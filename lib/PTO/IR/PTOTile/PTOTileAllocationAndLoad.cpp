@@ -15,6 +15,8 @@
 //===----------------------------------------------------------------------===//
 
 constexpr unsigned kValidShapeRank = 2;
+constexpr unsigned kA5TLoadSupportedElemBytes[] = {1, 2, 4, 8};
+constexpr unsigned kI64ElemBitWidth = 64;
 
 static LogicalResult verifyMultiTileSlot(AllocMultiTileOp op,
                                          pto::MultiTileBufType mtbTy) {
@@ -233,24 +235,29 @@ static LogicalResult verifyTLoadA5Types(TLoadOp op, Type srcElem,
   Type dstElem = dstTile.getElementType();
   unsigned srcBytes = getElemByteSize(srcElem);
   unsigned dstBytes = getElemByteSize(dstElem);
-  if (srcBytes != dstBytes)
+  if (srcBytes != dstBytes) {
     return op.emitOpError(
         "expects src and dst element types to have the same element size");
-  if (!(dstBytes == 1 || dstBytes == 2 || dstBytes == 4 || dstBytes == 8))
+  }
+  if (!llvm::is_contained(kA5TLoadSupportedElemBytes, dstBytes)) {
     return op.emitOpError(
         "expects A5 tload dst element size to be 1, 2, 4, or 8 bytes");
-  if (!isA5TLoadStoreTransferElemType(srcElem))
+  }
+  if (!isA5TLoadStoreTransferElemType(srcElem)) {
     return op.emitOpError(
         "expects A5 tload src element type to be i8/i16/i32/i64/f16/bf16/f32/f8/hif8/fp4");
-  if (!isA5TLoadStoreTransferElemType(dstElem))
+  }
+  if (!isA5TLoadStoreTransferElemType(dstElem)) {
     return op.emitOpError(
         "expects A5 tload dst element type to be i8/i16/i32/i64/f16/bf16/f32/f8/hif8/fp4");
+  }
   auto pad = dstTile.getPadValueI32();
-  if (dstElem.isInteger(64) &&
+  if (dstElem.isInteger(kI64ElemBitWidth) &&
       pad != static_cast<int32_t>(pto::PadValue::Null) &&
-      pad != static_cast<int32_t>(pto::PadValue::Zero))
+      pad != static_cast<int32_t>(pto::PadValue::Zero)) {
     return op.emitOpError(
         "expects A5 i64/u64 tload dst pad to be null or zero");
+  }
   return success();
 }
 

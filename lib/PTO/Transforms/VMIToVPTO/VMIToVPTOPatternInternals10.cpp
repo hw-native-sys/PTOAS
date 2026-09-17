@@ -69,7 +69,7 @@ private:
     VRegType vcvtResultType = resultTypes.front();
     if (isPackedBF16x2) {
         vcvtResultType = VRegType::get(
-            rewriter.getContext(), resultTypes.front().getElementCount() * mlir::pto::kValue2,
+            rewriter.getContext(), resultTypes.front().getElementCount() * kPairWidth,
             BFloat16Type::get(rewriter.getContext()));
     }
     return ResultViewPlan{isPackedBF16x2, vcvtResultType};
@@ -120,7 +120,7 @@ private:
     }
     ResultViewPlan viewPlan = buildResultViewPlan(plan.resultTypes, rewriter);
     return lowerFactor(
-        op, rewriter, sourceParts, plan.resultTypes, kPacked2Parts, mlir::pto::kValue2, *mask, viewPlan.isPackedBF16x2,
+        op, rewriter, sourceParts, plan.resultTypes, kPacked2Parts, kPairWidth, *mask, viewPlan.isPackedBF16x2,
         viewPlan.vcvtResultType);
   }
 
@@ -197,11 +197,11 @@ private:
   FailureOr<ExtFFactorPlan> buildFactorPlan(
       VMIExtFOp op, unsigned sourceBits, size_t sourcePartCount,
       size_t resultPartCount, OneToNPatternRewriter &rewriter) const {
-      if (sourceBits == mlir::pto::kValue16 && resultPartCount == kPairWidth * sourcePartCount) {
+      if (sourceBits == kElementBits16 && resultPartCount == kPairWidth * sourcePartCount) {
           static constexpr StringRef kEvenOddParts[] = {"EVEN", "ODD"};
           return ExtFFactorPlan{ArrayRef<StringRef>(kEvenOddParts), kPairWidth};
       }
-      if (sourceBits == mlir::pto::kValue8 && resultPartCount == kQuadWidth * sourcePartCount) {
+      if (sourceBits == kElementBits8 && resultPartCount == kQuadWidth * sourcePartCount) {
           static constexpr StringRef kPacked4Parts[] = {"P0", "P1", "P2", "P3"};
           return ExtFFactorPlan{ArrayRef<StringRef>(kPacked4Parts), kQuadWidth};
       }
@@ -425,7 +425,7 @@ private:
     }
     unsigned sourceBits =
         pto::getPTOStorageElemBitWidth(sourceType->getElementType());
-    if (sourceBits != mlir::pto::kValue32 && sourceBits != mlir::pto::kValue16) {
+    if (sourceBits != kElementBits32 && sourceBits != kElementBits16) {
         return rewriter.notifyMatchFailure(op, "truncf source bit width must be 32 or 16");
     }
     FailureOr<SmallVector<VRegType>> resultVRegTypes =
@@ -444,7 +444,7 @@ private:
     VRegType sourceViewType = *sourceType;
     if (sourceIsPackedBF16x2) {
         sourceViewType = VRegType::get(
-            rewriter.getContext(), sourceType->getElementCount() * mlir::pto::kValue2,
+            rewriter.getContext(), sourceType->getElementCount() * kPairWidth,
             BFloat16Type::get(rewriter.getContext()));
     }
     return TruncFPhysicalPlan{*sourceType, std::move(*resultVRegTypes),
@@ -648,14 +648,14 @@ private:
       size_t resultPartCount, OneToNPatternRewriter &rewriter) const {
     ArrayRef<StringRef> parts;
     int64_t factor = 0;
-    if (resultBits * mlir::pto::kValue2 == sourceBits) {
+    if (resultBits * kPairWidth == sourceBits) {
         static constexpr StringRef kEvenOddParts[] = {"EVEN", "ODD"};
         parts = kEvenOddParts;
-        factor = mlir::pto::kValue2;
-    } else if (resultBits * mlir::pto::kValue4 == sourceBits) {
+        factor = kPairWidth;
+    } else if (resultBits * kQuadWidth == sourceBits) {
         static constexpr StringRef kPacked4Parts[] = {"P0", "P1", "P2", "P3"};
         parts = kPacked4Parts;
-        factor = mlir::pto::kValue4;
+        factor = kQuadWidth;
     } else {
         return rewriter.notifyMatchFailure(op, "unsupported physical truncf source/result width relation");
     }

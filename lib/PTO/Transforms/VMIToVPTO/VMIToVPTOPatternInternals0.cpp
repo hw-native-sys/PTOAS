@@ -5,14 +5,12 @@
 // THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
 // INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
 // See LICENSE in the root of the software repository for the full text of the License.
-
 #pragma once
 //===- VMIToVPTOPatternInternals0.inc - VMIToVPTO internals -*- C++ -*-===//
 //===----------------------------------------------------------------------===//
-
 constexpr unsigned kVmiPatternInlineCapacity = 4;
 constexpr int64_t kDeintFactor2 = 2;
-
+constexpr int64_t kDeintFactor4 = 4;
 static FailureOr<SmallVector<Value, kVmiPatternInlineCapacity>> materializeDeintToContiguousMaskGroup(
     Operation *op, ValueRange sourceParts, TypeRange resultTypes, int64_t factor,
     int64_t groups, int64_t groupIndex, size_t resultOffset,
@@ -24,7 +22,7 @@ static FailureOr<SmallVector<Value, kVmiPatternInlineCapacity>> materializeDeint
   }
   SmallVector<Value, kVmiPatternInlineCapacity> results;
   if (factor == kDeintFactor2) {
-    FailureOr<std::array<Value, 2>> materialized =
+    FailureOr<std::array<Value, kDeintFactor2>> materialized =
         materializeFactor2DeintToContiguousGroup(
             op, sources, resultTypes, resultOffset, rewriter);
     if (failed(materialized)) {
@@ -33,7 +31,7 @@ static FailureOr<SmallVector<Value, kVmiPatternInlineCapacity>> materializeDeint
     results.append(materialized->begin(), materialized->end());
     return results;
   }
-    FailureOr<std::array<Value, 4>> materialized =
+    FailureOr<std::array<Value, kDeintFactor4>> materialized =
         materializeFactor4DeintToContiguousGroup(
             op, sources, resultTypes, resultOffset, rewriter);
   if (failed(materialized)) {
@@ -42,7 +40,6 @@ static FailureOr<SmallVector<Value, kVmiPatternInlineCapacity>> materializeDeint
   results.append(materialized->begin(), materialized->end());
   return results;
 }
-
 FailureOr<SmallVector<Value>> materializeStagingDeintToContiguousMaskLayout(
     Operation *op, ValueRange sourceParts, TypeRange resultTypes,
     int64_t factor, PatternRewriter &rewriter) {
@@ -50,13 +47,11 @@ FailureOr<SmallVector<Value>> materializeStagingDeintToContiguousMaskLayout(
     (void)rewriter.notifyMatchFailure(op, message);
     return failure();
   };
-  bool invalidGroups = (factor != 2 && factor != 4) || sourceParts.empty() ||
-                       sourceParts.size() % factor != 0;
-  if (invalidGroups) {
+  if (factor <= 0 || (factor != kDeintFactor2 && factor != kDeintFactor4) ||
+      sourceParts.empty() || sourceParts.size() % factor != 0) {
     return fail("staging deinterleaved mask layout requires grouped source "
                 "parts");
   }
-
   int64_t groups = sourceParts.size() / factor;
   SmallVector<Value> results;
   results.reserve(resultTypes.size());
@@ -82,16 +77,15 @@ FailureOr<SmallVector<Value>> materializeStagingDeintToContiguousMaskLayout(
   }
   return results;
 }
-
-FailureOr<std::array<Value, 4>> materializeFactor4ContiguousToDeintGroup(
+FailureOr<std::array<Value, kDeintFactor4>> materializeFactor4ContiguousToDeintGroup(
     Operation *op, ArrayRef<Value> sources, TypeRange resultTypes,
     int64_t groups, int64_t groupIndex, PatternRewriter &rewriter) {
   auto fail = [&op, &rewriter](const Twine &message)
-      -> FailureOr<std::array<Value, 4>> {
+      -> FailureOr<std::array<Value, kDeintFactor4>> {
     (void)rewriter.notifyMatchFailure(op, message);
     return failure();
   };
-  bool invalidSources = sources.size() != 4;
+  bool invalidSources = sources.size() != kDeintFactor4;
   bool insufficientResults =
       resultTypes.size() < static_cast<size_t>(4 * groups);
   if (invalidSources || insufficientResults) {
@@ -121,20 +115,19 @@ FailureOr<std::array<Value, 4>> materializeFactor4ContiguousToDeintGroup(
   if (failed(odd)) {
     return fail("unsupported predicate dintlv staging mask type");
   }
-  return std::array<Value, 4>{even->first, odd->first, even->second,
+  return std::array<Value, kDeintFactor4>{even->first, odd->first, even->second,
                               odd->second};
 }
-
-static FailureOr<std::array<Value, 2>> materializeFactor2ContiguousToDeintGroup(
+static FailureOr<std::array<Value, kDeintFactor2>> materializeFactor2ContiguousToDeintGroup(
     Operation *op, ArrayRef<Value> sources, TypeRange resultTypes,
     int64_t groups, int64_t groupIndex, PatternRewriter &rewriter) {
   auto fail = [&op, &rewriter](const Twine &message)
-      -> FailureOr<std::array<Value, 2>> {
+      -> FailureOr<std::array<Value, kDeintFactor2>> {
     (void)rewriter.notifyMatchFailure(op, message);
     return failure();
   };
   bool invalidGroup =
-      sources.size() != 2 ||
+      sources.size() != kDeintFactor2 ||
       resultTypes.size() < static_cast<size_t>(2 * groups);
   if (invalidGroup) {
     return fail("factor-2 staging mask conversion requires two grouped results");
@@ -145,9 +138,8 @@ static FailureOr<std::array<Value, 2>> materializeFactor2ContiguousToDeintGroup(
   if (failed(materialized)) {
     return fail("unsupported predicate dintlv staging mask type");
   }
-  return std::array<Value, 2>{materialized->first, materialized->second};
+  return std::array<Value, kDeintFactor2>{materialized->first, materialized->second};
 }
-
 static FailureOr<SmallVector<Value, kVmiPatternInlineCapacity>> materializeContiguousToDeintMaskGroup(
     Operation *op, ValueRange sourceParts, TypeRange resultTypes, int64_t factor,
     int64_t groups, int64_t groupIndex, PatternRewriter &rewriter) {
@@ -176,7 +168,7 @@ static FailureOr<SmallVector<Value, kVmiPatternInlineCapacity>> materializeConti
   }
   SmallVector<Value, kVmiPatternInlineCapacity> results;
   if (factor == kDeintFactor2) {
-    FailureOr<std::array<Value, 2>> materialized =
+    FailureOr<std::array<Value, kDeintFactor2>> materialized =
         materializeFactor2ContiguousToDeintGroup(
             op, sources, resultTypes, groups, groupIndex, rewriter);
     if (failed(materialized)) {
@@ -185,7 +177,7 @@ static FailureOr<SmallVector<Value, kVmiPatternInlineCapacity>> materializeConti
     results.append(materialized->begin(), materialized->end());
     return results;
   }
-  FailureOr<std::array<Value, 4>> materialized =
+  FailureOr<std::array<Value, kDeintFactor4>> materialized =
       materializeFactor4ContiguousToDeintGroup(
           op, sources, resultTypes, groups, groupIndex, rewriter);
   if (failed(materialized)) {
@@ -194,19 +186,16 @@ static FailureOr<SmallVector<Value, kVmiPatternInlineCapacity>> materializeConti
   results.append(materialized->begin(), materialized->end());
   return results;
 }
-
 struct StagingMaskPartAccumulator {
-  SmallVector<SmallVector<Value, kVmiPatternInlineCapacity>, 4> parts;
+  SmallVector<SmallVector<Value, kVmiPatternInlineCapacity>, kDeintFactor4> parts;
   int64_t factor;
   int64_t groups;
-
   StagingMaskPartAccumulator(int64_t factor, int64_t groups)
       : parts(factor), factor(factor), groups(groups) {
     for (SmallVector<Value, kVmiPatternInlineCapacity> &part : parts) {
       part.reserve(static_cast<size_t>(groups));
     }
   }
-
   LogicalResult append(Operation *op, ArrayRef<Value> values,
                        PatternRewriter &rewriter) {
     bool invalidArity = values.size() != static_cast<size_t>(factor);
@@ -220,7 +209,6 @@ struct StagingMaskPartAccumulator {
     }
     return success();
   }
-
   FailureOr<SmallVector<Value>> flatten(Operation *op,
                                         TypeRange resultTypes,
                                         PatternRewriter &rewriter) {
@@ -239,7 +227,6 @@ struct StagingMaskPartAccumulator {
     return results;
   }
 };
-
 FailureOr<SmallVector<Value>> materializeStagingContiguousToDeintMaskLayout(
     Operation *op, ValueRange sourceParts, TypeRange resultTypes,
     int64_t factor, PatternRewriter &rewriter) {
@@ -247,22 +234,17 @@ FailureOr<SmallVector<Value>> materializeStagingContiguousToDeintMaskLayout(
     (void)rewriter.notifyMatchFailure(op, message);
     return failure();
   };
-  bool invalidGroupedParts =
-      (factor != 2 && factor != 4) || sourceParts.empty() ||
-      resultTypes.size() % factor != 0;
-  if (invalidGroupedParts) {
+  if (factor <= 0 || (factor != kDeintFactor2 && factor != kDeintFactor4) ||
+      sourceParts.empty() || resultTypes.size() % factor != 0) {
     return fail("staging contiguous mask layout requires grouped result parts");
   }
-
   int64_t groups = resultTypes.size() / factor;
   bool tooManySourceParts =
       sourceParts.size() > static_cast<size_t>(groups * factor);
   if (tooManySourceParts) {
     return fail("staging contiguous mask layout has too many source parts");
   }
-
   StagingMaskPartAccumulator accumulator(factor, groups);
-
   for (int64_t i = 0; i < groups; ++i) {
     FailureOr<SmallVector<Value, kVmiPatternInlineCapacity>> materialized =
         materializeContiguousToDeintMaskGroup(
@@ -274,24 +256,19 @@ FailureOr<SmallVector<Value>> materializeStagingContiguousToDeintMaskLayout(
       return failure();
     }
   }
-
   return accumulator.flatten(op, resultTypes, rewriter);
 }
-
 FailureOr<SmallVector<Value>> materializeMaskGranularityCastLayoutConversion(
     Operation *op, VMIMaskType sourceType, VMIMaskType resultType,
     ValueRange sourceParts, TypeRange resultTypes, PatternRewriter &rewriter);
-
 FailureOr<SmallVector<Value>>
 materializeMaskGranularityCastLayoutConversionViaContiguous(
     Operation *op, VMIMaskType sourceType, VMIMaskType resultType,
     ValueRange sourceParts, TypeRange resultTypes, PatternRewriter &rewriter);
-
 FailureOr<std::optional<SmallVector<Value>>>
 materializeMaskGranularityCastStagingLayout(
     Operation *op, VMIMaskType sourceType, VMIMaskType resultType,
     ValueRange sourceParts, TypeRange resultTypes, PatternRewriter &rewriter);
-
 static FailureOr<SmallVector<Value>> forwardIdentityMaskParts(
     Operation *op, ValueRange sourceParts, TypeRange resultTypes,
     PatternRewriter &rewriter) {
@@ -301,12 +278,10 @@ static FailureOr<SmallVector<Value>> forwardIdentityMaskParts(
   }
   return SmallVector<Value>(sourceParts.begin(), sourceParts.end());
 }
-
 static bool requiresMaskDenseSplitFallback(VMILayoutAttr sourceLayout,
                                            VMILayoutAttr resultLayout) {
   return sourceLayout.isDenseSplit() || resultLayout.isDenseSplit();
 }
-
 FailureOr<std::optional<SmallVector<Value>>>
 materializeMaskGranularityCastLayoutFallback(
     Operation *op, VMIMaskType sourceType, VMIMaskType resultType,
@@ -317,7 +292,6 @@ materializeMaskGranularityCastLayoutFallback(
   if (succeeded(layoutParts)) {
     return std::optional<SmallVector<Value>>(std::move(*layoutParts));
   }
-
   FailureOr<std::optional<SmallVector<Value>>> staging =
       materializeMaskGranularityCastStagingLayout(
           op, sourceType, resultType, sourceParts, resultTypes, rewriter);
@@ -327,7 +301,6 @@ materializeMaskGranularityCastLayoutFallback(
   if (staging->has_value()) {
     return std::move(*staging);
   }
-
   if (!requiresMaskDenseSplitFallback(sourceLayout, resultLayout)) {
     return std::optional<SmallVector<Value>>{};
   }
@@ -339,7 +312,6 @@ materializeMaskGranularityCastLayoutFallback(
   }
   return std::optional<SmallVector<Value>>(std::move(*contiguous));
 }
-
 FailureOr<SmallVector<Value>>
 materializeMaskGranularityCastLayoutConversionViaContiguous(
     Operation *op, VMIMaskType sourceType, VMIMaskType resultType,
@@ -363,7 +335,6 @@ materializeMaskGranularityCastLayoutConversionViaContiguous(
   return materializeMaskGranularityCastLayoutConversion(
       op, contiguousType, resultType, *contiguousParts, resultTypes, rewriter);
 }
-
 static std::optional<bool> getMaskStagingDirection(
     VMILayoutAttr sourceLayout, VMILayoutAttr resultLayout, int64_t factor) {
   bool sourceContiguous = sourceLayout && sourceLayout.isContiguous() &&
@@ -379,7 +350,6 @@ static std::optional<bool> getMaskStagingDirection(
   }
   return sourceDeinterleaved;
 }
-
 FailureOr<std::optional<SmallVector<Value>>>
 materializeMaskGranularityCastStagingLayout(
     Operation *op, VMIMaskType sourceType, VMIMaskType resultType,
@@ -405,7 +375,6 @@ materializeMaskGranularityCastStagingLayout(
   }
   return std::optional<SmallVector<Value>>{};
 }
-
 FailureOr<SmallVector<Value>> materializeMaskGranularityCastLayoutConversion(
     Operation *op, VMIMaskType sourceType, VMIMaskType resultType,
     ValueRange sourceParts, TypeRange resultTypes, PatternRewriter &rewriter) {
@@ -413,19 +382,16 @@ FailureOr<SmallVector<Value>> materializeMaskGranularityCastLayoutConversion(
     (void)rewriter.notifyMatchFailure(op, message);
     return failure();
   };
-
   VMILayoutAttr sourceLayout = sourceType.getLayoutAttr();
   VMILayoutAttr resultLayout = resultType.getLayoutAttr();
   bool hasLayouts = sourceLayout && resultLayout;
   if (!hasLayouts) {
     return fail("mask granularity cast layout conversion requires layouts");
   }
-
   bool identityLayout = sourceLayout == resultLayout;
   if (identityLayout) {
     return forwardIdentityMaskParts(op, sourceParts, resultTypes, rewriter);
   }
-
   FailureOr<std::optional<SmallVector<Value>>> fallback =
       materializeMaskGranularityCastLayoutFallback(
           op, sourceType, resultType, sourceParts, resultTypes, sourceLayout,
@@ -436,15 +402,12 @@ FailureOr<SmallVector<Value>> materializeMaskGranularityCastLayoutConversion(
   if (fallback->has_value()) {
     return std::move(**fallback);
   }
-
   return fail("unsupported mask granularity cast layout conversion");
 }
-
 struct MaskGranularityCastPlan {
   VMIMaskType physicalSourceType;
   VMIMaskType physicalResultType;
 };
-
 static FailureOr<SmallVector<Value>> materializeMaskGranularityCastThroughLayout(
     Operation *op, VMIMaskType sourceType,
     ValueRange sourceParts, TypeRange resultTypes,
@@ -463,7 +426,6 @@ static FailureOr<SmallVector<Value>> materializeMaskGranularityCastThroughLayout
       op, granularityType, plan.physicalResultType, *granularityParts,
       resultTypes, rewriter);
 }
-
 static FailureOr<SmallVector<Value>> materializeMaskGranularityCastParts(
     Operation *op, VMIMaskType sourceType, VMIMaskType resultType,
     ValueRange sourceParts, TypeRange resultTypes,
@@ -476,11 +438,9 @@ static FailureOr<SmallVector<Value>> materializeMaskGranularityCastParts(
         op, plan.physicalSourceType, plan.physicalResultType, sourceParts,
         rewriter);
   }
-
   return materializeMaskGranularityCastThroughLayout(
       op, sourceType, sourceParts, resultTypes, plan, rewriter);
 }
-
 static FailureOr<MaskGranularityCastPlan> buildMaskGranularityCastPlan(
     Operation *op, VMIMaskType sourceType, VMIMaskType resultType,
     PatternRewriter &rewriter) {
@@ -505,7 +465,6 @@ static FailureOr<MaskGranularityCastPlan> buildMaskGranularityCastPlan(
   }
   return MaskGranularityCastPlan{*physicalSourceType, *physicalResultType};
 }
-
 FailureOr<SmallVector<Value>> materializeMaskGranularityCastConversion(
     Operation *op, VMIMaskType sourceType, VMIMaskType resultType,
     ValueRange sourceParts, TypeRange resultTypes, PatternRewriter &rewriter) {
@@ -514,7 +473,6 @@ FailureOr<SmallVector<Value>> materializeMaskGranularityCastConversion(
   if (failed(plan)) {
     return failure();
   }
-
   if (plan->physicalSourceType == plan->physicalResultType) {
     FailureOr<SmallVector<Value>> identity =
         forwardIdentityMaskParts(op, sourceParts, resultTypes, rewriter);
@@ -523,15 +481,12 @@ FailureOr<SmallVector<Value>> materializeMaskGranularityCastConversion(
     }
     return std::move(*identity);
   }
-
   return materializeMaskGranularityCastParts(
       op, sourceType, resultType, sourceParts, resultTypes, *plan, rewriter);
 }
-
 struct OneToNVMIEnsureLayoutOpPattern
     : OneToNOpConversionPattern<VMIEnsureLayoutOp> {
   using OneToNOpConversionPattern<VMIEnsureLayoutOp>::OneToNOpConversionPattern;
-
   LogicalResult
   matchAndRewrite(VMIEnsureLayoutOp op, OpAdaptor adaptor,
                   OneToNPatternRewriter &rewriter) const override {
@@ -546,12 +501,10 @@ struct OneToNVMIEnsureLayoutOpPattern
         });
   }
 };
-
 struct OneToNVMIEnsureMaskLayoutOpPattern
     : OneToNOpConversionPattern<VMIEnsureMaskLayoutOp> {
   using OneToNOpConversionPattern<
       VMIEnsureMaskLayoutOp>::OneToNOpConversionPattern;
-
   LogicalResult
   matchAndRewrite(VMIEnsureMaskLayoutOp op, OpAdaptor adaptor,
                   OneToNPatternRewriter &rewriter) const override {
@@ -574,7 +527,6 @@ struct OneToNVMIEnsureMaskLayoutOpPattern
     }
     VMILayoutAttr sourceLayout = sourceType.getLayoutAttr();
     VMILayoutAttr resultLayout = resultType.getLayoutAttr();
-
     ValueRange sourceParts = adaptor.getSource();
     FailureOr<SmallVector<Type>> maybe_resultTypes =
         getConvertedResultTypesOrFailure(op, *this->getTypeConverter());
@@ -591,12 +543,10 @@ struct OneToNVMIEnsureMaskLayoutOpPattern
                                   *this->getTypeConverter());
   }
 };
-
 struct OneToNVMIEnsureMaskGranularityOpPattern
     : OneToNOpConversionPattern<VMIEnsureMaskGranularityOp> {
   using OneToNOpConversionPattern<
       VMIEnsureMaskGranularityOp>::OneToNOpConversionPattern;
-
 private:
   LogicalResult replaceCheckedResults(
       VMIEnsureMaskGranularityOp op, OneToNPatternRewriter &rewriter,
@@ -620,9 +570,7 @@ private:
                                      *this->getTypeConverter());
     return success();
   }
-
 public:
-
   LogicalResult
   matchAndRewrite(VMIEnsureMaskGranularityOp op, OpAdaptor adaptor,
                   OneToNPatternRewriter &rewriter) const override {
@@ -640,7 +588,6 @@ public:
             op, "unsupported mask granularity cast layout relation: " + reason);
       }
     }
-
     ValueRange sourceParts = adaptor.getSource();
     FailureOr<SmallVector<Type>> maybe_resultTypes =
         getConvertedResultTypesOrFailure(op, *this->getTypeConverter());
@@ -648,17 +595,14 @@ public:
       return failure();
     }
     SmallVector<Type> resultTypes = std::move(*maybe_resultTypes);
-
     FailureOr<SmallVector<Value>> results =
         materializeMaskGranularityCastConversion(
             op, sourceType, resultType, sourceParts, resultTypes, rewriter);
     return replaceCheckedResults(op, rewriter, std::move(results), resultTypes);
   }
 };
-
 struct OneToNVMIBroadcastOpPattern : OneToNOpConversionPattern<VMIBroadcastOp> {
   using OneToNOpConversionPattern<VMIBroadcastOp>::OneToNOpConversionPattern;
-
   LogicalResult
   matchAndRewrite(VMIBroadcastOp op, OpAdaptor adaptor,
                   OneToNPatternRewriter &rewriter) const override {
@@ -669,7 +613,6 @@ struct OneToNVMIBroadcastOpPattern : OneToNOpConversionPattern<VMIBroadcastOp> {
           op, "broadcast input must convert to one value");
     }
     bool inputIsVReg = isa<VMIVRegType>(op.getValue().getType());
-
     FailureOr<SmallVector<Type>> maybe_resultTypes =
         getConvertedResultTypesOrFailure(op, *this->getTypeConverter());
     if (failed(maybe_resultTypes)) {
@@ -700,7 +643,6 @@ struct OneToNVMIBroadcastOpPattern : OneToNOpConversionPattern<VMIBroadcastOp> {
                                   *this->getTypeConverter());
   }
 };
-
 FailureOr<Value> createScalarOffsetConstant(Location loc, Type type,
                                             int64_t value,
                                             PatternRewriter &rewriter) {
@@ -717,20 +659,17 @@ FailureOr<Value> createScalarOffsetConstant(Location loc, Type type,
   }
   return failure();
 }
-
 FailureOr<Value> createIotaChunkBase(Location loc, Value base,
                                      int64_t laneOffset, StringRef order,
                                      PatternRewriter &rewriter) {
   if (laneOffset == 0) {
     return base;
   }
-
   FailureOr<Value> offset =
       createScalarOffsetConstant(loc, base.getType(), laneOffset, rewriter);
   if (failed(offset)) {
     return failure();
   }
-
   if (isa<IntegerType>(base.getType())) {
     if (order == "DESC") {
       return rewriter.create<arith::SubIOp>(loc, base, *offset).getResult();
@@ -743,21 +682,17 @@ FailureOr<Value> createIotaChunkBase(Location loc, Value base,
     }
     return rewriter.create<arith::AddFOp>(loc, base, *offset).getResult();
   }
-
   return failure();
 }
-
 struct IotaMaterializationContext {
   Location loc;
   Value base;
   StringAttr orderAttr;
   PatternRewriter &rewriter;
 };
-
 static StringRef getIotaOrder(const IotaMaterializationContext &context) {
   return context.orderAttr ? context.orderAttr.getValue() : StringRef("ASC");
 }
-
 FailureOr<Value> createIotaContiguousChunk(
     const IotaMaterializationContext &context, Type resultType,
     int64_t laneOffset) {
@@ -775,7 +710,6 @@ FailureOr<Value> createIotaContiguousChunk(
       .create<VciOp>(context.loc, resultType, *chunkBase, context.orderAttr)
       .getResult();
 }
-
 FailureOr<std::optional<Value>> createPowerOfTwoSubVLChunk(
     Location loc, Type resultType, Value base, int64_t groupSize,
     StringRef order, Value allMask, PatternRewriter &rewriter) {
@@ -785,7 +719,6 @@ FailureOr<std::optional<Value>> createPowerOfTwoSubVLChunk(
   if (unsupportedShape) {
     return std::optional<Value>{};
   }
-
   FailureOr<Value> zeroScalar =
       createScalarOffsetConstant(loc, base.getType(), 0, rewriter);
   FailureOr<Value> maskScalar = createScalarOffsetConstant(
@@ -794,7 +727,6 @@ FailureOr<std::optional<Value>> createPowerOfTwoSubVLChunk(
   if (failedScalars) {
     return failure();
   }
-
   Value laneIds =
       rewriter.create<VciOp>(loc, resultType, *zeroScalar, StringAttr{})
           .getResult();
@@ -819,19 +751,15 @@ FailureOr<std::optional<Value>> createPowerOfTwoSubVLChunk(
   return std::optional<Value>(
       rewriter.create<VaddsOp>(loc, resultType, rem, base, allMask).getResult());
 }
-
 /// Pack group-periodic ramps inside one physical VL when S < physVL and
 /// physVL % S == 0 (e.g. i32 L=64,group=2 → [base..base+31 | base..base+31]).
-///
 /// Preferred recipes (O(1), independent of G = physVL/S):
 ///   * S == 1 → vdup(base)
 ///   * S power-of-2 integer (all legal sub-VL S on this ISA) →
 ///       ASC:  vadds(vand(vci(0), S-1), base)
 ///       DESC: vsub(vdup(base), vand(vci(0), S-1))
-///
 /// Residual fallback (non-integer base): per-group vci(base) ∓ g*S +
 /// lane-range vsel. Index iota is integer-only in practice.
-///
 /// When S == physVL this is just `vci(base)` (single group fills the VL).
 static FailureOr<Value> materializeResidualSubVLGroup(
     Location loc, Type resultType, Value base, StringRef order, Value full,
@@ -874,7 +802,6 @@ static FailureOr<Value> materializeResidualSubVLGroup(
       .create<VselOp>(loc, resultType, adjusted, previousResult, *laneMask)
       .getResult();
 }
-
 FailureOr<Value> createResidualSubVLGroupPeriodicChunk(
     Location loc, Type resultType, Value base, StringRef order,
     Value full, MaskType maskType, Value zeroScalar, Value allMask,
@@ -897,7 +824,6 @@ FailureOr<Value> createResidualSubVLGroupPeriodicChunk(
   }
   return result;
 }
-
 static FailureOr<std::optional<Value>> createSubVLPeriodicFastPath(
     const IotaMaterializationContext &context, Type resultType,
     int64_t groupSize, StringRef order, Value allMask) {
@@ -911,7 +837,6 @@ static FailureOr<std::optional<Value>> createSubVLPeriodicFastPath(
                             /*position=*/nullptr)
             .getResult());
   }
-
   auto vregType = dyn_cast<VRegType>(resultType);
   if (!vregType) {
     return failure();
@@ -925,7 +850,6 @@ static FailureOr<std::optional<Value>> createSubVLPeriodicFastPath(
     }
     return std::optional<Value>(*result);
   }
-
   FailureOr<std::optional<Value>> powerOfTwo = createPowerOfTwoSubVLChunk(
       loc, resultType, base, groupSize, order, allMask, rewriter);
   if (failed(powerOfTwo)) {
@@ -933,7 +857,6 @@ static FailureOr<std::optional<Value>> createSubVLPeriodicFastPath(
   }
   return *powerOfTwo;
 }
-
 FailureOr<Value> createSubVLGroupPeriodicChunk(
     const IotaMaterializationContext &context, Type resultType,
     int64_t groupSize) {
@@ -944,22 +867,18 @@ FailureOr<Value> createSubVLGroupPeriodicChunk(
   if (!vregType) {
     return failure();
   }
-
   if (groupSize <= 0) {
     return failure();
   }
-
   int64_t lanesPerPart = vregType.getElementCount();
   if (lanesPerPart % groupSize != 0) {
     return failure();
   }
-
   FailureOr<Value> allMask =
       createAllTrueMaskForVReg(loc, vregType, rewriter);
   if (failed(allMask)) {
     return failure();
   }
-
   StringRef order = getIotaOrder(context);
   FailureOr<std::optional<Value>> fastPath = createSubVLPeriodicFastPath(
       context, resultType, groupSize, order, *allMask);
@@ -969,7 +888,6 @@ FailureOr<Value> createSubVLGroupPeriodicChunk(
   if (fastPath->has_value()) {
     return **fastPath;
   }
-
   int64_t groupsPerChunk = lanesPerPart / groupSize;
   FailureOr<Value> full =
       createIotaContiguousChunk(context, resultType, /*laneOffset=*/0);
@@ -982,12 +900,10 @@ FailureOr<Value> createSubVLGroupPeriodicChunk(
   if (failedResidualInputs) {
     return failure();
   }
-
   return createResidualSubVLGroupPeriodicChunk(
       loc, resultType, base, order, *full, *maskType, *zeroScalar, *allMask,
       groupSize, groupsPerChunk, rewriter);
 }
-
 FailureOr<Value> createIotaDeinterleavedChunk(
     const IotaMaterializationContext &context, Type resultType, int64_t factor,
     int64_t part, int64_t chunk, int64_t lanesPerPart) {
@@ -999,7 +915,6 @@ FailureOr<Value> createIotaDeinterleavedChunk(
   if (!vregType) {
     return failure();
   }
-
   FailureOr<Value> mask = createAllTrueMaskForVReg(loc, vregType, rewriter);
   FailureOr<Value> zero =
       createScalarOffsetConstant(loc, base.getType(), 0, rewriter);
@@ -1009,13 +924,11 @@ FailureOr<Value> createIotaDeinterleavedChunk(
   if (failedIotaInputs) {
     return failure();
   }
-
   Value local =
       rewriter.create<VciOp>(loc, resultType, *zero, StringAttr{}).getResult();
   Value scaled =
       rewriter.create<VmulsOp>(loc, resultType, local, *factorScalar, *mask)
           .getResult();
-
   StringRef order = orderAttr ? orderAttr.getValue() : StringRef("ASC");
   int64_t partOffset = part + factor * chunk * lanesPerPart;
   FailureOr<Value> biasedBase =
@@ -1023,7 +936,6 @@ FailureOr<Value> createIotaDeinterleavedChunk(
   if (failed(biasedBase)) {
     return failure();
   }
-
   if (order == "DESC") {
     Value baseVector = rewriter
                            .create<VdupOp>(loc, resultType, *biasedBase, *mask,
@@ -1032,17 +944,14 @@ FailureOr<Value> createIotaDeinterleavedChunk(
     return rewriter.create<VsubOp>(loc, resultType, baseVector, scaled, *mask)
         .getResult();
   }
-
   return rewriter.create<VaddsOp>(loc, resultType, scaled, *biasedBase, *mask)
       .getResult();
 }
-
 template <typename IotaOp>
 struct OneToNVMIIotaOpPattern : OneToNOpConversionPattern<IotaOp> {
   using OneToNOpConversionPattern<IotaOp>::OneToNOpConversionPattern;
   using OpAdaptor =
       typename OneToNOpConversionPattern<IotaOp>::OpAdaptor;
-
 private:
   struct IotaLoweringInput {
     VMIVRegType resultVMIType;
@@ -1051,7 +960,6 @@ private:
     SmallVector<Type> resultTypes;
     int64_t lanesPerPart;
   };
-
   FailureOr<IotaLoweringInput> getIotaLoweringInput(
       IotaOp op, OpAdaptor adaptor,
       OneToNPatternRewriter &rewriter) const {
@@ -1079,7 +987,6 @@ private:
     return IotaLoweringInput{resultVMIType, layout, *base,
                              std::move(*resultTypes), *lanesPerPart};
   }
-
   FailureOr<std::pair<int64_t, int64_t>> validateGroupedIotaShape(
       IotaOp op, VMIVRegType resultVMIType, VMILayoutAttr layout,
       TypeRange resultTypes, int64_t lanesPerPart,
@@ -1122,7 +1029,6 @@ private:
     }
     return std::make_pair(groupSize, expectedArity);
   }
-
   LogicalResult lowerGroupedIota(
       IotaOp op, Value base, VMIVRegType resultVMIType,
       VMILayoutAttr layout, TypeRange resultTypes, int64_t lanesPerPart,
@@ -1137,7 +1043,6 @@ private:
     int64_t safeGroupSize = groupSize > 0 ? groupSize : 1;
     bool groupSizeMultipleOfPhys = groupSize % safeLanesPerPart == 0;
     bool physMultipleOfGroupSize = lanesPerPart % safeGroupSize == 0;
-
     llvm::DenseMap<std::pair<Type, int64_t>, Value> sharedChunks;
     IotaMaterializationContext context{op.getLoc(), base, op.getOrderAttr(),
                                        rewriter};
@@ -1169,7 +1074,6 @@ private:
     }
     return success();
   }
-
   LogicalResult lowerContiguousIota(
       IotaOp op, Value base, TypeRange resultTypes, int64_t lanesPerPart,
       OneToNPatternRewriter &rewriter, SmallVectorImpl<Value> &results) const {
@@ -1189,7 +1093,6 @@ private:
     }
     return success();
   }
-
   LogicalResult lowerDeinterleavedIota(
       IotaOp op, Value base, VMILayoutAttr layout, TypeRange resultTypes,
       int64_t lanesPerPart, OneToNPatternRewriter &rewriter,
@@ -1219,7 +1122,6 @@ private:
     }
     return success();
   }
-
   LogicalResult lowerAndReplaceIota(
       IotaOp op, Value base, VMIVRegType resultVMIType,
       VMILayoutAttr layout, TypeRange resultTypes, int64_t lanesPerPart,
@@ -1243,9 +1145,7 @@ private:
     return replacePhysicalResults(rewriter, op, results,
                                   *this->getTypeConverter());
   }
-
 public:
-
   LogicalResult
   matchAndRewrite(IotaOp op, OpAdaptor adaptor,
                   OneToNPatternRewriter &rewriter) const override {
@@ -1261,10 +1161,8 @@ public:
                                input->lanesPerPart, rewriter, results);
   }
 };
-
 struct OneToNVMIConstantOpPattern : OneToNOpConversionPattern<VMIConstantOp> {
   using OneToNOpConversionPattern<VMIConstantOp>::OneToNOpConversionPattern;
-
 private:
   LogicalResult lowerSplat(VMIConstantOp op, TypedAttr splatAttr,
                            ArrayRef<Type> resultTypes,
@@ -1293,9 +1191,7 @@ private:
     return replacePhysicalResults(rewriter, op, results,
                                   *this->getTypeConverter());
   }
-
 public:
-
   LogicalResult
   matchAndRewrite(VMIConstantOp op, OpAdaptor adaptor,
                   OneToNPatternRewriter &rewriter) const override {
@@ -1308,7 +1204,6 @@ public:
     if (!splatAttr) {
       return rewriter.notifyMatchFailure(op, "splat constant must be typed");
     }
-
     // arith.constant only accepts signless integer types, whereas VMI vregs may
     // carry signed/unsigned element types (e.g. ui16). Remap an unsigned/signed
     // integer splat to its signless equivalent; the downstream pto.vdup accepts
@@ -1320,7 +1215,6 @@ public:
                                      intAttr.getValue());
       }
     }
-
     FailureOr<SmallVector<Type>> maybe_resultTypes =
         getConvertedResultTypesOrFailure(op, *this->getTypeConverter());
     if (failed(maybe_resultTypes)) {
@@ -1330,11 +1224,9 @@ public:
     return lowerSplat(op, splatAttr, resultTypes, rewriter);
   }
 };
-
 struct OneToNVMIConstantMaskOpPattern
     : OneToNOpConversionPattern<VMIConstantMaskOp> {
   using OneToNOpConversionPattern<VMIConstantMaskOp>::OneToNOpConversionPattern;
-
 private:
   FailureOr<SmallVector<Value>> materializePhysicalMasks(
       VMIConstantMaskOp op, ArrayRef<Type> resultTypes,
@@ -1369,9 +1261,7 @@ private:
     }
     return results;
   }
-
 public:
-
   LogicalResult
   matchAndRewrite(VMIConstantMaskOp op, OpAdaptor adaptor,
                   OneToNPatternRewriter &rewriter) const override {
@@ -1398,16 +1288,13 @@ public:
     return success();
   }
 };
-
 struct OneToNVMICreateMaskOpPattern
     : OneToNOpConversionPattern<VMICreateMaskOp> {
   using OneToNOpConversionPattern<VMICreateMaskOp>::OneToNOpConversionPattern;
-
 private:
   FailureOr<SmallVector<Type>> getResultTypes(VMICreateMaskOp op) const {
     return getConvertedResultTypes(op, 0, *this->getTypeConverter());
   }
-
   LogicalResult lowerDynamicCreateMask(
       VMICreateMaskOp op, OpAdaptor adaptor, VMIMaskType resultVMIType,
       VMILayoutAttr layout, int64_t lanesPerPart,
@@ -1430,7 +1317,6 @@ private:
     return replacePhysicalResults(rewriter, op, results,
                                   *this->getTypeConverter());
   }
-
   LogicalResult lowerConstantCreateMask(
       VMICreateMaskOp op, int64_t activeLanes, VMIMaskType resultVMIType,
       VMILayoutAttr layout, int64_t lanesPerPart,
@@ -1448,13 +1334,16 @@ private:
     return replacePhysicalResults(rewriter, op, results,
                                   *this->getTypeConverter());
   }
-
   LogicalResult lowerDynamicMask(
       VMICreateMaskOp op, Value active, VMIMaskType resultVMIType,
       VMILayoutAttr layout, TypeRange resultTypes,
       OneToNPatternRewriter &rewriter,
       SmallVectorImpl<Value> &results) const {
     int64_t factor = layout.isDenseSplit() ? layout.getFactor() : 1;
+    if (factor <= 0) {
+      return rewriter.notifyMatchFailure(
+          op, "dynamic create_mask requires a positive layout factor");
+    }
     bool resultFactorMismatch = resultTypes.size() % factor != 0;
     if (resultFactorMismatch) {
       return rewriter.notifyMatchFailure(
@@ -1486,7 +1375,6 @@ private:
     }
     return success();
   }
-
   FailureOr<std::pair<bool, int64_t>> getConstantMaskChunkActivity(
       VMICreateMaskOp op, VMIMaskType resultVMIType, int64_t part,
       int64_t chunk, int64_t activeLanes, int64_t lanesPerPart,
@@ -1516,7 +1404,6 @@ private:
     }
     return std::make_pair(anyLane, activeInChunk);
   }
-
   FailureOr<std::pair<Value, Value>> buildDynamicMaskChunk(
       VMICreateMaskOp op, Type resultType, Value remaining,
       OneToNPatternRewriter &rewriter) const {
@@ -1532,7 +1419,6 @@ private:
     }
     return *maskAndRemaining;
   }
-
   FailureOr<Value> materializeConstantMaskValue(
       VMICreateMaskOp op, Type resultType, int64_t activeInChunk,
       int64_t lanesPerPart, OneToNPatternRewriter &rewriter) const {
@@ -1561,7 +1447,6 @@ private:
     }
     return maskAndRemaining->first;
   }
-
   LogicalResult lowerConstantMask(
       VMICreateMaskOp op, int64_t activeLanes, VMIMaskType resultVMIType,
       VMILayoutAttr layout, TypeRange resultTypes, int64_t lanesPerPart,
@@ -1603,9 +1488,7 @@ private:
     }
     return success();
   }
-
 public:
-
   LogicalResult
   matchAndRewrite(VMICreateMaskOp op, OpAdaptor adaptor,
                   OneToNPatternRewriter &rewriter) const override {
@@ -1628,18 +1511,15 @@ public:
       return rewriter.notifyMatchFailure(
           op, "create_mask requires known physical mask lanes per part");
     }
-
     if (!activeConstant) {
       return lowerDynamicCreateMask(op, adaptor, resultVMIType, layout,
                                     *lanesPerPart, rewriter);
     }
-
     auto activeAttr = dyn_cast<IntegerAttr>(activeConstant.getValue());
     if (!activeAttr) {
       return rewriter.notifyMatchFailure(
           op, "create_mask active_lanes must be an integer constant");
     }
-
     int64_t activeLanes = activeAttr.getInt();
     if (activeLanes < 0) {
       activeLanes = 0;
@@ -1647,17 +1527,14 @@ public:
     if (activeLanes > resultVMIType.getElementCount()) {
       activeLanes = resultVMIType.getElementCount();
     }
-
     return lowerConstantCreateMask(op, activeLanes, resultVMIType, layout,
                                    *lanesPerPart, rewriter);
   }
 };
-
 struct OneToNVMICreateGroupMaskOpPattern
     : OneToNOpConversionPattern<VMICreateGroupMaskOp> {
   using OneToNOpConversionPattern<
       VMICreateGroupMaskOp>::OneToNOpConversionPattern;
-
 private:
   FailureOr<SmallVector<Value>> materializeGroupMaskResults(
       VMICreateGroupMaskOp op,
@@ -1692,7 +1569,6 @@ private:
     }
     return results;
   }
-
   LogicalResult lowerDynamicMask(
       VMICreateGroupMaskOp op, OpAdaptor adaptor,
       OneToNPatternRewriter &rewriter, VMIMaskType resultVMIType,
@@ -1704,7 +1580,6 @@ private:
     if (failed(active)) {
       return failure();
     }
-
     if (resultLayout && resultLayout.isDeinterleaved()) {
       VMILayoutAttr contiguousLayout =
           VMILayoutAttr::getContiguous(op.getContext());
@@ -1724,7 +1599,6 @@ private:
                                           rewriter),
           *this->getTypeConverter());
     }
-
     FailureOr<SmallVector<Value>> results = materializeDynamicGroupMaskForType(
         op, *active, resultVMIType, resultTypes, rewriter);
     if (failed(results)) {
@@ -1733,7 +1607,6 @@ private:
     return replaceMaterializedResults(rewriter, op, std::move(results),
                                       *this->getTypeConverter());
   }
-
   LogicalResult lowerConstantMask(
       VMICreateGroupMaskOp op, OneToNPatternRewriter &rewriter,
       ArrayRef<Type> resultTypes) const {
@@ -1744,7 +1617,6 @@ private:
       return rewriter.notifyMatchFailure(
           op, Twine("create_group_mask ") + reason);
     }
-
     FailureOr<SmallVector<Value>> results = materializeGroupMaskResults(
         op, *materializations, resultTypes,
         "create_group_mask produced too many physical masks", rewriter);
@@ -1755,7 +1627,6 @@ private:
                                      *this->getTypeConverter());
     return success();
   }
-
   FailureOr<SmallVector<Value>> buildFactor4ContiguousParts(
       VMICreateGroupMaskOp op, OpAdaptor adaptor,
       OneToNPatternRewriter &rewriter, VMIMaskType contiguousType,
@@ -1773,7 +1644,6 @@ private:
       return materializeDynamicGroupMaskForType(
           op, *active, contiguousType, resultTypes, rewriter);
     }
-
     std::string contiguousReason;
     FailureOr<SmallVector<ConstantMaskChunkMaterialization>> materializations =
         computeGroupMaskMaterializationForType(op, contiguousType,
@@ -1786,7 +1656,6 @@ private:
         op, *materializations, resultTypes,
         "create_group_mask produced too many contiguous masks", rewriter);
   }
-
   LogicalResult lowerFactor4Block(
       VMICreateGroupMaskOp op, OpAdaptor adaptor,
       OneToNPatternRewriter &rewriter, VMIMaskType resultVMIType,
@@ -1814,9 +1683,7 @@ private:
                                         rewriter),
         *this->getTypeConverter());
   }
-
 public:
-
   LogicalResult
   matchAndRewrite(VMICreateGroupMaskOp op, OpAdaptor adaptor,
                   OneToNPatternRewriter &rewriter) const override {
@@ -1831,12 +1698,11 @@ public:
     VMILayoutAttr resultLayout = resultVMIType.getLayoutAttr();
     bool needsFactor4ContiguousMaterialization =
         resultLayout && resultLayout.isBlockDeinterleaved() &&
-        resultLayout.getFactor() == 4;
+        resultLayout.getFactor() == kDeintFactor4;
     if (needsFactor4ContiguousMaterialization) {
       return lowerFactor4Block(op, adaptor, rewriter, resultVMIType,
                                resultLayout, resultTypes);
     }
-
     auto activeConstant =
         op.getActiveElemsPerGroup().getDefiningOp<arith::ConstantOp>();
     if (!activeConstant) {
@@ -1846,5 +1712,3 @@ public:
     return lowerConstantMask(op, rewriter, resultTypes);
   }
 };
-
-

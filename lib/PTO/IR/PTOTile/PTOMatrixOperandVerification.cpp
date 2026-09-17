@@ -183,7 +183,7 @@ static LogicalResult verifyA5MxMatTileOperands(Operation *op, Type lhsTy,
 
   auto lhsValid = getValidShapeVec(lhsTy);
   auto rhsValid = getValidShapeVec(rhsTy);
-  if (lhsValid.size() == 2 && rhsValid.size() == 2) {
+  if (lhsValid.size() == kLogicalTileRank && rhsValid.size() == kLogicalTileRank) {
     int64_t m = lhsValid[0];
     int64_t k = lhsValid[1];
     int64_t n = rhsValid[1];

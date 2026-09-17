@@ -10,6 +10,12 @@
 //===- VMIToVPTOPatternInternals3.inc - VMIToVPTO internals -*- C++ -*-===//
 //===----------------------------------------------------------------------===//
 
+constexpr int64_t kPackedByteStoreBlockStride = 32;
+constexpr int64_t kPackedByteStorePartsPerBlock = 4;
+constexpr int64_t kGroupStoreSlotBlockSize = 8;
+constexpr int64_t kGroupSlotIndexGroupSize = 8;
+constexpr int64_t kE2BBroadcastGroupCount = 8;
+
 struct OneToNVMIGroupStoreOpPattern
     : OneToNOpConversionPattern<VMIGroupStoreOp> {
   using OneToNOpConversionPattern<VMIGroupStoreOp>::OneToNOpConversionPattern;
@@ -139,7 +145,7 @@ private:
       return failure();
     }
     if (isKnownAddressAligned(destination, offset,
-                               valueVMIType.getElementType(), 32)) {
+                               valueVMIType.getElementType(), kMemoryAccessAlignmentBytes)) {
       FailureOr<Value> storeMask = createPrefixMaskForActiveLanes(
           op.getLoc(), *maskType, layout.getNumGroups(), rewriter);
       if (failed(storeMask)) {
@@ -240,7 +246,7 @@ private:
     }
     unsigned elementBits =
         pto::getPTOStorageElemBitWidth(valueVMIType.getElementType());
-    if (elementBits == 0 || 256 % elementBits != 0) {
+    if (elementBits == 0 || kGroupSlotVectorBits % elementBits != 0) {
       return rewriter.notifyMatchFailure(
           op, "slots=1 group_store requires supported element width");
     }
@@ -446,7 +452,8 @@ private:
         return rewriter.notifyMatchFailure(
             op, "unsupported element type for group_store mask");
       }
-      int64_t activeGroups = std::min<int64_t>(8, numGroups - slotBlock * 8);
+      int64_t activeGroups = std::min<int64_t>(
+          kGroupStoreSlotBlockSize, numGroups - slotBlock * kGroupStoreSlotBlockSize);
       FailureOr<Value> mask = createPrefixMaskForActiveLanes(
           op.getLoc(), *maskType, activeGroups, rewriter);
       if (failed(mask)) {
@@ -564,7 +571,8 @@ private:
         return rewriter.notifyMatchFailure(op,
                                            "group_store value must be vreg");
       }
-      int64_t activeGroups = std::min<int64_t>(8, numGroups - slotBlock * 8);
+      int64_t activeGroups = std::min<int64_t>(
+          kGroupStoreSlotBlockSize, numGroups - slotBlock * kGroupStoreSlotBlockSize);
       FailureOr<Value> mask = createPrefixMaskForActiveLanes(
           op.getLoc(), maskType, activeGroups, rewriter);
       if (failed(mask)) {
@@ -591,7 +599,7 @@ private:
         return failure();
       }
       Value groupOffset = createGroupChunkOffset(
-          op.getLoc(), offset, rowStride, slotBlock * 8, 0, rewriter);
+          op.getLoc(), offset, rowStride, slotBlock * kGroupStoreSlotBlockSize, 0, rewriter);
       groupOffsets.push_back(groupOffset);
       useDirectAccess &= isDirectMemoryDistAddressLegal(
           op.getDestination(), groupOffset,
@@ -626,7 +634,8 @@ private:
     SmallVector<int64_t> advances;
     advances.reserve(valueCount);
     for (size_t slotBlock = 0; slotBlock < valueCount; ++slotBlock) {
-      advances.push_back(std::min<int64_t>(8, numGroups - slotBlock * 8));
+      advances.push_back(std::min<int64_t>(
+          kGroupStoreSlotBlockSize, numGroups - slotBlock * kGroupStoreSlotBlockSize));
     }
     return advances;
   }
@@ -769,7 +778,7 @@ private:
     }
 
     if (isKnownAddressAligned(destination, offset,
-                              valueVMIType.getElementType(), 32)) {
+                              valueVMIType.getElementType(), kMemoryAccessAlignmentBytes)) {
       if (failed(emitAlignedCompactSmallGroupStore(
               op, *compactValue, valueVMIType, destination, offset, rewriter))) {
         return failure();
@@ -799,24 +808,25 @@ private:
           op, "failed to create packed group_store accumulator");
     }
     Value merged = *zero;
-    for (int64_t localPart = 0; localPart < 4; ++localPart) {
-      int64_t partIndex = blockStart / 8 + localPart;
+    for (int64_t localPart = 0; localPart < kPackedByteStorePartsPerBlock; ++localPart) {
+      int64_t partIndex = blockStart / kGroupStoreSlotBlockSize + localPart;
       if (partIndex >= static_cast<int64_t>(valueParts.size())) {
         break;
       }
-      int64_t activeGroups = std::min<int64_t>(8, numGroups - partIndex * 8);
+      int64_t activeGroups = std::min<int64_t>(
+          kGroupStoreSlotBlockSize, numGroups - partIndex * kGroupStoreSlotBlockSize);
       if (activeGroups <= 0) {
         break;
       }
       FailureOr<Value> nextMerged = mergePackedByteStoreBlockPart(
           op, rewriter, valueParts[partIndex], slotIndex, merged,
-          firstVRegType, maskType, localPart * 8, activeGroups);
+          firstVRegType, maskType, localPart * kGroupStoreSlotBlockSize, activeGroups);
       if (failed(nextMerged)) {
         return failure();
       }
       merged = *nextMerged;
     }
-    int64_t activeGroups = std::min<int64_t>(32, numGroups - blockStart);
+    int64_t activeGroups = std::min<int64_t>(kPackedByteStoreBlockStride, numGroups - blockStart);
     FailureOr<Value> storeMask = createPrefixMaskForActiveLanes(
         op.getLoc(), maskType, activeGroups, rewriter);
     if (failed(storeMask)) {
@@ -881,7 +891,7 @@ private:
       int64_t numGroups, bool useDirectPack4) const {
     SmallVector<Value> statefulValues;
     SmallVector<int64_t> statefulAdvances;
-    for (int64_t blockStart = 0; blockStart < numGroups; blockStart += 32) {
+    for (int64_t blockStart = 0; blockStart < numGroups; blockStart += kPackedByteStoreBlockStride) {
       FailureOr<std::tuple<Value, Value, Value>> block =
           buildPackedByteStoreBlock(
               op, rewriter, valueParts, firstVRegType, maskType, slotIndex,
@@ -904,7 +914,7 @@ private:
       }
       statefulValues.push_back(*statefulValue);
       statefulAdvances.push_back(
-          std::min<int64_t>(32, numGroups - blockStart));
+          std::min<int64_t>(kPackedByteStoreBlockStride, numGroups - blockStart));
     }
     if (!useDirectPack4 &&
         failed(emitPackedByteStoreStream(op, rewriter, destination, offset,
@@ -934,7 +944,7 @@ private:
                                    firstVRegType.getElementCount(),
                                    indexElementType);
     FailureOr<Value> slotIndex = createGroupSlotIndexVector(
-        op.getLoc(), indexType, /*groupSize=*/8, /*baseGroupSlot=*/0,
+        op.getLoc(), indexType, /*groupSize=*/kGroupSlotIndexGroupSize, /*baseGroupSlot=*/0,
         rewriter);
     if (failed(slotIndex)) {
       (void)rewriter.notifyMatchFailure(
@@ -1418,7 +1428,7 @@ private:
               "layout for direct group size or deinterleaved=2/4 result "
               "layout for split group size");
     }
-    if (elementBits != 16 && elementBits != 32) {
+    if (elementBits != kElementBits16 && elementBits != kElementBits32) {
       return rewriter.notifyMatchFailure(
           op, "group_broadcast_load E2B lowering requires b16 or b32 element type");
     }
@@ -1432,7 +1442,7 @@ private:
       return rewriter.notifyMatchFailure(
           op, "group_broadcast_load E2B lowering requires !pto.ptr source");
     }
-    if (numGroups != 8) {
+    if (numGroups != kE2BBroadcastGroupCount) {
       return rewriter.notifyMatchFailure(
           op, "group_broadcast_load E2B lowering requires num_groups = 8");
     }
@@ -1448,7 +1458,7 @@ private:
           op, "group_broadcast_load result must be vreg");
     }
     Value packetOffset =
-        createChunkOffset(op.getLoc(), offset, chunk * 8, rewriter);
+        createChunkOffset(op.getLoc(), offset, chunk * kE2BBroadcastGroupCount, rewriter);
     return rewriter
         .create<VldsOp>(op.getLoc(), packetType, Type{}, source, packetOffset,
                         rewriter.getStringAttr(e2bDist))
@@ -1718,11 +1728,11 @@ private:
     unsigned bits =
         pto::getPTOStorageElemBitWidth(resultVMIType.getElementType());
     std::optional<StringRef> dist;
-    if (bits == 8) {
+    if (bits == kElementBits8) {
       dist = StringRef("BRC_B8");
-    } else if (bits == 16) {
+    } else if (bits == kElementBits16) {
       dist = StringRef("BRC_B16");
-    } else if (bits == 32) {
+    } else if (bits == kElementBits32) {
       dist = StringRef("BRC_B32");
     }
     auto firstType = dyn_cast<VRegType>(resultTypes.front());
@@ -1752,9 +1762,9 @@ private:
       return false;
     }
     unsigned bits = directFact->layout.elementBits;
-    StringRef dist = bits == 16 ? StringRef("E2B_B16") : StringRef("E2B_B32");
+    StringRef dist = bits == kElementBits16 ? StringRef("E2B_B16") : StringRef("E2B_B32");
     auto firstType = dyn_cast<VRegType>(resultTypes.front());
-    bool legal = (bits == 16 || bits == 32) && firstType &&
+    bool legal = (bits == kElementBits16 || bits == kElementBits32) && firstType &&
                  isDirectMemoryDistAddressLegal(
                      op.getSource(), op.getOffset(),
                      resultVMIType.getElementType(), firstType,
@@ -1856,5 +1866,3 @@ public:
                                  numGroups, directFact);
   }
 };
-
-

@@ -35,14 +35,6 @@ namespace pto {
 //   * Partial               -> `TMATMUL<pto::AccPhase::Partial>(dst, lhs, rhs)`
 //   * Final                 -> `TMATMUL<pto::AccPhase::Final>(dst, lhs, rhs)`
 // The Unspecified default keeps backward compatibility with all upstream IR
-
-//===----------------------------------------------------------------------===//
-// Render `pto.tmatmul` as one of three forms depending on the optional
-// `acc_phase` attribute:
-//   * absent / Unspecified  -> `TMATMUL(dst, lhs, rhs)`
-//   * Partial               -> `TMATMUL<pto::AccPhase::Partial>(dst, lhs, rhs)`
-//   * Final                 -> `TMATMUL<pto::AccPhase::Final>(dst, lhs, rhs)`
-// The Unspecified default keeps backward compatibility with all upstream IR
 // that does not yet emit an explicit phase attribute.
 
 // Emit an opaque call for a DPS tile op and forward (or erase) the op: when

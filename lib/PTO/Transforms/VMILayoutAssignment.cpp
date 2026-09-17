@@ -180,6 +180,7 @@ bool containsVMIType(Type type) {
 
 constexpr unsigned kDirectionSpineLegCount = 4;
 constexpr unsigned kDirectionSpineMaxHops = 8;
+constexpr unsigned kDirectionSpineSetInlineCapacity = 8;
 constexpr unsigned kDirectionSpineSearchBudget = 512;
 
 // Whether the direction-spine recognition is allowed to seed layouts.
@@ -368,7 +369,6 @@ static bool isSpineWideningCast(Operation *op) {
 }
 
 // Narrow->wide handoff inside a matched direction spine.
-//
 // The composite 32<->16 / 32<->8 spine rows keep the narrow value split over
 // the four physical parts of its wide side so that the narrowing and the closing
 // widening are per-chunk one-to-one.  That is only safe while the narrow value
@@ -378,7 +378,6 @@ static bool isSpineWideningCast(Operation *op) {
 // strictly worse than the assembly it was meant to remove.  Requiring every use
 // of the narrowing leg's result to be a widening cast that is itself a leg of
 // the same spine is therefore a cheap, local sufficiency condition.
-//
 // The set is computed from the IR alone, before any seed exists, and is empty
 // whenever the direction-spine recognition is off or did not match.
 static void collectSpineScopedCasts(
@@ -2277,10 +2276,10 @@ struct LayoutSolver {
   // Cast ops that are legs of a closed nested round trip (see the
   // direction-spine recognition above).  Populated once per module, before the
   // constraint walk creates any seed.
-  llvm::SmallPtrSet<Operation *, 8> directionSpineLegs;
+  llvm::SmallPtrSet<Operation *, kDirectionSpineSetInlineCapacity> directionSpineLegs;
   // Subset of directionSpineLegs plus the widening legs that consume them: the
   // cast ops whose reconciliation must use the spine-scoped cast layout table.
-  llvm::SmallPtrSet<Operation *, 8> spineScopedCasts;
+  llvm::SmallPtrSet<Operation *, kDirectionSpineSetInlineCapacity> spineScopedCasts;
 };
 
 struct VMILayoutAssignmentPass

@@ -238,7 +238,7 @@ static FailureOr<SmallVector<Value>> materializeDeinterleaved2ToContiguous(
         op, "deinterleaved=2 to contiguous materialization requires 2*N "
             "source parts and at least one result part");
   }
-  int64_t groups = sourceParts.size() / 2;
+  int64_t groups = sourceParts.size() / kVMIDataLayoutFactor2;
   bool resultExceedsSource =
       resultTypes.size() > static_cast<size_t>(2 * groups);
   if (resultExceedsSource) {
@@ -283,7 +283,7 @@ static LogicalResult validateContiguousToDeinterleaved2Shape(
         op, "contiguous to deinterleaved=2 materialization requires at least "
             "one source part and 2*N result parts");
   }
-  groups = resultTypes.size() / 2;
+  groups = resultTypes.size() / kVMIDataLayoutFactor2;
   bool sourceExceedsResult =
       sourceParts.size() >
       static_cast<size_t>(kVMIDataLayoutFactor2 * groups);
@@ -455,7 +455,6 @@ static bool isSupportedDeinterleavedIntermediateLayout(VMILayoutAttr layout) {
 
 /// Physical arity of a dense lane-strided value once it is normalized to the
 /// unit lane stride.
-///
 /// The dense lane-stride materialization keeps one physical part per stride
 /// group, so normalizing a value of `sourcePartCount` parts at
 /// `sourceLaneStride` leaves the ceiling of the division: the last stride group
@@ -918,7 +917,7 @@ createPredicateIntlv(Location loc, Type lowType, Type highType, Value lhs,
 static FailureOr<SmallVector<Value>> materializeDeinterleaved2MaskToContiguous(
     Operation *op, ValueRange sourceParts, TypeRange resultTypes,
     PatternRewriter &rewriter) {
-  int64_t groups = sourceParts.size() / 2;
+  int64_t groups = sourceParts.size() / kVMIDataLayoutFactor2;
   SmallVector<Value> results;
   results.reserve(sourceParts.size());
   for (int64_t i = 0; i < groups; ++i) {
@@ -937,7 +936,7 @@ static FailureOr<SmallVector<Value>> materializeDeinterleaved2MaskToContiguous(
 static FailureOr<SmallVector<Value>> materializeContiguousToDeinterleaved2Mask(
     Operation *op, ValueRange sourceParts, TypeRange resultTypes,
     PatternRewriter &rewriter) {
-  int64_t groups = sourceParts.size() / 2;
+  int64_t groups = sourceParts.size() / kVMIDataLayoutFactor2;
   SmallVector<Value> part0;
   SmallVector<Value> part1;
   part0.reserve(groups);

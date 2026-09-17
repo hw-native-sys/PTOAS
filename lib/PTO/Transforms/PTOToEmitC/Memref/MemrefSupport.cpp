@@ -25,12 +25,6 @@ namespace pto {
 //===- PTOToEmitCMemref.cpp - memref/global-tensor/pointer lowering ---------===//
 //===----------------------------------------------------------------------===//
 
-
-
-
-
-
-
 // =============================================================================
 // 4. MemRef SubView -> Explicit Shape/Stride Construction (Full Implementation)
 // =============================================================================
@@ -102,35 +96,9 @@ std::string memrefElemTypeToString(Type elemTy) {
 // Helper: build GlobalTensor from a static MemRef (for TLOAD/TSTORE)
 //===----------------------------------------------------------------------===//
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 //===----------------------------------------------------------------------===//
 // PTO pointer lowering
 //===----------------------------------------------------------------------===
-
-
 
 } // namespace pto
 } // namespace mlir

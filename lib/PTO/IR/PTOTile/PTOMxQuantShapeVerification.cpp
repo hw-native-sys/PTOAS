@@ -8,12 +8,17 @@
 
 // Included by PTO.cpp as part of the PTO IR implementation translation unit.
 
+constexpr int64_t kMxQuantGroupSize = 32;
+constexpr int64_t kMxInterleaveRowMultiple = 64;
+constexpr int64_t kMxFp4PackFactor = 2;
+
 static LogicalResult mxRequireGroupedShape(TQuantMxOp op, const TQuantMxA5 &s,
                                            StringRef name, Type type,
                                            bool allowLegacy) {
   auto valid = getValidShapeVec(type);
-  SmallVector<int64_t, 2> canonical = {s.isDn ? s.srcRows / 32 : s.srcRows,
-                                       s.isDn ? s.srcCols : s.srcCols / 32};
+  SmallVector<int64_t, kExpectedTileRank> canonical = {
+      s.isDn ? s.srcRows / kMxQuantGroupSize : s.srcRows,
+      s.isDn ? s.srcCols : s.srcCols / kMxQuantGroupSize};
   if (llvm::equal(valid, canonical)) {
     return success();
   }
@@ -51,19 +56,19 @@ static FailureOr<TQuantMxA5> buildTQuantMxA5State(TQuantMxOp op) {
       s.srcPhysicalCols < s.srcCols) {
     return op.emitOpError("expects positive source valid shape within physical shape");
   }
-  if ((s.isDn ? s.srcRows : s.srcCols) % 32 != 0) {
+  if ((s.isDn ? s.srcRows : s.srcCols) % kMxQuantGroupSize != 0) {
     return op.emitOpError() << "expects src valid_shape[" << (s.isDn ? 0 : 1)
                             << "] to be a multiple of 32 when grpAxis is "
                             << (s.isDn ? "axis0" : "axis1");
   }
-  auto groupsOr = mxCheckedMul(s.srcRows, s.srcCols / 32);
+  auto groupsOr = mxCheckedMul(s.srcRows, s.srcCols / kMxQuantGroupSize);
   if (!groupsOr) {
     return op.emitOpError("cannot compute MX quantization group count without overflow");
   }
   s.groups = *groupsOr;
   s.isMxFp4 = op.getQuantType() == mlir::pto::QuantType::MXFP4_E2M1;
-  s.pack = s.isMxFp4 ? 2 : 1;
-  s.dstValidCols = s.isMxFp4 ? s.srcCols / 2 : s.srcCols;
+  s.pack = s.isMxFp4 ? kMxFp4PackFactor : 1;
+  s.dstValidCols = s.isMxFp4 ? s.srcCols / kMxFp4PackFactor : s.srcCols;
   return s;
 }
 
@@ -84,24 +89,24 @@ static LogicalResult verifyTQuantMxGrouping(TQuantMxOp op, const TQuantMxA5 &s) 
   if (!op.getInterleave()) {
     return mxRequireGroupedShape(op, s, "exp", s.expTy, /*allowLegacy=*/true);
   }
-  if (s.srcRows % 64 != 0) {
+  if (s.srcRows % kMxInterleaveRowMultiple != 0) {
     return op.emitOpError("expects src valid rows to be a multiple of 64 when interleave is true");
   }
-  if (s.srcPhysicalRows % 64 != 0) {
+  if (s.srcPhysicalRows % kMxInterleaveRowMultiple != 0) {
     return op.emitOpError("expects src physical rows to be a multiple of 64 when interleave is true");
   }
   auto doubledValidCols = mxCheckedMul(s.srcCols, 2);
   if (!doubledValidCols) {
     return op.emitOpError("cannot compute interleaved exp valid shape without overflow");
   }
-  if (s.expValid[0] != s.srcRows / 64 || s.expValid[1] != *doubledValidCols) {
+  if (s.expValid[0] != s.srcRows / kMxInterleaveRowMultiple || s.expValid[1] != *doubledValidCols) {
     return op.emitOpError("expects exp valid_shape to match [M/64, 2N] for grpAxis=axis0 with interleave=true");
   }
   return success();
 }
 
 static LogicalResult verifyTQuantMxDstShape(TQuantMxOp op, const TQuantMxA5 &s) {
-  if (s.isMxFp4 && s.srcPhysicalCols % 2 != 0) {
+  if (s.isMxFp4 && s.srcPhysicalCols % kMxFp4PackFactor != 0) {
     return op.emitOpError("expects MXFP4 src physical cols to be even for packed destination addressing");
   }
   if (s.dstValid[0] != s.srcRows || s.dstValid[1] != s.dstValidCols) {
@@ -126,7 +131,7 @@ static LogicalResult verifyTQuantMxAxis0Dst(TQuantMxOp op,
     if (!required || failed(mxRequireCapacity(op, "dst", s.dstTy, *required))) {
       return failure();
     }
-    if ((s.srcPhysicalCols / s.pack) % 32 != 0 && s.srcElem.isF16()) {
+    if ((s.srcPhysicalCols / s.pack) % kMxQuantGroupSize != 0 && s.srcElem.isF16()) {
       return op.emitOpError("does not support FP16 MXFP4 axis0 when packed source stride is not a multiple of 32 bytes");
     }
   } else {
@@ -148,7 +153,7 @@ static LogicalResult verifyTQuantMxAxis0Aux(TQuantMxOp op,
   if (s.scalingPhysical[1] != s.srcPhysicalCols) {
     return op.emitOpError("expects scaling physical cols to equal src physical cols for grpAxis=axis0");
   }
-  auto auxRequired = mxCheckedMul(s.srcRows / 32, s.srcPhysicalCols);
+  auto auxRequired = mxCheckedMul(s.srcRows / kMxQuantGroupSize, s.srcPhysicalCols);
   if (!auxRequired || failed(mxRequireCapacity(op, "max", s.maxTy, *auxRequired)) ||
       failed(mxRequireCapacity(op, "scaling", s.scalingTy, *auxRequired))) {
     return failure();
@@ -167,7 +172,7 @@ static LogicalResult verifyTQuantMxAxis0Aux(TQuantMxOp op,
     if (!alignedPhysicalCols) {
       return op.emitOpError("cannot compute interleaved exp physical cols without overflow");
     }
-    if (s.expPhysical[0] != s.srcPhysicalRows / 64) {
+    if (s.expPhysical[0] != s.srcPhysicalRows / kMxInterleaveRowMultiple) {
       return op.emitOpError("expects interleaved exp physical rows to be src physical rows / 64");
     }
     if (s.expPhysical[1] != *alignedPhysicalCols) {
@@ -235,16 +240,17 @@ static LogicalResult verifyTQuantMxAxis1Canonical(TQuantMxOp op,
   if (s.srcElem.isF16() || s.srcElem.isBF16()) {
     return op.emitOpError("does not support axis1 canonical 2D B16 quantization with the pinned pto-isa revision");
   }
-  SmallVector<int64_t, 2> canonicalShape = {s.srcRows, s.srcCols / 32};
+  SmallVector<int64_t, kExpectedTileRank> canonicalShape = {s.srcRows,
+                                                            s.srcCols / kMxQuantGroupSize};
   if (!llvm::equal(s.expValid, canonicalShape)) {
     return op.emitOpError("expects exp valid_shape to match canonical [M, N/32] for grpAxis=axis1");
   }
-  if (s.expPhysical[0] < s.srcRows || s.expPhysical[1] < s.srcCols / 32) {
+  if (s.expPhysical[0] < s.srcRows || s.expPhysical[1] < s.srcCols / kMxQuantGroupSize) {
     return op.emitOpError("expects axis1 canonical exp physical shape to cover [M, N/32]");
   }
   auto expPrefix = mxCheckedMul(s.srcRows - 1, s.expPhysical[1]);
   auto expRequired =
-      expPrefix ? mxCheckedAdd(*expPrefix, s.srcCols / 32) : std::nullopt;
+      expPrefix ? mxCheckedAdd(*expPrefix, s.srcCols / kMxQuantGroupSize) : std::nullopt;
   if (!expRequired || failed(mxRequireCapacity(op, "exp", s.expTy, *expRequired)) ||
       failed(mxRequireCapacity(op, "scaling", s.scalingTy, s.groups))) {
     return failure();

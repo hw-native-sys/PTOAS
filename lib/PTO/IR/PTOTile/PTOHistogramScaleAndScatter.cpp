@@ -206,7 +206,6 @@ LogicalResult MScatterOp::verify() {
   Type srcTy = getSrc().getType();
   Type idxTy = getIdx().getType();
   Type memTy = getMem().getType();
-
   if (getPTOTypeRank(srcTy) == -1 || getPTOTypeRank(idxTy) == -1 ||
       getPTOTypeRank(memTy) == -1) {
     return emitOpError("expects src, idx, and mem to use supported PTO shapes");

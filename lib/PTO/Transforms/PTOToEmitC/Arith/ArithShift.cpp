@@ -60,7 +60,6 @@ struct ArithShiftRightSIToEmitC : public OpConversionPattern<arith::ShRSIOp> {
       return failure();
     auto [loc, dstTy] = *prologue;
     const unsigned bitWidth = getScalarIntOrIndexBitWidth(op.getType());
-
     if (bitWidth == 1) {
       // (x >> y) on i1 is either x (y==0) or 0 (y!=0); approximate in u8.
       auto u8Ty = getUnsignedIntOpaqueType(rewriter.getContext(), 8);

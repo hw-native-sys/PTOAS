@@ -240,7 +240,6 @@ struct SubviewToEmitCPattern : public OpConversionPattern<memref::SubViewOp> {
     auto loc = op.getLoc();
     auto *ctx = rewriter.getContext();
 
-
     Value convertedSource = adaptor.getSource();
     if (auto cast =
             convertedSource.getDefiningOp<UnrealizedConversionCastOp>())

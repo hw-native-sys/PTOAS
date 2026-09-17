@@ -25,11 +25,6 @@ namespace pto {
 //===- PTOToEmitCScalarMisc.cpp - sync/barrier/comm/async/declare lowering ---------===//
 //===----------------------------------------------------------------------===//
 
-
-
-
-
-
 StringRef scatterAtomicTok(pto::ScatterAtomicOp atomic) {
   switch (atomic) {
   case pto::ScatterAtomicOp::None:
@@ -165,11 +160,9 @@ FailureOr<Value> getStructAdaptorValue(ValueRange operands) {
 // Build the `s.fA.fB...` member-access chain for a constant struct path and
 // return the final lvalue. `rootPtoTy` is the PTO struct type, walked in
 // parallel to look up field types per step.
-//
 // Every step is an `emitc.member`, which requires an lvalue operand and yields
 // an lvalue result, so the chain stays in lvalue form throughout — that is what
 // makes a write land in the struct rather than in a copy of it.
-//
 // `root` is the converted struct, i.e. a pointer. Two shapes reach here:
 //   - a local declared by pto.declare_struct, whose pointer is an address-of;
 //     that is unwrapped back to the variable so the access prints as `s.f0`.
@@ -459,8 +452,6 @@ Type getPointerLikeElementType(Type type) {
 bool isGmCmoSpace(pto::AddressSpace space) {
   return space == pto::AddressSpace::GM || space == pto::AddressSpace::Zero;
 }
-
-
 
 } // namespace pto
 } // namespace mlir

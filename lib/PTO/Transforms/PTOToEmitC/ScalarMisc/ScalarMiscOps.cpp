@@ -242,8 +242,6 @@ struct PTOSetValidShapeToEmitC : public OpConversionPattern<pto::SetValidShapeOp
 
   LogicalResult matchAndRewrite(pto::SetValidShapeOp op, OpAdaptor adaptor,
                                 ConversionPatternRewriter &rewriter) const override {
-    
-
     Value src = peelAllConversionCasts(adaptor.getSource());
     Value row = adaptor.getValidRow();
     Value col = adaptor.getValidCol();
@@ -267,8 +265,6 @@ struct PTOGetValidShapeToEmitC
 
   LogicalResult matchAndRewrite(pto::GetValidShapeOp op, OpAdaptor adaptor,
                                 ConversionPatternRewriter &rewriter) const override {
-    
-
     Value src = peelAllConversionCasts(adaptor.getSource());
     if (!isTileLikeValue(src))
       return rewriter.notifyMatchFailure(

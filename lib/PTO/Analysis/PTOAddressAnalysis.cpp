@@ -26,6 +26,10 @@ using namespace mlir::pto;
 
 namespace {
 
+constexpr unsigned kPointerTraceMaxDepth = 8;
+constexpr int64_t kBitsPerByte = 8;
+constexpr unsigned kSignExtendedIntBitWidth = 64;
+
 static std::optional<int64_t> getElementBytes(Value pointer) {
   Type elementType;
   if (auto pointerType = dyn_cast<PtrType>(pointer.getType())) {
@@ -80,7 +84,7 @@ static std::optional<int64_t> getConstantIndexValue(Value value) {
   if (!matchPattern(value, m_Constant(&attr))) {
     return std::nullopt;
   }
-  if (!attr.getValue().isSignedIntN(64)) {
+  if (!attr.getValue().isSignedIntN(kSignExtendedIntBitWidth)) {
     return std::nullopt;
   }
   return attr.getValue().getSExtValue();
@@ -184,7 +188,7 @@ getKnownIndexRemainder(Value value, int64_t modulus, unsigned depth = 0) {
   if (modulus <= 1) {
     return 0;
   }
-  if (depth > 8) {
+  if (depth > kPointerTraceMaxDepth) {
     return std::nullopt;
   }
   if (auto constant = getConstantIndexValue(value)) {
@@ -217,7 +221,7 @@ pointerRemainderThroughAddPtr(AddPtrOp add, int64_t alignmentBytes,
     return std::nullopt;
   }
   unsigned elementBits = getPTOStorageElemBitWidth(pointerType.getElementType());
-  if (elementBits == 0 || elementBits % 8 != 0) {
+  if (elementBits == 0 || elementBits % kBitsPerByte != 0) {
     return std::nullopt;
   }
   int64_t elementBytes = static_cast<int64_t>(elementBits / 8);
@@ -236,7 +240,7 @@ getKnownPointerRemainder(Value pointer, int64_t alignmentBytes,
   if (alignmentBytes <= 1) {
     return 0;
   }
-  if (depth > 8) {
+  if (depth > kPointerTraceMaxDepth) {
     return std::nullopt;
   }
   if (isa<BlockArgument>(pointer)) {
@@ -319,7 +323,7 @@ mlir::pto::getKnownAddressRemainderBytes(Value pointer, Value elementOffset,
   }
   auto base = getKnownPointerRemainder(pointer, alignmentBytes);
   unsigned elementBits = getPTOStorageElemBitWidth(elementType);
-  if (!base || elementBits == 0 || elementBits % 8 != 0) {
+  if (!base || elementBits == 0 || elementBits % kBitsPerByte != 0) {
     return std::nullopt;
   }
   int64_t elementBytes = static_cast<int64_t>(elementBits / 8);

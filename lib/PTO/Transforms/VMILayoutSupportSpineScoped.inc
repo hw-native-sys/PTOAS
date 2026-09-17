@@ -10,13 +10,11 @@
 #define VMILAYOUTSUPPORTSPINESCOPED_INC
 
 //===- VMILayoutSupportSpineScoped.inc - spine-scoped cast queries -*- C++ -*-=//
-//
 // Textual include unit of VMILayoutSupport.cpp, included at the end of the
 // translation unit so the definitions below can use the file-local cast
 // helpers.  It holds the cast-layout queries the direction-spine peephole in
 // VMILayoutAssignment reaches through getSpineScopedCastLayoutFact*; the rows
 // they read are not part of the generic preferred/legal tables.
-//
 //===----------------------------------------------------------------------===//
 
 FailureOr<VMICastLayoutFact>

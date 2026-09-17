@@ -219,21 +219,21 @@ static bool collectPersistentRelatedOps(
   return foundPersistent;
 }
 
-/// A loop whose body contains a pto.section.simt region is only promoted
-/// when a persistent GEP inside it actually depends on the loop's induction
-/// variable.
-///  - no dependency (e.g. a tile loop that only moves data while the
-///    fragment is indexed by lane constants, the RMSNorm shape): unrolling
-///    would clone the whole section once per iteration, the SIMT outlining
-///    emits one single-callsite linkonce_odr entry function per clone,
-///    BiSheng folds a subset of them, the `_simt_entry` ELF symbols go
-///    missing, and VPTO fatobj emission fails in the VF_SIMT size patch -
-///    for zero benefit, because materialization only needs the in-section
-///    accesses static, which this loop does not affect.
-///  - dependency (fragment slot selected per iteration): unrolling is the
-///    only way to statically resolve those accesses, so the loop must be
-///    promoted; the dep shape is verified to materialize correctly (each
-///    clone reads its own resident slot).
+// A loop whose body contains a pto.section.simt region is only promoted
+// when a persistent GEP inside it actually depends on the loop's induction
+// variable.
+//  - no dependency (e.g. a tile loop that only moves data while the
+//    fragment is indexed by lane constants, the RMSNorm shape): unrolling
+//    would clone the whole section once per iteration, the SIMT outlining
+//    emits one single-callsite linkonce_odr entry function per clone,
+//    BiSheng folds a subset of them, the `_simt_entry` ELF symbols go
+//    missing, and VPTO fatobj emission fails in the VF_SIMT size patch -
+//    for zero benefit, because materialization only needs the in-section
+//    accesses static, which this loop does not affect.
+//  - dependency (fragment slot selected per iteration): unrolling is the
+//    only way to statically resolve those accesses, so the loop must be
+//    promoted; the dep shape is verified to materialize correctly (each
+//    clone reads its own resident slot).
 static bool sectionLoopSkipsPromotion(
     Operation *loopOp, const llvm::SmallSetVector<Operation *, mlir::pto::kValue32> &relatedOps) {
   bool wrapsSection =

@@ -195,8 +195,8 @@ struct PTOUnrollLoopsImpl {
     // ceilDivPositive(upper - lower, step), which lowers to an *unsigned*
     // arith.divui.  A runtime `upper < lower` therefore makes the difference
     // negative, wraps it to a huge unsigned value, and turns a zero-trip loop
-    // into a practically endless one (upstream flags exactly this with a
-    // "TODO: Add dynamic asserts for negative lb/ub/step").  Guard both the
+    // into a practically endless one (upstream tracks exactly this as "add
+    // dynamic asserts for negative lb/ub/step").  Guard both the
     // static and the dynamic case before handing the loop over.
     std::optional<int64_t> lb = getConstantIntValue(forOp.getLowerBound());
     std::optional<int64_t> ub = getConstantIntValue(forOp.getUpperBound());

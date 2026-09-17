@@ -24,7 +24,6 @@ namespace mlir::pto {
 
 /// True when `layout` is a group-slot packet that lives in a single physical
 /// chunk and puts logical lane i on physical lane i.
-///
 /// A `num_groups = G, slots = S, lane_stride = 1` layout places logical lane i
 /// at {part 0, chunk i / S, lane i % S}.  With `G <= S` every lane lands in
 /// chunk 0 at lane i, and `G <= lanesPerPart` keeps that lane inside the
@@ -34,12 +33,10 @@ bool isVMISingleCarrierGroupSlots(VMILayoutAttr layout, int64_t lanesPerPart);
 
 /// Same as isVMISingleCarrierGroupSlots with the lane stride spelled out: the
 /// packet places logical lane i at {part 0, chunk i / S, lane (i % S) * LS}.
-///
 /// A lane stride other than 1 is only meaningful for sub-32-bit elements, whose
 /// several values share one carrier lane; a 32-bit element already fills a
 /// carrier lane.  The supported strides therefore follow the packable carrier
 /// chain (32 -> 16 -> 8): stride 2 up to 16-bit elements, stride 4 up to 8-bit.
-///
 /// Only the slot widths the lowering builds qualify (one or eight group slots
 /// per part): a packet with more slots spreads its groups over several carriers
 /// and is hand-written IR that no producer emits.
@@ -66,7 +63,6 @@ bool needsVMIDenseLaneStrideGroupSlotBridge(VMILayoutAttr sourceLayout,
 /// the same physical lanes of a single carrier, so converting between them is a
 /// pure register forward with no pack/zip/shuffle.  Symmetric in `lhs`/`rhs`:
 /// the relation holds in both directions.
-///
 /// Short dense vectors reach group operations through this relation: a group
 /// reduce with one result group, or a group broadcast reading eight slot
 /// values, is a genuine group packet, while the value a plain vload produces is
@@ -310,14 +306,12 @@ public:
                              std::string *reason = nullptr) const;
 
   // Spine-*scoped* cast layout query.
-  //
   // These queries are the only way to reach kSpineScopedCastLayoutPatterns /
   // kSpineScopedLegalCastLayoutPatterns.  Those rows are not part of the
   // generic preferred/legal tables, so a caller that does not explicitly ask
   // for the spine-scoped variant can never observe them - the scope is enforced
   // by construction (the rows are reachable from this entry point only), not by
   // "the candidate happened not to be selected".
-  //
   // The direction-spine peephole in VMILayoutAssignment calls this variant for
   // the cast ops of a matched <up,down,up,down> chain whose narrowing leg is
   // handed straight to the closing widening leg.  The scoped table adds the
