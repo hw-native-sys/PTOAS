@@ -64,7 +64,7 @@ LogicalResult matchAndRewrite(pto::TMinOp op, OpAdaptor adaptor,
   Value src1 = adaptor.getSrc1();
   Value dst  = adaptor.getDst();
 
-  SmallVector<Value, 3> operands{dst, src0, src1};
+  SmallVector<Value, mlir::pto::kValue3> operands{dst, src0, src1};
   createLastUseAwareOpaqueCall(rewriter, op.getOperation(), TypeRange{},
                                "TMIN", operands);
 

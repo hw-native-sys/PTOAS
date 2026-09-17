@@ -246,7 +246,7 @@ For each element (i, j):
 **示例：**
 
 ```mlir
-pto.tcmps ins(%a, %s {cmpMode = #pto<cmp less_than>} :
+pto.tcmps ins(%a, %s {cmpMode = #pto<cmp lt>} :
              !pto.tile_buf<loc=vec, dtype=f16, rows=16, cols=16,
              v_row=16, v_col=16, blayout=row_major, slayout=none_box,
              fractal=512, pad=0>, f16)
@@ -413,6 +413,7 @@ For each element (i, j):
 - **实现检查（A5）**
   - tile 元素类型必须为以下之一：`f16`、`f32`。
   - tile 必须使用 `loc=vec`。
+  - `slope` 必须为 `f32` 类型。
   - 有效区域边界：`valid row <= rows` 且 `valid column <= cols`。
   - `src` 和 `dst` 必须具有相同的 `validRow/validCol`。
 
@@ -781,19 +782,14 @@ For each element (i, j):
 
 **约束：**
 
-- **实现检查（A2A3）**
-  - `src` 和 `dst` 必须具有相同的元素类型。
-  - 元素类型必须为以下之一：`i16`、`i32`。
-  - `src` 和 `dst` 必须使用 `loc=vec`。
-  - `src` 和 `dst` 必须使用行优先布局（`blayout=row_major`）。
-  - `src` 和 `dst` 必须具有相同的有效区域：`src valid row == dst valid row` 且 `src valid column == dst valid column`。
-
-- **实现检查（A5）**
-  - `src` 和 `dst` 必须具有相同的元素类型。
-  - 元素类型必须为以下之一：`i8`、`i16`、`i32`。
-  - `src` 和 `dst` 必须使用 `loc=vec`。
-  - `src` 和 `dst` 必须使用行优先布局（`blayout=row_major`）。
-  - `src` 和 `dst` 必须具有相同的有效区域：`src valid row == dst valid row` 且 `src valid column == dst valid column`。
+- **实现检查（A2A3/A5）**
+  - `src` 和 `dst` 必须具有相同的元素类型，且该元素类型必须为整型；verifier 不限制整数位宽。
+  - `scalar` 必须为整型；当其取值在编译期已知时，必须非负。
+  - `src` 和 `dst` 的 `valid_shape` 必须落在静态 shape 范围内。
+- **目标支持边界**
+  - 硬件与 TileLib 模板只支持 `loc=vec` 且 `blayout=row_major` 的 tile。
+  - TileLib 模板的元素类型只覆盖 8/16/32 位整数；`i64` 等位宽在 verifier 层可通过，但落到模板选择时会因无合法模板而失败。
+  - TileLib 模板要求 `src` 与 `dst` 具有相同的有效形状；仅 `valid_shape` 不同（例如有效列数为 64 与 32 的两个 tile）时同样会因无合法模板而失败。
 
 **示例：**
 
@@ -1043,9 +1039,14 @@ For each element (i, j):
 
 **约束：**
 
+- **实现检查（A2A3/A5）**
+  - `src` 和 `dst` 必须具有相同的元素类型和相同的有效区域。
+  - `src` 和 `dst` 必须使用行优先布局（`blayout=row_major`）。
+  - `scalar` 的类型必须与 tile 元素类型一致。
+  - 元素类型仅支持 `i16`、`i32`、`f16`、`f32`。
+
 - **NPU 约束**
   - `src` 和 `dst` 必须是形状兼容的 `loc=vec` tile buffer。
-  - 标量元素类型必须与 tile 元素类型兼容。
   - 除零行为为未定义行为。
 
 **示例：**
@@ -1089,12 +1090,12 @@ For each element (i, j):
 
 - **实现检查（A2A3）**
   - `src` 和 `dst` 的元素类型必须为 `f16` 或 `f32`。
-  - `src` 和 `dst` 的元素类型必须一致。
+  - `src` 和 `dst` 的元素类型必须一致，或使用 `src=f16`、`dst=f32` 的扩展组合。
   - 所有 tile 必须使用 `loc=vec`。
 
 - **实现检查（A5）**
   - `src` 和 `dst` 的元素类型必须为 `f16`、`bf16` 或 `f32`。
-  - `src` 和 `dst` 的元素类型必须一致。
+  - `src` 和 `dst` 的元素类型必须一致，或使用 `src=f16`、`dst=f32` 的扩展组合。
   - 所有 tile 必须使用 `loc=vec`。
 
 **示例：**

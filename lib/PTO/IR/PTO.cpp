@@ -10,43 +10,8 @@
 //===----------------------------------------------------------------------===//
 
 #include "PTO/IR/PTO.h"
-#include "PTO/IR/PTOLayoutUtils.h"
-#include "PTO/IR/PTOMultiBuffer.h"
-#include "PTO/IR/PTOSyncUtils.h"
-#include "PTO/IR/PTOTypeUtils.h"
 
-#include "mlir/AsmParser/AsmParser.h"
-#include "mlir/Conversion/LLVMCommon/TypeConverter.h"
-#include "mlir/Dialect/Arith/IR/Arith.h"
-#include "mlir/Dialect/LLVMIR/LLVMTypes.h"
-#include "mlir/IR/Builders.h"
-#include "mlir/IR/BuiltinTypeInterfaces.h"
-#include "mlir/IR/BuiltinTypes.h"
-#include "mlir/IR/DialectImplementation.h"
-#include "mlir/IR/OpImplementation.h"
-#include "mlir/IR/TypeUtilities.h"
-#include "mlir/IR/Value.h"
-#include "mlir/IR/AsmState.h"
-#include "mlir/IR/SymbolTable.h"
-#include "mlir/IR/Types.h"
-#include "mlir/Interfaces/SideEffectInterfaces.h"
-#include "mlir/Support/LLVM.h"
-#include "mlir/Transforms/InliningUtils.h"
-#include "mlir/Parser/Parser.h"
-#include "llvm/ADT/ArrayRef.h"
-#include "llvm/ADT/STLExtras.h"
-#include "llvm/ADT/TypeSwitch.h"
-#include "llvm/Support/MathExtras.h"
-#include "mlir/IR/AffineExpr.h"
-#include "mlir/IR/AffineMap.h"
-#include "mlir/Dialect/Utils/StaticValueUtils.h"
-#include "llvm/Support/ErrorHandling.h"
-
-#include <algorithm>
-#include <limits>
-#include <numeric>
-#include <optional>
-#include <tuple>
+#include "mlir/Interfaces/InferIntRangeInterface.h"
 
 // PTO IR implementation is grouped by semantic responsibility. The files
 // remain textual fragments to preserve declaration order and internal linkage.
@@ -153,3 +118,56 @@
 
 // Remaining custom assembly hooks and generated operation definitions.
 #include "PTOPipeline/PTOCachePolicyAssemblyAndGeneratedOps.cpp"
+
+//===----------------------------------------------------------------------===//
+// InferIntRangeInterface: PTO runtime query ops (i64)
+//===----------------------------------------------------------------------===//
+
+// get_block_idx returns the linear index of the current block within the task,
+// documented as [0, BlockNum - 1]. The value is a 32-bit quantity on the
+// hardware, and the LLVM lowering rounds it through i32 on every path (the
+// tpe intrinsic is i32; the AIC path truncates the i64 intrinsic and
+// zero-extends back), matching the CCE frontend where
+// __builtin_cce_get_block_idx is int32_t. Report [0, INT32_MAX] accordingly:
+// this is what the lowered code actually computes, and it is tight enough for
+// range-driven consumers to fold address arithmetic that adds the block index
+// to bounded offsets, while a multiple of the index still fails u32 bounds
+// and stays wide.
+void pto::GetBlockIdxOp::inferResultRanges(
+    ::llvm::ArrayRef<::mlir::ConstantIntRanges> operandRanges,
+    ::mlir::SetIntRangeFn setResultRange) {
+  setResultRange(
+      getResult(),
+      ConstantIntRanges::fromUnsigned(APInt::getMinValue(64),
+                                      APInt(64, INT32_MAX)));
+}
+
+// get_subblock_idx returns the vector-core ID, documented as [0, 1].
+void pto::GetSubBlockIdxOp::inferResultRanges(
+    ::llvm::ArrayRef<::mlir::ConstantIntRanges> operandRanges,
+    ::mlir::SetIntRangeFn setResultRange) {
+  setResultRange(getResult(),
+                 ConstantIntRanges::fromUnsigned(APInt(64, 0),
+                                                 APInt(64, 1)));
+}
+
+// Block/subblock counts are non-negative. Do NOT claim >= 1: existing
+// kernels guard with `cmpi sge block_num, 1` and rely on that comparison
+// staying dynamic (a >= 1 range would fold the guard away).
+void pto::GetBlockNumOp::inferResultRanges(
+    ::llvm::ArrayRef<::mlir::ConstantIntRanges> operandRanges,
+    ::mlir::SetIntRangeFn setResultRange) {
+  setResultRange(
+      getResult(),
+      ConstantIntRanges::fromUnsigned(APInt::getMinValue(64),
+                                      APInt::getSignedMaxValue(64)));
+}
+
+void pto::GetSubBlockNumOp::inferResultRanges(
+    ::llvm::ArrayRef<::mlir::ConstantIntRanges> operandRanges,
+    ::mlir::SetIntRangeFn setResultRange) {
+  setResultRange(
+      getResult(),
+      ConstantIntRanges::fromUnsigned(APInt::getMinValue(64),
+                                      APInt::getSignedMaxValue(64)));
+}

@@ -26,8 +26,10 @@
 #include "mlir/IR/Value.h"
 #include "mlir/Pass/Pass.h"
 #include "llvm/ADT/DenseMap.h"
+#include "llvm/ADT/SmallPtrSet.h"
 #include "llvm/ADT/SmallVector.h"
 #include "llvm/ADT/TypeSwitch.h"
+#include "llvm/Support/CommandLine.h"
 
 #include <type_traits>
 
@@ -65,10 +67,15 @@ enum class DataLayoutSeedPhase {
   Reduce,
   GroupSlotLoad,
   GroupBroadcast,
-  GroupBroadcastLoad,
   CompactCast,
   GroupStore,
   LaneStrideNarrowCast,
+  // Cast layout preferences must get a chance to constrain downstream
+  // cast/cast-back chains before the group-broadcast natural seed.
+  // Otherwise a deinterleaved group-broadcast seed anchors the whole
+  // equivalence class and the preferred C -> LS4 -> C path cannot be
+  // selected.
+  GroupBroadcastLoad,
   Cast,
   WeakReduce,
   Store,
@@ -129,6 +136,278 @@ bool containsVMIType(Type type) {
     return containsVMIType(shapedType.getElementType());
   }
   return false;
+}
+
+//===----------------------------------------------------------------------===//
+// Direction-spine recognition.
+//
+// A cast *spine* is a run of cast legs that are reachable from one another
+// through layout-transparent VMI ops (the ops for which isVMISameLayoutOp is
+// true: elementwise arithmetic, lane-local maths, bitcasts, ...).  Each leg is
+// directed by the storage element bit width of its operand and result:
+// widening is "up" (extf / extsi / extui) and narrowing is "down" (truncf /
+// trunci).  The predicate below therefore never looks at the element type, the
+// element count or the shape - only at the direction sequence of the spine.
+//
+// The recognised shape is a *closed nested round trip*:
+//
+//     <up, down, up, down>   with   elem(leg0.source) == elem(leg3.result)
+//
+// i.e. the spine leaves an element type, is quantised down and widened back
+// twice, and returns to the element type it started from (bf16 -> f32 -> f8 ->
+// f32 -> bf16).  Only such a chain has a deinterleaved round trip worth keeping
+// consistent end to end.
+//
+// In addition the narrow intermediate (leg1.result) must be a *pure* round trip
+// inside the window: every use of it must be the closing widening leg (leg2) of
+// the same window and nothing else.  The deinterleaved family is only the right
+// choice for such a handoff, because only then can the narrow value stay split
+// over the four physical parts of its wide side and be read back one-to-one by
+// the widening leg (see the spine-scoped composite cast rows in
+// VMILayoutSupport).  A chain whose narrow value is also stored, or fed to an
+// elementwise op, or handed to a cast outside the window, would have to be
+// packed back into a contiguous narrow value - which on this target costs more
+// than the dist-encoded UB loads and stores the flip removes.  Those chains
+// therefore keep the pre-existing (lane-stride) family.
+//
+// Deliberately NOT recognised, so that these keep the pre-existing behaviour:
+//   * <down, up>  - a single round trip (f32 -> f8 -> f32) is already optimal;
+//   * <up>        - a chain that only widens has no round trip at all;
+//   * <up, down>  - a chain that widens and narrows again without a closing
+//                   widening leg never returns to a deinterleaved narrow form;
+//   * <up, down, up, down> whose leg1.result has any use other than leg2.
+//===----------------------------------------------------------------------===//
+
+constexpr unsigned kDirectionSpineLegCount = 4;
+constexpr unsigned kDirectionSpineMaxHops = 8;
+constexpr unsigned kDirectionSpineSearchBudget = 512;
+
+// Whether the direction-spine recognition is allowed to seed layouts.
+//
+// ON by default: the deinterleaved family it selects is the intended shape for
+// the bf16 quantise/dequantise chain, and the two regression tests that used to
+// assert the pre-existing layout for exactly that chain were updated together
+// with this default flip:
+//   test/lit/vmi_new/opt/fused_quant_dequant_vmi_opt.pto            (VPTO)
+//   test/lit/vmi_new/vmi_layout_assignment_cast_roundtrip.pto       (ASSIGN)
+// The ASSIGN test keeps a single-round-trip region per narrow element type as
+// the counterexample set proving the predicate did not widen; the LOWER side of
+// that test scopes its "no pto.vor" guard to those counterexamples, because
+// merging a deinterleaved value back to contiguous order legitimately uses
+// mask + or for the nested case only.
+//
+// Pass --vmi-prefer-cast-spine-round-trip=false to recover the pre-recognition
+// layout for the closed nested round-trip chain (used by offline A/B scans).
+//
+// This switch is independent of --vmi-prefer-lane-stride-narrowing: a matched
+// window is reseeded from the spine-scoped cast table, which pins the two outer
+// legs (16<->32) to the deinterleaved family and, when the narrow handoff is
+// pure, also pins the two inner legs (32<->16 or 32<->8) to the composite
+// deinterleaved lane-stride form.  A window that does not match keeps the
+// pre-existing tables - including the lane-stride narrowing ones, which that
+// switch still controls.
+static llvm::cl::opt<bool> preferCastSpineRoundTrip(
+    "vmi-prefer-cast-spine-round-trip",
+    llvm::cl::desc("Seed the deinterleaved family for closed nested round-trip "
+                   "cast chains (widening, narrowing, widening, narrowing back "
+                   "to the starting element type).  A chain is only recognised "
+                   "when the narrow handoff is pure: the truncation result must "
+                   "feed nothing but the matching extension of the same chain"),
+    llvm::cl::init(true));
+
+struct DirectionSpineLeg {
+  Operation *op = nullptr;
+  Value source;
+  Value result;
+  Type sourceElementType;
+  Type resultElementType;
+  bool widening = false;
+};
+
+static bool getDirectionSpineLeg(Operation *op, DirectionSpineLeg &leg) {
+  Value source;
+  Value result;
+  if (auto extf = dyn_cast<VMIExtFOp>(op)) {
+    source = extf.getSource();
+    result = extf.getResult();
+  } else if (auto extsi = dyn_cast<VMIExtSIOp>(op)) {
+    source = extsi.getSource();
+    result = extsi.getResult();
+  } else if (auto extui = dyn_cast<VMIExtUIOp>(op)) {
+    source = extui.getSource();
+    result = extui.getResult();
+  } else if (auto truncf = dyn_cast<VMITruncFOp>(op)) {
+    source = truncf.getSource();
+    result = truncf.getResult();
+  } else if (auto trunci = dyn_cast<VMITruncIOp>(op)) {
+    source = trunci.getSource();
+    result = trunci.getResult();
+  } else {
+    return false;
+  }
+
+  auto sourceType = dyn_cast<VMIVRegType>(source.getType());
+  auto resultType = dyn_cast<VMIVRegType>(result.getType());
+  if (!sourceType || !resultType) {
+    return false;
+  }
+  unsigned sourceBits =
+      pto::getPTOStorageElemBitWidth(sourceType.getElementType());
+  unsigned resultBits =
+      pto::getPTOStorageElemBitWidth(resultType.getElementType());
+  if (sourceBits == 0 || resultBits == 0 || sourceBits == resultBits) {
+    return false;
+  }
+
+  leg.op = op;
+  leg.source = source;
+  leg.result = result;
+  leg.sourceElementType = sourceType.getElementType();
+  leg.resultElementType = resultType.getElementType();
+  leg.widening = resultBits > sourceBits;
+  return true;
+}
+
+// Whether the narrow intermediate produced by \p downLeg is handed straight to
+// the closing widening leg \p upLeg of the same window and to nothing else.
+// This is the sufficiency condition for the deinterleaved family (see the
+// recognition comment above): the caller only needs the use-def list of one
+// value, and it is decided before any seed exists.
+static bool isPureNarrowHandoff(const DirectionSpineLeg &downLeg,
+                                const DirectionSpineLeg &upLeg) {
+  if (downLeg.result.use_empty()) {
+    return false;
+  }
+  for (OpOperand &use : downLeg.result.getUses()) {
+    if (use.getOwner() != upLeg.op) {
+      return false;
+    }
+  }
+  return true;
+}
+
+// Extend a partially built leg window forward from \p current.  Legs alternate
+// up/down starting with up, and between two legs only layout-transparent ops
+// are crossed (bounded by kDirectionSpineMaxHops per leg and by \p budget per
+// search).  A complete window is recorded only when it closes - the fourth leg
+// ends on the element type the first leg started from - and when its narrow
+// handoff is pure.
+static void extendDirectionSpineWindow(
+    Value current, SmallVectorImpl<DirectionSpineLeg> &window,
+    llvm::SmallPtrSetImpl<Operation *> &spineLegs, unsigned hops,
+    unsigned &budget) {
+  if (budget == 0) {
+    return;
+  }
+  if (window.size() == kDirectionSpineLegCount) {
+    if (window.front().sourceElementType == window.back().resultElementType &&
+        isPureNarrowHandoff(window[1], window[2])) {
+      for (const DirectionSpineLeg &leg : window) {
+        spineLegs.insert(leg.op);
+      }
+    }
+    return;
+  }
+
+  auto currentType = dyn_cast<VMIVRegType>(current.getType());
+  if (!currentType) {
+    return;
+  }
+  const bool expectWidening = window.size() % 2 == 0;
+  for (OpOperand &use : current.getUses()) {
+    if (budget == 0) {
+      return;
+    }
+    --budget;
+    Operation *user = use.getOwner();
+
+    DirectionSpineLeg next;
+    if (getDirectionSpineLeg(user, next) && next.source == current &&
+        next.widening == expectWidening) {
+      window.push_back(next);
+      extendDirectionSpineWindow(next.result, window, spineLegs, /*hops=*/0,
+                                 budget);
+      window.pop_back();
+      continue;
+    }
+
+    if (hops < kDirectionSpineMaxHops && isVMISameLayoutOp(user)) {
+      for (Value result : user->getResults()) {
+        auto resultType = dyn_cast<VMIVRegType>(result.getType());
+        if (!resultType ||
+            resultType.getElementType() != currentType.getElementType()) {
+          continue;
+        }
+        extendDirectionSpineWindow(result, window, spineLegs, hops + 1, budget);
+      }
+    }
+  }
+}
+
+// Record every cast op that is a leg of a closed nested round trip.
+static void collectDirectionSpineLegs(
+    ModuleOp module, llvm::SmallPtrSetImpl<Operation *> &spineLegs) {
+  SmallVector<DirectionSpineLeg, kDirectionSpineLegCount> window;
+  module.walk([&](Operation *op) {
+    DirectionSpineLeg first;
+    if (!getDirectionSpineLeg(op, first) || !first.widening) {
+      return;
+    }
+    unsigned budget = kDirectionSpineSearchBudget;
+    window.clear();
+    window.push_back(first);
+    extendDirectionSpineWindow(first.result, window, spineLegs, /*hops=*/0,
+                               budget);
+  });
+}
+
+// Whether \p op is a widening cast, i.e. the kind of op that closes a
+// narrow->wide handoff.
+static bool isSpineWideningCast(Operation *op) {
+  return isa<VMIExtFOp, VMIExtSIOp, VMIExtUIOp>(op);
+}
+
+// Narrow->wide handoff inside a matched direction spine.
+//
+// The composite 32<->16 / 32<->8 spine rows keep the narrow value split over
+// the four physical parts of its wide side so that the narrowing and the closing
+// widening are per-chunk one-to-one.  That is only safe while the narrow value
+// has no other consumer: an elementwise op, a store, a broadcast or any layout
+// request for a packed/contiguous narrow value would disagree with the
+// composite form and force an ensure_layout (or a residual op), which is
+// strictly worse than the assembly it was meant to remove.  Requiring every use
+// of the narrowing leg's result to be a widening cast that is itself a leg of
+// the same spine is therefore a cheap, local sufficiency condition.
+//
+// The set is computed from the IR alone, before any seed exists, and is empty
+// whenever the direction-spine recognition is off or did not match.
+static void collectSpineScopedCasts(
+    const llvm::SmallPtrSetImpl<Operation *> &spineLegs,
+    llvm::SmallPtrSetImpl<Operation *> &scopedCasts) {
+  for (Operation *op : spineLegs) {
+    if (!isa<VMITruncFOp, VMITruncIOp>(op) || op->getNumResults() != 1) {
+      continue;
+    }
+    Value narrow = op->getResult(0);
+    if (narrow.use_empty()) {
+      continue;
+    }
+    bool handoff = true;
+    for (OpOperand &use : narrow.getUses()) {
+      Operation *user = use.getOwner();
+      if (!isSpineWideningCast(user) || !spineLegs.contains(user)) {
+        handoff = false;
+        break;
+      }
+    }
+    if (!handoff) {
+      continue;
+    }
+    scopedCasts.insert(op);
+    for (OpOperand &use : narrow.getUses()) {
+      scopedCasts.insert(use.getOwner());
+    }
+  }
 }
 
 struct LayoutSolver {
@@ -302,6 +581,45 @@ struct LayoutSolver {
       return DataLayoutSeedPhase::LaneStrideNarrowCast;
     }
     return DataLayoutSeedPhase::Cast;
+  }
+
+  // Whether the seed for \p value can still be applied without conflicting
+  // with a preferred layout that is already pinned on the same value.
+  bool canSeedPreferredLayout(Value value, VMILayoutAttr layout) {
+    if (!layout) {
+      return false;
+    }
+    unsigned id = addDataValue(value);
+    if (id == ~0U) {
+      return false;
+    }
+    VMILayoutAttr existing = dataNodes[find(id)].preferredLayout;
+    return !existing || existing == layout;
+  }
+
+  // Cast layout fact used to seed one cast leg.  Only the legs the peephole
+  // proved to be a narrow->wide handoff (the narrowing leg plus the widening
+  // legs that consume it) are served from the spine-scoped table, which adds the
+  // composite 32<->16 / 32<->8 rows on top of the layouts the generic tables
+  // already offer.  Every other cast keeps the pre-existing table lookup and
+  // phase unchanged.
+  FailureOr<VMICastLayoutFact> getCastLayoutFactForSeed(Operation *op,
+                                                        Value seedValue,
+                                                        VMIVRegType sourceType,
+                                                        VMIVRegType resultType) {
+    VMILayoutSupport supports;
+    if (!spineScopedCasts.contains(op)) {
+      return supports.getPreferredCastLayoutFact(sourceType, resultType);
+    }
+
+    std::string reason;
+    FailureOr<VMICastLayoutFact> spineFact =
+        supports.getSpineScopedCastLayoutFact(sourceType, resultType, &reason);
+    if (succeeded(spineFact) &&
+        canSeedPreferredLayout(seedValue, spineFact->resultLayout)) {
+      return spineFact;
+    }
+    return supports.getPreferredCastLayoutFact(sourceType, resultType);
   }
 
   VMILayoutAttr getPreferredDenseStoreLayout(VMIVRegType type) const {
@@ -724,8 +1042,8 @@ struct LayoutSolver {
       }
     }
 
-    FailureOr<VMICastLayoutFact> fact =
-        VMILayoutSupport().getPreferredCastLayoutFact(sourceType, resultType);
+    FailureOr<VMICastLayoutFact> fact = getCastLayoutFactForSeed(
+        op, castOp.getResult(), sourceType, resultType);
     if (failed(fact)) {
       return WalkResult::advance();
     }
@@ -737,8 +1055,8 @@ struct LayoutSolver {
   WalkResult addTruncationConstraint(CastOp castOp, Operation *op) {
     auto sourceType = cast<VMIVRegType>(castOp.getSource().getType());
     auto resultType = cast<VMIVRegType>(castOp.getResult().getType());
-    FailureOr<VMICastLayoutFact> fact =
-        VMILayoutSupport().getPreferredCastLayoutFact(sourceType, resultType);
+    FailureOr<VMICastLayoutFact> fact = getCastLayoutFactForSeed(
+        op, castOp.getResult(), sourceType, resultType);
     VMILayoutAttr resultLayout =
         succeeded(fact) ? fact->resultLayout : getContiguousLayout();
     DataLayoutSeedPhase phase = succeeded(fact) ? getCastSeedPhase(*fact)
@@ -1042,7 +1360,12 @@ struct LayoutSolver {
     DataLayoutSeedPhase phase =
         succeeded(directFact) ? DataLayoutSeedPhase::GroupBroadcastLoad
                               : DataLayoutSeedPhase::Other;
-    return *constraintResult(setNaturalLayout(
+    // A direct E2B layout is a lowering preference, not a semantic
+    // natural-layout contract.  Keep it as a preferred seed so a
+    // downstream cast chain (for example C -> LS4 -> C) can select its
+    // compatible layout and materialize an ensure_layout for E2B when
+    // needed, instead of anchoring the whole equivalent value class.
+    return *constraintResult(setPreferredLayout(
         load.getResult(), getPreferredGroupBroadcastLoadLayout(load), op,
         phase));
   }
@@ -1839,6 +2162,7 @@ struct LayoutSolver {
 
   LogicalResult applyLayouts() {
     VMILayoutPropagator propagator(module);
+    propagator.setSpineScopedCastOps(&spineScopedCasts);
     addEquivalentLayoutValues(propagator);
     bool failedToPropagate = failed(requestExplicitLayouts(propagator)) ||
                              failed(runLayoutSeedPhases(propagator)) ||
@@ -1895,6 +2219,14 @@ struct LayoutSolver {
     if (failed(collect())) {
       return failure();
     }
+    // Pure IR analysis: it only needs the op structure, so it runs before the
+    // constraint walk decides any seed.  With the recognition disabled
+    // directionSpineLegs stays empty and every cast seed goes through the
+    // pre-existing tables and phases.
+    if (preferCastSpineRoundTrip) {
+      collectDirectionSpineLegs(module, directionSpineLegs);
+      collectSpineScopedCasts(directionSpineLegs, spineScopedCasts);
+    }
     if (failed(addConstraints())) {
       return failure();
     }
@@ -1919,6 +2251,13 @@ struct LayoutSolver {
   SmallVector<DataLayoutSeed> dataLayoutSeeds;
   SmallVector<DataUseRequest> dataUseRequests;
   SmallVector<MaskUseRequest> maskUseRequests;
+  // Cast ops that are legs of a closed nested round trip (see the
+  // direction-spine recognition above).  Populated once per module, before the
+  // constraint walk creates any seed.
+  llvm::SmallPtrSet<Operation *, 8> directionSpineLegs;
+  // Subset of directionSpineLegs plus the widening legs that consume them: the
+  // cast ops whose reconciliation must use the spine-scoped cast layout table.
+  llvm::SmallPtrSet<Operation *, 8> spineScopedCasts;
 };
 
 struct VMILayoutAssignmentPass

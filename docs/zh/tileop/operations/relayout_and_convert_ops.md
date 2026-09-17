@@ -28,8 +28,8 @@ pto.op ins(...) outs(%dst : !pto.tile_buf<...>)
 - [`pto.tfillpad_expand` — 扩展填充 Padding 区域](#ptotfillpad_expand--扩展填充-padding-区域)
 - [`pto.tfillpad_inplace` — 原地填充 Padding 区域](#ptotfillpad_inplace--原地填充-padding-区域)
 - [`pto.tconcatidx` — 索引控制列拼接](#ptotconcatidx--索引控制列拼接)
-- [`pto.textract_fp` — 带缩放因子的子 Tile 提取](#ptotextract_fp--带缩放因子的子-tile-提取)
-- [`pto.tinsert_fp` — 带缩放因子的子 Tile 插入](#ptotinsert_fp--带缩放因子的子-tile-插入)
+- [`pto.textract` 的 `fp` 形式](#ptotextract-的-fp-形式)
+- [`pto.tinsert` 的 `fp` 形式](#ptotinsert-的-fp-形式)
 
 ---
 
@@ -108,10 +108,11 @@ For each row i:
 **约束：**
 
 - **实现检查（A2A3）**
-  - src0 和 src1 必须使用相同的元素类型，且为以下之一：`i8`、`i16`、`i32`、`f16`、`f32`、`bf16`
+  - src0、src1 和 dst 必须使用相同的元素类型，且为以下之一：`i8`、`i16`、`i32`、`f16`、`f32`、`bf16`
   - 所有 tile 必须使用 `loc=vec`
+  - 三个 tile 必须为 rank-2，且 src0、src1 的有效行数必须与 dst 的有效行数相同
   - src0 的有效列数 + src1 的有效列数 <= dst 的列数
-  - src0 和 src1 的行数必须相等，且等于 dst 的行数
+  - 拼接会改变列方向长度，因此三者的物理 static shape 不要求完全相同
 
 - **实现检查（A5）**
   - 同 A2A3 要求，额外要求所有 tile 必须使用 `blayout=row_major`
@@ -169,7 +170,8 @@ For each element (i, j):
 
 - **实现检查（A5）**
   - dst 的元素类型必须与 src 相同（int8/fp8/fp16/bf16/f32 family）
-  - 支持 Mat->Left/Right/Scale 和 Vec->Mat 转换
+  - 支持 Mat->Left/Right/Scaling、Vec->Mat、Acc->Mat/Vec，以及
+    ND 布局的 Vec->Vec；ND 指 `blayout=row_major, slayout=none_box`
   - 运行时约束：`indexRow + dst.rows <= src.rows` 且 `indexCol + dst.cols <= src.cols`
 
 **示例：**
@@ -216,12 +218,17 @@ For each element (i, j):
 **约束：**
 
 - **实现检查（A2A3）**
-  - Vec->Vec 转换使用 PIPE_V
+  - `src`、`dst` 必须为 rank-2 `tile_buf`，`indexRow`、`indexCol` 必须非负，且插入区域不能越过 `dst` 静态边界
+  - 支持 Vec->Vec（同元素类型，`i8`/`f16`/`bf16`/`f32`）和 Acc->Mat
+  - Acc->Mat 要求两端为 NZ 布局（`col_major` + `row_major`），目标 `fractal=512`
+  - `fp` 与 `preQuantScalar` 互斥，且仅适用于 `src.loc=acc`；`fp` 必须使用 `loc=scaling`
 
 - **实现检查（A5）**
-  - Vec->Vec 转换使用 PIPE_V
-  - Vec->Mat 转换使用 PIPE_MTE3
-  - Acc->Mat 转换使用 PIPE_FIX
+  - 支持 Acc->Mat/Vec、Vec->Mat 和 Vec->Vec
+  - Vec->Vec 两端布局必须同为 ND（`row_major` + `none_box`）或同为 NZ（`col_major` + `row_major`）
+  - Vec->Mat 的目标必须为 NZ；源可为 ND 或 NZ，且源、目标元素类型相同
+  - `accToVecMode` 仅适用于 Acc->Vec；`tinsertMode` 仅适用于 NZ 的 Vec->Mat
+  - `fp`、`preQuantScalar` 和 ReLU 形式要求 `src.loc=acc`；`fp` 必须使用 `loc=scaling`
 
 **示例：**
 
@@ -275,6 +282,8 @@ For each element (i, j):
 
 - **实现检查（A2A3/A5）**
   - src 必须为 `f32` 类型
+  - 可选 `offset` 的元素类型必须为 `f32`
+  - src 与 dst 的有效 shape 必须一致
   - A2/A3: src 和 dst 必须使用 `blayout=row_major`
 
 **示例：**
@@ -325,7 +334,10 @@ For each row i:
 **约束：**
 
 - **实现检查（A2A3/A5）**
-  - 使用 custom verifier 检验操作数类型和大小兼容性
+  - `src` 元素类型必须为 8 位或 16 位整数
+  - `scale`、`offset` 和 `dst` 的元素类型必须为 `f32`
+  - `src`、`scale`、`offset` 和 `dst` 都必须是合法的 rank-2 `tile_buf`
+  - A2/A3 额外要求 `src`、`dst` 使用 row-major 布局；A5 无此附加布局限制
 
 **示例：**
 
@@ -539,7 +551,7 @@ For each row i:
 - **实现检查（A2A3）**
   - 所有操作数必须使用 `loc=vec`。
   - 数据 tile（src0、src1、dst）的元素类型必须一致，且为以下之一：`i8`、`i16`、`i32`、`f16`、`f32`、`bf16`。
-  - 索引 tile（src0Idx、src1Idx）的元素类型必须为 `i32`。
+  - 索引 tile（src0Idx、src1Idx）的元素类型必须相同，允许 signless `i8`、`i16` 或 `i32`。
 
 - **实现检查（A5）**
   - 同 A2A3 约束。
@@ -569,12 +581,12 @@ pto.tconcatidx
 
 ---
 
-### `pto.textract_fp` — 带缩放因子的子 Tile 提取
+### `pto.textract` 的 `fp` 形式
 
 ```mlir
-pto.textract_fp ins(<src>, <fp>, <indexRow>, <indexCol>
-                    : <src_type>, <fp_type>, index, index)
-                outs(<dst> : <dst_type>)
+pto.textract ins(<src>, <indexRow>, <indexCol> : <src_type>, index, index
+                fp <fp> : <fp_type>)
+             outs(<dst> : <dst_type>)
 ```
 
 **语义：**
@@ -589,8 +601,8 @@ For each element (i, j):
 
 | Name | Type | Description |
 | ---- | ---- | ----------- |
-| `src` | `pto.tile_buf` | 源 tile buffer（通常 `loc=acc`，`f32`/`i32`） |
-| `fp` | `pto.tile_buf` | 缩放因子 tile buffer（通常 `loc=vec`） |
+| `src` | `pto.tile_buf` | 源 tile buffer，必须为 `loc=acc` |
+| `fp` | `pto.tile_buf` | 缩放因子 tile buffer，必须为 `loc=scaling` |
 | `indexRow` | `index` | 提取起始行偏移 |
 | `indexCol` | `index` | 提取起始列偏移 |
 | `dst` | `pto.tile_buf` | 目标 tile buffer |
@@ -600,38 +612,37 @@ For each element (i, j):
 **约束：**
 
 - **实现检查（A2A3）**
+  - 位置必须为 `src=acc`、`fp=scaling`、`dst=mat`。
   - 支持的类型对：`(src=f32, dst=i8)` 或 `(src=i32, dst=i8/f16/i16)`。
   - `dst` 的 fractal 必须为 512。
 
 - **实现检查（A5）**
+  - 位置必须为 `src=acc`、`fp=scaling`，`dst` 可为 `mat` 或 `vec`。
   - 支持的类型对：`(src=f32, dst=i8/fp8/f16/bf16/f32)` 或 `(src=i32, dst=i8/f16/bf16)`。
   - 无 fractal 512 限制。
 
 **示例：**
 
 ```mlir
-pto.textract_fp
-    ins(%src, %fp, %row, %col :
-        !pto.tile_buf<loc=acc, dtype=f32, rows=16, cols=256,
-                      v_row=16, v_col=256, blayout=col_major,
-                      slayout=row_major, fractal=1024, pad=0>,
-        !pto.tile_buf<loc=vec, dtype=f32, rows=16, cols=1,
-                      v_row=16, v_col=1, blayout=row_major,
-                      slayout=none_box, fractal=512, pad=0>,
-        index, index)
-    outs(%dst : !pto.tile_buf<loc=vec, dtype=i8, rows=16, cols=64,
-                              v_row=16, v_col=64, blayout=row_major,
-                              slayout=none_box, fractal=512, pad=0>)
+pto.textract ins(%src, %row, %col : !pto.tile_buf<loc=acc, dtype=f32, rows=32, cols=32,
+                 v_row=32, v_col=32, blayout=col_major, slayout=row_major,
+                 fractal=1024, pad=0>, index, index
+                 fp %fp : !pto.tile_buf<loc=scaling, dtype=f32, rows=32, cols=32,
+                 v_row=32, v_col=32, blayout=row_major, slayout=row_major,
+                 fractal=512, pad=0>)
+             outs(%dst : !pto.tile_buf<loc=mat, dtype=i8, rows=32, cols=32,
+                 v_row=32, v_col=32, blayout=col_major, slayout=row_major,
+                 fractal=512, pad=0>)
 ```
 
 ---
 
-### `pto.tinsert_fp` — 带缩放因子的子 Tile 插入
+### `pto.tinsert` 的 `fp` 形式
 
 ```mlir
-pto.tinsert_fp ins(<src>, <fp>, <indexRow>, <indexCol>
-                   : <src_type>, <fp_type>, index, index)
-               outs(<dst> : <dst_type>)
+pto.tinsert ins(<src>, <indexRow>, <indexCol> : <src_type>, index, index
+               fp <fp> : <fp_type>)
+            outs(<dst> : <dst_type>)
 ```
 
 **语义：**
@@ -646,37 +657,36 @@ For each element (i, j):
 
 | Name | Type | Description |
 | ---- | ---- | ----------- |
-| `src` | `pto.tile_buf` | 源 tile buffer（通常 `loc=vec`） |
-| `fp` | `pto.tile_buf` | 缩放因子 tile buffer（通常 `loc=vec`） |
+| `src` | `pto.tile_buf` | 源 tile buffer，必须为 `loc=acc` |
+| `fp` | `pto.tile_buf` | 缩放因子 tile buffer，必须为 `loc=scaling` |
 | `indexRow` | `index` | 插入起始行偏移 |
 | `indexCol` | `index` | 插入起始列偏移 |
-| `dst` | `pto.tile_buf` | 目标 tile buffer（通常 `loc=acc`） |
+| `dst` | `pto.tile_buf` | 目标 tile buffer |
 
 **返回值：** 无。以 DPS 的形式写入 `dst`。
 
 **约束：**
 
 - **实现检查（A2A3）**
+  - 位置必须为 `src=acc`、`fp=scaling`、`dst=mat`。
   - 支持的类型对：`(src=f32, dst=i8)` 或 `(src=i32, dst=i8/f16/i16)`。
   - `dst` 的 fractal 必须为 512。
 
 - **实现检查（A5）**
+  - 位置必须为 `src=acc`、`fp=scaling`，`dst` 可为 `mat` 或 `vec`。
   - 支持的类型对：`(src=f32, dst=i8/fp8/f16/bf16/f32)` 或 `(src=i32, dst=i8/f16/bf16)`。
   - 无 fractal 512 限制。
 
 **示例：**
 
 ```mlir
-pto.tinsert_fp
-    ins(%src, %fp, %row, %col :
-        !pto.tile_buf<loc=vec, dtype=i8, rows=16, cols=64,
-                      v_row=16, v_col=64, blayout=row_major,
-                      slayout=none_box, fractal=512, pad=0>,
-        !pto.tile_buf<loc=vec, dtype=f32, rows=16, cols=1,
-                      v_row=16, v_col=1, blayout=row_major,
-                      slayout=none_box, fractal=512, pad=0>,
-        index, index)
-    outs(%dst : !pto.tile_buf<loc=acc, dtype=f32, rows=16, cols=256,
-                              v_row=16, v_col=256, blayout=col_major,
-                              slayout=row_major, fractal=1024, pad=0>)
+pto.tinsert ins(%src, %row, %col : !pto.tile_buf<loc=acc, dtype=f32, rows=32, cols=32,
+                v_row=32, v_col=32, blayout=col_major, slayout=row_major,
+                fractal=1024, pad=0>, index, index
+                fp %fp : !pto.tile_buf<loc=scaling, dtype=f32, rows=32, cols=32,
+                v_row=32, v_col=32, blayout=row_major, slayout=row_major,
+                fractal=512, pad=0>)
+            outs(%dst : !pto.tile_buf<loc=mat, dtype=i8, rows=32, cols=32,
+                v_row=32, v_col=32, blayout=col_major, slayout=row_major,
+                fractal=512, pad=0>)
 ```

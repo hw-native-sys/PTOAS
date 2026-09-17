@@ -16,7 +16,7 @@ static LogicalResult verifyTColSumTmpStride(Operation* op, Type srcTy, Type tmpT
 
     auto srcValid = getValidShapeVec(srcTy);
     auto tmpShape = getShapeVec(tmpTy);
-    if (srcValid.size() != 2 || tmpShape.size() != 2) {
+    if (srcValid.size() != mlir::pto::kValue2 || tmpShape.size() != mlir::pto::kValue2) {
         return op->emitOpError("expects src and tmp to be rank-2 tiles");
     }
 
@@ -101,14 +101,15 @@ static LogicalResult verifyTRowArgTmpA2A3(Operation* op, Type srcTy, Type tmpTy)
     }
 
     if (hasExactKnownValidShape(srcTy, tmpTy)) {
-        return verifyTmpCapacityAtLeast(op, tmpTy, 32);
+        return verifyTmpCapacityAtLeast(op, tmpTy, mlir::pto::kValue32);
     }
 
     auto srcShape = getShapeVec(srcTy);
     auto tmpShape = getShapeVec(tmpTy);
     auto srcValid = getValidShapeVec(srcTy);
     auto tmpValid = getValidShapeVec(tmpTy);
-    if (srcShape.size() != 2 || tmpShape.size() != 2 || srcValid.size() != 2 || tmpValid.size() != 2) {
+    if (srcShape.size() != mlir::pto::kValue2 || tmpShape.size() != mlir::pto::kValue2 ||
+        srcValid.size() != mlir::pto::kValue2 || tmpValid.size() != mlir::pto::kValue2) {
         return op->emitOpError("expects src and tmp to be rank-2 tiles");
     }
 
@@ -129,7 +130,7 @@ static LogicalResult verifyRowArgReductionTypes(Operation *op, Type srcTy,
     return op->emitOpError(
         "expects src element type to be i16/i32/f16/f32");
   auto dstInt = dyn_cast<IntegerType>(getElemTy(dstTy));
-  if (!dstInt || dstInt.getWidth() != 32)
+  if (!dstInt || dstInt.getWidth() != mlir::pto::kValue32)
     return op->emitOpError("expects dst element type to be i32 or ui32");
   return success();
 }
@@ -189,7 +190,7 @@ static LogicalResult verifyColReductionValidRegion(Operation* op, Type srcTy, Ty
 {
     auto srcValid = getValidShapeVec(srcTy);
     auto dstValid = getValidShapeVec(dstTy);
-    if (srcValid.size() != 2 || dstValid.size() != 2) {
+    if (srcValid.size() != mlir::pto::kValue2 || dstValid.size() != mlir::pto::kValue2) {
         return op->emitOpError("expects src and dst to have rank-2 valid_shape");
     }
     // Fully-empty dst valid region (0x0): dual-AIV no-op replay marker. The op
@@ -222,7 +223,7 @@ static LogicalResult verifyColArgReductionDstLayout(Operation* op, Type ty, Stri
         return failure();
     }
     auto valid = getValidShapeVec(ty);
-    if (valid.size() != 2) {
+    if (valid.size() != mlir::pto::kValue2) {
         return op->emitOpError() << "expects " << name << " to have rank-2 valid_shape";
     }
     if (valid[0] != ShapedType::kDynamic && valid[0] != 1) {

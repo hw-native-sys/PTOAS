@@ -8,6 +8,9 @@
 
 // Included by PTO.cpp as part of the PTO IR implementation translation unit.
 
+#include "mlir/IR/DialectImplementation.h"
+#include "llvm/ADT/TypeSwitch.h"
+
 using pto::TMrgSortOp;
 using pto::TMulOp;
 using pto::TMulSOp;

@@ -1,0 +1,62 @@
+#!/usr/bin/env python3
+# Copyright (c) 2026 Huawei Technologies Co., Ltd.
+# This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+# CANN Open Software License Agreement Version 2.0 (the "License").
+# Please refer to the License for details. You may not use this file except in compliance with the License.
+# THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+# INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+# See LICENSE in the root of the software repository for the full text of the License.
+
+"""Golden data for roundtrip-bf16-f16-bf16.
+
+Chain:  bf16 --vcvt--> f32 --vcvt(SAT)--> f16 --vcvt--> f32 --*1.5--> bf16
+
+Every input value is exactly representable both in bf16 and in f16 (bf16 has
+fewer mantissa bits than f16, so the widening to f32 and the narrowing to f16
+are both lossless), and every product by 1.5 is exactly representable in bf16,
+so the whole chain is lossless for this input set.  The oracle therefore does
+not depend on the hardware rounding mode, while the pseudo-random lane pattern
+still detects any lane permutation introduced by the layout assignment.
+"""
+
+import argparse
+from pathlib import Path
+
+import ml_dtypes
+import numpy as np
+
+ELEMS = 16384
+SCALE = np.float32(1.5)
+BF16 = ml_dtypes.bfloat16
+F16 = np.float16
+EXACT_VALUES = np.array(
+    [0.0, 1.0, -1.0, 0.5, -0.5, 1.5, -1.5, 2.0, -2.0, 3.0, -3.0, 4.0, -4.0],
+    dtype=np.float32,
+)
+
+
+def generate(output_dir: Path) -> None:
+    rng = np.random.default_rng(1337)
+    src = EXACT_VALUES[rng.integers(0, EXACT_VALUES.size, ELEMS)].astype(BF16)
+
+    restored = src.astype(np.float32)
+    quantized = restored.astype(F16)               # f32 -> f16 (lossless here)
+    widened = quantized.astype(np.float32)         # f16 -> f32
+    scaled = widened * SCALE
+    golden = scaled.astype(BF16)                   # f32 -> bf16 (round-nearest)
+
+    output_dir.mkdir(parents=True, exist_ok=True)
+    src.view(np.uint16).tofile(output_dir / "v1.bin")
+    np.zeros(ELEMS, dtype=np.uint16).tofile(output_dir / "v2.bin")
+    golden.view(np.uint16).tofile(output_dir / "golden_v2.bin")
+
+
+def main() -> None:
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--output-dir", type=Path, default=Path("."))
+    args = parser.parse_args()
+    generate(args.output_dir)
+
+
+if __name__ == "__main__":
+    main()

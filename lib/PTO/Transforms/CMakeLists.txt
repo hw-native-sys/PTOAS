@@ -37,6 +37,7 @@ set(_ptoas_vmi_split_units
   VMIToVPTO/VMIToVPTOPatternInternals3.cpp
   VMIToVPTO/VMIToVPTOPatternInternals4.cpp
   VMIToVPTO/VMIToVPTOPatternInternals5.cpp
+  VMIToVPTO/VMIToVPTOPatternInternals10.cpp
   VMIToVPTO/VMIToVPTOPatternInternals6.cpp
   VMIToVPTO/VMIToVPTOUnifiedPatternInternals.cpp
   VMIToVPTO/VMIToVPTOPatternInternals7.cpp
@@ -107,6 +108,7 @@ add_mlir_dialect_library(PTOTransforms
   Passes/PTOPromotePersistentFragmentLoopsPass.cpp
   Passes/PTOUnrollLoopsPass.cpp
   PTOValidateVMIIR.cpp
+  VMIExpandImplicitEnsureLayouts.cpp
   VMI/VMIPreAssignmentCombine.cpp
   VMI/VMIControlFlowSupport.cpp
   VMI/VMILegalizeArithSelect.cpp
@@ -238,6 +240,7 @@ add_mlir_dialect_library(PTOTransforms
   InferPTOLayout.cpp
   Lowering/PTOA5NormalizeTMovPass.cpp
   Lowering/PTORemoveIdentityTMov.cpp
+  Lowering/PTOArithRangeOptimize.cpp
   Lowering/PTOCanonicalizeIR.cpp
   Lowering/BufferizableOpInterfaceImpl.cpp
   Lowering/ConvertToPTOOp.cpp

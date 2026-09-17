@@ -10,7 +10,6 @@
 - [使用指南](user_guide/pipeline_overview.md)
     - [编译选项总览](user_guide/pipeline_overview.md)
     - [目标架构选项](user_guide/target_arch_options.md)
-    - [布局相关选项](user_guide/layout_options.md)
     - [自动内存规划](user_guide/memory_planning.md)
     - [自动同步选项](user_guide/auto_sync_options.md)
 
@@ -18,7 +17,6 @@
     - [PTO 机器模型](programming_model/machine_model.md)
     - [PTO 执行模型](programming_model/execution_model.md)
     - [Tile 与 Tensor View](programming_model/tile_and_tensor_view.md)
-    - [PTO 同步模型](programming_model/sync_model.md)
     - [CV Pipe](programming_model/cv_pipe.md)
     - [目标架构与使用差异](programming_model/architecture_notes.md)
 
@@ -42,6 +40,7 @@
     - [PTO 存储模型](memory_model/storage_model.md)
     - [Tile 分配](memory_model/tile_allocation.md)
     - [Reserved Buffer](memory_model/reserved_buffers.md)
+    - [地址规划模型](memory_model/address_planning.md)
 
 - [操作](operations/resource_binding_ops.md)
     - [资源绑定操作](operations/resource_binding_ops.md)
@@ -50,15 +49,11 @@
     - [矩阵计算操作](operations/matrix_compute_ops.md)
     - [逐元素操作（Tile-Tile）](operations/elementwise_tile_tile_op.md)
     - [Tile-标量/Tile-立即数操作](operations/tile_scalar_immediate_ops.md)
-    - [轴规约与广播操作](operations/reduction_and_broadcast_ops.md)
+    - [轴归约与广播操作](operations/reduction_and_broadcast_ops.md)
     - [重排与转换操作](operations/relayout_and_convert_ops.md)
-    - [同步操作](operations/sync_ops.md)
     - [核内 CV Pipe 前端接口](operations/cv_pipe_ops.md)
     - [运行时与调试操作](operations/runtime_and_debug_ops.md)
     - [复杂操作](operations/complex_ops.md)
 
 - [示例](examples/build_and_run_overview.md)
     - [从 PTO 到输出代码](examples/build_and_run_overview.md)
-    - [MatMul 示例](examples/matmul_example.md)
-    - [Softmax 示例](examples/softmax_example.md)
-    - [Flash Attention 示例](examples/flash_attention_example.md)

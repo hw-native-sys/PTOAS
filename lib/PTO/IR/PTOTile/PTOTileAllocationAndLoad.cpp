@@ -8,6 +8,8 @@
 
 // Included by PTO.cpp as part of the PTO IR implementation translation unit.
 
+#include "PTO/IR/PTOMultiBuffer.h"
+
 //===----------------------------------------------------------------------===//
 // AllocMultiTileOp / MultiTileGetOp
 //===----------------------------------------------------------------------===//

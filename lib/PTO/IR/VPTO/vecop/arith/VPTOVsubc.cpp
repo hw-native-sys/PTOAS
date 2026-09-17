@@ -14,4 +14,5 @@ using namespace mlir;
 using namespace mlir::pto;
 using namespace mlir::pto::vecop_detail;
 
+// NOLINTNEXTLINE(readability-make-member-function-const): ODS-generated verifier callback has a non-const signature.
 LogicalResult VsubcOp::verify() { return verifyCarryVecOp(*this); }

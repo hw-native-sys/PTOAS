@@ -55,7 +55,7 @@ std::optional<ArithCmpFConfig> getCmpFConfig(arith::CmpFPredicate predicate);
 template <typename PatternTy, typename ArithOp>
 static FailureOr<ScalarIntOpPrologue> resolveScalarIntPrologue(
     const PatternTy *pattern, ArithOp op, typename ArithOp::Adaptor adaptor,
-    ConversionPatternRewriter &rewriter) {
+    ConversionPatternRewriter &rewriter) { // NOLINT(readability-non-const-parameter): notifyMatchFailure requires a mutable rewriter.
   (void)adaptor;
   if (!isScalarIntOrIndex(op.getType()))
     return rewriter.notifyMatchFailure(

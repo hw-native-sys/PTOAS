@@ -624,6 +624,37 @@ def PTOCanonicalizeIR : Pass<"pto-canonicalize-ir", "func::FuncOp"> {
   ];
 }
 
+def PTOArithRangeOptimize : Pass<"pto-arith-range-optimize", ""> {
+  let summary = "Run integer-range-driven arith optimizations on PTO IR";
+  let description = [{
+    Runs the upstream arith integer-range optimizations
+    (mlir::arith::createIntRangeOptimizationsPass and
+    mlir::arith::createArithUnsignedWhenEquivalentPass) followed by a
+    canonicalization round, then rewrites element-offset chains feeding
+    pto.load/pto.store to i32 where a local recursive range
+    evaluation proves every chain value fits in [0, 2^32) (converted back
+    with arith.index_castui/extui at the anchor or at the provable subchain
+    boundary), finishing with canonicalize + CSE.
+
+    The range facts come from InferIntRangeInterface implementations on the
+    hardware ID queries: the VPTO SIMT queries (pto.get_tid_x/y/z,
+    pto.get_block_idx_x/y/z, pto.get_block_dim_x/y/z, pto.get_grid_dim_x/y/z,
+    pto.get_veccoreid, pto.get_laneid) and the PTO-level i64 runtime queries
+    (pto.get_block_idx, pto.get_subblock_idx, pto.get_block_num,
+    pto.get_subblock_num). Non-negative ranges let the upstream passes prove
+    signed-vs-unsigned equivalence and, for example, rewrite
+    arith.floordivsi/remsi by a power of two into unsigned div/rem forms that
+    the LLVM backend folds into shifts/masks.
+
+    Ops whose range cannot be proven are left unchanged.
+  }];
+  let constructor = "mlir::pto::createPTOArithRangeOptimizePass()";
+  let dependentDialects = [
+    "mlir::pto::PTODialect",
+    "mlir::arith::ArithDialect"
+  ];
+}
+
 def LowerPTOToUBufOps : Pass<"pto-lower-to-ubuf-ops", "mlir::func::FuncOp"> {
   let summary = "Lower eligible pto.tadd/tsub/tmul/tdiv to pto.ub.vadd/vsub/vmul/vdiv on a2a3 targets";
   let description = [{
@@ -1272,6 +1303,23 @@ def VMILowerUnifiedToLegacy : Pass<"vmi-lower-unified-to-legacy", "ModuleOp"> {
   }];
   let constructor = "mlir::pto::createVMILowerUnifiedToLegacyPass()";
   let dependentDialects = ["mlir::pto::PTODialect"];
+}
+
+def VMIExpandImplicitEnsureLayouts
+    : Pass<"vmi-expand-implicit-ensure-layouts", "ModuleOp"> {
+  let summary = "Expand implicit E2B group_broadcast_load layout conversions";
+  let description = [{
+    Rewrites each group_broadcast_load whose materialized result layout is
+    contiguous but that direct E2B lowering can serve with a deinterleaved
+    (d2/d4) result layout. The load result vreg is retyped to the E2B
+    deinterleaved layout and an ensure_layout d2/d4 -> contiguous is inserted
+    immediately after the load, so vmi-to-vpto lowers the broadcast as a
+    single E2B packet per part and converts to contiguous internally instead
+    of failing or falling back to the slower vselr broadcast path.
+  }];
+  let constructor = "mlir::pto::createVMIExpandImplicitEnsureLayoutsPass()";
+  let dependentDialects = ["mlir::func::FuncDialect",
+                           "mlir::pto::PTODialect"];
 }
 
 def VMIToVPTO : Pass<"vmi-to-vpto", "ModuleOp"> {

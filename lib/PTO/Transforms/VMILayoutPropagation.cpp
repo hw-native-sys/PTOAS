@@ -232,6 +232,22 @@ public:
 };
 
 class VMICastTransfer final : public VMILayoutTransfer {
+  // A cast op that the direction-spine peephole marked as part of a matched
+  // chain is reconciled against the spine-scoped table; every other cast op
+  // sees the generic tables only.
+  static FailureOr<SmallVector<VMICastLayoutFact, mlir::pto::kValue4>>
+  queryCastFacts(const VMILayoutPropagator &propagator, Operation *op,
+                 VMIVRegType sourceType, VMIVRegType resultType,
+                 VMICastLayoutPort port, VMILayoutAttr layout) {
+    VMILayoutSupport supports;
+    if (propagator.isSpineScopedCast(op)) {
+      return supports.getSpineScopedCastLayoutFactsForLayout(
+          sourceType, resultType, port, layout);
+    }
+    return supports.getCastLayoutFactsForLayout(sourceType, resultType, port,
+                                                layout);
+  }
+
 public:
   FailureOr<SmallVector<VMILayoutRelation, mlir::pto::kValue4>>
   query(const VMILayoutTransferQuery &request) const override {
@@ -247,12 +263,10 @@ public:
       return failure();
     }
 
-    VMILayoutSupport supports;
-
     if (changedValue == op->getOperand(0)) {
       FailureOr<SmallVector<VMICastLayoutFact, mlir::pto::kValue4>> facts =
-          supports.getCastLayoutFactsForLayout(
-              sourceType, resultType, VMICastLayoutPort::Source, changedLayout);
+          queryCastFacts(propagator, op, sourceType, resultType,
+                         VMICastLayoutPort::Source, changedLayout);
       if (failed(facts) || facts->empty()) {
         return failure();
       }
@@ -268,8 +282,8 @@ public:
 
     if (changedValue == op->getResult(0)) {
       FailureOr<SmallVector<VMICastLayoutFact, mlir::pto::kValue4>> facts =
-          supports.getCastLayoutFactsForLayout(
-              sourceType, resultType, VMICastLayoutPort::Result, changedLayout);
+          queryCastFacts(propagator, op, sourceType, resultType,
+                         VMICastLayoutPort::Result, changedLayout);
       if (failed(facts) || facts->empty()) {
         return failure();
       }
@@ -1095,6 +1109,8 @@ const VMILayoutTransfer *getTransfer(Operation *op) {
 }
 
 } // namespace
+
+bool mlir::pto::isVMISameLayoutOp(Operation *op) { return isSameLayoutOp(op); }
 
 VMILayoutPropagator::VMILayoutPropagator(Operation *scope)
     : scope(scope), ctx(scope ? scope->getContext() : nullptr) {}

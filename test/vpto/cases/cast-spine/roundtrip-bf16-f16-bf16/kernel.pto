@@ -1,0 +1,82 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+
+// RUN: ptoas --pto-arch a5 --pto-backend=vpto --emit-vpto %s -o /dev/null
+//
+// Direction spine: <up, down, up, down> closing on the starting element type:
+//   bf16 --vcvt--> f32 --vcvt--> f16 --vcvt--> f32 --vmul--> bf16
+// i.e. the closed nested round trip that --vmi-prefer-cast-spine-round-trip
+// recognises.  Unlike roundtrip-bf16-f8-bf16, the INNER narrow leg is 16-bit
+// (f32 -> f16), so this is the end-to-end case for the 16-bit composite
+// ("no vor") form of the spine-scoped cast rows.
+//
+// Structure (identical in every cast-spine case):
+//   mte_gm_ub -> scf.for(REPEAT) { scf.for(TILE) { chain } } -> mte_ub_gm
+// The inner TILE loop walks the whole UB buffer once; the outer REPEAT loop
+// replays it so one kernel launch performs REPEAT * 64 iterations of the chain.
+// That keeps the per-iteration VPTO shape stable (so the op census of the two
+// compiler arms is directly comparable) while making a single launch long enough
+// to time above the launch-overhead floor.
+
+module attributes {pto.target_arch = "a5", pto.kernel_kind = #pto.kernel_kind<vector>} {
+  func.func @vmi_cast_spine_bf16_f16_bf16_kernel(%src_gm: !pto.ptr<bf16, gm>,
+                                %dst_gm: !pto.ptr<bf16, gm>) attributes {pto.kernel} {
+    %c0 = arith.constant 0 : index
+    %c1 = arith.constant 1 : index
+    %c16 = arith.constant 16 : index
+    %c64 = arith.constant 64 : index
+    %c256 = arith.constant 256 : index
+    %c0_i64 = arith.constant 0 : i64
+    %c1_i64 = arith.constant 1 : i64
+    %c32768_i64 = arith.constant 32768 : i64
+    %scale = arith.constant 1.500000e+00 : f32
+
+    %ub_src = pto.castptr %c0_i64 : i64 -> !pto.ptr<bf16, ub>
+    %ub_dst = pto.castptr %c32768_i64 : i64 -> !pto.ptr<bf16, ub>
+
+    pto.mte_gm_ub %src_gm, %ub_src, %c0_i64, %c32768_i64
+      nburst(%c1_i64, %c32768_i64, %c32768_i64)
+      : !pto.ptr<bf16, gm>, !pto.ptr<bf16, ub>, i64, i64, i64, i64, i64
+
+    pto.set_flag["PIPE_MTE2", "PIPE_V", "EVENT_ID0"]
+    pto.wait_flag["PIPE_MTE2", "PIPE_V", "EVENT_ID0"]
+
+    pto.vecscope {
+      scf.for %rep = %c0 to %c16 step %c1 {
+        scf.for %tile = %c0 to %c64 step %c1 {
+          %elem = arith.muli %tile, %c256 : index
+          %x_bf16 = pto.vmi.vload %ub_src[%elem]
+              : !pto.ptr<bf16, ub> -> !pto.vmi.vreg<256xbf16>
+          %x = pto.vmi.vcvt %x_bf16
+              : !pto.vmi.vreg<256xbf16> -> !pto.vmi.vreg<256xf32>
+          %q = pto.vmi.vcvt %x {saturate = "SAT"}
+              : !pto.vmi.vreg<256xf32> -> !pto.vmi.vreg<256xf16>
+          %r = pto.vmi.vcvt %q
+              : !pto.vmi.vreg<256xf16> -> !pto.vmi.vreg<256xf32>
+          %scale_vec = pto.vmi.vbrc %scale
+              : f32 -> !pto.vmi.vreg<256xf32>
+          %s = pto.vmi.vmul %r, %scale_vec
+              : !pto.vmi.vreg<256xf32>, !pto.vmi.vreg<256xf32>
+              -> !pto.vmi.vreg<256xf32>
+          %y_bf16 = pto.vmi.vcvt %s {saturate = "SAT"}
+              : !pto.vmi.vreg<256xf32> -> !pto.vmi.vreg<256xbf16>
+          pto.vmi.vstore %y_bf16, %ub_dst[%elem]
+              : !pto.vmi.vreg<256xbf16>, !pto.ptr<bf16, ub>
+        }
+      }
+    }
+
+    pto.set_flag["PIPE_V", "PIPE_MTE3", "EVENT_ID0"]
+    pto.wait_flag["PIPE_V", "PIPE_MTE3", "EVENT_ID0"]
+    pto.mte_ub_gm %ub_dst, %dst_gm, %c32768_i64
+      nburst(%c1_i64, %c32768_i64, %c32768_i64)
+      : !pto.ptr<bf16, ub>, !pto.ptr<bf16, gm>, i64, i64, i64, i64
+    pto.barrier #pto.pipe<PIPE_ALL>
+    return
+  }
+}

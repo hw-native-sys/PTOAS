@@ -26,6 +26,7 @@ ParseResult MteGmL1Op::parse(OpAsmParser &parser, OperationState &result) {
   return parseDmaLoopOp<MteGmL1Op>(parser, result);
 }
 
+// NOLINTNEXTLINE(readability-make-member-function-const): ODS-generated printer callback has a non-const signature.
 void MteGmL1Op::print(OpAsmPrinter &p) { printDmaLoopOp(p, *this); }
 
 LogicalResult MteGmL1Op::verify() {

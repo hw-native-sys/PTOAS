@@ -13,6 +13,7 @@
 using namespace mlir;
 using namespace mlir::pto;
 
+// NOLINTNEXTLINE(readability-make-member-function-const): ODS-generated side-effect callback has a non-const signature.
 void CopyUbufToGmOp::getEffects(
     SmallVectorImpl<SideEffects::EffectInstance<MemoryEffects::Effect>>
         &effects) {
@@ -20,6 +21,7 @@ void CopyUbufToGmOp::getEffects(
   effects.emplace_back(MemoryEffects::Write::get(), &getDestinationMutable());
 }
 
+// NOLINTNEXTLINE(readability-make-member-function-const): ODS-generated verifier callback has a non-const signature.
 LogicalResult CopyUbufToGmOp::verify() {
   return verifyCopyGmToUbufOp(*this, false);
 }

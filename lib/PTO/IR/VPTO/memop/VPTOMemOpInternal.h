@@ -289,7 +289,7 @@ using namespace mlir::pto;
   [[maybe_unused]] static void getAtomicEffects(
       OpTy op,
       SmallVectorImpl<SideEffects::EffectInstance<MemoryEffects::Effect>>
-          &effects) {
+          &effects) { // NOLINT(readability-non-const-parameter): accumulates effect instances by design.
     effects.emplace_back(MemoryEffects::Read::get(), &op.getPtrMutable());
     effects.emplace_back(MemoryEffects::Write::get(), &op.getPtrMutable());
   }

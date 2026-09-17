@@ -127,8 +127,10 @@ ParseResult mlir::pto::TQuantMxOp::parse(OpAsmParser &parser,
                                          OperationState &result) {
   OpAsmParser::UnresolvedOperand src;
   Type srcTy;
-  SmallVector<OpAsmParser::UnresolvedOperand, 5> outOperands;
-  SmallVector<Type, 5> outTypes;
+  // The op accepts either 4 or 5 outs results; reserve inline space for the
+  // maximum shape so parsing never heap-allocates.
+  SmallVector<OpAsmParser::UnresolvedOperand, mlir::pto::kValue5> outOperands;
+  SmallVector<Type, mlir::pto::kValue5> outTypes;
   if (parser.parseKeyword("ins") || parser.parseLParen() ||
       parser.parseOperand(src) || parser.parseColonType(srcTy) ||
       parser.parseRParen()) {
@@ -266,7 +268,7 @@ static LogicalResult verifyTQuantA2A3Param(TQuantOp op, Type paramTy, Type dstTy
   }
   auto paramValid = getValidShapeVec(paramTy);
   auto dstValid = getValidShapeVec(dstTy);
-  if (paramValid.size() != 2 || dstValid.size() != 2) {
+  if (paramValid.size() != mlir::pto::kValue2 || dstValid.size() != mlir::pto::kValue2) {
     return op.emitOpError() << "expects A2/A3 " << paramName
                             << " and dst to have rank-2 valid_shape";
   }

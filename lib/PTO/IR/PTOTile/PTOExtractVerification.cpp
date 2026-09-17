@@ -239,7 +239,7 @@ static bool isA5SupportedVecElemType(Type ty) {
     return true;
   }
   if (auto it = dyn_cast<IntegerType>(ty)) {
-    return it.getWidth() == 8 || it.getWidth() == 32;
+    return it.getWidth() == mlir::pto::kValue8 || it.getWidth() == mlir::pto::kValue32;
   }
   if (auto ft = dyn_cast<FloatType>(ty)) {
       return ft.getWidth() == mlir::pto::kValue8 || ft.isF16() || ft.isBF16() || ft.isF32();

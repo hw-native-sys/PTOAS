@@ -309,6 +309,38 @@ public:
   getPreferredCastLayoutFact(VMIVRegType sourceType, VMIVRegType resultType,
                              std::string *reason = nullptr) const;
 
+  // Spine-*scoped* cast layout query.
+  //
+  // These queries are the only way to reach kSpineScopedCastLayoutPatterns /
+  // kSpineScopedLegalCastLayoutPatterns.  Those rows are not part of the
+  // generic preferred/legal tables, so a caller that does not explicitly ask
+  // for the spine-scoped variant can never observe them - the scope is enforced
+  // by construction (the rows are reachable from this entry point only), not by
+  // "the candidate happened not to be selected".
+  //
+  // The direction-spine peephole in VMILayoutAssignment calls this variant for
+  // the cast ops of a matched <up,down,up,down> chain whose narrowing leg is
+  // handed straight to the closing widening leg.  The scoped table adds the
+  // composite 16<->32 and 32<->8 rows (deinterleaved=4 -> deinterleaved=4 with
+  // an explicit lane stride) that keep the narrow value split over the four
+  // physical parts of its wide side, so the narrowing and the widening are
+  // per-chunk 1:1 and need no pto.vor assembly.
+  FailureOr<VMICastLayoutFact> getSpineScopedCastLayoutFact(
+      VMIVRegType sourceType, VMIVRegType resultType,
+      std::string *reason = nullptr) const;
+
+  FailureOr<VMICastLayoutFact> getSpineScopedCastLayoutFactForLayouts(
+      VMIVRegType sourceType, VMIVRegType resultType,
+      VMILayoutAttr sourceLayout, VMILayoutAttr resultLayout,
+      std::string *reason = nullptr) const;
+
+  FailureOr<SmallVector<VMICastLayoutFact, mlir::pto::kValue4>>
+  getSpineScopedCastLayoutFactsForLayout(VMIVRegType sourceType,
+                                         VMIVRegType resultType,
+                                         VMICastLayoutPort port,
+                                         VMILayoutAttr layout,
+                                         std::string *reason = nullptr) const;
+
   FailureOr<SmallVector<VMICastLayoutFact, mlir::pto::kValue4>>
   getCastLayoutFactsForLayout(VMIVRegType sourceType, VMIVRegType resultType,
                               VMICastLayoutPort port, VMILayoutAttr layout,

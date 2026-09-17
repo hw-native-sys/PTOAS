@@ -20,6 +20,7 @@
 #include "mlir/IR/Value.h"
 #include "mlir/Support/LogicalResult.h"
 #include "llvm/ADT/DenseMap.h"
+#include "llvm/ADT/SmallPtrSet.h"
 #include "llvm/ADT/SmallVector.h"
 
 #include <utility>
@@ -36,6 +37,14 @@ struct VMIValueLayoutAssignment {
   SmallVector<VMILayoutConflict, mlir::pto::kValue2> conflicts;
 };
 
+// True when \p op is a VMI op whose operands and results must carry one and
+// the same layout (elementwise and lane-local ops).  It is the single source of
+// truth for the "same layout" transfer used by the propagator, and is also the
+// relation layout consumers must use when they need to walk a
+// layout-transparent chain (for example the direction-spine recognition in
+// VMILayoutAssignment).
+bool isVMISameLayoutOp(Operation *op);
+
 class VMILayoutPropagator {
 public:
   explicit VMILayoutPropagator(Operation *scope);
@@ -46,6 +55,20 @@ public:
 
   LogicalResult run();
   LogicalResult apply(RewriterBase &rewriter);
+
+  // Cast ops for which the cast transfer must consult the *spine-scoped* cast
+  // layout table instead of the generic one (see
+  // VMILayoutSupport::getSpineScopedCastLayoutFact).  The set is null by
+  // default, so every propagation that does not opt in - including all
+  // propagation for a chain the direction-spine peephole did not match - can
+  // only ever see the generic tables.
+  void
+  setSpineScopedCastOps(const llvm::SmallPtrSetImpl<Operation *> *scopedOps) {
+    spineScopedCastOps = scopedOps;
+  }
+  bool isSpineScopedCast(Operation *op) const {
+    return spineScopedCastOps != nullptr && spineScopedCastOps->contains(op);
+  }
 
   bool canUseOperandLayout(OpOperand &operand, VMILayoutAttr layout) const;
   VMILayoutAttr getRequestedLayout(Value value) const;
@@ -86,6 +109,8 @@ private:
                                        VMILayoutConflict conflict,
                                        RewriterBase &rewriter) const;
 
+  // Borrowed; owned by the caller (the layout-assignment solver).
+  const llvm::SmallPtrSetImpl<Operation *> *spineScopedCastOps = nullptr;
   Operation *scope = nullptr;
   MLIRContext *ctx = nullptr;
   DenseMap<Value, VMIValueLayoutAssignment> assignments;

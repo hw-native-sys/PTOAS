@@ -166,6 +166,7 @@ dst[offset] = val  // 在线性偏移处写入单个标量值
 - **类型匹配** — `val` 的标量类型必须与 `dst` 的元素类型完全匹配（如 `f16` 与 `f16`）。
 - **偏移范围** — `offset` 必须在 `[0, rows*cols)` 范围内。
 - **有效性** — 操作只在 `dst` 的有效区域内生效。
+- **硬件管道** — 该操作在标量管道（`PIPE_S`）上执行，因此与同管道及依赖管道上的操作之间存在顺序约束。
 
 **示例：**
 
@@ -183,7 +184,7 @@ pto.tsetval ins(%offset, %val : index, f16)
 ### `pto.tgetval` — 读取 Tile 单元素
 
 ```mlir
-%val = pto.tgetval ins(<src>, <offset> : !pto.tile_buf<...>, index) -> <scalar_type>
+%val = pto.tgetval ins(<src>, <offset> : !pto.tile_buf<...>, index) outs : <scalar_type>
 ```
 
 **语义：**
@@ -205,7 +206,8 @@ result = src[offset]  // 从线性偏移处读取单个标量值
 
 - **位置要求** — `src` 必须使用 `loc=vec`。`loc=mat` 不被接受。
 - **偏移范围** — `offset` 必须在 `[0, rows*cols)` 范围内。
-- **元素类型** — 返回值类型自动推导为 `src` 的元素类型。
+- **元素类型** — `dst` 类型必须与 `src` 的元素类型一致。
+- **硬件管道** — 该操作在标量管道（`PIPE_S`）上执行，因此与同管道及依赖管道上的操作之间存在顺序约束。
 
 **示例：**
 
@@ -216,7 +218,7 @@ result = src[offset]  // 从线性偏移处读取单个标量值
 %offset = ... : index
 %val = pto.tgetval ins(%src, %offset : !pto.tile_buf<loc=vec, dtype=f16, rows=16, cols=16,
     v_row=16, v_col=16, blayout=row_major, slayout=none_box,
-    fractal=512, pad=0>, index) -> f16
+    fractal=512, pad=0>, index) outs : f16
 ```
 
 ---
@@ -270,6 +272,10 @@ pto.print ins("Value: %+08.3f", %val : StrAttr, f32)
 
 ```mlir
 pto.tprint ins(<src> : !pto.tile_buf<...>)
+
+// 通过临时全局缓冲区打印 Mat/Acc tile 的形式
+pto.tprint ins(<src>, <tmp> : !pto.tile_buf<...>, !pto.partition_tensor_view<...>)
+          {printFormat = <fmt>}
 ```
 
 **语义：**
@@ -282,22 +288,52 @@ print(src)  // 打印整个 tile 缓冲区的内容
 
 | Name | Type | Description |
 | ---- | ---- | ----------- |
-| `src` | `pto.tile_buf` | 待打印的 tile 缓冲区 |
+| `src` | `pto.tile_buf` / `pto.partition_tensor_view` | 待打印的 tile 缓冲区或全局视图；`tmp` 存在时必须为 `pto.tile_buf` |
+| `tmp` | `pto.partition_tensor_view`（可选） | 打印 Mat/Acc tile 时使用的临时全局缓冲区视图，**不是** `pto.tile_buf` |
 
 **返回值：** 无。本操作为调试输出，不产生返回值。
 
+**属性：**
+
+- `printFormat` — TPRINT 输出格式。可选，默认不指定。
+  - `#pto<print_format width8_precision4>` — 宽度 8、精度 4
+  - `#pto<print_format width8_precision2>` — 宽度 8、精度 2
+  - `#pto<print_format width10_precision6>` — 宽度 10、精度 6
+
 **约束：**
 
-- **元素类型** — 源 tile 的元素类型必须为以下之一：`f32`、`f16`、`i8`、`i16`、`i32`。
-- **位置限制** — 只有位置为 `loc=vec` 的 tile 支持打印。`loc=mat` 不被支持。
+`src` 的两种形态走不同的校验路径，约束也不同。
+
+- **src 为 tile（`pto.tile_buf`）**
+  - **元素类型** — 必须为以下之一：`f16`、`f32`、`i8`、`i16`、`i32`。
+  - **不带 `tmp`** — `src` 必须位于 `loc=vec`，其他位置会被拒绝。
+  - **带 `tmp`** — `src` 可为 `vec`/`mat`/`acc`；A5 目标不允许打印 `mat` tile（仅 A2A3 支持）。
+- **src 为全局视图（`pto.partition_tensor_view`）**
+  - **不带 `tmp`** — 直接打印，无 `loc` 要求（视图类型不携带局部位置）。
+  - **不允许携带 `tmp`** — verifier 检查 `expects tmp only when src is a tile_buf`；`src` 不是 `tile_buf` 时必须不写 `tmp`。
+- **`tmp` 类型** — 仅在 `src` 为 tile 时允许携带，且 `tmp` 必须是 `!pto.partition_tensor_view<...>`（verifier 检查 `expects mem to be !pto.partition_tensor_view`，写成 tile_buf 会被拒绝）；其元素类型必须与 `src` 的元素类型一致。
+- **`tmp` 布局** — 当 `tmp` 的布局可推导时，必须使用 ND 逻辑布局。
 - **缓冲区限制** — 打印缓冲区大小有限，超大 tile 打印可能被截断。
+- **硬件管道** — 该操作在向量管道（`PIPE_V`）上执行，因此与同管道及依赖管道上的操作之间存在顺序约束。
 
 **示例：**
 
 ```mlir
+// src 为 tile，不带 tmp：必须 loc=vec
 pto.tprint ins(%src : !pto.tile_buf<loc=vec, dtype=f16, rows=16, cols=16,
     v_row=16, v_col=16, blayout=row_major, slayout=none_box,
     fractal=512, pad=0>)
+
+// src 为 tile，带 tmp：可打印 acc/mat，tmp 用 partition_tensor_view
+pto.tprint ins(%src, %tmp :
+        !pto.tile_buf<loc=acc, dtype=f32, rows=16, cols=16,
+            v_row=16, v_col=16, blayout=col_major, slayout=row_major,
+            fractal=1024, pad=0>,
+        !pto.partition_tensor_view<16x16xf32>)
+          {printFormat = #pto<print_format width10_precision6>}
+
+// src 为全局视图：无 loc 要求，且不能携带 tmp
+pto.tprint ins(%pv : !pto.partition_tensor_view<16x16xf32>)
 ```
 
 ---

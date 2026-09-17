@@ -1,6 +1,6 @@
-# 轴规约与广播操作
+# 轴归约与广播操作
 
-本节描述了 PTO ISA 中沿行或沿列进行规约（reduction）和广播（broadcast）的全部操作。所有操作均作用于本地缓冲区（`tile_buf`，位于 `loc=vec` 空间），采用"目标传递风格"（Destination-Passing Style, DPS）：操作本身不产生 SSA 返回值，而是直接将结果写入预先分配好的目标 `tile_buf`。全部操作执行在 **Vector 流水线**（`PIPE_V`）上。
+本节描述了 PTO ISA 中沿行或沿列进行归约（reduction）和广播（broadcast）的全部操作。所有操作均作用于本地缓冲区（`tile_buf`，位于 `loc=vec` 空间），采用"目标传递风格"（Destination-Passing Style, DPS）：操作本身不产生 SSA 返回值，而是直接将结果写入预先分配好的目标 `tile_buf`。全部操作执行在 **Vector 流水线**（`PIPE_V`）上。
 
 这一类操作通常具有如下装配形式：
 
@@ -20,19 +20,19 @@ pto.op ins(%src : !pto.tile_buf<...>)
 ## 目录
 
 - [`pto.tcolexpand` — 列广播](#ptotcolexpand--列广播)
-- [`pto.tcolmax` — 列最大值规约](#ptotcolmax--列最大值规约)
-- [`pto.tcolargmax` — 列最大值索引规约](#ptotcolargmax--列最大值索引规约)
-- [`pto.tcolmin` — 列最小值规约](#ptotcolmin--列最小值规约)
-- [`pto.tcolargmin` — 列最小值索引规约](#ptotcolargmin--列最小值索引规约)
-- [`pto.tcolsum` — 列求和规约](#ptotcolsum--列求和规约)
+- [`pto.tcolmax` — 列最大值归约](#ptotcolmax--列最大值归约)
+- [`pto.tcolargmax` — 列最大值索引归约](#ptotcolargmax--列最大值索引归约)
+- [`pto.tcolmin` — 列最小值归约](#ptotcolmin--列最小值归约)
+- [`pto.tcolargmin` — 列最小值索引归约](#ptotcolargmin--列最小值索引归约)
+- [`pto.tcolsum` — 列求和归约](#ptotcolsum--列求和归约)
 - [`pto.trowexpand` — 行广播](#ptotrowexpand--行广播)
-- [`pto.trowmax` — 行最大值规约](#ptotrowmax--行最大值规约)
-- [`pto.trowargmax` — 行最大值索引规约](#ptotrowargmax--行最大值索引规约)
-- [`pto.trowmin` — 行最小值规约](#ptotrowmin--行最小值规约)
-- [`pto.trowargmin` — 行最小值索引规约](#ptotrowargmin--行最小值索引规约)
-- [`pto.trowsum` — 行求和规约](#ptotrowsum--行求和规约)
-- [`pto.tcolprod` — 列乘积规约](#ptotcolprod--列乘积规约)
-- [`pto.trowprod` — 行乘积规约](#ptotrowprod--行乘积规约)
+- [`pto.trowmax` — 行最大值归约](#ptotrowmax--行最大值归约)
+- [`pto.trowargmax` — 行最大值索引归约](#ptotrowargmax--行最大值索引归约)
+- [`pto.trowmin` — 行最小值归约](#ptotrowmin--行最小值归约)
+- [`pto.trowargmin` — 行最小值索引归约](#ptotrowargmin--行最小值索引归约)
+- [`pto.trowsum` — 行求和归约](#ptotrowsum--行求和归约)
+- [`pto.tcolprod` — 列乘积归约](#ptotcolprod--列乘积归约)
+- [`pto.trowprod` — 行乘积归约](#ptotrowprod--行乘积归约)
 - [`pto.trowexpandsub` — 行广播减法](#ptotrowexpandsub--行广播减法)
 - [`pto.trowexpandmul` — 行广播乘法](#ptotrowexpandmul--行广播乘法)
 - [`pto.trowexpanddiv` — 行广播除法](#ptotrowexpanddiv--行广播除法)
@@ -96,7 +96,7 @@ pto.tcolexpand ins(%src : !pto.tile_buf<loc=vec, dtype=f32, rows=1, cols=16,
 
 ---
 
-### `pto.tcolmax` — 列最大值规约
+### `pto.tcolmax` — 列最大值归约
 
 ```mlir
 pto.tcolmax ins(<src> : <src_type>) outs(<dst> : <dst_type>)
@@ -148,7 +148,7 @@ pto.tcolmax ins(%src : !pto.tile_buf<loc=vec, dtype=f16, rows=16, cols=16,
 
 ---
 
-### `pto.tcolargmax` — 列最大值索引规约
+### `pto.tcolargmax` — 列最大值索引归约
 
 ```mlir
 pto.tcolargmax ins(<src>, <tmp> : <src_type>, <tmp_type>)
@@ -200,7 +200,7 @@ pto.tcolargmax ins(%src, %tmp : !pto.tile_buf<loc=vec, dtype=f16, rows=16, cols=
 
 ---
 
-### `pto.tcolmin` — 列最小值规约
+### `pto.tcolmin` — 列最小值归约
 
 ```mlir
 pto.tcolmin ins(<src> : <src_type>) outs(<dst> : <dst_type>)
@@ -252,7 +252,7 @@ pto.tcolmin ins(%src : !pto.tile_buf<loc=vec, dtype=f16, rows=16, cols=16,
 
 ---
 
-### `pto.tcolargmin` — 列最小值索引规约
+### `pto.tcolargmin` — 列最小值索引归约
 
 ```mlir
 pto.tcolargmin ins(<src>, <tmp> : <src_type>, <tmp_type>)
@@ -304,7 +304,7 @@ pto.tcolargmin ins(%src, %tmp : !pto.tile_buf<loc=vec, dtype=f32, rows=16, cols=
 
 ---
 
-### `pto.tcolsum` — 列求和规约
+### `pto.tcolsum` — 列求和归约
 
 ```mlir
 pto.tcolsum ins(<src>, <tmp> : <src_type>, <tmp_type>)
@@ -330,9 +330,9 @@ For each column j:
 
 **属性：**
 
-- `isBinary` — 是否使用二叉规约树。默认值为 `false`。
-  - `true` — 使用二叉规约树
-  - `false` — 使用默认规约方式
+- `isBinary` — 是否使用二叉归约树。默认值为 `false`。
+  - `true` — 使用二叉归约树
+  - `false` — 使用默认归约方式
 
 **约束：**
 
@@ -413,7 +413,7 @@ pto.trowexpand ins(%src : !pto.tile_buf<loc=vec, dtype=f32, rows=16, cols=1,
 
 ---
 
-### `pto.trowmax` — 行最大值规约
+### `pto.trowmax` — 行最大值归约
 
 ```mlir
 pto.trowmax ins(<src> : <src_type>) outs(<dst> : <dst_type>)
@@ -459,7 +459,7 @@ pto.trowmax ins(%src : !pto.tile_buf<loc=vec, dtype=f16, rows=16, cols=16,
 
 ---
 
-### `pto.trowargmax` — 行最大值索引规约
+### `pto.trowargmax` — 行最大值索引归约
 
 ```mlir
 pto.trowargmax ins(<src>, <tmp> : <src_type>, <tmp_type>)
@@ -512,7 +512,7 @@ pto.trowargmax ins(%src, %tmp : !pto.tile_buf<loc=vec, dtype=f16, rows=16, cols=
 
 ---
 
-### `pto.trowmin` — 行最小值规约
+### `pto.trowmin` — 行最小值归约
 
 ```mlir
 pto.trowmin ins(<src>, <tmp> : <src_type>, <tmp_type>)
@@ -563,7 +563,7 @@ pto.trowmin ins(%src, %tmp : !pto.tile_buf<loc=vec, dtype=f16, rows=16, cols=16,
 
 ---
 
-### `pto.trowargmin` — 行最小值索引规约
+### `pto.trowargmin` — 行最小值索引归约
 
 ```mlir
 pto.trowargmin ins(<src>, <tmp> : <src_type>, <tmp_type>)
@@ -616,7 +616,7 @@ pto.trowargmin ins(%src, %tmp : !pto.tile_buf<loc=vec, dtype=f32, rows=16, cols=
 
 ---
 
-### `pto.trowsum` — 行求和规约
+### `pto.trowsum` — 行求和归约
 
 ```mlir
 pto.trowsum ins(<src> : <src_type>) outs(<dst> : <dst_type>)
@@ -662,7 +662,7 @@ pto.trowsum ins(%src : !pto.tile_buf<loc=vec, dtype=f16, rows=16, cols=16,
 
 ---
 
-### `pto.tcolprod` — 列乘积规约
+### `pto.tcolprod` — 列乘积归约
 
 ```mlir
 pto.tcolprod ins(<src> : <src_type>) outs(<dst> : <dst_type>)
@@ -713,7 +713,7 @@ pto.tcolprod ins(%src : !pto.tile_buf<loc=vec, dtype=f32, rows=16, cols=16,
 
 ---
 
-### `pto.trowprod` — 行乘积规约
+### `pto.trowprod` — 行乘积归约
 
 ```mlir
 pto.trowprod ins(<src>, <tmp> : <src_type>, <tmp_type>)

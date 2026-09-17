@@ -20,6 +20,7 @@ LogicalResult AtomicXorOp::verify() {
                             getSignednessAttr());
 }
 
+// NOLINTNEXTLINE(readability-make-member-function-const): ODS-generated side-effect callback has a non-const signature.
 void AtomicXorOp::getEffects(
     SmallVectorImpl<SideEffects::EffectInstance<MemoryEffects::Effect>>
         &effects) {

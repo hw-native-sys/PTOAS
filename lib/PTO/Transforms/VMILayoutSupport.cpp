@@ -86,6 +86,7 @@ static llvm::cl::opt<bool> preferLaneStrideNarrowing(
 //===----------------------------------------------------------------------===//
 #include "VMILayoutSupportPatternDSL.inc"
 #include "VMILayoutSupportTables.inc"
+#include "VMILayoutSupportSpineTables.inc"
 #include "VMILayoutSupportMaterialization.inc"
 } // namespace
 
@@ -546,6 +547,43 @@ static VMICastLayoutFact makeCastLayoutFact(int64_t sourceBits,
   return fact;
 }
 
+// Iterate one legal cast-relation table and append every matching
+// VMICastLayoutFact for the requested port/layout.  The generic and the
+// spine-scoped cast reconciliation share this step; they differ only in the
+// table they pass in.  Defined here (not in an earlier .inc) because it needs
+// makeCastLayoutFact above; the spine-scoped .inc is included at the end of
+// this translation unit and reaches it too.
+static void collectMatchingCastFacts(
+    ArrayRef<LegalCastLayoutPattern> patterns, VMIVRegType sourceType,
+    VMIVRegType resultType, VMICastLayoutPort port, VMILayoutAttr layout,
+    int64_t sourceBits, int64_t resultBits, int64_t numGroups,
+    SmallVectorImpl<VMICastLayoutFact> &facts) {
+  MLIRContext *ctx = sourceType.getContext();
+  for (const LegalCastLayoutPattern &pattern : patterns) {
+    if (!matchesElementBitsPattern(pattern.sourceBits, sourceBits) ||
+        !matchesElementBitsPattern(pattern.resultBits, resultBits) ||
+        !matchesCastTypeClass(pattern.typeClass, sourceType.getElementType(),
+                              resultType.getElementType())) {
+      continue;
+    }
+    VMILayoutAttr sourceLayout =
+        materializeLayoutPattern(ctx, pattern.sourceLayout, numGroups);
+    VMILayoutAttr resultLayout =
+        materializeLayoutPattern(ctx, pattern.resultLayout, numGroups);
+    if (!sourceLayout || !resultLayout) {
+      continue;
+    }
+    if (port == VMICastLayoutPort::Source && sourceLayout != layout) {
+      continue;
+    }
+    if (port == VMICastLayoutPort::Result && resultLayout != layout) {
+      continue;
+    }
+    facts.push_back(
+        makeCastLayoutFact(sourceBits, resultBits, sourceLayout, resultLayout));
+  }
+}
+
 static std::optional<VMICastLayoutFact>
 matchHighPriorityCastLayoutPattern(const HighPriorityCastLayoutPattern &pattern,
                                    VMIVRegType sourceType,
@@ -841,37 +879,13 @@ VMILayoutSupport::getCastLayoutFactsForLayout(VMIVRegType sourceType,
   };
 
   auto [sourceBits, resultBits] = getCastElementBits(sourceType, resultType);
-  MLIRContext *ctx = sourceType.getContext();
   SmallVector<VMICastLayoutFact, mlir::pto::kValue4> facts;
 
   int64_t numGroups =
       layout && layout.isGroupSlots() ? layout.getNumGroups() : 0;
-  for (const LegalCastLayoutPattern &pattern : kLegalCastLayoutPatterns) {
-    if (!matchesElementBitsPattern(pattern.sourceBits, sourceBits) ||
-        !matchesElementBitsPattern(pattern.resultBits, resultBits) ||
-        !matchesCastTypeClass(pattern.typeClass, sourceType.getElementType(),
-                              resultType.getElementType())) {
-      continue;
-    }
-
-    VMILayoutAttr sourceLayout =
-        materializeLayoutPattern(ctx, pattern.sourceLayout, numGroups);
-    VMILayoutAttr resultLayout =
-        materializeLayoutPattern(ctx, pattern.resultLayout, numGroups);
-    if (!sourceLayout || !resultLayout) {
-      continue;
-    }
-
-    if (port == VMICastLayoutPort::Source && sourceLayout != layout) {
-      continue;
-    }
-    if (port == VMICastLayoutPort::Result && resultLayout != layout) {
-      continue;
-    }
-
-    facts.push_back(
-        makeCastLayoutFact(sourceBits, resultBits, sourceLayout, resultLayout));
-  }
+  collectMatchingCastFacts(kLegalCastLayoutPatterns, sourceType, resultType,
+                           port, layout, sourceBits, resultBits, numGroups,
+                           facts);
 
   if (facts.empty()) {
     if (port == VMICastLayoutPort::Source) {
@@ -926,13 +940,6 @@ FailureOr<VMICastLayoutFact> VMILayoutSupport::getCastLayoutFactForResultLayout(
 FailureOr<VMICastLayoutFact> VMILayoutSupport::getCastLayoutFactForLayouts(
     VMIVRegType sourceType, VMIVRegType resultType, VMILayoutAttr sourceLayout,
     VMILayoutAttr resultLayout, std::string *reason) const {
-  auto fail = [reason](const Twine &message) -> FailureOr<VMICastLayoutFact> {
-    if (reason) {
-      *reason = message.str();
-    }
-    return failure();
-  };
-
   FailureOr<SmallVector<VMICastLayoutFact, mlir::pto::kValue4>> facts =
       getCastLayoutFactsForLayout(sourceType, resultType,
                                   VMICastLayoutPort::Source, sourceLayout,
@@ -941,20 +948,10 @@ FailureOr<VMICastLayoutFact> VMILayoutSupport::getCastLayoutFactForLayouts(
     return failure();
   }
 
-  std::optional<VMICastLayoutFact> selected;
-  for (const VMICastLayoutFact &fact : *facts) {
-    if (fact.resultLayout != resultLayout) {
-      continue;
-    }
-    if (selected) {
-      return fail("cast layout query produced ambiguous layout facts");
-    }
-    selected = fact;
-  }
-  if (!selected) {
-    return fail("source/result layouts do not match a legal cast table row");
-  }
-  return *selected;
+  return selectCastLayoutFactForResultLayout(
+      *facts, resultLayout,
+      "cast layout query produced ambiguous layout facts",
+      "source/result layouts do not match a legal cast table row", reason);
 }
 
 struct MaskGranularityCastQuery {
@@ -2280,6 +2277,10 @@ LogicalResult
 VMILayoutSupport::getVchistSupport(VMIVchistOp op, std::string *reason) const {
   return getVchistLayoutFact(op, reason);
 }
+
+// Textual include unit: the direction-spine-scoped cast layout queries, kept in
+// their own .inc so VMILayoutSupport.cpp stays under the source-size gate.
+#include "VMILayoutSupportSpineScoped.inc"
 
 } // namespace pto
 } // namespace mlir

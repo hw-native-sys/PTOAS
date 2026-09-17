@@ -3723,7 +3723,40 @@ f32 -> 8-bit fp-like:
   current default conversion attrs are rnd=R for f8E4M3/f8E5M2 and rnd=A for
     hif8. pto.vmi.truncf {rounding = "H"} is accepted only for f32 -> hif8
     and forwards rnd=H to the emitted pto.vcvt operations.
+
+f32 <-> 8-bit fp-like, *spine-scoped composite* path (pure narrow round trip):
+  when the fp8 value is produced by a narrowing leg whose only consumer is the
+  closing widening leg of the same direction-spine chain (a "pure" narrow
+  handoff, proved from the use-def list before any layout is seeded), the
+  composite rows of the spine-scoped cast layout table keep it in the
+  deinterleaved family instead of packing it back to contiguous order:
+    layout: deinterleaved=4 -> deinterleaved=4, lane_stride=4
+    pto.vcvt part=P0 per source chunk, both directions
+  source/result physical arity must be 4 -> 4 (one-to-one, no arity change)
+  no pto.vor is emitted: each quantising conversion writes part 0 of its own
+  carrier and the matching widening conversion reads that same carrier back.
+  The rows are reachable only through the spine-scoped queries, so a chain that
+  the direction-spine peephole did not match keeps the contiguous result above.
+  A narrow value that is also stored (or fed to any other op) does not qualify
+  and keeps the contiguous + lane-stride form.
 ```
+
+`group_broadcast_load` E2B explicitization (`vmi-expand-implicit-ensure-layouts`):
+
+The layout solver keeps the direct E2B layout as a lowering *preference*, so a
+`group_broadcast_load` result can still be materialized as contiguous, where
+vmi-to-vpto cannot lower a multi-part contiguous E2B form as one packet. The
+pass retypes the load result to the direct deinterleaved `d2`/`d4` layout and
+inserts an `ensure_layout` back to contiguous, so the broadcast lowers as one
+E2B packet per part. This is structurally cheaper than the `vsldb` fallback
+wherever E2B is available: a 2-carrier group broadcast is `1 E2B + 1 vintlv`
+(2 ops) against `1 vsldb + 2 vselr` (3 ops), and the `per_token` 12-config fp32
+scale is 10 ops on the `vsldb` route. On device, removing the pass cost up to
+9.7% on fp32 no-round 512x2048 (OFF/ON). ISA cycle counts for `vselr`/`vintlv`
+are not documented, so the argument rests on op counts plus device timing. The
+`compute_y1_to_fp8_fp16_vmi_opt` `CHECK-NOT: E2B_B16` / `vsldb` contract encoded
+the rejected heuristic and is corrected in the same change to assert the E2B
+route.
 
 Memory lowering：
 

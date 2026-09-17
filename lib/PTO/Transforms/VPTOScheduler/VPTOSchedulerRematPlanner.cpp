@@ -24,7 +24,7 @@ namespace {
 
 static unsigned countUnmetRegions(const RematCandidate& candidate, ArrayRef<int64_t> remaining)
 {
-    return llvm::count_if(candidate.affectedRegions, [&](unsigned index) { return remaining[index] > 0; });
+    return llvm::count_if(candidate.affectedRegions, [&remaining](unsigned index) { return remaining[index] > 0; });
 }
 
 static bool candidateFitsBudget(
@@ -66,7 +66,8 @@ static unsigned countDeadRecipeOperations(
                                  return deadOperations.contains(user);
                              });
             if (allUsersDead) {
-                changed = changed || deadOperations.insert(operation).second;
+                bool inserted = deadOperations.insert(operation).second;
+                changed = changed || inserted;
             }
         }
     }

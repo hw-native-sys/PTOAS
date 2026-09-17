@@ -479,10 +479,16 @@ selectCandidates(const VPTOScheduleContext &context,
     detail = "strategy produced no ranked candidates";
     return failure();
   }
+  const RankedCandidate *rankData = ranks.data();
+  if (!rankData) {
+    detail = "strategy produced no ranked candidates";
+    return failure();
+  }
   bool hasPressureClosure = context.closurePressureSet.has_value();
   CandidateSelection selection;
-  selection.selected = &ranks.front();
-  for (const RankedCandidate &rank : llvm::drop_begin(ranks)) {
+  selection.selected = rankData;
+  for (size_t index = 1; index < ranks.size(); ++index) {
+    const RankedCandidate &rank = rankData[index];
     if (isBetterCandidate(rank, *selection.selected,
                           rankingContext.hasNearLimitPressure,
                           rankingContext.hasHighPressure,
@@ -491,7 +497,8 @@ selectCandidates(const VPTOScheduleContext &context,
     }
   }
 
-  for (const RankedCandidate &rank : ranks) {
+  for (size_t index = 0; index < ranks.size(); ++index) {
+    const RankedCandidate &rank = rankData[index];
     if (&rank == selection.selected) {
       continue;
     }

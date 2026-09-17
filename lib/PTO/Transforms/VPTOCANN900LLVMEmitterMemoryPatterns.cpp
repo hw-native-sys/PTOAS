@@ -6,6 +6,9 @@
 // INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
 // See LICENSE in the root of the software repository for the full text of the License.
 
+#include "VPTOCANN900LLVMEmitterConfigTemplates.h"
+#include "VPTOCANN900LLVMEmitterPredicateTemplates.h"
+#include "VPTOCANN900LLVMEmitterScalarTemplates.h"
 #include "VPTOCANN900LLVMEmitterTemplates.h"
 
 namespace mlir::pto::detail {
@@ -99,7 +102,7 @@ public:
       : OpConversionPattern<PredicateMaskOp>(typeConverter, context), state(state) {}
 
   LogicalResult matchAndRewrite(PredicateMaskOp op, typename PredicateMaskOp::Adaptor adaptor,
-                                ConversionPatternRewriter &rewriter) const override {
+                                ConversionPatternRewriter &rewriter) const override { // NOLINT(readability-non-const-parameter): MLIR OpConversionPattern base signature.
     Type resultType = this->getTypeConverter()->convertType(op.getResult().getType());
     if (!resultType) {
       return rewriter.notifyMatchFailure(op, "failed to convert predicate-mask result type");
@@ -131,7 +134,7 @@ public:
       : OpConversionPattern<ReorderOp>(typeConverter, context), state(state) {}
 
   LogicalResult matchAndRewrite(ReorderOp op, typename ReorderOp::Adaptor adaptor,
-                                ConversionPatternRewriter &rewriter) const override {
+                                ConversionPatternRewriter &rewriter) const override { // NOLINT(readability-non-const-parameter): MLIR OpConversionPattern base signature.
     SmallVector<Type> resultTypes;
     if (failed(this->getTypeConverter()->convertTypes(op->getResultTypes(), resultTypes))) {
       return rewriter.notifyMatchFailure(op, "failed to convert predicate-pair-reorder result types");

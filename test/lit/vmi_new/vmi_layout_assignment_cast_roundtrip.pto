@@ -6,8 +6,30 @@
 // INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
 // See LICENSE in the root of the software repository for the full text of the License.
 
+// The five functions below are two positive and three negative cases for the
+// closed nested round-trip recognition (formerly "cast spine"):
+//   * f32_fp8_f32_roundtrip  : 256 lanes, bf16 -> f32 -> f8 -> f32 -> bf16,
+//                              i.e. up, down, up, down and closing on the same
+//                              element type, with a 32<->8 inner narrow leg
+//                              -> deinterleaved family, 8-bit composite form.
+//   * bf16_f16_bf16_roundtrip: 256 lanes, the same closed shape with a 32<->16
+//                              inner narrow leg -> deinterleaved family, the
+//                              16-bit composite form.
+//   * f32_f16_f32_roundtrip  : 128 lanes, f32 -> f16 -> f32, a single round
+//                              trip  -> unchanged contiguous + lane_stride 2.
+//   * si32_si16_si32_roundtrip: 64 lanes, same single round trip on si16.
+//   * ui32_ui8_ui32_roundtrip : 64 lanes, same single round trip on ui8.
+// Only the two nested cases may change with the recognition; the three single
+// round trips are the counterexamples that keep the predicate honest, so their
+// expectations are deliberately left untouched.  The LOWER side follows the
+// same split: the nested cases keep their narrow value split over the four
+// deinterleaved parts and convert each part back one-to-one, which is exactly
+// what the three counterexamples must still not need.  That is why the
+// "no pto.vor" guard moved from the RUN line (file-wide
+// --implicit-check-not) to scoped check-nots inside the three counterexample
+// regions.
 // RUN: pto-test-opt %s -vmi-lower-unified-to-legacy -vmi-mask-granularity-assignment -vmi-layout-assignment | FileCheck %s --check-prefix=ASSIGN
-// RUN: pto-test-opt %s -vmi-lower-unified-to-legacy -vmi-mask-granularity-assignment -vmi-layout-assignment -vmi-to-vpto | FileCheck %s --check-prefix=LOWER --implicit-check-not=pto.vor
+// RUN: pto-test-opt %s -vmi-lower-unified-to-legacy -vmi-mask-granularity-assignment -vmi-layout-assignment -vmi-to-vpto | FileCheck %s --check-prefix=LOWER
 
 module {
   func.func @f32_fp8_f32_roundtrip(
@@ -26,6 +48,37 @@ module {
         : !pto.vmi.vreg<256xf32> -> !pto.vmi.vreg<256xf8E4M3FN>
     %restored = pto.vmi.vcvt %quantized
         : !pto.vmi.vreg<256xf8E4M3FN> -> !pto.vmi.vreg<256xf32>
+    %scale_bf16 = pto.vmi.vbrc %scale
+        : bf16 -> !pto.vmi.vreg<256xbf16>
+    %scale_f32 = pto.vmi.vcvt %scale_bf16
+        : !pto.vmi.vreg<256xbf16> -> !pto.vmi.vreg<256xf32>
+    %scaled = pto.vmi.vmul %restored, %scale_f32
+        : !pto.vmi.vreg<256xf32>, !pto.vmi.vreg<256xf32>
+        -> !pto.vmi.vreg<256xf32>
+    %output = pto.vmi.vcvt %scaled {saturate = "SAT"}
+        : !pto.vmi.vreg<256xf32> -> !pto.vmi.vreg<256xbf16>
+    pto.vmi.vstore %output, %dst[%c0], %mask
+        : !pto.vmi.vreg<256xbf16>, !pto.ptr<bf16, ub>,
+          !pto.vmi.mask<256xpred>
+    return
+  }
+
+  func.func @bf16_f16_bf16_roundtrip(
+      %src: !pto.ptr<bf16, ub>,
+      %scale: bf16,
+      %dst: !pto.ptr<bf16, ub>) {
+    %c0 = arith.constant 0 : index
+    %c256 = arith.constant 256 : index
+    %mask = pto.vmi.create_mask %c256
+        : index -> !pto.vmi.mask<256xpred>
+    %input = pto.vmi.vload %src[%c0]
+        : !pto.ptr<bf16, ub> -> !pto.vmi.vreg<256xbf16>
+    %wide = pto.vmi.vcvt %input
+        : !pto.vmi.vreg<256xbf16> -> !pto.vmi.vreg<256xf32>
+    %narrow = pto.vmi.vcvt %wide {saturate = "SAT"}
+        : !pto.vmi.vreg<256xf32> -> !pto.vmi.vreg<256xf16>
+    %restored = pto.vmi.vcvt %narrow
+        : !pto.vmi.vreg<256xf16> -> !pto.vmi.vreg<256xf32>
     %scale_bf16 = pto.vmi.vbrc %scale
         : bf16 -> !pto.vmi.vreg<256xbf16>
     %scale_f32 = pto.vmi.vcvt %scale_bf16
@@ -107,15 +160,32 @@ module {
 
 // ASSIGN-LABEL: func.func @f32_fp8_f32_roundtrip(
 // ASSIGN: %[[INPUT:.*]] = pto.vmi.load
-// ASSIGN-SAME: -> !pto.vmi.vreg<256xbf16, #pto.vmi.layout<contiguous, lane_stride = 2>>
+// ASSIGN-SAME: -> !pto.vmi.vreg<256xbf16, #pto.vmi.layout<deinterleaved = 2>>
 // ASSIGN: %[[WIDE:.*]] = pto.vmi.extf %[[INPUT]]
-// ASSIGN-SAME: -> !pto.vmi.vreg<256xf32, #pto.vmi.layout<contiguous>>
+// ASSIGN-SAME: -> !pto.vmi.vreg<256xf32, #pto.vmi.layout<deinterleaved = 4>>
 // ASSIGN-NOT: pto.vmi.ensure_layout %[[WIDE]]
+// The quantised value is a pure narrow round trip (its only consumer is the
+// widening conversion below), so the spine-scoped composite cast rows keep it
+// split over the four physical parts of the deinterleaved wide side instead of
+// packing it back into contiguous order.
 // ASSIGN: %[[QUANTIZED:.*]] = pto.vmi.truncf %[[WIDE]]
-// ASSIGN-SAME: -> !pto.vmi.vreg<256xf8E4M3FN, #pto.vmi.layout<contiguous, lane_stride = 4>>
+// ASSIGN-SAME: -> !pto.vmi.vreg<256xf8E4M3FN, #pto.vmi.layout<deinterleaved = 4, lane_stride = 4>>
 // ASSIGN: %[[RESTORED:.*]] = pto.vmi.extf %[[QUANTIZED]]
-// ASSIGN-SAME: -> !pto.vmi.vreg<256xf32, #pto.vmi.layout<contiguous>>
+// ASSIGN-SAME: -> !pto.vmi.vreg<256xf32, #pto.vmi.layout<deinterleaved = 4>>
 // ASSIGN-NOT: pto.vmi.ensure_layout %[[QUANTIZED]]
+
+// 16-bit sibling: the same closed shape with an f32 -> f16 -> f32 inner narrow
+// leg.  The inner f16 value is again a pure narrow round trip, so the scoped
+// composite rows keep it split over the four physical parts of the wide side,
+// but the valid element now sits in the even lane of every 16-bit container.
+// ASSIGN-LABEL: func.func @bf16_f16_bf16_roundtrip(
+// ASSIGN: %[[WIDE16:.*]] = pto.vmi.extf
+// ASSIGN-SAME: -> !pto.vmi.vreg<256xf32, #pto.vmi.layout<deinterleaved = 4>>
+// ASSIGN: %[[F16:.*]] = pto.vmi.truncf %[[WIDE16]]
+// ASSIGN-SAME: -> !pto.vmi.vreg<256xf16, #pto.vmi.layout<deinterleaved = 4, lane_stride = 2>>
+// ASSIGN: %[[F16_BACK:.*]] = pto.vmi.extf %[[F16]]
+// ASSIGN-SAME: -> !pto.vmi.vreg<256xf32, #pto.vmi.layout<deinterleaved = 4>>
+// ASSIGN-NOT: pto.vmi.ensure_layout %[[F16]]
 
 // ASSIGN-LABEL: func.func @f32_f16_f32_roundtrip(
 // ASSIGN: %[[F16:.*]] = pto.vmi.truncf
@@ -140,8 +210,77 @@ module {
 // ASSIGN-NOT: pto.vmi.ensure_layout %[[UI8]]
 // ASSIGN: pto.vmi.store %[[UI8]]
 
+// Positive case: the deinterleaved layout lowers to a DINTLV load, one
+// narrowing conversion per part with no or-merge at all, and a single
+// interleave on the store path.  Because the quantised value is a pure narrow
+// round trip, each quantising conversion writes part 0 of its own carrier and
+// the matching widening conversion reads that same carrier back: the parts are
+// never assembled into one contiguous value and split again.
 // LOWER-LABEL: func.func @f32_fp8_f32_roundtrip(
-// LOWER-COUNT-4: pto.vcvt {{.*}} {part = "P0", rnd = "R", sat = "SAT"}
-// LOWER-NOT: part = "P1", rnd = "R", sat = "SAT"
-// LOWER-NOT: part = "P2", rnd = "R", sat = "SAT"
-// LOWER-NOT: part = "P3", rnd = "R", sat = "SAT"
+// LOWER: pto.vldsx2 {{.*}} "DINTLV_B16"
+// LOWER: %[[F8_0:[^,]+]] = pto.vcvt {{.*}} {part = "P0", rnd = "R", sat = "SAT"}
+// LOWER: %[[F8_1:[^,]+]] = pto.vcvt {{.*}} {part = "P0", rnd = "R", sat = "SAT"}
+// LOWER: %[[F8_2:[^,]+]] = pto.vcvt {{.*}} {part = "P0", rnd = "R", sat = "SAT"}
+// LOWER: %[[F8_3:[^,]+]] = pto.vcvt {{.*}} {part = "P0", rnd = "R", sat = "SAT"}
+// LOWER: %[[F8_BACK_0:[^,]+]] = pto.vcvt %[[F8_0]], {{.*}} {part = "P0"}
+// LOWER: %[[F8_BACK_1:[^,]+]] = pto.vcvt %[[F8_1]], {{.*}} {part = "P0"}
+// LOWER: %[[F8_BACK_2:[^,]+]] = pto.vcvt %[[F8_2]], {{.*}} {part = "P0"}
+// LOWER: %[[F8_BACK_3:[^,]+]] = pto.vcvt %[[F8_3]], {{.*}} {part = "P0"}
+// LOWER: %[[OUT_LOW:[^,]+]], %[[OUT_HIGH:[^,]+]] = pto.vintlv
+// LOWER: pto.vsts %[[OUT_LOW]]
+// LOWER: pto.vsts %[[OUT_HIGH]]
+
+// 16-bit nested case: identical shape, but the narrowing writes the even lane
+// of every 16-bit container.  The scoped composite form is one conversion per
+// wide part each way, so there is no pto.vor anywhere inside the inner
+// f32 -> f16 -> f32 leg (the two vor that remain further down belong to the
+// stored closing f32 -> bf16 leg).
+// LOWER-LABEL: func.func @bf16_f16_bf16_roundtrip(
+// LOWER: pto.vldsx2 {{.*}} "DINTLV_B16"
+// LOWER-NOT: pto.vor
+// LOWER: %[[F16_0:[^,]+]] = pto.vcvt {{.*}} {part = "EVEN", rnd = "R", sat = "SAT"}
+// LOWER-NOT: pto.vor
+// LOWER: %[[F16_1:[^,]+]] = pto.vcvt {{.*}} {part = "EVEN", rnd = "R", sat = "SAT"}
+// LOWER-NOT: pto.vor
+// LOWER: %[[F16_2:[^,]+]] = pto.vcvt {{.*}} {part = "EVEN", rnd = "R", sat = "SAT"}
+// LOWER-NOT: pto.vor
+// LOWER: %[[F16_3:[^,]+]] = pto.vcvt {{.*}} {part = "EVEN", rnd = "R", sat = "SAT"}
+// LOWER-NOT: pto.vor
+// LOWER: %[[F16_BACK_0:[^,]+]] = pto.vcvt %[[F16_0]], {{.*}} {part = "EVEN"}
+// LOWER-NOT: pto.vor
+// LOWER: %[[F16_BACK_1:[^,]+]] = pto.vcvt %[[F16_1]], {{.*}} {part = "EVEN"}
+// LOWER-NOT: pto.vor
+// LOWER: %[[F16_BACK_2:[^,]+]] = pto.vcvt %[[F16_2]], {{.*}} {part = "EVEN"}
+// LOWER-NOT: pto.vor
+// LOWER: %[[F16_BACK_3:[^,]+]] = pto.vcvt %[[F16_3]], {{.*}} {part = "EVEN"}
+
+// Counterexamples: a single round trip keeps the contiguous + lane_stride form
+// and therefore still needs no or-merge anywhere in its region.  The check-not
+// is repeated between every pair of anchors so that the whole region, not just
+// its first gap, is covered.
+// LOWER-LABEL: func.func @f32_f16_f32_roundtrip(
+// LOWER-NOT: pto.vor
+// LOWER: pto.vlds {{.*}} : !pto.ptr<f32, ub> -> !pto.vreg<64xf32>
+// LOWER-NOT: pto.vor
+// LOWER: pto.vcvt {{.*}} {part = "EVEN", rnd = "R", sat = "SAT"}
+// LOWER-NOT: pto.vor
+// LOWER: pto.vsts {{.*}} {dist = "PK_B32"}
+// LOWER-NOT: pto.vor
+
+// LOWER-LABEL: func.func @si32_si16_si32_roundtrip(
+// LOWER-NOT: pto.vor
+// LOWER: pto.vlds {{.*}} : !pto.ptr<si32, ub> -> !pto.vreg<64xsi32>
+// LOWER-NOT: pto.vor
+// LOWER: pto.vcvt {{.*}} {part = "EVEN", sat = "SAT"}
+// LOWER-NOT: pto.vor
+// LOWER: pto.vsts {{.*}} : !pto.vreg<64xsi32>
+// LOWER-NOT: pto.vor
+
+// LOWER-LABEL: func.func @ui32_ui8_ui32_roundtrip(
+// LOWER-NOT: pto.vor
+// LOWER: pto.vlds {{.*}} : !pto.ptr<ui32, ub> -> !pto.vreg<64xui32>
+// LOWER-NOT: pto.vor
+// LOWER: pto.vbitcast {{.*}} -> !pto.vreg<256xui8>
+// LOWER-NOT: pto.vor
+// LOWER: pto.vsts {{.*}} {dist = "PK4_B32"}
+// LOWER-NOT: pto.vor

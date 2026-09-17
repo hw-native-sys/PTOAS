@@ -7,6 +7,13 @@
 // See LICENSE in the root of the software repository for the full text of the License.
 
 // Included by PTO.cpp as part of the PTO IR implementation translation unit.
+// This fragment carries the shared imports for all fragments, so it also
+// carries the includes providing those names.
+
+#include "PTO/IR/PTOLayoutUtils.h"
+#include "PTO/IR/PTOSyncUtils.h"
+#include "PTO/IR/PTOTypeUtils.h"
+#include "mlir/Transforms/InliningUtils.h"
 
 // Explicit names shared by the PTO implementation fragments.
 namespace pto = mlir::pto;

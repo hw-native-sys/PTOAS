@@ -131,7 +131,7 @@ struct ResolvedMemoryAccess {
 };
 
 struct FrontierAccess {
-  VPTOSUnit *unit = nullptr;
+  const VPTOSUnit *unit = nullptr;
   ResolvedMemoryAccess access;
 };
 
@@ -769,7 +769,7 @@ static LogicalResult
 collectMemoryPredecessors(ArrayRef<FrontierAccess> frontier,
                           ArrayRef<ResolvedMemoryAccess> currentAccesses,
                           ConsumeWork &&consumeWork,
-                          SmallPtrSetImpl<VPTOSUnit *> &predecessors) {
+                          SmallPtrSetImpl<const VPTOSUnit *> &predecessors) {
   for (const FrontierAccess &prior : frontier) {
     for (const ResolvedMemoryAccess &current : currentAccesses) {
       if (failed(consumeWork())) {
@@ -803,7 +803,7 @@ collectResolvedMemoryAccesses(const VPTOSchedDAG &dag,
 
 static void
 updateMemoryFrontier(SmallVectorImpl<FrontierAccess> &frontier,
-                     VPTOSUnit *unit, // NOLINT(readability-non-const-parameter)
+                     const VPTOSUnit *unit,
                      ArrayRef<ResolvedMemoryAccess> currentAccesses) {
   llvm::erase_if(frontier, [&](const FrontierAccess &prior) {
     return llvm::any_of(
@@ -814,6 +814,35 @@ updateMemoryFrontier(SmallVectorImpl<FrontierAccess> &frontier,
   for (const ResolvedMemoryAccess &current : currentAccesses) {
     frontier.push_back({unit, current});
   }
+}
+
+template <typename ConsumeWork, typename AddEdge>
+static LogicalResult processMemoryAccess(
+    const VPTOSchedDAG &dag, SmallVectorImpl<FrontierAccess> &frontier,
+    VPTOSUnit &unit, ArrayRef<ResolvedMemoryAccess> currentAccesses,
+    ConsumeWork &&consumeWork, AddEdge &&addEdge) {
+  SmallPtrSet<const VPTOSUnit *, kVisitedOperationInlineCapacity>
+      predecessors;
+  if (failed(collectMemoryPredecessors(frontier, currentAccesses, consumeWork,
+                                       predecessors))) {
+    return mlir::failure();
+  }
+  for (const VPTOSUnit *predecessor : predecessors) {
+    VPTOSUnit *mutablePredecessor =
+        dag.lookup(predecessor->getOperation());
+    if (!mutablePredecessor ||
+        failed(addEdge(*mutablePredecessor, unit))) {
+      return mlir::failure();
+    }
+  }
+
+  // A write (or ordered/unknown access) replaces an earlier entry only when
+  // its may-alias coverage contains that entry. Partial overlap establishes
+  // an edge but cannot remove the old entry: a future access may touch only
+  // the uncovered portion. Read-only accesses remain side by side until a
+  // later closing access safely subsumes them.
+  updateMemoryFrontier(frontier, &unit, currentAccesses);
+  return success();
 }
 
 template <typename AddEdge>
@@ -983,36 +1012,23 @@ LogicalResult VPTOSchedDAGBuilder::buildMemoryEdges(
   }
 
   SmallVector<FrontierAccess> frontier;
+  auto addMemoryEdge = [this, &dag, &failure](VPTOSUnit &predecessor,
+                                               VPTOSUnit &successor) {
+    return addEdge(dag, predecessor, successor, VPTOSchedEdgeKind::Memory,
+                   VPTOSchedEdgeStrength::Must, /*latency=*/0,
+                   "may-alias memory frontier in original order", failure);
+  };
   for (auto indexedAccesses : llvm::enumerate(*resolved)) {
-    size_t unitIndex = indexedAccesses.index();
     ArrayRef<ResolvedMemoryAccess> currentAccesses = indexedAccesses.value();
     if (currentAccesses.empty()) {
       continue;
     }
-    VPTOSUnit *unit = dag.getUnits()[unitIndex].get();
-    SmallPtrSet<VPTOSUnit *, kVisitedOperationInlineCapacity> predecessors;
     auto consumeOne = [this, &failure]() { return consumeWork(failure); };
-    if (failed(collectMemoryPredecessors(frontier, currentAccesses, consumeOne,
-                                         predecessors))) {
+    VPTOSUnit *unit = dag.getUnits()[indexedAccesses.index()].get();
+    if (failed(processMemoryAccess(dag, frontier, *unit, currentAccesses,
+                                   consumeOne, addMemoryEdge))) {
       return mlir::failure();
     }
-    for (VPTOSUnit *predecessor : predecessors) {
-      if (failed(addEdge(dag, *predecessor, *unit,
-                         VPTOSchedEdgeKind::Memory,
-                         VPTOSchedEdgeStrength::Must,
-                         /*latency=*/0,
-                         "may-alias memory frontier in original order",
-                         failure))) {
-        return mlir::failure();
-      }
-    }
-
-    // A write (or ordered/unknown access) replaces an earlier entry only when
-    // its may-alias coverage contains that entry. Partial overlap establishes
-    // an edge but cannot remove the old entry: a future access may touch only
-    // the uncovered portion. Read-only accesses remain side by side until a
-    // later closing access safely subsumes them.
-    updateMemoryFrontier(frontier, unit, currentAccesses);
   }
   return success();
 }

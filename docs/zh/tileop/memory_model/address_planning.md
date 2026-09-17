@@ -2,62 +2,24 @@
 
 ## 概述
 
-`ptoas` 会把“需要哪些本地 / 工作区缓冲”转换成“这些缓冲实际落在什么偏移上”。这是第五章里最工程化的一环，也是把对象模型变成可生成代码表示的关键阶段。
+`ptoas` 会把 `pto.alloc_tile` 声明的本地 Tile 缓冲转换为实际地址。通常用户只需
+描述 Tile 的位置、形状和布局，无需指定每个缓冲区的偏移。
 
-## 入口
+## 用户入口
 
-## 规划模式
+使用正常的 `ptoas` 编译命令即可启用当前目标对应的地址规划：
 
-### `local-mem-plan` mode
+```bash
+ptoas --pto-arch=a3 input.pto -o output.cpp
+ptoas --pto-arch=a5 input.pto -o output.cpp
+```
 
-用于本地内存规划，核心目标是给参与本地地址规划的 buffer 分配本地偏移。
+地址规划由编译流程根据目标架构自动完成，无需额外选择规划模式。
 
-### `global-work-space-plan` mode
+## 自动规划行为
 
-用于全局 workspace 规划，适合需要工作区分配与复用的路径。
-
-## 关键选项
-
-当前实现暴露的主要选项包括：
-
-- `--mem-plan-mode=local-mem-plan`
-- `--mem-plan-mode=global-work-space-plan`
-- `--enable-global-workspace-reuse`
-- `--enable-print-memory-allocated-size`
-- `--restrict-inplace-as-isa`
-
-这些选项分别影响：
-
-- 规划对象属于本地地址空间还是全局工作区
-- 是否允许 workspace 复用
-- 是否打印分配规模
-- 是否按更保守的实现边界限制 inplace
-
-## 规划输入
-
-地址规划不是只看 `alloc_tile` 列表，而是组合多类分析结果：
-
-- buffer 信息
-- buffer 生命周期
-- gen / kill 信息
-- 语义冲突对
-- inplace 候选对
-- stable value order
-
-这些信息由 `MemLivenessAnalysis` 和相关辅助分析阶段构造，再交给 `MemPlan` 真正完成分配。
-
-## 规划过程概览
-
-典型流程可以概括为：
-
-1. 构建线性操作序
-2. 识别需要规划的 buffer
-3. 计算 buffer 生命周期
-4. 生成 inplace / conflict 关系
-5. 按地址空间与规划模式进行分配
-6. 回写偏移并把地址物化到 IR 中
-
-在本地地址规划模式下，普通本地 buffer 会先参与核心 `MemPlan` 算法；之后 `reserve_buffer` 再从同一地址空间中寻找对齐空洞。
+编译器会依据 Tile 的地址空间、大小、对齐和使用区间分配本地偏移，并在不改变
+程序语义的前提下复用存储。规划完成后，地址会写回相应对象，供后续代码生成使用。
 
 ## inplace 与复用
 
@@ -65,9 +27,8 @@
 
 - 生命周期不重叠的 buffer 可以候选复用
 - 满足语义条件的 buffer 可以形成 inplace 对
-- `restrict-inplace-as-isa` 会把某些本可复用的情况收紧为更保守策略
 
-这使得最终的地址规划结果通常取决于：
+最终的地址规划结果通常取决于：
 
 - 生命周期关系
 - 地址空间
@@ -76,19 +37,19 @@
 
 ## `reserve_buffer` 与地址规划的关系
 
-`reserve_buffer` 不进入普通 buffer 的核心 `MemPlan` 分配逻辑，而是在普通本地 buffer 完成规划后，再基于已占用区间找第一个满足对齐要求的空洞。
+`reserve_buffer` 会在普通本地 Tile 完成规划后，再从同一地址空间的未占用区间中
+选择满足大小和对齐要求的位置。
 
-自动分配模式下：
+自动分配时：
 
 - `auto = true`
 - `base` 必须缺省
-- pass 会补出解析后的 `base`
+- 编译器会补出解析后的 `base`
 
-当前 `local-mem-plan` 模式下：
+默认编译流程不接受 `auto = false` 的显式 `base`；普通 TileOp 程序应使用上述自动
+分配形式。
 
-- 显式 `base` 的 `reserve_buffer` 会被拒绝
-- 若需要保留显式基址路径，应走更接近手工控制的编译层级
+## 排查建议
 
-## 结果物化
-
-地址规划完成后，偏移信息会写回到相关对象，使后续阶段不再停留在抽象“待分配”状态。
+如果编译器报告本地内存不足或地址冲突，请先检查 Tile 的物理 shape、元素大小、
+`loc` 和同时存活的 Tile 数量。普通 TileOp 程序不应依赖未公开的内部规划选项。

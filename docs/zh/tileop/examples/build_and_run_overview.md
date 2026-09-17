@@ -8,9 +8,9 @@
 2. 使用 `ptoas` 生成 kernel C++
 3. 准备 `launch.cpp`，把 kernel entry 暴露成 host 可调用 wrapper
 4. 使用 CCE 编译器把 kernel C++ 与 `launch.cpp` 编译成 host 可链接的 fatobj
-5. 在 host 程序中分配内存、调用 launch wrapper，并通过 ACL 运行
+5. 在 host 程序中分配内存、调用 launch wrapper，并通过 AscendCL（Ascend Computing Language，昇腾编程语言，简称ACL）运行
 
-如果你的生成代码需要调用 PTO 指令 API，则它会通过 `pto-isa` 提供的统一入口头：
+如果你的生成代码需要调用 PTO 指令 API，则它会通过 `pto-isa` 提供的统一入口头文件：
 
 ```cpp
 #include <pto/pto-inst.hpp>
@@ -19,6 +19,8 @@
 `pto-isa` 的使用参考：
 
 - [https://gitcode.com/cann/pto-isa](https://gitcode.com/cann/pto-isa)
+
+本文档中 `pto-isa` 头文件统一写作 `#include <pto/pto-inst.hpp>`（`pto-isa` 推荐的统一入口头形式）；CANN 提供的头文件按 CANN 惯例写作 `#include "acl/acl.h"`。注意 `ptoas` 自身生成的 C++ 会输出 `#include "pto/pto-inst.hpp"` 的引号形式，两者指向同一个头文件，可互换使用。
 
 ## 第一步：使用 ptoas 生成 kernel C++
 
@@ -40,7 +42,7 @@ ptoas input.pto --pto-arch=a3 --enable-insert-sync -o input_kernel.cpp
 典型形态如下：
 
 ```cpp
-#include "pto/pto-inst.hpp"
+#include <pto/pto-inst.hpp>
 using namespace pto;
 
 __global__ AICORE void kernel_name(__gm__ float* a, __gm__ float* b, __gm__ float* c) {
@@ -195,12 +197,6 @@ example/
 - `launch.cpp`：kernel wrapper
 - `main.cpp`：host 侧运行入口
 - `CMakeLists.txt`：调用 `bisheng` 生成 fatobj 并链接 host 程序
-
-当前手册中的对应工程目录为：
-
-- [MatMul 示例](./matmul_example.md)
-- [Softmax 示例](./softmax_example.md)
-- [Flash Attention 示例](./flash_attention_example.md)
 
 ## 常见注意事项
 

@@ -1,6 +1,6 @@
 # 数据搬运操作
 
-本节描述了 PTO ISA 中用于数据搬运的指令族，包括从全局内存到本地缓冲区的数据转移、本地内存域之间的数据移动，以及标量元素的读写操作。这些操作采用"目标传递风格"（Destination-Passing Style, DPS）：操作本身不产生 SSA 返回值，而是直接将结果写入预先分配好的目标缓冲区或指针位置。
+本节描述了 PTO ISA 中用于数据搬运的指令族，包括从全局内存到本地缓冲区的数据转移、本地内存域之间的数据移动，以及标量元素的读写操作。这些操作采用"目标传递风格"（Destination-Passing Style，DPS）：操作本身不产生 SSA 返回值，而是直接将结果写入预先分配好的目标缓冲区或指针位置。
 
 数据搬运操作通常涉及以下场景：
 
@@ -157,14 +157,15 @@ pto.tprefetch ins(%pv : !pto.partition_tensor_view<16x16xf16>)
   - `src` 必须是扁平连续的逻辑 1D GM 视图。
   - `ctx` 必须是有效的 `prefetch_async_context`。
 
-**硬件管道：** PIPE_SDMA（异步 DMA 预取）
+**执行方式：** 该操作生成 `TPREFETCH_ASYNC` 调用，由 CANN 的 SDMA 运行时完成异步
+传输。`SDMA` 是这里的传输引擎，不是 PTO `PIPE_*` 调度枚举。
 
 **示例：**
 
 ```mlir
 %ctx = pto.make_prefetch_async_context(%workspace : !pto.ptr<i8>) -> !pto.prefetch_async_context
-%event = pto.tprefetch_async ins(%src, %ctx : !pto.partition_tensor_view<128xf32>, !pto.prefetch_async_context)
-                             -> !pto.async_event
+%event = pto.tprefetch_async(%src, %ctx : !pto.partition_tensor_view<128xf32>,
+                             !pto.prefetch_async_context) -> !pto.async_event
 ```
 
 ---
@@ -203,10 +204,14 @@ For each element (i, j) in tile valid region:
 
 **属性：**
 
-- `stPhase` — 存储阶段标记。默认值为 `unspecified`。
-  - `#pto<st_phase unspecified>` — 未指定的存储阶段
-  - `#pto<st_phase partial>` — 部分存储（累加中间值）
-  - `#pto<st_phase final>` — 最终存储（完成累加）
+- `stPhase` — `PTO_STPhaseAttr` 存储阶段属性，默认值为
+  `#pto<st_phase unspecified>`。
+
+  | 文本属性值 | 含义 |
+  | --- | --- |
+  | `#pto<st_phase unspecified>` | 未指定存储阶段 |
+  | `#pto<st_phase partial>` | 部分存储（累加中间值） |
+  | `#pto<st_phase final>` | 最终存储（完成累加） |
 
 - `atomicType` — 原子操作类型。默认值为 `atomic_none`。
   - `#pto<atomic_type atomic_none>` — 无原子操作
@@ -378,7 +383,7 @@ Element mode:
 
 - **类型约束（数据和索引）**
   - `mem` 和 `dst` 的元素类型必须相同。支持的类型：`i8`/`i16`/`i32`/`f16`/`bf16`/`f32`。A5 额外支持 `float8_e4m3`/`float8_e5m2` 系列。
-  - `idx` 的元素类型必须为无符号 `i32`。
+  - `idx` 的元素类型必须为 MLIR signless `i32`；不是 `ui32`。
 
 - **Tile / 内存角色**
   - `dst` 必须为 `loc=vec`、`blayout=row_major`、`slayout=none_box`。
@@ -480,7 +485,7 @@ Element mode:
 
 - **类型约束（数据和索引）**
   - `src` 和 `mem` 的元素类型必须相同。支持的类型：`i8`/`i16`/`i32`/`f16`/`bf16`/`f32`。A5 额外支持 `float8_e4m3`/`float8_e5m2` 系列。
-  - `idx` 的元素类型必须为无符号 `i32`。
+  - `idx` 的元素类型必须为 MLIR signless `i32`；不是 `ui32`。
 
 - **Tile / 内存角色**
   - `src` 必须为 `loc=vec`、`blayout=row_major`、`slayout=none_box`。
@@ -498,7 +503,7 @@ Element mode:
   - 默认 `scatterAtomicOp = none` 降低为默认 `MSCATTER(mem, src, idx)` 重载。
   - 非默认 `scatterAtomicOp` 值仅在 **A5** 上支持。
   - `add` 要求元素类型为 `i32`/`f16`/`f32`。
-  - `max`/`min` 要求元素类型为无符号 `i32` 或 `f32`。
+  - `max`/`min` 要求元素类型为 signless `i32` 或 `f32`。
 
 - **越界模式**
   - 默认 `scatterOob = undefined` 在仅指定 atomic 时降低为 `MSCATTER<Atomic>(mem, src, idx)` 形式，两个属性均为默认时降低为默认重载。
@@ -671,10 +676,16 @@ For each element (i, j):
   - 静态 shape 必须匹配。
   - 支持的位置对：`mat` → `left`/`right`/`bias`/`scaling`；`vec` → `vec`；`acc` → `mat`；`acc` → `vec`。
   - `accToVecMode` 仅用于 `acc` → `vec` 转换。
-  - `reluPreMode`、`fp`、`preQuantScalar` 仅在 `src.loc=acc` 时支持。
+  - `reluPreMode`、`fp`、`preQuantScalar` 仅在 `src.loc=acc` 时支持；`fp` 与 `preQuantScalar` 互斥。
+  - `fp` 必须使用 `loc=scaling`；带 `fp` 的源元素类型必须为 `f32` 或 32 位整数。
+  - `src.loc=acc` 且使用 `fp` 或 ReLU 时，源布局必须为 `blayout=col_major, slayout=row_major`。
+  - `acc` → `mat` 的目标 `fractal` 必须为 `512`；带 `fp` 时目标布局也必须为 `blayout=col_major, slayout=row_major`。
 
 - **实现检查（A5）**
-  - 类似于 A2A3，但支持的位置对为：`mat` → `left`/`right`/`bias`/`scaling`/`scale`；`vec` → `vec` 和 `vec` → `mat`；`acc` → `vec` 和 `acc` → `mat`。
+  - 支持的位置对为：`mat` → `left`/`right`/`bias`/`scaling`；`vec` → `vec`/`mat`；`acc` → `vec`/`mat`。
+  - `preQuantScalar`、`fp`、ReLU 与 `fp.loc=scaling` 的约束同上。
+  - `src.loc=acc` 且使用 `fp` 或 ReLU 时，源布局必须为 `blayout=col_major, slayout=row_major`。
+  - A5 不要求 `acc` → `mat` 的目标 `fractal=512`。
 
 **硬件管道：**
 

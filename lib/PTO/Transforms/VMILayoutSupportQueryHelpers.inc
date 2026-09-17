@@ -149,6 +149,35 @@ inline const GroupStoreLayoutPattern *selectPreferredGroupStorePattern(
   return selected;
 }
 
+// Pick the unique cast layout fact whose result layout equals \p resultLayout
+// from a successful source-side cast query.  The generic and the spine-scoped
+// cast reconciliation share this step; the caller supplies the diagnostics.
+static FailureOr<VMICastLayoutFact> selectCastLayoutFactForResultLayout(
+    ArrayRef<VMICastLayoutFact> facts, VMILayoutAttr resultLayout,
+    StringRef ambiguousMessage, StringRef noMatchMessage,
+    std::string *reason) {
+  std::optional<VMICastLayoutFact> selected;
+  for (const VMICastLayoutFact &fact : facts) {
+    if (fact.resultLayout != resultLayout) {
+      continue;
+    }
+    if (selected) {
+      if (reason) {
+        *reason = ambiguousMessage.str();
+      }
+      return failure();
+    }
+    selected = fact;
+  }
+  if (!selected) {
+    if (reason) {
+      *reason = noMatchMessage.str();
+    }
+    return failure();
+  }
+  return *selected;
+}
+
 } // namespace
 
 //===----------------------------------------------------------------------===//
@@ -372,12 +401,56 @@ LogicalResult VMILayoutSupport::getGroupBroadcastSupport(
       sourceType, resultType, numGroups, reason)));
 }
 
+// Checker-side acceptance for the two composite 32<->8 spine rows.
+//
+// This predicate is deliberately *not* part of the cast candidate path: it is
+// consulted only by the "is this assigned pair supportable" validators below
+// (getTruncFSupport / getExtFSupport and the matching residual-op guards in
+// VMIToVPTO), never by the layout solver or by the propagation transfer, which
+// reach the same rows exclusively through the spine-scoped queries.  Accepting
+// the pair here is what makes an already-seeded composite pair lowerable; it
+// cannot make any chain reach the pair on its own.
+static bool isSpineScopedCastLayoutPair(VMIVRegType sourceType,
+                                        VMIVRegType resultType,
+                                        VMILayoutAttr sourceLayout,
+                                        VMILayoutAttr resultLayout) {
+  if (!sourceLayout || !resultLayout) {
+    return false;
+  }
+  int64_t sourceBits =
+      pto::getPTOStorageElemBitWidth(sourceType.getElementType());
+  int64_t resultBits =
+      pto::getPTOStorageElemBitWidth(resultType.getElementType());
+  MLIRContext *ctx = sourceType.getContext();
+  int64_t numGroups =
+      sourceLayout.isGroupSlots() ? sourceLayout.getNumGroups() : 0;
+  for (const LegalCastLayoutPattern &pattern :
+       kSpineScopedLegalCastLayoutPatterns) {
+    if (!matchesElementBitsPattern(pattern.sourceBits, sourceBits) ||
+        !matchesElementBitsPattern(pattern.resultBits, resultBits)) {
+      continue;
+    }
+    if (matchesLayoutPattern(ctx, pattern.sourceLayout, sourceLayout,
+                             numGroups) &&
+        matchesLayoutPattern(ctx, pattern.resultLayout, resultLayout,
+                             numGroups)) {
+      return true;
+    }
+  }
+  return false;
+}
+
 inline LogicalResult getNarrowCastSupport(VMIVRegType sourceType,
                                           VMIVRegType resultType,
                                           std::string *reason) {
-  return success(succeeded(VMILayoutSupport().getCastLayoutFactForLayouts(
+  if (succeeded(VMILayoutSupport().getCastLayoutFactForLayouts(
+          sourceType, resultType, sourceType.getLayoutAttr(),
+          resultType.getLayoutAttr(), reason))) {
+    return success();
+  }
+  return success(isSpineScopedCastLayoutPair(
       sourceType, resultType, sourceType.getLayoutAttr(),
-      resultType.getLayoutAttr(), reason)));
+      resultType.getLayoutAttr()));
 }
 
 LogicalResult VMILayoutSupport::getTruncFSupport(VMITruncFOp op,
@@ -391,18 +464,28 @@ LogicalResult VMILayoutSupport::getExtFSupport(VMIExtFOp op,
                                                std::string *reason) const {
   auto sourceType = cast<VMIVRegType>(op.getSource().getType());
   auto resultType = cast<VMIVRegType>(op.getResult().getType());
-  return success(succeeded(getCastLayoutFactForLayouts(
+  if (succeeded(getCastLayoutFactForLayouts(
+          sourceType, resultType, sourceType.getLayoutAttr(),
+          resultType.getLayoutAttr(), reason))) {
+    return success();
+  }
+  return success(isSpineScopedCastLayoutPair(
       sourceType, resultType, sourceType.getLayoutAttr(),
-      resultType.getLayoutAttr(), reason)));
+      resultType.getLayoutAttr()));
 }
 
 template <typename OpT>
 inline LogicalResult getExtISupportImpl(OpT op, std::string *reason) {
   auto sourceType = cast<VMIVRegType>(op.getSource().getType());
   auto resultType = cast<VMIVRegType>(op.getResult().getType());
-  return success(succeeded(VMILayoutSupport().getCastLayoutFactForLayouts(
+  if (succeeded(VMILayoutSupport().getCastLayoutFactForLayouts(
+          sourceType, resultType, sourceType.getLayoutAttr(),
+          resultType.getLayoutAttr(), reason))) {
+    return success();
+  }
+  return success(isSpineScopedCastLayoutPair(
       sourceType, resultType, sourceType.getLayoutAttr(),
-      resultType.getLayoutAttr(), reason)));
+      resultType.getLayoutAttr()));
 }
 
 LogicalResult VMILayoutSupport::getExtSISupport(VMIExtSIOp op,

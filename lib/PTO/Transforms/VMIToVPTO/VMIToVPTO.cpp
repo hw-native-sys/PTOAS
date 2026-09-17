@@ -64,6 +64,7 @@ namespace {
 #include "VMIToVPTOPatternInternals3.cpp"
 #include "VMIToVPTOPatternInternals4.cpp"
 #include "VMIToVPTOPatternInternals5.cpp"
+#include "VMIToVPTOPatternInternals10.cpp"
 #include "VMIToVPTOPatternInternals6.cpp"
 #include "VMIToVPTOUnifiedPatternInternals.cpp"
 #include "VMIToVPTOPatternInternals7.cpp"

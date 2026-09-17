@@ -1,0 +1,96 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+
+// RUN: ptoas --pto-arch a5 --pto-backend=vpto --emit-vpto %s -o /dev/null
+//
+// Direction spine: <up, down, up, down> closing on the starting element type,
+// exactly as in roundtrip-bf16-f8-bf16, but here the narrow f8E4M3FN result is
+// *materialised* (stored to UB and copied out to GM) the way a real
+// quantise/dequantise kernel does:
+//
+//   bf16 --vcvt--> f32 --vmul--> f32 --vcvt--> f8E4M3FN   (quantise, stored)
+//   f8E4M3FN --vcvt--> f32 --vmul--> f32 --vcvt--> bf16   (dequantise, stored)
+//
+// The four cast legs are the same closed nested round trip as the lit template
+// test/lit/vmi_new/vmi_layout_assignment_cast_roundtrip.pto, so the direction
+// spine fires for the same reason; the difference is that the deinterleaved /
+// lane-stride choice for the narrow element type now also decides how the f8
+// value has to be reshuffled to reach contiguous UB memory.
+
+module attributes {pto.target_arch = "a5", pto.kernel_kind = #pto.kernel_kind<vector>} {
+  func.func @vmi_cast_spine_quant_dequant_bf16_f8_kernel(%src_gm: !pto.ptr<bf16, gm>,
+                                                         %q_gm: !pto.ptr<f8E4M3FN, gm>,
+                                                         %y_gm: !pto.ptr<bf16, gm>) attributes {pto.kernel} {
+    %c0 = arith.constant 0 : index
+    %c1 = arith.constant 1 : index
+    %c16 = arith.constant 16 : index
+    %c64 = arith.constant 64 : index
+    %c256 = arith.constant 256 : index
+    %c0_i64 = arith.constant 0 : i64
+    %c1_i64 = arith.constant 1 : i64
+    %c16384_i64 = arith.constant 16384 : i64
+    %c32768_i64 = arith.constant 32768 : i64
+    %c49152_i64 = arith.constant 49152 : i64
+    %quant_scale = arith.constant 1.500000e+00 : f32
+    %dequant_scale = arith.constant 2.000000e+00 : f32
+
+    %ub_src = pto.castptr %c0_i64 : i64 -> !pto.ptr<bf16, ub>
+    %ub_q = pto.castptr %c32768_i64 : i64 -> !pto.ptr<f8E4M3FN, ub>
+    %ub_y = pto.castptr %c49152_i64 : i64 -> !pto.ptr<bf16, ub>
+
+    pto.mte_gm_ub %src_gm, %ub_src, %c0_i64, %c32768_i64
+      nburst(%c1_i64, %c32768_i64, %c32768_i64)
+      : !pto.ptr<bf16, gm>, !pto.ptr<bf16, ub>, i64, i64, i64, i64, i64
+
+    pto.set_flag["PIPE_MTE2", "PIPE_V", "EVENT_ID0"]
+    pto.wait_flag["PIPE_MTE2", "PIPE_V", "EVENT_ID0"]
+
+    pto.vecscope {
+      scf.for %rep = %c0 to %c16 step %c1 {
+        scf.for %tile = %c0 to %c64 step %c1 {
+          %elem = arith.muli %tile, %c256 : index
+          %x_bf16 = pto.vmi.vload %ub_src[%elem]
+              : !pto.ptr<bf16, ub> -> !pto.vmi.vreg<256xbf16>
+          %x = pto.vmi.vcvt %x_bf16
+              : !pto.vmi.vreg<256xbf16> -> !pto.vmi.vreg<256xf32>
+          %qscale = pto.vmi.vbrc %quant_scale
+              : f32 -> !pto.vmi.vreg<256xf32>
+          %scaled = pto.vmi.vmul %x, %qscale
+              : !pto.vmi.vreg<256xf32>, !pto.vmi.vreg<256xf32>
+              -> !pto.vmi.vreg<256xf32>
+          %q = pto.vmi.vcvt %scaled {saturate = "SAT"}
+              : !pto.vmi.vreg<256xf32> -> !pto.vmi.vreg<256xf8E4M3FN>
+          pto.vmi.vstore %q, %ub_q[%elem]
+              : !pto.vmi.vreg<256xf8E4M3FN>, !pto.ptr<f8E4M3FN, ub>
+          %r = pto.vmi.vcvt %q
+              : !pto.vmi.vreg<256xf8E4M3FN> -> !pto.vmi.vreg<256xf32>
+          %dscale = pto.vmi.vbrc %dequant_scale
+              : f32 -> !pto.vmi.vreg<256xf32>
+          %restored = pto.vmi.vmul %r, %dscale
+              : !pto.vmi.vreg<256xf32>, !pto.vmi.vreg<256xf32>
+              -> !pto.vmi.vreg<256xf32>
+          %y = pto.vmi.vcvt %restored {saturate = "SAT"}
+              : !pto.vmi.vreg<256xf32> -> !pto.vmi.vreg<256xbf16>
+          pto.vmi.vstore %y, %ub_y[%elem]
+              : !pto.vmi.vreg<256xbf16>, !pto.ptr<bf16, ub>
+        }
+      }
+    }
+
+    pto.set_flag["PIPE_V", "PIPE_MTE3", "EVENT_ID0"]
+    pto.wait_flag["PIPE_V", "PIPE_MTE3", "EVENT_ID0"]
+    pto.mte_ub_gm %ub_q, %q_gm, %c16384_i64
+      nburst(%c1_i64, %c16384_i64, %c16384_i64)
+      : !pto.ptr<f8E4M3FN, ub>, !pto.ptr<f8E4M3FN, gm>, i64, i64, i64, i64
+    pto.mte_ub_gm %ub_y, %y_gm, %c32768_i64
+      nburst(%c1_i64, %c32768_i64, %c32768_i64)
+      : !pto.ptr<bf16, ub>, !pto.ptr<bf16, gm>, i64, i64, i64, i64
+    pto.barrier #pto.pipe<PIPE_ALL>
+    return
+  }
+}

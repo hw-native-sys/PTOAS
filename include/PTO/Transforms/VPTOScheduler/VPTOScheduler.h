@@ -59,7 +59,8 @@ struct VPTOScheduleDiagnostic {
   SmallVector<int64_t, kScheduleDiagnosticInlineCapacity> currentPressure;
   unsigned candidateCount = 0;
   std::optional<unsigned> closurePressureSet;
-  SmallVector<unsigned, 2> closureBundleOriginalIndices;
+  SmallVector<unsigned, kScheduleDiagnosticInlineCapacity>
+      closureBundleOriginalIndices;
   std::optional<unsigned> closureTargetOriginalIndex;
   unsigned closureGroupSize = 0;
   unsigned closureSteps = 0;

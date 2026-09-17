@@ -61,7 +61,7 @@ For each element at linear_index:
 **属性：**
 
 - `descending` — 是否生成降序序列。默认值为 `false`。
-  - `false` — 生成升序序列（S, S+1, S+2, ...）
+  - `false` — 生成升序序列（S，S+1，S+2，...）
   - `true` — 生成降序序列
 
 **约束：**
@@ -277,7 +277,7 @@ pto.tmrgsort ins(<src>, <blockLen> : <src_type>, <int_type>)
 // format2：多列表归并排序（2~4 路）
 pto.tmrgsort ins(<src0>, <src1>, ... , <tmp> {exhausted = <bool>} :
                  <src_type>, <src_type>, ... , <tmp_type>)
-             outs(<dst>, <excuted> : <dst_type>, vector<4xi16>)
+             outs(<dst>, <executed> : <dst_type>, vector<4xi16>)
 ```
 
 **语义：**
@@ -966,7 +966,7 @@ dst = philox_random(key0, key1, counter0..counter3, rounds)
 | `counter1` | `i32` | 计数器字 1 |
 | `counter2` | `i32` | 计数器字 2 |
 | `counter3` | `i32` | 计数器字 3 |
-| `dst` | `pto.tile_buf` | 目标 tile buffer（`i32`/`ui32`） |
+| `dst` | `pto.tile_buf` | 目标 tile 缓冲区（`i32`/`ui32`） |
 
 **返回值：** 无。以 DPS 的形式写入 `dst`。
 

@@ -19,6 +19,7 @@
 
 include "mlir/IR/OpBase.td"
 include "mlir/Interfaces/SideEffectInterfaces.td"
+include "mlir/Interfaces/InferIntRangeInterface.td"
 include "PTO/IR/VPTOInterfaces.td"
 
 def PTO_VectorType : Type<CPred<"::llvm::isa<::mlir::pto::VRegType>($_self)">,
@@ -534,6 +535,21 @@ class PTO_DirectSimtNullaryI32PureOp<string mnemonic>
   }];
 }
 
+/// Hardware-ID SIMT queries with a provably non-negative i32 result
+/// (thread/block IDs and dimensions). Excludes wrapping counters
+/// (get_clock*) and lanemask ops whose sign bit can be set; those must not
+/// be treated as non-negative range roots.
+class PTO_DirectSimtNullaryI32RangedPureOp<string mnemonic>
+    : PTO_SimtOp<mnemonic, [Pure,
+                            DeclareOpInterfaceMethods<InferIntRangeInterface, ["inferResultRanges"]>]> {
+  let arguments = (ins);
+  let results = (outs I32:$result);
+
+  let assemblyFormat = [{
+    attr-dict `:` type($result)
+  }];
+}
+
 class PTO_NullaryConfigOp<string mnemonic> : PTO_Op<mnemonic> {
   let arguments = (ins);
   let results = (outs);
@@ -628,20 +644,20 @@ def PTO_SetAtomicBF16Op : PTO_NullaryConfigOp<"set_atomic_bf16">;
 def PTO_SetAtomicS32Op : PTO_NullaryConfigOp<"set_atomic_s32">;
 def PTO_SetAtomicS16Op : PTO_NullaryConfigOp<"set_atomic_s16">;
 def PTO_SetAtomicS8Op : PTO_NullaryConfigOp<"set_atomic_s8">;
-def PTO_GetTidXOp : PTO_DirectSimtNullaryI32PureOp<"get_tid_x">;
-def PTO_GetTidYOp : PTO_DirectSimtNullaryI32PureOp<"get_tid_y">;
-def PTO_GetTidZOp : PTO_DirectSimtNullaryI32PureOp<"get_tid_z">;
-def PTO_GetBlockDimXOp : PTO_DirectSimtNullaryI32PureOp<"get_block_dim_x">;
-def PTO_GetBlockDimYOp : PTO_DirectSimtNullaryI32PureOp<"get_block_dim_y">;
-def PTO_GetBlockDimZOp : PTO_DirectSimtNullaryI32PureOp<"get_block_dim_z">;
-def PTO_GetGridDimXOp : PTO_DirectSimtNullaryI32PureOp<"get_grid_dim_x">;
-def PTO_GetGridDimYOp : PTO_DirectSimtNullaryI32PureOp<"get_grid_dim_y">;
-def PTO_GetGridDimZOp : PTO_DirectSimtNullaryI32PureOp<"get_grid_dim_z">;
-def PTO_GetBlockIdxXOp : PTO_DirectSimtNullaryI32PureOp<"get_block_idx_x">;
-def PTO_GetBlockIdxYOp : PTO_DirectSimtNullaryI32PureOp<"get_block_idx_y">;
-def PTO_GetBlockIdxZOp : PTO_DirectSimtNullaryI32PureOp<"get_block_idx_z">;
-def PTO_GetVecCoreIdOp : PTO_DirectSimtNullaryI32PureOp<"get_veccoreid">;
-def PTO_GetLaneIdOp : PTO_DirectSimtNullaryI32PureOp<"get_laneid">;
+def PTO_GetTidXOp : PTO_DirectSimtNullaryI32RangedPureOp<"get_tid_x">;
+def PTO_GetTidYOp : PTO_DirectSimtNullaryI32RangedPureOp<"get_tid_y">;
+def PTO_GetTidZOp : PTO_DirectSimtNullaryI32RangedPureOp<"get_tid_z">;
+def PTO_GetBlockDimXOp : PTO_DirectSimtNullaryI32RangedPureOp<"get_block_dim_x">;
+def PTO_GetBlockDimYOp : PTO_DirectSimtNullaryI32RangedPureOp<"get_block_dim_y">;
+def PTO_GetBlockDimZOp : PTO_DirectSimtNullaryI32RangedPureOp<"get_block_dim_z">;
+def PTO_GetGridDimXOp : PTO_DirectSimtNullaryI32RangedPureOp<"get_grid_dim_x">;
+def PTO_GetGridDimYOp : PTO_DirectSimtNullaryI32RangedPureOp<"get_grid_dim_y">;
+def PTO_GetGridDimZOp : PTO_DirectSimtNullaryI32RangedPureOp<"get_grid_dim_z">;
+def PTO_GetBlockIdxXOp : PTO_DirectSimtNullaryI32RangedPureOp<"get_block_idx_x">;
+def PTO_GetBlockIdxYOp : PTO_DirectSimtNullaryI32RangedPureOp<"get_block_idx_y">;
+def PTO_GetBlockIdxZOp : PTO_DirectSimtNullaryI32RangedPureOp<"get_block_idx_z">;
+def PTO_GetVecCoreIdOp : PTO_DirectSimtNullaryI32RangedPureOp<"get_veccoreid">;
+def PTO_GetLaneIdOp : PTO_DirectSimtNullaryI32RangedPureOp<"get_laneid">;
 def PTO_GetClock32Op : PTO_DirectSimtNullaryI32PureOp<"get_clock32">;
 def PTO_GetClock64Op : PTO_DirectSimtNullaryI64PureOp<"get_clock64">;
 def PTO_GetLaneMaskEqOp : PTO_DirectSimtNullaryI32PureOp<"get_lanemask_eq">;

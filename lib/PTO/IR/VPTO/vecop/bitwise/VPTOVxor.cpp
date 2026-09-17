@@ -14,6 +14,7 @@ using namespace mlir;
 using namespace mlir::pto;
 using namespace mlir::pto::vecop_detail;
 
+// NOLINTNEXTLINE(readability-make-member-function-const): ODS-generated verifier callback has a non-const signature.
 LogicalResult VxorOp::verify() {
   return verifyBinaryVecOp(*this, /*allowLowPrecision=*/true);
 }

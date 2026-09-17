@@ -1,6 +1,6 @@
 # 逐元素操作（Tile-Tile）
 
-本节描述了 PTO ISA 全部逐元素操作的指令名称、签名和语义。所有操作均作用于本地缓冲区（`tile_buf`，位于 `loc=vec` 空间），采用"目标传递风格"（Destination-Passing Style, DPS）：操作本身不产生 SSA 返回值，而是直接将结果写入预先分配好的目标 `tile_buf`。
+本节描述了 PTO ISA 全部逐元素操作的指令名称、签名和语义。所有操作均作用于本地缓冲区（`tile_buf`，位于 `loc=vec` 空间），采用"目标传递风格"（Destination-Passing Style，DPS）：操作本身不产生 SSA 返回值，而是直接将结果写入预先分配好的目标 `tile_buf`。
 
 这一类操作通常具有如下装配形式：
 
@@ -396,7 +396,7 @@ For each element (i, j):
   - `src0`、`src1` 和 `dst` 应具有相同的 `validRow/validCol`。
 
 - **实现检查（A5）**
-  - tile 元素类型必须为 `i32`、`i16`、`i8`、`f32` 或 `f16`。
+  - tile 元素类型必须为 `i32`、`i16`、`i8`、`f32`、`f16` 或 `bf16`。
   - tile 必须使用行优先布局 (`blayout=row_major`)。
   - 有效区域必须在静态 tile 形状范围内。
   - `src0`、`src1` 和 `dst` 应具有相同的 `validRow/validCol`。

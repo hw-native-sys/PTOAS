@@ -6,6 +6,9 @@
 // INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
 // See LICENSE in the root of the software repository for the full text of the License.
 
+#include "VPTOCANN900LLVMEmitterConfigTemplates.h"
+#include "VPTOCANN900LLVMEmitterPredicateTemplates.h"
+#include "VPTOCANN900LLVMEmitterScalarTemplates.h"
 #include "VPTOCANN900LLVMEmitterTemplates.h"
 
 namespace mlir::pto::detail {

@@ -39,13 +39,19 @@ ParseResult MadMxBiasOp::parse(OpAsmParser &parser, OperationState &result) {
                                                /*parseTf32ModeClause=*/false);
 }
 
+// NOLINTNEXTLINE(readability-make-member-function-const): ODS-generated printer callback has a non-const signature.
 void MadMxBiasOp::print(OpAsmPrinter &p) {
   printMadSemanticOpWithBias(p, *this, /*allowTf32Mode=*/false);
 }
 
+// NOLINTNEXTLINE(readability-make-member-function-const): ODS-generated interface callback has a non-const signature.
 bool MadMxBiasOp::isMadMxFamily() { return true; }
+// NOLINTNEXTLINE(readability-make-member-function-const): ODS-generated interface callback has a non-const signature.
 bool MadMxBiasOp::hasBiasOperand() { return true; }
+// NOLINTNEXTLINE(readability-make-member-function-const): ODS-generated interface callback has a non-const signature.
 bool MadMxBiasOp::readsAccumulator() { return false; }
+// NOLINTNEXTLINE(readability-make-member-function-const): ODS-generated interface callback has a non-const signature.
 bool MadMxBiasOp::supportsTf32Mode() { return false; }
 Value MadMxBiasOp::getBiasOrNull() { return getBias(); }
+// NOLINTNEXTLINE(readability-make-member-function-const): ODS-generated interface callback has a non-const signature.
 Attribute MadMxBiasOp::getTf32ModeAttr() { return {}; }

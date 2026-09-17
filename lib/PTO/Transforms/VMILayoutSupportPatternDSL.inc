@@ -207,7 +207,8 @@ inline VMILayoutAttr materializeLayoutPattern(MLIRContext *ctx,
   case LayoutPatternKind::LaneStride:
     return VMILayoutAttr::getContiguous(ctx, pattern.value);
   case LayoutPatternKind::Deinterleaved:
-    return VMILayoutAttr::getDeinterleaved(ctx, pattern.value);
+    return VMILayoutAttr::getDeinterleaved(ctx, pattern.value,
+                                           pattern.laneStride);
   case LayoutPatternKind::BlockDeinterleaved:
     return VMILayoutAttr::getBlockDeinterleaved(ctx, pattern.value);
   case LayoutPatternKind::GroupSlots:
@@ -246,6 +247,13 @@ static constexpr LayoutPattern ls(int64_t laneStride) {
 
 static constexpr LayoutPattern d(int64_t factor) {
   return {LayoutPatternKind::Deinterleaved, factor, 1};
+}
+
+// Deinterleaved with an explicit lane stride: the wide side of a storage-width
+// cast keeps its physical parts, and the narrow side carries each part in a
+// sparse lane-stride carrier so the narrowing/widening stays per-chunk 1:1.
+static constexpr LayoutPattern dls(int64_t factor, int64_t laneStride) {
+  return {LayoutPatternKind::Deinterleaved, factor, laneStride};
 }
 
 static constexpr LayoutPattern bd(int64_t factor) {

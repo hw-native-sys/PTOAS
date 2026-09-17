@@ -6,19 +6,45 @@
 // INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
 // See LICENSE in the root of the software repository for the full text of the License.
 
-// RUN: ptoas --pto-arch=a5 --pto-backend=vpto --vpto-scheduler=off --emit-vpto %s | FileCheck %s --check-prefix=VPTO --implicit-check-not=pto.vmi. --implicit-check-not='!pto.vmi' --implicit-check-not=pto.pge_ --implicit-check-not=pto.pintlv --implicit-check-not=pto.pdintlv --implicit-check-not=pto.vintlv --implicit-check-not=pto.vdintlv --implicit-check-not=pto.mem_bar --implicit-check-not=E2B_B16
+// Only one of the two file-wide "old layout" guards changed with the new
+// shape:
+//   * the vector-interleave op used to be forbidden.  The deinterleaved result
+//     now has to interleave once on the tail store path, so that guard is
+//     replaced by a positive assertion of the new shape (the interleave plus
+//     the two stores consuming its results) further down.
+//   * the E2B_B16 load dist stays forbidden, unchanged and still file-wide: the
+//     new shape loads with DINTLV_B16, so the guard still holds and there is no
+//     reason to weaken it to a scoped check-not.
+// RUN: ptoas --pto-arch=a5 --pto-backend=vpto --vpto-scheduler=off --emit-vpto %s | FileCheck %s --check-prefix=VPTO --implicit-check-not=pto.vmi. --implicit-check-not='!pto.vmi' --implicit-check-not=pto.pge_ --implicit-check-not=pto.pintlv --implicit-check-not=pto.pdintlv --implicit-check-not=pto.vdintlv --implicit-check-not=pto.mem_bar --implicit-check-not=E2B_B16
 
 // Optimization guard for the fused quant-to-FP8 and dequant-to-BF16 VMI demo.
 // This is the dynamic two-slot kernel derived from learning-chip/vmi-demo
 // quant/quant_dequant. Keep the row body as scf.for so it remains eligible for
 // hardware-loop lowering. The intended VPTO shape is:
-// - the reduction input becomes a direct DINTLV_B16 load, while the contiguous
-//   quant input becomes four UNPK_B16 loads;
+// - both the reduction input and the contiguous quant input are read with a
+//   direct DINTLV_B16 load. The bf16 -> f32 -> f8 -> f32 -> bf16 chain below is
+//   a closed nested round trip (up, down, up, down with the closing element
+//   type equal to the opening one), so layout assignment seeds the
+//   deinterleaved family for it; the four UNPK_B16 loads this check used to
+//   require belong to the single-round-trip layout and are gone;
 // - the eight reciprocal BF16 slots broadcast directly in registers, without
-//   a UB store/reload or VST_VLD barrier, then split into four data paths with
-//   bitcast + vzunpack;
+//   a UB store/reload or VST_VLD barrier, and stay in the 128-lane
+//   deinterleaved form, so the data paths consume them without the
+//   bitcast + vzunpack split;
 // - static predicates canonicalize to pset without predicate reorder ops;
-// - the FP8 roundtrip needs no standalone vector-interleave materialization.
+// - the FP8 intermediate is never packed back into contiguous order. Because
+//   the quantised value is a *pure* narrow round trip (its only consumer is the
+//   dequantising widening leg), the spine-scoped composite cast rows keep it
+//   split over the four deinterleaved physical parts, so each quantising pto.vcvt
+//   writes one part with part = "P0" and each dequantising pto.vcvt reads that
+//   same part back - no pto.vor assembly. This check therefore asserts the
+//   "no assembly" shape directly: the four quantising conversions, and the four
+//   dequantising conversions each consuming its own quantised part;
+// - the BF16 result is interleaved once (pto.vintlv) on the tail store path.
+//   The compute chain itself still needs no standalone interleave
+//   materialization; only the final contiguous store does.  (That 32->16 tail
+//   narrowing keeps its pto.vor merge: a deinterleaved 16-bit result chunk can
+//   only be produced as an even/odd sub-lane interleave of two 32-bit parts.)
 
 // VPTO-LABEL: func.func @fused_qd_vmi_current
 // VPTO-DAG: pto.pset_b16 "PAT_ALL"
@@ -31,62 +57,38 @@
 // VPTO: pto.vcgmax
 // VPTO: pto.vcvt {{.*}} {part = "EVEN", sat = "SAT"}
 // VPTO: %[[SCALE_ALIGN_OUT:.*]], %[[SCALE_BASE_OUT:.*]] = pto.vstus %[[SCALE_ALIGN_ARG]], {{.*}}, {{.*}}, %[[SCALE_BASE_ARG]]
-// VPTO: %[[RECIP_LOW:.*]] = pto.vselr {{.*}} : !pto.vreg<128xbf16>, !pto.vreg<128xui16> -> !pto.vreg<128xbf16>
-// VPTO: %[[RECIP_HIGH:.*]] = pto.vselr {{.*}} : !pto.vreg<128xbf16>, !pto.vreg<128xui16> -> !pto.vreg<128xbf16>
-// VPTO: %[[QUANT_0:[^,]+]], %{{.*}} = pto.vlds {{.*}} {dist = "UNPK_B16"}
-// VPTO: %[[QUANT_1:[^,]+]], %{{.*}} = pto.vlds {{.*}} {dist = "UNPK_B16"}
-// VPTO: %[[QUANT_2:[^,]+]], %{{.*}} = pto.vlds {{.*}} {dist = "UNPK_B16"}
-// VPTO: %[[QUANT_3:[^,]+]], %{{.*}} = pto.vlds {{.*}} {dist = "UNPK_B16"}
-// VPTO: %[[RECIP_LOW_BITS:.*]] = pto.vbitcast %[[RECIP_LOW]]
-// VPTO: %[[RECIP_0_WORDS:.*]] = pto.vzunpack %[[RECIP_LOW_BITS]], {{.*}}
-// VPTO: %[[RECIP_0:.*]] = pto.vbitcast %[[RECIP_0_WORDS]]
-// VPTO: %[[RECIP_1_WORDS:.*]] = pto.vzunpack %[[RECIP_LOW_BITS]], {{.*}}
-// VPTO: %[[RECIP_1:.*]] = pto.vbitcast %[[RECIP_1_WORDS]]
-// VPTO: %[[RECIP_HIGH_BITS:.*]] = pto.vbitcast %[[RECIP_HIGH]]
-// VPTO: %[[RECIP_2_WORDS:.*]] = pto.vzunpack %[[RECIP_HIGH_BITS]], {{.*}}
-// VPTO: %[[RECIP_2:.*]] = pto.vbitcast %[[RECIP_2_WORDS]]
-// VPTO: %[[RECIP_3_WORDS:.*]] = pto.vzunpack %[[RECIP_HIGH_BITS]], {{.*}}
-// VPTO: %[[RECIP_3:.*]] = pto.vbitcast %[[RECIP_3_WORDS]]
-// VPTO: pto.vmul %[[QUANT_0]], %[[RECIP_0]]
-// VPTO: pto.vmul %[[QUANT_1]], %[[RECIP_1]]
-// VPTO: pto.vmul %[[QUANT_2]], %[[RECIP_2]]
-// VPTO: pto.vmul %[[QUANT_3]], %[[RECIP_3]]
-// VPTO: %[[QUANT_FP8_0:.*]] = pto.vcvt {{.*}} {part = "P0", rnd = "R", sat = "SAT"}
-// VPTO: %[[QUANT_FP8_1:.*]] = pto.vcvt {{.*}} {part = "P0", rnd = "R", sat = "SAT"}
-// VPTO: %[[QUANT_FP8_2:.*]] = pto.vcvt {{.*}} {part = "P0", rnd = "R", sat = "SAT"}
-// VPTO: %[[QUANT_FP8_3:.*]] = pto.vcvt {{.*}} {part = "P0", rnd = "R", sat = "SAT"}
-// VPTO: %[[DEQUANT_SCALE_LOW:.*]] = pto.vselr {{.*}} : !pto.vreg<128xbf16>, !pto.vreg<128xui16> -> !pto.vreg<128xbf16>
-// VPTO: %[[DEQUANT_SCALE_HIGH:.*]] = pto.vselr {{.*}} : !pto.vreg<128xbf16>, !pto.vreg<128xui16> -> !pto.vreg<128xbf16>
-// VPTO: %[[DEQUANT_0:.*]] = pto.vcvt %[[QUANT_FP8_0]], {{.*}} {part = "P0"}
-// VPTO: %[[DEQUANT_1:.*]] = pto.vcvt %[[QUANT_FP8_1]], {{.*}} {part = "P0"}
-// VPTO: %[[DEQUANT_2:.*]] = pto.vcvt %[[QUANT_FP8_2]], {{.*}} {part = "P0"}
-// VPTO: %[[DEQUANT_3:.*]] = pto.vcvt %[[QUANT_FP8_3]], {{.*}} {part = "P0"}
-// VPTO: %[[DEQUANT_SCALE_LOW_BITS:.*]] = pto.vbitcast %[[DEQUANT_SCALE_LOW]]
-// VPTO: %[[DEQUANT_SCALE_0_WORDS:.*]] = pto.vzunpack %[[DEQUANT_SCALE_LOW_BITS]], {{.*}}
-// VPTO: %[[DEQUANT_SCALE_0:.*]] = pto.vbitcast %[[DEQUANT_SCALE_0_WORDS]]
-// VPTO: %[[DEQUANT_SCALE_1_WORDS:.*]] = pto.vzunpack %[[DEQUANT_SCALE_LOW_BITS]], {{.*}}
-// VPTO: %[[DEQUANT_SCALE_1:.*]] = pto.vbitcast %[[DEQUANT_SCALE_1_WORDS]]
-// VPTO: %[[DEQUANT_SCALE_HIGH_BITS:.*]] = pto.vbitcast %[[DEQUANT_SCALE_HIGH]]
-// VPTO: %[[DEQUANT_SCALE_2_WORDS:.*]] = pto.vzunpack %[[DEQUANT_SCALE_HIGH_BITS]], {{.*}}
-// VPTO: %[[DEQUANT_SCALE_2:.*]] = pto.vbitcast %[[DEQUANT_SCALE_2_WORDS]]
-// VPTO: %[[DEQUANT_SCALE_3_WORDS:.*]] = pto.vzunpack %[[DEQUANT_SCALE_HIGH_BITS]], {{.*}}
-// VPTO: %[[DEQUANT_SCALE_3:.*]] = pto.vbitcast %[[DEQUANT_SCALE_3_WORDS]]
-// VPTO: %[[DEQUANT_SCALE_F32_0:.*]] = pto.vcvt %[[DEQUANT_SCALE_0]], {{.*}} {part = "EVEN"}
-// VPTO: %[[DEQUANT_SCALE_F32_1:.*]] = pto.vcvt %[[DEQUANT_SCALE_1]], {{.*}} {part = "EVEN"}
-// VPTO: %[[DEQUANT_SCALE_F32_2:.*]] = pto.vcvt %[[DEQUANT_SCALE_2]], {{.*}} {part = "EVEN"}
-// VPTO: %[[DEQUANT_SCALE_F32_3:.*]] = pto.vcvt %[[DEQUANT_SCALE_3]], {{.*}} {part = "EVEN"}
-// VPTO: %[[DEQUANT_OUT_0:.*]] = pto.vmul %[[DEQUANT_0]], %[[DEQUANT_SCALE_F32_0]]
-// VPTO: %[[DEQUANT_OUT_1:.*]] = pto.vmul %[[DEQUANT_1]], %[[DEQUANT_SCALE_F32_1]]
-// VPTO: %[[DEQUANT_OUT_2:.*]] = pto.vmul %[[DEQUANT_2]], %[[DEQUANT_SCALE_F32_2]]
-// VPTO: %[[DEQUANT_OUT_3:.*]] = pto.vmul %[[DEQUANT_3]], %[[DEQUANT_SCALE_F32_3]]
-// VPTO: %[[DEQUANT_BF16_0:.*]] = pto.vcvt %[[DEQUANT_OUT_0]], {{.*}} {part = "EVEN", rnd = "R", sat = "SAT"}
-// VPTO: %[[DEQUANT_BF16_1:.*]] = pto.vcvt %[[DEQUANT_OUT_1]], {{.*}} {part = "EVEN", rnd = "R", sat = "SAT"}
-// VPTO: %[[DEQUANT_BF16_2:.*]] = pto.vcvt %[[DEQUANT_OUT_2]], {{.*}} {part = "EVEN", rnd = "R", sat = "SAT"}
-// VPTO: %[[DEQUANT_BF16_3:.*]] = pto.vcvt %[[DEQUANT_OUT_3]], {{.*}} {part = "EVEN", rnd = "R", sat = "SAT"}
-// VPTO: pto.vsts %[[DEQUANT_BF16_0]], {{.*}} {dist = "PK_B32"}
-// VPTO: pto.vsts %[[DEQUANT_BF16_1]], {{.*}} {dist = "PK_B32"}
-// VPTO: pto.vsts %[[DEQUANT_BF16_2]], {{.*}} {dist = "PK_B32"}
-// VPTO: pto.vsts %[[DEQUANT_BF16_3]], {{.*}} {dist = "PK_B32"}
+// VPTO: %[[RECIP:[^,]*]] = pto.vselr {{.*}} : !pto.vreg<128xbf16>, !pto.vreg<128xui16> -> !pto.vreg<128xbf16>
+// VPTO: %[[QUANT_LOW:[^,]+]], %[[QUANT_HIGH:[^,]+]], %{{.*}} = pto.vldsx2 {{.*}}, "DINTLV_B16"
+// VPTO: %[[QUANT_SCALED_LOW:[^,]+]] = pto.vmul %[[QUANT_LOW]], %[[RECIP]]
+// VPTO: %[[QUANT_SCALED_HIGH:[^,]+]] = pto.vmul %[[QUANT_HIGH]], %[[RECIP]]
+// VPTO: %[[QUANT_F32_0:[^,]+]] = pto.vcvt %[[QUANT_SCALED_LOW]], {{.*}} {part = "EVEN"}
+// VPTO: %[[QUANT_F32_1:[^,]+]] = pto.vcvt %[[QUANT_SCALED_HIGH]], {{.*}} {part = "EVEN"}
+// VPTO: %[[QUANT_F32_2:[^,]+]] = pto.vcvt %[[QUANT_SCALED_LOW]], {{.*}} {part = "ODD"}
+// VPTO: %[[QUANT_F32_3:[^,]+]] = pto.vcvt %[[QUANT_SCALED_HIGH]], {{.*}} {part = "ODD"}
+// VPTO: %[[QUANT_FP8_0:[^,]+]] = pto.vcvt %[[QUANT_F32_0]], {{.*}} {part = "P0", rnd = "R", sat = "SAT"}
+// VPTO: %[[QUANT_FP8_1:[^,]+]] = pto.vcvt %[[QUANT_F32_1]], {{.*}} {part = "P0", rnd = "R", sat = "SAT"}
+// VPTO: %[[QUANT_FP8_2:[^,]+]] = pto.vcvt %[[QUANT_F32_2]], {{.*}} {part = "P0", rnd = "R", sat = "SAT"}
+// VPTO: %[[QUANT_FP8_3:[^,]+]] = pto.vcvt %[[QUANT_F32_3]], {{.*}} {part = "P0", rnd = "R", sat = "SAT"}
+// VPTO: %[[DEQUANT_SCALE:[^,]*]] = pto.vselr {{.*}} : !pto.vreg<128xbf16>, !pto.vreg<128xui16> -> !pto.vreg<128xbf16>
+// VPTO: %[[DEQUANT_0:[^,]+]] = pto.vcvt %[[QUANT_FP8_0]], {{.*}} {part = "P0"}
+// VPTO: %[[DEQUANT_1:[^,]+]] = pto.vcvt %[[QUANT_FP8_1]], {{.*}} {part = "P0"}
+// VPTO: %[[DEQUANT_2:[^,]+]] = pto.vcvt %[[QUANT_FP8_2]], {{.*}} {part = "P0"}
+// VPTO: %[[DEQUANT_3:[^,]+]] = pto.vcvt %[[QUANT_FP8_3]], {{.*}} {part = "P0"}
+// VPTO: %[[DEQUANT_SCALE_F32_EVEN:[^,]+]] = pto.vcvt %[[DEQUANT_SCALE]], {{.*}} {part = "EVEN"}
+// VPTO: %[[DEQUANT_SCALE_F32_ODD:[^,]+]] = pto.vcvt %[[DEQUANT_SCALE]], {{.*}} {part = "ODD"}
+// VPTO: %[[DEQUANT_OUT_0:[^,]+]] = pto.vmul %[[DEQUANT_0]], %[[DEQUANT_SCALE_F32_EVEN]]
+// VPTO: %[[DEQUANT_OUT_1:[^,]+]] = pto.vmul %[[DEQUANT_1]], %[[DEQUANT_SCALE_F32_EVEN]]
+// VPTO: %[[DEQUANT_OUT_2:[^,]+]] = pto.vmul %[[DEQUANT_2]], %[[DEQUANT_SCALE_F32_ODD]]
+// VPTO: %[[DEQUANT_OUT_3:[^,]+]] = pto.vmul %[[DEQUANT_3]], %[[DEQUANT_SCALE_F32_ODD]]
+// VPTO: %[[DEQUANT_BF16_EVEN:[^,]+]] = pto.vcvt %[[DEQUANT_OUT_0]], {{.*}} {part = "EVEN", rnd = "R", sat = "SAT"}
+// VPTO: %[[DEQUANT_BF16_ODD:[^,]+]] = pto.vcvt %[[DEQUANT_OUT_2]], {{.*}} {part = "ODD", rnd = "R", sat = "SAT"}
+// VPTO: %[[DEQUANT_BF16_LOW:[^,]+]] = pto.vor %[[DEQUANT_BF16_EVEN]], %[[DEQUANT_BF16_ODD]]
+// VPTO: %[[DEQUANT_BF16_EVEN_HI:[^,]+]] = pto.vcvt %[[DEQUANT_OUT_1]], {{.*}} {part = "EVEN", rnd = "R", sat = "SAT"}
+// VPTO: %[[DEQUANT_BF16_ODD_HI:[^,]+]] = pto.vcvt %[[DEQUANT_OUT_3]], {{.*}} {part = "ODD", rnd = "R", sat = "SAT"}
+// VPTO: %[[DEQUANT_BF16_HIGH:[^,]+]] = pto.vor %[[DEQUANT_BF16_EVEN_HI]], %[[DEQUANT_BF16_ODD_HI]]
+// VPTO: %[[DEQUANT_LOW:[^,]+]], %[[DEQUANT_HIGH:[^,]+]] = pto.vintlv %[[DEQUANT_BF16_LOW]], %[[DEQUANT_BF16_HIGH]]
+// VPTO: pto.vsts %[[DEQUANT_LOW]], {{.*}} -> !pto.ptr<bf16, ub>
+// VPTO: pto.vsts %[[DEQUANT_HIGH]], {{.*}} -> !pto.ptr<bf16, ub>
 // VPTO: scf.yield %[[SCALE_BASE_OUT]], %[[SCALE_ALIGN_OUT]]
 // VPTO: pto.vstas %[[SCALE_LOOP]]#1, %[[SCALE_LOOP]]#0,
 

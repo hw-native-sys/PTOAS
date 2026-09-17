@@ -48,12 +48,8 @@
 
 ## 常见构造路径
 
-- `pto.alloc_tile`
-- `pto.bind_tile`
-- `pto.materialize_tile`
-- `pto.declare_tile`
-
-其中最常见的是 `pto.alloc_tile`。
+用户程序通过 `pto.alloc_tile` 创建 `!pto.tile_buf` 值。`pto.declare_tile`
+用于地址稍后分配的低层场景，不是常规 TileOp 编程入口。
 
 ## 特殊说明
 

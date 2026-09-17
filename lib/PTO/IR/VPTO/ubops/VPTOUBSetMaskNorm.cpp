@@ -14,6 +14,7 @@ using namespace mlir;
 using namespace mlir::pto;
 using namespace mlir::pto::ubops_detail;
 
+// NOLINTNEXTLINE(readability-make-member-function-const): ODS-generated side-effect callback has a non-const signature.
 void UBSetMaskNormOp::getEffects(
     SmallVectorImpl<SideEffects::EffectInstance<MemoryEffects::Effect>>
         &effects) {
@@ -21,6 +22,7 @@ void UBSetMaskNormOp::getEffects(
                        SideEffects::DefaultResource::get());
 }
 
+// NOLINTNEXTLINE(readability-make-member-function-const): ODS-generated verifier callback has a non-const signature.
 LogicalResult UBSetMaskNormOp::verify() {
   return success();
 }

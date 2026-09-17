@@ -59,10 +59,17 @@ FailureOr<bool> isPaddingLane(Type type, int64_t part, int64_t chunk,
 /// granule a 2048-bit physical carrier is divided into eight of.
 inline constexpr int64_t kVMIVCGBlockBytes = 32;
 
+/// A 2048-bit physical carrier is divided into exactly eight VCG blocks; loads
+/// spanning more than this many blocks use a different lowering strategy.
+inline constexpr int64_t kVMIMaxContiguousLoadBlocks = 8;
+
 /// Number of 32-byte blocks in a bounded contiguous load, or zero if the
 /// shape needs another load strategy. Preserve the existing single-block
 /// short-read footprint; larger partial carriers must occupy whole blocks.
 /// Full carriers keep their existing VLD(S) lowering.
+/// Bits in one byte; element payloads must be byte-addressable.
+inline constexpr int64_t kVMIBitsPerByte = 8;
+
 inline int64_t getVMIContiguousLoadBlockCount(VMIVRegType type) {
   VMILayoutAttr layout = type.getLayoutAttr();
   if (!layout || !layout.isContiguous() || layout.getLaneStride() != 1) {
@@ -73,19 +80,20 @@ inline int64_t getVMIContiguousLoadBlockCount(VMIVRegType type) {
     return 0;
   }
   unsigned elementBits = getPTOStorageElemBitWidth(type.getElementType());
-  if (elementBits == 0 || elementBits % 8 != 0) {
+  if (elementBits == 0 || elementBits % kVMIBitsPerByte != 0) {
     return 0;
   }
   int64_t payloadBytes = 0;
   if (type.getElementCount() <= 0 ||
       llvm::MulOverflow(type.getElementCount(),
-                        static_cast<int64_t>(elementBits / 8), payloadBytes)) {
+                        static_cast<int64_t>(elementBits / kVMIBitsPerByte),
+                        payloadBytes)) {
     return 0;
   }
   if (payloadBytes <= kVMIVCGBlockBytes) {
     return 1;
   }
-  if (payloadBytes >= 8 * kVMIVCGBlockBytes ||
+  if (payloadBytes >= kVMIMaxContiguousLoadBlocks * kVMIVCGBlockBytes ||
       payloadBytes % kVMIVCGBlockBytes != 0) {
     return 0;
   }
