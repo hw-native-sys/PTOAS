@@ -10842,38 +10842,39 @@ struct OneToNVMIGroupReduceOpPattern : OneToNOpConversionPattern<OpTy> {
                              combineMask(maskParts[1], *highMask))
                          .getResult();
 
-      MLIRContext *ctx = rewriter.getContext();
-      auto indexType = VRegType::get(
-          ctx, resultType.getElementCount(), IntegerType::get(ctx, 32));
-      FailureOr<Value> lane0Index = createGroupSlotIndexVector(
-          op.getLoc(), indexType, resultType.getElementCount(),
-          /*baseGroupSlot=*/0, rewriter);
-      FailureOr<Value> zero =
-          createZeroVector(op.getLoc(), resultType, rewriter);
-      if (failed(lane0Index) || failed(zero))
+      FailureOr<Value> lane0Mask =
+          createLaneRangeMask(op.getLoc(), maskType, 0, 1, rewriter);
+      FailureOr<Value> lane2Mask =
+          createLaneRangeMask(op.getLoc(), maskType, 2, 3, rewriter);
+      FailureOr<Value> lane01Mask =
+          createLaneRangeMask(op.getLoc(), maskType, 0, 2, rewriter);
+      if (failed(lane0Mask) || failed(lane2Mask) || failed(lane01Mask))
         return rewriter.notifyMatchFailure(
-            op, "failed to materialize contiguous f32 group=4 pack helpers");
+            op, "failed to materialize contiguous f32 group=4 pack masks");
 
       SmallVector<Value, 4> broadcasts;
       broadcasts.reserve(4);
       for (Value group : {group0, group1, group2, group3})
-        broadcasts.push_back(rewriter
-                                 .create<VselrOp>(op.getLoc(), resultType,
-                                                  group, *lane0Index)
-                                 .getResult());
+        broadcasts.push_back(
+            rewriter
+                .create<VdupOp>(op.getLoc(), resultType, group, *allTrue,
+                                rewriter.getStringAttr("LOWEST"))
+                .getResult());
 
-      Value packed = *zero;
-      for (int64_t lane = 0; lane < 4; ++lane) {
-        FailureOr<Value> laneMask = createLaneRangeMask(
-            op.getLoc(), maskType, lane, lane + 1, rewriter);
-        if (failed(laneMask))
-          return rewriter.notifyMatchFailure(
-              op, "failed to materialize contiguous group slot mask");
-        packed = rewriter
-                     .create<VselOp>(op.getLoc(), resultType, broadcasts[lane],
-                                     packed, *laneMask)
-                     .getResult();
-      }
+      Value pair01 = rewriter
+                         .create<VselOp>(op.getLoc(), resultType,
+                                         broadcasts[0], broadcasts[1],
+                                         *lane0Mask)
+                         .getResult();
+      Value pair23 = rewriter
+                         .create<VselOp>(op.getLoc(), resultType,
+                                         broadcasts[2], broadcasts[3],
+                                         *lane2Mask)
+                         .getResult();
+      Value packed = rewriter
+                         .create<VselOp>(op.getLoc(), resultType, pair01,
+                                         pair23, *lane01Mask)
+                         .getResult();
 
       replaceOpWithFlatConvertedValues(
           rewriter, op, SmallVector<Value>{packed},

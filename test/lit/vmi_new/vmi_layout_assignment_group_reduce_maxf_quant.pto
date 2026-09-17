@@ -117,8 +117,9 @@ module {
 
 // LOWER-LABEL: func.func @vmi_layout_assignment_group_reduce_maxf_group4_contiguous(
 // LOWER-COUNT-4: pto.vcmax
-// LOWER-COUNT-4: pto.vselr
-// LOWER-COUNT-4: pto.vsel
+// LOWER-COUNT-4: pto.vdup {{.*}} {position = "LOWEST"}
+// LOWER-COUNT-3: pto.vsel
+// LOWER-NOT: pto.vselr
 // LOWER-NOT: pto.vcgmax
 // LOWER-NOT: pto.vdintlv
 // LOWER-NOT: pto.vmi.
