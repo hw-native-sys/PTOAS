@@ -43,6 +43,28 @@ module {
         : !pto.vmi.vreg<64x!pto.f4E2M1x2>, !pto.ptr<!pto.f4E2M1x2, ub>
     return
   }
+
+  func.func @vmi_to_vpto_truncf_f32_bf16_contiguous_z_vmul(
+      %src: !pto.ptr<f32, ub>,
+      %scale: !pto.vmi.vreg<128xbf16>,
+      %dst: !pto.ptr<!pto.f4E2M1x2, ub>) {
+    %c0 = arith.constant 0 : index
+    %c128 = arith.constant 128 : index
+    %mask = pto.vmi.create_mask %c128 : index -> !pto.vmi.mask<128xpred>
+    %input = pto.vmi.vload %src[%c0]
+        : !pto.ptr<f32, ub> -> !pto.vmi.vreg<128xf32>
+    %packed = pto.vmi.truncf %input {rounding = "Z", saturate = "SAT"}
+        : !pto.vmi.vreg<128xf32> -> !pto.vmi.vreg<128xbf16>
+    %scaled = pto.vmi.vmul %packed, %scale, %mask
+        : !pto.vmi.vreg<128xbf16>, !pto.vmi.vreg<128xbf16>, !pto.vmi.mask<128xpred> -> !pto.vmi.vreg<128xbf16>
+    %pair = pto.vmi.vinterpret_cast %scaled
+        : !pto.vmi.vreg<128xbf16> -> !pto.vmi.vreg<64x!pto.bf16x2>
+    %f4 = pto.vmi.vcvt %pair {rounding = "R"}
+        : !pto.vmi.vreg<64x!pto.bf16x2> -> !pto.vmi.vreg<64x!pto.f4E2M1x2>
+    pto.vmi.vstore %f4, %dst[%c0]
+        : !pto.vmi.vreg<64x!pto.f4E2M1x2>, !pto.ptr<!pto.f4E2M1x2, ub>
+    return
+  }
 }
 
 // ASSIGN-LABEL: func.func @vmi_to_vpto_truncf_f32_bf16_contiguous_r(
@@ -98,3 +120,24 @@ module {
 // LOWER-NOT: pto.vmi.
 // LOWER-NOT: !pto.vmi.
 // LOWER-NOT: unrealized_conversion_cast
+
+// ASSIGN-LABEL: func.func @vmi_to_vpto_truncf_f32_bf16_contiguous_z_vmul(
+// ASSIGN: %[[PACKED:.*]] = pto.vmi.truncf
+// ASSIGN-SAME: !pto.vmi.vreg<128xf32, #pto.vmi.layout<contiguous>> -> !pto.vmi.vreg<128xbf16, #pto.vmi.layout<contiguous>>
+// ASSIGN: %[[SCALED:.*]] = pto.vmi.mulf %[[PACKED]]
+// ASSIGN-SAME: -> !pto.vmi.vreg<128xbf16, #pto.vmi.layout<contiguous>>
+// ASSIGN-NOT: pto.vmi.ensure_layout
+
+// LOWER-LABEL: func.func @vmi_to_vpto_truncf_f32_bf16_contiguous_z_vmul(
+// LOWER: %[[A16:.*]] = pto.vbitcast {{.*}} : !pto.vreg<64xf32> -> !pto.vreg<64xi32>
+// LOWER: %[[A_U16:.*]] = pto.vbitcast %[[A16]] : !pto.vreg<64xi32> -> !pto.vreg<128xi16>
+// LOWER: %[[B16:.*]] = pto.vbitcast {{.*}} : !pto.vreg<64xf32> -> !pto.vreg<64xi32>
+// LOWER: %[[B_U16:.*]] = pto.vbitcast %[[B16]] : !pto.vreg<64xi32> -> !pto.vreg<128xi16>
+// LOWER: %[[LOW:.*]], %[[HIGH:.*]] = pto.vdintlv %[[A_U16]], %[[B_U16]]
+// LOWER: %[[BF:.*]] = pto.vbitcast %[[HIGH]] : !pto.vreg<128xi16> -> !pto.vreg<128xbf16>
+// LOWER: %[[SCALED:.*]] = pto.vmul %[[BF]], {{.*}} : !pto.vreg<128xbf16>, !pto.vreg<128xbf16>, !pto.mask<b16> -> !pto.vreg<128xbf16>
+// LOWER-NOT: pto.vpack
+// LOWER-NOT: pto.vor
+// LOWER: pto.vsts {{.*}} {dist = "PK4_B32"}
+// LOWER-NOT: pto.vmi.
+// LOWER-NOT: !pto.vmi.

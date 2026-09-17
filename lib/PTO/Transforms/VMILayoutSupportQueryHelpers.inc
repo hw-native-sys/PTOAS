@@ -257,6 +257,12 @@ static bool hasPackedFP4NarrowConsumer(Value value) {
           continue;
         }
       }
+      if (auto mul = dyn_cast<VMIMulFOp>(user)) {
+        if (mul.getLhs() == current || mul.getRhs() == current) {
+          worklist.push_back(mul.getResult());
+          continue;
+        }
+      }
       auto truncf = dyn_cast<VMITruncFOp>(user);
       if (!truncf || truncf.getSource() != current)
         continue;
