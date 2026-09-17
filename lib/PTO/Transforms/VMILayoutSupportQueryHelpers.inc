@@ -285,6 +285,36 @@ bool VMILayoutSupport::isPackedFP4PairTruncF(VMITruncFOp op) const {
   return hasPackedFP4NarrowConsumer(op.getResult());
 }
 
+static bool hasGroupReduceMaxFUser(Value value) {
+  SmallVector<Value, 8> worklist{value};
+  while (!worklist.empty()) {
+    Value current = worklist.pop_back_val();
+    for (OpOperand &use : current.getUses()) {
+      Operation *user = use.getOwner();
+      if (auto reduce = dyn_cast<VMIGroupReduceMaxFOp>(user)) {
+        if (reduce.getSource() == current)
+          return true;
+      }
+      if (auto max = dyn_cast<VMIMaxFOp>(user)) {
+        if (max.getLhs() == current || max.getRhs() == current) {
+          worklist.push_back(max.getResult());
+          continue;
+        }
+      }
+    }
+  }
+  return false;
+}
+
+bool VMILayoutSupport::isBF16AmaxToReduce(VMIExtFOp op) const {
+  auto sourceType = dyn_cast<VMIVRegType>(op.getSource().getType());
+  auto resultType = dyn_cast<VMIVRegType>(op.getResult().getType());
+  if (!sourceType || !resultType || !sourceType.getElementType().isBF16() ||
+      !resultType.getElementType().isF32())
+    return false;
+  return hasGroupReduceMaxFUser(op.getResult());
+}
+
 FailureOr<SmallVector<VMICastLayoutFact, mlir::pto::kValue4>>
 VMILayoutSupport::getTruncFLayoutFactsForLayout(
     VMITruncFOp op, VMICastLayoutPort port, VMILayoutAttr layout,

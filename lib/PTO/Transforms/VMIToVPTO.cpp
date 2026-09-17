@@ -11570,6 +11570,37 @@ struct OneToNVMIExtFOpPattern : OneToNOpConversionPattern<VMIExtFOp> {
 
     VMILayoutAttr sourceLayout = sourceVMIType.getLayoutAttr();
     VMILayoutAttr resultLayout = resultVMIType.getLayoutAttr();
+    if (sourceBits == 16 && sourceType.getElementType().isBF16() &&
+        resultVRegTypes.front().getElementType().isF32() && sourceLayout &&
+        resultLayout && sourceLayout.isContiguous() &&
+        sourceLayout.getLaneStride() == 1 && resultLayout.isContiguous() &&
+        resultLayout.getLaneStride() == 1 &&
+        resultTypes.size() == 2 * sourceParts.size()) {
+      FailureOr<Value> zero =
+          createZeroVector(op.getLoc(), sourceType, rewriter);
+      if (failed(zero))
+        return rewriter.notifyMatchFailure(
+            op, "failed to build bf16 extf zero vector");
+
+      SmallVector<Value> results;
+      results.reserve(resultTypes.size());
+      for (Value sourcePart : sourceParts) {
+        auto interleaved = rewriter.create<VintlvOp>(
+            op.getLoc(), sourceType, sourceType, *zero, sourcePart);
+        for (Value part : {interleaved.getLow(), interleaved.getHigh()}) {
+          FailureOr<Value> converted =
+              bitcastVReg(op.getLoc(), part, resultVRegTypes.front(), rewriter);
+          if (failed(converted))
+            return rewriter.notifyMatchFailure(
+                op, "failed to bitcast interleaved bf16 extf result");
+          results.push_back(*converted);
+        }
+      }
+      replaceOpWithFlatConvertedValues(rewriter, op, results,
+                                       *this->getTypeConverter());
+      return success();
+    }
+
     if (sourceLayout && resultLayout && sourceLayout.isContiguous() &&
         resultLayout.isContiguous() && resultLayout.getLaneStride() == 1 &&
         ((sourceBits == 16 && sourceLayout.getLaneStride() == 2) ||

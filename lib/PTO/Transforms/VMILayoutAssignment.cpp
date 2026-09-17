@@ -756,6 +756,17 @@ struct LayoutSolver {
       }
     }
 
+    if constexpr (std::is_same_v<CastOp, VMIExtFOp>) {
+      if (VMILayoutSupport().isBF16AmaxToReduce(castOp)) {
+        VMILayoutAttr contiguous = getContiguousLayout();
+        requestDataUse(castOp.getSourceMutable(), contiguous, /*late=*/false,
+                       DataLayoutSeedPhase::CompactCast);
+        return *constraintResult(setPreferredLayout(
+            castOp.getResult(), contiguous, op,
+            DataLayoutSeedPhase::CompactCast));
+      }
+    }
+
     FailureOr<VMICastLayoutFact> fact =
         VMILayoutSupport().getPreferredCastLayoutFact(sourceType, resultType);
     if (failed(fact)) {

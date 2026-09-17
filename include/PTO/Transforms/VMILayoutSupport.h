@@ -450,6 +450,8 @@ public:
                                 VMILayoutAttr layout,
                                 std::string *reason = nullptr) const;
 
+  bool isBF16AmaxToReduce(VMIExtFOp op) const;
+
   LogicalResult getExtFSupport(VMIExtFOp op,
                                std::string *reason = nullptr) const;
 

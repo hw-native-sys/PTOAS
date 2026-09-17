@@ -236,6 +236,7 @@ static constexpr LegalCastLayoutPattern kLegalCastLayoutPatterns[] = {
     {bits<8>(), bits<16>(), d(2), d(4)},
     {bits<16>(), bits<32>(), c(), d(2)},
     {bits<16>(), bits<32>(), ls(2), c()},
+    {bits<16>(), bits<32>(), c(), c(), CastTypeClass::BF16ToF32},
     {bits<16>(), bits<32>(), d(2), d(4)},
 
     // 2x narrowing.
