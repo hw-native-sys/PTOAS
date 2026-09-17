@@ -1,0 +1,41 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+
+// RUN: pto-test-opt %s -vmi-lower-unified-to-legacy -vmi-mask-granularity-assignment -vmi-layout-assignment | FileCheck %s --check-prefix=ASSIGN
+// RUN: pto-test-opt %s -vmi-lower-unified-to-legacy -vmi-mask-granularity-assignment -vmi-layout-assignment -vmi-to-vpto | FileCheck %s --check-prefix=LOWER
+
+module {
+  func.func @vmi_to_vpto_trunci_i32_i16_contiguous(
+      %src: !pto.ptr<i32, ub>, %dst: !pto.ptr<i16, ub>) {
+    %c0 = arith.constant 0 : index
+    %input = pto.vmi.vload %src[%c0]
+        : !pto.ptr<i32, ub> -> !pto.vmi.vreg<128xi32, #pto.vmi.layout<contiguous>>
+    %trunc = pto.vmi.trunci %input {saturate = "NOSAT"}
+        : !pto.vmi.vreg<128xi32, #pto.vmi.layout<contiguous>> -> !pto.vmi.vreg<128xi16, #pto.vmi.layout<contiguous>>
+    pto.vmi.vstore %trunc, %dst[%c0]
+        : !pto.vmi.vreg<128xi16, #pto.vmi.layout<contiguous>>, !pto.ptr<i16, ub>
+    return
+  }
+}
+
+// ASSIGN-LABEL: func.func @vmi_to_vpto_trunci_i32_i16_contiguous
+// ASSIGN: %[[INPUT:.*]] = pto.vmi.load
+// ASSIGN-SAME: !pto.vmi.vreg<128xi32, #pto.vmi.layout<contiguous>>
+// ASSIGN: %[[TRUNC:.*]] = pto.vmi.trunci %[[INPUT]]
+// ASSIGN-SAME: !pto.vmi.vreg<128xi32, #pto.vmi.layout<contiguous>> -> !pto.vmi.vreg<128xi16, #pto.vmi.layout<contiguous>>
+
+// LOWER-LABEL: func.func @vmi_to_vpto_trunci_i32_i16_contiguous
+// LOWER: %[[P0:.*]] = pto.vlds {{.*}} : !pto.ptr<i32, ub> -> !pto.vreg<64xi32>
+// LOWER: %[[P1:.*]] = pto.vlds {{.*}} : !pto.ptr<i32, ub> -> !pto.vreg<64xi32>
+// LOWER: %[[U0:.*]] = pto.vbitcast %[[P0]] : !pto.vreg<64xi32> -> !pto.vreg<128xi16>
+// LOWER: %[[U1:.*]] = pto.vbitcast %[[P1]] : !pto.vreg<64xi32> -> !pto.vreg<128xi16>
+// LOWER: %[[LOW:.*]], %[[HIGH:.*]] = pto.vdintlv %[[U0]], %[[U1]] : !pto.vreg<128xi16>, !pto.vreg<128xi16> -> !pto.vreg<128xi16>, !pto.vreg<128xi16>
+// LOWER: pto.vsts %[[LOW]]
+// LOWER-NOT: pto.vcvt
+// LOWER-NOT: pto.vmi.
+// LOWER-NOT: !pto.vmi.

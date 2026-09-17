@@ -12419,6 +12419,56 @@ struct OneToNVMIExtIOpPattern : OneToNOpConversionPattern<OpT> {
 //   - 32-bit integer -> 8-bit integer, slots = 8, result lane_stride = 4
 //     Lowering shape: no vcvt; keep/bitcast the 32-bit carrier and let the
 //     later store consume it as PK4_B32.
+FailureOr<SmallVector<Value>> lowerContiguousI32ToI16Pair(
+    VMITruncIOp op, ValueRange sourceParts, ArrayRef<Type> resultTypes,
+    PatternRewriter &rewriter) {
+  Location loc = op.getLoc();
+  if (sourceParts.empty() || resultTypes.empty() ||
+      sourceParts.size() != 2 * resultTypes.size())
+    return failure();
+
+  auto sourcePartType = dyn_cast<VRegType>(sourceParts.front().getType());
+  auto resultPartType = dyn_cast<VRegType>(resultTypes.front());
+  if (!sourcePartType || !resultPartType ||
+      !isa<IntegerType>(sourcePartType.getElementType()) ||
+      !isa<IntegerType>(resultPartType.getElementType()) ||
+      sourcePartType.getElementType().getIntOrFloatBitWidth() != 32 ||
+      resultPartType.getElementType().getIntOrFloatBitWidth() != 16 ||
+      sourcePartType.getElementCount() * 2 != resultPartType.getElementCount())
+    return failure();
+
+  for (Value sourcePart : sourceParts)
+    if (sourcePart.getType() != sourcePartType)
+      return failure();
+  for (Type resultType : resultTypes)
+    if (resultType != resultPartType)
+      return failure();
+
+  auto i16Type = VRegType::get(rewriter.getContext(),
+                               resultPartType.getElementCount(),
+                               rewriter.getIntegerType(16));
+  SmallVector<Value> results;
+  results.reserve(resultTypes.size());
+  for (size_t resultIndex = 0; resultIndex < resultTypes.size();
+       ++resultIndex) {
+    FailureOr<Value> even =
+        bitcastVReg(loc, sourceParts[2 * resultIndex], i16Type, rewriter);
+    FailureOr<Value> odd =
+        bitcastVReg(loc, sourceParts[2 * resultIndex + 1], i16Type, rewriter);
+    if (failed(even) || failed(odd))
+      return failure();
+
+    auto deinterleaved = rewriter.create<VdintlvOp>(
+        loc, i16Type, i16Type, *even, *odd);
+    FailureOr<Value> result =
+        bitcastVReg(loc, deinterleaved.getLow(), resultPartType, rewriter);
+    if (failed(result))
+      return failure();
+    results.push_back(*result);
+  }
+  return results;
+}
+
 struct OneToNVMITruncIOpPattern : OneToNOpConversionPattern<VMITruncIOp> {
   using OneToNOpConversionPattern<VMITruncIOp>::OneToNOpConversionPattern;
 
@@ -12586,6 +12636,21 @@ struct OneToNVMITruncIOpPattern : OneToNOpConversionPattern<VMITruncIOp> {
     int64_t factor = sourceBits / resultBits;
 
     StringAttr sat = op->getAttrOfType<StringAttr>("saturate");
+
+    if (sourceBits == 32 && resultBits == 16 && sourceLayout && resultLayout &&
+        sourceLayout.isContiguous() && sourceLayout.getLaneStride() == 1 &&
+        resultLayout.isContiguous() && resultLayout.getLaneStride() == 1 &&
+        sourceParts.size() == 2 * resultTypes.size() && sat &&
+        sat.getValue() == "NOSAT") {
+      FailureOr<SmallVector<Value>> results = lowerContiguousI32ToI16Pair(
+          op, sourceParts, resultTypes, rewriter);
+      if (failed(results))
+        return rewriter.notifyMatchFailure(
+            op, "unsupported contiguous i32 -> i16 pair lowering");
+      replaceOpWithFlatConvertedValues(rewriter, op, *results,
+                                       *this->getTypeConverter());
+      return success();
+    }
 
     bool isDenseLaneStrideNarrowing =
         sourceLayout && resultLayout && sourceLayout.isContiguous() &&
