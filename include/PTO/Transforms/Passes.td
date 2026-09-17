@@ -1617,7 +1617,10 @@ def VPTOOptimizeVcvt
     conversions with `pto.vbitcast` when a canonical zero-filling producer --
     an unpack load, `pto.vzunpack` chain, or aligned narrowing `pto.vcvt` --
     proves that every widened carrier's high bits are zero. A following CSE
-    pass can then merge duplicate conversions and remove dead masks.
+    pass can then merge duplicate conversions and remove dead masks. It also
+    reconnects `vdintlv(vbitcast(vshrs(x, 16)), ...)` high-half extraction to
+    `vdintlv(vbitcast(x), ...)` so CSE can merge it with the parallel low-half
+    extraction used by bit-level round-to-odd conversions.
   }];
   let constructor = "mlir::pto::createVPTOOptimizeVcvtPass()";
   let dependentDialects = ["mlir::pto::PTODialect"];

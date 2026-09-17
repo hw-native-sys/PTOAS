@@ -10,6 +10,7 @@
 #include "PTO/IR/PTO.h"
 #include "PTO/IR/PTOTypeUtils.h"
 #include "PTO/Transforms/Passes.h"
+#include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/IR/BuiltinOps.h"
 #include "mlir/IR/PatternMatch.h"
 #include "mlir/Pass/Pass.h"
@@ -46,6 +47,18 @@ static bool isAllTrueMask(Value mask) {
     return op.getPattern() == "PAT_ALL";
   }
   return false;
+}
+
+static std::optional<int64_t> getConstantInt(Value value) {
+  if (auto constant = value.getDefiningOp<arith::ConstantIntOp>()) {
+    return constant.value();
+  }
+  if (auto constant = value.getDefiningOp<arith::ConstantOp>()) {
+    if (auto integer = dyn_cast<IntegerAttr>(constant.getValue())) {
+      return integer.getInt();
+    }
+  }
+  return std::nullopt;
 }
 
 static bool isPairEquivalentLoadDist(StringRef dist) {
@@ -271,12 +284,74 @@ struct FoldZeroGapExtensionPattern : public OpRewritePattern<VcvtOp> {
   }
 };
 
+// Fold the high-half extraction used by bit-level round-odd conversion:
+//
+//   lhs = vbitcast(vshrs(A, 16))
+//   rhs = vbitcast(vshrs(B, 16))
+//   _, high = vdintlv(lhs, rhs)
+//
+// The used `high` result is exactly the high-half stream of
+//
+//   low, high = vdintlv(vbitcast(A), vbitcast(B))
+//
+// Reconnecting the shifted form to the unshifted operands lets the ordinary
+// CSE pass merge it with the parallel low-half extraction.
+struct FoldShiftedVdintlvPattern : public OpRewritePattern<VdintlvOp> {
+  using OpRewritePattern::OpRewritePattern;
+
+  static std::optional<Value> getShiftedInput(Value value) {
+    auto bitcast = value.getDefiningOp<VbitcastOp>();
+    if (!bitcast)
+      return std::nullopt;
+    auto shift = bitcast.getInput().getDefiningOp<VshrsOp>();
+    if (!shift || !isAllTrueMask(shift.getMask()))
+      return std::nullopt;
+    std::optional<int64_t> amount = getConstantInt(shift.getScalar());
+    if (!amount || *amount != 16)
+      return std::nullopt;
+
+    auto inputType = dyn_cast<VRegType>(shift.getInput().getType());
+    auto resultType = dyn_cast<VRegType>(bitcast.getResult().getType());
+    if (!inputType || !resultType ||
+        getPTOStorageElemBitWidth(inputType.getElementType()) != 32 ||
+        getPTOStorageElemBitWidth(resultType.getElementType()) != 16)
+      return std::nullopt;
+    return shift.getInput();
+  }
+
+  LogicalResult matchAndRewrite(VdintlvOp op,
+                                PatternRewriter &rewriter) const override {
+    if (!op.getHigh().use_empty() || op.getLow().use_empty())
+      return failure();
+
+    std::optional<Value> lhsInput = getShiftedInput(op.getLhs());
+    std::optional<Value> rhsInput = getShiftedInput(op.getRhs());
+    if (!lhsInput || !rhsInput)
+      return failure();
+
+    Value lhs = rewriter
+                    .create<VbitcastOp>(op.getLoc(), op.getLhs().getType(),
+                                        *lhsInput)
+                    .getResult();
+    Value rhs = rewriter
+                    .create<VbitcastOp>(op.getLoc(), op.getRhs().getType(),
+                                        *rhsInput)
+                    .getResult();
+    auto unshifted = rewriter.create<VdintlvOp>(
+        op.getLoc(), op.getLow().getType(), op.getHigh().getType(), lhs, rhs);
+    rewriter.replaceAllUsesWith(op.getLow(), unshifted.getHigh());
+    rewriter.eraseOp(op);
+    return success();
+  }
+};
+
 struct VPTOOptimizeVcvtPass
     : public pto::impl::VPTOOptimizeVcvtBase<VPTOOptimizeVcvtPass> {
   void runOnOperation() override {
     RewritePatternSet patterns(&getContext());
     patterns.add<CanonicalizeEquivalentPartPattern,
-                 FoldZeroGapExtensionPattern>(&getContext());
+                 FoldZeroGapExtensionPattern,
+                 FoldShiftedVdintlvPattern>(&getContext());
     if (failed(applyPatternsAndFoldGreedily(getOperation(), std::move(patterns)))) {
       signalPassFailure();
     }

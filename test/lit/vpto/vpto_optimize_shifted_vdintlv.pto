@@ -1,0 +1,43 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+
+// RUN: pto-test-opt %s -vpto-optimize-vcvt -cse | FileCheck %s
+
+module {
+  func.func @fold_shifted_vdintlv(%a: !pto.vreg<64xi32>, %b: !pto.vreg<64xi32>)
+      -> !pto.vreg<128xi16> {
+    %mask32 = pto.pset_b32 "PAT_ALL" : !pto.mask<b32>
+    %mask16 = pto.pset_b16 "PAT_ALL" : !pto.mask<b16>
+    %c16 = arith.constant 16 : i16
+
+    %a16 = pto.vbitcast %a : !pto.vreg<64xi32> -> !pto.vreg<128xi16>
+    %b16 = pto.vbitcast %b : !pto.vreg<64xi32> -> !pto.vreg<128xi16>
+    %a_shr = pto.vshrs %a, %c16, %mask32
+        : !pto.vreg<64xi32>, i16, !pto.mask<b32> -> !pto.vreg<64xi32>
+    %b_shr = pto.vshrs %b, %c16, %mask32
+        : !pto.vreg<64xi32>, i16, !pto.mask<b32> -> !pto.vreg<64xi32>
+    %a_shr16 = pto.vbitcast %a_shr : !pto.vreg<64xi32> -> !pto.vreg<128xi16>
+    %b_shr16 = pto.vbitcast %b_shr : !pto.vreg<64xi32> -> !pto.vreg<128xi16>
+
+    %shifted_lo, %shifted_hi = pto.vdintlv %a_shr16, %b_shr16
+        : !pto.vreg<128xi16>, !pto.vreg<128xi16> -> !pto.vreg<128xi16>, !pto.vreg<128xi16>
+    %lo, %hi = pto.vdintlv %a16, %b16
+        : !pto.vreg<128xi16>, !pto.vreg<128xi16> -> !pto.vreg<128xi16>, !pto.vreg<128xi16>
+    %result = pto.vor %shifted_lo, %lo, %mask16
+        : !pto.vreg<128xi16>, !pto.vreg<128xi16>, !pto.mask<b16> -> !pto.vreg<128xi16>
+    return %result : !pto.vreg<128xi16>
+  }
+}
+
+// CHECK-LABEL: func.func @fold_shifted_vdintlv
+// CHECK: %[[A16:.*]] = pto.vbitcast %arg0
+// CHECK: %[[B16:.*]] = pto.vbitcast %arg1
+// CHECK: %[[LOW:.*]], %[[HIGH:.*]] = pto.vdintlv %[[A16]], %[[B16]]
+// CHECK-NOT: pto.vdintlv
+// CHECK: pto.vor %[[HIGH]], %[[LOW]]
+// CHECK-NOT: pto.vshrs
