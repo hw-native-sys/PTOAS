@@ -1,0 +1,56 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+
+// RUN: pto-test-opt %s -vmi-lower-unified-to-legacy -pto-validate-vmi-ir | FileCheck %s --check-prefix=SURFACE
+// RUN: pto-test-opt %s -vmi-lower-unified-to-legacy -vmi-mask-granularity-assignment -vmi-layout-assignment -vmi-to-vpto | FileCheck %s --check-prefix=LOWER
+
+// The block-strided forms take no mask operand from the surface: the legacy
+// lowering materializes an all-active mask for them, and that mask has to use
+// `pred` granularity so `pto-validate-vmi-ir` accepts the surface VMI IR (the
+// concrete b8/b16/b32 granularity is assigned later by
+// -vmi-mask-granularity-assignment).
+
+module {
+  func.func @block_store_without_mask(
+      %src: !pto.ptr<i32, ub>, %dst: !pto.ptr<i32, ub>, %off: index) {
+    %c0 = arith.constant 0 : index
+    %bs = arith.constant 8 : i16
+    %v = pto.vmi.vload %src[%c0]
+        : !pto.ptr<i32, ub> -> !pto.vmi.vreg<256xi32>
+    pto.vmi.vstore %v, %dst[%off], %bs
+        : !pto.vmi.vreg<256xi32>, !pto.ptr<i32, ub>
+    return
+  }
+
+  func.func @block_load_without_mask(
+      %src: !pto.ptr<i32, ub>, %dst: !pto.ptr<i32, ub>, %off: index) {
+    %c0 = arith.constant 0 : index
+    %bs = arith.constant 8 : i16
+    %v = pto.vmi.vload %src[%c0], %bs
+        : !pto.ptr<i32, ub> -> !pto.vmi.vreg<256xi32>
+    pto.vmi.vstore %v, %dst[%off]
+        : !pto.vmi.vreg<256xi32>, !pto.ptr<i32, ub>
+    return
+  }
+}
+
+// SURFACE-LABEL: func.func @block_store_without_mask(
+// SURFACE: pto.vmi.create_mask
+// SURFACE-SAME: -> !pto.vmi.mask<256xpred>
+// SURFACE: pto.vmi.stride_store
+// SURFACE-SAME: !pto.vmi.mask<256xpred>
+// SURFACE-LABEL: func.func @block_load_without_mask(
+// SURFACE: pto.vmi.create_mask
+// SURFACE-SAME: -> !pto.vmi.mask<256xpred>
+// SURFACE: pto.vmi.stride_load
+// SURFACE-SAME: !pto.vmi.mask<256xpred>
+
+// LOWER-LABEL: func.func @block_store_without_mask(
+// LOWER: pto.vsstb
+// LOWER-LABEL: func.func @block_load_without_mask(
+// LOWER: pto.vsldb

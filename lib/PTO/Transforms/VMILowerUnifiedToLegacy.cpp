@@ -70,6 +70,7 @@
 #include "PTO/IR/PTO.h"
 #include "PTO/IR/PTOTypeUtils.h"
 #include "PTO/Transforms/Passes.h"
+#include "VMI/VMIIndexUtils.h"
 
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/IR/BuiltinOps.h"
@@ -404,16 +405,11 @@ static LogicalResult lowerVCvt(VMICvtOp op, OpBuilder &builder) {
 //===----------------------------------------------------------------------===//
 
 static StringAttr getMaskGranularity(Type elementType, OpBuilder &builder) {
-  unsigned bits = mlir::pto::kValue32;
-  if (auto integerType = dyn_cast<IntegerType>(elementType)) {
-    bits = integerType.getWidth();
-  } else if (auto floatType = dyn_cast<FloatType>(elementType)) {
-    bits = floatType.getWidth();
-  }
-  StringRef granularity = bits <= mlir::pto::kValue8
-                              ? "b8"
-                              : bits <= mlir::pto::kValue16 ? "b16" : "b32";
-  return builder.getStringAttr(granularity);
+  // Surface phase: masks must use pred granularity so PTOValidateVMIIR
+  // passes.  Concrete b8/b16/b32 granularity is assigned later by
+  // VMIMaskGranularityAssignment.
+  (void)elementType;
+  return builder.getStringAttr("pred");
 }
 
 static Value createAllActiveMask(VMIVRegType valueType, Location loc,
@@ -599,15 +595,64 @@ static LogicalResult lowerDistributedStore(VMIvStoreOp op,
   return failure();
 }
 
-static LogicalResult lowerVStore(VMIvStoreOp op, OpBuilder &builder) {
-  if (hasMergePmode(op)) {
-    return failure();
+/// A group store whose row stride equals the per-group element count writes the
+/// rows back to back, so the whole access is one dense contiguous store.
+/// kGroupStoreLayoutPatterns only covers a few group shapes, so recognizing the
+/// degenerate row stride here (instead of registering every group size) keeps
+/// the store on the dense path.  One-lane groups are the slot form: the compact
+/// and group_slots paths already lower those, so they keep the group form, and
+/// so does any group store that carries a mask.
+static bool isDenseAliasedGroupStore(VMIvStoreOp op) {
+  if (!op.getMask().empty()) {
+    return false;
   }
+  ValueRange values = op.getValues();
+  if (values.size() != 1) {
+    return false;
+  }
+  auto valueType = dyn_cast<VMIVRegType>(values.front().getType());
+  if (!valueType) {
+    return false;
+  }
+  // The dense store keeps the value and destination element types equal; the
+  // group store is also the packed-narrowing store (e.g. i32 slots to a u8
+  // row), so a mismatched row must keep the group form.
+  Type destinationElementType;
+  if (auto destinationPtr = dyn_cast<PtrType>(op.getDestination().getType())) {
+    destinationElementType = destinationPtr.getElementType();
+  } else if (auto destinationMemRef =
+                 dyn_cast<MemRefType>(op.getDestination().getType())) {
+    destinationElementType = destinationMemRef.getElementType();
+  }
+  if (destinationElementType != valueType.getElementType()) {
+    return false;
+  }
+  int64_t numGroups = op.getGroupAttr().getInt();
+  int64_t elementCount = valueType.getElementCount();
+  if (numGroups <= 0 || elementCount <= 0 || elementCount % numGroups != 0) {
+    return false;
+  }
+  int64_t groupSize = elementCount / numGroups;
+  if (groupSize < 2) {
+    return false;
+  }
+  std::optional<int64_t> rowStride = getConstantIndexValue(op.getStride());
+  return rowStride && *rowStride == groupSize;
+}
+
+static LogicalResult lowerVStore(VMIvStoreOp op, OpBuilder &builder) {
+  // Stores are mask-governed by contract: the unified op carries no pmode, so
+  // there is no merge/zero selection to translate.
   LogicalResult result = success();
   if (op.getGroupAttr()) {
-    builder.create<VMIGroupStoreOp>(
-        op.getLoc(), op.getValues()[0], op.getDestination(), op.getOffset(),
-        op.getStride(), op.getGroupAttr());
+    if (isDenseAliasedGroupStore(op)) {
+      // Rows are packed, so the dense store aliases the group store exactly.
+      result = lowerContinuousStore(op, builder);
+    } else {
+      builder.create<VMIGroupStoreOp>(
+          op.getLoc(), op.getValues()[0], op.getDestination(), op.getOffset(),
+          op.getStride(), op.getGroupAttr());
+    }
   } else if (op.getBlockStride()) {
     result = lowerBlockStrideStore(op, builder);
   } else {

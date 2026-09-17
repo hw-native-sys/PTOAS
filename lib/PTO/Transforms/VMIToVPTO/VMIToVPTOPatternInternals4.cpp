@@ -20,6 +20,29 @@ constexpr unsigned kMaxInterleaveCarrierBitWidth = 32;
 constexpr int64_t kInterleaveFactor = 2;
 constexpr unsigned kPairResultCount = 2;
 
+/// Element advance between two consecutive physical chunks of a block-strided
+/// access.  One physical chunk is one 256B carrier, so the first 32B block of
+/// chunk `n` is `8 * block_stride` blocks past the first block of chunk
+/// `n - 1`, i.e. `block_stride * lanesPerPart` elements.  The product stays in
+/// index arithmetic so that a dynamic block_stride cannot overflow the 16-bit
+/// hardware control word.
+static Value createStrideChunkOffset(Location loc, Value baseOffset,
+                                     Value blockStride, int64_t chunk,
+                                     int64_t lanesPerPart,
+                                     OneToNPatternRewriter &rewriter) {
+  if (chunk == 0) {
+    return baseOffset;
+  }
+  Value stride =
+      rewriter.create<arith::IndexCastOp>(loc, rewriter.getIndexType(),
+                                          blockStride);
+  Value chunkAdvance = rewriter.create<arith::ConstantIndexOp>(
+      loc, chunk * lanesPerPart);
+  Value advance =
+      rewriter.create<arith::MulIOp>(loc, stride, chunkAdvance).getResult();
+  return rewriter.create<arith::AddIOp>(loc, baseOffset, advance).getResult();
+}
+
 struct OneToNVMIStrideLoadOpPattern
     : OneToNOpConversionPattern<VMIStrideLoadOp> {
   using OneToNOpConversionPattern<VMIStrideLoadOp>::OneToNOpConversionPattern;
@@ -29,27 +52,40 @@ private:
       VMIStrideLoadOp op, OneToNPatternRewriter &rewriter, Value source,
       Value offset, Value blockStride, Value repeatStride, ValueRange maskParts,
       ArrayRef<Type> resultTypes) const {
-    bool invalidPhysicalArity = resultTypes.size() != 1 || maskParts.size() != 1;
+    // One `pto.vsldb` reads one 256B carrier, so a payload spanning several
+    // carriers needs one instruction per carrier.  Converted result and mask
+    // parts are paired positionally: physical part i holds logical lanes
+    // [i * lanesPerPart, (i + 1) * lanesPerPart), which are exactly the 32B
+    // blocks 8i .. 8i + 8 of the block-strided access.
+    bool invalidPhysicalArity =
+        resultTypes.empty() || resultTypes.size() != maskParts.size();
     if (invalidPhysicalArity) {
       return rewriter.notifyMatchFailure(
-          op, "stride_load supports one physical result/mask chunk");
+          op, "stride_load requires matching physical result/mask chunks");
     }
-    auto resultType = dyn_cast<VRegType>(resultTypes.front());
-    if (!resultType || !isa<MaskType>(maskParts.front().getType())) {
-      return rewriter.notifyMatchFailure(
-          op, "stride_load requires physical vreg/mask parts");
-    }
-    Value base = rewriter
-                     .create<AddPtrOp>(op.getLoc(), source.getType(), source,
-                                       offset)
-                     .getResult();
-    Value loaded = rewriter
-                       .create<VsldbOp>(op.getLoc(), resultType,
-                                        /*updated_base=*/Type{}, base,
-                                        blockStride, repeatStride,
-                                        maskParts.front())
+    SmallVector<Value> results;
+    results.reserve(resultTypes.size());
+    for (auto [index, resultType] : llvm::enumerate(resultTypes)) {
+      auto resultVRegType = dyn_cast<VRegType>(resultType);
+      if (!resultVRegType || !isa<MaskType>(maskParts[index].getType())) {
+        return rewriter.notifyMatchFailure(
+            op, "stride_load requires physical vreg/mask parts");
+      }
+      Value chunkOffset = createStrideChunkOffset(
+          op.getLoc(), offset, blockStride, static_cast<int64_t>(index),
+          resultVRegType.getElementCount(), rewriter);
+      Value base = rewriter
+                       .create<AddPtrOp>(op.getLoc(), source.getType(), source,
+                                         chunkOffset)
                        .getResult();
-    replaceOpWithFlatConvertedValues(rewriter, op, SmallVector<Value>{loaded},
+      results.push_back(rewriter
+                            .create<VsldbOp>(op.getLoc(), resultType,
+                                             /*updated_base=*/Type{}, base,
+                                             blockStride, repeatStride,
+                                             maskParts[index])
+                            .getResult());
+    }
+    replaceOpWithFlatConvertedValues(rewriter, op, results,
                                      *this->getTypeConverter());
     return success();
   }
@@ -116,25 +152,32 @@ struct OneToNVMIStrideStoreOpPattern
 
     ValueRange valueParts = adaptor.getValue();
     ValueRange maskParts = adaptor.getMask();
-    bool invalidArity = valueParts.size() != 1 || maskParts.size() != 1;
+    // One `pto.vsstb` writes one 256B carrier; value and mask parts are paired
+    // positionally, exactly like the stride_load side.
+    bool invalidArity =
+        valueParts.empty() || valueParts.size() != maskParts.size();
     if (invalidArity) {
       return rewriter.notifyMatchFailure(
-          op, "stride_store supports one physical value/mask chunk");
-    }
-    bool invalidTypes = !isa<VRegType>(valueParts.front().getType()) ||
-                        !isa<MaskType>(maskParts.front().getType());
-    if (invalidTypes) {
-      return rewriter.notifyMatchFailure(
-          op, "stride_store requires physical vreg/mask parts");
+          op, "stride_store requires matching physical value/mask chunks");
     }
 
-    Value base = rewriter
-                     .create<AddPtrOp>(op.getLoc(), (*destination).getType(),
-                                       *destination, *offset)
-                     .getResult();
-    rewriter.create<VsstbOp>(op.getLoc(), /*updated_base=*/Type{},
-                             valueParts.front(), base, *blockStride,
-                             *repeatStride, maskParts.front());
+    for (auto [index, valuePart] : llvm::enumerate(valueParts)) {
+      auto valueVRegType = dyn_cast<VRegType>(valuePart.getType());
+      if (!valueVRegType || !isa<MaskType>(maskParts[index].getType())) {
+        return rewriter.notifyMatchFailure(
+            op, "stride_store requires physical vreg/mask parts");
+      }
+      Value chunkOffset = createStrideChunkOffset(
+          op.getLoc(), *offset, *blockStride, static_cast<int64_t>(index),
+          valueVRegType.getElementCount(), rewriter);
+      Value base = rewriter
+                       .create<AddPtrOp>(op.getLoc(), (*destination).getType(),
+                                         *destination, chunkOffset)
+                       .getResult();
+      rewriter.create<VsstbOp>(op.getLoc(), /*updated_base=*/Type{}, valuePart,
+                               base, *blockStride, *repeatStride,
+                               maskParts[index]);
+    }
     rewriter.eraseOp(op);
     return success();
   }

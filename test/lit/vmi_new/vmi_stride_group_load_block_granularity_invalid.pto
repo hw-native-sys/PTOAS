@@ -8,24 +8,17 @@
 
 // RUN: not pto-test-opt %s -vmi-lower-unified-to-legacy -vmi-mask-granularity-assignment -vmi-layout-assignment 2>&1 | FileCheck %s
 
+// A strided group whose group is finer than one 32-byte block has no lowering:
+// the block forms address whole blocks and the sub-chunk gather emulation is
+// gone, so the layout plan has to reject it.
+
 module {
-  func.func @vmi_layout_assignment_group_load_s16_compact_stride12_invalid(
-      %base: !pto.ptr<f32, ub>,
-      %mask: !pto.vmi.mask<128xpred>,
-      %dst: !pto.ptr<f32, ub>,
-      %off: index) {
-    %c1 = arith.constant 1 : index
-    %stride12 = arith.constant 12 : index
+  func.func @sub_32b_group_load(%base: !pto.ptr<ui8, ub>, %off: index) {
     // CHECK: VMI-LAYOUT-CONTRACT: pto.vmi.group_load with a row stride requires one group to be 32, 64, or 128 bytes and the row stride to be a whole number of 32-byte blocks
-    // CHECK-SAME: got group = 64 bytes, row_stride = 48 bytes
-    %x = pto.vmi.vload %base[%off], %stride12 {group = 8}
-        : !pto.ptr<f32, ub> -> !pto.vmi.vreg<128xf32>
-    %sum = pto.vmi.vcadd %x, %mask
-        {group = 8, reassoc}
-        : !pto.vmi.vreg<128xf32>, !pto.vmi.mask<128xpred>
-        -> !pto.vmi.vreg<8xf32>
-    pto.vmi.vstore %sum, %dst[%off], %c1 {group = 8}
-        : !pto.vmi.vreg<8xf32>, !pto.ptr<f32, ub>
+    // CHECK-SAME: got group = 8 bytes, row_stride = 16 bytes
+    %stride16 = arith.constant 16 : index
+    %x = pto.vmi.vload %base[%off], %stride16 {group = 8}
+        : !pto.ptr<ui8, ub> -> !pto.vmi.vreg<64xui8>
     return
   }
 }

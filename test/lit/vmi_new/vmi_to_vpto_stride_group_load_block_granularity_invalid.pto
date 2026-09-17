@@ -1,0 +1,25 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+
+// RUN: not pto-test-opt %s -vmi-lower-unified-to-legacy -vmi-to-vpto 2>&1 | FileCheck %s
+
+// Same 32-byte granularity contract on the VMIToVPTO side: when the result
+// layout is already assigned the layout pass has nothing to reject, so the
+// lowering pre-check has to spell out the block granularity rule.
+
+module {
+  func.func @sub_32b_group_load_with_layout(%base: !pto.ptr<ui8, ub>, %off: index) {
+    // CHECK: VMI-UNSUPPORTED
+    // CHECK-SAME: 32-byte blocks
+    // CHECK-SAME: got group = 8 bytes, row_stride = 16 bytes
+    %stride16 = arith.constant 16 : index
+    %x = pto.vmi.vload %base[%off], %stride16 {group = 8}
+        : !pto.ptr<ui8, ub> -> !pto.vmi.vreg<64xui8, #pto.vmi.layout<contiguous>>
+    return
+  }
+}

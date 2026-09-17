@@ -1,0 +1,84 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+
+// RUN: pto-test-opt %s -vmi-lower-unified-to-legacy -vmi-mask-granularity-assignment -vmi-layout-assignment | FileCheck %s --check-prefix=ASSIGN
+// RUN: not pto-test-opt %s -vmi-lower-unified-to-legacy -vmi-mask-granularity-assignment -vmi-layout-assignment -vmi-to-vpto 2>&1 | FileCheck %s --check-prefix=LOWER
+
+// Strided group loads are only admitted on the 32-byte block granularity the
+// block forms address: one group must be 32, 64, or 128 bytes and the row
+// stride must advance by a whole number of 32-byte blocks.  For f32 that is
+// group_size 8 (whole block, contiguous result), 16 and 32 (two/four blocks,
+// block_deinterleaved result).
+
+module {
+  func.func @whole_block_32b(
+      %base: !pto.ptr<f32, ub>, %mask: !pto.vmi.mask<64xpred>,
+      %dst: !pto.ptr<f32, ub>, %off: index) {
+    %c1 = arith.constant 1 : index
+    %stride16 = arith.constant 16 : index
+    %x = pto.vmi.vload %base[%off], %stride16 {group = 8}
+        : !pto.ptr<f32, ub> -> !pto.vmi.vreg<64xf32>
+    %sum = pto.vmi.vcadd %x, %mask
+        {group = 8, reassoc}
+        : !pto.vmi.vreg<64xf32>, !pto.vmi.mask<64xpred>
+        -> !pto.vmi.vreg<8xf32>
+    pto.vmi.vstore %sum, %dst[%off], %c1 {group = 8}
+        : !pto.vmi.vreg<8xf32>, !pto.ptr<f32, ub>
+    return
+  }
+
+  func.func @two_block_64b(
+      %base: !pto.ptr<f32, ub>, %mask: !pto.vmi.mask<128xpred>,
+      %dst: !pto.ptr<f32, ub>, %off: index) {
+    %c1 = arith.constant 1 : index
+    %stride32 = arith.constant 32 : index
+    %x = pto.vmi.vload %base[%off], %stride32 {group = 8}
+        : !pto.ptr<f32, ub> -> !pto.vmi.vreg<128xf32>
+    %sum = pto.vmi.vcadd %x, %mask
+        {group = 8, reassoc}
+        : !pto.vmi.vreg<128xf32>, !pto.vmi.mask<128xpred>
+        -> !pto.vmi.vreg<8xf32>
+    pto.vmi.vstore %sum, %dst[%off], %c1 {group = 8}
+        : !pto.vmi.vreg<8xf32>, !pto.ptr<f32, ub>
+    return
+  }
+
+  func.func @four_block_128b(
+      %base: !pto.ptr<f32, ub>, %mask: !pto.vmi.mask<256xpred>,
+      %dst: !pto.ptr<f32, ub>, %off: index) {
+    %c1 = arith.constant 1 : index
+    %stride64 = arith.constant 64 : index
+    %x = pto.vmi.vload %base[%off], %stride64 {group = 8}
+        : !pto.ptr<f32, ub> -> !pto.vmi.vreg<256xf32>
+    %sum = pto.vmi.vcadd %x, %mask
+        {group = 8, reassoc}
+        : !pto.vmi.vreg<256xf32>, !pto.vmi.mask<256xpred>
+        -> !pto.vmi.vreg<8xf32>
+    pto.vmi.vstore %sum, %dst[%off], %c1 {group = 8}
+        : !pto.vmi.vreg<8xf32>, !pto.ptr<f32, ub>
+    return
+  }
+}
+
+// ASSIGN-LABEL: func.func @whole_block_32b(
+// ASSIGN: %[[X0:.*]] = pto.vmi.group_load
+// ASSIGN-SAME: -> !pto.vmi.vreg<64xf32, #pto.vmi.layout<contiguous>>
+
+// ASSIGN-LABEL: func.func @two_block_64b(
+// ASSIGN: %[[X1:.*]] = pto.vmi.group_load
+// ASSIGN-SAME: -> !pto.vmi.vreg<128xf32, #pto.vmi.layout<block_deinterleaved = 2>>
+
+// ASSIGN-LABEL: func.func @four_block_128b(
+// ASSIGN: %[[X2:.*]] = pto.vmi.group_load
+// ASSIGN-SAME: -> !pto.vmi.vreg<256xf32, #pto.vmi.layout<block_deinterleaved = 4>>
+
+// The whole-block 32B shape is the one sub-part strided group the VPTO plan
+// lowers (one pto.vsldb per carrier); the 64B/128B block_deinterleaved shapes
+// are still layout-only, so the conversion reports residual VMI ops.
+// LOWER-DAG: pto.vsldb
+// LOWER-DAG: VMI-RESIDUAL-OP

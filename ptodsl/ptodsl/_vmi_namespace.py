@@ -811,7 +811,6 @@ class _VMINamespace:
         block_stride=None,
         dist_mode=None,
         group=None,
-        pmode=None,
         loc=None,
         ip=None,
     ):
@@ -840,7 +839,6 @@ class _VMINamespace:
             block_stride=_i16_value(block_stride, context="pto.vmi.vstore(block_stride)"),
             dist_mode=dist_mode,
             group=group,
-            pmode=pmode,
             loc=loc,
             ip=ip,
         )
