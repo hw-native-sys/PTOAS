@@ -168,18 +168,6 @@ count. Which memory access pattern is used depends on the selected mode family.
 | `offset` | `IndexLike` | Element offset into the source buffer |
 | `size` | `int` | Logical result lane count |
 
-**About `mask` on `vload`.**
-
-- `pto.vmi.vload(...)` does not take an explicit `mask` parameter. The load
-  surface describes how data is read from UB into a logical VMI value, not
-  which lanes of a later computation are active.
-- Tail handling and partial-lane participation are expressed on the consumer
-  side, typically by passing a mask to a later compute op such as
-  `pto.vmi.vadd(...)`, or to the final `pto.vmi.vstore(...)`.
-- In practice, if you need "load only the active lanes" behavior in authored
-  DSL code, write a normal `vload`, then apply your mask on the first consumer
-  or on the eventual store.
-
 **Mode 1: `dist_mode`**
 
 Use this family for the normal logical load surface. `dist_mode=None` means the
@@ -315,10 +303,10 @@ blocks = pto.vmi.vload(
 
 ### `vstore`
 
-### `pto.vmi.vstore(values, destination, offset, mask=None, *, dist_mode=None, pmode=None) -> None`
-### `pto.vmi.vstore((even, odd), destination, offset, mask=None, *, dist_mode="intlv", pmode=None) -> None`
-### `pto.vmi.vstore(values, destination, offset, *, group, stride, pmode=None) -> None`
-### `pto.vmi.vstore(values, destination, offset, mask=None, *, block_stride, pmode=None) -> None`
+### `pto.vmi.vstore(values, destination, offset, mask=None, *, dist_mode=None) -> None`
+### `pto.vmi.vstore((even, odd), destination, offset, mask=None, *, dist_mode="intlv") -> None`
+### `pto.vmi.vstore(values, destination, offset, *, group, stride) -> None`
+### `pto.vmi.vstore(values, destination, offset, mask=None, *, block_stride) -> None`
 
 **Description**: Writes one logical VMI vector, or a deinterleaved pair, back
 to a UB pointer. As with `vload`, the PTODSL surface is organized into the same
@@ -331,16 +319,17 @@ three mutually exclusive mode families.
 | `values` | `VRegType` or `(VRegType, VRegType)` | One VMI vector for normal forms, or an `(even, odd)` pair for `dist_mode="intlv"` |
 | `destination` | `PtrType` (ub) | UB destination pointer |
 | `offset` | `IndexLike` | Element offset into the destination buffer |
-| `pmode` | `str` or `None` | Optional inactive-lane mode: only `"zero"` is supported, it stores 0 to masked-off lanes |
 
-**About `pmode` on `vstore`.**
+**Stores are mask-governed.**
 
-- `pmode="zero"` is the default and only supported store behavior. When a
-  `mask` is present, inactive lanes are written as zero.
-- `pmode="merge"` is **not supported**
-- `pmode` only matters on store forms that actually use a `mask`. Group-mode
-  store does not take a mask operand, so there are no inactive lanes to define
-  there.
+- Only the elements selected by `mask` are written; **inactive lanes are not
+  written**, so the destination keeps its previous contents.
+- There is no zero/merge switch: the micro store has no such control, so
+  `vstore` takes **no `pmode` argument** (`pmode` remains available on the
+  compute ops, where it selects the inactive-result behaviour).
+- `pmode` is also not needed to describe store forms without a `mask`:
+  group-mode store does not take a mask operand (all elements are written),
+  and the other forms default to all-active when `mask` is omitted.
 
 **Mode 1: `dist_mode`**
 

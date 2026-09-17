@@ -977,9 +977,22 @@ private:
       return rewriter.notifyMatchFailure(
           op, "group_load requires num_groups to evenly divide lane count");
     }
+    // The block stride plan moves whole 32B fragments.  A group covering a
+    // single fragment packs into the plain contiguous result, while the two and
+    // four fragment groups split across physical parts and register as
+    // block_deinterleaved.
+    FailureOr<int64_t> lanesPerPart =
+        getDataLanesPerPart(resultVMIType.getElementType());
+    int64_t fragmentElems =
+        succeeded(lanesPerPart) ? *lanesPerPart / mlir::pto::kValue8 : 0;
+    bool wholeBlockContiguous =
+        resultLayout && resultLayout.isContiguous() &&
+        resultLayout.getLaneStride() == 1 && fragmentElems > 0 &&
+        *groupSize == fragmentElems;
     bool validFactorShape =
         (*groupSize == 16 && resultLayout.getFactor() == 2) ||
-        (*groupSize == 32 && resultLayout.getFactor() == 4);
+        (*groupSize == 32 && resultLayout.getFactor() == 4) ||
+        wholeBlockContiguous;
     std::optional<int64_t> constantRowStride =
         getConstantIndexValue(op.getRowStride());
     bool validRowStride = constantRowStride && *constantRowStride > 0 &&
@@ -989,7 +1002,8 @@ private:
         !isa<PtrType>(source.getType())) {
       return rewriter.notifyMatchFailure(
           op, !validFactorShape
-                  ? "block_deinterleaved group_load requires S=16/factor=2 or S=32/factor=4"
+                  ? "block_deinterleaved group_load requires S=16/factor=2, "
+                    "S=32/factor=4, or a whole-block contiguous group"
                   : !validGroupCount
                         ? "block_deinterleaved group_load requires num_groups multiple of 8"
                         : !validRowStride
@@ -1050,6 +1064,20 @@ private:
     bool isBlockF32 = resultLayout && resultLayout.isBlockDeinterleaved() &&
                       resultVMIType.getElementType().isF32();
     if (isBlockF32) {
+      return lowerBlockF32(op, rewriter, source, offset, rowStride,
+                           resultVMIType, resultLayout);
+    }
+    // Whole-block f32 groups whose fragments sit further apart than the group
+    // itself use the same block-stride vsldb plan; a plan that consumes exactly
+    // one physical part leaves the result plain contiguous.
+    FailureOr<int64_t> groupSize = getGroupSizeFromNumGroups(
+        resultVMIType, op.getNumGroupsAttr().getInt());
+    bool denseContiguous = resultLayout && resultLayout.isContiguous() &&
+                           resultLayout.getLaneStride() == 1;
+    if (denseContiguous && succeeded(groupSize) &&
+        isSupportedBlockStrideF32GroupLoad(
+            resultVMIType, *groupSize, getConstantIndexValue(op.getRowStride()),
+            op.getNumGroupsAttr().getInt())) {
       return lowerBlockF32(op, rewriter, source, offset, rowStride,
                            resultVMIType, resultLayout);
     }

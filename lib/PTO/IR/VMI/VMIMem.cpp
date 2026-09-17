@@ -854,9 +854,9 @@ static LogicalResult verifyVStoreGroupAndBlockModes(
   return success();
 }
 
-static LogicalResult verifyVStoreDistModeAndPmode(
+static LogicalResult verifyVStoreDistModeAndMaskCount(
     Operation *op, std::optional<StringRef> distMode, size_t nValues,
-    size_t maskCount, std::optional<StringRef> pmode) {
+    size_t maskCount) {
   if (distMode && validStoreDistModes().find(*distMode) == validStoreDistModes().end()) {
     return op->emitOpError("invalid dist-mode: \"") << *distMode << "\"";
   }
@@ -873,15 +873,6 @@ static LogicalResult verifyVStoreDistModeAndPmode(
   }
   if (maskCount > 1) {
     return op->emitOpError("at most one mask allowed");
-  }
-  if (pmode && validPModes().find(*pmode) == validPModes().end()) {
-    return op->emitOpError("invalid pmode: \"") << *pmode << "\"";
-  }
-  if (pmode && *pmode != "zero") {
-    return op->emitOpError("pmode \"merge\" is not supported for stores: the "
-                           "legacy store lowering is mask-governed only and "
-                           "cannot retain prior destination contents on inactive "
-                           "lanes; omit pmode (defaults to \"zero\")");
   }
   return success();
 }
@@ -934,8 +925,8 @@ LogicalResult VMIvStoreOp::verify() {
           hasGroup ? getGroupAttr().getInt() : 0, nValues, getValues()))) {
     return failure();
   }
-  if (failed(verifyVStoreDistModeAndPmode(getOperation(), distMode, nValues,
-                                         getMask().size(), getPmode()))) {
+  if (failed(verifyVStoreDistModeAndMaskCount(getOperation(), distMode, nValues,
+                                             getMask().size()))) {
     return failure();
   }
   return verifyVStoreValueMaskTypes(getOperation(), hasGroup, getValues(),
@@ -957,15 +948,6 @@ LogicalResult VMIVsstbOp::verify() {
       failed(verifyUBBackedMemory(getOperation(), getDestination().getType(),
                                   "destination"))) {
     return failure();
-  }
-  if (auto pmode = getPmode(); pmode && validPModes().find(*pmode) == validPModes().end()) {
-    return emitOpError("invalid pmode: \"") << *pmode << "\"";
-  }
-  if (auto pmode = getPmode(); pmode && *pmode != "zero") {
-    return emitOpError("pmode \"merge\" is not supported for stores: the "
-                       "legacy store lowering is mask-governed only and "
-                       "cannot retain prior destination contents on inactive "
-                       "blocks; omit pmode (defaults to \"zero\")");
   }
   return verifyMaskMatchesData(getOperation(), maskType, valueType);
 }

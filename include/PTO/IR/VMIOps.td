@@ -1379,9 +1379,9 @@ def VMIvStoreOp : VMI_Op<"vstore",
     block-stride mode (mutually exclusive with dist-mode and group):
     - {block_stride = B}: block-strided masked store
 
-    pmode governs inactive lane behavior:
-    - "zero" (default):  inactive lanes store 0
-    - "merge":           inactive lanes skip write (needs mask)
+    The store is mask-governed: an inactive lane or block is not written, so
+    the prior destination contents are retained.  The micro store has no
+    zero/merge switch, hence no pmode attribute.
 
     mask is variadic: 0 or 1 mask operand.
   }];
@@ -1393,8 +1393,7 @@ def VMIvStoreOp : VMI_Op<"vstore",
     Optional<I16>:$block_stride,
     Variadic<VMI_MaskTypeConstraint>:$mask,
     OptionalAttr<StrAttr>:$dist_mode,
-    OptionalAttr<I64Attr>:$group,
-    OptionalAttr<StrAttr>:$pmode
+    OptionalAttr<I64Attr>:$group
   );
   let results = (outs);
   let hasCustomAssemblyFormat = 1;
@@ -1404,10 +1403,13 @@ def VMIvStoreOp : VMI_Op<"vstore",
 def VMIVsstbOp : VMI_Op<"vsstb",
     [DeclareOpInterfaceMethods<MemoryEffectsOpInterface>]> {
   let summary = "VMI zero-repeat-stride block store";
+  let description = [{
+    Block-strided store.  Like every store it is mask-governed: a masked-off
+    block is not written, so the prior destination contents are retained.
+  }];
   let arguments = (ins VMI_VRegTypeConstraint:$value,
                        PtrOrMemRef:$destination, Index:$offset,
-                       I16:$block_stride, VMI_MaskTypeConstraint:$mask,
-                       OptionalAttr<StrAttr>:$pmode);
+                       I16:$block_stride, VMI_MaskTypeConstraint:$mask);
   let results = (outs);
   let hasVerifier = 1;
   let assemblyFormat = "$value `,` $destination `[` $offset `]` `,` $block_stride `,` $mask attr-dict `:` type($value) `,` type($destination) `,` type($mask)";

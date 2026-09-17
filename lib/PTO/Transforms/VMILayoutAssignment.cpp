@@ -845,31 +845,54 @@ struct LayoutSolver {
     if (numGroups <= 0 || type.getElementCount() % numGroups != 0) {
       return success();
     }
-    if (!type.getElementType().isF32()) {
-      return success();
-    }
 
     int64_t groupSize = type.getElementCount() / numGroups;
-    if (groupSize != mlir::pto::kValue16 &&
-        groupSize != mlir::pto::kValue32) {
-      return success();
-    }
-
     std::optional<int64_t> rowStride = getConstantIndexValue(op.getRowStride());
     if (rowStride && *rowStride == groupSize) {
+      // Packed rows alias the contiguous layout.
       return success();
     }
-    if (rowStride && *rowStride > 0 &&
-        *rowStride % mlir::pto::kValue8 == 0) {
+    // A group covering one physical part or more goes through the full-chunk
+    // plan, which accepts a dynamic row stride: leave it to that plan.
+    FailureOr<int64_t> lanesPerPart =
+        getDataLanesPerPart(type.getElementType());
+    if (succeeded(lanesPerPart) && groupSize >= *lanesPerPart) {
       return success();
     }
 
+    // Strided rows: the block forms (`vsldb`) address whole 32-byte blocks, so
+    // one group must span a whole number of them and the row stride must
+    // advance by a whole number of them.  Sub-32B groups and non-block row
+    // strides used to be emulated by the sub-chunk gather, which is gone; the
+    // contract is spelled out here because this pass is the first to see the
+    // shape.
+    unsigned elementBits =
+        pto::getPTOStorageElemBitWidth(type.getElementType());
+    if (elementBits == 0 || elementBits % 8 != 0) {
+      return success();
+    }
+    int64_t elementBytes = elementBits / 8;
+    int64_t blockElements = kVMIVCGBlockBytes / elementBytes;
+    bool granular = blockElements > 0 && groupSize > 0 &&
+                    groupSize % blockElements == 0 && rowStride &&
+                    *rowStride > 0 && *rowStride % blockElements == 0;
+    if (granular) {
+      return success();
+    }
+
+    std::string details;
+    llvm::raw_string_ostream stream(details);
+    stream << "group = "
+           << (groupSize > 0 ? groupSize * elementBytes : 0) << " bytes, "
+           << "row_stride = "
+           << (rowStride && *rowStride > 0 ? *rowStride * elementBytes : 0)
+           << " bytes";
     return op.emitError()
-           << kVMIDiagLayoutContractPrefix << "pto.vmi.group_load group_size "
-           << groupSize
-           << " requires constant positive row_stride divisible by 8 f32 "
-              "elements for the block8 stride plan; stable gather fallback is "
-              "not implemented";
+           << kVMIDiagLayoutContractPrefix
+           << "pto.vmi.group_load with a row stride requires one group to be "
+              "32, 64, or 128 bytes and the row stride to be a whole number of "
+              "32-byte blocks with a 32-byte aligned source; got "
+           << details;
   }
 
   VMILayoutAttr getDataLayout(Value value) {

@@ -1,0 +1,74 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+
+// RUN: pto-test-opt %s -vmi-lower-unified-to-legacy -vmi-to-vpto | FileCheck %s
+
+// A block-strided access spanning more than one 256B carrier is lowered one
+// carrier per `pto.vsldb`, pairing carrier i of the value with carrier i of the
+// mask.  The next carrier starts `block_stride * lanesPerPart` elements later,
+// because one carrier is eight 32B blocks while `block_stride` counts 32B
+// blocks.  The advance is kept in index arithmetic so that a dynamic
+// block_stride cannot overflow the 16-bit control word.
+module {
+  func.func @vmi_to_vpto_stride_load_multichunk(
+      %src: !pto.ptr<f32, ub>, %dst: !pto.ptr<f32, ub>, %offset: index,
+      %mask: !pto.vmi.mask<128xb32, #pto.vmi.layout<contiguous>>) {
+    %c0 = arith.constant 0 : index
+    %c8 = arith.constant 8 : i16
+    %out = pto.vmi.stride_load %src[%offset], %c8, %mask
+        : !pto.ptr<f32, ub>, i16,
+          !pto.vmi.mask<128xb32, #pto.vmi.layout<contiguous>>
+        -> !pto.vmi.vreg<128xf32, #pto.vmi.layout<contiguous>>
+    pto.vmi.store %out, %dst[%c0]
+        : !pto.vmi.vreg<128xf32, #pto.vmi.layout<contiguous>>, !pto.ptr<f32, ub>
+    return
+  }
+
+  func.func @vmi_to_vpto_stride_load_multichunk_dynamic_stride(
+      %src: !pto.ptr<f32, ub>, %dst: !pto.ptr<f32, ub>, %offset: index,
+      %block_stride: i16,
+      %mask: !pto.vmi.mask<128xb32, #pto.vmi.layout<contiguous>>) {
+    %c0 = arith.constant 0 : index
+    %out = pto.vmi.stride_load %src[%offset], %block_stride, %mask
+        : !pto.ptr<f32, ub>, i16,
+          !pto.vmi.mask<128xb32, #pto.vmi.layout<contiguous>>
+        -> !pto.vmi.vreg<128xf32, #pto.vmi.layout<contiguous>>
+    pto.vmi.store %out, %dst[%c0]
+        : !pto.vmi.vreg<128xf32, #pto.vmi.layout<contiguous>>, !pto.ptr<f32, ub>
+    return
+  }
+}
+
+// Constant block stride 8: 8 * (256B / 4B) = 512 f32 lanes of advance, folded
+// into an index constant.  One `pto.vsldb` per carrier, each with its own mask
+// part.
+// CHECK-LABEL: func.func @vmi_to_vpto_stride_load_multichunk(
+// CHECK: %[[C1:.*]] = arith.constant 512 : index
+// CHECK: %[[B0:.*]] = pto.addptr %arg0, %arg2 : <f32, ub> -> <f32, ub>
+// CHECK: %[[R0:.*]] = pto.vsldb %[[B0]], %c8_i16, %c0_i16, %arg3 : !pto.ptr<f32, ub>, i16, i16, !pto.mask<b32> -> !pto.vreg<64xf32>
+// CHECK: %[[D1:.*]] = arith.addi %arg2, %[[C1]] : index
+// CHECK: %[[B1:.*]] = pto.addptr %arg0, %[[D1]] : <f32, ub> -> <f32, ub>
+// CHECK: %[[R1:.*]] = pto.vsldb %[[B1]], %c8_i16, %c0_i16, %arg4 : !pto.ptr<f32, ub>, i16, i16, !pto.mask<b32> -> !pto.vreg<64xf32>
+// CHECK: pto.vsts %[[R0]], %arg1
+// CHECK: pto.vsts %[[R1]], %arg1
+
+// A dynamic block stride keeps the multiplication in index arithmetic.
+// CHECK-LABEL: func.func @vmi_to_vpto_stride_load_multichunk_dynamic_stride(
+// CHECK: pto.addptr %arg0, %arg2 : <f32, ub> -> <f32, ub>
+// CHECK: pto.vsldb %{{.*}}, %arg3, %c0_i16, %arg4 : !pto.ptr<f32, ub>, i16, i16, !pto.mask<b32> -> !pto.vreg<64xf32>
+// CHECK: %[[S:.*]] = arith.index_cast %arg3 : i16 to index
+// CHECK: %[[ADV:.*]] = arith.muli %[[S]], %c64 : index
+// CHECK: %[[DYN:.*]] = arith.addi %arg2, %[[ADV]] : index
+// CHECK: %[[BD:.*]] = pto.addptr %arg0, %[[DYN]] : <f32, ub> -> <f32, ub>
+// CHECK: pto.vsldb %[[BD]], %arg3, %c0_i16, %arg5 : !pto.ptr<f32, ub>, i16, i16, !pto.mask<b32> -> !pto.vreg<64xf32>
+// CHECK: pto.vsts
+// CHECK: pto.vsts
+
+// CHECK-NOT: pto.vmi.
+// CHECK-NOT: !pto.vmi.
+// CHECK-NOT: unrealized_conversion_cast

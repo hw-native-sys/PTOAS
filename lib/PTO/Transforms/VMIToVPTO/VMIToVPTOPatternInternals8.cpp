@@ -326,8 +326,8 @@ static std::optional<WalkResult> verifySupportedVMIStrideStoreOp(Operation *op) 
   if (auto store = dyn_cast<VMIStrideStoreOp>(op)) {
     return verifySupportedShapeOp(
         store, checkSupportedStrideStoreShape,
-        "pto.vmi.stride_store lowers through pto.vsstb only for one contiguous "
-        "physical value/mask chunk and a supported UB destination (");
+        "pto.vmi.stride_store lowers through pto.vsstb only for matching "
+        "physical value/mask chunks and a supported UB destination (");
   }
   return std::nullopt;
 }
@@ -399,8 +399,8 @@ static std::optional<WalkResult> verifySupportedVMIStrideLoadOp(Operation *op) {
   if (auto load = dyn_cast<VMIStrideLoadOp>(op)) {
     return verifySupportedShapeOp(
         load, checkSupportedStrideLoadShape,
-        "pto.vmi.stride_load lowers through pto.vsldb only for one "
-        "contiguous physical result/mask chunk and a supported UB source (");
+        "pto.vmi.stride_load lowers through pto.vsldb only for matching "
+        "physical result/mask chunks and a supported UB source (");
   }
   return std::nullopt;
 }
@@ -409,9 +409,9 @@ static std::optional<WalkResult> verifySupportedVMIGroupLoadOp(Operation *op) {
   if (auto load = dyn_cast<VMIGroupLoadOp>(op)) {
     return verifySupportedShapeOp(
         load, checkSupportedGroupLoadShape,
-        "pto.vmi.group_load requires contiguous full result chunks, a "
-        "supported UB source, and num_groups deriving a group size aligned "
-        "to physical chunks (");
+        "pto.vmi.group_load requires a supported UB source, a contiguous or "
+        "block_deinterleaved f32 result layout, and a group/row-stride shape "
+        "the block plans can address (");
   }
   return std::nullopt;
 }

@@ -1,0 +1,74 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+
+// RUN: pto-test-opt %s -vmi-lower-unified-to-legacy | FileCheck %s --check-prefix=LEGACY
+// RUN: pto-test-opt %s -vmi-lower-unified-to-legacy -vmi-mask-granularity-assignment -vmi-layout-assignment -vmi-to-vpto | FileCheck %s --check-prefix=LOWER
+
+// `stride == groupSize` makes a group_store a plain dense store: rows are packed
+// back to back, so the group form carries no extra addressing.  The alias only
+// exists for groupSize >= 2 -- `groupSize == 1` keeps the group form (it still
+// has to pack the per-group slots of a multi-part product).
+
+module {
+  func.func @group_store_dense_alias(
+      %src: !pto.ptr<ui8, ub>, %dst: !pto.ptr<ui8, ub>, %off: index) {
+    %c0 = arith.constant 0 : index
+    %c8 = arith.constant 8 : index
+    %v = pto.vmi.vload %src[%c0]
+        : !pto.ptr<ui8, ub> -> !pto.vmi.vreg<64xui8>
+    pto.vmi.vstore %v, %dst[%c0], %c8 {group = 8}
+        : !pto.vmi.vreg<64xui8>, !pto.ptr<ui8, ub>
+    return
+  }
+
+  // Strided rows that still sit on the 32-byte block granularity keep the
+  // group form (i32: group = 8 lanes = one 32-byte block, row stride = 16).
+  func.func @group_store_strided_rows(
+      %src: !pto.ptr<i32, ub>, %dst: !pto.ptr<i32, ub>, %off: index) {
+    %c0 = arith.constant 0 : index
+    %c16 = arith.constant 16 : index
+    %v = pto.vmi.vload %src[%c0]
+        : !pto.ptr<i32, ub> -> !pto.vmi.vreg<64xi32>
+    pto.vmi.vstore %v, %dst[%c0], %c16 {group = 8}
+        : !pto.vmi.vreg<64xi32>, !pto.ptr<i32, ub>
+    return
+  }
+
+  func.func @group_store_unit_group(
+      %src: !pto.ptr<ui8, ub>, %dst: !pto.ptr<ui8, ub>, %off: index) {
+    %c0 = arith.constant 0 : index
+    %c1 = arith.constant 1 : index
+    %v = pto.vmi.vload %src[%c0]
+        : !pto.ptr<ui8, ub> -> !pto.vmi.vreg<8xui8>
+    pto.vmi.vstore %v, %dst[%c0], %c1 {group = 8}
+        : !pto.vmi.vreg<8xui8>, !pto.ptr<ui8, ub>
+    return
+  }
+}
+
+// LEGACY-LABEL: func.func @group_store_dense_alias(
+// LEGACY-NOT: pto.vmi.group_store
+// LEGACY: pto.vmi.store
+
+// LEGACY-LABEL: func.func @group_store_strided_rows(
+// LEGACY: pto.vmi.group_store
+// LEGACY-SAME: {num_groups = 8 : i64}
+
+// LEGACY-LABEL: func.func @group_store_unit_group(
+// LEGACY: pto.vmi.group_store
+// LEGACY-SAME: {num_groups = 8 : i64}
+
+// LOWER-LABEL: func.func @group_store_dense_alias(
+// LOWER: pto.vsts {{.*}} {dist = "PK4_B32"}
+// LOWER-NOT: pto.vmi.
+// LOWER-LABEL: func.func @group_store_strided_rows(
+// LOWER: pto.vsstb
+// LOWER-NOT: pto.vmi.
+// LOWER-LABEL: func.func @group_store_unit_group(
+// LOWER: pto.vsts {{.*}} {dist = "NORM_B8"}
+// LOWER-NOT: pto.vmi.

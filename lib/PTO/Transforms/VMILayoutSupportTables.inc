@@ -475,6 +475,23 @@ static constexpr GroupLoadLayoutPattern kGroupLoadLayoutPatterns[] = {
     {bits<8, 16, 32>(), gb(2), memContiguous(), c()},
     {bits<8, 16, 32>(), gb(4), memContiguous(), c()},
     {bits<8, 16, 32>(), gbFull(), memAny(), c()},
+    // A group load whose source row stride differs from its group size is not
+    // contiguous: the rows above pair `memContiguous()` (row_stride ==
+    // group_size) with the stride-free full-chunk lowering.  A strided source
+    // therefore needs its own row before layout assignment can hand the result
+    // a layout at all.  The result layout is unchanged (`c()`), and the
+    // admissible source shapes are the ones the per-group address plans
+    // implement.  Those plans address whole 32-byte blocks, so the table only
+    // admits groups of 32, 64, or 128 bytes (`gb(1)`, `gb(2)`, `gb(4)`; larger
+    // groups are claimed by the `gbFull()` row above and the full-chunk plan).
+    // Sub-32B strided groups (`gb(1, 2)` / `gb(1, 4)`) have no lowering and are
+    // rejected with the 32-byte granularity contract by
+    // `describeStridedGroupLoadGranularityViolation`, as is a row stride that is
+    // not a whole number of 32-byte blocks.  Listing these after the contiguous
+    // rows keeps first-match precedence for the packed layout.
+    {bits<8, 16, 32>(), gb(1), memAny(), c()},
+    {bits<8, 16, 32>(), gb(2), memAny(), c()},
+    {bits<8, 16, 32>(), gb(4), memAny(), c()},
     {bits<32>(), gb(2), memBlockAligned(), bd(2)},
     {bits<32>(), gb(4), memBlockAligned(), bd(4)},
 };

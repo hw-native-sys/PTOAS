@@ -28,4 +28,5 @@ module {
   }
 }
 
-// CHECK: VMI-LAYOUT-CONTRACT: pto.vmi.group_load group_size 16 requires constant positive row_stride divisible by 8 f32 elements for the block8 stride plan; stable gather fallback is not implemented
+    // CHECK: VMI-LAYOUT-CONTRACT: pto.vmi.group_load with a row stride requires one group to be 32, 64, or 128 bytes and the row stride to be a whole number of 32-byte blocks
+    // CHECK-SAME: got group = 64 bytes, row_stride = 80 bytes
