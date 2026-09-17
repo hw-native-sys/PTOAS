@@ -192,6 +192,24 @@ VMILayoutSupport::getPreferredGroupReduceLayoutFact(VMIVRegType sourceType,
     return failure();
   }
 
+  // f32 group=4 has 32 lanes per group.  Use the ASC-compatible masked
+  // 64-lane reduction form so the producer chain can stay contiguous; the
+  // deinterleaved=4 form is still retained as a legal fallback.
+  if (sourceType.getElementType().isF32() && numGroups == 4 &&
+      key->groupSize == 32) {
+    MLIRContext *ctx = sourceType.getContext();
+    VMIGroupReduceLayoutFact fact;
+    fact.blockClass = VMIGroupBlockClass::FourBlock;
+    fact.sourceLayout = VMILayoutAttr::getContiguous(ctx);
+    fact.maskLayout = fact.sourceLayout;
+    fact.resultLayout =
+        VMILayoutAttr::getGroupSlots(ctx, numGroups, mlir::pto::kValue8);
+    fact.groupSize = key->groupSize;
+    fact.lanesPerPart = key->lanesPerPart;
+    fact.vcgBlockElems = key->vcgBlockElems;
+    return fact;
+  }
+
   for (const GroupReduceLayoutPattern &pattern : kGroupReduceLayoutPatterns) {
     if (!matchesGroupBlockPattern(pattern.block, *key)) {
       continue;
@@ -1533,6 +1551,58 @@ VMILayoutSupport::getPreferredMaskedStoreLayoutFact(
     return getMaskedStoreLayoutFact(valueType, maskType, reason);
   }
 
+  auto materializeMatchingPattern =
+      [&](const DenseMaskedStoreLayoutPattern &pattern)
+      -> std::optional<VMIMaskedStoreLayoutFact> {
+    if (!matchesElementBitsPattern(pattern.elementBits,
+                                   valueType.getElementType()) ||
+        !matchesElementCountPattern(pattern.elementCounts,
+                                    valueType.getElementCount())) {
+      return std::nullopt;
+    }
+
+    VMILayoutAttr valueLayout =
+        materializeLayoutPattern(valueType.getContext(), pattern.valueLayout);
+    if (!valueLayout ||
+        (existingValueLayout && existingValueLayout != valueLayout)) {
+      return std::nullopt;
+    }
+
+    VMILayoutAttr maskLayout =
+        materializeLayoutPattern(maskType.getContext(), pattern.maskLayout);
+    if (!maskLayout ||
+        (existingMaskLayout && existingMaskLayout != maskLayout)) {
+      return std::nullopt;
+    }
+
+    return VMIMaskedStoreLayoutFact{valueLayout, maskLayout};
+  };
+
+  // A producer may have already selected the value layout.  In that case
+  // preserve it and derive the matching predicate layout from the legal store
+  // relation; falling back to a contiguous mask would force an unnecessary
+  // value rematerialization (for example f32->fp8 lane_stride=4 stores).
+  if (existingValueLayout) {
+    for (const DenseMaskedStoreLayoutPattern &pattern :
+         kDenseMaskedStoreLayoutPatterns) {
+      if (!pattern.preferred)
+        continue;
+      if (std::optional<VMIMaskedStoreLayoutFact> fact =
+              materializeMatchingPattern(pattern))
+        return *fact;
+    }
+    for (const DenseMaskedStoreLayoutPattern &pattern :
+         kDenseMaskedStoreLayoutPatterns) {
+      if (pattern.preferred)
+        continue;
+      if (std::optional<VMIMaskedStoreLayoutFact> fact =
+              materializeMatchingPattern(pattern))
+        return *fact;
+    }
+    return fail("existing value layout has no matching dense masked store "
+                "layout row");
+  }
+
   for (const DenseMaskedStoreLayoutPattern &pattern :
        kDenseMaskedStoreLayoutPatterns) {
     if (!pattern.preferred) {
@@ -1547,20 +1617,9 @@ VMILayoutSupport::getPreferredMaskedStoreLayoutFact(
       continue;
     }
 
-    VMILayoutAttr valueLayout =
-        materializeLayoutPattern(valueType.getContext(), pattern.valueLayout);
-    VMILayoutAttr maskLayout =
-        materializeLayoutPattern(maskType.getContext(), pattern.maskLayout);
-    if (!valueLayout || !maskLayout) {
-      continue;
-    }
-    if (existingValueLayout && existingValueLayout != valueLayout) {
-      continue;
-    }
-    if (existingMaskLayout && existingMaskLayout != maskLayout) {
-      continue;
-    }
-    return VMIMaskedStoreLayoutFact{valueLayout, maskLayout};
+    if (std::optional<VMIMaskedStoreLayoutFact> fact =
+            materializeMatchingPattern(pattern))
+      return *fact;
   }
 
   return fail("value/mask types do not match a preferred dense masked store "

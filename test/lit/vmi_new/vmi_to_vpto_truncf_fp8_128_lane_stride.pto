@@ -22,6 +22,21 @@ module {
         : !pto.vmi.vreg<128xf8E4M3FN>, !pto.ptr<f8E4M3FN, ub>
     return
   }
+
+  func.func @vmi_to_vpto_truncf_fp8_128_lane_stride_masked(
+      %input: !pto.vmi.vreg<128xf32>,
+      %dst: !pto.ptr<f8E4M3FN, ub>,
+      %off: index) {
+    %c128 = arith.constant 128 : index
+    %mask = pto.vmi.create_mask %c128 : index -> !pto.vmi.mask<128xb8>
+    %c32 = arith.constant 32 : index
+    %aligned_off = arith.muli %off, %c32 : index
+    %packed = pto.vmi.truncf %input {saturate = "SAT"}
+        : !pto.vmi.vreg<128xf32> -> !pto.vmi.vreg<128xf8E4M3FN>
+    pto.vmi.vstore %packed, %dst[%aligned_off], %mask
+        : !pto.vmi.vreg<128xf8E4M3FN>, !pto.ptr<f8E4M3FN, ub>, !pto.vmi.mask<128xb8>
+    return
+  }
 }
 
 // ASSIGN-LABEL: func.func @vmi_to_vpto_truncf_fp8_128_lane_stride(
@@ -37,6 +52,29 @@ module {
 // LOWER-NOT: part = "P1"
 // LOWER-NOT: part = "P2"
 // LOWER-NOT: part = "P3"
+// LOWER-NOT: pto.vor
+// LOWER: pto.vsts {{.*}} {dist = "PK4_B32"}
+// LOWER: pto.vsts {{.*}} {dist = "PK4_B32"}
+// LOWER-NOT: pto.vmi.
+// LOWER-NOT: !pto.vmi.
+// LOWER-NOT: unrealized_conversion_cast
+
+// ASSIGN-LABEL: func.func @vmi_to_vpto_truncf_fp8_128_lane_stride_masked(
+// ASSIGN-SAME: %[[MASKED_INPUT:.*]]: !pto.vmi.vreg<128xf32, #pto.vmi.layout<contiguous>>
+// ASSIGN: %[[MASK:.*]] = pto.vmi.create_mask
+// ASSIGN-SAME: !pto.vmi.mask<128xb8, #pto.vmi.layout<contiguous, lane_stride = 4>>
+// ASSIGN: %[[MASKED_PACKED:.*]] = pto.vmi.truncf %[[MASKED_INPUT]]
+// ASSIGN-SAME: !pto.vmi.vreg<128xf8E4M3FN, #pto.vmi.layout<contiguous, lane_stride = 4>>
+// ASSIGN-NOT: pto.vmi.ensure_mask_layout
+// ASSIGN: pto.vmi.masked_store %[[MASKED_PACKED]], {{.*}}, %[[MASK]]
+
+// LOWER-LABEL: func.func @vmi_to_vpto_truncf_fp8_128_lane_stride_masked(
+// LOWER: pto.vcvt {{.*}} {part = "P0", rnd = "R", sat = "SAT"}
+// LOWER: pto.vcvt {{.*}} {part = "P0", rnd = "R", sat = "SAT"}
+// LOWER-NOT: part = "P1"
+// LOWER-NOT: part = "P2"
+// LOWER-NOT: part = "P3"
+// LOWER-NOT: pto.vdintlv
 // LOWER-NOT: pto.vor
 // LOWER: pto.vsts {{.*}} {dist = "PK4_B32"}
 // LOWER: pto.vsts {{.*}} {dist = "PK4_B32"}

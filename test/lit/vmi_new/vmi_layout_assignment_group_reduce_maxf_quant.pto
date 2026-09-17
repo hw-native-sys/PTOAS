@@ -48,6 +48,26 @@ module {
         : !pto.vmi.vreg<256xf8E4M3FN>, !pto.ptr<f8E4M3FN, ub>
     return
   }
+
+  func.func @vmi_layout_assignment_group_reduce_maxf_group4_contiguous(
+      %src: !pto.ptr<f32, ub>,
+      %scale_out: !pto.ptr<f32, ub>,
+      %off: index) {
+    %c32 = arith.constant 32 : index
+    %c128 = arith.constant 128 : index
+    %c1 = arith.constant 1 : index
+    %mask = pto.vmi.create_mask %c128 : index -> !pto.vmi.mask<128xpred>
+    %aligned_off = arith.muli %off, %c32 : index
+    %x = pto.vmi.vload %src[%aligned_off]
+        : !pto.ptr<f32, ub> -> !pto.vmi.vreg<128xf32>
+    %abs = pto.vmi.vabs %x : !pto.vmi.vreg<128xf32> -> !pto.vmi.vreg<128xf32>
+    %amax = pto.vmi.vcmax %abs, %mask {group = 4}
+        : !pto.vmi.vreg<128xf32>, !pto.vmi.mask<128xpred>
+        -> !pto.vmi.vreg<4xf32>
+    pto.vmi.vstore %amax, %scale_out[%aligned_off], %c1 {group = 4}
+        : !pto.vmi.vreg<4xf32>, !pto.ptr<f32, ub>
+    return
+  }
 }
 
 // ASSIGN-LABEL: func.func @vmi_layout_assignment_group_reduce_maxf_quant(
@@ -85,3 +105,21 @@ module {
 // LOWER-NOT: pto.vmi.
 // LOWER-NOT: !pto.vmi.
 // LOWER-NOT: unrealized_conversion_cast
+
+// ASSIGN-LABEL: func.func @vmi_layout_assignment_group_reduce_maxf_group4_contiguous(
+// ASSIGN: %[[G4_X:.*]] = pto.vmi.load
+// ASSIGN-SAME: -> !pto.vmi.vreg<128xf32, #pto.vmi.layout<contiguous>>
+// ASSIGN: %[[G4_ABS:.*]] = pto.vmi.absf %[[G4_X]]
+// ASSIGN: %[[G4_AMAX:.*]] = pto.vmi.group_reduce_maxf %[[G4_ABS]]
+// ASSIGN-SAME: !pto.vmi.vreg<128xf32, #pto.vmi.layout<contiguous>>
+// ASSIGN-SAME: -> !pto.vmi.vreg<4xf32, #pto.vmi.layout<num_groups = 4, slots = 8>>
+// ASSIGN: pto.vmi.group_store %[[G4_AMAX]]
+
+// LOWER-LABEL: func.func @vmi_layout_assignment_group_reduce_maxf_group4_contiguous(
+// LOWER-COUNT-4: pto.vcmax
+// LOWER-COUNT-4: pto.vselr
+// LOWER-COUNT-4: pto.vsel
+// LOWER-NOT: pto.vcgmax
+// LOWER-NOT: pto.vdintlv
+// LOWER-NOT: pto.vmi.
+// LOWER-NOT: !pto.vmi.

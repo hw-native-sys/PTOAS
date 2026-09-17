@@ -10611,6 +10611,7 @@ enum class GroupReduceLoweringPlan {
   OneBlockVcgadd,
   TwoBlockDeinterleaved2VcgaddVadd,
   FourBlockDeinterleaved4VcgaddTree,
+  FourBlockContiguousVcmaxTree,
   FullDeinterleaved2VcaddRows,
   ContiguousVcaddRows,
 };
@@ -10618,6 +10619,7 @@ enum class GroupReduceLoweringPlan {
 FailureOr<GroupReduceLoweringPlan>
 classifyGroupReduceLoweringPlan(VMIVRegType sourceType, VMIMaskType maskType,
                                 VMIVRegType resultType, int64_t numGroups,
+                                bool allowContiguousFourBlock,
                                 std::string *reason = nullptr) {
   VMILayoutSupport supports;
   FailureOr<VMIGroupReduceLayoutFact> fact =
@@ -10634,6 +10636,10 @@ classifyGroupReduceLoweringPlan(VMIVRegType sourceType, VMIMaskType maskType,
   case VMIGroupBlockClass::TwoBlock:
     return GroupReduceLoweringPlan::TwoBlockDeinterleaved2VcgaddVadd;
   case VMIGroupBlockClass::FourBlock:
+    if (allowContiguousFourBlock && fact->sourceLayout &&
+        fact->sourceLayout.isContiguous() &&
+        fact->sourceLayout.getLaneStride() == 1)
+      return GroupReduceLoweringPlan::FourBlockContiguousVcmaxTree;
     return GroupReduceLoweringPlan::FourBlockDeinterleaved4VcgaddTree;
   case VMIGroupBlockClass::FullPartMultiple:
     if (fact->sourceLayout && fact->sourceLayout.isDeinterleaved() &&
@@ -10670,9 +10676,14 @@ struct OneToNVMIGroupReduceOpPattern : OneToNOpConversionPattern<OpTy> {
           op, Twine(op->getName().getStringRef()) +
                   " has no layout support: " + supportReason);
     auto maskVMIType = cast<VMIMaskType>(op.getMask().getType());
+    bool allowContiguousFourBlock =
+        std::is_same_v<OpTy, VMIGroupReduceMaxFOp> &&
+        sourceVMIType.getElementType().isF32() &&
+        op.getNumGroupsAttr().getInt() == 4;
     FailureOr<GroupReduceLoweringPlan> plan = classifyGroupReduceLoweringPlan(
         sourceVMIType, maskVMIType, resultVMIType,
-        op.getNumGroupsAttr().getInt(), &supportReason);
+        op.getNumGroupsAttr().getInt(), allowContiguousFourBlock,
+        &supportReason);
     if (failed(plan))
       return rewriter.notifyMatchFailure(
           op, Twine(op->getName().getStringRef()) +
@@ -10771,6 +10782,102 @@ struct OneToNVMIGroupReduceOpPattern : OneToNOpConversionPattern<OpTy> {
       }
 
       replaceOpWithFlatConvertedValues(rewriter, op, results, *this->getTypeConverter());
+      return success();
+    }
+
+    if (*plan == GroupReduceLoweringPlan::FourBlockContiguousVcmaxTree) {
+      if (sourceParts.size() != 2 || maskParts.size() != 2 ||
+          resultTypes.size() != 1)
+        return rewriter.notifyMatchFailure(
+            op, "contiguous f32 group=4 reduction requires two source/mask "
+                "parts and one result part");
+
+      auto sourcePartType = dyn_cast<VRegType>(sourceParts.front().getType());
+      auto resultType = dyn_cast<VRegType>(resultTypes.front());
+      auto maskType = dyn_cast<MaskType>(maskParts.front().getType());
+      if (!sourcePartType || !resultType || !maskType ||
+          sourceParts[1].getType() != sourcePartType ||
+          maskParts[1].getType() != maskType ||
+          sourcePartType != resultType)
+        return rewriter.notifyMatchFailure(
+            op, "contiguous f32 group=4 reduction requires uniform "
+                "physical part types");
+
+      FailureOr<Value> lowMask =
+          createLaneRangeMask(op.getLoc(), maskType, 0, 32, rewriter);
+      FailureOr<Value> highMask =
+          createLaneRangeMask(op.getLoc(), maskType, 32, 64, rewriter);
+      FailureOr<Value> allTrue =
+          createAllTrueMask(op.getLoc(), maskType, rewriter);
+      if (failed(lowMask) || failed(highMask) || failed(allTrue))
+        return rewriter.notifyMatchFailure(
+            op, "contiguous f32 group=4 reduction requires materializable "
+                "lane masks");
+
+      auto combineMask = [&](Value userMask, Value laneMask) -> Value {
+        return rewriter
+            .create<PandOp>(op.getLoc(), maskType, userMask, laneMask,
+                            *allTrue)
+            .getResult();
+      };
+
+      Value group0 = rewriter
+                         .create<RowReduceOpTy>(
+                             op.getLoc(), resultType, sourceParts[0],
+                             combineMask(maskParts[0], *lowMask))
+                         .getResult();
+      Value group1 = rewriter
+                         .create<RowReduceOpTy>(
+                             op.getLoc(), resultType, sourceParts[0],
+                             combineMask(maskParts[0], *highMask))
+                         .getResult();
+      Value group2 = rewriter
+                         .create<RowReduceOpTy>(
+                             op.getLoc(), resultType, sourceParts[1],
+                             combineMask(maskParts[1], *lowMask))
+                         .getResult();
+      Value group3 = rewriter
+                         .create<RowReduceOpTy>(
+                             op.getLoc(), resultType, sourceParts[1],
+                             combineMask(maskParts[1], *highMask))
+                         .getResult();
+
+      MLIRContext *ctx = rewriter.getContext();
+      auto indexType = VRegType::get(
+          ctx, resultType.getElementCount(), IntegerType::get(ctx, 32));
+      FailureOr<Value> lane0Index = createGroupSlotIndexVector(
+          op.getLoc(), indexType, resultType.getElementCount(),
+          /*baseGroupSlot=*/0, rewriter);
+      FailureOr<Value> zero =
+          createZeroVector(op.getLoc(), resultType, rewriter);
+      if (failed(lane0Index) || failed(zero))
+        return rewriter.notifyMatchFailure(
+            op, "failed to materialize contiguous f32 group=4 pack helpers");
+
+      SmallVector<Value, 4> broadcasts;
+      broadcasts.reserve(4);
+      for (Value group : {group0, group1, group2, group3})
+        broadcasts.push_back(rewriter
+                                 .create<VselrOp>(op.getLoc(), resultType,
+                                                  group, *lane0Index)
+                                 .getResult());
+
+      Value packed = *zero;
+      for (int64_t lane = 0; lane < 4; ++lane) {
+        FailureOr<Value> laneMask = createLaneRangeMask(
+            op.getLoc(), maskType, lane, lane + 1, rewriter);
+        if (failed(laneMask))
+          return rewriter.notifyMatchFailure(
+              op, "failed to materialize contiguous group slot mask");
+        packed = rewriter
+                     .create<VselOp>(op.getLoc(), resultType, broadcasts[lane],
+                                     packed, *laneMask)
+                     .getResult();
+      }
+
+      replaceOpWithFlatConvertedValues(
+          rewriter, op, SmallVector<Value>{packed},
+          *this->getTypeConverter());
       return success();
     }
 

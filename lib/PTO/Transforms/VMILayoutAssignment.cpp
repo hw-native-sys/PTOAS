@@ -487,6 +487,15 @@ struct LayoutSolver {
 
     int64_t groupSize = type.getElementCount() / numGroups;
     int64_t vcgBlockElems = *lanesPerPart / 8;
+    // Keep f32 group=4 broadcasts in a dense layout so downstream
+    // elementwise quantization stays contiguous and its f32->fp8 store can
+    // use the direct lane_stride=4/PK4_B32 path.  The d4 form is only useful
+    // for the reduction input side; propagating it through the inverse/scale
+    // chain forces vdintlv materialization on every quantized row.
+    if (type.getElementType().isF32() && type.getElementCount() == 128 &&
+        numGroups == 4) {
+      return getContiguousLayout();
+    }
     if (type.getElementCount() < *lanesPerPart &&
         groupSize == vcgBlockElems) {
       return VMILayoutAttr::getContiguous(ctx, /*laneStride=*/mlir::pto::kValue2);
@@ -1123,11 +1132,13 @@ struct LayoutSolver {
   }
 
   WalkResult addMaskedStoreConstraint(VMIMaskedStoreOp store, Operation *op) {
-    if (hasDataLayoutSeed(store.getValue())) {
-      return WalkResult::advance();
-    }
     auto valueType = cast<VMIVRegType>(store.getValue().getType());
     auto maskType = cast<VMIMaskType>(store.getMask().getType());
+    if (hasDataLayoutSeed(store.getValue())) {
+      valueType = VMIVRegType::get(
+          valueType.getContext(), valueType.getElementCount(),
+          valueType.getElementType(), getDataLayout(store.getValue()));
+    }
     FailureOr<VMIMaskedStoreLayoutFact> fact =
         getPreferredDenseMaskedStoreLayout(valueType, maskType);
     if (failed(fact)) {

@@ -126,6 +126,7 @@ static constexpr GroupReduceLayoutPattern kGroupReduceLayoutPatterns[] = {
     {gb(1), c(), gs(8)},
     {gb(2), d(2), gs(8)},
     {gb(2), bd(2), gs(8)},
+    {gb(4), c(), gs(8)},
     {gb(4), d(4), gs(8)},
     {gb(4), bd(4), gs(8)},
     {gbFull(), c(), gs(1)},
