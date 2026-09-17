@@ -12,6 +12,7 @@ constexpr unsigned kTGatherI32BitWidth = 32;
 constexpr unsigned kExpectedTileRank = 2;
 constexpr int64_t kTmovAlignBytes = 16;
 constexpr unsigned kFp8ElemBitWidth = 8;
+constexpr unsigned kTGatherBDstElemBytes[] = {1, 2, 4};
 
 static LogicalResult verifyTGatherArch(TGatherOp op, bool isA5) {
   if (op.getMaskPatternAttr()) {
@@ -83,7 +84,7 @@ static LogicalResult verifyTGatherBA2A3(TGatherBOp op) {
            << "expects dst and offsets to use row-major layout";
   }
   auto dstBytes = tgatherbElemBytes(dstElemTy);
-  if (!dstBytes || (*dstBytes != 1 && *dstBytes != 2 && *dstBytes != 4)) {
+  if (!dstBytes || !llvm::is_contained(kTGatherBDstElemBytes, *dstBytes)) {
     return op.emitOpError()
            << "expects A2/A3 dst element size to be 1, 2, or 4 bytes";
   }
@@ -123,7 +124,7 @@ static LogicalResult verifyTGatherBA5(TGatherBOp op) {
   }
   Type dstElemTy = elems->second;
   auto dstBytes = tgatherbElemBytes(dstElemTy);
-  if (!dstBytes || (*dstBytes != 1 && *dstBytes != 2 && *dstBytes != 4)) {
+  if (!dstBytes || !llvm::is_contained(kTGatherBDstElemBytes, *dstBytes)) {
     return op.emitOpError() << "expects dst element size to be 1, 2, or 4 bytes";
   }
   return mlir::success();

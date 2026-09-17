@@ -402,7 +402,6 @@ LogicalResult VMILayoutSupport::getGroupBroadcastSupport(
 }
 
 // Checker-side acceptance for the two composite 32<->8 spine rows.
-//
 // This predicate is deliberately *not* part of the cast candidate path: it is
 // consulted only by the "is this assigned pair supportable" validators below
 // (getTruncFSupport / getExtFSupport and the matching residual-op guards in

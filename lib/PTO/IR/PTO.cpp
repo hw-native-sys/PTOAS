@@ -123,6 +123,9 @@
 // InferIntRangeInterface: PTO runtime query ops (i64)
 //===----------------------------------------------------------------------===//
 
+// Bit width of the i64 storage used for block-query range inference.
+constexpr unsigned kBlockQueryRangeBitWidth = 64;
+
 // get_block_idx returns the linear index of the current block within the task,
 // documented as [0, BlockNum - 1]. The value is a 32-bit quantity on the
 // hardware, and the LLVM lowering rounds it through i32 on every path (the
@@ -138,8 +141,8 @@ void pto::GetBlockIdxOp::inferResultRanges(
     ::mlir::SetIntRangeFn setResultRange) {
   setResultRange(
       getResult(),
-      ConstantIntRanges::fromUnsigned(APInt::getMinValue(64),
-                                      APInt(64, INT32_MAX)));
+      ConstantIntRanges::fromUnsigned(APInt::getMinValue(kBlockQueryRangeBitWidth),
+                                      APInt(kBlockQueryRangeBitWidth, INT32_MAX)));
 }
 
 // get_subblock_idx returns the vector-core ID, documented as [0, 1].
@@ -147,8 +150,8 @@ void pto::GetSubBlockIdxOp::inferResultRanges(
     ::llvm::ArrayRef<::mlir::ConstantIntRanges> operandRanges,
     ::mlir::SetIntRangeFn setResultRange) {
   setResultRange(getResult(),
-                 ConstantIntRanges::fromUnsigned(APInt(64, 0),
-                                                 APInt(64, 1)));
+                 ConstantIntRanges::fromUnsigned(APInt(kBlockQueryRangeBitWidth, 0),
+                                                 APInt(kBlockQueryRangeBitWidth, 1)));
 }
 
 // Block/subblock counts are non-negative. Do NOT claim >= 1: existing
@@ -159,8 +162,8 @@ void pto::GetBlockNumOp::inferResultRanges(
     ::mlir::SetIntRangeFn setResultRange) {
   setResultRange(
       getResult(),
-      ConstantIntRanges::fromUnsigned(APInt::getMinValue(64),
-                                      APInt::getSignedMaxValue(64)));
+      ConstantIntRanges::fromUnsigned(APInt::getMinValue(kBlockQueryRangeBitWidth),
+                                      APInt::getSignedMaxValue(kBlockQueryRangeBitWidth)));
 }
 
 void pto::GetSubBlockNumOp::inferResultRanges(
@@ -168,6 +171,6 @@ void pto::GetSubBlockNumOp::inferResultRanges(
     ::mlir::SetIntRangeFn setResultRange) {
   setResultRange(
       getResult(),
-      ConstantIntRanges::fromUnsigned(APInt::getMinValue(64),
-                                      APInt::getSignedMaxValue(64)));
+      ConstantIntRanges::fromUnsigned(APInt::getMinValue(kBlockQueryRangeBitWidth),
+                                      APInt::getSignedMaxValue(kBlockQueryRangeBitWidth)));
 }

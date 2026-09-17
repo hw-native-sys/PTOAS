@@ -538,7 +538,6 @@ tryGetPrecisionTypeAttr(Operation *op, PrecisionT highPrecision) {
   if (!typed) {
     return std::nullopt;
   }
-
   PrecisionT precision = typed.getPrecisionType();
   if (precision == highPrecision &&
       !highPrecisionImplementedOps().contains(op->getName().getStringRef())) {
@@ -588,12 +587,14 @@ static void appendTInsertAttrs(
                      stringifyReluPreMode(tinsert.getReluPreMode()).str());
 }
 
+constexpr unsigned kMaskAxisAttrInlineCapacity = 2;
+
 // Returns the mask_pattern / axis_value context attrs for TGatherOp /
 // TScatterOp.
 template <typename GatherScatterOpT>
-static SmallVector<std::pair<std::string, std::string>, mlir::pto::kValue2>
+static SmallVector<std::pair<std::string, std::string>, kMaskAxisAttrInlineCapacity>
 getMaskAxisContextAttrs(GatherScatterOpT op) {
-  SmallVector<std::pair<std::string, std::string>, mlir::pto::kValue2> maskAxisAttrs;
+  SmallVector<std::pair<std::string, std::string>, kMaskAxisAttrInlineCapacity> maskAxisAttrs;
   if (auto maskPatternAttr = op.getMaskPatternAttr()) {
     maskAxisAttrs.emplace_back(
         "mask_pattern", stringifyMaskPattern(maskPatternAttr.getValue()).str());

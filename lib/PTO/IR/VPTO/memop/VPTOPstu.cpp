@@ -14,6 +14,9 @@ using namespace mlir;
 using namespace mlir::pto;
 using namespace mlir::pto::memop_detail;
 
+constexpr unsigned kPstuUi16BitWidth = 16;
+constexpr unsigned kPstuUi32BitWidth = 32;
+
 void PstuOp::getEffects(
     SmallVectorImpl<SideEffects::EffectInstance<MemoryEffects::Effect>>
         &effects) {
@@ -40,13 +43,14 @@ LogicalResult PstuOp::verify() {
   auto baseType = cast<pto::PtrType>(getBase().getType());
   auto maskType = cast<pto::MaskType>(getValue().getType());
   auto elemType = dyn_cast<IntegerType>(baseType.getElementType());
-  if (!elemType || elemType.isSigned() || (elemType.getWidth() != mlir::pto::kValue16 && elemType.getWidth() != 32)) {
+  if (!elemType || elemType.isSigned() ||
+      (elemType.getWidth() != kPstuUi16BitWidth && elemType.getWidth() != kPstuUi32BitWidth)) {
     return emitOpError("requires ui16/ui32 UB base type");
   }
-  if (maskType.isB16() && elemType.getWidth() != mlir::pto::kValue16) {
+  if (maskType.isB16() && elemType.getWidth() != kPstuUi16BitWidth) {
     return emitOpError("requires !pto.mask<b16> to pair with !pto.ptr<ui16, ub>");
   }
-  if (maskType.isB32() && elemType.getWidth() != mlir::pto::kValue32) {
+  if (maskType.isB32() && elemType.getWidth() != kPstuUi32BitWidth) {
     return emitOpError("requires !pto.mask<b32> to pair with !pto.ptr<ui32, ub>");
   }
   return success();

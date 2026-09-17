@@ -258,7 +258,6 @@ addConversion([this, Ctx](MemRefType type) -> std::optional<Type> {
   // B. 处理 Memory Space
   std::string qualifier = "";
   Attribute memorySpace = type.getMemorySpace();
-  
   if (!memorySpace) {
      qualifier = "__gm__";
   } else if (auto ptoAttr = dyn_cast<pto::AddressSpaceAttr>(memorySpace)) {
@@ -270,12 +269,10 @@ addConversion([this, Ctx](MemRefType type) -> std::optional<Type> {
 
   std::string finalTypeStr = qualifier + " " + elemTypeStr;
   LLVM_DEBUG(llvm::dbgs() << "  [Success] -> " << finalTypeStr << "*\n");
-  
   return getEmitCPointerType(Ctx, finalTypeStr);
 });
 
 // ---------------------------------------------------------
-
 }
 
 void PTOToEmitCTypeConverter::registerFunctionAndMaterializations() {

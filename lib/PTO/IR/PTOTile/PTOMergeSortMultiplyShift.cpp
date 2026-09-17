@@ -11,6 +11,8 @@
 constexpr int64_t kBlockLenMultiple = 64;
 
 constexpr unsigned kMergeSortTileRank = 2;
+constexpr unsigned kMergeSortExecutedVecLen = 4;
+constexpr unsigned kMergeSortExecutedElemBitWidth = 16;
 static ParseResult resolveTMrgSortFormat2(OpAsmParser &parser,
                                           OperationState &result,
                                           TMrgSortFormat2State &state) {
@@ -112,8 +114,8 @@ static LogicalResult verifyTMrgSortFormat2Outputs(TMrgSortOp op, Type dstTy,
     return op.emitOpError("format2 dst/tmp must be PTO shaped-like");
   auto executedTy = dyn_cast<mlir::VectorType>(op.getExcuted().getType());
   if (!executedTy || executedTy.getRank() != 1 ||
-      executedTy.getNumElements() != 4 ||
-      !executedTy.getElementType().isInteger(16))
+      executedTy.getNumElements() != kMergeSortExecutedVecLen ||
+      !executedTy.getElementType().isInteger(kMergeSortExecutedElemBitWidth))
     return op.emitOpError("format2 excuted must be vector<4xi16>");
   Type elemTy = getElemTy(dstTy);
   if (tmpTy && elemTy != getElemTy(tmpTy))
@@ -150,7 +152,7 @@ static LogicalResult verifyTMrgSortFormat2Srcs(TMrgSortOp op) {
     Type srcTy = src.getType();
     auto srcShape = getShapeVec(srcTy);
     auto srcValidShape = getValidShapeVec(src);
-    if (srcShape.size() != 2 || srcValidShape.size() != 2) {
+    if (srcShape.size() != kMergeSortTileRank || srcValidShape.size() != kMergeSortTileRank) {
       return op.emitOpError() << "format2 expects src to be rank-2 tile-shaped";
     }
     if (srcShape[0] != mlir::ShapedType::kDynamic && srcShape[0] != 1) {

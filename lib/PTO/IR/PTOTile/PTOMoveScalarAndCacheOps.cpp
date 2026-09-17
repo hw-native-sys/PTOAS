@@ -57,7 +57,6 @@ static LogicalResult verifyMatmulLike(Operation *op, Type aTy, Type bTy, Type ds
   bool aValid = isa<RankedTensorType, pto::TileBufType, pto::PartitionTensorViewType>(aTy);
   bool bValid = isa<RankedTensorType, pto::TileBufType, pto::PartitionTensorViewType>(bTy);
   bool dValid = isa<RankedTensorType, pto::TileBufType, pto::PartitionTensorViewType>(dstTy);
-
   if (!aValid || !bValid || !dValid) {
     return op->emitOpError("expects inputs/outputs to be tensors or PTO tile types");
   }

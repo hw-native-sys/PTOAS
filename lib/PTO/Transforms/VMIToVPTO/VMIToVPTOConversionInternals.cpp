@@ -10,6 +10,17 @@
 //===- VMIToVPTOConversionInternals.inc - VMIToVPTO internals -*- C++ -*-===//
 //===----------------------------------------------------------------------===//
 
+constexpr unsigned kElemBitWidthB8 = 8;
+constexpr unsigned kElemBitWidthB16 = 16;
+constexpr unsigned kElemBitWidthB32 = 32;
+constexpr int64_t kBitsPerByte = 8;
+constexpr int64_t kI32ConstantBitWidth = 32;
+constexpr int64_t kI16ConstantBitWidth = 16;
+constexpr int64_t kMaxAdvanceBitWidth = 32;
+constexpr unsigned kMaxUnsignedBoundBits = 63;
+constexpr unsigned kBoundSignBitWidth = 64;
+constexpr int64_t kSupportedPatVLLanes[] = {1, 2, 3, 4, 8, 16, 32, 64, 128};
+
 std::optional<std::string> getX2MemoryDistToken(Type elementType,
                                                 StringRef prefix);
 std::optional<std::string> getDenseLaneStrideLoadDistToken(VMIVRegType type);
@@ -171,7 +182,6 @@ static FailureOr<VMIPhysicalConversionInput> getVMIPhysicalConversionInput(
 }
 
 /// Dense carrier view of a cast operand's declared layout.
-///
 /// A group-slot packet with `slots` slots places group g at lane
 /// (g % slots) * lane_stride of physical part g / slots, so as long as one
 /// packet fits in one part every part holds a lane-strided prefix of group
@@ -181,13 +191,11 @@ static FailureOr<VMIPhysicalConversionInput> getVMIPhysicalConversionInput(
 /// single-carrier case), so a cast may derive its part/parity plan from the
 /// dense view while forwarding the physical part unchanged: no pack, zip or
 /// shuffle instruction is implied.
-///
 /// Returns `layout` itself for layouts that are already dense (contiguous,
 /// deinterleaved, block), and a null attribute for a layout without a dense
 /// lane-stride view, i.e. a packet whose slots span more than one physical part
 /// (slots * lane_stride > physical lanes per part), where group blocks are
 /// spread across parts instead of being packed into carrier lanes.
-///
 /// Callers still decide polarity: the view only names the carrier, never the
 /// source or result lane the cast has to select.
 static VMILayoutAttr getVMICastDenseCarrierView(VMILayoutAttr layout,
@@ -252,7 +260,7 @@ static LogicalResult emitStatefulStoreStream(Operation *op, Value base,
             "advances");
   }
   if (llvm::any_of(advances, [](int64_t advance) {
-        return advance <= 0 || !llvm::isInt<32>(advance);
+        return advance <= 0 || !llvm::isInt<kMaxAdvanceBitWidth>(advance);
       })) {
     return rewriter.notifyMatchFailure(
         op, "unaligned store stream requires positive 32-bit advances");
@@ -265,7 +273,7 @@ static LogicalResult emitStatefulStoreStream(Operation *op, Value base,
   Value currentBase = base;
   for (auto [value, advance] : llvm::zip_equal(values, advances)) {
     Value advanceValue =
-        rewriter.create<arith::ConstantIntOp>(op->getLoc(), advance, 32);
+        rewriter.create<arith::ConstantIntOp>(op->getLoc(), advance, kI32ConstantBitWidth);
     auto store = rewriter.create<VstusOp>(op->getLoc(), align.getType(),
                                           currentBase.getType(), align,
                                           advanceValue, value, currentBase);
@@ -273,7 +281,7 @@ static LogicalResult emitStatefulStoreStream(Operation *op, Value base,
     currentBase = store.getBaseOut();
   }
 
-  Value zero = rewriter.create<arith::ConstantIntOp>(op->getLoc(), 0, 32);
+  Value zero = rewriter.create<arith::ConstantIntOp>(op->getLoc(), 0, kI32ConstantBitWidth);
   rewriter.create<VstasOp>(op->getLoc(), /*updated_base=*/Type{}, align,
                            currentBase, zero);
   return success();
@@ -603,24 +611,24 @@ materializeVMIToVPTO(OpBuilder &builder, TypeRange resultTypes, Value input,
 
 static int64_t getMaskGranularityBits(StringRef granularity) {
   if (granularity == "b8") {
-    return 8;
+    return kElemBitWidthB8;
   }
   if (granularity == "b16") {
-    return 16;
+    return kElemBitWidthB16;
   }
   if (granularity == "b32") {
-    return 32;
+    return kElemBitWidthB32;
   }
   return 0;
 }
 
 static StringRef getMaskGranularityForBits(int64_t bits) {
   switch (bits) {
-  case 8:
+  case kElemBitWidthB8:
     return "b8";
-  case 16:
+  case kElemBitWidthB16:
     return "b16";
-  case 32:
+  case kElemBitWidthB32:
     return "b32";
   default:
     return "";
@@ -754,10 +762,10 @@ FailureOr<int64_t> getVRegPhysicalFootprintBytes(TypeRange types) {
       return failure();
     }
     int64_t chunkBits = vregType.getElementCount() * elementBits;
-    if (chunkBits % 8 != 0) {
+    if (chunkBits % kBitsPerByte != 0) {
       return failure();
     }
-    totalBytes += chunkBits / 8;
+    totalBytes += chunkBits / kBitsPerByte;
   }
   return totalBytes;
 }
@@ -805,19 +813,19 @@ FailureOr<Value> createAllTrueMaskForVReg(Location loc, VRegType vregType,
   MLIRContext *ctx = rewriter.getContext();
   unsigned elementBits =
       pto::getPTOStorageElemBitWidth(vregType.getElementType());
-  if (elementBits == 8) {
+  if (elementBits == kElemBitWidthB8) {
     return rewriter
         .create<PsetB8Op>(loc, MaskType::get(ctx, "b8"),
                           rewriter.getStringAttr("PAT_ALL"))
         .getResult();
   }
-  if (elementBits == 16) {
+  if (elementBits == kElemBitWidthB16) {
     return rewriter
         .create<PsetB16Op>(loc, MaskType::get(ctx, "b16"),
                            rewriter.getStringAttr("PAT_ALL"))
         .getResult();
   }
-  if (elementBits == 32) {
+  if (elementBits == kElemBitWidthB32) {
     return rewriter
         .create<PsetB32Op>(loc, MaskType::get(ctx, "b32"),
                            rewriter.getStringAttr("PAT_ALL"))
@@ -829,13 +837,13 @@ FailureOr<Value> createAllTrueMaskForVReg(Location loc, VRegType vregType,
 FailureOr<MaskType> getMaskTypeForVReg(VRegType vregType, MLIRContext *ctx) {
   unsigned elementBits =
       pto::getPTOStorageElemBitWidth(vregType.getElementType());
-  if (elementBits == 8) {
+  if (elementBits == kElemBitWidthB8) {
     return MaskType::get(ctx, "b8");
   }
-  if (elementBits == 16) {
+  if (elementBits == kElemBitWidthB16) {
     return MaskType::get(ctx, "b16");
   }
-  if (elementBits == 32) {
+  if (elementBits == kElemBitWidthB32) {
     return MaskType::get(ctx, "b32");
   }
   return failure();
@@ -975,12 +983,12 @@ checkSupportedMaskableVReg(VMIVRegType type, std::string *reason = nullptr) {
 
 Value createI32Constant(Location loc, int64_t value,
                         PatternRewriter &rewriter) {
-  return rewriter.create<arith::ConstantIntOp>(loc, value, 32);
+  return rewriter.create<arith::ConstantIntOp>(loc, value, kI32ConstantBitWidth);
 }
 
 Value createI16Constant(Location loc, int64_t value,
                         PatternRewriter &rewriter) {
-  return rewriter.create<arith::ConstantIntOp>(loc, value, 16);
+  return rewriter.create<arith::ConstantIntOp>(loc, value, kI16ConstantBitWidth);
 }
 
 std::optional<std::string> getStaticPrefixPattern(int64_t activeLanes);
@@ -1048,20 +1056,10 @@ std::optional<std::string> getStaticPrefixPattern(int64_t activeLanes) {
   if (activeLanes <= 0) {
     return std::string("PAT_ALLF");
   }
-  switch (activeLanes) {
-  case 1:
-  case 2:
-  case 3:
-  case 4:
-  case 8:
-  case 16:
-  case 32:
-  case 64:
-  case 128:
+  if (llvm::is_contained(kSupportedPatVLLanes, activeLanes)) {
     return std::string("PAT_VL") + std::to_string(activeLanes);
-  default:
-    return std::nullopt;
   }
+  return std::nullopt;
 }
 
 std::optional<std::string> getPrefixPattern(int64_t activeLanes,
@@ -1477,8 +1475,8 @@ static bool isPackedByteGroupStore(Type destinationType, VRegType valueType) {
       dyn_cast_or_null<IntegerType>(destinationElementType);
   auto valueIntegerType = dyn_cast<IntegerType>(valueType.getElementType());
   return destinationIntegerType && valueIntegerType &&
-         pto::getPTOStorageElemBitWidth(destinationIntegerType) == 8 &&
-         pto::getPTOStorageElemBitWidth(valueIntegerType) == 32;
+         pto::getPTOStorageElemBitWidth(destinationIntegerType) == kElemBitWidthB8 &&
+         pto::getPTOStorageElemBitWidth(valueIntegerType) == kElemBitWidthB32;
 }
 
 enum class VMIMemoryDirection { Read, Write };
@@ -1578,10 +1576,10 @@ static std::optional<int64_t> getPhysicalVectorBytes(VRegType type) {
   if (elementBits == 0 ||
       llvm::MulOverflow(type.getElementCount(),
                         static_cast<int64_t>(elementBits), totalBits) ||
-      totalBits <= 0 || totalBits % 8 != 0) {
+      totalBits <= 0 || totalBits % kBitsPerByte != 0) {
     return std::nullopt;
   }
-  return totalBits / 8;
+  return totalBits / kBitsPerByte;
 }
 
 static bool isDirectMemoryDistAddressLegal(Value base, Value offset,
@@ -1658,13 +1656,13 @@ struct VMIStaticReadEnvelopes {
 static FailureOr<int64_t> getByteAddressableElementSize(
     Type elementType, std::string *reason) {
   unsigned elementBits = pto::getPTOStorageElemBitWidth(elementType);
-  if (elementBits == 0 || elementBits % 8 != 0) {
+  if (elementBits == 0 || elementBits % kBitsPerByte != 0) {
     if (reason) {
       *reason = "requires byte-addressable element type";
     }
     return failure();
   }
-  return static_cast<int64_t>(elementBits / 8);
+  return static_cast<int64_t>(elementBits / kBitsPerByte);
 }
 
 static FailureOr<VMIStaticReadEnvelopes> buildStaticReadEnvelopes(
@@ -1784,11 +1782,11 @@ struct VMIStatefulOffsetRange {
 static std::optional<int64_t> convertFiniteRangeBound(
     const APInt &bound, bool unsignedInterpretation) {
   if (unsignedInterpretation) {
-    return bound.getActiveBits() > 63
+    return bound.getActiveBits() > kMaxUnsignedBoundBits
                ? std::nullopt
                : std::optional<int64_t>(bound.getZExtValue());
   }
-  return bound.isSignedIntN(64) ? std::optional<int64_t>(bound.getSExtValue())
+  return bound.isSignedIntN(kBoundSignBitWidth) ? std::optional<int64_t>(bound.getSExtValue())
                                 : std::nullopt;
 }
 

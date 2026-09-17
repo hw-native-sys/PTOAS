@@ -808,7 +808,7 @@ WalkResult verifySupportedChannelOp(ChannelOp op, int64_t channels,
   if (succeeded(check(op, &reason))) {
     return WalkResult::advance();
   }
-  if (channels != 2 && channels != 4) {
+  if (channels != kDeintFactor2 && channels != kDeintFactor4) {
     op.emitError() << kVMIDiagUnsupportedPrefix << supportedText;
   } else {
     op.emitError() << kVMIDiagUnsupportedPrefix << shapeText << reason << ")";
