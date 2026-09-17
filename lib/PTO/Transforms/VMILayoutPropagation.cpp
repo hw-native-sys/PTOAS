@@ -247,11 +247,17 @@ public:
 
     VMILayoutSupport supports;
 
+    auto getCastFacts = [&](VMICastLayoutPort port) {
+      if (auto truncf = dyn_cast<VMITruncFOp>(op))
+        return supports.getTruncFLayoutFactsForLayout(truncf, port,
+                                                      changedLayout);
+      return supports.getCastLayoutFactsForLayout(sourceType, resultType, port,
+                                                  changedLayout);
+    };
+
     if (changedValue == op->getOperand(0)) {
       FailureOr<SmallVector<VMICastLayoutFact, mlir::pto::kValue4>> facts =
-          supports.getCastLayoutFactsForLayout(
-              sourceType, resultType, VMICastLayoutPort::Source,
-              changedLayout);
+          getCastFacts(VMICastLayoutPort::Source);
       if (failed(facts) || facts->empty()) {
         return failure();
       }
@@ -266,9 +272,7 @@ public:
 
     if (changedValue == op->getResult(0)) {
       FailureOr<SmallVector<VMICastLayoutFact, mlir::pto::kValue4>> facts =
-          supports.getCastLayoutFactsForLayout(
-              sourceType, resultType, VMICastLayoutPort::Result,
-              changedLayout);
+          getCastFacts(VMICastLayoutPort::Result);
       if (failed(facts) || facts->empty()) {
         return failure();
       }

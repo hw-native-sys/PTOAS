@@ -245,8 +245,85 @@ static LogicalResult getNarrowCastSupport(VMIVRegType sourceType,
       resultType.getLayoutAttr(), reason)));
 }
 
+static bool hasPackedFP4NarrowConsumer(Value value) {
+  SmallVector<Value, 8> worklist{value};
+  while (!worklist.empty()) {
+    Value current = worklist.pop_back_val();
+    for (OpOperand &use : current.getUses()) {
+      Operation *user = use.getOwner();
+      if (auto bitcast = dyn_cast<VMIBitcastOp>(user)) {
+        if (bitcast.getSource() == current) {
+          worklist.push_back(bitcast.getResult());
+          continue;
+        }
+      }
+      auto truncf = dyn_cast<VMITruncFOp>(user);
+      if (!truncf || truncf.getSource() != current)
+        continue;
+      auto resultType = dyn_cast<VMIVRegType>(truncf.getResult().getType());
+      if (resultType &&
+          pto::isPTOFloat4PackedType(resultType.getElementType()))
+        return true;
+    }
+  }
+  return false;
+}
+
+bool VMILayoutSupport::isPackedFP4PairTruncF(VMITruncFOp op) const {
+  auto sourceType = dyn_cast<VMIVRegType>(op.getSource().getType());
+  auto resultType = dyn_cast<VMIVRegType>(op.getResult().getType());
+  if (!sourceType || !resultType || !sourceType.getElementType().isF32() ||
+      !resultType.getElementType().isBF16() ||
+      sourceType.getElementCount() != resultType.getElementCount())
+    return false;
+  return hasPackedFP4NarrowConsumer(op.getResult());
+}
+
+FailureOr<SmallVector<VMICastLayoutFact, mlir::pto::kValue4>>
+VMILayoutSupport::getTruncFLayoutFactsForLayout(
+    VMITruncFOp op, VMICastLayoutPort port, VMILayoutAttr layout,
+    std::string *reason) const {
+  auto sourceType = cast<VMIVRegType>(op.getSource().getType());
+  auto resultType = cast<VMIVRegType>(op.getResult().getType());
+  FailureOr<SmallVector<VMICastLayoutFact, mlir::pto::kValue4>> facts =
+      getCastLayoutFactsForLayout(sourceType, resultType, port, layout, reason);
+
+  SmallVector<VMICastLayoutFact, mlir::pto::kValue4> allFacts;
+  if (succeeded(facts))
+    allFacts.append(facts->begin(), facts->end());
+
+  bool pairPath = isPackedFP4PairTruncF(op);
+  VMILayoutAttr contiguous = VMILayoutAttr::getContiguous(op.getContext());
+  bool matchesPairPort =
+      pairPath && ((port == VMICastLayoutPort::Source && layout == contiguous) ||
+                   (port == VMICastLayoutPort::Result && layout == contiguous));
+  if (matchesPairPort) {
+    VMICastLayoutFact pairFact;
+    pairFact.sourceBits = 32;
+    pairFact.resultBits = 16;
+    pairFact.sourceLayout = contiguous;
+    pairFact.resultLayout = contiguous;
+    pairFact.priority = VMICastLayoutPriority::High;
+    allFacts.push_back(pairFact);
+  }
+
+  if (allFacts.empty()) {
+    if (reason && reason->empty())
+      *reason = "requires a legal truncf cast relation for the requested layout";
+    return failure();
+  }
+  return allFacts;
+}
+
 LogicalResult VMILayoutSupport::getTruncFSupport(VMITruncFOp op,
                                                  std::string *reason) const {
+  auto sourceType = cast<VMIVRegType>(op.getSource().getType());
+  auto resultType = cast<VMIVRegType>(op.getResult().getType());
+  VMILayoutAttr contiguous = VMILayoutAttr::getContiguous(op.getContext());
+  if (isPackedFP4PairTruncF(op) &&
+      sourceType.getLayoutAttr() == contiguous &&
+      resultType.getLayoutAttr() == contiguous)
+    return success();
   return getNarrowCastSupport(cast<VMIVRegType>(op.getSource().getType()),
                               cast<VMIVRegType>(op.getResult().getType()),
                               reason);

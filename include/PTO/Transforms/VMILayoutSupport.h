@@ -443,6 +443,13 @@ public:
   LogicalResult getTruncFSupport(VMITruncFOp op,
                                  std::string *reason = nullptr) const;
 
+  bool isPackedFP4PairTruncF(VMITruncFOp op) const;
+
+  FailureOr<SmallVector<VMICastLayoutFact, mlir::pto::kValue4>>
+  getTruncFLayoutFactsForLayout(VMITruncFOp op, VMICastLayoutPort port,
+                                VMILayoutAttr layout,
+                                std::string *reason = nullptr) const;
+
   LogicalResult getExtFSupport(VMIExtFOp op,
                                std::string *reason = nullptr) const;
 

@@ -11688,6 +11688,115 @@ struct OneToNVMIExtFOpPattern : OneToNOpConversionPattern<VMIExtFOp> {
   }
 };
 
+// Lower the FP4-oriented f32 contiguous -> bf16 contiguous pair conversion
+// without materializing bf16 lane_stride=2 first.  Each f32 source part is
+// rounded in the u32 domain, then the two parts are split into low/high 16-bit
+// sublanes.  The high stream is the contiguous bf16 result.
+FailureOr<SmallVector<Value>> lowerContiguousF32ToBF16Pair(
+    VMITruncFOp op, ValueRange sourceParts, ArrayRef<Type> resultTypes,
+    StringRef rounding, PatternRewriter &rewriter) {
+  Location loc = op.getLoc();
+  if (sourceParts.empty() || resultTypes.empty() ||
+      sourceParts.size() != 2 * resultTypes.size())
+    return failure();
+
+  auto sourcePartType = dyn_cast<VRegType>(sourceParts.front().getType());
+  auto resultPartType = dyn_cast<VRegType>(resultTypes.front());
+  if (!sourcePartType || !resultPartType ||
+      !sourcePartType.getElementType().isF32() ||
+      !resultPartType.getElementType().isBF16() ||
+      sourcePartType.getElementCount() * 2 != resultPartType.getElementCount())
+    return failure();
+
+  for (Value sourcePart : sourceParts)
+    if (sourcePart.getType() != sourcePartType)
+      return failure();
+  for (Type resultType : resultTypes)
+    if (resultType != resultPartType)
+      return failure();
+
+  MLIRContext *ctx = rewriter.getContext();
+  auto ui32Type = VRegType::get(ctx, sourcePartType.getElementCount(),
+                               rewriter.getIntegerType(32));
+  auto ui16Type = VRegType::get(ctx, resultPartType.getElementCount(),
+                               rewriter.getIntegerType(16));
+  FailureOr<Value> activeMask =
+      createAllTrueMaskForVReg(loc, sourcePartType, rewriter);
+  if (failed(activeMask))
+    return failure();
+
+  Value one = createI32Constant(loc, 1, rewriter);
+  Value oneVec =
+      rewriter.create<VdupOp>(loc, ui32Type, one, *activeMask,
+                              /*position=*/nullptr)
+          .getResult();
+  Value shift16 = createI16Constant(loc, 16, rewriter);
+
+  auto roundSourcePart = [&](Value sourcePart) -> FailureOr<Value> {
+    FailureOr<Value> bits = bitcastVReg(loc, sourcePart, ui32Type, rewriter);
+    if (failed(bits))
+      return failure();
+
+    Value rounded = *bits;
+    if (rounding == "R") {
+      Value high = rewriter
+                       .create<VshrsOp>(loc, ui32Type, *bits, shift16,
+                                        *activeMask)
+                       .getResult();
+      Value lowBit = rewriter
+                         .create<VandOp>(loc, ui32Type, high, oneVec,
+                                         *activeMask)
+                         .getResult();
+      Value biased = rewriter
+                         .create<VaddsOp>(loc, ui32Type, *bits,
+                                          createI32Constant(loc, 0x7FFF, rewriter),
+                                          *activeMask)
+                         .getResult();
+      rounded = rewriter
+                    .create<VaddOp>(loc, ui32Type, biased, lowBit,
+                                    *activeMask)
+                    .getResult();
+    } else if (rounding == "A") {
+      rounded = rewriter
+                    .create<VaddsOp>(loc, ui32Type, *bits,
+                                     createI32Constant(loc, 0xFFFF, rewriter),
+                                     *activeMask)
+                    .getResult();
+    } else if (rounding == "H") {
+      rounded = rewriter
+                    .create<VaddsOp>(loc, ui32Type, *bits,
+                                     createI32Constant(loc, 0x8000, rewriter),
+                                     *activeMask)
+                    .getResult();
+    } else if (rounding != "Z") {
+      return failure();
+    }
+
+    return bitcastVReg(loc, rounded, ui16Type, rewriter);
+  };
+
+  SmallVector<Value> results;
+  results.reserve(resultTypes.size());
+  for (size_t resultIndex = 0; resultIndex < resultTypes.size();
+       ++resultIndex) {
+    FailureOr<Value> even =
+        roundSourcePart(sourceParts[2 * resultIndex]);
+    FailureOr<Value> odd =
+        roundSourcePart(sourceParts[2 * resultIndex + 1]);
+    if (failed(even) || failed(odd))
+      return failure();
+
+    auto deinterleaved = rewriter.create<VdintlvOp>(
+        loc, ui16Type, ui16Type, *even, *odd);
+    FailureOr<Value> result = bitcastVReg(loc, deinterleaved.getHigh(),
+                                          resultPartType, rewriter);
+    if (failed(result))
+      return failure();
+    results.push_back(*result);
+  }
+  return results;
+}
+
 struct OneToNVMITruncFOpPattern : OneToNOpConversionPattern<VMITruncFOp> {
   using OneToNOpConversionPattern<VMITruncFOp>::OneToNOpConversionPattern;
 
@@ -11833,6 +11942,24 @@ struct OneToNVMITruncFOpPattern : OneToNOpConversionPattern<VMITruncFOp> {
 
     unsigned resultBits = pto::getPTOStorageElemBitWidth(
         resultVRegTypes.front().getElementType());
+
+    if (sourceBits == 32 && resultBits == 16 &&
+        sourceElementType.isF32() && resultElementType.isBF16() &&
+        sourceLayout && resultLayout && sourceLayout.isContiguous() &&
+        sourceLayout.getLaneStride() == 1 && resultLayout.isContiguous() &&
+        resultLayout.getLaneStride() == 1 &&
+        sourceParts.size() == 2 * resultTypes.size()) {
+      StringRef rounding = getTruncFRoundMode(op, resultElementType);
+      FailureOr<SmallVector<Value>> results = lowerContiguousF32ToBF16Pair(
+          op, sourceParts, resultTypes, rounding, rewriter);
+      if (failed(results))
+        return rewriter.notifyMatchFailure(
+            op, "unsupported contiguous f32 -> bf16 pair lowering");
+      replaceOpWithFlatConvertedValues(rewriter, op, *results,
+                                       *this->getTypeConverter());
+      return success();
+    }
+
     // Same-width fp->fp (bf16 -> f16, f16 -> bf16): dense contiguous 1:1,
     // no part; rnd always, sat follows the fp-to-fp contract.
     if (sourceBits == resultBits && sourceLayout && resultLayout &&

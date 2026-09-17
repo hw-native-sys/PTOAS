@@ -769,6 +769,16 @@ struct LayoutSolver {
   WalkResult addTruncationConstraint(CastOp castOp, Operation *op) {
     auto sourceType = cast<VMIVRegType>(castOp.getSource().getType());
     auto resultType = cast<VMIVRegType>(castOp.getResult().getType());
+    if constexpr (std::is_same_v<CastOp, VMITruncFOp>) {
+      if (VMILayoutSupport().isPackedFP4PairTruncF(castOp)) {
+        VMILayoutAttr contiguous = getContiguousLayout();
+        requestDataUse(castOp.getSourceMutable(), contiguous, /*late=*/false,
+                       DataLayoutSeedPhase::CompactCast);
+        return *constraintResult(setPreferredLayout(
+            castOp.getResult(), contiguous, op,
+            DataLayoutSeedPhase::CompactCast));
+      }
+    }
     FailureOr<VMICastLayoutFact> fact =
         VMILayoutSupport().getPreferredCastLayoutFact(sourceType, resultType);
     VMILayoutAttr resultLayout =
