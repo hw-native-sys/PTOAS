@@ -1,0 +1,106 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You should not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+
+// -----------------------------------------------------------------------------
+// case: vmi_new/vmula-bf16-vl8-unaligned-stateful-load
+// family: memory load lowering (PtrType stateful fallback)
+// target_ops: pto.vmi.vload (PtrType source, unaligned effective address)
+// regression for: #1374 (commits 343742bf4 + 700a8fd82)
+//
+// Before 343742bf4 a PtrType load whose effective address could not be proven
+// 32-byte aligned was rejected by checkSupportedContiguousLoadAddress with
+// VMI-UNSUPPORTED ("requires statically shaped memref source"), because
+// computeSafeStatefulReadProof only handles MemRefType.  The vldas+vldus
+// stateful stream (5eb87c2) could have lowered it, but the preflight check
+// ran first and never let it through.  This reproduced as 54 vmi_vmula sim
+// failures for small VL (vl=2/4/8) across bf16/f16/f32/i16/i32/i8.
+//
+// This kernel reproduces that failing shape -- vl=8 bf16 (16 bytes, half a
+// VCG block), the loads sourced from non-32B-aligned UB addresses -- with
+// three distinct misalignment residue classes:
+//
+//   - acc: base 1024 (aligned) + element offset 4 → eff. addr 1032, 8 mod 32
+//   - lhs: base 2048 (aligned) + element offset 1 → eff. addr 2050, 2 mod 32
+//   - rhs: base 3072 (aligned) + element offset 6 → eff. addr 3084, 12 mod 32
+//
+// The GM→UB staging destinations stay 32B-aligned (A5 MTE requires aligned
+// copy destinations); the misalignment is introduced only on the load side,
+// which is exactly the situation the preflight change covers.
+//
+// Expected behaviour (verified in the VPTO IR and on the simulator):
+//   - all three loads pass the preflight and lower to pto.vldas + pto.vldus
+//     (no pto.vsldb anywhere),
+//   - the vmula result is bit-identical to the aligned case
+//     vmi_new/vmula-bf16-vl8 (same input samples, wide-domain accumulate,
+//     one RNE round to bf16).
+// -----------------------------------------------------------------------------
+
+module attributes {pto.target_arch = "a5", pto.kernel_kind = #pto.kernel_kind<vector>} {
+  func.func @vmi_vmula_bf16_vl8_unaligned_kernel(%acc_gm: !pto.ptr<bf16, gm>,
+                                                 %lhs_gm: !pto.ptr<bf16, gm>,
+                                                 %rhs_gm: !pto.ptr<bf16, gm>,
+                                                 %dst_gm: !pto.ptr<bf16, gm>) attributes {pto.kernel} {
+    %c0 = arith.constant 0 : index
+    %c8 = arith.constant 8 : index
+    %c0_i64 = arith.constant 0 : i64
+    %c1_i64 = arith.constant 1 : i64
+    %c16_i64 = arith.constant 16 : i64
+    %c32_i64 = arith.constant 32 : i64
+    %c1024_i64 = arith.constant 1024 : i64
+    %c2048_i64 = arith.constant 2048 : i64
+    %c3072_i64 = arith.constant 3072 : i64
+    %c4096_i64 = arith.constant 4096 : i64
+    %c1 = arith.constant 1 : index
+    %c4 = arith.constant 4 : index
+    %c6 = arith.constant 6 : index
+
+    // 32B-aligned, non-overlapping UB staging slots; each holds the 8-lane
+    // payload at a different element offset (see the loads below).
+    %ub_acc = pto.castptr %c1024_i64 : i64 -> !pto.ptr<bf16, ub>
+    %ub_lhs = pto.castptr %c2048_i64 : i64 -> !pto.ptr<bf16, ub>
+    %ub_rhs = pto.castptr %c3072_i64 : i64 -> !pto.ptr<bf16, ub>
+    %ub_dst = pto.castptr %c4096_i64 : i64 -> !pto.ptr<bf16, ub>
+
+    pto.mte_gm_ub %acc_gm, %ub_acc, %c0_i64, %c32_i64
+      nburst(%c1_i64, %c32_i64, %c32_i64)
+      : !pto.ptr<bf16, gm>, !pto.ptr<bf16, ub>, i64, i64, i64, i64, i64
+    pto.mte_gm_ub %lhs_gm, %ub_lhs, %c0_i64, %c32_i64
+      nburst(%c1_i64, %c32_i64, %c32_i64)
+      : !pto.ptr<bf16, gm>, !pto.ptr<bf16, ub>, i64, i64, i64, i64, i64
+    pto.mte_gm_ub %rhs_gm, %ub_rhs, %c0_i64, %c32_i64
+      nburst(%c1_i64, %c32_i64, %c32_i64)
+      : !pto.ptr<bf16, gm>, !pto.ptr<bf16, ub>, i64, i64, i64, i64, i64
+
+    pto.set_flag["PIPE_MTE2", "PIPE_V", "EVENT_ID0"]
+    pto.wait_flag["PIPE_MTE2", "PIPE_V", "EVENT_ID0"]
+
+    pto.vecscope {
+      // Three PtrType loads with unprovable 32B alignment (residues 8/2/12
+      // mod 32).  All three must take the vldas+vldus stateful stream.
+      %acc = pto.vmi.vload %ub_acc[%c4] : !pto.ptr<bf16, ub> -> !pto.vmi.vreg<8xbf16>
+      %lhs = pto.vmi.vload %ub_lhs[%c1] : !pto.ptr<bf16, ub> -> !pto.vmi.vreg<8xbf16>
+      %rhs = pto.vmi.vload %ub_rhs[%c6] : !pto.ptr<bf16, ub> -> !pto.vmi.vreg<8xbf16>
+      %mask = pto.vmi.create_mask %c8 : index -> !pto.vmi.mask<8xpred>
+      %result = pto.vmi.vmula %acc, %lhs, %rhs, %mask
+          : !pto.vmi.vreg<8xbf16>, !pto.vmi.vreg<8xbf16>,
+            !pto.vmi.vreg<8xbf16>, !pto.vmi.mask<8xpred>
+          -> !pto.vmi.vreg<8xbf16>
+      // The store side stays on the ordinary aligned path.
+      pto.vmi.vstore %result, %ub_dst[%c0]
+          : !pto.vmi.vreg<8xbf16>, !pto.ptr<bf16, ub>
+    }
+
+    pto.set_flag["PIPE_V", "PIPE_MTE3", "EVENT_ID0"]
+    pto.wait_flag["PIPE_V", "PIPE_MTE3", "EVENT_ID0"]
+    pto.mte_ub_gm %ub_dst, %dst_gm, %c16_i64
+      nburst(%c1_i64, %c16_i64, %c16_i64)
+      : !pto.ptr<bf16, ub>, !pto.ptr<bf16, gm>, i64, i64, i64, i64
+    pto.barrier #pto.pipe<PIPE_ALL>
+    return
+  }
+}
