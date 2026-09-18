@@ -14,6 +14,8 @@
 // provably disjoint modulo N, or indeterminate. The result lets sync
 // shrink event-id count or skip same-iter forward syncs entirely when
 // producer and consumer touch different slots in every iteration.
+// Rotation offsets also determine which slot events are initially available
+// and which releases remain outstanding at the loop boundary.
 //
 //===----------------------------------------------------------------------===//
 
@@ -22,6 +24,7 @@
 
 #include "mlir/IR/Value.h"
 #include <cstdint>
+#include <optional>
 
 namespace mlir {
 namespace pto {
@@ -52,6 +55,11 @@ mlir::Value findMultiTileSlotExpr(mlir::Value v);
 ///   compareSlotSSA(%iv % 2, %j % 2)          -> kUnknown   // diff symbols
 ///   compareSlotSSA(arith.constant 0, arith.constant 1) -> kDisjoint
 SlotRelation compareSlotSSA(mlir::Value a, mlir::Value b, uint32_t N);
+
+/// Recognize `(iv + nonnegative constant) remui N` for boundary event
+/// accounting. The returned offset is reduced modulo N. Other expressions
+/// require conservative synchronization rather than assumed slot rotation.
+std::optional<uint32_t> getSlotRotationOffset(mlir::Value slot, mlir::Value inductionVar, uint32_t count);
 
 } // namespace pto
 } // namespace mlir

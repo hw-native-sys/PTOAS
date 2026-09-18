@@ -166,8 +166,17 @@ struct BaseMemInfo {
  
 using DepBaseMemInfoPairVec =
     SmallVector<std::pair<const BaseMemInfo *, const BaseMemInfo *>>;
- 
+
 // 表示一个具体的同步指令 (Set, Wait, Barrier)
+// A unit-step loop visits slot `(iv + offset) % count` once per rotation.
+// Boundary flags compare each lane's first set and wait in that rotation.
+struct SlotEventSchedule {
+    Operation* loop{nullptr};
+    uint32_t producerOffset{0};
+    uint32_t consumerOffset{0};
+    bool producerBeforeConsumer{false};
+};
+
 class SyncOperation {
 public:
   enum class TYPE {
@@ -198,6 +207,9 @@ public:
   // hardware event-id index. Empty when this sync is single-buffer.
   Value slotSSAExpr;
   uint32_t slotCount{1};
+  std::optional<SlotEventSchedule> slotSchedule;
+  // Present only on the synthetic loop prime/drain for this event lane.
+  std::optional<uint32_t> boundarySlot;
   Value lowestCommonAncestorBuffer{nullptr};
   int reuseCntForWiden{0};
   bool reallocatedLoopHeadTailSync{false};

@@ -1,0 +1,43 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+
+// RUN: ptoas %s --enable-insert-sync --pto-arch=a3 --emit-pto-ir -o %t
+// RUN: %python %S/Inputs/check_multi_tile_prefetch_sync.py ptoas %s %t
+// REQUIRES: pto-python-bindings
+//
+// Issue #1519: preload slot 0, then prefetch the next slot before consuming
+// the current one. Check the emitted event protocol and cross-pipe ordering
+// for zero, odd, and even trip counts, including alternate slot expressions.
+module {
+  func.func @double_prefetch(%gm : !pto.partition_tensor_view<16x16xf16>, %n : index) {
+    %c0 = arith.constant 0 : index
+    %c1 = arith.constant 1 : index
+    %c2 = arith.constant 2 : index
+
+    %mb = pto.alloc_multi_tile : !pto.multi_tile_buf<vec, 16x16xf16, count=2>
+    %acc = pto.alloc_tile : !pto.tile_buf<vec, 16x16xf16>
+
+    // preload iter 0 -> slot0
+    %pre = pto.multi_tile_get %mb[%c0] : !pto.multi_tile_buf<vec, 16x16xf16, count=2> -> !pto.tile_buf<vec, 16x16xf16>
+    pto.tload ins(%gm : !pto.partition_tensor_view<16x16xf16>) outs(%pre : !pto.tile_buf<vec, 16x16xf16>)
+
+    scf.for %i = %c0 to %n step %c1 {
+      %next     = arith.addi  %i,    %c1 : index
+      %cur_idx  = arith.remui %i,    %c2 : index
+      %next_idx = arith.remui %next, %c2 : index
+
+      // prefetch into the other slot
+      %s_next = pto.multi_tile_get %mb[%next_idx] : !pto.multi_tile_buf<vec, 16x16xf16, count=2> -> !pto.tile_buf<vec, 16x16xf16>
+      pto.tload ins(%gm : !pto.partition_tensor_view<16x16xf16>) outs(%s_next : !pto.tile_buf<vec, 16x16xf16>)
+
+      %s_cur = pto.multi_tile_get %mb[%cur_idx] : !pto.multi_tile_buf<vec, 16x16xf16, count=2> -> !pto.tile_buf<vec, 16x16xf16>
+      pto.tadd ins(%s_cur, %s_cur : !pto.tile_buf<vec, 16x16xf16>, !pto.tile_buf<vec, 16x16xf16>) outs(%acc : !pto.tile_buf<vec, 16x16xf16>)
+    }
+    return
+  }
+}
