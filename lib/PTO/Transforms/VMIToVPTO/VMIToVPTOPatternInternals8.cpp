@@ -461,10 +461,12 @@ std::optional<WalkResult> verifySupportedVMIStructuredLoadOp(Operation *op) {
 }
 
 std::optional<WalkResult> verifySupportedVMIMemoryLoadOp(
-    Operation *op, bool enableStableGatherMaskedLoad) {
+    Operation *op, bool enableStableGatherMaskedLoad,
+    VMILoadSafetyPolicy loadSafety) {
   if (auto load = dyn_cast<VMILoadOp>(op)) {
     std::string reason;
-    if (failed(checkSupportedContiguousLoadAddress(load, &reason))) {
+    if (failed(
+            checkSupportedContiguousLoadAddress(load, loadSafety, &reason))) {
       load.emitError() << kVMIDiagUnsupportedPrefix << reason;
       return WalkResult::interrupt();
     }
@@ -485,9 +487,10 @@ std::optional<WalkResult> verifySupportedVMIMemoryLoadOp(
 }
 
 std::optional<WalkResult> verifySupportedVMIMemoryOp(
-    Operation *op, bool enableStableGatherMaskedLoad) {
+    Operation *op, bool enableStableGatherMaskedLoad,
+    VMILoadSafetyPolicy loadSafety) {
   if (auto loadResult = verifySupportedVMIMemoryLoadOp(
-          op, enableStableGatherMaskedLoad);
+          op, enableStableGatherMaskedLoad, loadSafety);
       loadResult.has_value()) {
     return *loadResult;
   }
@@ -1237,9 +1240,10 @@ verifySupportedVMIChannelShuffleOp(Operation *op) {
 }
 
 std::optional<WalkResult> verifySupportedVMIStandardOp(
-    Operation *op, bool enableStableGatherMaskedLoad) {
+    Operation *op, bool enableStableGatherMaskedLoad,
+    VMILoadSafetyPolicy loadSafety) {
   if (auto memoryResult = verifySupportedVMIMemoryOp(
-          op, enableStableGatherMaskedLoad);
+          op, enableStableGatherMaskedLoad, loadSafety);
       memoryResult.has_value()) {
     return *memoryResult;
   }
@@ -1277,9 +1281,10 @@ std::optional<WalkResult> verifySupportedVMIStandardOp(
 }
 
 static WalkResult verifySupportedVMIToVPTOOp(
-    Operation *op, bool enableStableGatherMaskedLoad) {
+    Operation *op, bool enableStableGatherMaskedLoad,
+    VMILoadSafetyPolicy loadSafety) {
   if (auto standardResult = verifySupportedVMIStandardOp(
-          op, enableStableGatherMaskedLoad);
+          op, enableStableGatherMaskedLoad, loadSafety);
       standardResult.has_value()) {
     return *standardResult;
   }
@@ -1292,10 +1297,12 @@ static WalkResult verifySupportedVMIToVPTOOp(
 
 LogicalResult
 verifySupportedVMIToVPTOOps(ModuleOp module,
-                            bool enableStableGatherMaskedLoad) {
+                            bool enableStableGatherMaskedLoad,
+                            VMILoadSafetyPolicy loadSafety) {
   WalkResult result = module.walk(
-      [&enableStableGatherMaskedLoad](Operation *op) {
-        return verifySupportedVMIToVPTOOp(op, enableStableGatherMaskedLoad);
+      [enableStableGatherMaskedLoad, loadSafety](Operation *op) {
+        return verifySupportedVMIToVPTOOp(op, enableStableGatherMaskedLoad,
+                                          loadSafety);
       });
   return failure(result.wasInterrupted());
 }

@@ -81,8 +81,10 @@ for n in LANES:
             if n == 256:
                 assert "pto.vlds " in out and "pto.vsldb " not in out, out
 
-# 33 bytes is not a bounded contiguous load at all: it falls back to the
-# generic full-carrier read, which has no supported lowering and always fails.
+# 33 bytes is not a bounded contiguous load: it falls back to a full-carrier
+# read. Strict load safety rejects the unproven physical read; the default
+# policy accepts the same shape. This 33-lane shape covers IR robustness only;
+# PTODSL's public VMI lane whitelist excludes 33.
 compile_ir("unsafe_load_33_0", """module {
   func.func @probe(%p: !pto.ptr<ui8, ub>) -> !pto.vmi.vreg<33xui8> {
     %off = arith.constant 0 : index

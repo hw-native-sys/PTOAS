@@ -29,18 +29,6 @@ struct VMIToVPTOPass : public mlir::pto::impl::VMIToVPTOBase<VMIToVPTOPass> {
 
   void runOnOperation() override {
     ModuleOp module = getOperation();
-    if (failed(verifyVMIToVPTOInputIR(module))) {
-      signalPassFailure();
-      return;
-    }
-    if (failed(verifySupportedVMIToVPTOOps(module,
-                                           enableStableGatherMaskedLoad))) {
-      signalPassFailure();
-      return;
-    }
-
-    MLIRContext *context = module.getContext();
-    VMIToVPTOTypeConverter typeConverter;
     FailureOr<VMILoadSafetyPolicy> loadSafetyPolicy =
         parseLoadSafetyPolicy(loadSafety);
     if (failed(loadSafetyPolicy)) {
@@ -49,6 +37,18 @@ struct VMIToVPTOPass : public mlir::pto::impl::VMIToVPTOBase<VMIToVPTOPass> {
       signalPassFailure();
       return;
     }
+    if (failed(verifyVMIToVPTOInputIR(module))) {
+      signalPassFailure();
+      return;
+    }
+    if (failed(verifySupportedVMIToVPTOOps(
+            module, enableStableGatherMaskedLoad, *loadSafetyPolicy))) {
+      signalPassFailure();
+      return;
+    }
+
+    MLIRContext *context = module.getContext();
+    VMIToVPTOTypeConverter typeConverter;
     RewritePatternSet patterns(context);
 
     populateVMIConversionPatterns(typeConverter, patterns, *loadSafetyPolicy);
@@ -64,4 +64,3 @@ struct VMIToVPTOPass : public mlir::pto::impl::VMIToVPTOBase<VMIToVPTOPass> {
     }
   }
 };
-

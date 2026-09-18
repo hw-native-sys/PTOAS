@@ -545,8 +545,10 @@ known 32B alignment -> direct NORM
 otherwise           -> stateful continuous access
 ```
 
-load stateful 路径仍需满足完整 VL read 的安全条件。store 可以用 `vstus` 精确写入
-Dense/Prefix 的低位连续 payload。
+在默认 `policy` 和 `warn` 模式下，load stateful 路径不以完整 VL read 的安全证明作为
+准入条件；`warn` 在证明失败时报告 warning。只有 `error` 模式要求完整 physical read
+envelope 可证明安全。无 extent 的 `!pto.ptr` 因而在 `policy`/`warn` 下可以进入该路径，
+在 `error` 下拒绝。store 可以用 `vstus` 精确写入 Dense/Prefix 的低位连续 payload。
 
 #### UNPK
 
@@ -554,7 +556,7 @@ Dense/Prefix 的低位连续 payload。
 required alignment proven
   -> direct UNPK
 
-alignment not proven and stateful read envelope proven safe
+alignment not proven and (policy accepts over-read or stateful read envelope proven safe)
   -> vldus full vector
   -> explicit lane expansion using only semantic input portion
 
