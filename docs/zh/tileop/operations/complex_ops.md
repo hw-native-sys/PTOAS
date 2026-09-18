@@ -35,18 +35,19 @@ pto.op ins(<src>, ... : <src_type>, ...) outs(<dst> : <dst_type>)
 ### `pto.tci` — 连续整数序列生成
 
 ```mlir
-pto.tci ins(<S> {descending = <bool>} : <int_type>)
-        outs(<dst> : <dst_type>)
+pto.tci ins(<S> : <int_type>)
+         outs(<dst> : <dst_type>)
+         {descending = <bool>}
 ```
 
 **语义：**
 
 ```text
-For each element at linear_index:
+For each column j in the single valid row:
     if descending == false:
-        dst[linear_index] = S + linear_index
+        dst[0, j] = S + j
     else:
-        dst[linear_index] = S + (total_elements - 1 - linear_index)
+        dst[0, j] = S - j
 ```
 
 **参数：**
@@ -62,14 +63,14 @@ For each element at linear_index:
 
 - `descending` — 是否生成降序序列。默认值为 `false`。
   - `false` — 生成升序序列（S，S+1，S+2，...）
-  - `true` — 生成降序序列
+  - `true` — 从 S 开始递减（S，S-1，S-2，...）。
 
 **约束：**
 
 - **实现检查（A2A3/A5）**
-  - `dst` 元素类型必须为整数类型，且仅支持 `i16` 或 `i32`。
+  - `dst` 元素类型必须为整数类型，支持 16 位或 32 位整数，例如 `i16`、`ui16`、`i32`、`ui32`。
   - `S` 的类型必须与 `dst` 元素类型完全一致。
-  - `dst` 必须为 rank-2。
+  - `dst` 使用 `loc=vec`，为 rank-2 的单行序列 Tile；有效行数为 1。
   - `dst.cols` 不能为 1。
 
 **示例：**
@@ -80,6 +81,16 @@ pto.tci ins(%c0_i16 : i16)
         outs(%tile : !pto.tile_buf<loc=vec, dtype=i16, rows=1, cols=16,
             v_row=1, v_col=16, blayout=row_major, slayout=none_box,
             fractal=512, pad=1>)
+```
+
+当起始值为 10、有效列数为 4 时，升序结果为 `[10,11,12,13]`，降序结果为 `[10,9,8,7]`。
+
+```mlir
+%start = pto.constant 10 : i16
+pto.tci ins(%start : i16)
+  outs(%sequence : !pto.tile_buf<loc=vec, dtype=i16, rows=1, cols=16,
+    v_row=1, v_col=4, blayout=row_major, slayout=none_box,
+    fractal=512, pad=0>) {descending = true}
 ```
 
 ---
@@ -141,16 +152,16 @@ pto.tgatherb ins(%src, %offsets :
 
 ```mlir
 // 索引形式
-pto.tgather ins(<src>, <indices>, <tmp> : <src_type>, <indices_type>, <tmp_type>)
+pto.tgather ins(<src>, <indices> : <src_type>, <indices_type>)
             outs(<dst> : <dst_type>)
 
 // 比较形式
-pto.tgather ins(<src>, <kValue>, <tmp> : <src_type>, <scalar_type>, <tmp_type>)
+pto.tgather ins(<src>, <kValue> : <src_type>, <scalar_type>)
             outs(<dst>, <cdst> : <dst_type>, <cdst_type>)
             {cmpMode = #pto<cmp <mode>>, offset = <i32>}
 
 // 掩码形式
-pto.tgather ins(<src>, {maskPattern = #pto.mask_pattern<<pattern>>} : <src_type>)
+pto.tgather ins(<src>, {maskPattern = #pto.mask_pattern<<pattern>>} : <src_type>, "row")
             outs(<dst> : <dst_type>)
 ```
 
@@ -210,7 +221,6 @@ P1000:
 | `dst` | `pto.tile_buf` | 主目标 tile 缓冲区 |
 | `cdst` | `pto.tile_buf` | 比较形式中的辅助目标 tile（仅比较形式） |
 | `indices` | `pto.tile_buf` | 索引形式中的索引 tile（仅索引形式） |
-| `tmp` | `pto.tile_buf` | 索引形式和比较形式中的临时 tile（仅索引/比较形式） |
 | `kValue` | 标量类型 | 比较形式中的标量比较值（仅比较形式） |
 
 **返回值：** 无。以 DPS 的形式写入 `dst`（及比较形式下的 `cdst`）。
@@ -235,24 +245,21 @@ P1000:
 **约束：**
 
 - **实现检查（A2A3）**
-  - 索引形式：`src` 和 `dst` 元素类型必须一致，且为 `i16`、`i32`、`f16` 或 `f32` 之一。`indices` 元素类型必须为 `i32`。`tmp` 元素类型必须与 `indices` 一致。`dst` 的 `valid_shape[1]` 必须等于 `dst.cols`。
-  - 比较形式：`dst` 和 `cdst` 元素类型必须为 `i32`。`src` 元素类型必须为 `f16`、`f32`，或当 `cmpMode=eq` 时可为 `i32`。`kValue` 类型必须与 `src` 元素类型一致。`cmpMode` 必须为 `eq` 或 `gt`。`src`、`dst`、`cdst`、`tmp` 必须为 `loc=vec`。
+  - 索引形式：`src` 和 `dst` 元素类型必须一致，且为 `i16`、`i32`、`f16` 或 `f32` 之一。`indices` 元素类型必须为 `i32`，物理形状和有效形状必须为静态值。`dst` 的 `valid_shape[1]` 必须等于 `dst.cols`。
+  - 比较形式：`dst` 和 `cdst` 元素类型必须为 `i32`。`src` 元素类型必须为 `f16`、`f32`，或当 `cmpMode=eq` 时可为 `i32`；`src` 的物理形状必须为静态值。`kValue` 类型必须与 `src` 元素类型一致。`cmpMode` 必须为 `eq` 或 `gt`。`src`、`dst`、`cdst` 必须为 `loc=vec`。
   - 掩码形式：`src` 元素大小必须为 2 或 4 字节。`src` 和 `dst` 必须使用 `loc=vec` 和 `blayout=row_major`。`src` 和 `dst` 元素大小必须一致。`dst` 的 `valid_shape[1]` 必须等于 `dst.cols`。
 
 - **实现检查（A5）**
   - 索引形式：`src` 和 `dst` 元素类型必须一致，且为 `i8`、`i16`、`i32`、`f16` 或 `f32` 之一。`indices` 元素类型可为 `i16` 或 `i32`。`dst` 的 `valid_shape[1]` 必须等于 `dst.cols`。
-  - 比较形式：`dst` 和 `cdst` 元素类型必须为 `i32`。`src` 元素类型必须为 `i16`、`i32`、`f16` 或 `f32` 之一。`kValue` 类型必须与 `src` 元素类型一致。`cmpMode` 必须为 `eq` 或 `gt`。`src`、`dst`、`cdst`、`tmp` 必须为 `loc=vec`。
+  - 比较形式：`dst` 和 `cdst` 元素类型必须为 `i32`。`src` 元素类型必须为 `i16`、`i32`、`f16` 或 `f32` 之一。`kValue` 类型必须与 `src` 元素类型一致。`cmpMode` 必须为 `eq` 或 `gt`。`src`、`dst`、`cdst` 必须为 `loc=vec`。
   - 掩码形式：`src` 元素大小必须为 1、2 或 4 字节。`src` 和 `dst` 必须使用 `loc=vec` 和 `blayout=row_major`。`src`/`dst` 元素类型必须为 `i8`、`i16`、`i32`、`f16`、`bf16`、`f32` 或 fp8 类支持类型之一。`src` 和 `dst` 元素大小必须一致。`dst` 的 `valid_shape[1]` 必须等于 `dst.cols`。
 
 **示例：**
 
 ```mlir
 // 索引形式
-pto.tgather ins(%src, %indices, %index_tmp :
+pto.tgather ins(%src, %indices :
                 !pto.tile_buf<loc=vec, dtype=f16, rows=1, cols=32,
-                    v_row=1, v_col=32, blayout=row_major, slayout=none_box,
-                    fractal=512, pad=0>,
-                !pto.tile_buf<loc=vec, dtype=i32, rows=1, cols=32,
                     v_row=1, v_col=32, blayout=row_major, slayout=none_box,
                     fractal=512, pad=0>,
                 !pto.tile_buf<loc=vec, dtype=i32, rows=1, cols=32,
@@ -574,7 +581,7 @@ pto.tscatter ins(<src>, <indexes> : <src_type>, <indexes_type>)
              outs(<dst> : <dst_type>)
 
 // 掩码形式
-pto.tscatter ins(<src>, {maskPattern = #pto.mask_pattern<<pattern>>} : <src_type>)
+pto.tscatter ins(<src>, {maskPattern = #pto.mask_pattern<<pattern>>} : <src_type>, <axis>)
              outs(<dst> : <dst_type>)
 ```
 
@@ -583,14 +590,14 @@ pto.tscatter ins(<src>, {maskPattern = #pto.mask_pattern<<pattern>>} : <src_type
 ```text
 索引形式：
     For each element (i, j):
-        dst[indexes[i], j] = src[i, j]
+        flat_dst[indexes[i, j]] = src[i, j]
 
 掩码形式：
     将 src 中按行主序连续存放的元素，按 maskPattern 指定的位置散射回 dst；
     未被 maskPattern 命中的位置补 0。
 ```
 
-默认掩码形式可视为 `pto.tgather` 掩码形式的反向展开。设 `src` 的有效区域为 `R x Csrc`，`dst` 的有效区域为 `R x Cdst`，并满足：
+`axis="row"` 的掩码形式可视为 `pto.tgather` 掩码形式的反向展开。设 `src` 的有效区域为 `R x Csrc`，`dst` 的有效区域为 `R x Cdst`，并满足：
 
 - `P0101` / `P1010`：`Cdst = 2 * Csrc`
 - `P0001` / `P0010` / `P0100` / `P1000`：`Cdst = 4 * Csrc`
@@ -648,43 +655,74 @@ P0010 -> [0, a, 0, 0, 0, b, 0, 0, 0, c, 0, 0, 0, d, 0, 0]
 | Name | Type | Description |
 | ---- | ---- | ----------- |
 | `src` | `pto.tile_buf` | 源 tile 缓冲区 |
-| `indexes` | `pto.tile_buf` | 索引形式中的行索引 tile（仅索引形式） |
+| `indexes` | `pto.tile_buf` | 与 src 有效区域相同的逐元素目标索引 Tile；索引单位为目标元素（仅索引形式） |
 | `dst` | `pto.tile_buf` | 目标 tile 缓冲区 |
 
 **返回值：** 无。以 DPS 的形式写入 `dst`。
 
 **属性：**
 
+- `axis` — 掩码形式必须指定 `"row"` 或 `"col"`，写在 ins 的源类型之后；没有默认值，索引形式不使用该属性。
+  - `"row"`：保持行数，在每一行内沿列展开。
+  - `"col"`：保持列数，沿行展开；将上述公式中的列坐标换为行坐标。
+
 - `maskPattern` — 掩码模式，仅用于掩码形式。
-  - `#pto.mask_pattern<P0101>` — 每 2 列中的第 1 列写入 `src`，其余列补 0
-  - `#pto.mask_pattern<P1010>` — 每 2 列中的第 2 列写入 `src`，其余列补 0
-  - `#pto.mask_pattern<P0001>` — 每 4 列中的第 1 列写入 `src`，其余列补 0
-  - `#pto.mask_pattern<P0010>` — 每 4 列中的第 2 列写入 `src`，其余列补 0
-  - `#pto.mask_pattern<P0100>` — 每 4 列中的第 3 列写入 `src`，其余列补 0
-  - `#pto.mask_pattern<P1000>` — 每 4 列中的第 4 列写入 `src`，其余列补 0
+  - `#pto.mask_pattern<P0101>` — 每 2 个位置中的第 1 个位置写入 `src`，其余位置补 0
+  - `#pto.mask_pattern<P1010>` — 每 2 个位置中的第 2 个位置写入 `src`，其余位置补 0
+  - `#pto.mask_pattern<P0001>` — 每 4 个位置中的第 1 个位置写入 `src`，其余位置补 0
+  - `#pto.mask_pattern<P0010>` — 每 4 个位置中的第 2 个位置写入 `src`，其余位置补 0
+  - `#pto.mask_pattern<P0100>` — 每 4 个位置中的第 3 个位置写入 `src`，其余位置补 0
+  - `#pto.mask_pattern<P1000>` — 每 4 个位置中的第 4 个位置写入 `src`，其余位置补 0
   - `#pto.mask_pattern<P1111>` — 全量复制，不插入 0
 
 **约束：**
 
-- **实现检查（A2A3）**
-  - 索引形式：`src`、`dst` 和 `indexes` 必须为 `loc=vec`。`src`/`dst` 元素类型必须一致，且为 `i8`、`i16`、`i32`、`f16`、`bf16` 或 `f32` 之一。`indexes` 元素类型必须为 `i16` 或 `i32`。当 `dst` 元素大小为 4 字节时，`indexes` 元素大小也必须为 4 字节；2 字节时也必须为 2 字节；1 字节时 `indexes` 必须为 2 字节。不对 `indexes` 中的值进行越界检查。索引形式在 A2/A3 上降低到标量 UB 循环（`PIPE_S`）。
-  - 掩码形式：`src` 和 `dst` 必须为 `loc=vec` 且 `blayout=row_major`。`src` 和 `dst` 元素类型必须一致，且为 `i8`、`i16`、`i32`、`f16`、`bf16` 或 `f32` 之一。`src` 和 `dst` 的有效行数必须一致。`dst` 的有效列数必须等于 `src` 有效列数乘以掩码扩展因子。
-
-- **实现检查（A5）**
-  - 索引形式：约束与 A2A3 索引形式相同。索引形式在 A5 上使用向量散射（`PIPE_V`）。
-  - 掩码形式：A5 不支持掩码形式。
+- A3 和 A5 均支持索引形式及掩码形式；indexes 和 maskPattern 必须且只能选择其一。
+- src/dst 均位于 `vec`，元素类型一致，支持 8/16/32 位整数及 `f16`、`bf16`、`f32`。
+- 索引形式：indexes 位于 `vec`，与 src 有效形状相同；dst 每维有效尺寸不小于 src。4 字节数据使用 32 位索引，2 字节和 1 字节数据使用 16 位索引。
+- 每个索引表示从 dst 存储起点计数的目标元素位置，不是行号或字节偏移。用户应提供范围内且互不冲突的索引；操作不进行逐值越界检查，不保证重复目标索引的覆盖顺序。
+- A5 索引形式先将目标清零，再写入索引命中的位置；未命中位置为零。
+- 掩码形式：src/dst 均使用 `blayout=row_major`。设扩展因子为 F：`P0101/P1010` 为 2，单个 1 的四位模式为 4，`P1111` 为 1。
+- `axis="row"` 要求有效行数相同，`dst.valid_cols=F*src.valid_cols`；`axis="col"` 要求有效列数相同，`dst.valid_rows=F*src.valid_rows`。掩码未命中的位置补零。
 
 **示例：**
 
+索引形式中，若源有效数据为 `[11,22,33,44]`，对应索引为 `[2,0,3,1]`，目标前四个元素为 `[22,44,11,33]`。每个索引对应一个源元素。
+
 ```mlir
-// 掩码形式（A2A3）
+pto.tscatter ins(%values, %indexes :
+  !pto.tile_buf<loc=vec, dtype=f32, rows=1, cols=8,
+    v_row=1, v_col=4, blayout=row_major, slayout=none_box,
+    fractal=512, pad=0>,
+  !pto.tile_buf<loc=vec, dtype=i32, rows=1, cols=8,
+    v_row=1, v_col=4, blayout=row_major, slayout=none_box,
+    fractal=512, pad=0>)
+  outs(%result : !pto.tile_buf<loc=vec, dtype=f32, rows=1, cols=8,
+    v_row=1, v_col=4, blayout=row_major, slayout=none_box,
+    fractal=512, pad=0>)
+```
+
+```mlir
+// A3/A5：沿每一行的列方向展开
 pto.tscatter ins(%src, {maskPattern = #pto.mask_pattern<P0101>} :
                  !pto.tile_buf<loc=vec, dtype=f16, rows=1, cols=32,
                      v_row=1, v_col=32, blayout=row_major, slayout=none_box,
-                     fractal=512, pad=0>)
+                     fractal=512, pad=0>, "row")
              outs(%dst : !pto.tile_buf<loc=vec, dtype=f16, rows=1, cols=64,
                      v_row=1, v_col=64, blayout=row_major, slayout=none_box,
                      fractal=512, pad=0>)
+```
+
+沿列的行方向展开由 `"col"` 指定。下例把两行有效数据展开成四行，第 2、4 行补零。
+
+```mlir
+pto.tscatter ins(%src, {maskPattern = #pto.mask_pattern<P0101>} :
+  !pto.tile_buf<loc=vec, dtype=f32, rows=16, cols=8,
+    v_row=2, v_col=8, blayout=row_major, slayout=none_box,
+    fractal=512, pad=0>, "col")
+  outs(%dst : !pto.tile_buf<loc=vec, dtype=f32, rows=16, cols=8,
+    v_row=4, v_col=8, blayout=row_major, slayout=none_box,
+    fractal=512, pad=0>)
 ```
 
 ---

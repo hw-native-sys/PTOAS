@@ -29,12 +29,12 @@ module attributes {pto.target_arch = "a5"} {
   %hs_idx_tile_inline3021__tile = pto.alloc_tile addr = %c544_i64 valid_row = %c8_index valid_col = %c8_index : !pto.tile_buf<loc=vec, dtype=i32, rows=8, cols=8, v_row=?, v_col=?, blayout=row_major, slayout=none_box, fractal=512, pad=0>
   scf.for %hs_tt_inline2960__idx_v0 = %c0_index to %c8_index step %c1_index {
     %7 = arith.addi %5, %hs_tt_inline2960__idx_v0 : index
-    %6 = pto.load_scalar %arg0[%7] : !pto.ptr<i64> -> i64
+    %6 = pto.load %arg0[%7] : !pto.ptr<i64> -> i64
     %8 = arith.index_cast %6 : i64 to index
     scf.for %hs_k_inline2956__idx_v0 = %c0_index to %c6_index step %c1_index {
       %flat_offset_mul = arith.muli %8, %c6_index : index
       %flat_offset = arith.addi %flat_offset_mul, %hs_k_inline2956__idx_v0 : index
-      %9 = pto.load_scalar %arg1[%flat_offset] : !pto.ptr<i32> -> i32
+      %9 = pto.load %arg1[%flat_offset] : !pto.ptr<i32> -> i32
       %10 = arith.muli %hs_tt_inline2960__idx_v0, %c8_index : index
       %11 = arith.addi %10, %hs_k_inline2956__idx_v0 : index
       pto.tsetval ins(%11, %9 : index, i32) outs(%hs_idx_tile_inline3021__tile : !pto.tile_buf<loc=vec, dtype=i32, rows=8, cols=8, v_row=?, v_col=?, blayout=row_major, slayout=none_box, fractal=512, pad=0>)
@@ -100,14 +100,14 @@ module attributes {pto.target_arch = "a5"} {
         %25 = arith.addi %5, %hs_wt_tt_inline3017__idx_v0 : index
         %26 = arith.muli %25, %c6_index : index
         %27 = arith.addi %26, %hs_wt_k_inline2951__idx_v0 : index
-        pto.store_scalar %22, %arg3[%27] : !pto.ptr<i32>, i32
+        pto.store %22, %arg3[%27] : !pto.ptr<i32>, i32
         %29 = arith.muli %hs_wt_tt_inline3017__idx_v0, %c8_index : index
         %30 = arith.addi %29, %hs_wt_k_inline2951__idx_v0 : index
         %28 = pto.tgetval ins(%hs_weights_pad_inline2982__tile, %30 : !pto.tile_buf<loc=vec, dtype=f32, rows=8, cols=8, v_row=?, v_col=?, blayout=row_major, slayout=none_box, fractal=512, pad=1>, index) outs : f32
         %31 = arith.addi %5, %hs_wt_tt_inline3017__idx_v0 : index
         %32 = arith.muli %31, %c6_index : index
         %33 = arith.addi %32, %hs_wt_k_inline2951__idx_v0 : index
-        pto.store_scalar %28, %arg4[%33] : !pto.ptr<f32>, f32
+        pto.store %28, %arg4[%33] : !pto.ptr<f32>, f32
       }
     }
   }

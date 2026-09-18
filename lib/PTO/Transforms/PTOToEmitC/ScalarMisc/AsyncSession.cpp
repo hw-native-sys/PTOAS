@@ -123,7 +123,7 @@ struct PTOInitializeL2LPipeToEmitC
 
 struct PTOBuildAsyncSessionToEmitC
     : public OpConversionPattern<mlir::pto::BuildAsyncSessionOp> {
-  PTOBuildAsyncSessionToEmitC(TypeConverter &typeConverter, MLIRContext *ctx)
+  PTOBuildAsyncSessionToEmitC(const TypeConverter &typeConverter, MLIRContext *ctx)
       : OpConversionPattern<mlir::pto::BuildAsyncSessionOp>(typeConverter, ctx) {}
 
   LogicalResult matchAndRewrite(mlir::pto::BuildAsyncSessionOp op,
@@ -208,7 +208,7 @@ struct PTOBuildAsyncSessionToEmitC
         blockBytesAttr
             ? static_cast<uint64_t>(
                   getIntegerAttrSignedValue(blockBytesAttr))
-            : 32 * 1024;
+            : mlir::pto::kValue32 * mlir::pto::kValue1024;
     uint64_t commBlockOffset =
         commBlockOffsetAttr
             ? static_cast<uint64_t>(
@@ -238,7 +238,7 @@ template <typename AsyncOp>
 struct PTOAsyncTransferToEmitC : public OpConversionPattern<AsyncOp> {
   using OpConversionPattern<AsyncOp>::OpConversionPattern;
 
-  explicit PTOAsyncTransferToEmitC(TypeConverter &typeConverter, MLIRContext *ctx,
+  explicit PTOAsyncTransferToEmitC(const TypeConverter &typeConverter, MLIRContext *ctx,
                                    StringRef callee)
       : OpConversionPattern<AsyncOp>(typeConverter, ctx), callee(callee.str()) {}
 
@@ -271,7 +271,7 @@ struct PTOAsyncTransferToEmitC : public OpConversionPattern<AsyncOp> {
 
 template <typename AsyncEventOp>
 struct PTOAsyncEventToEmitC : public OpConversionPattern<AsyncEventOp> {
-  explicit PTOAsyncEventToEmitC(TypeConverter &typeConverter, MLIRContext *ctx,
+  explicit PTOAsyncEventToEmitC(const TypeConverter &typeConverter, MLIRContext *ctx,
                                 StringRef callee)
       : OpConversionPattern<AsyncEventOp>(typeConverter, ctx),
         callee(callee.str()) {}

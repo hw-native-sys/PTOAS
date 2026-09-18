@@ -1,6 +1,6 @@
 # 重排与转换操作
 
-本节描述了 PTO ISA 中用于 Tile 形状重解释、拼接、子区域提取与插入、类型转换、量化与反量化、以及填充处理的操作指令族。所有操作均作用于本地缓冲区（`tile_buf`，位于 `loc=vec` 或 `loc=mat` 空间），采用“目标传递风格”（Destination-Passing Style, DPS）：操作本身不产生 SSA 返回值，而是直接将结果写入预先分配好的目标 `tile_buf`。
+本节描述 Tile 形状重解释、拼接、子区域提取与插入、类型转换、量化与反量化，以及填充处理。操作作用于本地 `tile_buf`，合法存储位置由各操作决定。`pto.treshape` 返回共享存储的 SSA 视图；其余操作的 Tile Buffer 形式采用“目标传递风格”（Destination-Passing Style，DPS），将结果写入预先分配的目标缓冲区。
 
 这一类操作通常具有如下装配形式：
 
@@ -25,8 +25,6 @@ pto.op ins(...) outs(%dst : !pto.tile_buf<...>)
 - [`pto.tquant` — Tile 量化](#ptotquant--tile-量化)
 - [`pto.tdequant` — Tile 反量化](#ptotdequant--tile-反量化)
 - [`pto.tfillpad` — 填充 Padding 区域](#ptotfillpad--填充-padding-区域)
-- [`pto.tfillpad_expand` — 扩展填充 Padding 区域](#ptotfillpad_expand--扩展填充-padding-区域)
-- [`pto.tfillpad_inplace` — 原地填充 Padding 区域](#ptotfillpad_inplace--原地填充-padding-区域)
 - [`pto.tconcatidx` — 索引控制列拼接](#ptotconcatidx--索引控制列拼接)
 - [`pto.textract` 的 `fp` 形式](#ptotextract-的-fp-形式)
 - [`pto.tinsert` 的 `fp` 形式](#ptotinsert-的-fp-形式)
@@ -38,14 +36,14 @@ pto.op ins(...) outs(%dst : !pto.tile_buf<...>)
 ### `pto.treshape` — Tile 形状重解释
 
 ```mlir
-pto.treshape ins(<src> : !pto.tile_buf)
-             outs(<dst> : !pto.tile_buf)
+%view = pto.treshape <src> : <src_type> -> <result_type>
 ```
 
 **语义：**
 
 ```text
-dst = reinterpret(src)
+view = reinterpret_view(src, result_type)
+// view 与 src 共享同一块底层存储，不分配或复制元素。
 ```
 
 **参数：**
@@ -53,27 +51,26 @@ dst = reinterpret(src)
 | Name | Type | Description |
 | ---- | ---- | ----------- |
 | `src` | `pto.tile_buf` | 源 tile buffer |
-| `dst` | `pto.tile_buf` | 目标 tile buffer（新的形状和 layout） |
 
-**返回值：** 无。以 DPS 的形式写入 `dst`。
+**返回值：** 指定结果类型的 `!pto.tile_buf` 视图。通过源或结果视图写入共享存储后，另一视图也会观察到该变化；它不是独立的数据副本。
 
 **约束：**
 
 - **实现检查（A2A3/A5）**
-  - 源和目标必须使用相同的存储位置：`src.loc == dst.loc`
-  - 源和目标的总字节大小必须相等
+  - 源和结果视图必须使用相同的存储位置：`src.loc == view.loc`
+  - 源和结果必须具有静态物理尺寸，且总字节大小相等
   - 不支持有装箱（boxed）与无装箱（non-boxed）layout 之间的转换
 
 **示例：**
 
 ```mlir
-pto.treshape
-    ins(%src : !pto.tile_buf<loc=vec, dtype=f32, rows=16, cols=32,
+%view = pto.treshape %src
+    : !pto.tile_buf<loc=vec, dtype=f32, rows=16, cols=32,
                              v_row=16, v_col=32, blayout=row_major,
-                             slayout=none_box, fractal=512, pad=0>)
-    outs(%dst : !pto.tile_buf<loc=vec, dtype=f32, rows=32, cols=16,
+                             slayout=none_box, fractal=512, pad=0>
+    -> !pto.tile_buf<loc=vec, dtype=f32, rows=32, cols=16,
                               v_row=32, v_col=16, blayout=row_major,
-                              slayout=none_box, fractal=512, pad=0>)
+                              slayout=none_box, fractal=512, pad=0>
 ```
 
 ---
@@ -137,7 +134,7 @@ pto.tconcat
 ### `pto.textract` — 子 Tile 提取
 
 ```mlir
-pto.textract ins(<src> [<indexRow>, <indexCol>] : !pto.tile_buf, index, index)
+pto.textract ins(<src>, <indexRow>, <indexCol> : !pto.tile_buf, index, index)
              outs(<dst> : !pto.tile_buf)
 ```
 
@@ -153,8 +150,8 @@ For each element (i, j):
 | Name | Type | Description |
 | ---- | ---- | ----------- |
 | `src` | `pto.tile_buf` | 源 tile buffer |
-| `indexRow` | `index` | 提取起始行偏移 |
-| `indexCol` | `index` | 提取起始列偏移 |
+| `indexRow` | `index` | 以行为单位的提取起始偏移 |
+| `indexCol` | `index` | 以元素为单位的提取起始列偏移 |
 | `dst` | `pto.tile_buf` | 目标 tile buffer（子区域） |
 
 **返回值：** 无。以 DPS 的形式写入 `dst`。
@@ -162,14 +159,14 @@ For each element (i, j):
 **约束：**
 
 - **实现检查（A2A3）**
-  - dst 的元素类型必须与 src 相同，且为以下之一：`i8`、`f16`、`bf16`、`f32`
-  - 支持 Vec->Vec 转换
+  - 基础 `vec` → `vec` 和 `mat` → `left`/`right` 形式使用相同元素类型，支持 `i8`、`f16`、`bf16`、`f32`。
+  - 支持 `vec` → `vec`、`mat` → `left`/`right`，以及 `acc` → `mat`。累加器转换形式支持 `f32` → `f16`/`bf16`；附加量化参数见本章 `fp` 形式。
   - src 的 layout/fractal 必须与 dst 支持的组合兼容
   - 运行时约束：`indexRow + dst.rows <= src.rows` 且 `indexCol + dst.cols <= src.cols`
-  - dst 必须使用 `loc=left` 或 `loc=right`
+  - `mat` → `left`/`right` 的目标分别使用 `row_major/row_major` 和 `row_major/col_major` 布局；`acc` → `mat` 的源和目标使用 `col_major/row_major`，目标 `fractal=512`。
 
 - **实现检查（A5）**
-  - dst 的元素类型必须与 src 相同（int8/fp8/fp16/bf16/f32 family）
+  - 基础非累加器形式使用相同元素类型；累加器形式可进行支持的精度转换，附加量化参数见本章 `fp` 形式。
   - 支持 Mat->Left/Right/Scaling、Vec->Mat、Acc->Mat/Vec，以及
     ND 布局的 Vec->Vec；ND 指 `blayout=row_major, slayout=none_box`
   - 运行时约束：`indexRow + dst.rows <= src.rows` 且 `indexCol + dst.cols <= src.cols`
@@ -178,14 +175,14 @@ For each element (i, j):
 
 ```mlir
 pto.textract
-    ins(%src [%row, %col] :
+    ins(%src, %row, %col :
         !pto.tile_buf<loc=vec, dtype=f32, rows=32, cols=32,
                       v_row=32, v_col=32, blayout=row_major,
                       slayout=none_box, fractal=512, pad=0>,
         index, index)
-    outs(%dst : !pto.tile_buf<loc=left, dtype=f32, rows=16, cols=16,
+    outs(%dst : !pto.tile_buf<loc=vec, dtype=f32, rows=16, cols=16,
                               v_row=16, v_col=16, blayout=row_major,
-                              slayout=none_box, fractal=256, pad=0>)
+                              slayout=none_box, fractal=512, pad=0>)
 ```
 
 ---
@@ -237,7 +234,7 @@ pto.tinsert
     ins(%src, %row, %col :
         !pto.tile_buf<loc=vec, dtype=f32, rows=16, cols=16,
                       v_row=16, v_col=16, blayout=row_major,
-                      slayout=none_box, fractal=256, pad=0>,
+                      slayout=none_box, fractal=512, pad=0>,
         index, index)
     outs(%dst : !pto.tile_buf<loc=vec, dtype=f32, rows=32, cols=32,
                               v_row=32, v_col=32, blayout=row_major,
@@ -363,153 +360,52 @@ pto.tdequant
 ### `pto.tfillpad` — 填充 Padding 区域
 
 ```mlir
-pto.tfillpad ins(<src> : !pto.tile_buf)
-             outs(<dst> : !pto.tile_buf)
+pto.tfillpad ins(<src> : <src_type>) outs(<dst> : <dst_type>)
 ```
 
-**语义：**
+**语义：** 将源有效区域复制到目标中的相同坐标，并按目标类型的 pad 策略填充其余物理区域。该接口同时支持等容量填充、VEC 目标容量扩展及同一存储的原地填充。
 
 ```text
-For each element in valid region:
-    dst = src
-For each element in padded region:
-    dst = PadVal(dst)
+For each physical position (i,j) in dst:
+    if i < src.valid_rows and j < src.valid_cols:
+        dst[i,j] = src[i,j]
+    else:
+        dst[i,j] = padding_value(dst.pad, dst.dtype)
+// src 与 dst 为同一 Tile 时，源有效区域保持原值。
 ```
 
-**参数：**
-
-| Name | Type | Description |
-| ---- | ---- | ----------- |
-| `src` | `pto.tile_buf` | 源 tile buffer |
-| `dst` | `pto.tile_buf` | 目标 tile buffer（包含 pad 属性） |
-
-**返回值：** 无。以 DPS 的形式写入 `dst`。
+**参数与返回值：** src 为源 Tile，dst 为预先分配的目标 Tile；没有 SSA 返回值。物理容量由 rows/cols 决定，参与复制的区域由源 v_row/v_col 决定。
 
 **约束：**
 
-- **实现检查（A2A3/A5）**
-  - `src` 和 `dst` 必须为 rank-2。
-  - `dst` 的 `pad` 值不能为 `Null`。
-  - `src` 和 `dst` 元素大小必须一致，且为 1、2 或 4 字节。
-  - `src` 和 `dst` 必须具有相同的静态 shape（`rows`/`cols` 一致）。
-
-- **特殊行为（loc=mat）**
-  - 当 `loc=mat` 时，`src` 和 `dst` 必须可降低到同一个 `TFILLPAD` tile 特化，即 `validShape` 和 `pad` 必须一致。
-  - 异构 `TFILLPAD` 重载仅在 `loc=vec` 下可用。
+- src/dst 为 rank-2 Tile；元素存储大小相同，均为 1、2 或 4 字节。
+- dst 的 pad 不能为 `null`（0）；`zero`（1）、`max`（2）、`min`（3）分别表示零填充、元素类型最大值和最小值策略，整数编码不是任意填充值。
+- 各维目标物理尺寸不小于源尺寸；物理尺寸扩展仅适用于 `loc=vec` 的源与目标。不允许用不匹配的动态物理尺寸表示扩展。
+- `loc=mat` 时源与目标 Tile 类型相同，包括有效区域与 pad；可选 `padValue = #pto<pad_value zero|max|min>` 属性必须与目标类型的 pad 一致，省略时使用目标类型策略。该属性不能用于 VEC。
+- 不使用单独的 mode 属性选择行为；同一 Tile 可同时作为 ins 与 outs，表示原地填充。
 
 **示例：**
+
+VEC 的 `16x16` 数据扩展到 `32x32` 容量，源区域外补零；随后演示对同一个 Tile 原地补零。
 
 ```mlir
 pto.tfillpad
-    ins(%src : !pto.tile_buf<loc=vec, dtype=f32, rows=32, cols=32,
-                             v_row=32, v_col=32, blayout=row_major,
-                             slayout=none_box, fractal=512, pad=1>)
-    outs(%dst : !pto.tile_buf<loc=vec, dtype=f32, rows=32, cols=32,
-                              v_row=32, v_col=32, blayout=row_major,
-                              slayout=none_box, fractal=512, pad=1>)
+  ins(%src : !pto.tile_buf<loc=vec, dtype=f32, rows=16, cols=16,
+    v_row=16, v_col=16, blayout=row_major, slayout=none_box,
+    fractal=512, pad=0>)
+  outs(%dst : !pto.tile_buf<loc=vec, dtype=f32, rows=32, cols=32,
+    v_row=16, v_col=16, blayout=row_major, slayout=none_box,
+    fractal=512, pad=1>)
 ```
-
----
-
-### `pto.tfillpad_expand` — 扩展填充 Padding 区域
 
 ```mlir
-pto.tfillpad_expand ins(<src> : !pto.tile_buf)
-                    outs(<dst> : !pto.tile_buf)
-```
-
-**语义：**
-
-```text
-For each element in src valid region:
-    dst[i, j] = src[i, j]
-For each element in dst padded region:
-    dst[i, j] = PadVal(dst)
-
-Constraint: dst.rows >= src.rows and dst.cols >= src.cols
-```
-
-**参数：**
-
-| Name | Type | Description |
-| ---- | ---- | ----------- |
-| `src` | `pto.tile_buf` | 源 tile buffer |
-| `dst` | `pto.tile_buf` | 目标 tile buffer（可能更大） |
-
-**返回值：** 无。以 DPS 的形式写入 `dst`。
-
-**约束：**
-
-- **实现检查（A2A3/A5）**
-  - `src` 和 `dst` 必须为 rank-2。
-  - `src` 和 `dst` 元素大小必须一致，且为 1、2 或 4 字节。
-  - `dst` 的 `pad` 值不能为 `Null`。
-  - `dst.rows >= src.rows` 且 `dst.cols >= src.cols`（允许 `dst` 的 shape 大于 `src`）。
-
-**示例：**
-
-```mlir
-pto.tfillpad_expand
-    ins(%src : !pto.tile_buf<loc=vec, dtype=f32, rows=16, cols=16,
-                             v_row=16, v_col=16, blayout=row_major,
-                             slayout=none_box, fractal=256, pad=1>)
-    outs(%dst : !pto.tile_buf<loc=vec, dtype=f32, rows=32, cols=32,
-                              v_row=32, v_col=32, blayout=row_major,
-                              slayout=none_box, fractal=512, pad=1>)
-```
-
----
-
-### `pto.tfillpad_inplace` — 原地填充 Padding 区域
-
-```mlir
-pto.tfillpad_inplace ins(<src> : !pto.tile_buf)
-                     outs(<dst> : !pto.tile_buf)
-```
-
-**语义：**
-
-```text
-For each element inside valid_shape:
-    keep existing value
-For each element in padded region:
-    dst = PadVal(dst)
-
-Note: src and dst often refer to the same SSA value
-```
-
-**参数：**
-
-| Name | Type | Description |
-| ---- | ---- | ----------- |
-| `src` | `pto.tile_buf` | 源 tile buffer（通常与 dst 相同） |
-| `dst` | `pto.tile_buf` | 目标 tile buffer（原地修改） |
-
-**返回值：** 无。以 DPS 的形式写入 `dst`。
-
-**约束：**
-
-- **实现检查（A2A3/A5）**
-  - `src` 和 `dst` 必须为 rank-2。
-  - `src` 和 `dst` 元素大小必须一致，且为 1、2 或 4 字节。
-  - `dst` 的 `pad` 值不能为 `Null`。
-  - `src` 和 `dst` 必须具有相同的静态 shape（`rows`/`cols` 一致）。
-  - 不允许 `dst` 的 shape 大于 `src`（与 `tfillpad_expand` 不同）。
-
-**底层指令：**
-
-- 降低为 `TFILLPAD_INPLACE(dst, src)`
-
-**示例：**
-
-```mlir
-pto.tfillpad_inplace
-    ins(%tile : !pto.tile_buf<loc=vec, dtype=f32, rows=32, cols=32,
-                              v_row=32, v_col=32, blayout=row_major,
-                              slayout=none_box, fractal=512, pad=1>)
-    outs(%tile : !pto.tile_buf<loc=vec, dtype=f32, rows=32, cols=32,
-                               v_row=32, v_col=32, blayout=row_major,
-                               slayout=none_box, fractal=512, pad=1>)
+pto.tfillpad
+  ins(%tile : !pto.tile_buf<loc=vec, dtype=f32, rows=32, cols=32,
+    v_row=16, v_col=16, blayout=row_major, slayout=none_box,
+    fractal=512, pad=1>)
+  outs(%tile : !pto.tile_buf<loc=vec, dtype=f32, rows=32, cols=32,
+    v_row=16, v_col=16, blayout=row_major, slayout=none_box,
+    fractal=512, pad=1>)
 ```
 
 ---

@@ -154,7 +154,7 @@ outline pass 再把每个 section 转成 `func.func {pto.simt_entry}` + `pto.sim
 
 ## Pass 设计
 
-- 分析实现：`lib/PTO/Transforms/SIMTPersistentFragmentAnalysis.cpp` / `SIMTPersistentFragmentAnalysis.h`
+- 分析实现：`lib/PTO/Transforms/Passes/SIMTPersistentFragmentAnalysis.cpp` / `SIMTPersistentFragmentAnalysis.h`
 - Analysis-only pass：`lib/PTO/Transforms/PTOAnalyzeSIMTPersistentFragment.cpp`，pass 名 `pto-analyze-simt-persistent-fragment`
 - C++：`lib/PTO/Transforms/PTOMaterializeSIMTPersistentFragment.cpp`
 - Pass 名：`pto-materialize-simt-persistent-fragment`

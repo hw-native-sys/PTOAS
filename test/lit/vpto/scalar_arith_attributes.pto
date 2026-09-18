@@ -1,0 +1,87 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+
+// RUN: pto-test-opt '--pass-pipeline=builtin.module(func.func(pto-lower-generic-ops))' %s | FileCheck %s
+
+module {
+  func.func @attributes_and_extrema(
+      %f: f32, %g: f32, %i: i32, %j: i32) ->
+      (i32, i32, i32, i32, f32, f32, f32, f32, i1,
+       f32, f32, f32, f32, i16, f16, f32) {
+    %add = pto.addi %i, %j overflow<nsw, nuw> : i32
+    %sub = pto.subi %i, %j overflow<nuw> : i32
+    %mul = pto.muli %i, %j overflow<nsw> : i32
+    %shl = pto.shl %i, %j overflow<nsw> : i32
+    %fadd = pto.addf %f, %g fastmath<nnan,ninf> : f32
+    %neg = pto.negf %f fastmath<nsz> : f32
+    %div = pto.divf %f, %g fastmath<arcp> : f32
+    %rem = pto.remf %f, %g fastmath<reassoc> : f32
+    %cmp = pto.cmpf olt %f, %g fastmath<nnan> : f32
+    %maxnum = pto.maxf %f, %g fastmath<nnan> : f32
+    %minnum = pto.minf %f, %g fastmath<nnan> : f32
+    %maximum = pto.maximum %f, %g fastmath<nnan> : f32
+    %minimum = pto.minimum %f, %g fastmath<nnan> : f32
+    %trunci = pto.trunci %i overflow<nsw> : i32 -> i16
+    %truncf = pto.ftof %f round(z) fastmath<nnan> : f32 -> f16
+    %extf = pto.ftof %truncf fastmath<ninf> : f16 -> f32
+    return %add, %sub, %mul, %shl, %fadd, %neg, %div, %rem, %cmp,
+           %maxnum, %minnum, %maximum, %minimum, %trunci, %truncf, %extf :
+        i32, i32, i32, i32, f32, f32, f32, f32, i1,
+        f32, f32, f32, f32, i16, f16, f32
+  }
+
+  func.func @extended_integer(%i: i32, %j: i32,
+                              %vi: vector<4xi32>, %vj: vector<4xi32>) ->
+      (i32, i1, i32, i32, i32, i32, vector<4xi32>, vector<4xi1>,
+       vector<4xi32>, vector<4xi32>) {
+    %sum, %overflow = pto.addui_extended %i, %j : i32, i1
+    %low_s, %high_s = pto.mul_extended %i, %j signed : i32
+    %low_u, %high_u = pto.mul_extended %i, %j unsigned : i32
+    %vsum, %voverflow = pto.addui_extended %vi, %vj : vector<4xi32>, vector<4xi1>
+    %vlow, %vhigh = pto.mul_extended %vi, %vj unsigned : vector<4xi32>
+    return %sum, %overflow, %low_s, %high_s, %low_u, %high_u,
+           %vsum, %voverflow, %vlow, %vhigh :
+        i32, i1, i32, i32, i32, i32, vector<4xi32>, vector<4xi1>,
+        vector<4xi32>, vector<4xi32>
+  }
+
+  func.func @integer_abs(%value: i32) -> (i32, i32) {
+    %signed = pto.absi %value signed : i32
+    %unsigned = pto.absi %value unsigned : i32
+    return %signed, %unsigned : i32, i32
+  }
+}
+
+// CHECK-LABEL: func.func @attributes_and_extrema
+// CHECK: arith.addi {{.*}} overflow<nsw, nuw> : i32
+// CHECK: arith.subi {{.*}} overflow<nuw> : i32
+// CHECK: arith.muli {{.*}} overflow<nsw> : i32
+// CHECK: arith.shli {{.*}} overflow<nsw> : i32
+// CHECK: arith.addf {{.*}} fastmath<nnan,ninf> : f32
+// CHECK: arith.negf {{.*}} fastmath<nsz> : f32
+// CHECK: arith.divf {{.*}} fastmath<arcp> : f32
+// CHECK: arith.remf {{.*}} fastmath<reassoc> : f32
+// CHECK: arith.cmpf olt, {{.*}} fastmath<nnan> : f32
+// CHECK: llvm.intr.maxnum({{.*}}) {fastmathFlags = #llvm.fastmath<nnan>} : (f32, f32) -> f32
+// CHECK: llvm.intr.minnum({{.*}}) {fastmathFlags = #llvm.fastmath<nnan>} : (f32, f32) -> f32
+// CHECK: llvm.intr.maximum({{.*}}) {fastmathFlags = #llvm.fastmath<nnan>} : (f32, f32) -> f32
+// CHECK: llvm.intr.minimum({{.*}}) {fastmathFlags = #llvm.fastmath<nnan>} : (f32, f32) -> f32
+// CHECK: arith.trunci {{.*}} {overflowFlags = #arith.overflow<nsw>} : i32 to i16
+// CHECK: arith.truncf {{.*}} toward_zero fastmath<nnan> : f32 to f16
+// CHECK: arith.extf {{.*}} fastmath<ninf> : f16 to f32
+// CHECK-LABEL: func.func @extended_integer
+// CHECK: arith.addui_extended
+// CHECK: arith.mulsi_extended
+// CHECK: arith.mului_extended
+// CHECK: arith.addui_extended
+// CHECK: arith.mului_extended
+
+// CHECK-LABEL: func.func @integer_abs
+// CHECK: math.absi
+// CHECK-NOT: math.absi
+// CHECK: return {{.*}}, %arg0

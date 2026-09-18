@@ -11,7 +11,7 @@
 
 from dataclasses import dataclass
 
-from ptodsl import pto, scalar
+from ptodsl import pto
 from ptodsl._ast_rewrite import rewrite_jit_function
 import ptodsl.tilelib as tilelib
 

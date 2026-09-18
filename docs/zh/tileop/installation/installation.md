@@ -4,7 +4,7 @@
 
 本文介绍通过CANN PTO-AS `run`安装包安装PTO-AS组件并部署PTOAS工具的方法。
 
-PTOAS随PTO-AS组件一起安装。安装PTO-AS组件时，安装程序会部署PTOAS启动程序、运行时依赖和PTOAS wheel，并将PTOAS wheel安装到组件使用的私有Python目录中，无需在当前Python环境中单独执行`pip install`。
+PTOAS随PTO-AS组件一起安装。安装PTO-AS组件时，安装程序会部署PTOAS启动程序、运行时依赖和PTOAS wheel，并将PTOAS wheel安装到CANN版本根目录下的共享`python/site-packages`中，无需在当前Python环境中单独执行`pip install`。
 
 ## 安装前准备
 
@@ -39,7 +39,13 @@ bash cann-pto-as_9.2.0_linux-x86_64.run --full --install-path=xxx
 export ASCEND_PTO_AS_PATH=<install_path>/cann/pto_as
 ```
 
-其中，`<install_path>`为`--install-path`指定的安装根目录。
+其中，`<install_path>`为`--install-path`指定的安装根目录。该变量用于定位 PTO-AS 组件；命令搜索路径和 Python 包搜索路径通过 CANN toolkit 环境脚本加载：
+
+```bash
+source <install_path>/cann/set_env.sh
+```
+
+请使用实际安装位置的 `set_env.sh`。脚本将当前 CANN 版本的 `bin` 加入 PATH，并将 `python/site-packages` 加入 PYTHONPATH；安装时的 `--setenv` 设置不能代替此处的 toolkit 环境加载。
 
 如果安装时未指定`--install-path`，默认安装根目录如下：
 
@@ -70,42 +76,41 @@ bash cann-pto-as_9.2.0_linux-x86_64.run --pre-check
 
 安装PTO-AS组件时，安装程序会自动安装PTOAS wheel，并部署PTOAS相关运行文件。
 
-相关文件位于：
+以下 `<version_root>` 表示 CANN 版本根目录。默认布局中为 `<install_path>/cann`；安装时也可以直接指定版本目录，其实际位置以安装结果及环境脚本为准。
 
 ```text
-<install_path>/cann/tools/ptoas/
-```
-
-主要目录如下：
-
-```text
-tools/ptoas/
+<version_root>/
 ├── bin/
-├── lib/
-├── python/
-└── wheels/
+│   └── ptoas -> ../tools/ptoas/bin/ptoas
+├── python/site-packages/
+│   ├── ptoas/
+│   ├── ptodsl/
+│   └── ...
+└── tools/ptoas/
+    ├── bin/ptoas
+    └── wheels/
 ```
 
-目录说明如下：
-
-| 目录 | 说明 |
-| --- | --- |
-| `bin` | PTOAS启动程序 |
-| `lib` | PTOAS运行时共享库 |
-| `python` | PTOAS私有Python包目录 |
-| `wheels` | PTOAS wheel文件 |
-
-PTOAS wheel由安装程序自动安装，无需在当前Python环境中单独执行`pip install`。
+`tools/ptoas/bin/ptoas` 为启动程序，`tools/ptoas/wheels` 保存随安装包部署的 wheel；Python 包及其运行依赖部署在共享的 `python/site-packages`，而不是 PTOAS 专属的 Python 子目录。安装器自动安装 wheel，无需另行安装到用户当前 Python 环境。
 
 ## 检查安装结果
 
-安装完成后，可以检查PTOAS启动程序是否已经部署：
+加载环境脚本后，确认命令和 Python 包可以使用：
 
 ```bash
-ls <install_path>/cann/tools/ptoas/bin/ptoas
+command -v ptoas
+ptoas --version
+python3 -c 'import ptoas; import ptodsl'
 ```
 
-该检查用于确认PTOAS启动程序已经安装，不代表PTOAS编译功能已完成验证。
+Python 导入检查应使用与安装 wheel 兼容的解释器。继续使用 [vec_add.pto](../examples/vec_add.pto) 验证实际编译，在该示例所在目录执行：
+
+```bash
+ptoas vec_add.pto --pto-arch=a3 --pto-backend=emitc \
+  --enable-insert-sync -o vec_add_kernel.cpp
+```
+
+上述检查分别验证环境、包导入和 PTOAS 生成代码功能；设备运行流程见 [构建与运行示例](../examples/build_and_run_overview.md)。
 
 ## 卸载PTO-AS
 

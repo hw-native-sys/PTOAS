@@ -87,10 +87,16 @@ stages:
               token: ${{ secrets.GIT_TOKEN }}
           - name: Build and test PTOAS
             timeout-minutes: 180
-            run: |
-              set -euo pipefail
-              bash "${{ steps.process_checkout.outputs.path }}/.gitcode/scripts/build_and_test.sh" \
-                "${{ steps.process_checkout.outputs.path }}"
+            uses: build-accelerate
+            with:
+              command: |
+                set -euo pipefail
+                export WORKSPACE="${{ steps.process_checkout.outputs.path }}"
+                cd "${WORKSPACE}"
+                export CMAKE_C_COMPILER_LAUNCHER=/tmp/codearts/cloudcache/xcache
+                export CMAKE_CXX_COMPILER_LAUNCHER=/tmp/codearts/cloudcache/xcache
+                BuildAccelerate bash .gitcode/scripts/build_and_test.sh "${WORKSPACE}"
+              AC_SERVER_IP: ${{ vars.AC_SERVER_IP }}
         runs-on:
           - self-hosted
           - arch=x64

@@ -19,10 +19,10 @@ using namespace mlir::pto;
 namespace mlir {
 namespace pto {
 
-struct PTOLoadScalarToEmitC : public OpConversionPattern<pto::LoadScalarOp> {
-  using OpConversionPattern<pto::LoadScalarOp>::OpConversionPattern;
+struct PTOLoadToEmitC : public OpConversionPattern<pto::PTOLoadOp> {
+  using OpConversionPattern<pto::PTOLoadOp>::OpConversionPattern;
 
-  LogicalResult matchAndRewrite(pto::LoadScalarOp op, OpAdaptor adaptor,
+  LogicalResult matchAndRewrite(pto::PTOLoadOp op, OpAdaptor adaptor,
                                 ConversionPatternRewriter &rewriter) const override {
     Value ptr = adaptor.getPtr();
     Value offset = adaptor.getOffset();
@@ -40,10 +40,10 @@ struct PTOLoadScalarToEmitC : public OpConversionPattern<pto::LoadScalarOp> {
   }
 };
 
-struct PTOStoreScalarToEmitC : public OpConversionPattern<pto::StoreScalarOp> {
-  using OpConversionPattern<pto::StoreScalarOp>::OpConversionPattern;
+struct PTOStoreToEmitC : public OpConversionPattern<pto::PTOStoreOp> {
+  using OpConversionPattern<pto::PTOStoreOp>::OpConversionPattern;
 
-  LogicalResult matchAndRewrite(pto::StoreScalarOp op, OpAdaptor adaptor,
+  LogicalResult matchAndRewrite(pto::PTOStoreOp op, OpAdaptor adaptor,
                                 ConversionPatternRewriter &rewriter) const override {
     Value ptr = adaptor.getPtr();
     Value offset = adaptor.getOffset();
@@ -63,8 +63,8 @@ struct PTOStoreScalarToEmitC : public OpConversionPattern<pto::StoreScalarOp> {
 
 void populateScalarMiscScalarPtrPatterns(RewritePatternSet &patterns,
                         TypeConverter &typeConverter, MLIRContext *ctx) {
-  patterns.add<PTOLoadScalarToEmitC>(typeConverter, ctx);
-  patterns.add<PTOStoreScalarToEmitC>(typeConverter, ctx);
+  patterns.add<PTOLoadToEmitC>(typeConverter, ctx);
+  patterns.add<PTOStoreToEmitC>(typeConverter, ctx);
 }
 
 } // namespace pto

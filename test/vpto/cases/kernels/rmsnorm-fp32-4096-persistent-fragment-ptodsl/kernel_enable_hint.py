@@ -12,7 +12,7 @@
 # unrolled); pto-promote-persistent-fragment-loops must override it to
 # "full" for these dependency loops, which is what this case verifies.
 
-from ptodsl import pto, scalar
+from ptodsl import pto
 
 
 @pto.jit(
@@ -54,8 +54,8 @@ def main_kernel_c(
   with pto.simt(128, 1, 1):
     simtvf_tx = pto.get_tid_x()
     with pto.for_(0, 16, step=1, unroll="enable") as i:
-      scalar.store(
-          scalar.load(
+      pto.store(
+          pto.load(
               pto.castptr(buf_dyn_shmem, pto.ptr(pto.f32, "ub")),
               (i * 256) + (simtvf_tx * 2),
               contiguous=2,
@@ -86,8 +86,8 @@ def main_kernel_c(
       simtvf_tx = pto.get_tid_x()
 
       for i in pto.static_range(0, 16):
-        scalar.store(
-            scalar.load(
+        pto.store(
+            pto.load(
                 pto.castptr(buf_dyn_shmem, pto.ptr(pto.f32, "ub")),
                 ((((t & 1) * 4096) + (i * 256)) + (simtvf_tx * 2)) + 4224,
                 contiguous=2,
@@ -96,18 +96,18 @@ def main_kernel_c(
             i * 2,
         )
 
-      scalar.store(float.fromhex("0x0p+0"), sum_sq, 0)
+      pto.store(float.fromhex("0x0p+0"), sum_sq, 0)
       for i_1 in pto.static_range(0, 32):
-        scalar.store(
-            scalar.load(sum_sq, 0)
-            + (scalar.load(x_frag, i_1) * scalar.load(x_frag, i_1)),
+        pto.store(
+            pto.load(sum_sq, 0)
+            + (pto.load(x_frag, i_1) * pto.load(x_frag, i_1)),
             sum_sq,
             0,
         )
 
-      scalar.store(
+      pto.store(
           pto.simt_allreduce_sum(
-              scalar.load(sum_sq, 0),
+              pto.load(sum_sq, 0),
               threads=128,
               scale=1,
               thread_offset=0,
@@ -118,21 +118,21 @@ def main_kernel_c(
           sum_sq,
           0,
       )
-      var = (scalar.load(sum_sq, 0) / float.fromhex("0x1p+12")) + eps
+      var = (pto.load(sum_sq, 0) / float.fromhex("0x1p+12")) + eps
       rstd_val = float.fromhex("0x1p+0") / pto.sqrt(var)
-      scalar.store(
+      pto.store(
           rstd_val,
           pto.castptr(buf_dyn_shmem, pto.ptr(pto.f32, "ub")),
           ((t & 1) * 8) + 20608,
       )
 
       with pto.for_(0, 16, step=1, unroll="enable") as i_2:
-        scalar.store(
+        pto.store(
             (
-                scalar.load(x_frag, i_2 * 2, contiguous=2)
+                pto.load(x_frag, i_2 * 2, contiguous=2)
                 * pto.Vec(pto.f32, 2, init=rstd_val)
             )
-            * scalar.load(w_frag, i_2 * 2, contiguous=2),
+            * pto.load(w_frag, i_2 * 2, contiguous=2),
             pto.castptr(buf_dyn_shmem, pto.ptr(pto.f32, "ub")),
             ((((t & 1) * 4096) + (i_2 * 256)) + (simtvf_tx * 2)) + 12416,
         )

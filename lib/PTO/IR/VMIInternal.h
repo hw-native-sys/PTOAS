@@ -277,16 +277,27 @@ mlir::LogicalResult verifySignedI32OrF16F32ElementType(mlir::Operation *op, mlir
 
 mlir::LogicalResult verifyVMIPmodeMask(mlir::Operation *op, mlir::pto::VMIMaskType maskType, mlir::pto::VMIVRegType dataType, std::optional<llvm::StringRef> pmode);
 // Batch12: MaskMatchesData + pmode tail shared
+// VMI predication mode: inactive result lanes are zeroed.  "zero" is the only
+// supported value and an absent attribute means "zero" as well.
+inline constexpr llvm::StringLiteral kVMIPModeZero = "zero";
+
+inline mlir::LogicalResult verifyVMIPMode(mlir::Operation *op,
+                                          std::optional<llvm::StringRef> pmode) {
+  if (!pmode || *pmode == kVMIPModeZero) {
+    return mlir::success();
+  }
+  return op->emitOpError("invalid pmode \"")
+         << *pmode << "\"; expected \"" << kVMIPModeZero << "\"";
+}
+
 template <typename OpTy>
 static mlir::LogicalResult verifyMaskMatchesDataPmode(OpTy op, mlir::pto::VMIMaskType maskType,
                                                 mlir::pto::VMIVRegType resultType) {
   if (mlir::failed(verifyMaskMatchesData(op.getOperation(), maskType, resultType))) {
     return mlir::failure();
   }
-  if (auto pmode = op.getPmode()) {
-    if (pmode.value() != "merge" && pmode.value() != "zero") {
-      return op.emitOpError("pmode must be 'merge' or 'zero'");
-    }
+  if (mlir::failed(verifyVMIPMode(op.getOperation(), op.getPmode()))) {
+    return mlir::failure();
   }
   return mlir::success();
 }

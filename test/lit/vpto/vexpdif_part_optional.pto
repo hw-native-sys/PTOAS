@@ -1,0 +1,54 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+// RUN: pto-test-opt %s -split-input-file | FileCheck %s
+
+// An f32 source covers the whole vector with a single instruction, so `part`
+// may be omitted. The compact form round-trips unchanged.
+module {
+  func.func @vexpdif_f32_without_part(
+      %input: !pto.vreg<64xf32>,
+      %max: !pto.vreg<64xf32>,
+      %mask: !pto.mask<b32>) -> !pto.vreg<64xf32> {
+    // CHECK-LABEL: func.func @vexpdif_f32_without_part
+    // CHECK: pto.vexpdif %{{.*}}, %{{.*}}, %{{.*}} : !pto.vreg<64xf32>, !pto.vreg<64xf32>, !pto.mask<b32> -> !pto.vreg<64xf32>
+    %result = pto.vexpdif %input, %max, %mask : !pto.vreg<64xf32>, !pto.vreg<64xf32>, !pto.mask<b32> -> !pto.vreg<64xf32>
+    return %result : !pto.vreg<64xf32>
+  }
+}
+
+// -----
+
+// The explicit f32 form keeps its positional token, so existing producers that
+// pass the hardware contract value stay valid.
+module {
+  func.func @vexpdif_f32_with_part(
+      %input: !pto.vreg<64xf32>,
+      %max: !pto.vreg<64xf32>,
+      %mask: !pto.mask<b32>) -> !pto.vreg<64xf32> {
+    // CHECK-LABEL: func.func @vexpdif_f32_with_part
+    // CHECK: pto.vexpdif %{{.*}}, %{{.*}}, %{{.*}}, "ODD" : !pto.vreg<64xf32>, !pto.vreg<64xf32>, !pto.mask<b32> -> !pto.vreg<64xf32>
+    %result = pto.vexpdif %input, %max, %mask, "ODD" : !pto.vreg<64xf32>, !pto.vreg<64xf32>, !pto.mask<b32> -> !pto.vreg<64xf32>
+    return %result : !pto.vreg<64xf32>
+  }
+}
+
+// -----
+
+// An f16 source packs two elements per 32-bit lane and one instruction only
+// consumes the selected half, so the half selection stays explicit.
+module {
+  func.func @vexpdif_f16_with_part(
+      %input: !pto.vreg<128xf16>,
+      %max: !pto.vreg<128xf16>,
+      %mask: !pto.mask<b16>) -> !pto.vreg<64xf32> {
+    // CHECK-LABEL: func.func @vexpdif_f16_with_part
+    // CHECK: pto.vexpdif %{{.*}}, %{{.*}}, %{{.*}}, "EVEN" : !pto.vreg<128xf16>, !pto.vreg<128xf16>, !pto.mask<b16> -> !pto.vreg<64xf32>
+    %result = pto.vexpdif %input, %max, %mask, "EVEN" : !pto.vreg<128xf16>, !pto.vreg<128xf16>, !pto.mask<b16> -> !pto.vreg<64xf32>
+    return %result : !pto.vreg<64xf32>
+  }
+}

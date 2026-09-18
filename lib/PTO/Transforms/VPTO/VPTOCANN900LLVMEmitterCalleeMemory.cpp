@@ -582,20 +582,11 @@ FailureOr<VcvtContract> buildVcvtContract(pto::VcvtOp op) {
 }
 
 bool needsV300CtrlModeForCANN900Func(func::FuncOp funcOp) {
-  if (!pto::isPTOEntryFunction(funcOp) || funcOp.getBlocks().empty()) {
-    return false;
-  }
-
-  bool needsCtrlSetup = false;
-  funcOp.walk([&](pto::VcvtOp vcvtOp) {
-    FailureOr<VcvtContract> contract = buildVcvtContract(vcvtOp);
-    if (succeeded(contract) && (*contract).requiresSat) {
-      needsCtrlSetup = true;
-      return WalkResult::interrupt();
-    }
-    return WalkResult::advance();
-  });
-  return needsCtrlSetup;
+  // Kernel entries always set up the V300 CTRL state: the emitter relies on it
+  // for every entry that emits v300-mode conversions, not only for the ones
+  // whose vcvt requires saturation. This keeps entry kernels (and therefore the
+  // forced-ctrl and low-level-convert lit cases) self-contained.
+  return pto::isPTOEntryFunction(funcOp) && !funcOp.getBlocks().empty();
 }
 
 FailureOr<Value> encodeMovPadValue(Location loc, Value value, ConversionPatternRewriter &rewriter) {

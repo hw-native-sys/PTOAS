@@ -59,7 +59,7 @@ for (int i = 0; i < N; i++)
 
 ### `pto.vexpdif`
 
-- **syntax:** `%result = pto.vexpdif %input, %max, %mask, "EVEN|ODD" : !pto.vreg<NxT>, !pto.vreg<NxT>, !pto.mask<bW> -> !pto.vreg<Mxf32>`
+- **syntax:** `%result = pto.vexpdif %input, %max, %mask[, "EVEN|ODD"] : !pto.vreg<NxT>, !pto.vreg<NxT>, !pto.mask<bW> -> !pto.vreg<Mxf32>`
 - **A5 types:** input `f16` or `f32`, output `f32`
 - **semantics:** Fused exp(x - max) for numerically stable softmax.
 
@@ -72,7 +72,11 @@ for (int i = 0; i < N; i++)
 
 - **inputs:** `%input` is the source vector, `%max` is the broadcasted
   subtraction term, `%mask` selects active source lanes, and `%part` selects
-  `EVEN` or `ODD` for the underlying hardware contract.
+  `EVEN` or `ODD` for the underlying hardware contract. An `f16` source packs
+  two elements per 32-bit lane and one instruction only consumes the selected
+  half, so `%part` is required; an `f32` source is covered by a single
+  instruction that computes the whole vector and the selected value is not
+  observable in the result, so `%part` may be omitted.
 - **outputs:** `%result` is the fused `exp(input - max)` vector with `f32`
   elements.
 - **constraints and limitations:** Source vectors must be `f16` or `f32`, the

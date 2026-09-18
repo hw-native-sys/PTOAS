@@ -173,8 +173,8 @@ include/PTO/IR/VMIAttrs.td
 lib/PTO/IR/VMI.cpp
 
 include/PTO/Transforms/Passes.td
-lib/PTO/Transforms/PTOValidateVMIIR.cpp
-lib/PTO/Transforms/VMILayoutAssignment.cpp
+lib/PTO/Transforms/Passes/PTOValidateVMIIR.cpp
+lib/PTO/Transforms/VMI/VMILayoutAssignment.cpp
 lib/PTO/Transforms/VMIToVPTO.cpp
 small layout fact/materialization helpers under lib/PTO/Transforms
 

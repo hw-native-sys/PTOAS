@@ -14,7 +14,7 @@ module attributes {pto.target_arch = "a5"} {
   %0 = arith.muli %wb_blk_inline424__ssa_v0, %c8_index : index
   scf.for %write_dt_inline419__idx_v0 = %c0_index to %c8_index step %c1_index {
     %1 = arith.addi %0, %write_dt_inline419__idx_v0 : index
-    %write_row_i64_inline422__tile = pto.load_scalar %arg1[%1] : !pto.ptr<i64> -> i64
+    %write_row_i64_inline422__tile = pto.load %arg1[%1] : !pto.ptr<i64> -> i64
     %2 = arith.index_cast %write_row_i64_inline422__tile : i64 to index
     %3 = arith.cmpi sle, %c0_index, %2 : index
     scf.if %3 {

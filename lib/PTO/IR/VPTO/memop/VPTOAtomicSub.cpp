@@ -17,7 +17,8 @@ using namespace mlir::pto::memop_detail;
 LogicalResult AtomicSubOp::verify() {
   return verifyAtomicCommon(getOperation(), getPtr(), getValue().getType(),
                             getOld().getType(), /*bitwise=*/false,
-                            getSignednessAttr());
+                            getOperation()->getAttr("signedness"),
+                            /*acceptsSignedness=*/false);
 }
 
 void AtomicSubOp::getEffects(

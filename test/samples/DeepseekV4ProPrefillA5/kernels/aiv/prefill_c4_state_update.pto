@@ -24,12 +24,12 @@ module attributes {pto.target_arch = "a5"} {
   %update_t_inline5027__ssa_v0 = arith.index_cast %__pypto_spmd_block_idx : i32 to index
   %6 = arith.cmpi slt, %update_t_inline5027__ssa_v0, %c64_index : index
   scf.if %6 {
-    %state_row_raw_inline5026__tile = pto.load_scalar %arg0[%update_t_inline5027__ssa_v0] : !pto.ptr<i64> -> i64
+    %state_row_raw_inline5026__tile = pto.load %arg0[%update_t_inline5027__ssa_v0] : !pto.ptr<i64> -> i64
     %7 = arith.index_cast %state_row_raw_inline5026__tile : i64 to index
     %8 = arith.cmpi sle, %c0_index, %7 : index
     scf.if %8 {
       %9 = arith.index_cast %state_row_raw_inline5026__tile : i64 to index
-      %update_pos_inline5065__tile = pto.load_scalar %arg1[%update_t_inline5027__ssa_v0] : !pto.ptr<i32> -> i32
+      %update_pos_inline5065__tile = pto.load %arg1[%update_t_inline5027__ssa_v0] : !pto.ptr<i32> -> i32
       %10 = arith.index_cast %update_pos_inline5065__tile : i32 to index
       %11 = arith.remsi %10, %c4_index : index
       %t__tile = pto.alloc_tile addr = %c128_i64 valid_row = %c1_index valid_col = %c32_index : !pto.tile_buf<loc=vec, dtype=f32, rows=1, cols=32, v_row=?, v_col=?, blayout=row_major, slayout=none_box, fractal=512, pad=0>

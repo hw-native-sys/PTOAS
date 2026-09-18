@@ -49,6 +49,16 @@ using namespace mlir::pto;
   LogicalResult verifyMteL1L0FullControlRanges(
       Operation *op, ArrayRef<Value> fullOperands);
 
+  // A grouped DMA copy always writes whole 32B blocks on the destination side,
+  // so a constant burst length that is not a multiple of 32 leaves a tail block
+  // holding source data. The op stays valid; warn so the author can opt into a
+  // deterministic tail (a pad group, or a 32B-aligned length when the op has no
+  // padding support).
+  void warnUnalignedBurstLengthWithoutPad(Operation *op, Value lenBurst,
+                                          Value padValue,
+                                          StringRef destinationSpace,
+                                          StringRef remedy);
+
   LogicalResult verifyMteL0cUbBufferSpaces(MteL0cUbOp op);
 
   LogicalResult verifyMteL0cUbSubBlockId(MteL0cUbOp op);

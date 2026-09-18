@@ -50,7 +50,7 @@ source "${ASCEND_HOME_PATH}/bin/setenv.bash"
 | ODS 定义 | `include/PTO/IR/PTOOps.td` |
 | VPTO ODS 定义 | `include/PTO/IR/VPTOOps.td` |
 | C++ IR/Verifier | `lib/PTO/IR/PTO.cpp` |
-| ExpandTileOp | `lib/PTO/Transforms/ExpandTileOp.cpp` |
+| ExpandTileOp | `lib/PTO/Transforms/TileOp/ExpandTileOp.cpp` |
 | VPTO→LLVM lowering | `lib/PTO/Transforms/VPTOLLVMEmitter.cpp` |
 | PTODSL TileLib 模板 | `lib/TileOps/` |
 | PTODSL TileLib daemon | `ptodsl/ptodsl/tilelib/serving/` |
@@ -660,7 +660,7 @@ TPrint 不匹配时，按以下顺序排查：
 |---|---|---|
 | ODS 定义 | `include/PTO/IR/*.td` | `ninja -C build ptoas` + 清 build |
 | C++ IR/Verifier | `lib/PTO/IR/PTO.cpp` | `ninja -C build ptoas` + 清 build |
-| Expand/属性转发 | `lib/PTO/Transforms/ExpandTileOp.cpp` | `ninja -C build ptoas` + 清 build |
+| Expand/属性转发 | `lib/PTO/Transforms/TileOp/ExpandTileOp.cpp` | `ninja -C build ptoas` + 清 build |
 | VPTO→LLVM lowering | `lib/PTO/Transforms/VPTOLLVMEmitter.cpp` | `ninja -C build ptoas` + 清 build |
 | PTODSL TileLib 模板 | `lib/TileOps/a5/*.py` | 清 build + 重启 TileLib daemon |
 | `.pto` 文件 | `*.pto` | 仅重跑 ptoas |

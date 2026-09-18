@@ -26,7 +26,7 @@ module {
                       blayout=row_major, slayout=none_box, fractal=512, pad=0>,
         index) outs : f32
     %sum = arith.addf %value, %value : f32
-    pto.store_scalar %sum, %out[%c0] : !pto.ptr<f32>, f32
+    pto.store %sum, %out[%c0] : !pto.ptr<f32>, f32
     return
   }
 
@@ -40,13 +40,13 @@ module {
       attributes {pto.kernel_kind = #pto.kernel_kind<vector>} {
     %c0 = arith.constant 0 : index
     %sum16 = arith.addf %lhs16, %rhs16 : f16
-    pto.store_scalar %sum16, %out16[%c0] : !pto.ptr<f16>, f16
+    pto.store %sum16, %out16[%c0] : !pto.ptr<f16>, f16
     %sumbf = arith.addf %lhsbf, %rhsbf : bf16
-    pto.store_scalar %sumbf, %outbf[%c0] : !pto.ptr<bf16>, bf16
+    pto.store %sumbf, %outbf[%c0] : !pto.ptr<bf16>, bf16
     %sum32 = arith.addf %lhs32, %rhs32 : f32
-    pto.store_scalar %sum32, %out32[%c0] : !pto.ptr<f32>, f32
+    pto.store %sum32, %out32[%c0] : !pto.ptr<f32>, f32
     %sum64 = arith.addf %lhs64, %rhs64 : f64
-    pto.store_scalar %sum64, %out64[%c0] : !pto.ptr<f64>, f64
+    pto.store %sum64, %out64[%c0] : !pto.ptr<f64>, f64
     return
   }
 }

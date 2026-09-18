@@ -1,6 +1,6 @@
 # Tile-标量/Tile-立即数操作
 
-本节描述了 PTO ISA 中 Tile 与标量（或立即数）之间的逐元素运算指令族。所有操作均作用于本地缓冲区（`tile_buf`，位于 `loc=vec` 空间），采用"目标传递风格"（Destination-Passing Style, DPS）：操作本身不产生 SSA 返回值，而是直接将结果写入预先分配好的目标 `tile_buf`。
+本节描述了 PTO ISA 中 Tile 与标量（或立即数）之间的逐元素运算指令族。所有操作均作用于本地缓冲区（`tile_buf`，位于 `loc=vec` 空间），采用“目标传递风格”（Destination-Passing Style，DPS）：操作本身不产生 SSA 返回值，而是直接将结果写入预先分配好的目标 `tile_buf`。
 
 这一类操作通常具有如下装配形式：
 
@@ -63,7 +63,7 @@ For each element (i, j):
 | Name | Type | Description |
 | ---- | ---- | ----------- |
 | `src` | `pto.tile_buf` | 源 tile buffer |
-| `scalar` | `ScalarType` (signless integer / float) | 加到每个元素上的标量值 |
+| `scalar` | `ScalarType`（signless integer / float）| 加到每个元素上的标量值 |
 | `dst` | `pto.tile_buf` | 目标 tile buffer |
 
 **返回值：** 无。以 DPS 的形式写入 `dst`。
@@ -114,7 +114,7 @@ For each element (i, j):
 | Name | Type | Description |
 | ---- | ---- | ----------- |
 | `src0` | `pto.tile_buf` | 第一个源 tile buffer |
-| `scalar` | `ScalarType` (signless integer / float) | 标量值 |
+| `scalar` | `ScalarType`（signless integer / float）| 标量值 |
 | `src1` | `pto.tile_buf` | 第二个源 tile buffer |
 | `dst` | `pto.tile_buf` | 目标 tile buffer |
 
@@ -185,10 +185,10 @@ For each element (i, j):
 **示例：**
 
 ```mlir
-pto.tands ins(%a, %s : !pto.tile_buf<loc=vec, dtype=i32, rows=16, cols=16,
+pto.tands ins(%a, %s : !pto.tile_buf<loc=vec, dtype=i16, rows=16, cols=16,
              v_row=16, v_col=16, blayout=row_major, slayout=none_box,
              fractal=512, pad=0>, i32)
-          outs(%c : !pto.tile_buf<loc=vec, dtype=i32, rows=16, cols=16,
+          outs(%c : !pto.tile_buf<loc=vec, dtype=i16, rows=16, cols=16,
              v_row=16, v_col=16, blayout=row_major, slayout=none_box,
              fractal=512, pad=0>)
 ```
@@ -214,7 +214,7 @@ For each element (i, j):
 | Name | Type | Description |
 | ---- | ---- | ----------- |
 | `src` | `pto.tile_buf` | 源 tile buffer |
-| `scalar` | `ScalarType` (signless integer / float) | 用于比较的标量值 |
+| `scalar` | `ScalarType`（signless integer / float）| 用于比较的标量值 |
 | `dst` | `pto.tile_buf` | 目标 tile buffer（打包谓词掩码） |
 
 **返回值：** 无。以 DPS 的形式写入 `dst`。
@@ -350,7 +350,7 @@ For each element (i, j):
 
 | Name | Type | Description |
 | ---- | ---- | ----------- |
-| `scalar` | `ScalarType` (signless integer / float) | 要广播的标量值 |
+| `scalar` | `ScalarType`（signless integer / float）| 要广播的标量值 |
 | `dst` | `pto.tile_buf` | 目标 tile buffer |
 
 **返回值：** 无。以 DPS 的形式写入 `dst`。
@@ -449,7 +449,7 @@ For each element (i, j):
 | Name | Type | Description |
 | ---- | ---- | ----------- |
 | `src` | `pto.tile_buf` | 源 tile buffer |
-| `scalar` | `ScalarType` (signless integer / float) | 标量值 |
+| `scalar` | `ScalarType`（signless integer / float）| 标量值 |
 | `dst` | `pto.tile_buf` | 目标 tile buffer |
 
 **返回值：** 无。以 DPS 的形式写入 `dst`。
@@ -500,7 +500,7 @@ For each element (i, j):
 | Name | Type | Description |
 | ---- | ---- | ----------- |
 | `src` | `pto.tile_buf` | 源 tile buffer |
-| `scalar` | `ScalarType` (signless integer / float) | 标量值 |
+| `scalar` | `ScalarType`（signless integer / float）| 标量值 |
 | `dst` | `pto.tile_buf` | 目标 tile buffer |
 
 **返回值：** 无。以 DPS 的形式写入 `dst`。
@@ -551,7 +551,7 @@ For each element (i, j):
 | Name | Type | Description |
 | ---- | ---- | ----------- |
 | `src` | `pto.tile_buf` | 源 tile buffer |
-| `scalar` | `ScalarType` (signless integer / float) | 标量乘数 |
+| `scalar` | `ScalarType`（signless integer / float）| 标量乘数 |
 | `dst` | `pto.tile_buf` | 目标 tile buffer |
 
 **返回值：** 无。以 DPS 的形式写入 `dst`。
@@ -654,7 +654,7 @@ For each element (i, j):
 | Name | Type | Description |
 | ---- | ---- | ----------- |
 | `src` | `pto.tile_buf` | 源 tile buffer |
-| `scalar` | `ScalarType` (signless integer / float) | 标量除数 |
+| `scalar` | `ScalarType`（signless integer / float）| 标量除数 |
 | `tmp` | `pto.tile_buf` | ISA API 所需的临时 tile buffer |
 | `dst` | `pto.tile_buf` | 目标 tile buffer |
 
@@ -876,7 +876,7 @@ For each element (i, j):
 | Name | Type | Description |
 | ---- | ---- | ----------- |
 | `src` | `pto.tile_buf` | 源 tile buffer |
-| `scalar` | `ScalarType` (signless integer / float) | 被减去的标量值 |
+| `scalar` | `ScalarType`（signless integer / float）| 被减去的标量值 |
 | `dst` | `pto.tile_buf` | 目标 tile buffer |
 
 **返回值：** 无。以 DPS 的形式写入 `dst`。
@@ -927,7 +927,7 @@ For each element (i, j):
 | Name | Type | Description |
 | ---- | ---- | ----------- |
 | `src0` | `pto.tile_buf` | 第一个源 tile buffer |
-| `scalar` | `ScalarType` (signless integer / float) | 被减去的标量值 |
+| `scalar` | `ScalarType`（signless integer / float）| 被减去的标量值 |
 | `src1` | `pto.tile_buf` | 第二个源 tile buffer（加回的值） |
 | `dst` | `pto.tile_buf` | 目标 tile buffer |
 
@@ -1032,7 +1032,7 @@ For each element (i, j):
 | Name | Type | Description |
 | ---- | ---- | ----------- |
 | `src` | `pto.tile_buf` | 源 tile buffer |
-| `scalar` | `ScalarType` (signless integer / float) | 浮点标量除数 |
+| `scalar` | `ScalarType`（signless integer / float）| 浮点标量除数 |
 | `dst` | `pto.tile_buf` | 目标 tile buffer |
 
 **返回值：** 无。以 DPS 的形式写入 `dst`。

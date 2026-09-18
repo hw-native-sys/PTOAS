@@ -9,77 +9,7 @@
 
 """Vector math ops: arithmetic, comparison helpers, scalar load/store."""
 
-from functools import wraps
-import warnings
-from ._diagnostics import (
-    PTODSLDeprecationWarning,
-    explicit_mode_required_with_context_error,
-    make_tensor_view_invalid_layout_error,
-    make_tensor_view_missing_metadata_error,
-    tile_row_alignment_error,
-)
-from ._host_tensors import resolve_tensor_data_entry
-from ._scalar_coercion import coerce_scalar_to_type, materialize_scalar_literal
-from ._scalar_adaptation import (
-    classify_runtime_scalar_type,
-    coerce_runtime_i1_value,
-    coerce_runtime_index_value,
-    coerce_runtime_integer_value,
-)
-from ._runtime_scalar_ops import emit_runtime_binary_op
-from ._surface_values import (
-    AllocatedBufferValue,
-    MaskResultValue,
-    PartitionTensorViewValue,
-    TensorViewValue,
-    TileSliceValue,
-    TileValue,
-    _coerce_index_value,
-    _static_index_dims,
-    _unwrap_sequence,
-    compose_partition_spec,
-    emit_as_ptr,
-    infer_tile_element_type,
-    is_runtime_scalar_ir_type,
-    parse_tile_type_metadata,
-    resolve_address_access,
-    unwrap_surface_value,
-    wrap_surface_value,
-)
-from ._types import (
-    _is_struct_type,
-    _isinstance_pto_type,
-    _materialize_integer_literal,
-    _normalize_address_space,
-    _resolve,
-    _strip_integer_signedness,
-    mask_type,
-    part_tensor_view_type,
-    part_tensor_view_type_from_dims,
-    ptr,
-    tensor_view_type,
-    tensor_view_type_from_dims,
-    vreg_type,
-)
-from ptoas.mlir.dialects import arith, pto as _pto
-from ptoas.mlir.ir import (
-    Attribute,
-    BF16Type,
-    F16Type,
-    F32Type,
-    Float8E4M3FNType,
-    Float8E5M2Type,
-    FloatAttr,
-    IndexType,
-    IntegerAttr,
-    IntegerType,
-    MemRefType,
-    Operation,
-    Type,
-    TypeAttr,
-    UnitAttr,
-    VectorType,
-)
+from ._ops_imports import *  # noqa: F401,F403
 
 from ._ops_common import (
     _coerce_i64,
@@ -91,6 +21,7 @@ from ._ops_common import (
     _emit_unary_vec_op,
     _emit_vec_scalar_masked_op,
     _infer_mask_metadata,
+    _infer_vreg_metadata,
     _negate_runtime_scalar,
     _normalize_vcvt_round_mode,
     _normalize_vdup_position_mode,
@@ -373,16 +304,51 @@ def vsqz(inp, mask):
     return _emit_unary_vec_op(_pto.VsqzOp, inp, mask)
 
 
-def vexpdif(inp, ref, mask, part: str = "ODD"):
-    """``pto.vexpdif`` – ``exp(inp - ref)`` selecting ODD or EVEN lanes."""
-    _reject_low_precision_vreg_operands(inp, ref, context="pto.vexpdif(...)")
+_EVEN_ODD_PART_TOKENS = ("EVEN", "ODD")
+
+
+def _normalize_even_odd_part_mode(part, *, context: str) -> str:
+    """Normalize a PTODSL EVEN/ODD part selector into its IR token."""
+    token = part if isinstance(part, str) else str(part)
+    if "." in token:
+        token = token.rsplit(".", 1)[-1]
+    normalized = token.strip().upper()
+    if normalized not in _EVEN_ODD_PART_TOKENS:
+        raise ValueError(
+            f"{context} does not support part {part!r}; expected one of EVEN, ODD"
+        )
+    return normalized
+
+
+def vexpdif(inp, ref, mask, part=None):
+    """``pto.vexpdif`` – ``exp(inp - ref)``.
+
+    ``part`` selects which 16-bit half of every 32-bit lane feeds the mixed
+    precision subtraction. ``f16`` inputs pack two elements per 32-bit lane and
+    consume only one half per instruction, so they must select
+    ``PartMode.EVEN`` or ``PartMode.ODD`` explicitly. ``f32`` inputs are covered
+    by a single instruction that computes the whole vector, so ``part`` may be
+    omitted there.
+    """
+    context = "pto.vexpdif(...)"
+    _reject_low_precision_vreg_operands(inp, ref, context=context)
+    kwargs = {}
+    if part is None:
+        _, elem_type = _infer_vreg_metadata(inp)
+        if F16Type.isinstance(elem_type):
+            raise TypeError(
+                f"{context} requires part=pto.PartMode.EVEN or pto.PartMode.ODD for "
+                "f16 input vectors; omit part only for f32 inputs"
+            )
+    else:
+        kwargs["part"] = _normalize_even_odd_part_mode(part, context=context)
     return wrap_surface_value(
         _pto.VexpdifOp(
             unwrap_surface_value(inp).type,
             unwrap_surface_value(inp),
             unwrap_surface_value(ref),
             unwrap_surface_value(mask),
-            part,
+            **kwargs,
         ).result
     )
 
@@ -629,70 +595,30 @@ def _resolve_l1_bypass_scalar_pointer(ptr_value, *, context: str):
     return raw_ptr, elem_type
 
 
-def _validate_scalar_l1_bypass(value, *, context: str) -> bool:
-    if not isinstance(value, bool):
-        raise TypeError(f"{context} expects bypass_l1 to be a bool")
-    return value
-
-
-def load_scalar(ptr_value, offset=0, *, bypass_l1=False):
-    """Load one scalar through the scalar pipeline.
-
-    ``bypass_l1=True`` selects the AICore GM device-memory form and emits
-    ``pto.ld_dev``.  The bypass form requires a GM pointer with an i8, i16,
-    i32, or i64 element type and is valid only in an ordinary AICore entry.
-    """
-    bypass_l1 = _validate_scalar_l1_bypass(bypass_l1, context="load_scalar(...)")
-    if bypass_l1:
-        raw_ptr, elem_type = _resolve_l1_bypass_scalar_pointer(
-            ptr_value, context="load_scalar(..., bypass_l1=True)"
-        )
-        return wrap_surface_value(
-            _pto.PTOLdDevOp(
-                elem_type,
-                raw_ptr,
-                _coerce_index(offset, context="load_scalar(offset)"),
-            ).value
-        )
-
-    result_type = _pointer_element_type(ptr_value, context="load_scalar(ptr)")
+def ld_dev(ptr_value, offset=0):
+    """Load one integer GM element while bypassing the local L1 cache."""
+    raw_ptr, elem_type = _resolve_l1_bypass_scalar_pointer(
+        ptr_value, context="ld_dev(...)"
+    )
     return wrap_surface_value(
-        _pto.LoadScalarOp(
-            _resolve(result_type),
-            unwrap_surface_value(ptr_value),
-            _coerce_index(offset, context="load_scalar(offset)"),
+        _pto.PTOLdDevOp(
+            elem_type,
+            raw_ptr,
+            _coerce_index(offset, context="ld_dev(offset)"),
         ).value
     )
 
 
-def store_scalar(ptr_value, offset, value, *, bypass_l1=False):
-    """Store one scalar through the scalar pipeline.
-
-    ``bypass_l1=True`` selects the AICore GM device-memory form and emits
-    ``pto.st_dev``.  The bypass form requires a GM pointer with an i8, i16,
-    i32, or i64 element type and is valid only in an ordinary AICore entry.
-    """
-    bypass_l1 = _validate_scalar_l1_bypass(bypass_l1, context="store_scalar(...)")
-    if bypass_l1:
-        raw_ptr, elem_type = _resolve_l1_bypass_scalar_pointer(
-            ptr_value, context="store_scalar(..., bypass_l1=True)"
-        )
-        raw_value = coerce_scalar_to_type(
-            value,
-            elem_type,
-            context="store_scalar(..., bypass_l1=True)",
-        )
-        _pto.PTOStDevOp(
-            raw_value,
-            raw_ptr,
-            _coerce_index(offset, context="store_scalar(offset)"),
-        )
-        return
-
-    _pto.StoreScalarOp(
-        unwrap_surface_value(ptr_value),
-        _coerce_index(offset, context="store_scalar(offset)"),
-        unwrap_surface_value(value),
+def st_dev(ptr_value, offset, value):
+    """Store one integer GM element while bypassing the local L1 cache."""
+    raw_ptr, elem_type = _resolve_l1_bypass_scalar_pointer(
+        ptr_value, context="st_dev(...)"
+    )
+    raw_value = coerce_scalar_to_type(value, elem_type, context="st_dev(...)")
+    _pto.PTOStDevOp(
+        raw_value,
+        raw_ptr,
+        _coerce_index(offset, context="st_dev(offset)"),
     )
 
 

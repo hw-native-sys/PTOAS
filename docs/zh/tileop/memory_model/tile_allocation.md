@@ -52,7 +52,7 @@ tile 分配模型主要围绕 `!pto.tile_buf<...>` 展开。一个 tile buffer �
 
 `pto-plan-memory` 不只做简单顺序分配，还会分析生命周期和语义冲突，决定哪些 buffer 可以复用同一块存储。
 
-仓内实现里可以看到：
+仓库内实现里可以看到：
 
 - inplace pair 列表
 - semantic conflict pair

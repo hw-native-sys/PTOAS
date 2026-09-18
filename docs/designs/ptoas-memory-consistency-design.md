@@ -38,7 +38,7 @@ PyPTO 或用户需要显式表达内存一致性动作：
 
 ```mlir
 // cacheable scalar GM store 发布 payload
-pto.store_scalar %value, %payload[%idx] : !pto.ptr<i32, gm>, i32
+pto.store %value, %payload[%idx] : !pto.ptr<i32, gm>, i32
 pto.cmo.cacheinvalid %payload single_cache_line : !pto.ptr<i32, gm>
 pto.fence.barrier_all #pto.fence_scope<gm>
 pto.comm.tnotify ...
@@ -48,7 +48,7 @@ pto.comm.tnotify ...
 // TWait 后读取 cacheable scalar GM payload
 pto.comm.twait ...
 pto.cmo.cacheinvalid %payload single_cache_line : !pto.ptr<i32, gm>
-%value = pto.load_scalar %payload[%idx] : !pto.ptr<i32, gm> -> i32
+%value = pto.load %payload[%idx] : !pto.ptr<i32, gm> -> i32
 ```
 
 如果涉及 non-cacheable MTE/FIX/comm macro payload，当前 PTOAS 不再自动根据

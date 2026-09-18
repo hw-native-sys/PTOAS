@@ -12,8 +12,8 @@
 module attributes {pto.target_arch = "a5", pto.kernel_kind = #pto.kernel_kind<vector>} {
   func.func @load_scalar_ui32(%ptr: !pto.ptr<ui32>) {
     %c0 = arith.constant 0 : index
-    %v = pto.load_scalar %ptr[%c0] : !pto.ptr<ui32> -> ui32
-    pto.store_scalar %v, %ptr[%c0] : !pto.ptr<ui32>, ui32
+    %v = pto.load %ptr[%c0] : !pto.ptr<ui32> -> ui32
+    pto.store %v, %ptr[%c0] : !pto.ptr<ui32>, ui32
     return
   }
 }
@@ -22,5 +22,5 @@ module attributes {pto.target_arch = "a5", pto.kernel_kind = #pto.kernel_kind<ve
 // NORMALIZE-SAME: (vpto-ptr-normalize)
 // NORMALIZE-LABEL: func.func @load_scalar_ui32(%arg0: !pto.ptr<ui32, gm>) {
 // NORMALIZE: %[[C0:.*]] = arith.constant 0 : index
-// NORMALIZE: %[[VAL:.*]] = pto.load_scalar %arg0[%[[C0]]] : <ui32, gm> -> ui32
-// NORMALIZE: pto.store_scalar %[[VAL]], %arg0[%[[C0]]] : <ui32, gm>, ui32
+// NORMALIZE: %[[VAL:.*]] = pto.load %arg0[%[[C0]]] : !pto.ptr<ui32, gm> -> ui32
+// NORMALIZE: pto.store %[[VAL]], %arg0[%[[C0]]] : !pto.ptr<ui32, gm>, ui32

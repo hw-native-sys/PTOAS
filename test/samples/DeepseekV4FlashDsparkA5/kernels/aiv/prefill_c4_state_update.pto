@@ -29,12 +29,12 @@ module attributes {pto.target_arch = "a5"} {
     %6 = arith.addi %5, %update_dt_inline6__idx_v0 : index
     %7 = arith.cmpi slt, %6, %c128_index : index
     scf.if %7 {
-      %state_row_raw_inline3__tile = pto.load_scalar %arg1[%6] : !pto.ptr<i64> -> i64
+      %state_row_raw_inline3__tile = pto.load %arg1[%6] : !pto.ptr<i64> -> i64
       %8 = arith.index_cast %state_row_raw_inline3__tile : i64 to index
       %9 = arith.cmpi sle, %c0_index, %8 : index
       scf.if %9 {
         %10 = arith.index_cast %state_row_raw_inline3__tile : i64 to index
-        %update_pos_inline2__tile = pto.load_scalar %arg2[%6] : !pto.ptr<i32> -> i32
+        %update_pos_inline2__tile = pto.load %arg2[%6] : !pto.ptr<i32> -> i32
         %11 = arith.index_cast %update_pos_inline2__tile : i32 to index
         %12 = arith.remsi %11, %c4_index : index
         %t__tile = pto.alloc_tile addr = %c1024_i64 valid_row = %c1_index valid_col = %c256_index : !pto.tile_buf<loc=vec, dtype=f32, rows=1, cols=256, v_row=?, v_col=?, blayout=row_major, slayout=none_box, fractal=512, pad=0>

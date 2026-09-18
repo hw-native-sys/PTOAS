@@ -168,18 +168,6 @@ count. Which memory access pattern is used depends on the selected mode family.
 | `offset` | `IndexLike` | Element offset into the source buffer |
 | `size` | `int` | Logical result lane count |
 
-**About `mask` on `vload`.**
-
-- `pto.vmi.vload(...)` does not take an explicit `mask` parameter. The load
-  surface describes how data is read from UB into a logical VMI value, not
-  which lanes of a later computation are active.
-- Tail handling and partial-lane participation are expressed on the consumer
-  side, typically by passing a mask to a later compute op such as
-  `pto.vmi.vadd(...)`, or to the final `pto.vmi.vstore(...)`.
-- In practice, if you need "load only the active lanes" behavior in authored
-  DSL code, write a normal `vload`, then apply your mask on the first consumer
-  or on the eventual store.
-
 **Mode 1: `dist_mode`**
 
 Use this family for the normal logical load surface. `dist_mode=None` means the
@@ -315,10 +303,10 @@ blocks = pto.vmi.vload(
 
 ### `vstore`
 
-### `pto.vmi.vstore(values, destination, offset, mask=None, *, dist_mode=None, pmode=None) -> None`
-### `pto.vmi.vstore((even, odd), destination, offset, mask=None, *, dist_mode="intlv", pmode=None) -> None`
-### `pto.vmi.vstore(values, destination, offset, *, group, stride, pmode=None) -> None`
-### `pto.vmi.vstore(values, destination, offset, mask=None, *, block_stride, pmode=None) -> None`
+### `pto.vmi.vstore(values, destination, offset, mask=None, *, dist_mode=None) -> None`
+### `pto.vmi.vstore((even, odd), destination, offset, mask=None, *, dist_mode="intlv") -> None`
+### `pto.vmi.vstore(values, destination, offset, *, group, stride) -> None`
+### `pto.vmi.vstore(values, destination, offset, mask=None, *, block_stride) -> None`
 
 **Description**: Writes one logical VMI vector, or a deinterleaved pair, back
 to a UB pointer. As with `vload`, the PTODSL surface is organized into the same
@@ -331,16 +319,17 @@ three mutually exclusive mode families.
 | `values` | `VRegType` or `(VRegType, VRegType)` | One VMI vector for normal forms, or an `(even, odd)` pair for `dist_mode="intlv"` |
 | `destination` | `PtrType` (ub) | UB destination pointer |
 | `offset` | `IndexLike` | Element offset into the destination buffer |
-| `pmode` | `str` or `None` | Optional inactive-lane mode: only `"zero"` is supported, it stores 0 to masked-off lanes |
 
-**About `pmode` on `vstore`.**
+**Stores are mask-governed.**
 
-- `pmode="zero"` is the default and only supported store behavior. When a
-  `mask` is present, inactive lanes are written as zero.
-- `pmode="merge"` is **not supported**
-- `pmode` only matters on store forms that actually use a `mask`. Group-mode
-  store does not take a mask operand, so there are no inactive lanes to define
-  there.
+- Only the elements selected by `mask` are written; **inactive lanes are not
+  written**, so the destination keeps its previous contents.
+- There is no zero/merge switch: the micro store has no such control, so
+  `vstore` takes **no `pmode` argument** (`pmode` remains available on the
+  compute ops, where it selects the inactive-result behaviour).
+- `pmode` is also not needed to describe store forms without a `mask`:
+  group-mode store does not take a mask operand (all elements are written),
+  and the other forms default to all-active when `mask` is omitted.
 
 **Mode 1: `dist_mode`**
 
@@ -545,7 +534,7 @@ mask).
 | `lhs` | `VRegType` | First operand vector |
 | `rhs` | `VRegType` or `ScalarType` | Second vector operand or scalar addend |
 | `mask` | VMI mask or `None` | Optional predicate mask gating lane participation |
-| `pmode` | `str` or `None` | Optional predicate mode: `"merge"` keeps predicate-inactive lanes at their prior value; `"zero"` writes 0 |
+| `pmode` | `str` or `None` | Optional predicate mode: `"zero"` writes 0 to predicate-inactive lanes |
 
 **Returns**:
 
@@ -592,7 +581,7 @@ only).
 |-----------|------|-------------|
 | `source` | `VRegType` | Input vector |
 | `mask` | VMI mask or `None` | Optional predicate mask gating lane participation |
-| `pmode` | `str` or `None` | Optional predicate mode: `"merge"` keeps predicate-inactive lanes at their prior value; `"zero"` writes 0 |
+| `pmode` | `str` or `None` | Optional predicate mode: `"zero"` writes 0 to predicate-inactive lanes |
 
 **Returns**:
 
@@ -650,7 +639,7 @@ lanes.
 | `source` | `VRegType` | Input vector |
 | `scalar` | `ScalarType` | Scalar operand (Python number or PTODSL scalar). For `vshls` and `vshrs`, this is a signless `i16` shift amount; other operations coerce it to the vector element type |
 | `mask` | VMI mask | **Required.** Predicate mask gating lane participation |
-| `pmode` | `str` or `None` | Optional predicate mode: `"merge"` keeps predicate-inactive lanes at their prior value; `"zero"` writes 0 |
+| `pmode` | `str` or `None` | Optional predicate mode: `"zero"` writes 0 to predicate-inactive lanes |
 
 **Returns**:
 
@@ -696,7 +685,7 @@ instructions consume masks to pick between values lane by lane.
 | `rhs` | `VRegType` | Second operand vector |
 | `seed` | VMI mask | Seed mask gating which lanes participate |
 | `cmp` | `str` | Comparison predicate. VMI accepts bare predicates `"eq"`, `"ne"`, `"lt"`, `"le"`, `"gt"`, `"ge"`. Floating-point compares also accept ordered forms `"oeq"`, `"one"`, `"olt"`, `"ole"`, `"ogt"`, `"oge"` |
-| `pmode` | `str` or `None` | Optional predicate mode: `"merge"` keeps predicate-inactive lanes at their prior value; `"zero"` writes 0 |
+| `pmode` | `str` or `None` | Optional predicate mode: `"zero"` writes 0 to predicate-inactive lanes |
 **Returns**:
 
 | Return Value | Type | Description |
@@ -718,7 +707,7 @@ The scalar is broadcast to all lanes.
 | `scalar` | `ScalarType` | Scalar operand (coerced to the vector element type) |
 | `seed` | VMI mask | Seed mask gating lane participation |
 | `cmp` | `str` | Comparison predicate. Same accepted spellings as `vcmp` |
-| `pmode` | `str` or `None` | Optional predicate mode: `"merge"` keeps predicate-inactive lanes at their prior value; `"zero"` writes 0 |
+| `pmode` | `str` or `None` | Optional predicate mode: `"zero"` writes 0 to predicate-inactive lanes |
 **Returns**:
 
 | Return Value | Type | Description |
@@ -745,7 +734,7 @@ pred2 = pto.vmi.vcmps(src, 0.0, seed_mask, "ge")
 | `mask` | VMI mask | Selection predicate |
 | `true_value` | `VRegType` | Value taken when mask is true |
 | `false_value` | `VRegType` | Value taken when mask is false |
-| `pmode` | `str` or `None` | Optional predicate mode: `"merge"` keeps predicate-inactive lanes at their prior value; `"zero"` writes 0 |
+| `pmode` | `str` or `None` | Optional predicate mode: `"zero"` writes 0 to predicate-inactive lanes |
 **Returns**:
 
 | Return Value | Type | Description |
@@ -814,7 +803,7 @@ performed per group.
 | `mask` | VMI mask | **Required.** Predicate mask gating lane participation |
 | `group` | `int` or `None` | Number of groups for per-group reduction. `None` means full-vector reduction |
 | `reassoc` | `bool` | For `vcadd` on floating-point data only: must be spelled explicitly as `True`; `False` is rejected. On integer `vcadd`, `True` is accepted but the attribute is ignored |
-| `pmode` | `str` or `None` | Optional predicate mode: `"merge"` keeps predicate-inactive lanes at their prior value; `"zero"` writes 0 |
+| `pmode` | `str` or `None` | Optional predicate mode: `"zero"` writes 0 to predicate-inactive lanes |
 
 **Returns**:
 
@@ -873,7 +862,7 @@ unsigned. Use `siN` types for signed conversion semantics.
 | `to_dtype` | `DType` | Target element type. PTODSL derives the result vector type from the source lane count/layout and this dtype |
 | `rounding` | rounding mode or `None` | Optional rounding mode token |
 | `saturate` | `"SAT"`, `"NOSAT"`, or `None` | Saturation mode. For fp-narrow, int-narrow, and fp-to-int, `None` defaults to `"SAT"` |
-| `pmode` | `str` or `None` | Optional predicate mode: `"merge"` keeps predicate-inactive lanes at their prior value; `"zero"` writes 0 |
+| `pmode` | `str` or `None` | Optional predicate mode: `"zero"` writes 0 to predicate-inactive lanes |
 
 **Returns**:
 
@@ -971,7 +960,7 @@ stable softmax numerator.
 | `x` | `VRegType` | Input vector with `f16` or `f32` elements |
 | `max_value` | `VRegType` | Maximum value vector with the same type as `x` |
 | `mask` | VMI mask | **Required.** Predicate mask gating lane participation |
-| `pmode` | `str` or `None` | Optional predicate mode: `"zero"` zeros inactive lanes; `"merge"` preserves their prior values. Defaults to `"zero"`. |
+| `pmode` | `str` or `None` | Optional predicate mode: `"zero"` (default) zeros inactive lanes |
 **Returns**:
 
 | Return Value | Type | Description |
@@ -992,7 +981,7 @@ stable softmax numerator.
 | `acc` | `VRegType` | Accumulator vector |
 | `alpha` | `ScalarType` | Scalar multiplier (coerced to the element type of `x`) |
 | `mask` | VMI mask | **Required.** Predicate mask |
-| `pmode` | `str` or `None` | Optional predicate mode: `"merge"` keeps predicate-inactive lanes at their prior value; `"zero"` writes 0 |
+| `pmode` | `str` or `None` | Optional predicate mode: `"zero"` writes 0 to predicate-inactive lanes |
 **Returns**:
 
 | Return Value | Type | Description |
@@ -1012,7 +1001,7 @@ stable softmax numerator.
 | `x` | `VRegType` | Input vector |
 | `slope` | `ScalarType` | Negative-slope multiplier (coerced to the element type of `x`) |
 | `mask` | VMI mask | **Required.** Predicate mask |
-| `pmode` | `str` or `None` | Optional predicate mode: `"merge"` keeps predicate-inactive lanes at their prior value; `"zero"` writes 0 |
+| `pmode` | `str` or `None` | Optional predicate mode: `"zero"` writes 0 to predicate-inactive lanes |
 **Returns**:
 
 | Return Value | Type | Description |
@@ -1033,7 +1022,7 @@ stable softmax numerator.
 | `x` | `VRegType` | Input vector |
 | `alpha` | `VRegType` | Per-lane slope vector |
 | `mask` | VMI mask | **Required.** Predicate mask |
-| `pmode` | `str` or `None` | Optional predicate mode: `"merge"` keeps predicate-inactive lanes at their prior value; `"zero"` writes 0 |
+| `pmode` | `str` or `None` | Optional predicate mode: `"zero"` writes 0 to predicate-inactive lanes |
 **Returns**:
 
 | Return Value | Type | Description |
@@ -1055,7 +1044,7 @@ and `high` carries the upper 32 bits. Signedness follows the inputs.
 | `a` | `VRegType` | First `i32` or `ui32` operand vector |
 | `b` | `VRegType` | Matching second operand vector |
 | `mask` | VMI mask | **Required.** Predicate mask |
-| `pmode` | `str` or `None` | Optional predicate mode: `"merge"` keeps predicate-inactive lanes at their prior value; `"zero"` writes 0 |
+| `pmode` | `str` or `None` | Optional predicate mode: `"zero"` writes 0 to predicate-inactive lanes |
 
 **Returns**:
 
@@ -1087,7 +1076,7 @@ The accumulator is both the input and the result value.
 | `lhs` | `VRegType` | First multiply operand |
 | `rhs` | `VRegType` | Second multiply operand |
 | `mask` | VMI mask | **Required.** Predicate mask |
-| `pmode` | `str` or `None` | Optional predicate mode: `"merge"` keeps predicate-inactive lanes at their prior value; `"zero"` writes 0 |
+| `pmode` | `str` or `None` | Optional predicate mode: `"zero"` writes 0 to predicate-inactive lanes |
 **Returns**:
 
 | Return Value | Type | Description |
@@ -1175,7 +1164,7 @@ unspecified value.
 | `source` | `PtrType` (ub) | UB source pointer |
 | `offsets` | `VRegType` | Per-lane element offsets (integer VMI vector) |
 | `mask` | VMI mask | **Required.** Predicate mask gating lane participation |
-| `pmode` | `str` or `None` | Optional predicate mode: `"merge"` keeps predicate-inactive lanes at their prior value; `"zero"` writes 0 |
+| `pmode` | `str` or `None` | Optional predicate mode: `"zero"` writes 0 to predicate-inactive lanes |
 
 **Returns**:
 
@@ -1204,7 +1193,7 @@ gathers one 32-byte block using byte-level offsets.
 | `source` | `PtrType` (ub) | UB source pointer |
 | `offsets` | `VRegType` | Per-lane byte offsets (integer VMI vector) |
 | `mask` | VMI mask | **Required.** Predicate mask |
-| `pmode` | `str` or `None` | Optional predicate mode: `"merge"` keeps predicate-inactive lanes at their prior value; `"zero"` writes 0 |
+| `pmode` | `str` or `None` | Optional predicate mode: `"zero"` writes 0 to predicate-inactive lanes |
 **Returns**:
 
 | Return Value | Type | Description |
@@ -1248,8 +1237,7 @@ original mask. B8 keeps dense logical bytes and a logical b8 mask; lowering
 expands each group of at most 128 bytes into the low byte of 128 B16 request
 slots, and unpacks the corresponding mask half to b16. A 256-lane byte scatter
 therefore emits two physical request groups. Inactive and padding requests
-perform no writes. `pmode=None` or `"zero"` use this path; `"merge"` remains
-unsupported by the existing scatter lowering.
+perform no writes. `pmode=None` or `"zero"` use this path.
 
 `create_mask(96, size=128)` is valid: 96 is the active prefix length, while 128
 is the logical lane count. `create_mask(96, size=96)` is invalid.
@@ -1328,7 +1316,7 @@ the upper half.
 | `lhs` | `VRegType` | First source vector |
 | `rhs` | `VRegType` | Second source vector |
 | `mask` | VMI mask | **Required.** Predicate mask gating lane participation |
-| `pmode` | `str` or `None` | Optional predicate mode: `"merge"` keeps predicate-inactive lanes at their prior value; `"zero"` writes 0 |
+| `pmode` | `str` or `None` | Optional predicate mode: `"zero"` writes 0 to predicate-inactive lanes |
 **Returns**:
 
 | Return Value | Type | Description |
@@ -1351,7 +1339,7 @@ of the logical input stream into two output vectors.
 | `lhs` | `VRegType` | Lower half of the interleaved input |
 | `rhs` | `VRegType` | Upper half of the interleaved input |
 | `mask` | VMI mask | **Required.** Predicate mask gating lane participation |
-| `pmode` | `str` or `None` | Optional predicate mode: `"merge"` keeps predicate-inactive lanes at their prior value; `"zero"` writes 0 |
+| `pmode` | `str` or `None` | Optional predicate mode: `"zero"` writes 0 to predicate-inactive lanes |
 **Returns**:
 
 | Return Value | Type | Description |

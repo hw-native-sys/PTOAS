@@ -18,7 +18,7 @@ module attributes {pto.target_arch = "a5"} {
     %2 = arith.addi %1, %rope_dt_inline1615__idx_v0 : index
     %3 = arith.cmpi slt, %2, %c128_index : index
     scf.if %3 {
-      %4 = pto.load_scalar %arg2[%2] : !pto.ptr<i32> -> i32
+      %4 = pto.load %arg2[%2] : !pto.ptr<i32> -> i32
       %5 = arith.index_cast %4 : i32 to index
       %t__tile = pto.alloc_tile addr = %c0_i64 valid_row = %c1_index valid_col = %c64_index : !pto.tile_buf<loc=vec, dtype=bf16, rows=1, cols=64, v_row=?, v_col=?, blayout=row_major, slayout=none_box, fractal=512, pad=0>
       %6 = arith.maxsi %5, %c0_index : index

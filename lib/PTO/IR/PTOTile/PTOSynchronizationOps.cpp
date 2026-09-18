@@ -44,7 +44,17 @@ static LogicalResult verifyNamedSyncEventOp(Operation *op, PipeAttr pipe,
   const bool hasDynamicEventId = static_cast<bool>(eventIdDyn);
   if (hasStaticEventId == hasDynamicEventId) {
     return op->emitOpError()
-           << "expects exactly one event-id form: static attr or dynamic index operand";
+           << "expects exactly one event-id form: static attr or dynamic integer operand";
+  }
+  if (hasDynamicEventId) {
+    Type eventIdType = eventIdDyn.getType();
+    const bool isSupportedDynamicEventId =
+        eventIdType.isInteger(32) || eventIdType.isInteger(64);
+    if (!isSupportedDynamicEventId) {
+      return op->emitOpError()
+             << "expects dynamic event_id to be i32 or i64, but got "
+             << eventIdType;
+    }
   }
   const bool staticEventIdOutOfRange =
       hasStaticEventId &&
@@ -69,15 +79,15 @@ static LogicalResult verifyNamedSyncEventOp(Operation *op, PipeAttr pipe,
 
 ParseResult mlir::pto::SetCrossBlockOp::parse(OpAsmParser &parser,
                                               OperationState &result) {
-  return parseSyncEventOpCommon(parser, result,
-                                SetCrossBlockOp::getPipeAttrName(result.name),
-                                SetCrossBlockOp::getEventIdAttrName(result.name));
+  return parseSyncEventOpIntra(parser, result,
+                               SetCrossBlockOp::getPipeAttrName(result.name),
+                               SetCrossBlockOp::getEventIdAttrName(result.name));
 }
 
 void mlir::pto::SetCrossBlockOp::print(OpAsmPrinter &p) {
-  printSyncEventOpCommon(p, getOperation(), getPipe(), getEventIdAttr(),
-                         getEventIdDyn(), getPipeAttrName().getValue(),
-                         getEventIdAttrName().getValue());
+  printSyncEventOpIntra(p, getOperation(), getPipe(), getEventIdAttr(),
+                        getEventIdDyn(), getPipeAttrName().getValue(),
+                        getEventIdAttrName().getValue());
 }
 
 LogicalResult mlir::pto::SetCrossBlockOp::verify() {
@@ -94,15 +104,15 @@ LogicalResult mlir::pto::SetCrossBlockOp::verify() {
 
 ParseResult mlir::pto::WaitCrossBlockOp::parse(OpAsmParser &parser,
                                              OperationState &result) {
-  return parseSyncEventOpCommon(parser, result,
-                                WaitCrossBlockOp::getPipeAttrName(result.name),
-                                WaitCrossBlockOp::getEventIdAttrName(result.name));
+  return parseSyncEventOpIntra(parser, result,
+                               WaitCrossBlockOp::getPipeAttrName(result.name),
+                               WaitCrossBlockOp::getEventIdAttrName(result.name));
 }
 
 void mlir::pto::WaitCrossBlockOp::print(OpAsmPrinter &p) {
-  printSyncEventOpCommon(p, getOperation(), getPipe(), getEventIdAttr(),
-                         getEventIdDyn(), getPipeAttrName().getValue(),
-                         getEventIdAttrName().getValue());
+  printSyncEventOpIntra(p, getOperation(), getPipe(), getEventIdAttr(),
+                        getEventIdDyn(), getPipeAttrName().getValue(),
+                        getEventIdAttrName().getValue());
 }
 
 LogicalResult mlir::pto::WaitCrossBlockOp::verify() {
@@ -112,15 +122,15 @@ LogicalResult mlir::pto::WaitCrossBlockOp::verify() {
 
 ParseResult mlir::pto::SetIntraBlockOp::parse(OpAsmParser &parser,
                                                OperationState &result) {
-  return parseSyncEventOpCommon(parser, result,
-                                SetIntraBlockOp::getPipeAttrName(result.name),
-                                SetIntraBlockOp::getEventIdAttrName(result.name));
+  return parseSyncEventOpIntra(
+      parser, result, SetIntraBlockOp::getPipeAttrName(result.name),
+      SetIntraBlockOp::getEventIdAttrName(result.name));
 }
 
 void mlir::pto::SetIntraBlockOp::print(OpAsmPrinter &p) {
-  printSyncEventOpCommon(p, getOperation(), getPipe(), getEventIdAttr(),
-                         getEventIdDyn(), getPipeAttrName().getValue(),
-                         getEventIdAttrName().getValue());
+  printSyncEventOpIntra(p, getOperation(), getPipe(), getEventIdAttr(),
+                        getEventIdDyn(), getPipeAttrName().getValue(),
+                        getEventIdAttrName().getValue());
 }
 
 LogicalResult mlir::pto::SetIntraBlockOp::verify() {
@@ -137,15 +147,15 @@ LogicalResult mlir::pto::SetIntraBlockOp::verify() {
 
 ParseResult mlir::pto::WaitIntraBlockOp::parse(OpAsmParser &parser,
                                                OperationState &result) {
-  return parseSyncEventOpCommon(parser, result,
-                                WaitIntraBlockOp::getPipeAttrName(result.name),
-                                WaitIntraBlockOp::getEventIdAttrName(result.name));
+  return parseSyncEventOpIntra(
+      parser, result, WaitIntraBlockOp::getPipeAttrName(result.name),
+      WaitIntraBlockOp::getEventIdAttrName(result.name));
 }
 
 void mlir::pto::WaitIntraBlockOp::print(OpAsmPrinter &p) {
-  printSyncEventOpCommon(p, getOperation(), getPipe(), getEventIdAttr(),
-                         getEventIdDyn(), getPipeAttrName().getValue(),
-                         getEventIdAttrName().getValue());
+  printSyncEventOpIntra(p, getOperation(), getPipe(), getEventIdAttr(),
+                        getEventIdDyn(), getPipeAttrName().getValue(),
+                        getEventIdAttrName().getValue());
 }
 
 LogicalResult mlir::pto::WaitIntraBlockOp::verify() {

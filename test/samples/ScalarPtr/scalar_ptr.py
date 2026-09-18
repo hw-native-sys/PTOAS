@@ -36,8 +36,8 @@ def build():
                 src, dst = entry.arguments
                 src_off = pto.addptr(src, c8)
 
-                val = pto.load_scalar(f32, src_off, c4)
-                pto.store_scalar(dst, c4, val)
+                val = pto.PTOLoadOp(f32, src_off, c4).value
+                pto.PTOStoreOp(dst, c4, val)
 
                 func.ReturnOp([])
 

@@ -33,9 +33,17 @@ LogicalResult MteGmL1Op::verify() {
   if (failed(verifyCopyGmToUbufOp(*this, true))) {
     return failure();
   }
-  return verifyDmaLoadStoreLoopGroups(
-      getOperation(), getLoopCounts(), getLoopSrcStrides(),
-      getLoopDstStrides());
+  if (failed(verifyDmaLoadStoreLoopGroups(
+          getOperation(), getLoopCounts(), getLoopSrcStrides(),
+          getLoopDstStrides()))) {
+    return failure();
+  }
+  // L1 has the same 32B block write granularity as UB and this op has no pad
+  // group, so warn about an unaligned constant burst length (the tail block
+  // then carries source data and cannot be made deterministic here).
+  warnUnalignedBurstLengthWithoutPad(getOperation(), getLenBurst(), Value(),
+                                     "L1", "a 32B-aligned len_burst");
+  return success();
 }
 
 void MteGmL1Op::getEffects(

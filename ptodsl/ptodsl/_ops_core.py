@@ -9,29 +9,25 @@
 
 """Core PTODSL ops: constants, structs, and pointer arithmetic."""
 
-from __future__ import annotations
-
-# Shared import surface consolidated in _ops_imports to avoid repeating the
-# identical block across the sibling _ops modules. See _ops_imports.__all__.
 from ._ops_imports import *  # noqa: F401,F403
+
+
 
 
 
 
 def const(value: int, *, dtype=None):
     """
-    Emit an ``arith.constant``.
+    Emit a frontend ``pto.constant``.
 
     ``dtype`` is a ``_DType`` descriptor or a concrete ``ptoas.mlir.ir.Type``.
     Defaults to ``index`` when omitted.
     """
     from ._types import index as _idx_dtype
     mlir_type = _resolve(dtype) if dtype is not None else _resolve(_idx_dtype)
-    if any(cls.isinstance(mlir_type) for cls in (F16Type, BF16Type, F32Type)):
-        return wrap_surface_value(arith.ConstantOp(mlir_type, FloatAttr.get(mlir_type, value)).result)
-    if IntegerType.isinstance(mlir_type):
-        return wrap_surface_value(_materialize_integer_literal(mlir_type, value))
-    return wrap_surface_value(arith.ConstantOp(mlir_type, value).result)
+    return wrap_surface_value(
+        materialize_scalar_literal(value, mlir_type, context="pto.const(...)")
+    )
 
 
 # ── Stack-local structs ──────────────────────────────────────────

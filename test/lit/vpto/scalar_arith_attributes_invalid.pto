@@ -1,0 +1,77 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+
+// RUN: pto-test-opt -split-input-file -verify-diagnostics %s
+
+module {
+  func.func @float_overflow(%a: f32, %b: f32) {
+    // expected-error@+1 {{does not accept overflowFlags}}
+    %0 = "pto.addf"(%a, %b) {overflowFlags = #pto.overflow<nsw>} : (f32, f32) -> f32
+    return
+  }
+}
+
+// -----
+
+module {
+  func.func @integer_fastmath(%a: i32, %b: i32) {
+    // expected-error@+1 {{does not accept fastmath}}
+    %0 = "pto.muli"(%a, %b) {fastmath = #pto.fastmath<nnan>} : (i32, i32) -> i32
+    return
+  }
+}
+
+// -----
+
+module {
+  func.func @invalid_cast_attrs(%a: f32) {
+    // expected-error@+1 {{does not accept overflowFlags}}
+    %0 = "pto.ftof"(%a) {overflowFlags = #pto.overflow<nsw>} : (f32) -> f16
+    return
+  }
+}
+
+// -----
+
+module {
+  func.func @invalid_rounding(%a: f16) {
+    // expected-error@+1 {{accepts a rounding mode only when the destination is narrower}}
+    %0 = "pto.ftof"(%a) {roundingmode = 3 : i32} : (f16) -> f32
+    return
+  }
+}
+
+// -----
+
+module {
+  func.func @invalid_hardware_rounding(%a: f32) {
+    // expected-error@+1 {{to_odd and hybrid rounding modes are only valid in a SIMT execution scope}}
+    %0 = "pto.ftof"(%a) {roundingmode = 5 : i32} : (f32) -> f16
+    return
+  }
+}
+
+// -----
+
+module {
+  func.func @invalid_fastmath(%a: i32) {
+    // expected-error@+1 {{does not accept fastmath}}
+    %0 = "pto.itof"(%a) {fastmath = #pto.fastmath<nnan>, signedness = #pto.signedness<signed>} : (i32) -> f32
+    return
+  }
+}
+
+// -----
+
+module {
+  func.func @same_type_attrs(%a: f32) {
+    // expected-error@+1 {{requires different source and destination formats}}
+    %0 = pto.ftof %a fastmath<nnan> : f32 -> f32
+    return
+  }
+}

@@ -1,0 +1,110 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+
+// RUN: ptoas --pto-arch=a2 --pto-backend=emitc --pto-level=level2 --emit-pto-ir %s | FileCheck %s --check-prefix=A23
+// RUN: ptoas --pto-arch=a3 --pto-backend=emitc --pto-level=level2 --emit-pto-ir %s | FileCheck %s --check-prefix=A23
+// RUN: ptoas --pto-arch=a3 --pto-backend=emitc --pto-level=level1 --emit-pto-ir %s | FileCheck %s --check-prefix=A23
+// RUN: ptoas --pto-arch=a5 --pto-backend=emitc --pto-level=level2 --emit-pto-ir %s | FileCheck %s --check-prefix=A5
+// RUN: ptoas --pto-arch=a3 --pto-backend=emitc --pto-level=level2 %s | FileCheck %s --check-prefix=CPP
+// RUN: ptoas --pto-arch=a5 --pto-backend=emitc --pto-level=level2 %s | FileCheck %s --check-prefix=CPP
+
+module {
+  func.func @index_no_tmp() {
+    %src = pto.alloc_tile : !pto.tile_buf<vec, 4x32xf16>
+    %indices = pto.alloc_tile : !pto.tile_buf<vec, 2x32xi32>
+    %dst = pto.alloc_tile : !pto.tile_buf<vec, 2x32xf16>
+    pto.tgather ins(%src, %indices : !pto.tile_buf<vec, 4x32xf16>, !pto.tile_buf<vec, 2x32xi32>)
+               outs(%dst : !pto.tile_buf<vec, 2x32xf16>)
+    return
+  }
+
+  func.func @compare_no_tmp() {
+    %key = arith.constant 1.0 : f16
+    %src = pto.alloc_tile : !pto.tile_buf<vec, 2x32xf16>
+    %dst = pto.alloc_tile : !pto.tile_buf<vec, 2x32xi32>
+    %count = pto.alloc_tile : !pto.tile_buf<vec, 2x8xi32>
+    pto.tgather ins(%src, %key : !pto.tile_buf<vec, 2x32xf16>, f16)
+               outs(%dst, %count : !pto.tile_buf<vec, 2x32xi32>, !pto.tile_buf<vec, 2x8xi32>)
+               {cmpMode = #pto<cmp gt>, offset = 7 : i32}
+    return
+  }
+
+  func.func @compare_small_f32() {
+    %key = arith.constant 0.0 : f32
+    %src = pto.alloc_tile : !pto.tile_buf<vec, 1x8xf32>
+    %dst = pto.alloc_tile : !pto.tile_buf<vec, 1x8xi32>
+    %count = pto.alloc_tile : !pto.tile_buf<vec, 1x8xi32>
+    pto.tgather ins(%src, %key : !pto.tile_buf<vec, 1x8xf32>, f32)
+               outs(%dst, %count : !pto.tile_buf<vec, 1x8xi32>, !pto.tile_buf<vec, 1x8xi32>)
+    return
+  }
+
+  func.func @explicit_tmp_preserved() {
+    %src = pto.alloc_tile : !pto.tile_buf<vec, 1x32xf16>
+    %indices = pto.alloc_tile : !pto.tile_buf<vec, 1x32xi32>
+    %dst = pto.alloc_tile : !pto.tile_buf<vec, 1x32xf16>
+    %tmp = pto.alloc_tile : !pto.tile_buf<vec, 1x32xi32>
+    pto.tgather ins(%src, %indices, %tmp : !pto.tile_buf<vec, 1x32xf16>, !pto.tile_buf<vec, 1x32xi32>, !pto.tile_buf<vec, 1x32xi32>)
+               outs(%dst : !pto.tile_buf<vec, 1x32xf16>)
+    return
+  }
+
+  func.func @mask_no_tmp() {
+    %src = pto.alloc_tile : !pto.tile_buf<vec, 1x32xf16>
+    %dst = pto.alloc_tile : !pto.tile_buf<vec, 1x16xf16>
+    pto.tgather ins(%src, {maskPattern = #pto.mask_pattern<P0101>} : !pto.tile_buf<vec, 1x32xf16>, "row")
+               outs(%dst : !pto.tile_buf<vec, 1x16xf16>)
+    return
+  }
+}
+
+// A23-LABEL: func.func @index_no_tmp
+// A23-COUNT-3: pto.alloc_tile
+// A23: %[[ITMP:.*]] = pto.alloc_tile {{.*}} : !pto.tile_buf<vec, 2x32xi32>
+// A23: pto.tgather ins(%{{[^,]+}}, %{{[^,]+}}, %[[ITMP]] :
+// A23-LABEL: func.func @compare_no_tmp
+// The 768-byte i32 tile covers the bitmap (192B), indices (256B), and
+// conversion storage rounded to a full 256B repeat.
+// A23: %[[CTMP:.*]] = pto.alloc_tile {{.*}} : !pto.tile_buf<vec, 2x96xi32>
+// A23: pto.tgather ins(%{{[^,]+}}, %{{[^,]+}}, %[[CTMP]] :
+// A23-SAME: offset = 7 : i32
+// A23-LABEL: func.func @compare_small_f32
+// A23: %[[FTMP:.*]] = pto.alloc_tile {{.*}} : !pto.tile_buf<vec, 1x96xi32>
+// A23: pto.tgather ins(%{{[^,]+}}, %{{[^,]+}}, %[[FTMP]] :
+// A23-LABEL: func.func @explicit_tmp_preserved
+// A23-COUNT-4: pto.alloc_tile
+// A23-NOT: pto.alloc_tile
+// A23: pto.tgather
+// A23-LABEL: func.func @mask_no_tmp
+// A23-COUNT-2: pto.alloc_tile
+// A23-NOT: pto.alloc_tile
+// A23: pto.tgather ins(%{{[^,]+}}, {maskPattern
+
+// A5-LABEL: func.func @index_no_tmp
+// A5-COUNT-3: pto.alloc_tile
+// A5-NOT: pto.alloc_tile
+// A5: pto.tgather ins(%{{[^,]+}}, %{{[^, ]+}} :
+// A5-LABEL: func.func @compare_no_tmp
+// A5: %[[PLACEHOLDER:.*]] = pto.alloc_tile {{.*}} : !pto.tile_buf<vec, 1x16xf16>
+// A5: pto.tgather ins(%{{[^,]+}}, %{{[^,]+}}, %[[PLACEHOLDER]] :
+// A5-SAME: offset = 7 : i32
+// A5-LABEL: func.func @mask_no_tmp
+// A5-COUNT-2: pto.alloc_tile
+// A5-NOT: pto.alloc_tile
+// A5: pto.tgather ins(%{{[^,]+}}, {maskPattern
+
+// CPP-LABEL: void index_no_tmp(
+// CPP: TGATHER(
+// CPP-LABEL: void compare_no_tmp(
+// CPP: CmpMode::GT>(
+// CPP-LABEL: void compare_small_f32(
+// CPP: CmpMode::EQ>(
+// CPP-LABEL: void explicit_tmp_preserved(
+// CPP: TGATHER(
+// CPP-LABEL: void mask_no_tmp(
+// CPP: MaskPattern::P0101>(

@@ -1,0 +1,371 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+
+// RUN: pto-test-opt '--pass-pipeline=builtin.module(builtin.module(func.func(pto-lower-generic-ops)))' %s | FileCheck %s
+// RUN: ptoas --pto-arch=a5 --pto-backend=vpto --emit-vpto-llvm-ir %s -o - 2>&1 | FileCheck %s --check-prefix=LLVM
+// RUN: ptoas --pto-arch=a5 --pto-backend=vpto --emit-vpto %s -o - | FileCheck %s --check-prefix=PIPELINE
+
+module attributes {pto.target_arch = "a5"} {
+  module attributes {pto.backend = "vpto", pto.kernel_kind = #pto.kernel_kind<vector>, pto.target_arch = "a5"} {
+    func.func @scalar_frontend(%lhs: f32, %rhs: f32, %half: f16,
+                               %si_lhs: i32, %si_rhs: i32,
+                               %ui_lhs: i32, %ui_rhs: i32,
+                               %cond: i1, %idx: index) ->
+        (index, i32, i32, f32, i32, i32, index, f32, f32, f32,
+         f32, i32, i32, index, i32, i32, i32, i32, index, i1,
+         i1, i1, i1, f32, f32, index)
+        attributes {pto.entry} {
+    %c0 = pto.constant 0 : index
+    %c3 = pto.constant 3 : index
+    %c1 = pto.constant 1 : i32
+    %c2 = pto.constant 2 : i32
+    %cf = pto.constant 1.000000e+00 : f32
+    %si_add = pto.addi %si_lhs, %c1 : i32
+    %ui_sub = pto.subi %ui_lhs, %c2 : i32
+    %idx_mul = pto.muli %idx, %c3 : index
+    %f_add = pto.addf %lhs, %cf : f32
+    %f_sub = pto.subf %lhs, %rhs : f32
+    %f_mul = pto.mulf %lhs, %rhs : f32
+    %f_div = pto.divf %lhs, %rhs : f32
+    %si_div = pto.floordiv %si_lhs, %si_rhs signed : i32
+    %ui_div = pto.divi %ui_lhs, %ui_rhs unsigned : i32
+    %idx_div = pto.floordiv %idx, %c3 signed : index
+    %si_rem = pto.remi %si_lhs, %si_rhs signed : i32
+    %ui_rem = pto.remi %ui_lhs, %ui_rhs unsigned : i32
+    %bits_and = pto.and %si_lhs, %si_rhs : i32
+    %bits_or = pto.or %ui_lhs, %ui_rhs : i32
+    %bits_xor = pto.xor %idx, %c3 : index
+    %si_cmp = pto.cmpi gt %si_lhs, %si_rhs signed : i32
+    %ui_cmp = pto.cmpi le %ui_lhs, %ui_rhs unsigned : i32
+    %idx_cmp = pto.cmpi ne %idx, %c0 signed : index
+    %f_cmp = pto.cmpf ge %lhs, %rhs : f32
+    %max = pto.maxf %lhs, %rhs : f32
+    %min = pto.minf %lhs, %rhs : f32
+    %abs = pto.absf %max : f32
+    %exp = pto.exp %abs : f32 -> f32
+    %log = pto.log %exp : f32 -> f32
+    %sqrt = pto.sqrt %log : f32 -> f32
+    %wide = pto.ftof %half : f16 -> f32
+    %selected = pto.select %cond, %sqrt, %wide : f32
+    %idx_i32 = pto.index_cast %idx signed : index -> i32
+    %roundtrip = pto.index_cast %idx_i32 signed : i32 -> index
+      return %c0, %c1, %c2, %cf, %si_add, %ui_sub, %idx_mul, %f_add,
+             %f_sub, %f_mul, %f_div, %si_div, %ui_div, %idx_div, %si_rem,
+             %ui_rem, %bits_and, %bits_or, %bits_xor, %si_cmp, %ui_cmp,
+             %idx_cmp, %f_cmp, %selected, %min, %roundtrip :
+          index, i32, i32, f32, i32, i32, index, f32, f32, f32,
+          f32, i32, i32, index, i32, i32, i32, i32, index, i1,
+          i1, i1, i1, f32, f32, index
+    }
+
+    func.func @builtin_vector_frontend(
+        %f_lhs: vector<4xf32>, %f_rhs: vector<4xf32>,
+        %f_half: vector<4xf16>,
+        %si_lhs: vector<4xi32>, %si_rhs: vector<4xi32>,
+        %ui_lhs: vector<4xi32>, %ui_rhs: vector<4xi32>) ->
+        (vector<4xi32>, vector<4xf32>, vector<4xf32>, vector<4xf32>, vector<4xf32>,
+         vector<4xf32>, vector<4xi1>, vector<4xi32>, vector<4xi32>,
+         vector<4xi32>, vector<4xi32>, vector<4xi1>, vector<4xi32>,
+         vector<4xi1>, vector<4xf32>, vector<4xf32>, vector<4xi32>,
+         vector<4xi32>, vector<4xi32>, vector<4xi32>, vector<4xi32>) {
+      %si_one = pto.constant dense<1> : vector<4xi32>
+      %f_add = pto.addf %f_lhs, %f_rhs : vector<4xf32>
+      %f_neg = pto.negf %f_lhs : vector<4xf32>
+      %f_div = pto.divf %f_lhs, %f_rhs : vector<4xf32>
+      %f_max = pto.maxf %f_lhs, %f_rhs : vector<4xf32>
+      %f_abs = pto.absf %f_lhs : vector<4xf32>
+      %f_cmp = pto.cmpf ge %f_lhs, %f_rhs : vector<4xf32>
+      %si_add = pto.addi %si_lhs, %si_one : vector<4xi32>
+      %si_div = pto.floordiv %si_lhs, %si_rhs signed : vector<4xi32>
+      %si_rem = pto.remi %si_lhs, %si_rhs signed : vector<4xi32>
+      %si_and = pto.and %si_lhs, %si_rhs : vector<4xi32>
+      %si_cmp = pto.cmpi gt %si_lhs, %si_rhs signed : vector<4xi32>
+      %ui_div = pto.divi %ui_lhs, %ui_rhs unsigned : vector<4xi32>
+      %ui_cmp = pto.cmpi le %ui_lhs, %ui_rhs unsigned : vector<4xi32>
+      %f_wide = pto.ftof %f_half : vector<4xf16> -> vector<4xf32>
+      %f_select = pto.select %f_cmp, %f_lhs, %f_rhs : vector<4xf32>
+      %si_ceil = pto.ceildiv %si_lhs, %si_rhs signed : vector<4xi32>
+      %si_shl = pto.shl %si_lhs, %si_one : vector<4xi32>
+      %si_shr = pto.shr %si_lhs, %si_one signed : vector<4xi32>
+      %ui_shr = pto.shr %ui_lhs, %ui_rhs unsigned : vector<4xi32>
+      %si_neg = pto.negi %si_lhs : vector<4xi32>
+      return %si_one, %f_add, %f_neg, %f_div, %f_max, %f_abs, %f_cmp, %si_add,
+             %si_div, %si_rem, %si_and, %si_cmp, %ui_div, %ui_cmp,
+             %f_wide, %f_select, %si_ceil, %si_shl, %si_shr, %ui_shr,
+             %si_neg :
+          vector<4xi32>, vector<4xf32>, vector<4xf32>, vector<4xf32>, vector<4xf32>,
+          vector<4xf32>, vector<4xi1>, vector<4xi32>, vector<4xi32>,
+          vector<4xi32>, vector<4xi32>, vector<4xi1>, vector<4xi32>,
+          vector<4xi1>, vector<4xf32>, vector<4xf32>, vector<4xi32>,
+          vector<4xi32>, vector<4xi32>, vector<4xi32>, vector<4xi32>
+    }
+
+    func.func @builtin_vector_integer_cast(
+        %si16_value: vector<4xi16>, %ui16_value: vector<4xi16>) ->
+        (vector<4xi32>, vector<4xi32>) {
+      %si32_value = pto.exti %si16_value signed : vector<4xi16> -> vector<4xi32>
+      %ui32_value = pto.exti %ui16_value unsigned : vector<4xi16> -> vector<4xi32>
+      return %si32_value, %ui32_value : vector<4xi32>, vector<4xi32>
+    }
+
+    func.func @common_numeric_mapping_gaps(
+        %lhs: f32, %rhs: f32, %si: i32, %ui: i32,
+        %f_lhs: vector<4xf32>, %f_rhs: vector<4xf32>,
+        %si4: vector<4xi32>, %ui4: vector<4xi32>) ->
+        (f32, vector<4xf32>, f32, f32, i32, i32,
+         vector<4xf32>, vector<4xf32>, vector<4xi32>, vector<4xi32>,
+         f32, i32, vector<4xf32>) {
+      %f_rem = pto.remf %lhs, %rhs : f32
+      %f_rem4 = pto.remf %f_lhs, %f_rhs : vector<4xf32>
+      %si_to_f = pto.itof %si signed : i32 -> f32
+      %ui_to_f = pto.itof %ui unsigned : i32 -> f32
+      %f_to_si = pto.ftoi %lhs signed : f32 -> i32
+      %f_to_ui = pto.ftoi %rhs unsigned : f32 -> i32
+      %si4_to_f = pto.itof %si4 signed : vector<4xi32> -> vector<4xf32>
+      %ui4_to_f = pto.itof %ui4 unsigned : vector<4xi32> -> vector<4xf32>
+      %f4_to_si = pto.ftoi %f_lhs signed : vector<4xf32> -> vector<4xi32>
+      %f4_to_ui = pto.ftoi %f_rhs unsigned : vector<4xf32> -> vector<4xi32>
+      %bits_to_f = pto.bitcast %si : i32 -> f32
+      %f_to_bits = pto.bitcast %lhs : f32 -> i32
+      %bits4_to_f = pto.bitcast %ui4 : vector<4xi32> -> vector<4xf32>
+      return %f_rem, %f_rem4, %si_to_f, %ui_to_f, %f_to_si, %f_to_ui,
+             %si4_to_f, %ui4_to_f, %f4_to_si, %f4_to_ui, %bits_to_f,
+             %f_to_bits, %bits4_to_f :
+          f32, vector<4xf32>, f32, f32, i32, i32,
+          vector<4xf32>, vector<4xf32>, vector<4xi32>, vector<4xi32>,
+          f32, i32, vector<4xf32>
+    }
+
+    func.func @common_cmp_mapping_gaps(
+        %lhs: f32, %rhs: f32,
+        %f_lhs: vector<4xf32>, %f_rhs: vector<4xf32>) ->
+        (i1, i1, i1, i1, i1, i1, i1, i1,
+         i1, i1, i1, i1, i1, i1, i1, vector<4xi1>) {
+      %false = pto.cmpf false %lhs, %rhs : f32
+      %oeq = pto.cmpf oeq %lhs, %rhs : f32
+      %ogt = pto.cmpf ogt %lhs, %rhs : f32
+      %oge = pto.cmpf oge %lhs, %rhs : f32
+      %olt = pto.cmpf olt %lhs, %rhs : f32
+      %ole = pto.cmpf ole %lhs, %rhs : f32
+      %one = pto.cmpf one %lhs, %rhs : f32
+      %ord = pto.cmpf ord %lhs, %rhs : f32
+      %ueq = pto.cmpf ueq %lhs, %rhs : f32
+      %ugt = pto.cmpf ugt %lhs, %rhs : f32
+      %uge = pto.cmpf uge %lhs, %rhs : f32
+      %ult = pto.cmpf ult %lhs, %rhs : f32
+      %ule = pto.cmpf ule %lhs, %rhs : f32
+      %une = pto.cmpf une %lhs, %rhs : f32
+      %uno = pto.cmpf uno %lhs, %rhs : f32
+      %true = pto.cmpf true %f_lhs, %f_rhs : vector<4xf32>
+      return %false, %oeq, %ogt, %oge, %olt, %ole, %one, %ord,
+             %ueq, %ugt, %uge, %ult, %ule, %une, %uno, %true :
+          i1, i1, i1, i1, i1, i1, i1, i1,
+          i1, i1, i1, i1, i1, i1, i1, vector<4xi1>
+    }
+
+    func.func @explicit_integer_semantics(
+        %si: i32, %si_rhs: i32, %ui: i32, %ui_rhs: i32,
+        %idx: index, %cond: i1, %values: vector<4xi32>,
+        %other_values: vector<4xi32>,
+        %indices: vector<4xindex>) ->
+        (i32, i32, i32, i32, i32, i32, i32, i32, i32,
+         i32, i32, i32, i32, i1, i1, vector<4xi32>, i32, i32,
+         vector<4xi32>) {
+      %divsi = pto.divi %si, %si_rhs signed : i32
+      %divui = pto.divi %ui, %ui_rhs unsigned : i32
+      %floor = pto.floordiv %si, %si_rhs signed : i32
+      %ceilsi = pto.ceildiv %si, %si_rhs signed : i32
+      %ceilui = pto.ceildiv %ui, %ui_rhs unsigned : i32
+      %remsi = pto.remi %si, %si_rhs signed : i32
+      %remui = pto.remi %ui, %ui_rhs unsigned : i32
+      %shrsi = pto.shr %si, %si_rhs signed : i32
+      %shrui = pto.shr %ui, %ui_rhs unsigned : i32
+      %maxsi = pto.maxi %si, %si_rhs signed : i32
+      %maxui = pto.maxi %ui, %ui_rhs unsigned : i32
+      %minsi = pto.mini %si, %si_rhs signed : i32
+      %minui = pto.mini %ui, %ui_rhs unsigned : i32
+      %sgt = pto.cmpi gt %si, %si_rhs signed : i32
+      %ugt = pto.cmpi gt %ui, %ui_rhs unsigned : i32
+      %whole = pto.select %cond, %values, %other_values : i1, vector<4xi32>
+      %signed_index = pto.index_cast %idx signed : index -> i32
+      %unsigned_index = pto.index_cast %idx unsigned : index -> i32
+      %vector_index = pto.index_cast %indices unsigned : vector<4xindex> -> vector<4xi32>
+      return %divsi, %divui, %floor, %ceilsi, %ceilui, %remsi, %remui,
+             %shrsi, %shrui, %maxsi, %maxui, %minsi, %minui, %sgt, %ugt,
+             %whole, %signed_index, %unsigned_index, %vector_index :
+          i32, i32, i32, i32, i32, i32, i32, i32, i32,
+          i32, i32, i32, i32, i1, i1, vector<4xi32>, i32, i32,
+          vector<4xi32>
+    }
+
+    func.func @common_float_math(
+        %lhs: f32, %rhs: f32, %acc: f32,
+        %lhs4: vector<4xf32>, %rhs4: vector<4xf32>,
+        %acc4: vector<4xf32>) ->
+        (f32, f32, vector<4xf32>, vector<4xf32>) {
+      %pow = pto.pow %lhs, %rhs : f32, f32 -> f32
+      %fma = pto.fma %lhs, %rhs, %acc : f32, f32, f32 -> f32
+      %pow4 = pto.pow %lhs4, %rhs4 : vector<4xf32>, vector<4xf32> -> vector<4xf32>
+      %fma4 = pto.fma %lhs4, %rhs4, %acc4 : vector<4xf32>, vector<4xf32>, vector<4xf32> -> vector<4xf32>
+      return %pow, %fma, %pow4, %fma4 :
+          f32, f32, vector<4xf32>, vector<4xf32>
+    }
+  }
+}
+
+// CHECK-LABEL: func.func @scalar_frontend
+// CHECK-DAG: arith.constant 0 : index
+// CHECK-DAG: arith.constant 3 : index
+// CHECK-DAG: arith.constant 1 : i32
+// CHECK-DAG: arith.constant 2 : i32
+// CHECK-DAG: arith.constant 1.000000e+00 : f32
+// CHECK-DAG: arith.addi
+// CHECK-DAG: arith.subi
+// CHECK-DAG: arith.muli
+// CHECK-DAG: arith.addf
+// CHECK-DAG: arith.subf
+// CHECK-DAG: arith.mulf
+// CHECK-DAG: arith.divf
+// CHECK-DAG: arith.floordivsi
+// CHECK-DAG: arith.divui
+// CHECK-DAG: arith.floordivsi
+// CHECK-DAG: arith.remsi
+// CHECK-DAG: arith.remui
+// CHECK-DAG: arith.andi
+// CHECK-DAG: arith.ori
+// CHECK-DAG: arith.xori
+// CHECK-DAG: arith.cmpi sgt
+// CHECK-DAG: arith.cmpi ule
+// CHECK-DAG: arith.cmpi ne
+// CHECK-DAG: arith.cmpf oge
+// CHECK-DAG: llvm.intr.maxnum
+// CHECK-DAG: llvm.intr.minnum
+// CHECK-DAG: math.absf
+// CHECK-DAG: math.exp
+// CHECK-DAG: math.log
+// CHECK-DAG: math.sqrt
+// CHECK-DAG: arith.extf
+// CHECK-DAG: arith.select
+// CHECK-DAG: arith.index_cast
+// CHECK-DAG: arith.index_cast
+// CHECK-NOT: pto.
+// CHECK: return
+
+// CHECK-LABEL: func.func @builtin_vector_frontend
+// CHECK-DAG: arith.constant dense<1> : vector<4xi32>
+// CHECK-DAG: arith.addf {{.*}} : vector<4xf32>
+// CHECK-DAG: arith.negf {{.*}} : vector<4xf32>
+// CHECK-DAG: arith.divf {{.*}} : vector<4xf32>
+// CHECK-DAG: llvm.intr.maxnum({{.*}}) : (vector<4xf32>, vector<4xf32>) -> vector<4xf32>
+// CHECK-DAG: math.absf {{.*}} : vector<4xf32>
+// CHECK-DAG: arith.cmpf oge, {{.*}} : vector<4xf32>
+// CHECK-DAG: arith.addi {{.*}} : vector<4xi32>
+// CHECK-DAG: arith.floordivsi {{.*}} : vector<4xi32>
+// CHECK-DAG: arith.remsi {{.*}} : vector<4xi32>
+// CHECK-DAG: arith.andi {{.*}} : vector<4xi32>
+// CHECK-DAG: arith.cmpi sgt, {{.*}} : vector<4xi32>
+// CHECK-DAG: arith.divui {{.*}} : vector<4xi32>
+// CHECK-DAG: arith.cmpi ule, {{.*}} : vector<4xi32>
+// CHECK-DAG: arith.extf {{.*}} : vector<4xf16> to vector<4xf32>
+// CHECK-DAG: arith.select {{.*}} : vector<4xi1>, vector<4xf32>
+// CHECK-DAG: arith.ceildivsi {{.*}} : vector<4xi32>
+// CHECK-DAG: arith.shli {{.*}} : vector<4xi32>
+// CHECK-DAG: arith.shrsi {{.*}} : vector<4xi32>
+// CHECK-DAG: arith.shrui {{.*}} : vector<4xi32>
+// CHECK-DAG: arith.subi {{.*}} : vector<4xi32>
+// CHECK-NOT: pto.
+// CHECK: return
+
+// CHECK-LABEL: func.func @builtin_vector_integer_cast
+// CHECK-DAG: arith.extsi {{.*}} : vector<4xi16> to vector<4xi32>
+// CHECK-DAG: arith.extui {{.*}} : vector<4xi16> to vector<4xi32>
+// CHECK-NOT: pto.
+// CHECK: return
+
+// CHECK-LABEL: func.func @common_numeric_mapping_gaps
+// CHECK-DAG: arith.remf {{.*}} : f32
+// CHECK-DAG: arith.remf {{.*}} : vector<4xf32>
+// CHECK-DAG: arith.sitofp {{.*}} : i32 to f32
+// CHECK-DAG: arith.uitofp {{.*}} : i32 to f32
+// CHECK-DAG: arith.fptosi {{.*}} : f32 to i32
+// CHECK-DAG: arith.fptoui {{.*}} : f32 to i32
+// CHECK-DAG: arith.sitofp {{.*}} : vector<4xi32> to vector<4xf32>
+// CHECK-DAG: arith.uitofp {{.*}} : vector<4xi32> to vector<4xf32>
+// CHECK-DAG: arith.fptosi {{.*}} : vector<4xf32> to vector<4xi32>
+// CHECK-DAG: arith.fptoui {{.*}} : vector<4xf32> to vector<4xi32>
+// CHECK-DAG: arith.bitcast {{.*}} : i32 to f32
+// CHECK-DAG: arith.bitcast {{.*}} : f32 to i32
+// CHECK-DAG: arith.bitcast {{.*}} : vector<4xi32> to vector<4xf32>
+// CHECK-NOT: pto.
+// CHECK: return
+
+// CHECK-LABEL: func.func @common_cmp_mapping_gaps
+// CHECK-DAG: arith.cmpf false
+// CHECK-DAG: arith.cmpf oeq
+// CHECK-DAG: arith.cmpf ogt
+// CHECK-DAG: arith.cmpf oge
+// CHECK-DAG: arith.cmpf olt
+// CHECK-DAG: arith.cmpf ole
+// CHECK-DAG: arith.cmpf one
+// CHECK-DAG: arith.cmpf ord
+// CHECK-DAG: arith.cmpf ueq
+// CHECK-DAG: arith.cmpf ugt
+// CHECK-DAG: arith.cmpf uge
+// CHECK-DAG: arith.cmpf ult
+// CHECK-DAG: arith.cmpf ule
+// CHECK-DAG: arith.cmpf une
+// CHECK-DAG: arith.cmpf uno
+// CHECK-DAG: arith.cmpf true
+// CHECK-NOT: pto.
+// CHECK: return
+
+// CHECK-LABEL: func.func @explicit_integer_semantics
+// CHECK-DAG: arith.divsi
+// CHECK-DAG: arith.divui
+// CHECK-DAG: arith.floordivsi
+// CHECK-DAG: arith.ceildivsi
+// CHECK-DAG: arith.ceildivui
+// CHECK-DAG: arith.remsi
+// CHECK-DAG: arith.remui
+// CHECK-DAG: arith.shrsi
+// CHECK-DAG: arith.shrui
+// CHECK-DAG: arith.maxsi
+// CHECK-DAG: arith.maxui
+// CHECK-DAG: arith.minsi
+// CHECK-DAG: arith.minui
+// CHECK-DAG: arith.cmpi sgt
+// CHECK-DAG: arith.cmpi ugt
+// CHECK-DAG: arith.select
+// CHECK-DAG: arith.index_cast
+// CHECK-DAG: arith.index_castui
+// CHECK-DAG: arith.index_castui
+// CHECK-NOT: pto.
+// CHECK: return
+
+// CHECK-LABEL: func.func @common_float_math
+// CHECK-DAG: math.powf
+// CHECK-DAG: math.fma
+// CHECK-DAG: math.powf {{.*}} : vector<4xf32>
+// CHECK-DAG: math.fma {{.*}} : vector<4xf32>
+// CHECK-NOT: pto.
+// CHECK: return
+
+// LLVM: call float @llvm.maxnum.f32
+// LLVM: call float @llvm.minnum.f32
+// LLVM: call float @llvm.fabs.f32
+// LLVM: call float @llvm.exp.f32
+// LLVM: call float @llvm.log.f32
+// LLVM: call float @llvm.sqrt.f32
+// LLVM-LABEL: define {{.*}} @builtin_vector_frontend
+// LLVM: call <4 x float> @llvm.maxnum.v4f32
+// LLVM: call <4 x float> @llvm.fabs.v4f32
+
+// PIPELINE: arith.constant
+// PIPELINE-NOT: pto.constant
+// PIPELINE-NOT: pto.addi{{[[:space:]]}}
+// PIPELINE-NOT: pto.cast{{[[:space:]]}}

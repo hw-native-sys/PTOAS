@@ -337,7 +337,7 @@ layout pass at once:
 
 ```text
 include/PTO/Transforms/VMILayoutPropagation.h
-lib/PTO/Transforms/VMILayoutPropagation.cpp
+lib/PTO/Transforms/VMI/VMILayoutPropagation.cpp
 ```
 
 The public type should expose value layout requests, operand-local value layout

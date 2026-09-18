@@ -40,6 +40,9 @@ module attributes {pto.target_arch = "a5", pto.kernel_kind = #pto.kernel_kind<ve
     %c32_i32 = arith.constant 32 : i32
     %c64_i32 = arith.constant 64 : i32
     %c96_i32 = arith.constant 96 : i32
+    %c128_i32 = arith.constant 128 : i32
+    %c224_i32 = arith.constant 224 : i32
+    %c544_i32 = arith.constant 544 : i32
 
     %f32_neg = arith.constant -3.000000e+00 : f32
     %f32_one = arith.constant 1.000000e+00 : f32
@@ -54,16 +57,21 @@ module attributes {pto.target_arch = "a5", pto.kernel_kind = #pto.kernel_kind<ve
     %i32_neg = arith.constant -4 : i32
     %u32_four = arith.constant 4 : i32
     %f16_three = arith.constant 3.000000e+00 : f16
+    %f32_pos_half = arith.constant 2.500000e+00 : f32
+    %f32_neg_half = arith.constant -2.500000e+00 : f32
+    %f32_large = arith.constant 7.000000e+04 : f32
+    %f32_i32_overflow = arith.constant 1.000000e+20 : f32
+    %f32_i32_underflow = arith.constant -1.000000e+20 : f32
     %tid = pto.get_tid_x : i32
     %signed_tid = arith.subi %tid, %c16_i32 : i32
-    %tid_f16 = pto.convert %signed_tid round(r) nosat signed : i32 -> f16
+    %tid_f16 = pto.itof %signed_tid signed round(r) : i32 -> f16
 
-    %abs = pto.absf %f32_neg : f32 -> f32
-    %abs_f16 = pto.absf %tid_f16 : f16 -> f16
+    %abs = pto.absf %f32_neg : f32
+    %abs_f16 = pto.absf %tid_f16 : f16
     %sqrt_f32 = pto.sqrt %f32_four : f32 -> f32
     %sqrt_f16 = pto.sqrt %f16_four : f16 -> f16
-    %fmin = pto.fmin %f32_one, %f32_two : f32, f32 -> f32
-    %fmax = pto.fmax %bf16_one, %bf16_two : bf16, bf16 -> bf16
+    %min = pto.minf %f32_one, %f32_two : f32
+    %max = pto.maxf %bf16_one, %bf16_two : bf16
     %exp = pto.exp %f32_one : f32 -> f32
     %log = pto.log %f32_one : f32 -> f32
     %pow = pto.pow %f32_two, %f32_four : f32, f32 -> f32
@@ -75,29 +83,53 @@ module attributes {pto.target_arch = "a5", pto.kernel_kind = #pto.kernel_kind<ve
     %fma = pto.fma %f32_one, %f32_two, %f32_four : f32, f32, f32 -> f32
     %fma16 = pto.fma %f16_one, %f16_two, %f16_four : f16, f16, f16 -> f16
     %fmabf16 = pto.fma %bf16_one, %bf16_two, %bf16_four : bf16, bf16, bf16 -> bf16
-    %s32_f32 = pto.convert %i32_neg round(r) nosat signed : i32 -> f32
-    %u32_f16 = pto.convert %u32_four round(r) nosat unsigned : i32 -> f16
+    %s32_f32 = pto.itof %i32_neg signed round(r) : i32 -> f32
+    %u32_f16 = pto.itof %u32_four unsigned round(r) : i32 -> f16
 
-    %abs_i = pto.convert %abs round(z) sat signed : f32 -> i32
-    %sqrt_f32_i = pto.convert %sqrt_f32 round(z) sat signed : f32 -> i32
-    %sqrt_f16_i = pto.convert %sqrt_f16 round(z) sat signed : f16 -> i32
-    %fmin_i = pto.convert %fmin round(z) sat signed : f32 -> i32
-    %fmax_i = pto.convert %fmax round(z) sat signed : bf16 -> i32
-    %exp_i = pto.convert %exp round(z) sat signed : f32 -> i32
-    %log_i = pto.convert %log round(z) sat signed : f32 -> i32
-    %pow_i = pto.convert %pow round(z) sat signed : f32 -> i32
-    %pow16_i = pto.convert %pow16 round(z) sat signed : f16 -> i32
-    %ceil_i = pto.convert %ceil round(z) sat signed : bf16 -> i32
-    %floor_i = pto.convert %floor round(z) sat signed : f32 -> i32
-    %rint_i = pto.convert %rint round(z) sat signed : f16 -> i32
-    %round_i = pto.convert %round round(z) sat signed : bf16 -> i32
-    %fma_i = pto.convert %fma round(z) sat signed : f32 -> i32
-    %fma16_i = pto.convert %fma16 round(z) sat signed : f16 -> i32
-    %fmabf16_i = pto.convert %fmabf16 round(z) sat signed : bf16 -> i32
-    %s32_f32_i = pto.convert %s32_f32 round(z) sat signed : f32 -> i32
-    %u32_f16_i = pto.convert %u32_f16 round(z) sat unsigned : f16 -> i32
-    %fmin16 = pto.fmin %tid_f16, %f16_three : f16, f16 -> f16
-    %fmax16 = pto.fmax %tid_f16, %f16_three : f16, f16 -> f16
+    %abs_i = pto.ftoi %abs signed round(z) sat : f32 -> i32
+    %sqrt_f32_i = pto.ftoi %sqrt_f32 signed round(z) sat : f32 -> i32
+    %sqrt_f16_i = pto.ftoi %sqrt_f16 signed round(z) sat : f16 -> i32
+    %min_i = pto.ftoi %min signed round(z) sat : f32 -> i32
+    %max_i = pto.ftoi %max signed round(z) sat : bf16 -> i32
+    %exp_i = pto.ftoi %exp signed round(z) sat : f32 -> i32
+    %log_i = pto.ftoi %log signed round(z) sat : f32 -> i32
+    %pow_i = pto.ftoi %pow signed round(z) sat : f32 -> i32
+    %pow16_i = pto.ftoi %pow16 signed round(z) sat : f16 -> i32
+    %ceil_i = pto.ftoi %ceil signed round(z) sat : bf16 -> i32
+    %floor_i = pto.ftoi %floor signed round(z) sat : f32 -> i32
+    %rint_i = pto.ftoi %rint signed round(z) sat : f16 -> i32
+    %round_i = pto.ftoi %round signed round(z) sat : bf16 -> i32
+    %fma_i = pto.ftoi %fma signed round(z) sat : f32 -> i32
+    %fma16_i = pto.ftoi %fma16 signed round(z) sat : f16 -> i32
+    %fmabf16_i = pto.ftoi %fmabf16 signed round(z) sat : bf16 -> i32
+    %s32_f32_i = pto.ftoi %s32_f32 signed round(z) sat : f32 -> i32
+    %u32_f16_i = pto.ftoi %u32_f16 unsigned round(z) sat : f16 -> i32
+    %generic_itof = pto.itof %signed_tid signed : i32 -> f32
+    %generic_ftoi = pto.ftoi %generic_itof signed : f32 -> i32
+    %generic_ftof = pto.ftof %generic_itof : f32 -> f16
+    %generic_itof_bits = llvm.bitcast %generic_itof : f32 to i32
+    %generic_ftof_bits = llvm.bitcast %generic_ftof : f16 to i16
+    %generic_ftof_out = arith.extui %generic_ftof_bits : i16 to i32
+    %round_pos_r = pto.ftoi %f32_pos_half signed round(r) sat : f32 -> i32
+    %round_neg_r = pto.ftoi %f32_neg_half signed round(r) sat : f32 -> i32
+    %round_pos_a = pto.ftoi %f32_pos_half signed round(a) sat : f32 -> i32
+    %round_neg_a = pto.ftoi %f32_neg_half signed round(a) sat : f32 -> i32
+    %round_pos_f = pto.ftoi %f32_pos_half signed round(f) sat : f32 -> i32
+    %round_neg_f = pto.ftoi %f32_neg_half signed round(f) sat : f32 -> i32
+    %round_pos_c = pto.ftoi %f32_pos_half signed round(c) sat : f32 -> i32
+    %round_neg_c = pto.ftoi %f32_neg_half signed round(c) sat : f32 -> i32
+    %round_pos_z = pto.ftoi %f32_pos_half signed round(z) sat : f32 -> i32
+    %round_neg_z = pto.ftoi %f32_neg_half signed round(z) sat : f32 -> i32
+    %ftoi_sat_hi = pto.ftoi %f32_i32_overflow signed round(z) sat : f32 -> i32
+    %ftoi_sat_lo = pto.ftoi %f32_i32_underflow signed round(z) sat : f32 -> i32
+    %ftof_sat = pto.ftof %f32_large sat : f32 -> f16
+    %ftof_nosat = pto.ftof %f32_large : f32 -> f16
+    %ftof_sat_bits = llvm.bitcast %ftof_sat : f16 to i16
+    %ftof_nosat_bits = llvm.bitcast %ftof_nosat : f16 to i16
+    %ftof_sat_out = arith.extui %ftof_sat_bits : i16 to i32
+    %ftof_nosat_out = arith.extui %ftof_nosat_bits : i16 to i32
+    %fmin16 = pto.minf %tid_f16, %f16_three : f16
+    %fmax16 = pto.maxf %tid_f16, %f16_three : f16
     %fmin16_bits = llvm.bitcast %fmin16 : f16 to i16
     %fmax16_bits = llvm.bitcast %fmax16 : f16 to i16
     %abs_f16_bits = llvm.bitcast %abs_f16 : f16 to i16
@@ -108,8 +140,8 @@ module attributes {pto.target_arch = "a5", pto.kernel_kind = #pto.kernel_kind<ve
     pto.store %abs_i, %dst[%c0] : !pto.ptr<i32, ub>, i32
     pto.store %sqrt_f32_i, %dst[%c1] : !pto.ptr<i32, ub>, i32
     pto.store %sqrt_f16_i, %dst[%c2] : !pto.ptr<i32, ub>, i32
-    pto.store %fmin_i, %dst[%c3] : !pto.ptr<i32, ub>, i32
-    pto.store %fmax_i, %dst[%c4] : !pto.ptr<i32, ub>, i32
+    pto.store %min_i, %dst[%c3] : !pto.ptr<i32, ub>, i32
+    pto.store %max_i, %dst[%c4] : !pto.ptr<i32, ub>, i32
     pto.store %exp_i, %dst[%c5] : !pto.ptr<i32, ub>, i32
     pto.store %log_i, %dst[%c6] : !pto.ptr<i32, ub>, i32
     pto.store %pow_i, %dst[%c7] : !pto.ptr<i32, ub>, i32
@@ -134,6 +166,58 @@ module attributes {pto.target_arch = "a5", pto.kernel_kind = #pto.kernel_kind<ve
     %abs_f16_offset = arith.addi %tid, %c96_i32 : i32
     %abs_f16_idx = arith.index_castui %abs_f16_offset : i32 to index
     pto.store %abs_f16_out, %dst[%abs_f16_idx] : !pto.ptr<i32, ub>, i32
+    %generic_itof_offset = arith.addi %tid, %c128_i32 : i32
+    %generic_itof_idx = arith.index_castui %generic_itof_offset : i32 to index
+    pto.store %generic_itof_bits, %dst[%generic_itof_idx] : !pto.ptr<i32, ub>, i32
+    %generic_ftoi_offset = arith.addi %tid, %c128_i32 : i32
+    %generic_ftoi_base = arith.addi %generic_ftoi_offset, %c32_i32 : i32
+    %generic_ftoi_idx = arith.index_castui %generic_ftoi_base : i32 to index
+    pto.store %generic_ftoi, %dst[%generic_ftoi_idx] : !pto.ptr<i32, ub>, i32
+    %generic_ftof_offset = arith.addi %generic_ftoi_base, %c32_i32 : i32
+    %generic_ftof_idx = arith.index_castui %generic_ftof_offset : i32 to index
+    pto.store %generic_ftof_out, %dst[%generic_ftof_idx] : !pto.ptr<i32, ub>, i32
+    %round_base = arith.addi %tid, %c224_i32 : i32
+    %round_idx = arith.index_castui %round_base : i32 to index
+    pto.store %round_pos_r, %dst[%round_idx] : !pto.ptr<i32, ub>, i32
+    %round_base_1 = arith.addi %round_base, %c32_i32 : i32
+    %round_idx_1 = arith.index_castui %round_base_1 : i32 to index
+    pto.store %round_neg_r, %dst[%round_idx_1] : !pto.ptr<i32, ub>, i32
+    %round_base_2 = arith.addi %round_base_1, %c32_i32 : i32
+    %round_idx_2 = arith.index_castui %round_base_2 : i32 to index
+    pto.store %round_pos_a, %dst[%round_idx_2] : !pto.ptr<i32, ub>, i32
+    %round_base_3 = arith.addi %round_base_2, %c32_i32 : i32
+    %round_idx_3 = arith.index_castui %round_base_3 : i32 to index
+    pto.store %round_neg_a, %dst[%round_idx_3] : !pto.ptr<i32, ub>, i32
+    %round_base_4 = arith.addi %round_base_3, %c32_i32 : i32
+    %round_idx_4 = arith.index_castui %round_base_4 : i32 to index
+    pto.store %round_pos_f, %dst[%round_idx_4] : !pto.ptr<i32, ub>, i32
+    %round_base_5 = arith.addi %round_base_4, %c32_i32 : i32
+    %round_idx_5 = arith.index_castui %round_base_5 : i32 to index
+    pto.store %round_neg_f, %dst[%round_idx_5] : !pto.ptr<i32, ub>, i32
+    %round_base_6 = arith.addi %round_base_5, %c32_i32 : i32
+    %round_idx_6 = arith.index_castui %round_base_6 : i32 to index
+    pto.store %round_pos_c, %dst[%round_idx_6] : !pto.ptr<i32, ub>, i32
+    %round_base_7 = arith.addi %round_base_6, %c32_i32 : i32
+    %round_idx_7 = arith.index_castui %round_base_7 : i32 to index
+    pto.store %round_neg_c, %dst[%round_idx_7] : !pto.ptr<i32, ub>, i32
+    %round_base_8 = arith.addi %round_base_7, %c32_i32 : i32
+    %round_idx_8 = arith.index_castui %round_base_8 : i32 to index
+    pto.store %round_pos_z, %dst[%round_idx_8] : !pto.ptr<i32, ub>, i32
+    %round_base_9 = arith.addi %round_base_8, %c32_i32 : i32
+    %round_idx_9 = arith.index_castui %round_base_9 : i32 to index
+    pto.store %round_neg_z, %dst[%round_idx_9] : !pto.ptr<i32, ub>, i32
+    %ftoi_sat_hi_offset = arith.addi %tid, %c544_i32 : i32
+    %ftoi_sat_hi_idx = arith.index_castui %ftoi_sat_hi_offset : i32 to index
+    pto.store %ftoi_sat_hi, %dst[%ftoi_sat_hi_idx] : !pto.ptr<i32, ub>, i32
+    %ftoi_sat_lo_offset = arith.addi %ftoi_sat_hi_offset, %c32_i32 : i32
+    %ftoi_sat_lo_idx = arith.index_castui %ftoi_sat_lo_offset : i32 to index
+    pto.store %ftoi_sat_lo, %dst[%ftoi_sat_lo_idx] : !pto.ptr<i32, ub>, i32
+    %ftof_sat_base = arith.addi %ftoi_sat_lo_offset, %c32_i32 : i32
+    %ftof_sat_idx = arith.index_castui %ftof_sat_base : i32 to index
+    pto.store %ftof_sat_out, %dst[%ftof_sat_idx] : !pto.ptr<i32, ub>, i32
+    %ftof_nosat_offset = arith.addi %ftof_sat_base, %c32_i32 : i32
+    %ftof_nosat_idx = arith.index_castui %ftof_nosat_offset : i32 to index
+    pto.store %ftof_nosat_out, %dst[%ftof_nosat_idx] : !pto.ptr<i32, ub>, i32
     return
   }
 }

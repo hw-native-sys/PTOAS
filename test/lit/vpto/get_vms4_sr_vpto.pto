@@ -13,11 +13,11 @@ module attributes {pto.target_arch = "a5"} {
     func.func @get_vms4_sr_kernel(%arg0: !pto.ptr<i16, gm>) attributes {pto.kernel} {
       %c0 = arith.constant 0 : index
       %list0, %list1, %list2, %list3 = pto.get_vms4_sr : i16, i16, i16, i16
-      pto.store_scalar %list1, %arg0[%c0] : !pto.ptr<i16, gm>, i16
+      pto.store %list1, %arg0[%c0] : !pto.ptr<i16, gm>, i16
       return
     }
   }
 }
 
 // CHECK: %{{.*}}, %{{.*}}, %{{.*}}, %{{.*}} = pto.get_vms4_sr : i16, i16, i16, i16
-// CHECK: pto.store_scalar
+// CHECK: pto.store

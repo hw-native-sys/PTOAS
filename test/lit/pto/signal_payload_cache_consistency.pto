@@ -40,7 +40,7 @@ module {
     %c1 = arith.constant 1 : index
     %v_i32 = arith.constant 7 : i32
 
-    pto.store_scalar %v_i32, %payload_ptr[%c0] : !pto.ptr<i32>, i32
+    pto.store %v_i32, %payload_ptr[%c0] : !pto.ptr<i32>, i32
     pto.cmo.cacheinvalid %payload_ptr single_cache_line : !pto.ptr<i32>
     pto.fence.barrier_all #pto.fence_scope<gm>
 
@@ -71,8 +71,8 @@ module {
         {cmp = #pto<wait_cmp ge>}
 
     pto.cmo.cacheinvalid %payload_ptr single_cache_line : !pto.ptr<i32>
-    %val = pto.load_scalar %payload_ptr[%c0] : !pto.ptr<i32> -> i32
-    pto.store_scalar %val, %payload_ptr[%c0] : !pto.ptr<i32>, i32
+    %val = pto.load %payload_ptr[%c0] : !pto.ptr<i32> -> i32
+    pto.store %val, %payload_ptr[%c0] : !pto.ptr<i32>, i32
     return
   }
 

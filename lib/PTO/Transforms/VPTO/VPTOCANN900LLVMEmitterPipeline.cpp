@@ -39,11 +39,12 @@ void markIllegalVPTOSimtOps(ConversionTarget &target) {
       pto::GetBlockIdxYOp, pto::GetBlockIdxZOp, pto::GetVecCoreIdOp, pto::GetLaneIdOp, pto::GetClock32Op,
       pto::GetClock64Op, pto::GetLaneMaskEqOp, pto::GetLaneMaskLeOp, pto::GetLaneMaskLtOp, pto::GetLaneMaskGeOp,
       pto::GetLaneMaskGtOp, pto::VoteAllOp, pto::VoteAnyOp, pto::VoteUniOp, pto::VoteBallotOp, pto::ShuffleIdxOp,
-      pto::ShuffleUpOp, pto::ShuffleDownOp, pto::ShuffleBflyOp, pto::ReduxAddOp, pto::ReduxMaxOp, pto::ReduxMinOp,
+      pto::ShuffleUpOp, pto::ShuffleDownOp, pto::ShuffleBflyOp, pto::ReduxAddIOp, pto::ReduxAddFOp,
+      pto::ReduxMaxIOp, pto::ReduxMaxFOp, pto::ReduxMinIOp, pto::ReduxMinFOp,
       pto::AtomicCasOp, pto::AtomicExchOp, pto::AtomicAddOp, pto::AtomicSubOp, pto::AtomicMinOp, pto::AtomicMaxOp,
       pto::AtomicAndOp, pto::AtomicOrOp, pto::AtomicXorOp, pto::TrapOp, pto::PrmtOp, pto::MulhiOp, pto::MulI32ToI64Op,
       pto::SqrtOp, pto::AbsFOp, pto::ExpOp, pto::LogOp, pto::CeilOp, pto::FloorOp, pto::RintOp, pto::RoundOp,
-      pto::FMinOp, pto::FMaxOp, pto::PowOp, pto::FmaOp, pto::ConvertOp, pto::SyncthreadsOp, pto::ThreadfenceOp,
+      pto::PowOp, pto::FmaOp, pto::FToFOp, pto::FToIOp, pto::IToFOp, pto::SyncthreadsOp, pto::ThreadfenceOp,
       pto::ThreadfenceBlockOp, pto::KeepOp, pto::ResumeOp>();
 }
 
@@ -133,9 +134,10 @@ void configureVPTOTypeLoweringTarget(ConversionTarget &target, VPTOTypeConverter
   target.addDynamicallyLegalOp<arith::SelectOp>([&](arith::SelectOp op) {
     return typeConverter.isLegal(op->getOperandTypes()) && typeConverter.isLegal(op->getResultTypes());
   });
-  target.addIllegalOp<pto::AddPtrOp, pto::CastPtrOp, pto::LoadScalarOp, pto::StoreScalarOp, pto::PTOLoadOp,
-                      pto::PTOStoreOp, pto::PTOLdgOp, pto::PTOStgOp, pto::PTOLdDevOp, pto::PTOStDevOp,
-                      pto::DeclareStructOp, pto::StructGetOp, pto::StructSetOp>();
+  target.addIllegalOp<pto::AddPtrOp, pto::CastPtrOp, pto::PTOLoadOp, pto::PTOStoreOp, pto::PTOLdgOp,
+                      pto::PTOStgOp, pto::PTOLdDevOp, pto::PTOStDevOp, pto::DeclareLocalArrayOp,
+                      pto::LocalArrayGetOp, pto::LocalArraySetOp, pto::DeclareStructOp, pto::StructGetOp,
+                      pto::StructSetOp, pto::FToFOp, pto::FToIOp, pto::IToFOp>();
 }
 
 void configureVPTOCarrierTypeLegality(ConversionTarget &target, VPTOTypeConverter &typeConverter) {
@@ -560,6 +562,7 @@ static LogicalResult runPipeline(ModuleOp module, StringRef march, llvm::raw_ost
   // emitted LLVM IR.  It replaces createConvertSCFToCFPass here; running both
   // would be redundant.
   kernelModulePM.addNestedPass<func::FuncOp>(pto::createPTOConvertSCFToCFWithLoopHintsPass());
+  kernelModulePM.addPass(createConvertMathToLLVMPass());
   kernelModulePM.addPass(createArithToLLVMConversionPass());
   kernelModulePM.addPass(createConvertIndexToLLVMPass());
   kernelModulePM.addPass(createFinalizeMemRefToLLVMConversionPass());

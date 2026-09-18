@@ -168,13 +168,8 @@ static LogicalResult verifyVMICmpCommon(OpTy op, VMIVRegType dataType,
            << op.getCmp() << "'; expected eq/ne/lt/le/gt/ge, "
            << "or oeq/one/olt/ole/ogt/oge";
   }
-  if (auto pmode = op.getPmode()) {
-    bool unsupportedPmode =
-        pmode.value() != "zero" && pmode.value() != "merge";
-    if (unsupportedPmode) {
-      return op.emitOpError("unsupported pmode '")
-             << pmode.value() << "'; expected \"zero\" or \"merge\"";
-    }
+  if (failed(verifyVMIPMode(op.getOperation(), op.getPmode()))) {
+    return failure();
   }
   if (failed(verifyMaskMatchesData(op.getOperation(), seedType, dataType))) {
     return failure();
@@ -523,12 +518,8 @@ static LogicalResult verifyVecScalarShapeMaskPmode(
   if (failed(verifyMaskMatchesData(op, maskType, resultType))) {
     return failure();
   }
-  if (pmode.has_value()) {
-    StringRef mode = pmode.value();
-    if (mode != "merge" && mode != "zero") {
-      return op->emitOpError("unsupported pmode '")
-             << mode << "'; expected \"merge\" or \"zero\"";
-    }
+  if (failed(verifyVMIPMode(op, pmode))) {
+    return failure();
   }
   return success();
 }
@@ -1052,12 +1043,8 @@ LogicalResult VMIvSelOp::verify() {
   if (failed(verifyMaskMatchesData(getOperation(), maskType, resultType))) {
     return failure();
   }
-  if (auto pmode = getPmode(); pmode.has_value()) {
-    StringRef mode = pmode.value();
-    if (mode != "merge" && mode != "zero") {
-      return emitOpError("pmode must be \"merge\" or \"zero\", got \"")
-             << mode << "\"";
-    }
+  if (failed(verifyVMIPMode(getOperation(), getPmode()))) {
+    return failure();
   }
   return success();
 }
@@ -1112,10 +1099,8 @@ LogicalResult VMIVexpdifOp::verify() {
     return failure();
   }
 
-  if (auto pmode = getPmode()) {
-    if (pmode.value() != "merge" && pmode.value() != "zero") {
-      return emitOpError("pmode must be 'merge' or 'zero'");
-    }
+  if (failed(verifyVMIPMode(getOperation(), getPmode()))) {
+    return failure();
   }
   return success();
 }
@@ -1283,8 +1268,8 @@ LogicalResult VMIVmullOp::verify() {
     return failure();
   }
 
-  if (auto pmode = getPmode(); pmode && pmode.value() != "zero") {
-    return emitOpError("pmode must be 'zero' when specified");
+  if (failed(verifyVMIPMode(getOperation(), getPmode()))) {
+    return failure();
   }
   return success();
 }

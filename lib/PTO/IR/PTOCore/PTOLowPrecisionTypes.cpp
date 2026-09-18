@@ -217,14 +217,15 @@ static StringRef printPtrAddressSpaceKeyword(pto::AddressSpace space) {
   llvm_unreachable("unhandled pointer address space");
 }
 
-static ParseResult parseSyncEventOpCommon(OpAsmParser &parser,
-                                          OperationState &result,
-                                          StringAttr pipeAttrName,
-                                          StringAttr eventIdAttrName) {
+static ParseResult parseSyncEventPipe(OpAsmParser &parser,
+                                      OperationState &result,
+                                      StringAttr pipeAttrName) {
   PipeAttr pipeAttr;
   if (succeeded(parser.parseOptionalLess())) {
     StringRef pipeTok;
-    if (parser.parseKeyword(&pipeTok) || parser.parseGreater()) {
+    const bool pipeTokenParsed = succeeded(parser.parseKeyword(&pipeTok)) &&
+                                 succeeded(parser.parseGreater());
+    if (!pipeTokenParsed) {
       return failure();
     }
     auto pipeOr = symbolizePIPE(pipeTok);
@@ -234,33 +235,69 @@ static ParseResult parseSyncEventOpCommon(OpAsmParser &parser,
     }
     pipeAttr = PipeAttr::get(parser.getContext(), *pipeOr);
     result.addAttribute(pipeAttrName, pipeAttr);
-  } else if (parser.parseAttribute(pipeAttr, pipeAttrName,
-                                   result.attributes)) {
+  } else if (parser.parseAttribute(pipeAttr, pipeAttrName, result.attributes)) {
     return failure();
   }
-  if (parser.parseComma()) {
-    return failure();
-  }
+  return parser.parseComma();
+}
 
+static ParseResult parseSyncEventOperand(OpAsmParser &parser,
+                                         OperationState &result,
+                                         StringAttr eventIdAttrName,
+                                         bool typedOperand) {
   OpAsmParser::UnresolvedOperand eventOperand;
   OptionalParseResult parseEventOperand =
       parser.parseOptionalOperand(eventOperand);
-  if (parseEventOperand.has_value()) {
-    if (failed(*parseEventOperand)) {
-      return failure();
-    }
-    if (parser.resolveOperand(eventOperand, parser.getBuilder().getIndexType(),
-                              result.operands)) {
-      return failure();
-    }
-  } else {
+  if (!parseEventOperand.has_value()) {
     IntegerAttr eventAttr;
     if (parser.parseAttribute(eventAttr, parser.getBuilder().getI32Type(),
                               eventIdAttrName, result.attributes)) {
       return failure();
     }
+    return success();
   }
+  if (failed(*parseEventOperand)) {
+    return failure();
+  }
+  Type eventType;
+  if (typedOperand) {
+    if (parser.parseColonType(eventType)) {
+      return failure();
+    }
+  } else {
+    eventType = parser.getBuilder().getIndexType();
+  }
+  return parser.resolveOperand(eventOperand, eventType, result.operands);
+}
 
+static ParseResult parseSyncEventOpCommon(OpAsmParser &parser,
+                                          OperationState &result,
+                                          StringAttr pipeAttrName,
+                                          StringAttr eventIdAttrName) {
+  if (failed(parseSyncEventPipe(parser, result, pipeAttrName))) {
+    return failure();
+  }
+  if (failed(parseSyncEventOperand(parser, result, eventIdAttrName,
+                                   /*typedOperand=*/false))) {
+    return failure();
+  }
+  if (parser.parseOptionalAttrDict(result.attributes)) {
+    return failure();
+  }
+  return success();
+}
+
+static ParseResult parseSyncEventOpIntra(OpAsmParser &parser,
+                                         OperationState &result,
+                                         StringAttr pipeAttrName,
+                                         StringAttr eventIdAttrName) {
+  if (failed(parseSyncEventPipe(parser, result, pipeAttrName))) {
+    return failure();
+  }
+  if (failed(parseSyncEventOperand(parser, result, eventIdAttrName,
+                                   /*typedOperand=*/true))) {
+    return failure();
+  }
   if (parser.parseOptionalAttrDict(result.attributes)) {
     return failure();
   }
@@ -276,6 +313,19 @@ static void printSyncEventOpCommon(OpAsmPrinter &p, Operation *op,
     p << eventAttr.getInt();
   } else {
     p << eventDyn;
+  }
+  p.printOptionalAttrDict(op->getAttrs(), {pipeAttrName, eventIdAttrName});
+}
+
+static void printSyncEventOpIntra(OpAsmPrinter &p, Operation *op,
+                                  PipeAttr pipeAttr, IntegerAttr eventAttr,
+                                  Value eventDyn, StringRef pipeAttrName,
+                                  StringRef eventIdAttrName) {
+  p << " <" << stringifyPIPE(pipeAttr.getPipe()) << ">, ";
+  if (eventAttr) {
+    p << eventAttr.getInt();
+  } else {
+    p << eventDyn << " : " << eventDyn.getType();
   }
   p.printOptionalAttrDict(op->getAttrs(), {pipeAttrName, eventIdAttrName});
 }

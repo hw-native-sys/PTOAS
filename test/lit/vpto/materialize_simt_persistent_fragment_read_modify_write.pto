@@ -30,8 +30,8 @@ module attributes {pto.target_arch = "a5", pto.kernel_kind = #pto.kernel_kind<ve
 
 // MATERIALIZE-LABEL: func.func @persistent_fragment_read_modify_write
 // MATERIALIZE-NOT: llvm.alloca
-// MATERIALIZE: %[[ONE:.*]] = arith.constant 1.000000e+00 : f32
-// MATERIALIZE: %[[TWO:.*]] = arith.constant 2.000000e+00 : f32
+// MATERIALIZE-DAG: %[[ONE:.*]] = arith.constant 1.000000e+00 : f32
+// MATERIALIZE-DAG: %[[TWO:.*]] = arith.constant 2.000000e+00 : f32
 // MATERIALIZE: pto.section.simt<<<32, 1, 1>>> {
 // MATERIALIZE-NEXT: pto.keep %[[ONE]] {slot = 0 : i64} : f32
 // MATERIALIZE: pto.section.simt<<<32, 1, 1>>> {

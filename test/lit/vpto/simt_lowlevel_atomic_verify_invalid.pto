@@ -12,7 +12,7 @@ module attributes {pto.target_arch = "a5", pto.kernel_kind = #pto.kernel_kind<ve
   func.func @atomic_invalid(%ub_i64: !pto.ptr<i64, ub>) attributes {pto.aicore} {
     %i64 = arith.constant 9 : i64
     // CHECK: does not support i64 UB-space atomics
-    %old = pto.atomic_add %ub_i64, %i64 l2cache(nmfv) signed : !pto.ptr<i64, ub>, i64 -> i64
+    %old = pto.atomic_add %ub_i64, %i64 l2cache(nmfv) : !pto.ptr<i64, ub>, i64 -> i64
     return
   }
 }

@@ -12,7 +12,7 @@ static LogicalResult verifyTileBufCommon(Operation *op, Type ty, StringRef name,
                                          bool allowLowPrecision) {
   auto tb = dyn_cast<pto::TileBufType>(ty);
   if (tb) {
-    if (tb.getRank() != 2) {
+    if (tb.getRank() != kLogicalTileRank) {
       return op->emitOpError() << "expects " << name << " to be a rank-2 tile_buf";
     }
     Type elemTy = tb.getElementType();

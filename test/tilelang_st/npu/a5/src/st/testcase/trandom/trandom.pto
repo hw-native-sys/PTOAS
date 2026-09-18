@@ -23,12 +23,12 @@ module attributes {pto.target_arch = "a5", pto.kernel_kind = #pto.kernel_kind<ve
     %c1024  = arith.constant 1024  : index
 
     // Load key and counter values as ui32
-    %key0_ui32 = pto.load_scalar %key_ptr[%c0] : !pto.ptr<ui32> -> ui32
-    %key1_ui32 = pto.load_scalar %key_ptr[%c1] : !pto.ptr<ui32> -> ui32
-    %counter0_ui32 = pto.load_scalar %counter_ptr[%c0] : !pto.ptr<ui32> -> ui32
-    %counter1_ui32 = pto.load_scalar %counter_ptr[%c1] : !pto.ptr<ui32> -> ui32
-    %counter2_ui32 = pto.load_scalar %counter_ptr[%c2] : !pto.ptr<ui32> -> ui32
-    %counter3_ui32 = pto.load_scalar %counter_ptr[%c3] : !pto.ptr<ui32> -> ui32
+    %key0_ui32 = pto.load %key_ptr[%c0] : !pto.ptr<ui32> -> ui32
+    %key1_ui32 = pto.load %key_ptr[%c1] : !pto.ptr<ui32> -> ui32
+    %counter0_ui32 = pto.load %counter_ptr[%c0] : !pto.ptr<ui32> -> ui32
+    %counter1_ui32 = pto.load %counter_ptr[%c1] : !pto.ptr<ui32> -> ui32
+    %counter2_ui32 = pto.load %counter_ptr[%c2] : !pto.ptr<ui32> -> ui32
+    %counter3_ui32 = pto.load %counter_ptr[%c3] : !pto.ptr<ui32> -> ui32
 
     // Convert ui32 to i32 (signless) before passing to pto.trandom
     %key0 = builtin.unrealized_conversion_cast %key0_ui32 : ui32 to i32

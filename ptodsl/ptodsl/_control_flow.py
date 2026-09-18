@@ -32,7 +32,13 @@ import warnings
 
 from ._diagnostics import explicit_mode_required_with_context_error
 from ._runtime_index_ops import coerce_runtime_index
-from ._scalar_adaptation import coerce_integer_like, coerce_runtime_i1_value, coerce_runtime_integer_to_i1
+from ._scalar_adaptation import (
+    coerce_integer_like,
+    coerce_runtime_i1_value,
+    coerce_runtime_integer_to_i1,
+    coerce_runtime_loop_bounds,
+    classify_runtime_scalar_type,
+)
 from ._scalar_coercion import coerce_scalar_to_type
 from ._surface_types import const_expr
 from ._tracing.active import current_session, require_active_session
@@ -195,10 +201,16 @@ class _ForCM:
         self._ip = None
 
     def __enter__(self):
+        start, stop, step = coerce_runtime_loop_bounds(
+            unwrap_surface_value(self._start),
+            unwrap_surface_value(self._stop),
+            unwrap_surface_value(self._step),
+            context="pto.for_(...) loop bound",
+        )
         self._for_op = scf.ForOp(
-            _coerce_index(self._start),
-            _coerce_index(self._stop),
-            _coerce_index(self._step),
+            start,
+            stop,
+            step,
             self._iter_args if self._iter_args else None,
         )
         apply_unroll_hint(self._for_op, self._unroll, self._unroll_factor)
@@ -1003,6 +1015,100 @@ def _coerce_i1_to_integer_at(value, *, block, target_type, context):
         return coerce_integer_like(value, target_type)
 
 
+def _materialize_short_circuit_literals(name, then_value, else_value):
+    """Normalize a Python literal against the typed branch of a short-circuit merge."""
+    then_is_typed = hasattr(then_value, "type")
+    else_is_typed = hasattr(else_value, "type")
+    # A Python bool literal against a typed branch materializes to i1 first; the
+    # typed-vs-typed rules then pick the result type.
+    if then_is_typed and isinstance(else_value, bool):
+        else_value = coerce_runtime_i1_value(
+            else_value,
+            context=f"br.assign(...) else branch value for '{name}'",
+        )
+        else_is_typed = True
+    elif else_is_typed and isinstance(then_value, bool):
+        then_value = coerce_runtime_i1_value(
+            then_value,
+            context=f"br.assign(...) then branch value for '{name}'",
+        )
+        then_is_typed = True
+    elif then_is_typed and isinstance(else_value, int) and _is_i1_type(then_value.type):
+        raise TypeError(
+            "short-circuit merge cannot infer an integer width for the Python "
+            f"literal {else_value!r} against an i1 branch value; materialize it "
+            "explicitly with pto.const(..., dtype=...)",
+        )
+    elif else_is_typed and isinstance(then_value, int) and _is_i1_type(else_value.type):
+        raise TypeError(
+            "short-circuit merge cannot infer an integer width for the Python "
+            f"literal {then_value!r} against an i1 branch value; materialize it "
+            "explicitly with pto.const(..., dtype=...)",
+        )
+    return then_value, else_value, then_is_typed, else_is_typed
+
+
+def _reconcile_both_typed_values(
+    name,
+    then_value,
+    else_value,
+    *,
+    short_circuit_merge: bool,
+    then_block,
+    else_block,
+):
+    """Reconcile two typed branch values with mismatched i1/integer/kind shapes."""
+    then_is_i1 = _is_i1_type(then_value.type)
+    else_is_i1 = _is_i1_type(else_value.type)
+    if then_is_i1 != else_is_i1:
+        if then_is_i1 and _is_integer_like_type(else_value.type):
+            if short_circuit_merge:
+                then_value = _coerce_i1_to_integer_at(
+                    then_value,
+                    block=then_block,
+                    target_type=else_value.type,
+                    context=f"br.assign(...) then branch value for '{name}'",
+                )
+            else:
+                else_value = _coerce_integer_to_i1_at(
+                    else_value,
+                    block=else_block,
+                    context=f"br.assign(...) else branch value for '{name}'",
+                )
+        elif else_is_i1 and _is_integer_like_type(then_value.type):
+            if short_circuit_merge:
+                else_value = _coerce_i1_to_integer_at(
+                    else_value,
+                    block=else_block,
+                    target_type=then_value.type,
+                    context=f"br.assign(...) else branch value for '{name}'",
+                )
+            else:
+                then_value = _coerce_integer_to_i1_at(
+                    then_value,
+                    block=then_block,
+                    context=f"br.assign(...) then branch value for '{name}'",
+                )
+        return then_value, else_value
+    if _is_integer_like_type(then_value.type) and _is_integer_like_type(else_value.type):
+        then_kind = classify_runtime_scalar_type(then_value.type)
+        else_kind = classify_runtime_scalar_type(else_value.type)
+        if then_kind != else_kind:
+            if then_kind == "index":
+                else_value = coerce_scalar_to_type(
+                    else_value,
+                    then_value.type,
+                    context=f"br.assign(...) else branch value for '{name}'",
+                )
+            else:
+                then_value = coerce_scalar_to_type(
+                    then_value,
+                    else_value.type,
+                    context=f"br.assign(...) then branch value for '{name}'",
+                )
+    return then_value, else_value
+
+
 def _reconcile_branch_assignment_values(
     name,
     then_value,
@@ -1025,66 +1131,19 @@ def _reconcile_branch_assignment_values(
     else_is_typed = hasattr(else_value, "type")
 
     if short_circuit_merge and (then_is_typed != else_is_typed):
-        # A Python bool literal against a typed branch materializes to i1
-        # first; the typed-vs-typed rules below then pick the result type.
-        if then_is_typed and isinstance(else_value, bool):
-            else_value = coerce_runtime_i1_value(
-                else_value,
-                context=f"br.assign(...) else branch value for '{name}'",
-            )
-            else_is_typed = True
-        elif else_is_typed and isinstance(then_value, bool):
-            then_value = coerce_runtime_i1_value(
-                then_value,
-                context=f"br.assign(...) then branch value for '{name}'",
-            )
-            then_is_typed = True
-        elif then_is_typed and isinstance(else_value, int) and _is_i1_type(then_value.type):
-            raise TypeError(
-                "short-circuit merge cannot infer an integer width for the Python "
-                f"literal {else_value!r} against an i1 branch value; materialize it "
-                "explicitly with pto.const(..., dtype=...)",
-            )
-        elif else_is_typed and isinstance(then_value, int) and _is_i1_type(else_value.type):
-            raise TypeError(
-                "short-circuit merge cannot infer an integer width for the Python "
-                f"literal {then_value!r} against an i1 branch value; materialize it "
-                "explicitly with pto.const(..., dtype=...)",
-            )
+        then_value, else_value, then_is_typed, else_is_typed = _materialize_short_circuit_literals(
+            name, then_value, else_value
+        )
 
     if then_is_typed and else_is_typed:
-        then_is_i1 = _is_i1_type(then_value.type)
-        else_is_i1 = _is_i1_type(else_value.type)
-        if then_is_i1 != else_is_i1:
-            if then_is_i1 and _is_integer_like_type(else_value.type):
-                if short_circuit_merge:
-                    then_value = _coerce_i1_to_integer_at(
-                        then_value,
-                        block=then_block,
-                        target_type=else_value.type,
-                        context=f"br.assign(...) then branch value for '{name}'",
-                    )
-                else:
-                    else_value = _coerce_integer_to_i1_at(
-                        else_value,
-                        block=else_block,
-                        context=f"br.assign(...) else branch value for '{name}'",
-                    )
-            elif else_is_i1 and _is_integer_like_type(then_value.type):
-                if short_circuit_merge:
-                    else_value = _coerce_i1_to_integer_at(
-                        else_value,
-                        block=else_block,
-                        target_type=then_value.type,
-                        context=f"br.assign(...) else branch value for '{name}'",
-                    )
-                else:
-                    then_value = _coerce_integer_to_i1_at(
-                        then_value,
-                        block=then_block,
-                        context=f"br.assign(...) then branch value for '{name}'",
-                    )
-        return then_value, else_value
+        return _reconcile_both_typed_values(
+            name,
+            then_value,
+            else_value,
+            short_circuit_merge=short_circuit_merge,
+            then_block=then_block,
+            else_block=else_block,
+        )
     if then_is_typed:
         return then_value, coerce_scalar_to_type(
             else_value,

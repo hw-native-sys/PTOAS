@@ -8,6 +8,7 @@
 
 // Included by PTO.cpp as part of the PTO IR implementation translation unit.
 
+constexpr unsigned kI16ElemBitWidth = 16;
 
 static LogicalResult verifyMGatherMScatterCoalesce(
     Operation *op, StringRef dataName, std::optional<pto::Coalesce> coalesce,
@@ -219,12 +220,13 @@ static LogicalResult verifyMGatherMScatterIdxTile(Operation *op, Type ty,
 }
 
 static bool isA5TLoadStoreTransferElemType(Type ty) {
-    return ty.isInteger(mlir::pto::kValue8) || ty.isInteger(16) || ty.isInteger(32) ||
-           ty.isInteger(mlir::pto::kValue64) || ty.isF16() || ty.isBF16() || ty.isF32() || isPTOLowPrecisionType(ty);
+    return ty.isInteger(kByteElemBitWidth) || ty.isInteger(kI16ElemBitWidth) ||
+           ty.isInteger(kI32ElemBitWidth) ||
+           ty.isInteger(kI64ElemBitWidth) || ty.isF16() || ty.isBF16() || ty.isF32() || isPTOLowPrecisionType(ty);
 }
 
 static bool isA5AccStorePreQuantDstType(Type srcElem, Type dstElem) {
-    if (srcElem.isInteger(mlir::pto::kValue32)) {
+    if (srcElem.isInteger(kI32ElemBitWidth)) {
         return dstElem.isInteger(mlir::pto::kValue8) || dstElem.isF16() || dstElem.isBF16();
     }
   if (!srcElem.isF32()) {

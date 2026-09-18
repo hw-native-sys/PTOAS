@@ -7,7 +7,7 @@ module attributes {pto.target_arch = "a5"} {
   %c128_index = arith.constant 128 : index
   %hidden_states__ssa_v0_view = pto.make_tensor_view %arg0, shape = [%arg5, %c4096_index], strides = [%c4096_index, %c1_index] {layout = #pto.layout<nd>} : !pto.tensor_view<?x?xbf16>
   %hidden_done__ssa_v0_view = pto.make_tensor_view %arg1, shape = [%c2_index, %c1_index], strides = [%c1_index, %c2_index] {layout = #pto.layout<dn>} : !pto.tensor_view<?x?xi32>
-  %_hidden_anchor_inline111__tile = pto.load_scalar %arg0[%c0_index] : !pto.ptr<bf16> -> bf16
+  %_hidden_anchor_inline111__tile = pto.load %arg0[%c0_index] : !pto.ptr<bf16> -> bf16
   scf.for %owner_tp_inline144__idx_v0 = %c0_index to %c2_index step %c1_index {
     %0 = arith.index_cast %arg2 : i32 to index
     %1 = arith.cmpi ne, %owner_tp_inline144__idx_v0, %0 : index

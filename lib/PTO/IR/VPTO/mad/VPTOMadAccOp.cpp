@@ -12,14 +12,12 @@
 
 using namespace mlir;
 using namespace mlir::pto;
+using namespace mlir::pto::mad_detail;
 
 void MadAccOp::getEffects(
     SmallVectorImpl<SideEffects::EffectInstance<MemoryEffects::Effect>>
         &effects) {
-  effects.emplace_back(MemoryEffects::Read::get(), &getLhsMutable());
-  effects.emplace_back(MemoryEffects::Read::get(), &getRhsMutable());
-  effects.emplace_back(MemoryEffects::Read::get(), &getDstMutable());
-  effects.emplace_back(MemoryEffects::Write::get(), &getDstMutable());
+  collectMadSemanticEffects(*this, effects, /*accumulates=*/true);
 }
 
 LogicalResult MadAccOp::verify() { return verifyMadSemanticWithTf32(*this); }
@@ -33,8 +31,8 @@ void MadAccOp::print(OpAsmPrinter &p) {
   printMadSemanticOpNoBias(p, *this, /*allowTf32Mode=*/true);
 }
 
-bool MadAccOp::isMadMxFamily() { return false; }
-bool MadAccOp::hasBiasOperand() { return false; }
-bool MadAccOp::readsAccumulator() { return true; }
-bool MadAccOp::supportsTf32Mode() { return true; }
-Value MadAccOp::getBiasOrNull() { return {}; }
+bool MadAccOp::isMadMxFamily() const { return false; }
+bool MadAccOp::hasBiasOperand() const { return false; }
+bool MadAccOp::readsAccumulator() const { return true; }
+bool MadAccOp::supportsTf32Mode() const { return true; }
+Value MadAccOp::getBiasOrNull() const { return {}; }

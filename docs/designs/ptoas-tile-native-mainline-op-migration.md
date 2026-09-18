@@ -95,12 +95,11 @@ PTO tile/view IR
 | `pto.partition_view` | 已保持 PTO 形态穿过 memplan 和 sync | 最终保持到 backend | 不参与 local memplan；sync result alias source，并根据 offset/size 缩小 GM range | memref-backed source 在 `PTOResolveBufferSelect` 转成 `memref.subview`；`declare_global` 等运行时 source 保持 PTO op 走已有直接 EmitC lowering |
 | `pto.get_tensor_view_dim` | 已保持 PTO 形态穿过 memplan 和 sync | 直接读取 PTO view shape | 不影响 memplan/sync | 当前在 `PTOResolveBufferSelect` 随所属 view 转成 `memref.dim` |
 | `pto.get_tensor_view_stride` | 已保持 PTO 形态穿过 memplan 和 sync | 直接读取 PTO view stride | 不影响 memplan/sync | 当前在 `PTOResolveBufferSelect` 随所属 view 转成 strided memref metadata |
-| `pto.inttoptr` | 结果改成 GM memref，并限制用途 | 保持 PTO pointer-like value | 不参与 local memplan；sync 将其视作 GM provenance | 保留 restricted-use verifier；EmitC/VPTO 直接 lowering |
-| `pto.ptrtoint` | 折叠 `addptr` 链并生成 byte offset | 保持 PTO op，或迁移到独立 address-canonicalization pass | 不影响 local memplan；不能丢失 GM provenance | backend 生成整数地址；覆盖 ptr、addptr、view base |
+| `pto.castptr` | 在 integer、memref 与 PTO pointer 之间统一转换 | 保持 PTO pointer-like value | pointer/memref 转换继承 provenance；可识别的 ptr→int→ptr 恢复 provenance；裸 integer 来源保守处理 | backend 根据输入/结果类型选择转换；覆盖 ptr、addptr、view base |
 | `pto.addptr` | 折叠进 tensor view、scalar load/store 或 pipe init | 保持到独立 address canonicalization/backend | sync 需要把 result alias 到 base，并记录 offset | EmitC/VPTO 直接 lowering；保留非法 escape 校验 |
 | `pto.castptr` | 作为 pointer/memref 适配 op | 保持 PTO pointer cast | result alias source，地址空间变化必须校验 | 两后端直接 lowering |
-| `pto.load_scalar` | `addptr` offset 被折叠进 op | op 直接接受 base+offset，或 backend 统一折叠 | InsertSync 记录 GM read；不参与 local memplan | 覆盖 inttoptr/addptr 和动态 offset |
-| `pto.store_scalar` | `addptr` offset 被折叠进 op | op 直接接受 base+offset，或 backend 统一折叠 | InsertSync 记录 GM write | 覆盖跨 pipe flush/sync |
+| `pto.load` | `addptr` offset 被折叠进 op | op 直接接受 base+offset，或 backend 统一折叠 | InsertSync 记录 GM read；不参与 local memplan | 覆盖 castptr/addptr 和动态 offset |
+| `pto.store` | `addptr` offset 被折叠进 op | op 直接接受 base+offset，或 backend 统一折叠 | InsertSync 记录 GM write | 覆盖跨 pipe flush/sync |
 | `pto.initialize_l2g2l_pipe` | `gm_addr` 上的 addptr 被提前折叠 | 迁移到独立 address canonicalization 或 op verifier/lowering | sync 保留 GM base provenance | EmitC/VPTO 覆盖动态地址 |
 
 ## 7. Control Flow 与函数 ABI
@@ -299,8 +298,8 @@ output-input RAW 和 scratch WAW/WAR。
 9. `pto.make_tensor_view`
 10. `pto.partition_view`
 11. `pto.get_tensor_view_dim/get_tensor_view_stride`
-12. `pto.inttoptr/ptrtoint/addptr/castptr`
-13. `pto.load_scalar/store_scalar/initialize_l2g2l_pipe`
+12. `pto.castptr/addptr`
+13. `pto.load/store/initialize_l2g2l_pipe`
 14. `scf.if/scf.for/scf.yield`
 15. `pto.fusion_region/pto.yield`
 16. `func.func/func.call/helper ABI`

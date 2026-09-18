@@ -13,13 +13,12 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from .._runtime_index_ops import coerce_runtime_index
+from ptoas.mlir.dialects import scf
+from ptoas.mlir.ir import InsertionPoint, IntegerAttr, IntegerType, StringAttr, Operation
+
+from .._scalar_adaptation import coerce_runtime_loop_bounds
 from .._surface_values import unwrap_surface_value
 from .._types import _is_struct_type
-
-from ptoas.mlir.dialects import arith
-from ptoas.mlir.dialects import scf
-from ptoas.mlir.ir import InsertionPoint, IntegerAttr, IntegerType, StringAttr
 
 
 # ── loop-unroll hints ─────────────────────────────────────────────────────────
@@ -92,12 +91,11 @@ def build_carry_loop_frame(start, stop, step, state_items, *, unroll=None, unrol
     state_names = tuple(name for name, _ in state_items)
     state_templates = tuple(value for _, value in state_items)
     iter_args = [_materialize_carry_init(value) for value in state_templates]
-    for_op = scf.ForOp(
-        _coerce_index(start),
-        _coerce_index(stop),
-        _coerce_index(step),
-        iter_args,
+    bounds = coerce_runtime_loop_bounds(
+        unwrap_surface_value(start), unwrap_surface_value(stop),
+        unwrap_surface_value(step), context="pto.for_(...).carry(...) loop bound",
     )
+    for_op = scf.ForOp(*bounds, iter_args)
     apply_unroll_hint(for_op, unroll, unroll_factor)
     insertion_point = InsertionPoint(for_op.body)
     insertion_point.__enter__()
@@ -137,11 +135,6 @@ def finish_carry_loop_frame(frame: CarryLoopFrame, exc_type, exc, tb) -> None:
         frame.insertion_point.__exit__(exc_type, exc, tb)
 
 
-def _coerce_index(value):
-    raw_value = unwrap_surface_value(value)
-    return coerce_runtime_index(raw_value, context="pto.for_(...).carry(...) loop bound")
-
-
 def _materialize_carry_init(value):
     raw_value = unwrap_surface_value(value)
     if _is_struct_type(getattr(raw_value, "type", None)):
@@ -152,7 +145,11 @@ def _materialize_carry_init(value):
     if isinstance(raw_value, bool):
         raise TypeError("pto.for_(...).carry(...) does not accept bool loop-carried values")
     if isinstance(raw_value, int):
-        return arith.ConstantOp(IntegerType.get_signless(32), raw_value).result
+        i32 = IntegerType.get_signless(32)
+        return Operation.create(
+            "pto.constant", results=[i32],
+            attributes={"value": IntegerAttr.get(i32, raw_value)},
+        ).results[0]
     return raw_value
 
 

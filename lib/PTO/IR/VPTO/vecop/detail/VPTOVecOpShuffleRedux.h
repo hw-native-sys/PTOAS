@@ -43,13 +43,6 @@ using namespace mlir::pto;
     return type.isF16() || type.isF32();
   }
 
-  inline bool isSupportedReduxValueType(Type type) {
-    if (auto intType = dyn_cast<IntegerType>(type)) {
-      return intType.getWidth() == mlir::pto::kValue32;
-    }
-    return type.isF16() || type.isF32();
-  }
-
   inline LogicalResult verifyShuffleSemanticControl(Operation *op,
                                                     Type controlType,
                                                     IntegerAttr widthAttr,
@@ -70,34 +63,16 @@ using namespace mlir::pto;
     return success();
   }
 
-  inline LogicalResult verifyReduxSemanticType(Operation *op, Type valueType,
-                                               Attribute signednessAttr,
-                                               bool requireSignedness) {
-    if (!isSupportedReduxValueType(valueType)) {
-      return op->emitOpError()
-             << "requires i32, f16 or f32 value/result type";
-    }
-
-    auto intType = dyn_cast<IntegerType>(valueType);
-    if (!intType) {
-      if (signednessAttr) {
-        return op->emitOpError()
-               << "does not accept signedness for floating-point redux";
+  inline LogicalResult verifyReduxSemanticAttrs(Operation *op,
+                                                  bool acceptsSignedness) {
+    for (StringRef attrName : {"fastmath", "roundingmode", "overflowFlags"}) {
+      if (op->hasAttr(attrName)) {
+        return op->emitOpError() << "does not accept " << attrName;
       }
-      return success();
     }
-
-    if (!signednessAttr && requireSignedness) {
-      return op->emitOpError()
-             << "requires explicit signedness for integer redux";
+    if (!acceptsSignedness && op->hasAttr("signedness")) {
+      return op->emitOpError() << "does not accept signedness";
     }
-
-    if (!signednessAttr) {
-      return success();
-    }
-
-    auto signedness = cast<pto::SignednessAttr>(signednessAttr).getValue();
-    (void)signedness;
     return success();
   }
 

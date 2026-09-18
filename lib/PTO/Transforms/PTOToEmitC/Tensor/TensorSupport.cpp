@@ -22,6 +22,8 @@ namespace pto {
 //===- PTOToEmitCTensor.cpp - tensor elementwise op lowering ---------===//
 //===----------------------------------------------------------------------===//
 
+constexpr unsigned kTquantAttrInlineCapacity = 4;
+
 //===----------------------------------------------------------------------===//
 // pto.tadds lowering -> TADDS(dst, src, scalar)
 //===----------------------------------------------------------------------===//
@@ -253,7 +255,7 @@ buildTQuantTemplateArgs(pto::TQuantOp op,
     llvm_unreachable("unknown QuantType");
   };
 
-  SmallVector<Attribute, 4> args{
+  SmallVector<Attribute, kTquantAttrInlineCapacity> args{
       emitc::OpaqueAttr::get(ctx, quantTypeTok()),
       emitc::OpaqueAttr::get(ctx, dstOT.getValue().str()),
       emitc::OpaqueAttr::get(ctx, srcOT.getValue().str()),

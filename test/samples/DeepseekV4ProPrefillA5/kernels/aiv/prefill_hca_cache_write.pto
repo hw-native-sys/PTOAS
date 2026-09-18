@@ -13,7 +13,7 @@ module attributes {pto.target_arch = "a5"} {
   scf.for %write_t_inline762__idx_v0 = %c0_index to %c128_index step %c1_index {
     %1 = arith.cmpi slt, %write_t_inline762__idx_v0, %c64_index : index
     scf.if %1 {
-      %write_row_raw_inline761__tile = pto.load_scalar %arg1[%write_t_inline762__idx_v0] : !pto.ptr<i64> -> i64
+      %write_row_raw_inline761__tile = pto.load %arg1[%write_t_inline762__idx_v0] : !pto.ptr<i64> -> i64
       %2 = arith.index_cast %write_row_raw_inline761__tile : i64 to index
       %3 = arith.cmpi sle, %c0_index, %2 : index
       scf.if %3 {

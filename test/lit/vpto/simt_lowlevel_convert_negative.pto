@@ -6,14 +6,69 @@
 // INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
 // See LICENSE in the root of the software repository for the full text of the License.
 
-// RUN: not ptoas --pto-arch=a5 --pto-backend=vpto %s -o %t 2>&1 | FileCheck %s
+// RUN: pto-test-opt -split-input-file -verify-diagnostics %s
 
 module attributes {pto.target_arch = "a5", pto.kernel_kind = #pto.kernel_kind<vector>} {
-  func.func @convert_negative() attributes {pto.aicore} {
-    %f32 = arith.constant 2.000000e+00 : f32
-    %bad = pto.convert %f32 round(z) nosat signed : f32 -> i32
+  func.func @non_simt_rounding(%f32: f32) attributes {pto.aicore} {
+    // expected-error@+1 {{rounding mode is only valid in a SIMT execution scope for floating-point-to-integer conversion}}
+    %bad = pto.ftoi %f32 signed round(z) : f32 -> i32
     return
   }
 }
 
-// CHECK: fp32-to-integer conversion requires saturation enable
+// -----
+
+module attributes {pto.target_arch = "a5", pto.kernel_kind = #pto.kernel_kind<vector>} {
+  func.func @simt_ftoi_requires_saturation(%f32: f32) attributes {pto.simt_entry} {
+    // expected-error@+1 {{fp32-to-integer conversion requires saturation enable}}
+    %bad = pto.ftoi %f32 signed round(z) : f32 -> i32
+    return
+  }
+}
+
+// -----
+
+module attributes {pto.target_arch = "a5", pto.kernel_kind = #pto.kernel_kind<vector>} {
+  func.func @simt_ftoi_rejects_to_odd(%f16: f16) attributes {pto.simt_entry} {
+    // expected-error@+1 {{fp16/bf16-to-integer conversion supports rounding r/a/f/c/z}}
+    %bad = pto.ftoi %f16 unsigned round(o) sat : f16 -> i32
+    return
+  }
+}
+
+// -----
+
+module attributes {pto.target_arch = "a5", pto.kernel_kind = #pto.kernel_kind<vector>} {
+  func.func @simt_itof_rejects_hybrid(%i32: i32) attributes {pto.simt_entry} {
+    // expected-error@+1 {{integer-to-floating conversion supports rounding r/a/f/c/z}}
+    %bad = pto.itof %i32 signed round(h) sat : i32 -> f16
+    return
+  }
+}
+
+// -----
+
+module attributes {pto.target_arch = "a5", pto.kernel_kind = #pto.kernel_kind<vector>} {
+  func.func @simt_conversion_requires_signedness(%f32: f32) attributes {pto.simt_entry} {
+    // expected-error@+1 {{requires attribute 'signedness'}}
+    %bad = "pto.ftoi"(%f32) {
+      roundingmode = 3 : i32,
+      saturation = #pto.saturation<sat>
+    } : (f32) -> i32
+    return
+  }
+}
+
+// -----
+
+module attributes {pto.target_arch = "a5", pto.kernel_kind = #pto.kernel_kind<vector>} {
+  func.func @conversion_rejects_integer_to_integer(%i32: i32) attributes {pto.simt_entry} {
+    // expected-error@+1 {{operand #0 must be standard or PTO packed floating-point value}}
+    %bad = "pto.ftoi"(%i32) {
+      roundingmode = 3 : i32,
+      saturation = #pto.saturation<sat>,
+      signedness = #pto.signedness<signed>
+    } : (i32) -> i32
+    return
+  }
+}

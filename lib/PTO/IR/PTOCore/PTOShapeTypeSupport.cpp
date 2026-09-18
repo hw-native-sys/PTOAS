@@ -160,10 +160,18 @@ static ParseResult parseSyncEventOpCommon(OpAsmParser &parser,
                                           OperationState &result,
                                           StringAttr pipeAttrName,
                                           StringAttr eventIdAttrName);
+static ParseResult parseSyncEventOpIntra(OpAsmParser &parser,
+                                         OperationState &result,
+                                         StringAttr pipeAttrName,
+                                         StringAttr eventIdAttrName);
 static void printSyncEventOpCommon(OpAsmPrinter &p, Operation *op,
                                    PipeAttr pipeAttr, IntegerAttr eventAttr,
                                    Value eventDyn, StringRef pipeAttrName,
                                    StringRef eventIdAttrName);
+static void printSyncEventOpIntra(OpAsmPrinter &p, Operation *op,
+                                  PipeAttr pipeAttr, IntegerAttr eventAttr,
+                                  Value eventDyn, StringRef pipeAttrName,
+                                  StringRef eventIdAttrName);
 static bool isTileLikeType(Type ty);
 static SmallVector<int64_t, mlir::pto::kValue4> getShapeVec(Type ty);
 static SmallVector<int64_t, mlir::pto::kValue4> getValidShapeVec(Type ty);

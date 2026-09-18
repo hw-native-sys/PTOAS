@@ -707,7 +707,7 @@ lib/PTO/Transforms/VMIPhysicalMemoryAccess.cpp
 lib/PTO/Transforms/VMIToVPTO.cpp
   op-specific plan construction and non-memory physicalization
 
-lib/PTO/Transforms/VPTOStatefulStreamFusion.cpp
+lib/PTO/Transforms/VPTO/VPTOStatefulStreamFusion.cpp
   complete post-legalization stream fusion implementation
 ```
 

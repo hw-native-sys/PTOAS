@@ -17,7 +17,6 @@ from importlib.util import module_from_spec, spec_from_file_location
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 from ptodsl import pto
-from ptodsl import scalar
 from ptodsl._context import make_context
 from ptodsl._runtime.toolchain import resolve_ptoas_binary
 from ptoas.mlir.ir import Module
@@ -220,6 +219,7 @@ def run_ptoas_frontend_expect_failure(
     )
     return result.stderr
 
+
 @pto.jit(target="a5")
 def host_vec_copy(
     A_ptr: pto.ptr(pto.f32, "gm"),
@@ -242,11 +242,11 @@ def host_vec_copy(
 @pto.simt
 def simt_gm_memory_core_body(gm: pto.ptr(pto.i32, "gm")):
     tx = pto.get_tid_x()
-    src_idx = scalar.index_cast(tx)
-    loaded = scalar.load(gm, src_idx)
+    src_idx = tx
+    loaded = pto.load(gm, src_idx)
     with_bias = loaded + tx + 1000
-    scalar.store(with_bias, gm, scalar.index_cast(tx + 32))
-    scalar.store(tx, gm, scalar.index_cast(tx + 64))
+    pto.store(with_bias, gm, tx + 32)
+    pto.store(tx, gm, tx + 64)
 
 
 @pto.jit(target="a5", mode="explicit")
@@ -347,11 +347,11 @@ def vec_value_arith_simt_body(
 ):
     tid = pto.get_tid_x()
     base = tid * 4
-    x4 = scalar.load(A_ptr, base, contiguous=4)
-    y4 = scalar.load(A_ptr, 32 + base, contiguous=4)
-    scalar.store(x4 + y4, O_ptr, base)
-    scalar.store(x4 - y4, O_ptr, 32 + base)
-    scalar.store(x4 * y4, O_ptr, 64 + base)
+    x4 = pto.load(A_ptr, base, contiguous=4)
+    y4 = pto.load(A_ptr, 32 + base, contiguous=4)
+    pto.store(x4 + y4, O_ptr, base)
+    pto.store(x4 - y4, O_ptr, 32 + base)
+    pto.store(x4 * y4, O_ptr, 64 + base)
 
 
 @pto.jit(target="a5", mode="explicit")
@@ -363,7 +363,21 @@ def vec_value_arith_frontend(
     pto.pipe_barrier(pto.Pipe.ALL)
 
 
-def main() -> None:
+def expect_vec_value_arith_lowering(mlir_text: str) -> None:
+    """Check the VPTO object path lowers PTO vector arithmetic to standard arith."""
+    for lowered_op in ("arith.addf", "arith.subf", "arith.mulf"):
+        expect(
+            lowered_op in mlir_text,
+            "vec_value_arith_frontend should lower PTO vector arithmetic to standard arith operations",
+        )
+    for unlowered_op in ("pto.addf", "pto.subf", "pto.mulf"):
+        expect(
+            unlowered_op not in mlir_text,
+            "vec_value_arith_frontend should not retain lowered PTO vector arithmetic operations",
+        )
+
+
+def _frontend_verify_part1() -> tuple:
     ptoas_bin = resolve_ptoas_binary()
     mixed_backend_example = REPO_ROOT / "ptodsl" / "examples" / "mixed_backend_kernel_module.py"
     cv_split_example = REPO_ROOT / "ptodsl" / "examples" / "flash_attention" / "flash_attention_cv_split.py"
@@ -391,7 +405,8 @@ def main() -> None:
     struct_text = struct_frontend_verify_probe.compile().mlir_text()
     expect(
         "pto.declare_struct" in struct_text and "pto.struct_get" in struct_text,
-        "struct_frontend_verify_probe source MLIR should contain the PTODSL struct surface before frontend verification",
+        "struct_frontend_verify_probe source MLIR should contain the PTODSL struct surface before frontend "
+        "verification",
     )
     struct_frontend_texts = run_ptoas_frontend_verify(
         ptoas_bin,
@@ -407,6 +422,10 @@ def main() -> None:
         "func.func @struct_frontend_verify_probe" in struct_frontend_text,
         "struct_frontend_verify_probe frontend verification should preserve the kernel symbol",
     )
+    return cv_split_example, mixed_backend_example, ptoas_bin, struct_frontend_text, struct_text
+
+
+def _frontend_verify_part2(ptoas_bin, struct_frontend_text, struct_text) -> tuple:
     expect(
         "pto.declare_struct" in struct_frontend_text
         and "pto.struct_set" in struct_frontend_text
@@ -444,6 +463,10 @@ def main() -> None:
         "simt_gm_memory_core PTODSL artifact should lower to exactly one backend child module",
     )
     simt_frontend_text = simt_frontend_texts[0]
+    return simt_frontend_text
+
+
+def _frontend_verify_part3(ptoas_bin, simt_frontend_text) -> tuple:
     if simt_frontend_text:
         expect(
             "func.func @simt_gm_memory_core_kernel" in simt_frontend_text,
@@ -487,15 +510,26 @@ def main() -> None:
         "pto.kernel_kind = #pto.kernel_kind<vector>" in mixed_backend_emitc_frontend_text,
         "mixed-backend caller frontend verification should infer vector kernel_kind for the uncovered entry tile path",
     )
+    return mixed_backend_emitc_frontend_text, mixed_backend_frontend_texts
+
+
+def _frontend_verify_part4(
+    mixed_backend_emitc_frontend_text,
+    mixed_backend_example,
+    mixed_backend_frontend_texts,
+    ptoas_bin,
+) -> tuple:
     expect(
         "pto.tload" in mixed_backend_emitc_frontend_text
         and "pto.tadds" in mixed_backend_emitc_frontend_text
         and "pto.tstore" in mixed_backend_emitc_frontend_text,
-        "mixed-backend caller frontend verification output should preserve the entry tile path after inferred section normalization",
+        "mixed-backend caller frontend verification output should preserve the entry tile path after inferred section "
+        "normalization",
     )
     expect(
         "func.call @process_row_ptr_kernel_module__ptodsl_" in mixed_backend_emitc_frontend_text,
-        "mixed-backend caller frontend verification output should keep the kernel-module call alongside the normalized tile path",
+        "mixed-backend caller frontend verification output should keep the kernel-module call alongside the normalized "
+        "tile path",
     )
     expect(
         mixed_backend_emitc_frontend_text.index("pto.tload")
@@ -504,7 +538,8 @@ def main() -> None:
     )
     expect(
         mixed_backend_frontend_texts[1] == "",
-        "mixed-backend VPTO callee child should continue to compile through the fallback object path when --emit-pto-ir is unavailable",
+        "mixed-backend VPTO callee child should continue to compile through the fallback object path when --emit-pto-ir"
+        "is unavailable",
     )
 
     ptr_like_addr_text = PTR_LIKE_TILE_BUF_ADDR_MLIR
@@ -525,7 +560,8 @@ def main() -> None:
     expect(
         "pto.alloc_tile addr" in ptr_like_addr_frontend_text
         and "pto.tile_buf_addr" in ptr_like_addr_frontend_text,
-        "ptr-like tile_buf_addr lowering should keep the tile-native address path until PTOPlanMemory materializes alloc_tile addr",
+        "ptr-like tile_buf_addr lowering should keep the tile-native address path until PTOPlanMemory materializes "
+        "alloc_tile addr",
     )
     expect(
         "call @consume" in ptr_like_addr_frontend_text,
@@ -533,6 +569,10 @@ def main() -> None:
     )
 
     example_mlir_text = emit_example_mlir(mixed_backend_example)
+    return example_mlir_text
+
+
+def _frontend_verify_part5(example_mlir_text) -> None:
     example_child_texts = extract_child_module_texts(
         example_mlir_text,
         "mixed_backend_kernel_module.py --emit-mlir output",
@@ -551,14 +591,16 @@ def main() -> None:
     expect(
         "func.func @emitc_entry_calls_vpto_module" in example_emitc_child
         and "func.func private @scale_row_kernel_module__ptodsl_" in example_emitc_child,
-        "mixed_backend_kernel_module.py EmitC child should resemble mixed-external-vadd by keeping an entry symbol plus one private imported helper symbol",
+        "mixed_backend_kernel_module.py EmitC child should resemble mixed-external-vadd by keeping an entry symbol plus"
+        "one private imported helper symbol",
     )
     expect(
         "pto.tload" in example_emitc_child
         and "pto.tadds" in example_emitc_child
         and "pto.tstore" in example_emitc_child
         and "func.call @scale_row_kernel_module__ptodsl_" in example_emitc_child,
-        "mixed_backend_kernel_module.py EmitC child should keep the entry tile path plus one cross-backend helper call, like mixed-external-vadd's caller-side shape",
+        "mixed_backend_kernel_module.py EmitC child should keep the entry tile path plus one cross-backend helper call,"
+        "like mixed-external-vadd's caller-side shape",
     )
     expect(
         'pto.backend = "vpto"' in example_vpto_child
@@ -575,6 +617,8 @@ def main() -> None:
         "mixed_backend_kernel_module.py VPTO child should defer vector inference without a legacy inline section",
     )
 
+
+def _frontend_verify_part6(cv_split_example, example_mlir_text, ptoas_bin) -> tuple:
     example_frontend_texts = run_ptoas_frontend_verify(
         ptoas_bin,
         example_mlir_text,
@@ -587,16 +631,19 @@ def main() -> None:
     example_emitc_frontend_text = example_frontend_texts[0]
     expect(
         "pto.kernel_kind = #pto.kernel_kind<vector>" in example_emitc_frontend_text,
-        "mixed_backend_kernel_module.py frontend verification should infer vector kernel_kind for the uncovered EmitC entry tile path",
+        "mixed_backend_kernel_module.py frontend verification should infer vector kernel_kind for the uncovered EmitC "
+        "entry tile path",
     )
     expect(
         example_emitc_frontend_text.index("pto.tload")
         < example_emitc_frontend_text.index("func.call @scale_row_kernel_module__ptodsl_"),
-        "mixed_backend_kernel_module.py frontend verification should preserve the entry tile path before the helper call",
+        "mixed_backend_kernel_module.py frontend verification should preserve the entry tile path before the helper "
+        "call",
     )
     expect(
         example_frontend_texts[1] == "",
-        "mixed_backend_kernel_module.py VPTO child should continue to compile through the fallback object path in frontend verification",
+        "mixed_backend_kernel_module.py VPTO child should continue to compile through the fallback object path in "
+        "frontend verification",
     )
 
     cv_split = load_example_module(
@@ -617,8 +664,13 @@ def main() -> None:
     )
     expect(
         cv_split_frontend_text.count('module attributes {pto.backend = "emitc"') >= 2,
-        "hw_native_flash_attention_cv_split.py frontend verification should preserve the cube and vector EmitC helper children",
+        "hw_native_flash_attention_cv_split.py frontend verification should preserve the cube and vector EmitC helper "
+        "children",
     )
+    return cv_split_frontend_text
+
+
+def _frontend_verify_part7(cv_split_frontend_text, ptoas_bin) -> tuple:
     expect(
         'pto.kernel_kind = #pto.kernel_kind<cube>' in cv_split_frontend_text
         and 'pto.visibility = "external"' in cv_split_frontend_text
@@ -639,7 +691,8 @@ def main() -> None:
         and
         "func.func public @hw_native_flash_attention_cv_split_vector_h128_s1t256_qp3_qr128__ptodsl_"
         in cv_split_frontend_text,
-        "cv-split frontend verification should preserve the vector helper public ABI-specialized symbol and kernel_kind",
+        "cv-split frontend verification should preserve the vector helper public ABI-specialized symbol and "
+        "kernel_kind",
     )
     expect(
         "pto.tfree(" in cv_split_frontend_text
@@ -664,6 +717,10 @@ def main() -> None:
         lowp_text,
         "low_precision_vcvt_frontend PTODSL artifact",
     )
+    return lowp_frontend_texts
+
+
+def _frontend_verify_part8(lowp_frontend_texts, ptoas_bin) -> tuple:
     expect(
         len(lowp_frontend_texts) == 1,
         "low_precision_vcvt_frontend PTODSL artifact should lower to exactly one backend child module",
@@ -671,7 +728,8 @@ def main() -> None:
     lowp_frontend_text = lowp_frontend_texts[0]
     expect(
         lowp_frontend_text == "",
-        "low_precision_vcvt_frontend should continue to compile through the VPTO fallback object path when --emit-pto-ir is unavailable",
+        "low_precision_vcvt_frontend should continue to compile through the VPTO fallback object path when "
+        "--emit-pto-ir is unavailable",
     )
 
     invalid_lowp_vcvt_mlir = """
@@ -696,17 +754,25 @@ module attributes {pto.target_arch = "a5", pto.kernel_kind = #pto.kernel_kind<ve
     )
 
     vec_arith_text = vec_value_arith_frontend.compile().mlir_text()
-    expect("vector<4xf32>" in vec_arith_text, "vec_value_arith_frontend source MLIR should contain vector<4xf32> values")
+    expect(
+        "vector<4xf32>" in vec_arith_text,
+        "vec_value_arith_frontend source MLIR should contain vector<4xf32> values",
+    )
     expect(
         "pto.simt_launch" in vec_arith_text,
         "vec_value_arith_frontend source MLIR should lower through a SIMT launch",
     )
     expect(
-        "arith.addf" in vec_arith_text
-        and "arith.subf" in vec_arith_text
-        and "arith.mulf" in vec_arith_text,
-        "vec_value_arith_frontend source MLIR should contain all three VecValue arithmetic ops before frontend verification",
+        "pto.addf" in vec_arith_text
+        and "pto.subf" in vec_arith_text
+        and "pto.mulf" in vec_arith_text,
+        "vec_value_arith_frontend source MLIR should contain all three VecValue arithmetic ops before frontend "
+        "verification",
     )
+    return vec_arith_text
+
+
+def _frontend_verify_part9(ptoas_bin, vec_arith_text) -> None:
     vec_arith_frontend_texts = run_ptoas_frontend_verify(
         ptoas_bin,
         vec_arith_text,
@@ -717,12 +783,39 @@ module attributes {pto.target_arch = "a5", pto.kernel_kind = #pto.kernel_kind<ve
         "vec_value_arith_frontend PTODSL artifact should lower to exactly one backend child module",
     )
     vec_arith_frontend_text = vec_arith_frontend_texts[0]
-    expect(
-        vec_arith_frontend_text == "",
-        "vec_value_arith_frontend should compile through the VPTO fallback object path when --emit-pto-ir is unavailable",
-    )
+    expect_vec_value_arith_lowering(vec_arith_frontend_text)
 
     print("ptodsl_ptoas_frontend_verify: PASS")
+
+
+def main() -> None:
+    (
+        cv_split_example,
+        mixed_backend_example,
+        ptoas_bin,
+        struct_frontend_text,
+        struct_text,
+    ) = _frontend_verify_part1()
+    simt_frontend_text = _frontend_verify_part2(
+        ptoas_bin, struct_frontend_text, struct_text
+    )
+    (
+        mixed_backend_emitc_frontend_text,
+        mixed_backend_frontend_texts,
+    ) = _frontend_verify_part3(ptoas_bin, simt_frontend_text)
+    example_mlir_text = _frontend_verify_part4(
+        mixed_backend_emitc_frontend_text,
+        mixed_backend_example,
+        mixed_backend_frontend_texts,
+        ptoas_bin,
+    )
+    _frontend_verify_part5(example_mlir_text)
+    cv_split_frontend_text = _frontend_verify_part6(
+        cv_split_example, example_mlir_text, ptoas_bin
+    )
+    lowp_frontend_texts = _frontend_verify_part7(cv_split_frontend_text, ptoas_bin)
+    vec_arith_text = _frontend_verify_part8(lowp_frontend_texts, ptoas_bin)
+    _frontend_verify_part9(ptoas_bin, vec_arith_text)
 
 
 if __name__ == "__main__":

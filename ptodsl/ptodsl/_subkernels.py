@@ -383,6 +383,28 @@ def _is_runtime_scalar_value(value) -> bool:
     return is_runtime_scalar_ir_type(type_obj)
 
 
+def _coerce_tileop_scalar_argument(role, name, annotation, value):
+    """Coerce a tileop runtime scalar argument to the annotated MLIR type."""
+    raw_value = unwrap_surface_value(value)
+    expected_type = _resolve(annotation)
+    if raw_value.type == expected_type:
+        return value
+    if str(expected_type) == "index" and is_runtime_scalar_ir_type(raw_value.type):
+        from ._scalar_coercion import coerce_scalar_to_type
+
+        return coerce_scalar_to_type(
+            raw_value,
+            expected_type,
+            context=f"@pto.tileop argument '{name}'",
+        )
+    raise subkernel_argument_type_error(
+        role.value,
+        name,
+        f"a PTO scalar of MLIR type {expected_type}",
+        str(raw_value.type),
+    )
+
+
 def _normalize_subkernel_argument(role: KernelRole, name: str, annotation, value):
     if annotation is Tile:
         if isinstance(value, Tile):
@@ -396,15 +418,7 @@ def _normalize_subkernel_argument(role: KernelRole, name: str, annotation, value
             return const(value, dtype=annotation)
         if _is_runtime_scalar_value(value):
             if role == KernelRole.TILEOP:
-                raw_value = unwrap_surface_value(value)
-                expected_type = _resolve(annotation)
-                if raw_value.type != expected_type:
-                    raise subkernel_argument_type_error(
-                        role.value,
-                        name,
-                        f"a PTO scalar of MLIR type {expected_type}",
-                        str(raw_value.type),
-                    )
+                return _coerce_tileop_scalar_argument(role, name, annotation, value)
             return value
         raise subkernel_argument_type_error(
             role.value,

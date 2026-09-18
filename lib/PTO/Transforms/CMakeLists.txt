@@ -66,24 +66,26 @@ add_mlir_dialect_library(PTOTransforms
   VPTO/VPTOCANN900LLVMEmitterCommon.cpp
   VPTO/VPTOCANN900LLVMEmitterUbuf.cpp
   VPTO/VPTOCANN900LLVMEmitter.cpp
-  VPTOCANN900LLVMEmitterArithmeticPatterns.cpp
+  VPTO/VPTOCANN900LLVMEmitterArithmeticPatterns.cpp
   VPTO/VPTOCANN900LLVMEmitterCalleeCore.cpp
   VPTO/VPTOCANN900LLVMEmitterCalleeMemory.cpp
-  VPTOCANN900LLVMEmitterMemoryPatterns.cpp
+  VPTO/VPTOCANN900LLVMEmitterMemoryPatterns.cpp
   VPTO/VPTOCANN900LLVMEmitterPacking.cpp
   VPTO/VPTOCANN900LLVMEmitterPipeline.cpp
-  VPTOCANN900LLVMEmitterScalarPatterns.cpp
+  VPTO/VPTOCANN900LLVMEmitterScalarPatterns.cpp
   VPTO/VPTOCANN900LLVMEmitterTypeHelpers.cpp
-  VPTOCANN900LLVMEmitterTypePatterns.cpp
+  VPTO/VPTOCANN900LLVMEmitterTypePatterns.cpp
   VPTO/VPTOLLVMEmitterDispatcher.cpp
-  VPTOLLVMEmitterHelper.cpp
-  VPTOPtrNormalize.cpp
+  VPTO/VPTOLLVMEmitterHelper.cpp
+  VPTO/VPTOPtrNormalize.cpp
   VPTO/VPTOPtrCastCleanup.cpp
   VPTO/VPTOCombineReductions.cpp
   VPTO/VPTOOptimizeVcvt.cpp
   VPTO/VPTOMaskSimplify.cpp
-  VPTOExpandWrapperOps.cpp
-  VPTOSoftPostUpdate.cpp
+  VPTOExpandMadOps.cpp
+  VPTO/VPTOExpandWrapperOps.cpp
+  VPTOOptimizeCtrlState.cpp
+  VPTO/VPTOSoftPostUpdate.cpp
   VPTO/VPTOGuardedLICM.cpp
   Passes/PTOPrintAddressAnalysis.cpp
   VPTOScheduler/VPTORegPressureTracker.cpp
@@ -100,33 +102,33 @@ add_mlir_dialect_library(PTOTransforms
   VPTOScheduler/VPTOSchedulerRematPressure.cpp
   VPTOScheduler/VPTOSchedulerRematerialization.cpp
   VPTOScheduler/VPTOSchedulerPass.cpp
-  PTOVPTOPtrBoundary.cpp
+  Passes/PTOVPTOPtrBoundary.cpp
   VPTO/VPTOBufferMaterialization.cpp
-  PTOValidateVPTOIR.cpp
+  Passes/PTOValidateVPTOIR.cpp
   Passes/PTONarrowVPTOLoopCounters.cpp
   Passes/PTOConvertSCFToCFWithLoopHintsPass.cpp
   Passes/PTOPromotePersistentFragmentLoopsPass.cpp
   Passes/PTOUnrollLoopsPass.cpp
-  PTOValidateVMIIR.cpp
-  VMIExpandImplicitEnsureLayouts.cpp
+  Passes/PTOValidateVMIIR.cpp
+  VMI/VMIExpandImplicitEnsureLayouts.cpp
   VMI/VMIPreAssignmentCombine.cpp
   VMI/VMIControlFlowSupport.cpp
   VMI/VMILegalizeArithSelect.cpp
   VMI/VMIMaskGranularityAssignment.cpp
-  VMILowerUnifiedToLegacy.cpp
+  VMI/VMILowerUnifiedToLegacy.cpp
   VMI/VMINormalizeSignlessIntToUnsigned.cpp
   VMI/VMILayoutRematerializeWeakProducers.cpp
-  VMILayoutAssignment.cpp
+  VMI/VMILayoutAssignment.cpp
   VMI/VMILayoutFold.cpp
-  VMILayoutPropagation.cpp
-  VMILayoutSupport.cpp
+  VMI/VMILayoutPropagation.cpp
+  VMI/VMILayoutSupport.cpp
   VMI/VMILayoutRematerialize.cpp
-  VMILayoutSinkMaterialization.cpp
+  VMI/VMILayoutSinkMaterialization.cpp
   VMIToVPTO/VMIToVPTO.cpp
   ${_ptoas_vmi_split_units}
-  VPTOStatefulStreamFusion.cpp
+  VPTO/VPTOStatefulStreamFusion.cpp
   Lowering/PTOExpandSoftLib.cpp
-  SIMTPersistentFragmentAnalysis.cpp
+  Passes/SIMTPersistentFragmentAnalysis.cpp
   Passes/PTOAnalyzeSIMTPersistentFragment.cpp
   Passes/PTOMaterializeSIMTPersistentFragment.cpp
   Passes/PTOOutlineSIMTSections.cpp
@@ -135,13 +137,12 @@ add_mlir_dialect_library(PTOTransforms
   InsertSync/PTOInsertSync.cpp
   Passes/PTOInjectBarrierAllSync.cpp
   InsertSync/InsertSyncDebug.cpp
-  PTOMaterializeImplicitTmp.cpp
+  Passes/PTOMaterializeImplicitTmp.cpp
   Lowering/PTORematerializeFixpipeVectorQuant.cpp
-  Passes/PTOValidateIntToPtrUses.cpp
   TileOp/TileLibService.cpp
   Support/SoftLibService.cpp
-  InsertTemplateAttributes.cpp
-  ExpandTileOp.cpp
+  TileOp/InsertTemplateAttributes.cpp
+  TileOp/ExpandTileOp.cpp
   TileOp/FoldTileBufIntrinsics.cpp
   Lowering/LowerPTOToUBufOps.cpp
   TileOp/PTOLowerToOpLibCalls.cpp
@@ -234,28 +235,29 @@ add_mlir_dialect_library(PTOTransforms
   Lowering/CppPostprocess.cpp
   Support/Utils.cpp
   Passes/OptMemPlanForPipeline.cpp
-  InferPTOMemScope.cpp
-  PTOPlanMemoryModern.cpp
+  Passes/InferPTOMemScope.cpp
+  Passes/PTOPlanMemoryModern.cpp
   Passes/PTORemoveRedundantBarrier.cpp
-  InferPTOLayout.cpp
+  Passes/InferPTOLayout.cpp
   Lowering/PTOA5NormalizeTMovPass.cpp
   Lowering/PTORemoveIdentityTMov.cpp
   Lowering/PTOArithRangeOptimize.cpp
   Lowering/PTOCanonicalizeIR.cpp
   Lowering/BufferizableOpInterfaceImpl.cpp
   Lowering/ConvertToPTOOp.cpp
+  Lowering/PTOLowerGenericOps.cpp
   Passes/PTOAssignDefaultFrontendPipeIdPass.cpp
   Lowering/PTOLowerFrontendPipeOpsPass.cpp
   Passes/PTOInferValidatePipeInitPass.cpp
   Passes/PTOResolveBufferSelect.cpp
-  PTOResolveReservedBuffersPass.cpp
+  Passes/PTOResolveReservedBuffersPass.cpp
   Passes/SlotAffineAnalysis.cpp
   Passes/PTOWrapFunctionsInSectionsPass.cpp
-  PTONormalizeUncoveredTileSections.cpp
+  Passes/PTONormalizeUncoveredTileSections.cpp
   Passes/PTOValidatePhysicalSectionBoundaries.cpp
-  PTOMaterializeTileOpSections.cpp
+  Passes/PTOMaterializeTileOpSections.cpp
   VPTO/VPTONormalizeContainer.cpp
-  VPTOSplitCVModule.cpp
+  VPTO/VPTOSplitCVModule.cpp
   InsertSync/PTOIRTranslator.cpp
   InsertSync/SyncMacroModel.cpp
   InsertSync/SyncCommon.cpp
@@ -288,9 +290,11 @@ add_mlir_dialect_library(PTOTransforms
   PTOIR
   MLIRAnalysis
   MLIRIR
+  MLIRLLVMDialect
   MLIRPass
   MLIRFuncDialect
   MLIRMemRefDialect
+  MLIRMathDialect
   MLIRArithDialect
   MLIRAffineDialect
   MLIREmitCDialect
@@ -307,6 +311,7 @@ add_mlir_dialect_library(PTOTransforms
   MLIRSCFDialect
   MLIRSCFToControlFlow
   MLIRConvertToLLVMPass
+  MLIRMathToLLVM
   MLIRTargetLLVMIRExport
   MLIRToLLVMIRTranslationRegistration
   PRIVATE

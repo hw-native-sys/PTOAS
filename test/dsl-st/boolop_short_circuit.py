@@ -13,7 +13,7 @@
 import numpy as np
 
 from common import auto_main, golden_output_case
-from ptodsl import pto, scalar
+from ptodsl import pto
 
 
 ELEMENTS = 8
@@ -32,10 +32,10 @@ def boolop_and_short_circuit(
     output: pto.ptr(pto.i8, "gm"),
 ):
     for i in range(ELEMENTS):
-        value = scalar.load(values, i)
-        divisor = scalar.load(divisors, i)
+        value = pto.load(values, i)
+        divisor = pto.load(divisors, i)
         result = (divisor != 0) and ((value // divisor) > 0)
-        scalar.store(result, output, i)
+        pto.store(result, output, i)
 
 
 @pto.jit(
@@ -51,10 +51,10 @@ def boolop_or_short_circuit(
     output: pto.ptr(pto.i8, "gm"),
 ):
     for i in range(ELEMENTS):
-        value = scalar.load(values, i)
-        divisor = scalar.load(divisors, i)
+        value = pto.load(values, i)
+        divisor = pto.load(divisors, i)
         result = (divisor == 0) or ((value // divisor) > 0)
-        scalar.store(result, output, i)
+        pto.store(result, output, i)
 
 
 @pto.jit(
@@ -70,10 +70,10 @@ def boolop_int_or_keeps_operand(
     output: pto.ptr(pto.i32, "gm"),
 ):
     for i in range(ELEMENTS):
-        x = scalar.load(lhs, i)
-        y = scalar.load(rhs, i)
+        x = pto.load(lhs, i)
+        y = pto.load(rhs, i)
         result = x or (y > 0)
-        scalar.store(result, output, i)
+        pto.store(result, output, i)
 
 
 @pto.jit(
@@ -89,10 +89,10 @@ def boolop_flag_and_integer_rhs(
     output: pto.ptr(pto.i32, "gm"),
 ):
     for i in range(ELEMENTS):
-        flag = scalar.load(flags, i)
-        value = scalar.load(values, i)
+        flag = pto.load(flags, i)
+        value = pto.load(values, i)
         result = (flag != 0) and value
-        scalar.store(result, output, i)
+        pto.store(result, output, i)
 
 
 @pto.jit(
@@ -108,10 +108,10 @@ def boolop_index_and_i1(
     output: pto.ptr(pto.i32, "gm"),
 ):
     for i in range(ELEMENTS):
-        index = scalar.index_cast(scalar.load(indices, i))
-        value = scalar.load(values, i)
+        index = pto.cast(pto.load(indices, i), pto.index)
+        value = pto.load(values, i)
         result = index and (value > 0)
-        scalar.store(result, output, i)
+        pto.store(result, output, i)
 
 
 def make_division_inputs():

@@ -111,6 +111,10 @@ void TPushToAivOp::getEffects(
     SmallVectorImpl<SideEffects::EffectInstance<MemoryEffects::Effect>>
         &effects) {
   addEffect(effects, &getTileMutable(), MemoryEffects::Read::get());
+  effects.emplace_back(MemoryEffects::Read::get(),
+                       SideEffects::DefaultResource::get());
+  effects.emplace_back(MemoryEffects::Write::get(),
+                       SideEffects::DefaultResource::get());
 
   auto funcOp = getOperation()->getParentOfType<func::FuncOp>();
   if (!funcOp) {
@@ -138,6 +142,20 @@ void TPushToAivOp::getEffects(
                          getFixpipeQuantStateIdAttr(getOperation(), getId()),
                          FixpipeQuantStateResource::get());
   }
+}
+
+void TPushToAicOp::getEffects(
+    SmallVectorImpl<SideEffects::EffectInstance<MemoryEffects::Effect>>
+        &effects) {
+  addEffect(effects, &getTileMutable(), MemoryEffects::Read::get());
+  auto aivSubblockId = getAivSubblockidMutable();
+  if (!aivSubblockId.empty()) {
+    addEffect(effects, &*aivSubblockId.begin(), MemoryEffects::Read::get());
+  }
+  effects.emplace_back(MemoryEffects::Read::get(),
+                       SideEffects::DefaultResource::get());
+  effects.emplace_back(MemoryEffects::Write::get(),
+                       SideEffects::DefaultResource::get());
 }
 
 void TAllocOp::getEffects(
@@ -189,51 +207,70 @@ void SetQuantVectorOp::getEffects(
                        FixpipeQuantStateResource::get());
 }
 
-static constexpr const char kConvertRoundingKeywords[] = "r/a/f/c/z/o/h";
-
-static ParseResult parseConvertRounding(OpAsmParser &parser,
-                                        RoundingAttr &roundingAttr) {
-  StringRef roundingKeyword;
-  if (parser.parseKeyword("round") || parser.parseLParen() ||
-      parser.parseKeyword(&roundingKeyword) || parser.parseRParen()) {
+static OptionalParseResult
+parseOptionalGenericRounding(OpAsmParser &parser,
+                             FloatRoundingModeAttr &roundingAttr) {
+  if (failed(parser.parseOptionalKeyword("round"))) {
+    return std::nullopt;
+  }
+  if (parser.parseLParen()) {
     return failure();
   }
-  std::optional<Rounding> rounding = symbolizeRounding(roundingKeyword);
+  StringRef token;
+  bool parseFailed = failed(parser.parseKeyword(&token)) ||
+                     failed(parser.parseRParen());
+  if (parseFailed) {
+    return failure();
+  }
+  static const llvm::StringMap<FloatRoundingMode> modes = {
+      {"r", FloatRoundingMode::to_nearest_even},
+      {"a", FloatRoundingMode::to_nearest_away},
+      {"f", FloatRoundingMode::downward},
+      {"c", FloatRoundingMode::upward},
+      {"z", FloatRoundingMode::toward_zero},
+      {"o", FloatRoundingMode::to_odd},
+      {"h", FloatRoundingMode::hybrid},
+  };
+  auto it = modes.find(token);
+  if (it == modes.end()) {
+    return parser.emitError(parser.getCurrentLocation())
+           << "expected rounding r/a/f/c/z/o/h";
+  }
+  roundingAttr = FloatRoundingModeAttr::get(parser.getContext(), it->second);
+  return success();
+}
+
+static void printOptionalGenericRounding(OpAsmPrinter &printer, Operation *op,
+                                         FloatRoundingModeAttr rounding) {
   if (!rounding) {
-    return parser.emitError(parser.getCurrentLocation())
-           << "expected convert rounding to be one of "
-           << kConvertRoundingKeywords;
+    return;
   }
-  roundingAttr = RoundingAttr::get(parser.getContext(), *rounding);
+  static constexpr StringLiteral tokens[] = {"r", "f", "c", "z", "a", "o", "h"};
+  printer << "round(" << tokens[static_cast<unsigned>(rounding.getValue())]
+          << ")";
+}
+
+static OptionalParseResult
+parseOptionalSaturation(OpAsmParser &parser, SaturationAttr &saturationAttr) {
+  if (succeeded(parser.parseOptionalKeyword("sat"))) {
+    saturationAttr =
+        SaturationAttr::get(parser.getContext(), Saturation::Enable);
+  } else if (succeeded(parser.parseOptionalKeyword("nosat"))) {
+    saturationAttr =
+        SaturationAttr::get(parser.getContext(), Saturation::Disable);
+  } else {
+    return std::nullopt;
+  }
   return success();
 }
 
-static void printConvertRounding(OpAsmPrinter &printer, Operation *op,
-                                 RoundingAttr rounding) {
-  (void)op;
-  printer << "round(" << stringifyRounding(rounding.getValue()) << ")";
-}
-
-static ParseResult parseConvertSaturation(OpAsmParser &parser,
-                                          SaturationAttr &saturationAttr) {
-  StringRef saturationKeyword;
-  if (parser.parseKeyword(&saturationKeyword)) {
-    return failure();
+static void printOptionalSaturation(OpAsmPrinter &printer, const Operation *op,
+                                    SaturationAttr saturation) {
+  bool isEnabled =
+      saturation && saturation.getValue() != Saturation::Disable;
+  if (isEnabled) {
+    printer << "sat";
   }
-  std::optional<Saturation> saturation =
-      symbolizeSaturation(saturationKeyword);
-  if (!saturation) {
-    return parser.emitError(parser.getCurrentLocation())
-           << "expected convert saturation to be sat or nosat";
-  }
-  saturationAttr = SaturationAttr::get(parser.getContext(), *saturation);
-  return success();
-}
-
-static void printConvertSaturation(OpAsmPrinter &printer, Operation *op,
-                                   SaturationAttr saturation) {
-  (void)op;
-  printer << stringifySaturation(saturation.getValue());
 }
 
 static ParseResult parseSignedness(OpAsmParser &parser,
@@ -251,10 +288,65 @@ static ParseResult parseSignedness(OpAsmParser &parser,
   return success();
 }
 
-static void printSignedness(OpAsmPrinter &printer, Operation *op,
+static void printSignedness(OpAsmPrinter &printer, const Operation *op,
                             SignednessAttr signedness) {
   (void)op;
   printer << stringifySignedness(signedness.getValue());
+}
+
+static ParseResult
+parseScalarCmpPredicate(OpAsmParser &parser,
+                        ScalarCmpPredicateAttr &predicateAttr) {
+  StringRef predicateKeyword;
+  if (parser.parseKeyword(&predicateKeyword)) {
+    return failure();
+  }
+  std::optional<ScalarCmpPredicate> predicate =
+      symbolizeScalarCmpPredicate(predicateKeyword);
+  if (!predicate) {
+    return parser.emitError(parser.getCurrentLocation())
+           << "expected scalar comparison predicate to be one of "
+              "eq, ne, lt, le, gt, ge, or an explicit floating-point "
+              "predicate";
+  }
+  predicateAttr = ScalarCmpPredicateAttr::get(parser.getContext(), *predicate);
+  return success();
+}
+
+static void printScalarCmpPredicate(OpAsmPrinter &printer, Operation *op,
+                                    ScalarCmpPredicateAttr predicate) {
+  printer << stringifyScalarCmpPredicate(predicate.getValue());
+}
+
+static Type getPTOI1SameShape(Type type) {
+  if (auto vectorType = dyn_cast<VectorType>(type)) {
+    return VectorType::Builder(vectorType)
+        .setElementType(IntegerType::get(type.getContext(), 1));
+  }
+  return IntegerType::get(type.getContext(), 1);
+}
+
+static ParseResult parseSelectType(OpAsmParser &parser, Type &conditionType,
+                                   Type &resultType) {
+  Type firstType;
+  if (failed(parser.parseType(firstType))) {
+    return failure();
+  }
+  if (succeeded(parser.parseOptionalComma())) {
+    conditionType = firstType;
+    return parser.parseType(resultType);
+  }
+  resultType = firstType;
+  conditionType = getPTOI1SameShape(resultType);
+  return success();
+}
+
+static void printSelectType(OpAsmPrinter &printer, Operation *op,
+                            Type conditionType, Type resultType) {
+  if (conditionType != getPTOI1SameShape(resultType)) {
+    printer << conditionType << ", ";
+  }
+  printer << resultType;
 }
 
 static OptionalParseResult parseOptionalSignedness(OpAsmParser &parser,
@@ -271,7 +363,7 @@ static OptionalParseResult parseOptionalSignedness(OpAsmParser &parser,
   return std::nullopt;
 }
 
-static void printOptionalSignedness(OpAsmPrinter &printer, Operation *op,
+static void printOptionalSignedness(OpAsmPrinter &printer, const Operation *op,
                                     SignednessAttr signedness) {
   (void)op;
   printer << stringifySignedness(signedness.getValue());

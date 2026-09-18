@@ -333,7 +333,16 @@ def _expect_raises(exc_type, callback, message):
     raise AssertionError(f"expected {exc_type.__name__} containing {message!r}")
 
 
-def main() -> None:
+def _assert_read_before_rebinding_zero_constant(mlir_text: str) -> None:
+    zero_match = re.search(r"(%\d+) = pto\.constant 0 : i64", mlir_text)
+    assert zero_match is not None
+    assert re.search(
+        rf"scf\.yield {re.escape(zero_match.group(1))}, %\d+ : i64, i64",
+        mlir_text,
+    )
+
+
+def _check_explicit_section_surface() -> None:
     text = explicit_sections_probe.compile().mlir_text()
     assert text.count("pto.section.cube {") == 1
     assert text.count("pto.section.vector {") == 1
@@ -378,6 +387,8 @@ def main() -> None:
         "pto.section() is not allowed inside a cube or simd subkernel body",
     )
 
+
+def _check_lexical_section_rebinding() -> None:
     lexical_text = lexical_section_rebinding_probe.compile().mlir_text()
     assert lexical_text.count("pto.section.cube {") == 1
     assert lexical_text.count("pto.section.vector {") == 1
@@ -400,6 +411,8 @@ def main() -> None:
         module = Module.parse(sibling_conditional_text, context)
         module.operation.verify()
 
+
+def _check_single_sided_conditional_rebinding() -> None:
     sibling_single_sided_text = lexical_section_sibling_single_sided_conditional_rebinding_probe.compile().mlir_text()
     assert sibling_single_sided_text.count("pto.section.cube {") == 1
     assert sibling_single_sided_text.count("pto.section.vector {") == 1
@@ -427,14 +440,13 @@ def main() -> None:
         module.operation.verify()
 
     read_before_rebinding_text = lexical_section_single_sided_read_before_rebinding_probe.compile().mlir_text()
-    assert re.search(
-        r"scf\.yield %c0_i64, %[\d]+ : i64, i64",
-        read_before_rebinding_text,
-    )
+    _assert_read_before_rebinding_zero_constant(read_before_rebinding_text)
     with make_context() as context:
         module = Module.parse(read_before_rebinding_text, context)
         module.operation.verify()
 
+
+def _check_lexical_section_shapes() -> None:
     branch_merge_then_while_text = lexical_section_branch_merge_then_while_probe.compile().mlir_text()
     assert branch_merge_then_while_text.count("pto.section.cube {") == 1
     assert "scf.if" in branch_merge_then_while_text
@@ -470,6 +482,8 @@ def main() -> None:
     assert "arith.addi" not in vector_text
     assert "pto.wait_flag_dyn" in vector_text
 
+
+def _check_section_diagnostics() -> None:
     _expect_raises(
         RuntimeError,
         lambda: lexical_section_escape_probe.compile(),
@@ -493,6 +507,14 @@ def main() -> None:
 
     unspecified_text = unspecified_kernel_kind_section_probe.compile().mlir_text()
     assert "pto.section.vector {" in unspecified_text
+
+
+def main() -> None:
+    _check_explicit_section_surface()
+    _check_lexical_section_rebinding()
+    _check_single_sided_conditional_rebinding()
+    _check_lexical_section_shapes()
+    _check_section_diagnostics()
 
 
 if __name__ == "__main__":

@@ -39,9 +39,9 @@ module attributes {pto.target_arch = "a5"} {
         %dynamic = arith.muli %iv64, %c128_i64 : i64
         %offset64 = arith.addi %range_base, %dynamic : i64
         %addr = arith.index_cast %offset64 : i64 to index
-        %v = pto.load_scalar %buf[%addr] : !pto.ptr<f32, ub> -> f32
+        %v = pto.load %buf[%addr] : !pto.ptr<f32, ub> -> f32
         %v2 = arith.addf %v, %v : f32
-        pto.store_scalar %v2, %buf[%addr] : !pto.ptr<f32, ub>, f32
+        pto.store %v2, %buf[%addr] : !pto.ptr<f32, ub>, f32
       }
     }
     return
@@ -59,9 +59,9 @@ module attributes {pto.target_arch = "a5"} {
   // CHECK:     %[[DYN:.*]] = arith.muli %[[IV64]], %{{.*}} : i64
   // CHECK:     %[[OFF:.*]] = arith.addi %[[RANGEBASE]], %[[DYN]] : i64
   // CHECK:     %[[ADDR:.*]] = arith.index_cast %[[OFF]] : i64 to index
-  // CHECK:     pto.load_scalar
+  // CHECK:     pto.load
   // CHECK:     arith.addf
-  // CHECK:     pto.store_scalar
+  // CHECK:     pto.store
 
   // An unsigned index<->integer cast (arith.index_castui) must also be
   // hoistable: VPTO soft post-update emits this form for unsigned offset and
@@ -88,7 +88,7 @@ module attributes {pto.target_arch = "a5"} {
         %dynamic = arith.muli %iv64, %c128_i64 : i64
         %dyn_index = arith.index_cast %dynamic : i64 to index
         %addr = arith.addi %base, %dyn_index : index
-        pto.store_scalar %c0_i32, %buf[%addr] : !pto.ptr<i32, ub>, i32
+        pto.store %c0_i32, %buf[%addr] : !pto.ptr<i32, ub>, i32
       }
     }
     return
@@ -106,7 +106,31 @@ module attributes {pto.target_arch = "a5"} {
   // CHECK:     %[[DYN:.*]] = arith.muli %[[IV64]], %{{.*}} : i64
   // CHECK:     %[[DYNIDX:.*]] = arith.index_cast %[[DYN]] : i64 to index
   // CHECK:     %[[ADDR:.*]] = arith.addi %[[BASE]], %[[DYNIDX]] : index
-  // CHECK:     pto.store_scalar
+  // CHECK:     pto.store
+
+  // The unified pointer cast must remain hoistable. This case covers the
+  // integer-to-pointer form used by guarded address chains.
+  func.func @guarded_licm_castptr(%raw: i64, %count: index) {
+    %c0 = arith.constant 0 : index
+    %c1 = arith.constant 1 : index
+    %c1000 = arith.constant 1000 : index
+    %zero = arith.constant 0 : i32
+    scf.for %iv = %c0 to %count step %c1 {
+      %in_bounds = arith.cmpi slt, %iv, %c1000 : index
+      scf.if %in_bounds {
+        %buf = pto.castptr %raw : i64 -> !pto.ptr<i32, ub>
+        pto.store %zero, %buf[%iv] : !pto.ptr<i32, ub>, i32
+      }
+    }
+    return
+  }
+
+  // CHECK-LABEL: func.func @guarded_licm_castptr
+  // CHECK: %[[BUF:.*]] = pto.castptr %{{.*}} : i64 -> !pto.ptr<i32, ub>
+  // CHECK: scf.for
+  // CHECK:   scf.if
+  // CHECK-NOT: pto.castptr
+  // CHECK:     pto.store %{{.*}}, %[[BUF]]
 
   // Invariants must climb out of nested scf.if guards as well.
   func.func @guarded_licm_nested_if(%buf: !pto.ptr<f32, ub>, %lane: i32,
@@ -129,8 +153,8 @@ module attributes {pto.target_arch = "a5"} {
           %dynamic = arith.muli %iv64, %c128_i64 : i64
           %offset64 = arith.addi %range_base, %dynamic : i64
           %addr = arith.index_cast %offset64 : i64 to index
-          %v = pto.load_scalar %buf[%addr] : !pto.ptr<f32, ub> -> f32
-          pto.store_scalar %v, %buf[%addr] : !pto.ptr<f32, ub>, f32
+          %v = pto.load %buf[%addr] : !pto.ptr<f32, ub> -> f32
+          pto.store %v, %buf[%addr] : !pto.ptr<f32, ub>, f32
         }
       }
     }
@@ -149,8 +173,8 @@ module attributes {pto.target_arch = "a5"} {
   // CHECK:       %[[IV64:.*]] = arith.index_cast %[[IV:.*]] : index to i64
   // CHECK:       %[[DYN:.*]] = arith.muli %[[IV64]], %{{.*}} : i64
   // CHECK:       %[[OFF:.*]] = arith.addi %[[RANGEBASE]], %[[DYN]] : i64
-  // CHECK:       pto.load_scalar
-  // CHECK:       pto.store_scalar
+  // CHECK:       pto.load
+  // CHECK:       pto.store
 
   // Innermost-first processing: the inner loop sits inside an outer guard.  The
   // invariant chain must climb from the inner loop's guard, out of the outer
@@ -177,8 +201,8 @@ module attributes {pto.target_arch = "a5"} {
             %dynamic = arith.muli %iv64, %c128_i64 : i64
             %offset64 = arith.addi %range_base, %dynamic : i64
             %addr = arith.index_cast %offset64 : i64 to index
-            %v = pto.load_scalar %buf[%addr] : !pto.ptr<f32, ub> -> f32
-            pto.store_scalar %v, %buf[%addr] : !pto.ptr<f32, ub>, f32
+            %v = pto.load %buf[%addr] : !pto.ptr<f32, ub> -> f32
+            pto.store %v, %buf[%addr] : !pto.ptr<f32, ub>, f32
           }
         }
       }
@@ -199,8 +223,8 @@ module attributes {pto.target_arch = "a5"} {
   // CHECK:         %[[IV64:.*]] = arith.index_cast %[[IV:.*]] : index to i64
   // CHECK:         %[[DYN:.*]] = arith.muli %[[IV64]], %{{.*}} : i64
   // CHECK:         %[[OFF:.*]] = arith.addi %[[RANGEBASE]], %[[DYN]] : i64
-  // CHECK:         pto.load_scalar
-  // CHECK:         pto.store_scalar
+  // CHECK:         pto.load
+  // CHECK:         pto.store
 
   // Negative (IV-dependent): every address expression transitively depends
   // on the induction variable, so nothing may be hoisted in front of the loop.
@@ -219,8 +243,8 @@ module attributes {pto.target_arch = "a5"} {
         %dynamic = arith.muli %iv64, %c128_i64 : i64
         %combined = arith.addi %slot, %dynamic : i64
         %addr = arith.index_cast %combined : i64 to index
-        %v = pto.load_scalar %buf[%addr] : !pto.ptr<f32, ub> -> f32
-        pto.store_scalar %v, %buf[%addr] : !pto.ptr<f32, ub>, f32
+        %v = pto.load %buf[%addr] : !pto.ptr<f32, ub> -> f32
+        pto.store %v, %buf[%addr] : !pto.ptr<f32, ub>, f32
       }
     }
     return
@@ -236,8 +260,8 @@ module attributes {pto.target_arch = "a5"} {
   // CHECK:     arith.index_cast
   // CHECK:     arith.muli
   // CHECK:     arith.addi
-  // CHECK:     pto.load_scalar
-  // CHECK:     pto.store_scalar
+  // CHECK:     pto.load
+  // CHECK:     pto.store
 
   // Negative (non-speculatable): the divsi divisor is an unknown function
   // argument, so even though its operands are loop-invariant and hoistable,
@@ -256,8 +280,8 @@ module attributes {pto.target_arch = "a5"} {
         %slot = arith.muli %w64, %c32_i64 : i64
         %quotient = arith.divsi %slot, %divisor : i64
         %addr = arith.index_cast %slot : i64 to index
-        %v = pto.load_scalar %buf[%addr] : !pto.ptr<f32, ub> -> f32
-        pto.store_scalar %v, %buf[%addr] : !pto.ptr<f32, ub>, f32
+        %v = pto.load %buf[%addr] : !pto.ptr<f32, ub> -> f32
+        pto.store %v, %buf[%addr] : !pto.ptr<f32, ub>, f32
       }
     }
     return
@@ -270,8 +294,8 @@ module attributes {pto.target_arch = "a5"} {
   // CHECK:   arith.cmpi
   // CHECK:   scf.if
   // CHECK:     %[[QUOTIENT:.*]] = arith.divsi %[[SLOT]], %{{.*}} : i64
-  // CHECK:     pto.load_scalar
-  // CHECK:     pto.store_scalar
+  // CHECK:     pto.load
+  // CHECK:     pto.store
 
   // Negative (SIMT referential transparency): pto.get_clock32 reads the
   // clock, pto.get_vms4_sr reads the VMS4 status register, and
@@ -294,7 +318,7 @@ module attributes {pto.target_arch = "a5"} {
         %ballot = pto.vote_ballot %pred : i1 -> i32
         %shuf = pto.shuffle_idx %v, %c1_i32 : i32, i32 -> i32
         %c0_i32 = arith.constant 0 : i32
-        pto.store_scalar %c0_i32, %buf[%iv] : !pto.ptr<i32, ub>, i32
+        pto.store %c0_i32, %buf[%iv] : !pto.ptr<i32, ub>, i32
       }
     }
     return
@@ -312,7 +336,7 @@ module attributes {pto.target_arch = "a5"} {
   // CHECK:     pto.get_vms4_sr
   // CHECK:     pto.vote_ballot
   // CHECK:     pto.shuffle_idx
-  // CHECK:     pto.store_scalar
+  // CHECK:     pto.store
 
   // Negative (non-speculatable "total" div): arith.floordivsi is in the total
   // integer-binary family without ConditionallySpeculatable, yet dividing by
@@ -330,7 +354,7 @@ module attributes {pto.target_arch = "a5"} {
       scf.if %in_bounds {
         %quotient = arith.floordivsi %x, %divisor : i64
         %addr = arith.index_cast %quotient : i64 to index
-        pto.store_scalar %c0_i32, %buf[%addr] : !pto.ptr<i32, ub>, i32
+        pto.store %c0_i32, %buf[%addr] : !pto.ptr<i32, ub>, i32
       }
     }
     return
@@ -342,5 +366,5 @@ module attributes {pto.target_arch = "a5"} {
   // CHECK:   arith.cmpi
   // CHECK:   scf.if
   // CHECK:     %[[QUOTIENT:.*]] = arith.floordivsi %{{.*}}, %{{.*}} : i64
-  // CHECK:     pto.store_scalar
+  // CHECK:     pto.store
 }

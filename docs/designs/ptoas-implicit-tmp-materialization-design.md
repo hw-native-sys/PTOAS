@@ -597,7 +597,7 @@ TSORT32, TQUANT
 | 条件性 tmp，不应无条件 materialize | `TTRANS`、`TCVT`、`TPOW`、`TPOWS`、`TRSQRT`、`TMRGSORT`、`TSORT32` | 需要先判断精度、dtype、layout、format 或尾部条件。 |
 | 已从 mandatory tmp 改为 optional tmp | `TTRANS`、`TXOR`、`TXORS`、`TPRELU`、`TROWPROD`、`TROWSUM`、`TROWMAX`、`TROWMIN`、`TROWARGMAX`、`TROWARGMIN`、`TCOLARGMAX`、`TCOLARGMIN`、`TSEL`、`TSELS`、`TREM`、`TREMS` | ODS、parse/print、verifier、MemoryEffects、materialize 和 lowering 已接入。 |
 | 当前 PTOAS IR 已有 optional tmp | `TCOLSUM`、`TRSQRT`、`TPOW`、`TPOWS`、`TSORT32`、`TQUANT` | 可直接纳入 `pto-materialize-implicit-tmp` 的后续实现。 |
-| 已有 optional tmp 但不纳入 implicit-tmp materialize | `TGATHER` | main 分支要求 A2/A3 显式 tmp（verifier 拒绝省略），A5 index-form 设计为无 tmp；`replaceTGatherWithTmp` 实现保留但当前不在 dispatch 中启用。 |
+| 按形式补齐 optional tmp | `TGATHER` | A2/A3 index/compare form 自动补齐，A5 compare form 补占位 tile；A5 index form 和 mask form 不补 tmp。 |
 | 当前 PTOAS IR 暂无对应 op | `TADDDEQRELU` | 需先完成 PTOAS IR 接入；`TCVT` 已新增 optional tmp operand。 |
 
 ### 通用规则
@@ -783,13 +783,11 @@ TGATHER, TTRANS, TCVT
 
 TGATHER：
 
-- 当前 PTOAS IR 已支持 optional tmp，但 **tgather 不纳入 implicit-tmp materialize 范围**。
-- main 分支（PR #1080 "Add TGATHER indices and mask"）对 tgather 的 tmp 契约更严：A2/A3 index-form 和所有 compare-form 都要求显式 `tmp`（verifier 报 `index-form tgather expects both indices and tmp` / `compare-form tgather expects dst, cdst, kValue, and tmp`）；A5 index-form 设计为不带 tmp（emit `TGATHER(src, indices, dst)` 三参数）。
-- 因此 tgather 省略 tmp 时不由 `pto-materialize-implicit-tmp` 自动补齐，而是由 verifier 直接拒绝（A2/A3）或允许无 tmp（A5 index-form）。
-- index form：A2/A3 C++ API 需要 tmp；tmp dtype 与 indices dtype 一致，shape 覆盖 indices；A5 不使用 tmp。
-- compare form：A2/A3 tmp 是合并暂存缓冲区，包含 `cmpsTmp`、`indexTmp`、`cvtTmp` 三个区域；最小字节数按 PTO-ISA 文档公式计算；A5 不使用 tmp。
-- mask form 不使用 tmp。
-- A2/A3 index / compare form 必须显式提供 tmp；A5 index-form 不带 tmp。
+- level1/level2 的 A2/A3 index/compare form 省略 `tmp` 时，在 memplan 前自动分配；显式 `tmp` 保持不变。
+- index form：tmp 与 indices 使用相同的 dtype、物理形状和有效形状。自动补齐要求这些形状为静态值。
+- compare form：对物理形状为 `R x C` 的 src，生成 `R x T` 的 i32 tmp。位图占 `R*T` 字节，i32 索引占 `4*R*C` 字节，阈值转换预留 `alignUp(4*R, 256)` 字节。令 `P = 4*R*C + alignUp(4*R, 256)`，取 `T = alignUp(ceil(P/(3*R)), 32)`，使分配的 `4*R*T` 字节覆盖三个区域，并保持各区域起始地址 32 字节对齐。实现通过逐级整除向上取整避免计算 `3*R`，并检查尺寸计算的整数溢出。
+- A5 index form 和 mask form 不补 tmp；level1/level2 的 A5 compare form 补 32 字节占位 tile。
+- level3 的 A2/A3 index form 和所有架构的 compare form 缺少 tmp 时报告 `requires explicit tmp when PlanMemory is skipped`。
 
 TTRANS：
 

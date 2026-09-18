@@ -17,7 +17,8 @@ module attributes {pto.target_arch = "a3", pto.kernel_kind = #pto.kernel_kind<ve
     %c0 = arith.constant 0 : i64
     %c1 = arith.constant 1 : i64
     %ub = pto.castptr %c0 : i64 -> !pto.ptr<f32, ub>
-    pto.mte_gm_ub %arg0, %ub, %c0, %c1
+    %c32 = arith.constant 32 : i64
+    pto.mte_gm_ub %arg0, %ub, %c0, %c32
       nburst(%c1, %c1, %c1)
       : !pto.ptr<f32, gm>, !pto.ptr<f32, ub>, i64, i64, i64, i64, i64
     return
@@ -27,7 +28,8 @@ module attributes {pto.target_arch = "a3", pto.kernel_kind = #pto.kernel_kind<ve
     %c0 = arith.constant 0 : i64
     %c1 = arith.constant 1 : i64
     %ub = pto.castptr %c0 : i64 -> !pto.ptr<f32, ub>
-    pto.mte_gm_ub %arg0, %ub, %c0, %c1
+    %c32 = arith.constant 32 : i64
+    pto.mte_gm_ub %arg0, %ub, %c0, %c32
       nburst(%c1, %c1, %c1)
       loop(%c1, %c1, %c1)
       loop1(%c1, %c1, %c1)

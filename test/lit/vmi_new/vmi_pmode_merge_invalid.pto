@@ -1,0 +1,86 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+
+// VMI pmode is a zero-only predicate mode: any other value must be rejected by
+// the verifier of every op family that carries the attribute.
+// RUN: not pto-test-opt %s -split-input-file 2>&1 | FileCheck %s
+
+module {
+  func.func @binary_merge(%lhs: !pto.vmi.vreg<64xf32>,
+                          %rhs: !pto.vmi.vreg<64xf32>,
+                          %mask: !pto.vmi.mask<64xpred>)
+      -> !pto.vmi.vreg<64xf32> {
+    %result = pto.vmi.vadd %lhs, %rhs, %mask {pmode = "merge"}
+        : !pto.vmi.vreg<64xf32>, !pto.vmi.vreg<64xf32>,
+          !pto.vmi.mask<64xpred> -> !pto.vmi.vreg<64xf32>
+    return %result : !pto.vmi.vreg<64xf32>
+  }
+}
+
+// CHECK: 'pto.vmi.vadd' op invalid pmode "merge"; expected "zero"
+
+// -----
+
+module {
+  func.func @unary_merge(%source: !pto.vmi.vreg<64xf32>,
+                         %mask: !pto.vmi.mask<64xpred>)
+      -> !pto.vmi.vreg<64xf32> {
+    %result = pto.vmi.vabs %source, %mask {pmode = "merge"}
+        : !pto.vmi.vreg<64xf32>, !pto.vmi.mask<64xpred>
+        -> !pto.vmi.vreg<64xf32>
+    return %result : !pto.vmi.vreg<64xf32>
+  }
+}
+
+// CHECK: 'pto.vmi.vabs' op invalid pmode "merge"; expected "zero"
+
+// -----
+
+module {
+  func.func @vec_scalar_merge(
+      %source: !pto.vmi.vreg<64xf32>,
+      %scalar: f32,
+      %mask: !pto.vmi.mask<64xpred>) -> !pto.vmi.vreg<64xf32> {
+    %result = pto.vmi.vmuls %source, %scalar, %mask {pmode = "merge"}
+        : !pto.vmi.vreg<64xf32>, f32, !pto.vmi.mask<64xpred>
+        -> !pto.vmi.vreg<64xf32>
+    return %result : !pto.vmi.vreg<64xf32>
+  }
+}
+
+// CHECK: 'pto.vmi.vmuls' op invalid pmode "merge"; expected "zero"
+
+// -----
+
+module {
+  func.func @vmull_merge(
+      %a: !pto.vmi.vreg<64xi32>, %b: !pto.vmi.vreg<64xi32>,
+      %mask: !pto.vmi.mask<64xpred>) {
+    %low, %high = pto.vmi.vmull %a, %b, %mask {pmode = "merge"}
+        : !pto.vmi.vreg<64xi32>, !pto.vmi.vreg<64xi32>,
+          !pto.vmi.mask<64xpred>
+        -> !pto.vmi.vreg<64xi32>, !pto.vmi.vreg<64xi32>
+    return
+  }
+}
+
+// CHECK: 'pto.vmi.vmull' op invalid pmode "merge"; expected "zero"
+
+// -----
+
+module {
+  func.func @vload_merge(%src: !pto.ptr<f32, ub>, %offset: index)
+      -> !pto.vmi.vreg<64xf32> {
+    %r = pto.vmi.vload %src[%offset] {pmode = "merge"}
+        : !pto.ptr<f32, ub> -> !pto.vmi.vreg<64xf32>
+    return %r : !pto.vmi.vreg<64xf32>
+  }
+}
+
+// CHECK: 'pto.vmi.vload' op invalid pmode "merge"; expected "zero"
+

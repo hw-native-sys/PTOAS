@@ -24,7 +24,7 @@ Dispatch tree (compile-time, since *threads* / *scale* are Python ints)::
 
 from __future__ import annotations
 
-from . import scalar
+from . import _scalar as scalar
 from ._control_flow import if_, for_
 from ._ops import const as _const, get_laneid, get_tid_x, redux_add, redux_max, redux_min, shuffle_bfly, syncthreads
 from ._surface_values import unwrap_surface_value
@@ -186,7 +186,7 @@ def _write_warp_partials(warp_val, scratch, *, wid, lid, scale: int) -> None:
     with if_(is_writer) as br:
         with br.then_:
             slot = wid * scale + lid
-            scalar.store(warp_val, scratch, scalar.index_cast(slot))
+            scalar.store(warp_val, scratch, slot)
 
 
 def _combine_warp_partials(lid, scratch, *, num_warps: int, scale: int,
@@ -199,7 +199,7 @@ def _combine_warp_partials(lid, scratch, *, num_warps: int, scale: int,
     if scale == 1:
         loaded = scalar.select(
             lid < num_warps,
-            scalar.load(scratch, scalar.index_cast(lid)),
+            scalar.load(scratch, lid),
             identity,
         )
         return _REDUCER_REDUX[reducer](loaded)
@@ -208,7 +208,7 @@ def _combine_warp_partials(lid, scratch, *, num_warps: int, scale: int,
     if total <= 32:
         loaded = scalar.select(
             lid < total,
-            scalar.load(scratch, scalar.index_cast(lid)),
+            scalar.load(scratch, lid),
             identity,
         )
         return _emit_butterfly(
@@ -221,7 +221,7 @@ def _combine_warp_partials(lid, scratch, *, num_warps: int, scale: int,
     my_slot = lid % scale
     for w in range(num_warps):
         idx_val = w * scale + my_slot
-        loaded_v = scalar.load(scratch, scalar.index_cast(idx_val))
+        loaded_v = scalar.load(scratch, idx_val)
         reduced = combine(reduced, loaded_v)
     return scalar.select(is_reducer, reduced, identity)
 
@@ -252,10 +252,10 @@ def _broadcast_warp_result(partial_reduced, scratch, *, tx, scale: int):
     is_global_leader = tx < scale
     with if_(is_global_leader) as br5:
         with br5.then_:
-            scalar.store(partial_reduced, scratch, scalar.index_cast(tx))
+            scalar.store(partial_reduced, scratch, tx)
 
     syncthreads()
-    result = scalar.load(scratch, scalar.index_cast(tx % scale))
+    result = scalar.load(scratch, tx % scale)
     syncthreads()
     return result
 
@@ -303,16 +303,16 @@ def _emit_ub_reduce(x, scratch, *,
     lane = tx % threads
 
     # ── each lane writes x → scratch[tx] ─────────────────────────────────
-    scalar.store(x, scratch, scalar.index_cast(tx))
+    scalar.store(x, scratch, tx)
     syncthreads()
 
     # ── reducers sequentially combine ────────────────────────────────────
-    is_reducer = lane < scale
+    is_reducer = scalar.cmp(lane, scale, "lt")
     with if_(is_reducer) as br:
         with br.then_:
             group_offset = group * threads
             first_elem = group_offset + lane
-            acc = scalar.load(scratch, scalar.index_cast(first_elem))
+            acc = scalar.load(scratch, first_elem)
 
             carry_loop = for_(scale, threads, step=scale).carry(acc=acc)
             with carry_loop:
@@ -330,14 +330,14 @@ def _emit_ub_reduce(x, scratch, *,
     syncthreads()
 
     # ── per-class leader writes back ─────────────────────────────────────
-    is_leader = lane < scale
+    is_leader = scalar.cmp(lane, scale, "lt")
     with if_(is_leader) as br5:
         with br5.then_:
-            scalar.store(flag, scratch, scalar.index_cast(group * threads + lane))
+            scalar.store(flag, scratch, group * threads + lane)
 
     # ── broadcast ────────────────────────────────────────────────────────
     syncthreads()
-    result = scalar.load(scratch, scalar.index_cast(group * threads + (tx % scale)))
+    result = scalar.load(scratch, group * threads + (tx % scale))
     syncthreads()
 
     return result

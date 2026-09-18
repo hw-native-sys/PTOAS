@@ -26,7 +26,7 @@ module attributes {pto.target_arch = "a5"} {
     %2 = arith.index_cast %arg4 : i32 to index
     %3 = arith.cmpi slt, %1, %2 : index
     scf.if %3 {
-      %abs_pos_inline514__tile = pto.load_scalar %arg2[%1] : !pto.ptr<i32> -> i32
+      %abs_pos_inline514__tile = pto.load %arg2[%1] : !pto.ptr<i32> -> i32
       %4 = arith.index_cast %abs_pos_inline514__tile : i32 to index
       %5 = arith.addi %4, %c1_index : index
       %6 = arith.divsi %5, %c4_index : index
@@ -59,7 +59,7 @@ module attributes {pto.target_arch = "a5"} {
           %25 = arith.index_cast %22 : i32 to index
           %26 = arith.addi %21, %25 : index
           %27 = arith.divsi %26, %c128_index : index
-          %blk_inline502__tile = pto.load_scalar %arg3[%27] : !pto.ptr<i32> -> i32
+          %blk_inline502__tile = pto.load %arg3[%27] : !pto.ptr<i32> -> i32
           %29 = arith.index_cast %blk_inline502__tile : i32 to index
           %30 = arith.cmpi sle, %c0_index, %29 : index
           scf.if %30 {

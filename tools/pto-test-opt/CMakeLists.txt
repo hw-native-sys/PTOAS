@@ -26,6 +26,8 @@ target_link_libraries(pto-test-opt PRIVATE
   MLIRFuncDialect
   MLIRArithDialect
   MLIRMemRefDialect
+  MLIRMathDialect
+  MLIRLLVMDialect
   MLIRSCFDialect
   MLIRControlFlowDialect
 )

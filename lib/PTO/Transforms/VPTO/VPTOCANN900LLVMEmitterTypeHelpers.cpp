@@ -10,6 +10,34 @@
 
 namespace mlir::pto::detail {
 
+LLVM::LLVMArrayType getVPTOLocalArrayStorageType(pto::LocalArrayType arrayType, Builder &builder) {
+  Type storageType = convertVPTOType(arrayType.getElementType(), builder);
+  for (int64_t dim : llvm::reverse(arrayType.getShape())) {
+    storageType = LLVM::LLVMArrayType::get(storageType, dim);
+  }
+  return cast<LLVM::LLVMArrayType>(storageType);
+}
+
+FailureOr<Value> getVPTOLocalArrayElementAddress(ConversionPatternRewriter &rewriter, Location loc, Value root,
+                                                 pto::LocalArrayType arrayType, ValueRange indices) {
+  bool hasWrongRank = indices.size() != static_cast<size_t>(arrayType.getRank());
+  if (hasWrongRank) {
+    return failure();
+  }
+
+  auto pointerType = LLVM::LLVMPointerType::get(rewriter.getContext());
+  Type storageType = getVPTOLocalArrayStorageType(arrayType, rewriter);
+  Value address = root;
+  Value zero = rewriter.create<LLVM::ConstantOp>(loc, rewriter.getI64Type(), rewriter.getI64IntegerAttr(0));
+  for (Value index : indices) {
+    if (index.getType().isIndex()) {
+      index = rewriter.create<arith::IndexCastUIOp>(loc, rewriter.getI64Type(), index);
+    }
+    address = rewriter.create<LLVM::GEPOp>(loc, pointerType, storageType, address, ValueRange{zero, index});
+    storageType = cast<LLVM::LLVMArrayType>(storageType).getElementType();
+  }
+  return address;
+}
 [[maybe_unused]] Value getI1Constant(OpBuilder &builder, Location loc, bool value) {
   return builder.create<arith::ConstantOp>(loc, builder.getIntegerAttr(builder.getI1Type(), value ? 1 : 0)).getResult();
 }

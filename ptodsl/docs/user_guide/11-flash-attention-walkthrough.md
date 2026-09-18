@@ -374,9 +374,9 @@ pto.pipe_barrier(pto.Pipe.ALL)
 materialize_tile_bounds(meta_ptr,
     q_mat.valid_shape[0],
     k_mat.valid_shape[0])
-row_start = scalar.load(meta_ptr + 0)
-row_stop  = scalar.load(meta_ptr + 1)
-valid_cols = scalar.load(meta_ptr + 2)
+row_start = pto.load(meta_ptr + 0)
+row_stop  = pto.load(meta_ptr + 1)
+valid_cols = pto.load(meta_ptr + 2)
 ```
 
 The SIMT sub-kernel `materialize_tile_bounds` writes `{0, valid_rows, valid_cols}` into the metadata buffer. The explicit-mode body then loads these scalars. They control the row iteration range in subsequent sub-kernels, handling partial tail blocks.
@@ -571,9 +571,9 @@ def materialize_tile_bounds(
     valid_rows: pto.i32,
     valid_cols: pto.i32,
 ):
-    scalar.store(0, meta_ptr + 0)
-    scalar.store(valid_rows, meta_ptr + 1)
-    scalar.store(valid_cols, meta_ptr + 2)
+    pto.store(0, meta_ptr + 0)
+    pto.store(valid_rows, meta_ptr + 1)
+    pto.store(valid_cols, meta_ptr + 2)
 ```
 
 Three scalar stores write the loop bounds into the metadata buffer. `meta_ptr` is a typed UB pointer; `+ 0`, `+ 1`, `+ 2` are element offsets into `i32` storage, not byte offsets. This is the simplest sub-kernel in the sketch — it handles scalar control metadata, not vector math.
@@ -594,14 +594,14 @@ def blend_output_rows(
     valid_dim: pto.i32,
 ):
     for row in range(row_start, row_stop, 1):
-        alpha = scalar.load(alpha_tile[row, 0])
-        beta  = scalar.load(beta_tile[row, 0])
+        alpha = pto.load(alpha_tile[row, 0])
+        beta  = pto.load(beta_tile[row, 0])
 
         for col in range(0, valid_dim, 1):
-            o_prev = scalar.load(o_prev_tile[row, col])
-            pv_val = scalar.load(pv_tile[row, col])
+            o_prev = pto.load(o_prev_tile[row, col])
+            pv_val = pto.load(pv_tile[row, col])
             o_next = alpha * o_prev + beta * pv_val
-            scalar.store(o_next, o_next_tile[row, col])
+            pto.store(o_next, o_next_tile[row, col])
 ```
 
 This is a scalar element-wise blend over the tile domain:
@@ -626,9 +626,9 @@ For trivial sub-kernels like `materialize_tile_bounds`, a named function is over
 <!-- ptodsl-doc-test: {"mode":"compile_fragment","fixture":"flash_attention.inline_simt_scope","symbol":"flash_attention_inline_simt_scope_probe","compile":{"BLOCK_Q":16,"BLOCK_KV":16}} -->
 ```python
 with pto.simt():
-    scalar.store(0, meta_ptr + 0)
-    scalar.store(q_mat.valid_shape[0], meta_ptr + 1)
-    scalar.store(k_mat.valid_shape[0], meta_ptr + 2)
+    pto.store(0, meta_ptr + 0)
+    pto.store(q_mat.valid_shape[0], meta_ptr + 1)
+    pto.store(k_mat.valid_shape[0], meta_ptr + 2)
 ```
 
 The `with pto.simt():` block acts as an anonymous inline sub-kernel scope. For 3-line helpers that have no reuse, the context manager avoids the indirection of a separate function. For complex, reusable logic like `online_softmax_rows` or `qk_matmul`, the named decorator form remains the better fit.

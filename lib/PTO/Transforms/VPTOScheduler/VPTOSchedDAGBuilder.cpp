@@ -448,13 +448,6 @@ static std::optional<IntegerRange> getPointerAddressRange(Value value) {
       value = input;
       continue;
     }
-    if (auto intToPtr = dyn_cast<IntToPtrOp>(definingOp)) {
-      std::optional<int64_t> address = getConstantInteger(intToPtr.getAddr());
-      if (!address) {
-        return std::nullopt;
-      }
-      return addDisplacement(*address, displacement);
-    }
     if (auto addPtr = dyn_cast<AddPtrOp>(definingOp)) {
       if (failed(accumulateAddPtrDisplacement(addPtr, displacement))) {
         return std::nullopt;

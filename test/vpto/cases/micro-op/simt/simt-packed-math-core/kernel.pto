@@ -62,25 +62,25 @@ module attributes {pto.target_arch = "a5", pto.kernel_kind = #pto.kernel_kind<ve
 
     %shfl = pto.shuffle_idx %h2_one, %shfl_idx {width = 16 : i32} : vector<2xf16>, i32 -> vector<2xf16>
     %sqrt_h2 = pto.sqrt %h2_four : vector<2xf16> -> vector<2xf16>
-    %abs_h2 = pto.absf %h2_neg : vector<2xf16> -> vector<2xf16>
+    %abs_h2 = pto.absf %h2_neg : vector<2xf16>
     %exp_h2 = pto.exp %h2_zero : vector<2xf16> -> vector<2xf16>
     %log_h2 = pto.log %h2_one : vector<2xf16> -> vector<2xf16>
-    %min_h2 = pto.fmin %h2_12, %h2_21 : vector<2xf16>, vector<2xf16> -> vector<2xf16>
+    %min_h2 = pto.minf %h2_12, %h2_21 : vector<2xf16>
     %pow_h2 = pto.pow %h2_two, %h2_two : vector<2xf16>, vector<2xf16> -> vector<2xf16>
     %fma_h2 = pto.fma %h2_one, %h2_two, %h2_one : vector<2xf16>, vector<2xf16>, vector<2xf16> -> vector<2xf16>
-    %f32_to_h2 = pto.convert %f2_12 round(r) nosat : vector<2xf32> -> vector<2xf16>
-    %abs_b2 = pto.absf %b2_neg : vector<2xbf16> -> vector<2xbf16>
-    %max_b2 = pto.fmax %b2_12, %b2_21 : vector<2xbf16>, vector<2xbf16> -> vector<2xbf16>
+    %f32_to_h2 = pto.ftof %f2_12 round(r) : vector<2xf32> -> vector<2xf16>
+    %abs_b2 = pto.absf %b2_neg : vector<2xbf16>
+    %max_b2 = pto.maxf %b2_12, %b2_21 : vector<2xbf16>
     %fma_b2 = pto.fma %b2_one, %b2_two, %b2_one : vector<2xbf16>, vector<2xbf16>, vector<2xbf16> -> vector<2xbf16>
-    %f32_to_b2 = pto.convert %f2_12 round(r) nosat : vector<2xf32> -> vector<2xbf16>
-    %h2_to_f32 = pto.convert %h2_12 round(r) nosat : vector<2xf16> -> vector<2xf32>
-    %b2_to_f32 = pto.convert %b2_12 round(r) nosat : vector<2xbf16> -> vector<2xf32>
-    %f32_to_f8e4 = pto.convert %f2_12 round(r) nosat : vector<2xf32> -> vector<2xf8E4M3FN>
-    %f32_to_f8e5 = pto.convert %f2_12 round(r) nosat : vector<2xf32> -> vector<2xf8E5M2>
-    %f32_to_hif8 = pto.convert %f2_12 round(a) nosat : vector<2xf32> -> !pto.hif8x2
-    %f8e4_to_f32 = pto.convert %f32_to_f8e4 round(r) nosat : vector<2xf8E4M3FN> -> vector<2xf32>
-    %f8e5_to_f32 = pto.convert %f32_to_f8e5 round(r) nosat : vector<2xf8E5M2> -> vector<2xf32>
-    %hif8_to_f32 = pto.convert %f32_to_hif8 round(a) nosat : !pto.hif8x2 -> vector<2xf32>
+    %f32_to_b2 = pto.ftof %f2_12 round(r) : vector<2xf32> -> vector<2xbf16>
+    %h2_to_f32 = pto.ftof %h2_12 round(r) : vector<2xf16> -> vector<2xf32>
+    %b2_to_f32 = pto.ftof %b2_12 round(r) : vector<2xbf16> -> vector<2xf32>
+    %f32_to_f8e4 = pto.ftof %f2_12 round(r) : vector<2xf32> -> vector<2xf8E4M3FN>
+    %f32_to_f8e5 = pto.ftof %f2_12 round(r) : vector<2xf32> -> vector<2xf8E5M2>
+    %f32_to_hif8 = pto.ftof %f2_12 round(a) : vector<2xf32> -> !pto.hif8x2
+    %f8e4_to_f32 = pto.ftof %f32_to_f8e4 round(r) : vector<2xf8E4M3FN> -> vector<2xf32>
+    %f8e5_to_f32 = pto.ftof %f32_to_f8e5 round(r) : vector<2xf8E5M2> -> vector<2xf32>
+    %hif8_to_f32 = pto.ftof %f32_to_hif8 round(a) : !pto.hif8x2 -> vector<2xf32>
 
     %shfl_bits = llvm.bitcast %shfl : vector<2xf16> to i32
     %sqrt_h2_bits = llvm.bitcast %sqrt_h2 : vector<2xf16> to i32

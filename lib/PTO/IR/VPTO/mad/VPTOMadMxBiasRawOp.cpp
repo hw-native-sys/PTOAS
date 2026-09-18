@@ -28,6 +28,6 @@ LogicalResult MadMxBiasRawOp::verify() {
                            getDst().getType(), getBias().getType());
 }
 
-bool MadMxBiasRawOp::isMadMxFamily() { return true; }
-bool MadMxBiasRawOp::hasBiasOperand() { return true; }
+bool MadMxBiasRawOp::isMadMxFamily() const { return true; }
+bool MadMxBiasRawOp::hasBiasOperand() const { return true; }
 Value MadMxBiasRawOp::getBiasOrNull() { return getBias(); }

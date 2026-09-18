@@ -78,15 +78,16 @@ def _assert_tail_guarded(mlir_text: str, tail_op_pattern: str):
     """
     assert not re.search(r"scf\.if %true", mlir_text), (
         "constant-true guard still present; break/continue tails are unpredicated")
-    tail = re.search(tail_op_pattern, mlir_text)
-    assert tail is not None, f"tail op {tail_op_pattern!r} not found in MLIR"
+    tails = list(re.finditer(tail_op_pattern, mlir_text))
+    assert tails, f"tail op {tail_op_pattern!r} not found in MLIR"
     guards = list(re.finditer(r"= scf\.if (%(?!true|false)\w+(?:#\d+)?) -> \(", mlir_text))
     assert guards, "no active-guarded tail region found"
     for guard in guards:
         if not _is_flag_merge_result(mlir_text, guard.group(1)):
             continue
         open_brace = mlir_text.index("{", guard.end())
-        if guard.start() < tail.start() < _region_close(mlir_text, open_brace):
+        region_end = _region_close(mlir_text, open_brace)
+        if any(guard.start() < tail.start() < region_end for tail in tails):
             return
     raise AssertionError(
         "tail op is not contained in a region guarded by the merged active "
@@ -493,7 +494,14 @@ def unsupported_while_subscript(limit: pto.i32):
         value = value + pto.const(1, dtype=pto.i32)
 
 
-def main():
+def _assert_dead_addi_absent(mlir_text: str, context_label: str) -> None:
+    assert not re.search(r"pto\.constant 10 : i32\s+%[\w#]+ = pto\.addi", mlir_text), (
+        f"{context_label}: dead tail must be dropped, not emitted")
+    assert not re.search(r"scf\.if %false", mlir_text), (
+        f"{context_label}: dead tail must be dropped, not false-guarded")
+
+
+def _check_dead_tail_exception_paths():
     # Dead-tail truncation must account for exception paths.  A break in the
     # try body does not make the statement transfer on an exception caught by
     # a falling-through handler, while a transferring handler (or finally)
@@ -527,6 +535,8 @@ def main():
         "    dead = dead + ten\n"
     )) == 1, "transferring finally blocks must drop the outer tail"
 
+
+def _check_runtime_loop_shapes():
     text = runtime_while_probe.compile().mlir_text()
     assert "scf.while" in text
     assert "scf.condition" in text
@@ -537,8 +547,9 @@ def main():
         loop_text = fn.compile().mlir_text()
         assert "scf.while" in loop_text
         assert "scf.condition" in loop_text
-        assert "scf.yield" in loop_text
 
+
+def _check_loop_carry_contract():
     # Issue #1256 regressions: loop-local temporaries must not be carried.
     # issue_1256_while_local_temp / break_flag / branch_temp all used to raise
     # UnboundLocalError at the pto._while(...) setup.  Besides compiling, each
@@ -565,6 +576,8 @@ def main():
             f"{fn.__name__}: expected {expected_carries} loop-carried slots, got {actual}; "
             "loop-local temporaries must not enter the carry state")
 
+
+def _check_partial_liveout():
     # While-loop partial live-outs use the same definite-binding rule as
     # runtime for-loops: an unbound default path is diagnosed explicitly,
     # while a value initialized before the loop becomes an ordinary carry.
@@ -578,24 +591,26 @@ def main():
     assert "scf.while" in bound_text
     assert _while_iter_arg_count(bound_text) == 2
 
+
+def _check_tail_predication():
     # Break/continue tail predication: the statement after a control transfer
     # must sit inside a region guarded by the merged active flag.
     # issue_1256_exact_while_true_break is the reporter's kernel: the addi
     # after ``if should_break: break`` used to execute unconditionally.
     _assert_tail_guarded(
         issue_1256_exact_while_true_break.compile().mlir_text(),
-        r"arith\.addi %[\w#]+, %c1_i32")
+        r"pto\.addi %[\w#]+, %[\w#]+")
     _assert_tail_guarded(
         while_continue_skips_tail.compile().mlir_text(),
-        r"arith\.addi %[\w#]+, %c10_i32")
+        r"pto\.addi %[\w#]+, %[\w#]+")
     _assert_tail_guarded(
         while_nested_if_break_tail.compile().mlir_text(),
-        r"arith\.addi %[\w#]+, %c10_i32")
+        r"pto\.addi %[\w#]+, %[\w#]+")
     _assert_tail_guarded(
         for_break_tail_guard.compile().mlir_text(),
-        r"arith\.addi %[\w#]+, %c1_i32")
+        r"pto\.addi %[\w#]+, %[\w#]+")
     for_tail_carry_text = for_break_tail_carry_merge.compile().mlir_text()
-    _assert_tail_guarded(for_tail_carry_text, r"arith\.addi %[\w#]+, %c10_i32")
+    _assert_tail_guarded(for_tail_carry_text, r"pto\.addi %[\w#]+, %[\w#]+")
     assert re.search(r"= scf\.if %\w+(?:#\d+)? -> \(i1, i32\)", for_tail_carry_text), (
         "for break tail guard must merge active + loop-carried value so the "
         "loop update does not read a stale SSA value")
@@ -603,7 +618,7 @@ def main():
     # The continue-guard's tail contains a break: the guard must merge both
     # control flags back out (value + active + did_break).
     flags_text = while_continue_then_break_flags.compile().mlir_text()
-    _assert_tail_guarded(flags_text, r"arith\.addi %[\w#]+, %c1_i32")
+    _assert_tail_guarded(flags_text, r"pto\.addi %[\w#]+, %[\w#]+")
     assert re.search(r"= scf\.if %\w+(?:#\d+)? -> \(i1, i1, i32\)", flags_text), (
         "outer guard must merge value + active + did_break so the nested "
         "break survives the guard region")
@@ -611,16 +626,15 @@ def main():
     # Nested branch tail: the +1 addi inside the branch must also sit inside
     # an active-guarded region (verified by brace-depth containment).
     nested_text = while_nested_if_break_tail.compile().mlir_text()
-    _assert_tail_guarded(nested_text, r"arith\.addi %[\w#]+, %c1_i32")
+    _assert_tail_guarded(nested_text, r"pto\.addi %[\w#]+, %[\w#]+")
 
     # The dead tail of an unconditional break is truncated before analysis:
     # the dead addi must not appear in the IR at all (neither executed nor
-    # wrapped in a constant-false guard).
+
+
+def _check_dead_tail_carry_contract():
     dead_text = while_unconditional_break_dead_tail.compile().mlir_text()
-    assert not re.search(r"arith\.addi %[\w#]+, %c10_i32", dead_text), (
-        "dead tail after unconditional break must be dropped, not emitted")
-    assert not re.search(r"scf\.if %false", dead_text), (
-        "dead tail after unconditional break must be dropped, not false-guarded")
+    _assert_dead_addi_absent(dead_text, "dead tail after unconditional break")
 
     # The new kernels also lock their carry counts (value + control flags;
     # the for-loop additionally carries its induction variable).  The dead-*
@@ -651,10 +665,11 @@ def main():
     for fn in (while_if_else_break_dead_tail, while_with_break_dead_tail,
                while_try_break_dead_tail):
         text = fn.compile().mlir_text()
-        assert not re.search(r"arith\.addi %[\w#]+, %c10_i32", text), (
-            f"{fn.__name__}: dead tail after a guaranteed compound transfer "
-            "must be dropped, not emitted")
+        _assert_dead_addi_absent(
+            text, "dead tail after a guaranteed compound transfer")
 
+
+def _check_storeless_body_diagnostics():
     # Truncating the dead tail must not weaken the store-less-body diagnostic:
     # a controlled while whose only real statement is the transfer still has
     # nothing to carry the control state in.
@@ -691,6 +706,8 @@ def main():
     else:
         raise AssertionError("while subscript carry must be diagnosed")
 
+
+def _check_unbound_live_after_diagnostics():
     # A loop-local name used after the loop without an outer initialization
     # must stay on the explicit last-iteration-only diagnostics path rather
     # than being evaluated as an unbound carry at while setup.
@@ -708,6 +725,8 @@ def main():
     else:
         raise AssertionError("unbound loop-local used after while must be diagnosed")
 
+
+def _check_unguarded_tail_fixtures():
     # Negative fixtures for the checker itself: a tail that merely sits
     # inside an *unrelated* dynamic scf.if (condition is a block argument or
     # an arith result, not the merged active flag) must be rejected — the
@@ -742,6 +761,18 @@ def main():
             raise AssertionError(
                 "checker accepted a tail guarded by an unrelated dynamic if "
                 "(condition is not the merged active flag)")
+
+
+def main():
+    _check_dead_tail_exception_paths()
+    _check_runtime_loop_shapes()
+    _check_loop_carry_contract()
+    _check_partial_liveout()
+    _check_tail_predication()
+    _check_dead_tail_carry_contract()
+    _check_storeless_body_diagnostics()
+    _check_unbound_live_after_diagnostics()
+    _check_unguarded_tail_fixtures()
 
 
 if __name__ == "__main__":

@@ -693,18 +693,7 @@ static bool getEffectiveVPTOSchedulerRematerialization(
   return vptoSchedulerRemat;
 }
 
-static void prepareVPTOForEmission(PassManager &pm,
-                                   VPTOSchedulerCLIMode schedulerMode,
-                                   bool rematerialize) {
-  auto &kernelModulePM = pm.nest<ModuleOp>();
-  // VPTO LLVM emission lowers pto.barrier to the backend barrier intrinsic.
-  // A5 does not support a standalone PIPE_V barrier; vector barriers are either
-  // unnecessary or must be removed before LLVM emission. Upper-level
-  // programming frameworks may still produce pto.barrier(PIPE_V) from generic
-  // storage-sync constructs, so run sync-to-pipe legalization here and let the
-  // backend checks catch any illegal barrier that still leaks through.
-  kernelModulePM.addNestedPass<func::FuncOp>(
-      pto::createLoweringSyncToPipePass());
+static void addPersistentFragmentLowering(OpPassManager &kernelModulePM) {
   // Persistent fragment loops must be fully unrolled before fragment
   // analysis/materialization; promote them ahead of the unroll pass.
   kernelModulePM.addNestedPass<func::FuncOp>(
@@ -719,6 +708,21 @@ static void prepareVPTOForEmission(PassManager &pm,
   kernelModulePM.addNestedPass<func::FuncOp>(
       pto::createPTOMaterializeSIMTPersistentFragmentPass());
   kernelModulePM.addPass(pto::createPTOOutlineSIMTSectionsPass());
+}
+
+static void prepareVPTOForEmission(PassManager &pm,
+                                   VPTOSchedulerCLIMode schedulerMode,
+                                   bool rematerialize) {
+  auto &kernelModulePM = pm.nest<ModuleOp>();
+  // VPTO LLVM emission lowers pto.barrier to the backend barrier intrinsic.
+  // A5 does not support a standalone PIPE_V barrier; vector barriers are either
+  // unnecessary or must be removed before LLVM emission. Upper-level
+  // programming frameworks may still produce pto.barrier(PIPE_V) from generic
+  // storage-sync constructs, so run sync-to-pipe legalization here and let the
+  // backend checks catch any illegal barrier that still leaks through.
+  kernelModulePM.addNestedPass<func::FuncOp>(
+      pto::createLoweringSyncToPipePass());
+  addPersistentFragmentLowering(kernelModulePM);
   kernelModulePM.addPass(pto::createVPTOPtrNormalizePass());
   kernelModulePM.addPass(pto::createVPTOPtrCastCleanupPass());
   kernelModulePM.addPass(pto::createVPTOOptimizeVcvtPass());
@@ -747,10 +751,23 @@ static void prepareVPTOForEmission(PassManager &pm,
   kernelModulePM.addPass(pto::createPTOInlineLibCallPass());
   kernelModulePM.addPass(createCanonicalizerPass());
   kernelModulePM.addPass(createCSEPass());
+  // Tile and soft-library expansion may introduce generic scalar PTO ops.
+  // Lower them before final VPTO scheduling and legality validation.
+  kernelModulePM.addNestedPass<func::FuncOp>(
+      pto::createPTOLowerGenericOpsPass());
+  auto &expandedChildModulePM = kernelModulePM.nest<ModuleOp>();
+  expandedChildModulePM.addNestedPass<func::FuncOp>(
+      pto::createPTOLowerGenericOpsPass());
   // Reconstruct the optimized reduction tree before scheduling so the
   // scheduler sees the final MI instruction set and dependencies.
   kernelModulePM.addPass(pto::createVPTOCombineReductionsPass());
   kernelModulePM.addPass(createCSEPass());
+  // Materialize the minimal CTRL accesses before scheduling: a surviving
+  // ctrl_state_guard is region-bearing and would make every guarded raw MAD
+  // a scheduling boundary, splitting cube loop bodies and blocking the
+  // MTE/MAD interleave the scheduler exists to find.
+  kernelModulePM.addNestedPass<func::FuncOp>(
+      pto::createVPTOOptimizeCtrlStatePass());
   if (schedulerMode != VPTOSchedulerCLIMode::Off) {
     pto::VPTOSchedulerOptions schedulerOptions;
     schedulerOptions.mode =
@@ -816,6 +833,8 @@ static void lowerPTOToVPTOBackend(PassManager &pm, ModuleOp module) {
   kernelModulePM.addPass(pto::createPTOInlineLibCallPass());
   kernelModulePM.addNestedPass<mlir::func::FuncOp>(
       pto::createFoldTileBufIntrinsicsPass("shape-only"));
+  kernelModulePM.addNestedPass<mlir::func::FuncOp>(
+      pto::createPTOLowerGenericOpsPass());
   if (enableA5VPTOPostLoweringFusionLifecycle) {
     appendA5VPTOPostLoweringFusionPipeline(kernelModulePM);
   }
@@ -1253,6 +1272,13 @@ static LogicalResult runPreBackendNormalization(ModuleOp module) {
   preBackendPM.addPass(pto::createPTOMaterializeTileOpSectionsPass());
   preBackendPM.addPass(pto::createPTONormalizeUncoveredTileSectionsPass());
   preBackendPM.addPass(pto::createPTOValidatePhysicalSectionBoundariesPass());
+  // Shared frontend analyses consume standard arith/index producer chains.
+  // Lower execution-domain-independent PTO scalar ops before those analyses.
+  preBackendPM.addNestedPass<func::FuncOp>(
+      pto::createPTOLowerGenericOpsPass());
+  auto &preBackendChildModulePM = preBackendPM.nest<ModuleOp>();
+  preBackendChildModulePM.addNestedPass<func::FuncOp>(
+      pto::createPTOLowerGenericOpsPass());
   if (failed(preBackendPM.run(module))) {
     llvm::errs() << "Error: failed to normalize uncovered PTO tile sections.\n";
     return failure();
@@ -1379,9 +1405,6 @@ static LogicalResult populateMainLoweringPasses(PassManager &pm,
   if (!isA2A3) {
     pm.addNestedPass<mlir::func::FuncOp>(pto::createPTOA5NormalizeTMovPass());
   }
-  pm.addNestedPass<mlir::func::FuncOp>(
-      pto::createPTOValidateIntToPtrUsesPass());
-
   // PTODSL legality discovery happens on tile-native PTO IR before fusion.
   // Fusion may later filter the ordered `candidates` array; ExpandTileOp
   // consumes the first candidate that remains.

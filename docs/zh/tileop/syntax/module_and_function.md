@@ -39,7 +39,7 @@ module attributes {
 - `--pto-arch=a3`
 - `--pto-arch=a5`
 
-用户在编写 `module` 时，不需要再额外通过模块属性重复声明目标设备信息。
+用户在编写 `module` 时，不需要再通过模块属性重复声明目标设备信息。
 
 ## `func.func`
 
@@ -96,10 +96,12 @@ func.func @kernel(%src: !pto.ptr<f16>, %dst: !pto.ptr<f16>, %m: i32, %n: i32) {
 ### 带函数属性
 
 ```mlir
-func.func @kernel(%src: !pto.ptr<f16>) attributes {sym_visibility = "public"} {
+func.func @kernel(%src: !pto.ptr<f16>) attributes {pto.kernel_kind = #pto.kernel_kind<vector>} {
   return
 }
 ```
+
+函数默认使用 `public` 可见性，无需将 `sym_visibility = "public"` 写入属性字典。私有函数使用 `func.func private @name(...)` 形式声明。
 
 ## Constraints
 

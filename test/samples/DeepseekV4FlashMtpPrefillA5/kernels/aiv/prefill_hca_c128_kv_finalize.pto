@@ -11,7 +11,7 @@ module attributes {pto.target_arch = "a5"} {
   %7 = arith.muli %arg3, %c128_index : index
   %cmp_kv_flat_inline6363__ssa_v0_view = pto.make_tensor_view %arg1, shape = [%7, %c512_index], strides = [%c512_index, %c1_index] {layout = #pto.layout<nd>} : !pto.tensor_view<?x?xbf16>
   %normed_kv_pad_inline6321__ssa_v4_view = pto.make_tensor_view %arg2, shape = [%c8_index, %c512_index], strides = [%c512_index, %c1_index] {layout = #pto.layout<nd>} : !pto.tensor_view<?x?xf32>
-  %final_cmp_row_raw_inline6287__tile = pto.load_scalar %arg0[%c0_index] : !pto.ptr<i32> -> i32
+  %final_cmp_row_raw_inline6287__tile = pto.load %arg0[%c0_index] : !pto.ptr<i32> -> i32
   %0 = arith.index_cast %final_cmp_row_raw_inline6287__tile : i32 to index
   %1 = arith.cmpi sle, %c0_index, %0 : index
   scf.if %1 {

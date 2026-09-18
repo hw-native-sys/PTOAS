@@ -24,6 +24,7 @@
 #include "mlir-c/Support.h"
 #include "pto-c/Dialect/PTO.h"
 #include "pto-c/Dialect/PTOEnums.h"
+#include "PTO/Support/CodeConstants.h"
 #include "pybind11/stl.h"
 #include "mlir/Bindings/Python/PybindAdaptors.h"
 
@@ -1459,7 +1460,7 @@ static void addTileBufConfigGetMethod(pure_subclass &c) {
                 MlirAttribute pad,
                 MlirContext ctx,
                 py::object compactModeObj) -> py::object {
-                MlirType i32 = mlirIntegerTypeGet(ctx, 32);
+                MlirType i32 = mlirIntegerTypeGet(ctx, mlir::pto::kValue32);
                 MlirAttribute sz = mlirIntegerAttrGet(i32, s_fractal_size);
                 MlirAttribute compactMode = mlirPTOCompactModeAttrGet(
                     ctx, static_cast<int32_t>(MlirPTOCompactMode::Null));

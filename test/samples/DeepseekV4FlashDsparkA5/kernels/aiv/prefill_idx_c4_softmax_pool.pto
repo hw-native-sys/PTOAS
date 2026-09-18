@@ -54,13 +54,13 @@ module attributes {pto.target_arch = "a5"} {
   %pool_score_tile_inline2518__tile = pto.alloc_tile addr = %c0_i64 valid_row = %c8_index valid_col = %c128_index : !pto.tile_buf<loc=vec, dtype=f32, rows=8, cols=128, v_row=?, v_col=?, blayout=row_major, slayout=none_box, fractal=512, pad=0>
   %flat_offset_mul = arith.muli %c0_index, %c32_index : index
   %flat_offset = arith.addi %flat_offset_mul, %pool_idx_inline2589__ssa_v0 : index
-  %write_slot_raw_inline2616__tile = pto.load_scalar %arg0[%flat_offset] : !pto.ptr<i32> -> i32
+  %write_slot_raw_inline2616__tile = pto.load %arg0[%flat_offset] : !pto.ptr<i32> -> i32
   %48 = arith.index_cast %write_slot_raw_inline2616__tile : i32 to index
   %49 = arith.cmpi sle, %c0_index, %48 : index
   scf.if %49 {
     %50 = arith.muli %c0_index, %c32_index : index
     %51 = arith.addi %50, %pool_idx_inline2589__ssa_v0 : index
-    %write_pos_inline2612__tile = pto.load_scalar %arg1[%51] : !pto.ptr<i32> -> i32
+    %write_pos_inline2612__tile = pto.load %arg1[%51] : !pto.ptr<i32> -> i32
     %52 = arith.index_cast %write_pos_inline2612__tile : i32 to index
     %53 = arith.addi %52, %cn3_index : index
     %54 = arith.subi %53, %c4_index : index
@@ -80,7 +80,7 @@ module attributes {pto.target_arch = "a5"} {
         %59 = arith.divsi %55, %c8_index : index
         %61 = arith.muli %59, %c8_index : index
         %62 = arith.subi %55, %61 : index
-        %prev_phys_block_raw_inline2594__tile = pto.load_scalar %arg2[%59] : !pto.ptr<i32> -> i32
+        %prev_phys_block_raw_inline2594__tile = pto.load %arg2[%59] : !pto.ptr<i32> -> i32
         %64 = arith.index_cast %prev_phys_block_raw_inline2594__tile : i32 to index
         %65 = arith.cmpi sle, %c0_index, %64 : index
         scf.if %65 {
@@ -119,7 +119,7 @@ module attributes {pto.target_arch = "a5"} {
       %81 = arith.divsi %77, %c8_index : index
       %83 = arith.muli %81, %c8_index : index
       %84 = arith.subi %77, %83 : index
-      %cur_phys_block_raw_inline2621__tile = pto.load_scalar %arg2[%81] : !pto.ptr<i32> -> i32
+      %cur_phys_block_raw_inline2621__tile = pto.load %arg2[%81] : !pto.ptr<i32> -> i32
       %86 = arith.index_cast %cur_phys_block_raw_inline2621__tile : i32 to index
       %87 = arith.cmpi sle, %c0_index, %86 : index
       scf.if %87 {
@@ -146,7 +146,7 @@ module attributes {pto.target_arch = "a5"} {
       }
     }
     scf.for %pool_t_inline2547__idx_v0 = %c0_index to %c128_index step %c1_index {
-      %pool_pos_inline2544__tile = pto.load_scalar %arg4[%pool_t_inline2547__idx_v0] : !pto.ptr<i32> -> i32
+      %pool_pos_inline2544__tile = pto.load %arg4[%pool_t_inline2547__idx_v0] : !pto.ptr<i32> -> i32
       %101 = arith.cmpi sle, %pool_pos_inline2544__tile, %write_pos_inline2612__tile : i32
       scf.if %101 {
         %102 = arith.index_cast %pool_pos_inline2544__tile : i32 to index

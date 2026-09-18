@@ -573,9 +573,8 @@ bool srcInt = isVMIIntegerLikeType(srcElem), dstInt = isVMIIntegerLikeType(dstEl
     return failure();
   }
   if (auto pmodeAttr = (*this)->getAttrOfType<StringAttr>("pmode")) {
-    StringRef pmode = pmodeAttr.getValue();
-    if (pmode != "merge" && pmode != "zero") {
-      return emitOpError("pmode must be 'merge' or 'zero'");
+    if (failed(verifyVMIPMode(getOperation(), pmodeAttr.getValue()))) {
+      return failure();
     }
   }
   return success();

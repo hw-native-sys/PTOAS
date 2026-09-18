@@ -26,7 +26,7 @@ module attributes {pto.target_arch = "a5"} {
     scf.for %gather_ki_inline2109__idx_v0 = %c0_index to %c128_index step %c1_index {
       %flat_offset_mul = arith.muli %3, %c128_index : index
       %flat_offset = arith.addi %flat_offset_mul, %gather_ki_inline2109__idx_v0 : index
-      %gather_raw_inline2208__tile = pto.load_scalar %arg1[%flat_offset] : !pto.ptr<i32> -> i32
+      %gather_raw_inline2208__tile = pto.load %arg1[%flat_offset] : !pto.ptr<i32> -> i32
       %5 = arith.index_cast %gather_raw_inline2208__tile : i32 to index
       %6 = arith.cmpi sle, %c0_index, %5 : index
       scf.if %6 {

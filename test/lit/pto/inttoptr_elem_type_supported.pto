@@ -3,12 +3,12 @@
 module {
   func.func @inttoptr_supported_elem_types(%addr: i64, %dst_f32: !pto.ptr<f32>, %dst_i32: !pto.ptr<i32>) attributes {pto.kernel_kind = #pto.kernel_kind<vector>} {
     %c0 = arith.constant 0 : index
-    %ptr_f32 = pto.inttoptr %addr : i64 -> !pto.ptr<f32>
-    %val_f32 = pto.load_scalar %ptr_f32[%c0] : !pto.ptr<f32> -> f32
-    pto.store_scalar %val_f32, %dst_f32[%c0] : !pto.ptr<f32>, f32
-    %ptr_i32 = pto.inttoptr %addr : i64 -> !pto.ptr<i32>
-    %val_i32 = pto.load_scalar %ptr_i32[%c0] : !pto.ptr<i32> -> i32
-    pto.store_scalar %val_i32, %dst_i32[%c0] : !pto.ptr<i32>, i32
+    %ptr_f32 = pto.castptr %addr : i64 -> !pto.ptr<f32>
+    %val_f32 = pto.load %ptr_f32[%c0] : !pto.ptr<f32> -> f32
+    pto.store %val_f32, %dst_f32[%c0] : !pto.ptr<f32>, f32
+    %ptr_i32 = pto.castptr %addr : i64 -> !pto.ptr<i32>
+    %val_i32 = pto.load %ptr_i32[%c0] : !pto.ptr<i32> -> i32
+    pto.store %val_i32, %dst_i32[%c0] : !pto.ptr<i32>, i32
     return
   }
 }

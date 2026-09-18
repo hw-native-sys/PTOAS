@@ -414,7 +414,7 @@ bool isOnePointStoreDist(StringRef dist) {
   return contract && contract->isOnePointStore();
 }
 
-VPTOTypeConverter::VPTOTypeConverter(MLIRContext *context) {
+VPTOTypeConverter::VPTOTypeConverter(const MLIRContext *context) {
   (void)context;
   addConversion([](Type type) { return type; });
   addConversion([](Type type) -> Type {
@@ -560,8 +560,7 @@ Type convertVPTOType(Type type, Builder &builder) {
   if (isa<pto::AlignType>(type)) {
     return VectorType::get({32}, builder.getI8Type());
   }
-  if (isa<pto::StructType>(type))
-  {
+  if (isa<pto::LocalArrayType, pto::StructType>(type)) {
     return LLVM::LLVMPointerType::get(builder.getContext());
   }
   if (auto ptrType = dyn_cast<pto::PtrType>(type)) {
@@ -629,7 +628,7 @@ bool hasVPTOConvertibleType(Type type) {
     return false;
   }
   if (isa<pto::VRegType, pto::MaskType, pto::AlignType, pto::PtrType,
-          pto::StructType>(type) ||
+          pto::LocalArrayType, pto::StructType>(type) ||
       pto::isPTOLowPrecisionType(type)) {
     return true;
   }

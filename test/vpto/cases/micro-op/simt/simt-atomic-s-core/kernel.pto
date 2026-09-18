@@ -59,13 +59,13 @@ module attributes {pto.target_arch = "a5", pto.kernel_kind = #pto.kernel_kind<ve
     %out_and_idx = arith.index_castui %out_and : i32 to index
 
     %ptr0 = pto.addptr %s, %idx_add : !pto.ptr<i32, ub> -> !pto.ptr<i32, ub>
-    %old_add = pto.atomic_add %ptr0, %v5 l2cache(nmfv) signed : !pto.ptr<i32, ub>, i32 -> i32
+    %old_add = pto.atomic_add %ptr0, %v5 l2cache(nmfv) : !pto.ptr<i32, ub>, i32 -> i32
     %ptr1 = pto.addptr %s, %idx_max : !pto.ptr<i32, ub> -> !pto.ptr<i32, ub>
     %old_max = pto.atomic_max %ptr1, %v7 l2cache(nmfv) signed : !pto.ptr<i32, ub>, i32 -> i32
     %ptr2 = pto.addptr %s, %idx_cas : !pto.ptr<i32, ub> -> !pto.ptr<i32, ub>
-    %old_cas = pto.atomic_cas %ptr2, %v10, %v42 l2cache(nmfv) signed : !pto.ptr<i32, ub>, i32 -> i32
+    %old_cas = pto.atomic_cas %ptr2, %v10, %v42 l2cache(nmfv) : !pto.ptr<i32, ub>, i32 -> i32
     %ptr3 = pto.addptr %s, %idx_and : !pto.ptr<i32, ub> -> !pto.ptr<i32, ub>
-    %old_and = pto.atomic_and %ptr3, %v7 l2cache(nmfv) unsigned : !pto.ptr<i32, ub>, i32 -> i32
+    %old_and = pto.atomic_and %ptr3, %v7 l2cache(nmfv) : !pto.ptr<i32, ub>, i32 -> i32
 
     pto.store %old_add, %out[%out_add_idx] : !pto.ptr<i32, ub>, i32
     pto.store %old_max, %out[%out_max_idx] : !pto.ptr<i32, ub>, i32

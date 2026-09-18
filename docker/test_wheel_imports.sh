@@ -15,7 +15,7 @@
 #   - ptoas.mlir.ir
 #   - ptoas.mlir.dialects.pto
 #   - ptodsl
-#   - from ptodsl import pto, scalar
+#   - from ptodsl import pto
 #   - ptoas CLI entry
 # and that a minimal PTODSL compile-only probe succeeds.
 
@@ -96,7 +96,7 @@ echo "Testing ptodsl import..."
 "$PYTHON_BIN" -c "import ptodsl; print(f'ptodsl imported successfully from {ptodsl.__file__}')"
 
 echo "Testing ptodsl public imports..."
-"$PYTHON_BIN" -c "from ptodsl import pto, scalar; print('ptodsl public imports imported successfully')"
+"$PYTHON_BIN" -c "from ptodsl import pto; print('ptodsl public imports imported successfully')"
 
 echo "Testing installed ptoas console entry..."
 "$PYTHON_BIN" -c "from ptoas import _core; print(f'ptoas native extension imported successfully from {_core.__file__}')"

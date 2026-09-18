@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/usr/bin/env bash
 # --------------------------------------------------------------------------------
 # Copyright (c) 2025 Huawei Technologies Co., Ltd.
 # This program is free software, you can redistribute it and/or modify it under the terms and conditions of
@@ -16,6 +16,8 @@
 # installs PTOAS through the tree's native CMake build. Both Actions and robot
 # PreSmoke consume a cached or downloaded Compile installer; PreSmoke never
 # builds from source.
+# Native, wheel, and CPack configurations use separate persistent build trees.
+# Use --clean to discard PTOAS intermediates without touching the LLVM cache.
 
 set -e
 
@@ -29,6 +31,7 @@ export BASE_PATH=$(
   pwd
 )
 export BUILD_PATH="${BASE_PATH}/build"
+export WHEEL_BUILD_PATH="${BUILD_PATH}/wheel"
 export BUILD_OUT_PATH="${BASE_PATH}/build_out"
 export INSTALL_PATH="${BASE_PATH}/install"
 export PACKAGE_STAGE_PATH="${BUILD_PATH}/package_runtime"
@@ -215,6 +218,7 @@ usage() {
   echo "    -h, --help               Print usage"
   echo "    --build                  Build and run validation"
   echo "    --pkg                    Build and package through CANN CPack"
+  echo "    --clean                  Reset PTOAS build trees before building"
   echo "    --pkg-type=<TYPE>        Package type (run/rpm/deb/all); accepted for"
   echo "                             interface compatibility and forwarded to CPack"
   echo "    -j <N>                   Parallel jobs (default: nproc)"
@@ -848,8 +852,7 @@ configure_ptoas() {
   local pybind_dir
   pybind_dir="$("${python_bin}" -m pybind11 --cmakedir 2>/dev/null || true)"
 
-  echo "Resetting PTOAS build tree: ${BUILD_PATH}"
-  rm -rf "${BUILD_PATH}"
+  echo "Configuring incremental PTOAS build: ${BUILD_PATH}"
   mkdir -p "${BUILD_PATH}"
   if is_presmoke; then
     touch "${PTOAS_PRESMOKE_SKIP_RUNOP_MARKER}"
@@ -869,7 +872,9 @@ configure_ptoas() {
     -DCMAKE_INSTALL_PREFIX="${INSTALL_PATH}"
     -DCMAKE_C_COMPILER="${PTOAS_CC}"
     -DCMAKE_CXX_COMPILER="${PTOAS_CXX}"
-    -DENABLE_PACKAGE="${ENABLE_PACKAGE:-FALSE}"
+    -DCMAKE_C_COMPILER_LAUNCHER="${CMAKE_C_COMPILER_LAUNCHER:-}"
+    -DCMAKE_CXX_COMPILER_LAUNCHER="${CMAKE_CXX_COMPILER_LAUNCHER:-}"
+    -DENABLE_PACKAGE=OFF
     -DPACKAGE_TYPE="${PACKAGE_TYPE:-run}"
     -DCANN_3RD_LIB_PATH="${CANN_3RD_LIB_PATH}"
   )
@@ -972,7 +977,7 @@ stage_ptoas_wheel() {
        --use-feature=in-tree-build --help >/dev/null 2>&1; then
     wheel_feature_args+=(--use-feature=in-tree-build)
   fi
-  # scikit-build-core reconfigures the PTOAS tree from scratch for the wheel.
+  # Keep the wheel's scikit-build configuration separate from configure_ptoas.
   # compile.sh sources /opt/rh/devtoolset-7/enable, so PATH resolves the C/C++
   # compilers to the devtoolset GCC 7.3.1 unless the wheel configure pins them
   # explicitly; --gcc-toolchain below is a clang-only flag, so letting CMake
@@ -986,7 +991,12 @@ stage_ptoas_wheel() {
   wheel_feature_args+=(
     "--config-settings=cmake.define.CMAKE_C_COMPILER=${PTOAS_CC}"
     "--config-settings=cmake.define.CMAKE_CXX_COMPILER=${PTOAS_CXX}"
+    "--config-settings=cmake.define.CMAKE_C_COMPILER_LAUNCHER=${CMAKE_C_COMPILER_LAUNCHER:-}"
+    "--config-settings=cmake.define.CMAKE_CXX_COMPILER_LAUNCHER=${CMAKE_CXX_COMPILER_LAUNCHER:-}"
+    "--config-settings=cmake.define.LLVM_DIR=${LLVM_BUILD_DIR}/lib/cmake/llvm"
+    "--config-settings=cmake.define.MLIR_DIR=${LLVM_BUILD_DIR}/lib/cmake/mlir"
     "--config-settings=cmake.define.CANN_3RD_LIB_PATH=${CANN_3RD_LIB_PATH}"
+    "--config-settings=cmake.define.ENABLE_PACKAGE=OFF"
   )
   # Pass the devtoolset-7 sysroot + gcc-toolchain through CMake defines so the
   # wheel's native extension links against the CentOS7 libc floor, matching the
@@ -1010,7 +1020,7 @@ stage_ptoas_wheel() {
     )
   fi
   CMAKE_BUILD_PARALLEL_LEVEL="$(ptoas_build_jobs)" \
-  SKBUILD_BUILD_DIR="${BUILD_PATH}" \
+  SKBUILD_BUILD_DIR="${WHEEL_BUILD_PATH}" \
   LLVM_BUILD_DIR="${LLVM_BUILD_DIR}" \
     "${python_bin}" -m pip wheel "${BASE_PATH}" \
       "${wheel_feature_args[@]}" \
@@ -1074,6 +1084,26 @@ stage_ptoas_wheel() {
   echo "staged ptoas wheel: ${PTOAS_WHEEL_FILE}"
 }
 
+# Reuse the wheel build's exported CMake files. The packaging configuration has
+# no native targets: changing the installer payload cannot rebuild the compiler.
+package_ptoas_wheel() {
+  local package_build="${BUILD_PATH}/package"
+  cmake --install "${WHEEL_BUILD_PATH}" --prefix "${INSTALL_PATH}" --component PTOAS_CMake
+  # The shared GitCode API checker reads build/compile_commands.json.
+  cp "${WHEEL_BUILD_PATH}/compile_commands.json" "${BUILD_PATH}/compile_commands.json"
+  cmake -G Ninja -S "${BASE_PATH}" -B "${package_build}" \
+    -DPTOAS_PACKAGE_ONLY=ON \
+    -DPTOAS_NATIVE_BUILD_DIR="${WHEEL_BUILD_PATH}" \
+    -DPTOAS_WHEEL_FILE="${PTOAS_WHEEL_FILE}" \
+    -DCMAKE_INSTALL_PREFIX="${INSTALL_PATH}" \
+    -DCMAKE_BUILD_TYPE=Release \
+    -DCMAKE_C_COMPILER="${PTOAS_CC}" \
+    -DCMAKE_CXX_COMPILER="${PTOAS_CXX}" \
+    -DCANN_3RD_LIB_PATH="${CANN_3RD_LIB_PATH}" \
+    -DPACKAGE_TYPE="${PACKAGE_TYPE:-run}"
+  cmake --build "${package_build}" --target package -- -j "$(ptoas_build_jobs)"
+}
+
 # Package the wheel into a self-extracting .run installer under build_out. The
 # GitCode smoke pipeline invokes the artifact with --full / --uninstall. Keep
 # the wheel installer here because the legacy install-tree helper only extracts
@@ -1090,21 +1120,13 @@ package() {
   # default to the packaging version and allow an explicit override.
   PTOAS_PACKAGE_VERSION="${PTOAS_PACKAGE_VERSION:-9.2.0}"
 
-  # Build and repair the wheel first, then reconfigure with its absolute path
-  # so CMake/CPack owns run, RPM, and DEB payload generation uniformly. The
-  # wheel pass configures and compiles the same sources in the same build
-  # tree, so no separate pre-build of PTOAS is needed here: compile errors
-  # surface in stage_ptoas_wheel before the final configure.
+  # Compile once through the wheel backend, then package its existing output.
+  # Keep both build trees so a repeated invocation can use Ninja's dependency
+  # graph in addition to the CI compiler cache.
   rm -rf "${BUILD_OUT_PATH}"
   mkdir -p "${BUILD_OUT_PATH}"
   stage_ptoas_wheel
-  ENABLE_PACKAGE=TRUE
-  configure_ptoas
-  # configure_ptoas resets the build tree; rebuild all targets before the
-  # install/CPack pass so generated install scripts reference real artifacts.
-  cmake --build "${BUILD_PATH}" -- -j "${_ptoas_jobs}"
-  cmake --install "${BUILD_PATH}"
-  cmake --build "${BUILD_PATH}" --target package -- -j "${_ptoas_jobs}"
+  package_ptoas_wheel
   echo "package staged under ${BUILD_OUT_PATH}"
   # Diagnostics: the OBS uploader reads build_out via the host path
   # /opt/cloud/slavespace/.../x86build/build_out; print what we actually
@@ -1265,6 +1287,7 @@ main() {
   JOBS="${JOBS:-}"
   ENABLE_BUILD_ONLY=FALSE
   ENABLE_PACKAGE=FALSE
+  CLEAN_PTOAS=FALSE
 
   while [ $# -gt 0 ]; do
     case "$1" in
@@ -1278,6 +1301,10 @@ main() {
         ;;
       --pkg)
         ENABLE_PACKAGE=TRUE
+        shift
+        ;;
+      --clean)
+        CLEAN_PTOAS=TRUE
         shift
         ;;
       --pkg-type|--pkg-type=*)
@@ -1341,6 +1368,10 @@ main() {
     trap 'report_build_failure "$?"' EXIT
     resolve_devtoolset_toolchain
     resolve_ptoas_toolchain
+    if [ "${CLEAN_PTOAS}" == "TRUE" ]; then
+      echo "Cleaning PTOAS build trees: ${BUILD_PATH}"
+      rm -rf "${BUILD_PATH}"
+    fi
   fi
 
   prepare_llvm_cache_layout

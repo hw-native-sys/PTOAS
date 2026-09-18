@@ -12,6 +12,7 @@ constexpr unsigned kTGatherI32BitWidth = 32;
 constexpr unsigned kExpectedTileRank = 2;
 constexpr int64_t kTmovAlignBytes = 16;
 constexpr unsigned kFp8ElemBitWidth = 8;
+constexpr unsigned kTGatherBDstElemBytes[] = {1, 2, 4};
 
 static LogicalResult verifyTGatherArch(TGatherOp op, bool isA5) {
   if (op.getMaskPatternAttr()) {
@@ -24,19 +25,18 @@ static LogicalResult verifyTGatherArch(TGatherOp op, bool isA5) {
     return op.emitOpError("axis attribute must not be provided without maskPattern");
   }
   if (op.getCdst() || op.getKValue()) {
-    if (!op.getCdst() || !op.getKValue() || !op.getTmp()) {
-      return op.emitOpError("compare-form tgather expects dst, cdst, kValue, and tmp");
+    bool hasCompareOperands = op.getCdst() && op.getKValue();
+    if (!hasCompareOperands) {
+      return op.emitOpError("compare-form tgather expects dst, cdst, and kValue");
     }
     if (op.getIndices()) {
       return op.emitOpError("compare-form tgather does not take indices");
     }
     return verifyTGatherCompareForm(op, /*allowA5SrcTypes=*/isA5);
   }
-  if (!op.getIndices())
-    return op.emitOpError(isA5 ? "index-form tgather expects indices"
-                               : "index-form tgather expects both indices and tmp");
-  if (!isA5 && !op.getTmp())
-    return op.emitOpError("index-form tgather expects both indices and tmp");
+  if (!op.getIndices()) {
+    return op.emitOpError("index-form tgather expects indices");
+  }
   return verifyTGatherIndexForm(op, /*allow16BitIndices=*/isA5,
                                 /*allowA5ElemTypes=*/isA5);
 }
@@ -84,7 +84,7 @@ static LogicalResult verifyTGatherBA2A3(TGatherBOp op) {
            << "expects dst and offsets to use row-major layout";
   }
   auto dstBytes = tgatherbElemBytes(dstElemTy);
-  if (!dstBytes || (*dstBytes != 1 && *dstBytes != 2 && *dstBytes != 4)) {
+  if (!dstBytes || !llvm::is_contained(kTGatherBDstElemBytes, *dstBytes)) {
     return op.emitOpError()
            << "expects A2/A3 dst element size to be 1, 2, or 4 bytes";
   }
@@ -124,7 +124,7 @@ static LogicalResult verifyTGatherBA5(TGatherBOp op) {
   }
   Type dstElemTy = elems->second;
   auto dstBytes = tgatherbElemBytes(dstElemTy);
-  if (!dstBytes || (*dstBytes != 1 && *dstBytes != 2 && *dstBytes != 4)) {
+  if (!dstBytes || !llvm::is_contained(kTGatherBDstElemBytes, *dstBytes)) {
     return op.emitOpError() << "expects dst element size to be 1, 2, or 4 bytes";
   }
   return mlir::success();

@@ -39,13 +39,14 @@ new `index` / integer mixed case at the individual operation emitter.
     result type.
 - Keep operation-specific emitters focused on operation lowering, not type
   reconciliation details.
-- Avoid backend changes. This is a PTODSL frontend refactor.
+- Keep `index`/integer conversion in the existing `pto.cast` frontend surface;
+  represent it as `pto.index_cast` until generic PTO operations are legalized.
 
 ## Non-Goals
 
-- Do not change PTO IR operation definitions or verifier behavior.
+- Do not change the semantics of ordinary numeric conversions.
 - Do not redesign signed/unsigned semantics.
-- Do not introduce a public user-facing API.
+- Do not introduce a second public index-cast API.
 - Do not change AST rewrite behavior.
 - Do not merge tile-template tracing's private `_Value(type_text)` prototype
   model into this helper. That path does not operate on the authored
@@ -91,14 +92,23 @@ APIs such as scalar store know their destination element type. They should call
 Rules:
 
 - Python literals materialize directly as the target type.
-- `integer -> index` uses `arith.index_cast`.
-- `index -> integer` uses `arith.index_cast` to the signless target and then
-  restores authored integer signedness where needed.
+- `integer -> index` uses `pto.index_cast` with signedness derived from the
+  integer source.
+- `index -> integer` uses `pto.index_cast` with signedness derived from the
+  integer destination, then restores authored integer signedness where needed.
 - `integer -> integer` extends, truncates, or strips/restores signedness using
   the existing width rules.
 - `float -> float` extends or truncates.
 - `float -> index/integer` and `index/integer -> float` remain invalid unless a
   future API explicitly asks for such a conversion.
+
+The public `pto.cast(value, dtype)` interface also accepts the
+`index <-> integer` pair. It emits `pto.index_cast` with signedness derived
+from the integer side; later legalization selects `arith.index_cast` or
+`arith.index_castui`. Numeric conversion attributes do not apply to this type
+bridge. APIs whose semantic
+target is already `index` (such as pointer offsets, loop bounds, and memory
+access offsets) adapt integer runtime values automatically.
 
 ### Prefer Index
 
@@ -128,7 +138,7 @@ Rules:
 
 - Python `int` materializes directly as the target integer type.
 - Python `bool` is rejected for normal integer operands.
-- runtime `index` casts to the target integer type with `arith.index_cast`.
+- runtime `index` casts to the target integer type with `pto.index_cast`.
 - runtime integer values extend, truncate, or strip/restore signedness using
   the shared integer adaptation helper.
 - runtime floating-point values are rejected.

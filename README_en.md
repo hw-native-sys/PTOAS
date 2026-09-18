@@ -143,6 +143,14 @@ owns `PYTHON_BIN`. Activating the virtual environment created above puts its
 After installation, configure the runtime environment in section 4 before
 running either `ptoas` or `check-pto`.
 
+The GitCode/CANN entrypoint `bash build.sh --build` preserves `build/` for
+incremental Ninja builds. `bash build.sh --pkg` builds the wheel in
+`build/wheel/`, then packages it in `build/package/` without rebuilding PTOAS.
+Use `--clean --build` or `--clean --pkg` to reset PTOAS intermediates, for
+example when switching toolchains; the shared LLVM cache is preserved.
+`BuildAccelerate`/xcache provides compiler caching across CI jobs. Incremental
+builds within a workspace require the corresponding build directory to persist.
+
 ### 3.4 Step 3: Supported Python Install Flows
 
 If you want to use Python bindings or PTODSL, prefer the repository-root
@@ -165,7 +173,7 @@ After installation, the following imports should work directly:
 
 ```python
 import ptodsl
-from ptodsl import pto, scalar
+from ptodsl import pto
 from ptoas.mlir.dialects import pto as mlir_pto
 ```
 
@@ -267,13 +275,13 @@ can be imported directly.
 from ptoas.mlir.ir import Context, Module, Location
 # PTOAS ships its MLIR Python API in the ptoas.mlir namespace.
 from ptoas.mlir.dialects import pto
-from ptodsl import pto as jit_pto, scalar
+from ptodsl import pto as jit_pto
 
 with Context() as ctx, Location.unknown():
     pto.register_dialect(ctx, load=True)
     module = Module.create()
     print("PTO Dialect registered successfully!")
-    print("PTODSL imported successfully!", jit_pto, scalar)
+    print("PTODSL imported successfully!", jit_pto)
 ```
 
 ### 5.3 Running Tests

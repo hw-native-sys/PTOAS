@@ -23,18 +23,18 @@ module attributes {pto.target_arch = "a5"} {
     %2 = arith.index_cast %arg4 : i32 to index
     %3 = arith.cmpi slt, %map_w_inline6339__idx_v0, %2 : index
     %map_seen_inline6346__phi_v5 = scf.if %3 -> (index) {
-      %map_slot_raw_inline6351__tile = pto.load_scalar %arg2[%map_w_inline6339__idx_v0] : !pto.ptr<i64> -> i64
+      %map_slot_raw_inline6351__tile = pto.load %arg2[%map_w_inline6339__idx_v0] : !pto.ptr<i64> -> i64
       %4 = arith.index_cast %map_slot_raw_inline6351__tile : i64 to index
       %5 = arith.cmpi sle, %c0_index, %4 : index
       %map_seen_inline6346__phi_v4 = scf.if %5 -> (index) {
-        %6 = pto.load_scalar %arg3[%map_w_inline6339__idx_v0] : !pto.ptr<i32> -> i32
+        %6 = pto.load %arg3[%map_w_inline6339__idx_v0] : !pto.ptr<i32> -> i32
         %flat_offset_mul = arith.muli %c0_index, %c8_index : index
         %flat_offset = arith.addi %flat_offset_mul, %map_seen_inline6346__iter_v1 : index
-        pto.store_scalar %6, %arg0[%flat_offset] : !pto.ptr<i32>, i32
+        pto.store %6, %arg0[%flat_offset] : !pto.ptr<i32>, i32
         %7 = arith.trunci %map_slot_raw_inline6351__tile : i64 to i32
         %8 = arith.muli %c0_index, %c8_index : index
         %9 = arith.addi %8, %map_seen_inline6346__iter_v1 : index
-        pto.store_scalar %7, %arg1[%9] : !pto.ptr<i32>, i32
+        pto.store %7, %arg1[%9] : !pto.ptr<i32>, i32
         %10 = arith.addi %map_seen_inline6346__iter_v1, %c1_index : index
         scf.yield %10 : index
       } else {

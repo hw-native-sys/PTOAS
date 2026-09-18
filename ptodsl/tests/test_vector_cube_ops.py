@@ -1559,17 +1559,20 @@ class VectorCubeSurfaceTest(unittest.TestCase):
 
     def test_intra_sync_mixed_writeback_event_ranges(self):
         dynamic_event = object()
-        dynamic_event_operand = object()
-        with patch_ops("_pipe_attr", side_effect=lambda pipe: f"pipe:{pipe}") as pipe_attr, \
-             patch_ops("unwrap_surface_value", return_value=dynamic_event_operand) as unwrap_surface_value, \
-             patch.object(_ops._pto, "set_intra_block") as set_intra_block_op, \
-             patch.object(_ops._pto, "wait_intra_block") as wait_intra_block_op:
-            _ops.set_intra_block(pto.Pipe.FIX, 31)
-            _ops.set_intra_block(pto.Pipe.MTE3, 31)
-            _ops.wait_intra_block(pto.Pipe.FIX, 16)
-            _ops.wait_intra_block(pto.Pipe.V, 31)
-            _ops.wait_intra_block(pto.Pipe.MTE3, 31)
-            _ops.wait_intra_block(pto.Pipe.MTE3, dynamic_event)
+        with make_context():
+            dynamic_event_operand = SimpleNamespace(
+                type=IntegerType.get_signless(32)
+            )
+            with patch_ops("_pipe_attr", side_effect=lambda pipe: f"pipe:{pipe}") as pipe_attr, \
+                 patch_ops("unwrap_surface_value", return_value=dynamic_event_operand) as unwrap_surface_value, \
+                 patch("ptodsl._ops._pto.set_intra_block") as set_intra_block_op, \
+                 patch("ptodsl._ops._pto.wait_intra_block") as wait_intra_block_op:
+                _ops.set_intra_block(pto.Pipe.FIX, 31)
+                _ops.set_intra_block(pto.Pipe.MTE3, 31)
+                _ops.wait_intra_block(pto.Pipe.FIX, 16)
+                _ops.wait_intra_block(pto.Pipe.V, 31)
+                _ops.wait_intra_block(pto.Pipe.MTE3, 31)
+                _ops.wait_intra_block(pto.Pipe.MTE3, dynamic_event)
 
         self.assertEqual(pipe_attr.call_count, 6)
         self.assertEqual(set_intra_block_op.call_count, 2)

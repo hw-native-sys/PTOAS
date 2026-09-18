@@ -29,8 +29,8 @@ LogicalResult MadMxRawOp::verify() {
 
 // ODS OpInterface methods have generated non-const declarations.
 // NOLINTNEXTLINE(readability-make-member-function-const)
-bool MadMxRawOp::isMadMxFamily() { return true; }
+bool MadMxRawOp::isMadMxFamily() const { return true; }
 // NOLINTNEXTLINE(readability-make-member-function-const)
-bool MadMxRawOp::hasBiasOperand() { return false; }
+bool MadMxRawOp::hasBiasOperand() const { return false; }
 // NOLINTNEXTLINE(readability-make-member-function-const)
-Value MadMxRawOp::getBiasOrNull() { return {}; }
+Value MadMxRawOp::getBiasOrNull() const { return {}; }

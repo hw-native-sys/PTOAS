@@ -21,14 +21,15 @@ import tempfile
 from unittest import mock
 
 
-REPO_ROOT = Path(__file__).resolve().parents[2]
-USER_GUIDE_ROOT = REPO_ROOT / "ptodsl" / "docs" / "user_guide"
-from ptodsl import pto, scalar
+from ptodsl import pto
 from ptodsl._context import make_context
 from ptodsl._runtime.launch import LaunchHandle, _marshal_launch_args
 from ptodsl._runtime.toolchain import resolve_ptoas_binary
 from ptoas.mlir.ir import Module
 from support.docs_fragment_fixtures import FRAGMENT_FIXTURES, render_fragment_fixture
+
+REPO_ROOT = Path(__file__).resolve().parents[2]
+USER_GUIDE_ROOT = REPO_ROOT / "ptodsl" / "docs" / "user_guide"
 
 FENCE_RE = re.compile(r"^```(?P<lang>[A-Za-z0-9_+-]*)\s*$")
 META_RE = re.compile(r"^\s*<!--\s*ptodsl-doc-(?P<kind>test|pending)\s*:\s*(?P<body>.*?)\s*-->\s*$")
@@ -344,7 +345,6 @@ def execute_source(
         "__name__": "__ptodsl_doc_snippet__",
         "__file__": str(source_file),
         "pto": pto,
-        "scalar": scalar,
     }
     if extra_namespace is not None:
         namespace.update(extra_namespace)

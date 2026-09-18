@@ -1,0 +1,69 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+
+// RUN: split-file %s %t
+// RUN: not ptoas --pto-arch=a3 --pto-backend=emitc --pto-level=level2 %t/index-shape.pto 2>&1 | FileCheck %s --check-prefix=SHAPE
+// RUN: not ptoas --pto-arch=a3 --pto-backend=emitc --pto-level=level2 %t/compare-type.pto 2>&1 | FileCheck %s --check-prefix=TYPE
+// RUN: not ptoas --pto-arch=a3 --pto-backend=emitc --pto-level=level2 %t/dynamic.pto 2>&1 | FileCheck %s --check-prefix=SIZE
+// RUN: not ptoas --pto-arch=a3 --pto-backend=emitc --pto-level=level2 %t/overflow.pto 2>&1 | FileCheck %s --check-prefix=SIZE
+
+//--- index-shape.pto
+module {
+  func.func @bad_index_shape() {
+    %src = pto.alloc_tile : !pto.tile_buf<vec, 2x32xf16>
+    %indices = pto.alloc_tile : !pto.tile_buf<vec, 2x32xi32>
+    %dst = pto.alloc_tile : !pto.tile_buf<vec, 1x32xf16>
+    pto.tgather ins(%src, %indices : !pto.tile_buf<vec, 2x32xf16>, !pto.tile_buf<vec, 2x32xi32>)
+               outs(%dst : !pto.tile_buf<vec, 1x32xf16>)
+    return
+  }
+}
+
+// SHAPE: error: 'pto.tgather' op expects dst and indices to have the same valid_shape
+
+//--- compare-type.pto
+module {
+  func.func @bad_compare_type() {
+    %key = arith.constant 0 : i16
+    %src = pto.alloc_tile : !pto.tile_buf<vec, 1x32xi16>
+    %dst = pto.alloc_tile : !pto.tile_buf<vec, 1x32xi32>
+    %count = pto.alloc_tile : !pto.tile_buf<vec, 1x8xi32>
+    pto.tgather ins(%src, %key : !pto.tile_buf<vec, 1x32xi16>, i16)
+               outs(%dst, %count : !pto.tile_buf<vec, 1x32xi32>, !pto.tile_buf<vec, 1x8xi32>)
+    return
+  }
+}
+
+// TYPE: error: 'pto.tgather' op expects A2/A3 compare-form tgather src element type to be f16/f32, or i32 when cmpMode=eq
+
+//--- dynamic.pto
+module {
+  func.func @dynamic_index_rows(%rows: index) {
+    %src = pto.alloc_tile : !pto.tile_buf<vec, 2x32xf16>
+    %indices = pto.alloc_tile valid_row = %rows : !pto.tile_buf<vec, 2x32xi32, valid=?x32>
+    %dst = pto.alloc_tile valid_row = %rows : !pto.tile_buf<vec, 2x32xf16, valid=?x32>
+    pto.tgather ins(%src, %indices : !pto.tile_buf<vec, 2x32xf16>, !pto.tile_buf<vec, 2x32xi32, valid=?x32>)
+               outs(%dst : !pto.tile_buf<vec, 2x32xf16, valid=?x32>)
+    return
+  }
+}
+
+//--- overflow.pto
+// The source byte size fits i64, but the comparison scratch capacity does not.
+module {
+  func.func @compare_scratch_overflow(%src: !pto.tile_buf<vec, 144115188075855872x8xf32, valid=1x8>) {
+    %key = arith.constant 0.0 : f32
+    %dst = pto.alloc_tile : !pto.tile_buf<vec, 1x8xi32>
+    %count = pto.alloc_tile : !pto.tile_buf<vec, 1x8xi32>
+    pto.tgather ins(%src, %key : !pto.tile_buf<vec, 144115188075855872x8xf32, valid=1x8>, f32)
+               outs(%dst, %count : !pto.tile_buf<vec, 1x8xi32>, !pto.tile_buf<vec, 1x8xi32>)
+    return
+  }
+}
+
+// SIZE: error: 'pto.tgather' op requires static tile_buf indices/src with representable scratch size to materialize implicit tgather tmp

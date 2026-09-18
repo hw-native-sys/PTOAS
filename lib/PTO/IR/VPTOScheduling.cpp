@@ -315,6 +315,33 @@ static void collectPostUpdateEffects(
 }
 } // namespace
 
+// Derive the ctrl scheduling effect from StateAccessOpInterface so every
+// consumer (raw MAD Consume, acc-store copy-out) is ordered against the
+// set_ctrl that installs a configuration and the restore that follows it.
+// Without these edges the scheduler could hoist a mad_raw above its
+// configuration. The explicit get_ctrl/set_ctrl ops are covered too: they
+// declare the interface as Query / Write respectively.
+static void collectCtrlStateEffects(Operation *op,
+                                    SmallVectorImpl<VPTOSchedulingEffect>
+                                        &effects) {
+  auto access = dyn_cast<StateAccessOpInterface>(op);
+  if (!access || access.getStateResource() != StateResource::Ctrl) {
+    return;
+  }
+  switch (access.getStateAccessKind()) {
+  case StateAccessKind::Query:
+  case StateAccessKind::Consume:
+    effects.push_back(
+        {VPTOSchedulingEffectKind::ImplicitRead, "ctrl", Value()});
+    break;
+  case StateAccessKind::Write:
+  case StateAccessKind::Clobber:
+    effects.push_back(
+        {VPTOSchedulingEffectKind::ImplicitWrite, "ctrl", Value()});
+    break;
+  }
+}
+
 VPTOSchedulingSemantics
 mlir::pto::getDefaultVPTOSchedulingSemantics(Operation *op) {
   VPTOSchedulingSemantics semantics;
@@ -340,12 +367,7 @@ mlir::pto::getDefaultVPTOSchedulingSemantics(Operation *op) {
   if (auto sprsts = dyn_cast<SprstsOp>(op))
     effects.push_back(
         {VPTOSchedulingEffectKind::ImplicitRead, sprsts.getSpr(), Value()});
-  if (isa<GetCtrlOp>(op))
-    effects.push_back(
-        {VPTOSchedulingEffectKind::ImplicitRead, "ctrl", Value()});
-  if (isa<SetCtrlOp>(op))
-    effects.push_back(
-        {VPTOSchedulingEffectKind::ImplicitWrite, "ctrl", Value()});
+  collectCtrlStateEffects(op, effects);
 
   collectMemoryAccesses(op, semantics);
   if (getExecutionPipe(op) || !semantics.effects.empty()) {

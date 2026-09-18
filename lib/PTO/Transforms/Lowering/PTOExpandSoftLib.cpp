@@ -288,7 +288,7 @@ struct PTOExpandSoftLibPass
       return false;
     }
     auto integer = dyn_cast<IntegerType>(resultVreg.getElementType());
-    auto expectedMask = integer && integer.getWidth() == 16 ? "b16" : "b32";
+    auto expectedMask = integer && integer.getWidth() == mlir::pto::kValue16 ? "b16" : "b32";
     bool lhsLegal = isSoftLibVdivIntegerVReg(vdiv.getLhs().getType());
     bool rhsLegal = isSoftLibVdivIntegerVReg(vdiv.getRhs().getType());
     bool sameType = vdiv.getLhs().getType() == vdiv.getRhs().getType() &&
@@ -319,7 +319,7 @@ struct PTOExpandSoftLibPass
       targetArch = attr.getValue();
     }
     SmallVector<Operation *> candidates;
-    module.walk([&](Operation *op) {
+    module.walk([&candidates](Operation *op) {
       bool isSoftLibCandidate = isa<SinOp, CosOp>(op) || isIntegerVdiv(op);
       if (isSoftLibCandidate) {
         candidates.push_back(op);

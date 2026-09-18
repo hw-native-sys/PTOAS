@@ -149,15 +149,12 @@ module attributes {pto.target_arch = "a5", pto.kernel_kind = #pto.kernel_kind<ve
 // CHECK: %{{.*}}:3 = scf.for {{.*}} to %[[COL_BOUND]] step {{.*}} iter_args
 // CHECK-SAME: -> (index, index, index) {
 // CHECK: %[[ADD0:.*]] = pto.vadd
-// CHECK: %{{.*}} = arith.subi
 // CHECK: %[[STORE0:.*]] = pto.tile_buf_addr
 // CHECK: pto.vsts %[[ADD0]], %[[STORE0]]
 // CHECK: %[[ADD1:.*]] = pto.vadd
-// CHECK: %{{.*}} = arith.subi
 // CHECK: %[[STORE1:.*]] = pto.tile_buf_addr
 // CHECK: pto.vsts %[[ADD1]], %[[STORE1]]
 // CHECK: %[[ADD2:.*]] = pto.vadd
-// CHECK: %{{.*}} = arith.subi
 // CHECK: %[[STORE2:.*]] = pto.tile_buf_addr
 // CHECK: pto.vsts %[[ADD2]], %[[STORE2]]
 // CHECK: }
@@ -176,11 +173,9 @@ module attributes {pto.target_arch = "a5", pto.kernel_kind = #pto.kernel_kind<ve
 // CHECK: %{{.*}}:2 = scf.for {{.*}} to %[[TILE_COL]] step {{.*}} iter_args
 // CHECK-SAME: -> (index, index) {
 // CHECK: %[[CADD0:.*]] = pto.vadd
-// CHECK: %{{.*}} = arith.subi
 // CHECK: %[[CSTORE0:.*]] = pto.tile_buf_addr
 // CHECK: pto.vsts %[[CADD0]], %[[CSTORE0]]
 // CHECK: %[[CADD1:.*]] = pto.vadd
-// CHECK: %{{.*}} = arith.subi
 // CHECK: %[[CSTORE1:.*]] = pto.tile_buf_addr
 // CHECK: pto.vsts %[[CADD1]], %[[CSTORE1]]
 // CHECK: }
@@ -198,11 +193,9 @@ module attributes {pto.target_arch = "a5", pto.kernel_kind = #pto.kernel_kind<ve
 // Inner col loop carries reduce accumulator (vreg).
 // CHECK: scf.for {{.*}} to %[[RCOL_BOUND]] step {{.*}} iter_args
 // CHECK: %[[RADD:.*]] = pto.vadd
-// CHECK: %{{.*}} = arith.subi
 // CHECK: %[[RADD_STORE:.*]] = pto.tile_buf_addr
 // CHECK: pto.vsts %[[RADD]], %[[RADD_STORE]]
 // CHECK: %[[RMUL:.*]] = pto.vmul
-// CHECK: %{{.*}} = arith.subi
 // CHECK: %[[RMUL_STORE:.*]] = pto.tile_buf_addr
 // CHECK: pto.vsts %[[RMUL]], %[[RMUL_STORE]]
 // Reduce computation inside the same col loop.

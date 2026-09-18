@@ -252,16 +252,6 @@ void TMovOp::getEffects(SmallVectorImpl<SideEffects::EffectInstance<MemoryEffect
     PTO_ADD_WRITE(effects, dstOperand);                                            \
   }
 
-void LoadScalarOp::getEffects(
-    SmallVectorImpl<SideEffects::EffectInstance<MemoryEffects::Effect>> &effects) {
-  PTO_ADD_READ(effects, getPtrMutable());
-}
-
-void StoreScalarOp::getEffects(
-    SmallVectorImpl<SideEffects::EffectInstance<MemoryEffects::Effect>> &effects) {
-  PTO_ADD_WRITE(effects, getPtrMutable());
-}
-
 // === Tile/Device ops added for InsertSync ===
 
 // MGATHER: Read(mem, idx) -> Write(dst)

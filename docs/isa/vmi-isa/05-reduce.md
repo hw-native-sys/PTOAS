@@ -146,7 +146,7 @@ store, and broadcast device cases before claiming a benefit.
   |---|---|---|---|
   | `group` | `1`, `2`, `4`, `8` | `1` (full reduce) | Number of sub-groups |
   | `reassoc` | *(unit attr)* | *(absent)* | Permit reassociation (**required** for fp sources) |
-  | `pmode` | `"zero"`, `"merge"` | `"zero"` | Inactive-result behavior |
+  | `pmode` | `"zero"` | `"zero"` | Inactive-result behavior |
 
 - **datatypes:** full reduce — `i32`, `f16`/`f32`; grouped reduce — `i8`/`i16`/`i32`, `f16`/`f32`
 - **lowering to `pto.mi`:**

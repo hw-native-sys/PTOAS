@@ -1,16 +1,10 @@
 // Copyright (c) 2026 Huawei Technologies Co., Ltd.
-// This program is free software; you can redistribute it and/or modify it under the terms and conditions of
-// the CANN Open Software License Agreement Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
-//
-//     http://console.huawei.com/cann/license
-//
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
 
 //===- PTOArithRangeOptimize.cpp -----------------------------------------===//
 //
@@ -95,11 +89,16 @@ static llvm::cl::opt<bool> disableOffsetNarrowing(
 
 namespace {
 
+constexpr unsigned kI32RangeBitWidth = 32;
+constexpr unsigned kI64RangeBitWidth = 64;
+constexpr unsigned kCollectedRangesInlineCapacity = 4;
+constexpr unsigned kAnchorInlineCapacity = 32;
+
 // Unsigned 64-bit interval used by the local evaluator; `valid` is false
 // once a value escapes the grammar or its range cannot be represented.
 struct URange {
-  APInt lo = APInt(64, 0); // 64-bit
-  APInt hi = APInt(64, 0); // 64-bit
+  APInt lo = APInt(kI64RangeBitWidth, 0); // 64-bit
+  APInt hi = APInt(kI64RangeBitWidth, 0); // 64-bit
   bool valid = false;
 
   URange() = default;
@@ -115,7 +114,7 @@ struct URange {
 
 static bool fitsU32(const URange &r) {
   return r.valid && r.lo.isNonNegative() && r.hi.isNonNegative() &&
-         r.hi.getActiveBits() <= 32;
+         r.hi.getActiveBits() <= kI32RangeBitWidth;
 }
 
 // Result of proving one chain value: `range.valid` means the value is
@@ -193,10 +192,10 @@ private:
     APInt step128 = step->zext(128);
     APInt iters = (ub128 - lb128 + step128 - 1).udiv(step128);
     APInt last = lb128 + step128 * (iters - 1);
-    if (last.getActiveBits() > 32) {
+    if (last.getActiveBits() > kI32RangeBitWidth) {
       return URange::invalid();
     }
-    return URange::range(lb->zext(64), last.trunc(64).zext(64));
+    return URange::range(lb->zext(kI64RangeBitWidth), last.trunc(kI64RangeBitWidth).zext(kI64RangeBitWidth));
   }
 
   // Range of a nullary op implementing InferIntRangeInterface (the hardware
@@ -204,7 +203,7 @@ private:
   // index argRanges and would read out of bounds on the empty argument.
   static URange interfaceRange(Operation *op) {
     auto iface = cast<InferIntRangeInterface>(op);
-    SmallVector<std::pair<Value, ConstantIntRanges>, 4> collected;
+    SmallVector<std::pair<Value, ConstantIntRanges>, kCollectedRangesInlineCapacity> collected;
     iface.inferResultRanges(
         {}, [&](Value result, const ConstantIntRanges &ranges) {
           collected.emplace_back(result, ranges);
@@ -216,7 +215,7 @@ private:
     if (!r.umin().isNonNegative()) {
       return URange::invalid();
     }
-    return URange::range(r.umin().zext(64), r.umax().zext(64));
+    return URange::range(r.umin().zext(kI64RangeBitWidth), r.umax().zext(kI64RangeBitWidth));
   }
 
   // Produces the i32 value of a proven chain node. i32-typed nodes are used
@@ -233,7 +232,7 @@ private:
       return ci.i32Value;
     }
     Type ty = v.getType();
-    if (ty.isSignlessInteger(64)) {
+    if (ty.isSignlessInteger(kI64RangeBitWidth)) {
       return b.create<arith::TruncIOp>(pos->getLoc(), b.getI32Type(), v);
     }
     if (isa<IndexType>(ty)) {
@@ -245,10 +244,10 @@ private:
   // Zero-extends an i32 chain value back to `ty` (index or i64). Exact for
   // proven non-negative u32 ranges.
   Value widen(Value i32Value, Type ty, OpBuilder &b, Operation *pos) {
-    if (ty.isSignlessInteger(32)) {
+    if (ty.isSignlessInteger(kI32RangeBitWidth)) {
       return i32Value;
     }
-    if (ty.isSignlessInteger(64)) {
+    if (ty.isSignlessInteger(kI64RangeBitWidth)) {
       return b.create<arith::ExtUIOp>(pos->getLoc(), ty, i32Value);
     }
     if (isa<IndexType>(ty)) {
@@ -271,7 +270,7 @@ private:
       return; // already narrowed by a previous anchor
     }
     Type operandTy = operand.getType();
-    if (operandTy.isSignlessInteger(32)) {
+    if (operandTy.isSignlessInteger(kI32RangeBitWidth)) {
       return; // nothing to shrink; the operand already is i32
     }
     OpBuilder b(user);
@@ -306,7 +305,7 @@ private:
       return true;
     }
     auto intTy = dyn_cast<IntegerType>(ty);
-    return intTy && (intTy.getWidth() == 32 || intTy.getWidth() == 64);
+    return intTy && (intTy.getWidth() == kI32RangeBitWidth || intTy.getWidth() == kI64RangeBitWidth);
   }
 
   ChainInfo visitImpl(Value v) {
@@ -335,10 +334,10 @@ private:
     if (auto cst = constantOf(def)) {
       // Constant operands are re-materialized in i32 where needed, so no
       // eager i32Value here.
-      if (!cst->isNonNegative() || cst->getActiveBits() > 32) {
+      if (!cst->isNonNegative() || cst->getActiveBits() > kI32RangeBitWidth) {
         return fail();
       }
-      return ChainInfo{URange::exact(cst->zext(64)), Value(), 0};
+      return ChainInfo{URange::exact(cst->zext(kI64RangeBitWidth)), Value(), 0};
     }
     if (isa<arith::MulIOp, arith::AddIOp>(def)) {
       return visitMulAdd(v, def);
@@ -366,7 +365,7 @@ private:
   // which a signed cast performs sign extension on this target).
   static bool isWideningToIndex(Type from, Type to) {
     auto fromInt = dyn_cast<IntegerType>(from);
-    return fromInt && fromInt.getWidth() < 64 && isa<IndexType>(to);
+    return fromInt && fromInt.getWidth() < kI64RangeBitWidth && isa<IndexType>(to);
   }
 
   // index_cast / index_castui between index and an integer type preserve
@@ -391,7 +390,7 @@ private:
     if (isa<arith::IndexCastOp>(def) &&
         isWideningToIndex(def->getOperand(0).getType(),
                           def->getResult(0).getType()) &&
-        inner.range.hi.sgt(APInt(64, INT32_MAX))) {
+        inner.range.hi.sgt(APInt(kI64RangeBitWidth, INT32_MAX))) {
       return fail();
     }
     return inner;
@@ -407,7 +406,7 @@ private:
     if (!fitsU32(range)) {
       return fail();
     }
-    return ChainInfo{range, v.getType().isSignlessInteger(32) ? v : Value(), 0};
+    return ChainInfo{range, v.getType().isSignlessInteger(kI32RangeBitWidth) ? v : Value(), 0};
   }
 
   ChainInfo visitMulAdd(Value v, Operation *def) {
@@ -429,14 +428,14 @@ private:
                        : lhsCI.range.lo + rhsCI.range.lo;
       APInt hi = isMul ? lhsCI.range.hi * rhsCI.range.hi
                        : lhsCI.range.hi + rhsCI.range.hi;
-      if (!lo.isNegative() && !hi.isNegative() && hi.getActiveBits() <= 32) {
+      if (!lo.isNegative() && !hi.isNegative() && hi.getActiveBits() <= kI32RangeBitWidth) {
         combined = URange::range(lo, hi);
       }
     }
 
     if (combined.valid) {
       unsigned binOps = std::max(lhsCI.binOps, rhsCI.binOps) + 1;
-      if (v.getType().isSignlessInteger(32)) {
+      if (v.getType().isSignlessInteger(kI32RangeBitWidth)) {
         return ChainInfo{combined, v, binOps};
       }
       // Mirror the operation in i32 right before its original so any later
@@ -472,7 +471,7 @@ private:
     // change the result or introduce a division by zero. Keep those chains
     // in their original i64 form.
     if (!rhsCst || !rhsCst->isStrictlyPositive() ||
-        rhsCst->getActiveBits() > 32) {
+        rhsCst->getActiveBits() > kI32RangeBitWidth) {
       return fail();
     }
     if (!lhsCI.provable() || !fitsU32(lhsCI.range)) {
@@ -482,21 +481,21 @@ private:
     // the unsigned interval formulas only hold when the whole proven window
     // keeps the sign bit clear.
     if (isa<arith::DivSIOp, arith::RemSIOp, arith::FloorDivSIOp>(def) &&
-        (lhsCI.range.hi.sgt(APInt(64, INT32_MAX)) ||
-         rhsCst->sgt(APInt(64, INT32_MAX)))) {
+        (lhsCI.range.hi.sgt(APInt(kI64RangeBitWidth, INT32_MAX)) ||
+         rhsCst->sgt(APInt(kI64RangeBitWidth, INT32_MAX)))) {
       return fail();
     }
-    APInt rhs64 = rhsCst->zext(64);
+    APInt rhs64 = rhsCst->zext(kI64RangeBitWidth);
     APInt remHi =
         lhsCI.range.hi.ult(rhs64 - 1) ? lhsCI.range.hi : rhs64 - 1;
     URange range = isRem
-                       ? URange::range(APInt(64, 0), remHi)
+                       ? URange::range(APInt(kI64RangeBitWidth, 0), remHi)
                        : URange::range(lhsCI.range.lo.udiv(rhs64),
                                        lhsCI.range.hi.udiv(rhs64));
     if (!fitsU32(range)) {
       return fail();
     }
-    if (v.getType().isSignlessInteger(32)) {
+    if (v.getType().isSignlessInteger(kI32RangeBitWidth)) {
       return ChainInfo{range, v, lhsCI.binOps + 1};
     }
     auto ops = i32BinaryMirrorOperands(def, lhs, lhsCI, rhs64);
@@ -530,7 +529,7 @@ private:
     }
     Value rhs32 = b.create<arith::ConstantOp>(
         def->getLoc(), b.getI32Type(),
-        b.getIntegerAttr(b.getI32Type(), rhsCst.zext(64).trunc(32)));
+        b.getIntegerAttr(b.getI32Type(), rhsCst.zext(kI64RangeBitWidth).trunc(32)));
     return std::pair{lhs32, rhs32};
   }
 
@@ -581,7 +580,7 @@ struct PTOArithRangeOptimizePass
     // controls, so they belong to that copy path rather than to the UB-side
     // scalar accesses this rewrite targets. Both narrowed ops carry the
     // element offset at operand index 1.
-    SmallVector<std::pair<Operation *, unsigned>, 32> anchors;
+    SmallVector<std::pair<Operation *, unsigned>, kAnchorInlineCapacity> anchors;
     getOperation()->walk([&](Operation *op) {
       if (isa<pto::PTOStoreOp, pto::PTOLoadOp>(op)) {
         anchors.emplace_back(op, 1);

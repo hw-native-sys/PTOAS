@@ -180,9 +180,12 @@ static LogicalResult verifyTGatherIndexShapes(TGatherOp op, bool allowA5ElemType
       return failure();
     }
     if (!isRowMajorTileBuf(dstTy) || !isRowMajorTileBuf(idxTy) ||
-        !isRowMajorTileBuf(op.getTmp().getType())) {
+        (op.getTmp() && !isRowMajorTileBuf(op.getTmp().getType()))) {
       return op.emitOpError(
           "expects A2/A3 index-form dst, indices, and tmp to use row-major layout");
+    }
+    if (!op.getTmp()) {
+      return success();
     }
     auto idxElem = dyn_cast<IntegerType>(getElemTy(idxTy));
     Type tmpElem = getElemTy(op.getTmp().getType());
@@ -223,20 +226,11 @@ static LogicalResult verifyTGatherCompareSrcType(TGatherOp op, Type srcElem,
   return success();
 }
 
-static LogicalResult verifyTGatherCompareForm(TGatherOp op, bool allowA5SrcTypes) {
-  Type srcTy = op.getSrc().getType();
-  Type dstTy = op.getDst().getType();
-  Type cdstTy = op.getCdst().getType();
-  Type tmpTy = op.getTmp().getType();
-  if (failed(verifyTileBufCommon(op, srcTy, "src")) ||
-      failed(verifyTileBufCommon(op, dstTy, "dst")) ||
-      failed(verifyTileBufCommon(op, cdstTy, "cdst")) ||
-      failed(verifyTileBufCommon(op, tmpTy, "tmp"))) {
-    return failure();
-  }
-  Type srcElem = getElemTy(srcTy);
-  Type dstElem = getElemTy(dstTy);
-  Type cdstElem = getElemTy(cdstTy);
+static LogicalResult verifyTGatherCompareElementTypes(TGatherOp op,
+                                                      bool allowA5SrcTypes) {
+  Type srcElem = getElemTy(op.getSrc().getType());
+  Type dstElem = getElemTy(op.getDst().getType());
+  Type cdstElem = getElemTy(op.getCdst().getType());
   if (!srcElem || !dstElem || !cdstElem) {
     return op.emitOpError("failed to get element type for src/dst/cdst");
   }
@@ -255,13 +249,28 @@ static LogicalResult verifyTGatherCompareForm(TGatherOp op, bool allowA5SrcTypes
   if (cmpMode != pto::CmpMode::EQ && cmpMode != pto::CmpMode::GT) {
     return op.emitOpError("expects compare-form tgather cmpMode to be eq or gt");
   }
-  if (failed(verifyTGatherCompareSrcType(op, srcElem, cmpMode, allowA5SrcTypes))) {
+  return verifyTGatherCompareSrcType(op, srcElem, cmpMode, allowA5SrcTypes);
+}
+
+static LogicalResult verifyTGatherCompareForm(TGatherOp op, bool allowA5SrcTypes) {
+  Type srcTy = op.getSrc().getType();
+  Type dstTy = op.getDst().getType();
+  Type cdstTy = op.getCdst().getType();
+  Value tmp = op.getTmp();
+  bool hasInvalidTile = failed(verifyTileBufCommon(op, srcTy, "src")) ||
+      failed(verifyTileBufCommon(op, dstTy, "dst")) ||
+      failed(verifyTileBufCommon(op, cdstTy, "cdst")) ||
+      (tmp && failed(verifyTileBufCommon(op, tmp.getType(), "tmp")));
+  if (hasInvalidTile) {
+    return failure();
+  }
+  if (failed(verifyTGatherCompareElementTypes(op, allowA5SrcTypes))) {
     return failure();
   }
   if (failed(verifyVecTileCommonA2A3(op, srcTy, "src")) ||
       failed(verifyVecTileCommonA2A3(op, dstTy, "dst")) ||
       failed(verifyVecTileCommonA2A3(op, cdstTy, "cdst")) ||
-      failed(verifyVecTileCommonA2A3(op, tmpTy, "tmp"))) {
+      (tmp && failed(verifyVecTileCommonA2A3(op, tmp.getType(), "tmp")))) {
     return failure();
   }
   return success();

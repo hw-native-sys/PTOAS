@@ -1,6 +1,6 @@
 # 矩阵计算操作
 
-本节描述了 PTO ISA 中全部矩阵计算操作的指令名称、签名和语义。矩阵计算操作在 Cube（矩阵）流水线上执行，用于完成矩阵乘法（TMATMUL）和矩阵-向量乘法（TGEMV）。所有操作均采用"目标传递风格"（Destination-Passing Style，DPS）：操作本身不产生 SSA 返回值，而是直接将结果写入预先分配好的目标 `tile_buf`。
+本节描述了 PTO ISA 中全部矩阵计算操作的指令名称、签名和语义。矩阵计算操作在 Cube（矩阵）流水线上执行，用于完成矩阵乘法（TMATMUL）和矩阵-向量乘法（TGEMV）。所有操作均采用“目标传递风格”（Destination-Passing Style，DPS）：操作本身不产生 SSA 返回值，而是直接将结果写入预先分配好的目标 `tile_buf`。
 
 这一类操作通常具有如下汇编形式：
 
@@ -16,7 +16,7 @@
 - 目标累加器 tile 位于 `loc=acc`（L0C 缓冲区）
 - 形状约束：`lhs.rows == dst.rows`，`lhs.cols == rhs.rows`，`rhs.cols == dst.cols`
 - 所有操作在矩阵流水线（`PIPE_M`）上执行
-- **(A5)** 布局约束：`lhs.blayout=col_major, lhs.slayout=row_major`；`rhs.blayout=row_major, rhs.slayout=col_major`；`dst.blayout=col_major, dst.slayout=row_major`。A2A3 不在 IR 层面强制校验 `blayout`/`slayout`
+- **（A5）** 布局约束：`lhs.blayout=col_major, lhs.slayout=row_major`；`rhs.blayout=row_major, rhs.slayout=col_major`；`dst.blayout=col_major, dst.slayout=row_major`。A2A3 不在 IR 层面强制校验 `blayout`/`slayout`
 
 ---
 
@@ -88,7 +88,7 @@ For each (i, j):
 ```mlir
 pto.tmatmul ins(%lhs, %rhs :
                 !pto.tile_buf<loc=left, dtype=f16, rows=32, cols=32,
-                    v_row=32, v_col=32, blayout=row_major,
+                    v_row=32, v_col=32, blayout=col_major,
                     slayout=row_major, fractal=512, pad=0>,
                 !pto.tile_buf<loc=right, dtype=f16, rows=32, cols=32,
                     v_row=32, v_col=32, blayout=row_major,
@@ -148,7 +148,7 @@ pto.tmatmul.acc ins(%acc_in, %lhs, %rhs :
                         v_row=32, v_col=32, blayout=col_major,
                         slayout=row_major, fractal=1024, pad=0>,
                     !pto.tile_buf<loc=left, dtype=f16, rows=32, cols=32,
-                        v_row=32, v_col=32, blayout=row_major,
+                        v_row=32, v_col=32, blayout=col_major,
                         slayout=row_major, fractal=512, pad=0>,
                     !pto.tile_buf<loc=right, dtype=f16, rows=32, cols=32,
                         v_row=32, v_col=32, blayout=row_major,
@@ -172,7 +172,7 @@ pto.tmatmul.bias ins(<lhs>, <rhs>, <bias> : <lhs_type>, <rhs_type>, <bias_type>)
 
 ```text
 For each (i, j):
-    dst[i, j] = sum_k lhs[i, k] * rhs[k, j] + bias[i, j]
+    dst[i, j] = sum_k lhs[i, k] * rhs[k, j] + bias[0, j]
 ```
 
 **参数：**
@@ -212,7 +212,7 @@ For each (i, j):
 ```mlir
 pto.tmatmul.bias ins(%lhs, %rhs, %bias :
                      !pto.tile_buf<loc=left, dtype=f16, rows=32, cols=32,
-                         v_row=32, v_col=32, blayout=row_major,
+                         v_row=32, v_col=32, blayout=col_major,
                          slayout=row_major, fractal=512, pad=0>,
                      !pto.tile_buf<loc=right, dtype=f16, rows=32, cols=32,
                          v_row=32, v_col=32, blayout=row_major,
@@ -270,31 +270,35 @@ For each (i, j):
 
 **约束：**
 
-- **实现检查（A5）**
-  - `lhs`/`rhs` 元素类型支持 `f8E4M3FN`、`f8E5M2` 等 fp8 类型对（目标定义）。
-  - `lhs_scale`/`rhs_scale` 必须位于 `loc=scaling`。
-  - `dst` 元素类型必须为 `f32`。
-  - 运行时约束：`m/k/n`（分别取自 `lhs valid row`、`lhs valid column`、`rhs valid column`）必须在 `[1, 4095]` 范围内。
+- **A2/A3 不支持此操作。**
+- **A5 约束**
+  - `lhs`/`rhs` 必须位于 `left`/`right`，目标位于 `acc`，并满足本章的矩阵形状与布局约束；`dst` 元素类型为 `f32`。
+  - 本节示例使用 `f8E4M3FN` 或 `f8E5M2` 的 FP8 类型对；以下尺寸关系分别使用数据类型中记录的物理与有效 extent。
+  - 左数据物理列数与右数据物理行数必须为 64 的正整数倍；有效 `M/K/N` 必须在 `[1,4095]`。
+  - 两个 scale 均位于 `scaling`。对物理尺寸和有效尺寸分别计算：左 scale 为 `[M,ceil(K/32)]`，右 scale 为 `[ceil(K/32),N]`。
+  - 左 scale 使用 `blayout=row_major, slayout=row_major`；右 scale 使用 `blayout=col_major, slayout=col_major`；两者 `fractal=32`。
 
 **示例：**
 
+A5 示例：有效区域等于物理尺寸，M=16、K=64、N=16；左 scale 为 `16x2`，右 scale 为 `2x16`。输入数据与缩放因子已准备在对应 Tile 中。
+
 ```mlir
 pto.tmatmul.mx ins(%a, %a_scale, %b, %b_scale :
-                   !pto.tile_buf<loc=left, dtype=f8E4M3FN, rows=16, cols=32,
-                       v_row=16, v_col=32, blayout=col_major,
-                       slayout=row_major, fractal=512, pad=0>,
-                   !pto.tile_buf<loc=scaling, dtype=f16, rows=16, cols=32,
-                       v_row=16, v_col=32, blayout=row_major,
-                       slayout=none_box, fractal=32, pad=0>,
-                   !pto.tile_buf<loc=right, dtype=f8E4M3FN, rows=32, cols=16,
-                       v_row=32, v_col=16, blayout=row_major,
-                       slayout=col_major, fractal=512, pad=0>,
-                   !pto.tile_buf<loc=scaling, dtype=f16, rows=32, cols=16,
-                       v_row=32, v_col=16, blayout=row_major,
-                       slayout=none_box, fractal=32, pad=0>)
-               outs(%dst : !pto.tile_buf<loc=acc, dtype=f32, rows=16, cols=16,
-                       v_row=16, v_col=16, blayout=col_major,
-                       slayout=row_major, fractal=512, pad=0>)
+    !pto.tile_buf<loc=left, dtype=f8E4M3FN, rows=16, cols=64,
+        v_row=16, v_col=64, blayout=col_major, slayout=row_major,
+        fractal=512, pad=0>,
+    !pto.tile_buf<loc=scaling, dtype=f16, rows=16, cols=2,
+        v_row=16, v_col=2, blayout=row_major, slayout=row_major,
+        fractal=32, pad=0>,
+    !pto.tile_buf<loc=right, dtype=f8E4M3FN, rows=64, cols=16,
+        v_row=64, v_col=16, blayout=row_major, slayout=col_major,
+        fractal=512, pad=0>,
+    !pto.tile_buf<loc=scaling, dtype=f16, rows=2, cols=16,
+        v_row=2, v_col=16, blayout=col_major, slayout=col_major,
+        fractal=32, pad=0>)
+  outs(%dst : !pto.tile_buf<loc=acc, dtype=f32, rows=16, cols=16,
+      v_row=16, v_col=16, blayout=col_major, slayout=row_major,
+      fractal=512, pad=0>)
 ```
 
 ---
@@ -349,26 +353,28 @@ For each (i, j):
 
 **示例：**
 
+A5 示例：有效区域等于物理尺寸，M=16、K=64、N=32；左 scale 为 `16x2`，右 scale 为 `2x32`。输入数据与缩放因子已准备在对应 Tile 中。
+
 ```mlir
 pto.tmatmul.mx.acc ins(%c_in, %a, %a_scale, %b, %b_scale :
-                       !pto.tile_buf<loc=acc, dtype=f32, rows=16, cols=32,
-                           v_row=16, v_col=32, blayout=col_major,
-                           slayout=row_major, fractal=512, pad=0>,
-                       !pto.tile_buf<loc=left, dtype=f8E4M3FN, rows=16, cols=32,
-                           v_row=16, v_col=32, blayout=col_major,
-                           slayout=row_major, fractal=512, pad=0>,
-                       !pto.tile_buf<loc=scaling, dtype=f16, rows=16, cols=32,
-                           v_row=16, v_col=32, blayout=row_major,
-                           slayout=none_box, fractal=32, pad=0>,
-                       !pto.tile_buf<loc=right, dtype=f8E4M3FN, rows=32, cols=32,
-                           v_row=32, v_col=32, blayout=row_major,
-                           slayout=col_major, fractal=512, pad=0>,
-                       !pto.tile_buf<loc=scaling, dtype=f16, rows=32, cols=32,
-                           v_row=32, v_col=32, blayout=row_major,
-                           slayout=none_box, fractal=32, pad=0>)
-                   outs(%dst : !pto.tile_buf<loc=acc, dtype=f32, rows=16, cols=32,
-                           v_row=16, v_col=32, blayout=col_major,
-                           slayout=row_major, fractal=512, pad=0>)
+    !pto.tile_buf<loc=acc, dtype=f32, rows=16, cols=32,
+        v_row=16, v_col=32, blayout=col_major, slayout=row_major,
+        fractal=512, pad=0>,
+    !pto.tile_buf<loc=left, dtype=f8E4M3FN, rows=16, cols=64,
+        v_row=16, v_col=64, blayout=col_major, slayout=row_major,
+        fractal=512, pad=0>,
+    !pto.tile_buf<loc=scaling, dtype=f16, rows=16, cols=2,
+        v_row=16, v_col=2, blayout=row_major, slayout=row_major,
+        fractal=32, pad=0>,
+    !pto.tile_buf<loc=right, dtype=f8E4M3FN, rows=64, cols=32,
+        v_row=64, v_col=32, blayout=row_major, slayout=col_major,
+        fractal=512, pad=0>,
+    !pto.tile_buf<loc=scaling, dtype=f16, rows=2, cols=32,
+        v_row=2, v_col=32, blayout=col_major, slayout=col_major,
+        fractal=32, pad=0>)
+  outs(%dst : !pto.tile_buf<loc=acc, dtype=f32, rows=16, cols=32,
+      v_row=16, v_col=32, blayout=col_major, slayout=row_major,
+      fractal=512, pad=0>)
 ```
 
 ---
@@ -390,7 +396,7 @@ k_group = floor(k / 32)
 For each (i, j):
     dst[i, j] =
         sum_k (lhs[i, k] * lhs_scale[i, k_group]) *
-              (rhs[k, j] * rhs_scale[k_group, j]) + bias[i, j]
+              (rhs[k, j] * rhs_scale[k_group, j]) + bias[0, j]
 ```
 
 **参数：**
@@ -416,26 +422,28 @@ For each (i, j):
 
 **示例：**
 
+A5 示例：有效区域等于物理尺寸，M=16、K=64、N=16；左 scale 为 `16x2`，右 scale 为 `2x16`。输入数据与缩放因子已准备在对应 Tile 中。
+
 ```mlir
 pto.tmatmul.mx.bias ins(%a, %a_scale, %b, %b_scale, %bias :
-                        !pto.tile_buf<loc=left, dtype=f8E4M3FN, rows=16, cols=32,
-                            v_row=16, v_col=32, blayout=col_major,
-                            slayout=row_major, fractal=512, pad=0>,
-                        !pto.tile_buf<loc=scaling, dtype=f16, rows=16, cols=32,
-                            v_row=16, v_col=32, blayout=row_major,
-                            slayout=none_box, fractal=32, pad=0>,
-                        !pto.tile_buf<loc=right, dtype=f8E4M3FN, rows=32, cols=16,
-                            v_row=32, v_col=16, blayout=row_major,
-                            slayout=col_major, fractal=512, pad=0>,
-                        !pto.tile_buf<loc=scaling, dtype=f16, rows=32, cols=16,
-                            v_row=32, v_col=16, blayout=row_major,
-                            slayout=none_box, fractal=32, pad=0>,
-                        !pto.tile_buf<loc=bias, dtype=f32, rows=1, cols=16,
-                            v_row=1, v_col=16, blayout=row_major,
-                            slayout=none_box, fractal=512, pad=0>)
-                    outs(%dst : !pto.tile_buf<loc=acc, dtype=f32, rows=16, cols=16,
-                            v_row=16, v_col=16, blayout=col_major,
-                            slayout=row_major, fractal=512, pad=0>)
+    !pto.tile_buf<loc=left, dtype=f8E4M3FN, rows=16, cols=64,
+        v_row=16, v_col=64, blayout=col_major, slayout=row_major,
+        fractal=512, pad=0>,
+    !pto.tile_buf<loc=scaling, dtype=f16, rows=16, cols=2,
+        v_row=16, v_col=2, blayout=row_major, slayout=row_major,
+        fractal=32, pad=0>,
+    !pto.tile_buf<loc=right, dtype=f8E4M3FN, rows=64, cols=16,
+        v_row=64, v_col=16, blayout=row_major, slayout=col_major,
+        fractal=512, pad=0>,
+    !pto.tile_buf<loc=scaling, dtype=f16, rows=2, cols=16,
+        v_row=2, v_col=16, blayout=col_major, slayout=col_major,
+        fractal=32, pad=0>,
+    !pto.tile_buf<loc=bias, dtype=f32, rows=1, cols=16,
+        v_row=1, v_col=16, blayout=row_major, slayout=none_box,
+        fractal=512, pad=0>)
+  outs(%dst : !pto.tile_buf<loc=acc, dtype=f32, rows=16, cols=16,
+      v_row=16, v_col=16, blayout=col_major, slayout=row_major,
+      fractal=512, pad=0>)
 ```
 
 ---
@@ -574,7 +582,7 @@ pto.tgemv.bias ins(<lhs>, <rhs>, <bias> : <lhs_type>, <rhs_type>, <bias_type>)
 
 ```text
 For each (i, j):
-    dst[i, j] = sum_k lhs[i, k] * rhs[k, j] + bias[i, j]
+    dst[i, j] = sum_k lhs[i, k] * rhs[k, j] + bias[0, j]
 ```
 
 **参数：**
@@ -671,33 +679,35 @@ For each (i, j):
 
 **约束：**
 
-- **A2A3 不支持此操作。**
-
-- **实现检查（A5）**
-  - `lhs`/`rhs` 元素类型支持 `f8E4M3FN`、`f8E5M2` 等 fp8 类型对（目标定义）。
-  - `lhs_scale`/`rhs_scale` 必须位于 `loc=scaling`。
-  - `dst` 元素类型必须为 `f32`。
-  - 运行时约束：`m` 必须为 `1`；`k/n` 必须在 `[1, 4095]` 范围内。
+- **A2/A3 不支持此操作。**
+- **A5 约束**
+  - 数据与目标分别位于 `left`、`right`、`acc`，使用本章 A5 矩阵布局；`dst` 元素类型为 `f32`。
+  - 本节示例使用 `f8E4M3FN` 或 `f8E5M2` 的 FP8 类型对。
+  - 有效 `M=1`，有效 `K/N` 在 `[1,4095]`；数据的物理尺寸满足矩阵乘法形状关系。
+  - 两个 scale 均位于 `scaling`。令 `G=ceil(K/32)`，其中 K 为有效归约维：左 scale 的物理与有效尺寸均为 `[1,G]`；右 scale 的物理尺寸为 `[G,rhs.cols]`，有效尺寸为 `[G,N]`。
+  - 右 scale 的物理列容量覆盖右数据的物理列容量，不能以有效 N 替代已对齐的物理 N。
 
 **示例：**
 
+A5 示例：有效区域等于物理尺寸，M=1、K=128、N=16；左 scale 为 `1x4`，右 scale 为 `4x16`。输入数据与缩放因子已准备在对应 Tile 中。
+
 ```mlir
 pto.tgemv.mx ins(%a, %a_scale, %b, %b_scale :
-                 !pto.tile_buf<loc=left, dtype=f8E4M3FN, rows=1, cols=128,
-                     v_row=1, v_col=128, blayout=col_major,
-                     slayout=row_major, fractal=512, pad=0>,
-                 !pto.tile_buf<loc=scaling, dtype=f16, rows=1, cols=128,
-                     v_row=1, v_col=128, blayout=row_major,
-                     slayout=row_major, fractal=512, pad=0>,
-                 !pto.tile_buf<loc=right, dtype=f8E4M3FN, rows=128, cols=16,
-                     v_row=128, v_col=16, blayout=row_major,
-                     slayout=col_major, fractal=512, pad=0>,
-                 !pto.tile_buf<loc=scaling, dtype=f16, rows=128, cols=16,
-                     v_row=128, v_col=16, blayout=row_major,
-                     slayout=row_major, fractal=512, pad=0>)
-             outs(%dst : !pto.tile_buf<loc=acc, dtype=f32, rows=1, cols=16,
-                     v_row=1, v_col=16, blayout=col_major,
-                     slayout=row_major, fractal=1024, pad=0>)
+    !pto.tile_buf<loc=left, dtype=f8E4M3FN, rows=1, cols=128,
+        v_row=1, v_col=128, blayout=col_major, slayout=row_major,
+        fractal=512, pad=0>,
+    !pto.tile_buf<loc=scaling, dtype=f16, rows=1, cols=4,
+        v_row=1, v_col=4, blayout=row_major, slayout=row_major,
+        fractal=32, pad=0>,
+    !pto.tile_buf<loc=right, dtype=f8E4M3FN, rows=128, cols=16,
+        v_row=128, v_col=16, blayout=row_major, slayout=col_major,
+        fractal=512, pad=0>,
+    !pto.tile_buf<loc=scaling, dtype=f16, rows=4, cols=16,
+        v_row=4, v_col=16, blayout=col_major, slayout=col_major,
+        fractal=32, pad=0>)
+  outs(%dst : !pto.tile_buf<loc=acc, dtype=f32, rows=1, cols=16,
+      v_row=1, v_col=16, blayout=col_major, slayout=row_major,
+      fractal=1024, pad=0>)
 ```
 
 ---
@@ -754,26 +764,28 @@ For each (i, j):
 
 **示例：**
 
+A5 示例：有效区域等于物理尺寸，M=1、K=128、N=16；左 scale 为 `1x4`，右 scale 为 `4x16`。输入数据与缩放因子已准备在对应 Tile 中。
+
 ```mlir
 pto.tgemv.mx.acc ins(%c_in, %a, %a_scale, %b, %b_scale :
-                     !pto.tile_buf<loc=acc, dtype=f32, rows=1, cols=16,
-                         v_row=1, v_col=16, blayout=col_major,
-                         slayout=row_major, fractal=1024, pad=0>,
-                     !pto.tile_buf<loc=left, dtype=f8E4M3FN, rows=1, cols=128,
-                         v_row=1, v_col=128, blayout=col_major,
-                         slayout=row_major, fractal=512, pad=0>,
-                     !pto.tile_buf<loc=scaling, dtype=f16, rows=1, cols=128,
-                         v_row=1, v_col=128, blayout=row_major,
-                         slayout=row_major, fractal=512, pad=0>,
-                     !pto.tile_buf<loc=right, dtype=f8E4M3FN, rows=128, cols=16,
-                         v_row=128, v_col=16, blayout=row_major,
-                         slayout=col_major, fractal=512, pad=0>,
-                     !pto.tile_buf<loc=scaling, dtype=f16, rows=128, cols=16,
-                         v_row=128, v_col=16, blayout=row_major,
-                         slayout=row_major, fractal=512, pad=0>)
-                 outs(%dst : !pto.tile_buf<loc=acc, dtype=f32, rows=1, cols=16,
-                         v_row=1, v_col=16, blayout=col_major,
-                         slayout=row_major, fractal=1024, pad=0>)
+    !pto.tile_buf<loc=acc, dtype=f32, rows=1, cols=16,
+        v_row=1, v_col=16, blayout=col_major, slayout=row_major,
+        fractal=1024, pad=0>,
+    !pto.tile_buf<loc=left, dtype=f8E4M3FN, rows=1, cols=128,
+        v_row=1, v_col=128, blayout=col_major, slayout=row_major,
+        fractal=512, pad=0>,
+    !pto.tile_buf<loc=scaling, dtype=f16, rows=1, cols=4,
+        v_row=1, v_col=4, blayout=row_major, slayout=row_major,
+        fractal=32, pad=0>,
+    !pto.tile_buf<loc=right, dtype=f8E4M3FN, rows=128, cols=16,
+        v_row=128, v_col=16, blayout=row_major, slayout=col_major,
+        fractal=512, pad=0>,
+    !pto.tile_buf<loc=scaling, dtype=f16, rows=4, cols=16,
+        v_row=4, v_col=16, blayout=col_major, slayout=col_major,
+        fractal=32, pad=0>)
+  outs(%dst : !pto.tile_buf<loc=acc, dtype=f32, rows=1, cols=16,
+      v_row=1, v_col=16, blayout=col_major, slayout=row_major,
+      fractal=1024, pad=0>)
 ```
 
 ---
@@ -795,7 +807,7 @@ k_group = floor(k / 32)
 For each (i, j):
     dst[i, j] =
         sum_k (lhs[i, k] * lhs_scale[i, k_group]) *
-              (rhs[k, j] * rhs_scale[k_group, j]) + bias[i, j]
+              (rhs[k, j] * rhs_scale[k_group, j]) + bias[0, j]
 ```
 
 **参数：**
@@ -823,24 +835,26 @@ For each (i, j):
 
 **示例：**
 
+A5 示例：有效区域等于物理尺寸，M=1、K=128、N=16；左 scale 为 `1x4`，右 scale 为 `4x16`。输入数据与缩放因子已准备在对应 Tile 中。
+
 ```mlir
 pto.tgemv.mx.bias ins(%a, %a_scale, %b, %b_scale, %bias :
-                      !pto.tile_buf<loc=left, dtype=f8E4M3FN, rows=1, cols=128,
-                          v_row=1, v_col=128, blayout=col_major,
-                          slayout=row_major, fractal=512, pad=0>,
-                      !pto.tile_buf<loc=scaling, dtype=f16, rows=1, cols=128,
-                          v_row=1, v_col=128, blayout=row_major,
-                          slayout=row_major, fractal=512, pad=0>,
-                      !pto.tile_buf<loc=right, dtype=f8E4M3FN, rows=128, cols=16,
-                          v_row=128, v_col=16, blayout=row_major,
-                          slayout=col_major, fractal=512, pad=0>,
-                      !pto.tile_buf<loc=scaling, dtype=f16, rows=128, cols=16,
-                          v_row=128, v_col=16, blayout=row_major,
-                          slayout=row_major, fractal=512, pad=0>,
-                      !pto.tile_buf<loc=bias, dtype=f32, rows=1, cols=16,
-                          v_row=1, v_col=16, blayout=row_major,
-                          slayout=none_box, fractal=512, pad=0>)
-                  outs(%dst : !pto.tile_buf<loc=acc, dtype=f32, rows=1, cols=16,
-                          v_row=1, v_col=16, blayout=col_major,
-                          slayout=row_major, fractal=1024, pad=0>)
+    !pto.tile_buf<loc=left, dtype=f8E4M3FN, rows=1, cols=128,
+        v_row=1, v_col=128, blayout=col_major, slayout=row_major,
+        fractal=512, pad=0>,
+    !pto.tile_buf<loc=scaling, dtype=f16, rows=1, cols=4,
+        v_row=1, v_col=4, blayout=row_major, slayout=row_major,
+        fractal=32, pad=0>,
+    !pto.tile_buf<loc=right, dtype=f8E4M3FN, rows=128, cols=16,
+        v_row=128, v_col=16, blayout=row_major, slayout=col_major,
+        fractal=512, pad=0>,
+    !pto.tile_buf<loc=scaling, dtype=f16, rows=4, cols=16,
+        v_row=4, v_col=16, blayout=col_major, slayout=col_major,
+        fractal=32, pad=0>,
+    !pto.tile_buf<loc=bias, dtype=f32, rows=1, cols=16,
+        v_row=1, v_col=16, blayout=row_major, slayout=none_box,
+        fractal=512, pad=0>)
+  outs(%dst : !pto.tile_buf<loc=acc, dtype=f32, rows=1, cols=16,
+      v_row=1, v_col=16, blayout=col_major, slayout=row_major,
+      fractal=1024, pad=0>)
 ```

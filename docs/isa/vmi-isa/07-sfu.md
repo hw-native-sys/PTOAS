@@ -20,7 +20,7 @@
 
   ```c
   for (int i = 0; i < L; i++)
-      dst[i] = mask[i] ? exp(x[i] - max[i]) : (pmode_merge ? dst_old[i] : 0);
+      dst[i] = mask[i] ? exp(x[i] - max[i]) : 0;
   ```
 
 - **syntax:**
@@ -41,7 +41,7 @@
   |---|---|---|
   | `result` | `!pto.vmi.vreg<L×f32>` | `exp(x − max)` (always `f32`) |
 
-- **attributes:** `pmode` (`"zero"` / `"merge"`), default `"zero"`
+- **attributes:** `pmode` = `"zero"` (default)
 - **datatypes:** `x` and `max`: matching `f16` or `f32`; result: `f32`
 - **lowering to `pto.mi`:**
   ```
@@ -63,7 +63,7 @@
 
   ```c
   for (int i = 0; i < L; i++)
-      dst[i] = mask[i] ? (alpha * x[i] + acc[i]) : (pmode_merge ? dst_old[i] : 0);
+      dst[i] = mask[i] ? (alpha * x[i] + acc[i]) : 0;
   ```
 
 - **syntax:**
@@ -99,7 +99,7 @@
 
   ```c
   for (int i = 0; i < L; i++)
-      dst[i] = mask[i] ? (src[i] > 0 ? src[i] : slope * src[i]) : (pmode_merge ? dst_old[i] : 0);
+      dst[i] = mask[i] ? (src[i] > 0 ? src[i] : slope * src[i]) : 0;
   ```
 
 - **syntax:**
@@ -128,7 +128,7 @@
 
   ```c
   for (int i = 0; i < L; i++)
-      dst[i] = mask[i] ? (max(src[i], 0) + alpha[i] * min(src[i], 0)) : (pmode_merge ? dst_old[i] : 0);
+      dst[i] = mask[i] ? (max(src[i], 0) + alpha[i] * min(src[i], 0)) : 0;
   ```
 
 - **syntax:**
@@ -164,10 +164,8 @@
   for (int i = 0; i < L; i++) {
       // signed variant; use uint64_t for the ui32 form
       int64_t r = (int64_t)lhs[i] * (int64_t)rhs[i];
-      low [i] = mask[i] ? (int32_t)(r & 0xFFFFFFFF)
-                        : (pmode_merge ? low_old [i] : 0);
-      high[i] = mask[i] ? (int32_t)(r >> 32)
-                        : (pmode_merge ? high_old[i] : 0);
+      low [i] = mask[i] ? (int32_t)(r & 0xFFFFFFFF) : 0;
+      high[i] = mask[i] ? (int32_t)(r >> 32) : 0;
   }
   ```
 
@@ -196,7 +194,7 @@
 
   | Attribute | Type | Default | Description |
   |---|---|---|---|
-  | `pmode` | `StrAttr` (`"zero"` \| `"merge"`) | `"zero"` | Predication mode. `"merge"` preserves the previous `low`/`high` lane values on inactive lanes; on A5 this is **not implemented**  (see [Appendix C](10-appendices.md)). |
+  | `pmode` | `StrAttr` (`"zero"`) | `"zero"` | Predication mode. Inactive lanes write 0. |
 
 - **datatypes:** `i32 → (i32, i32)`, `ui32 → (ui32, ui32)` (both result vregs share the input signedness).
 - **lowering to `pto.mi`:**
@@ -220,7 +218,7 @@
 
   ```c
   for (int i = 0; i < L; i++)
-      dst[i] = mask[i] ? (acc[i] + lhs[i] * rhs[i]) : (pmode_merge ? dst_old[i] : 0);
+      dst[i] = mask[i] ? (acc[i] + lhs[i] * rhs[i]) : 0;
   ```
 
 - **syntax:**
@@ -446,7 +444,7 @@ loads at 64/128 lanes use bounded 2/4-block reads at aligned addresses.
 
   ```c
   for (int i = 0; i < L; i++)
-      dst[i] = mask[i] ? ub[base + offsets[i]] : (pmode_merge ? dst_old[i] : 0);
+      dst[i] = mask[i] ? ub[base + offsets[i]] : 0;
   ```
 
 - **syntax:**

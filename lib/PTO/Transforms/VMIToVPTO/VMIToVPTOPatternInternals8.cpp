@@ -326,8 +326,8 @@ static std::optional<WalkResult> verifySupportedVMIStrideStoreOp(Operation *op) 
   if (auto store = dyn_cast<VMIStrideStoreOp>(op)) {
     return verifySupportedShapeOp(
         store, checkSupportedStrideStoreShape,
-        "pto.vmi.stride_store lowers through pto.vsstb only for one contiguous "
-        "physical value/mask chunk and a supported UB destination (");
+        "pto.vmi.stride_store lowers through pto.vsstb only for matching "
+        "physical value/mask chunks and a supported UB destination (");
   }
   return std::nullopt;
 }
@@ -399,8 +399,8 @@ static std::optional<WalkResult> verifySupportedVMIStrideLoadOp(Operation *op) {
   if (auto load = dyn_cast<VMIStrideLoadOp>(op)) {
     return verifySupportedShapeOp(
         load, checkSupportedStrideLoadShape,
-        "pto.vmi.stride_load lowers through pto.vsldb only for one "
-        "contiguous physical result/mask chunk and a supported UB source (");
+        "pto.vmi.stride_load lowers through pto.vsldb only for matching "
+        "physical result/mask chunks and a supported UB source (");
   }
   return std::nullopt;
 }
@@ -409,9 +409,9 @@ static std::optional<WalkResult> verifySupportedVMIGroupLoadOp(Operation *op) {
   if (auto load = dyn_cast<VMIGroupLoadOp>(op)) {
     return verifySupportedShapeOp(
         load, checkSupportedGroupLoadShape,
-        "pto.vmi.group_load requires contiguous full result chunks, a "
-        "supported UB source, and num_groups deriving a group size aligned "
-        "to physical chunks (");
+        "pto.vmi.group_load requires a supported UB source, a contiguous or "
+        "block_deinterleaved f32 result layout, and a group/row-stride shape "
+        "the block plans can address (");
   }
   return std::nullopt;
 }
@@ -622,13 +622,6 @@ WalkResult emitMaskableNonVReg(Operation *op, StringRef opName,
 template <typename VecScalarOp, typename MaskableCheck>
 WalkResult verifySupportedVecScalarOp(VecScalarOp op, StringRef opName,
                                       MaskableCheck checkMaskable) {
-  bool requiresPassthru =
-      op.getPmode().has_value() && *op.getPmode() == "merge";
-  if (requiresPassthru) {
-    op.emitError() << kVMIDiagUnsupportedPrefix << opName
-                   << " with pmode=merge requires an explicit passthru lowering";
-    return WalkResult::interrupt();
-  }
   auto resultType = dyn_cast<VMIVRegType>(op.getResult().getType());
   if (!resultType) {
     return emitMaskableNonVReg(op.getOperation(), opName,
@@ -637,19 +630,11 @@ WalkResult verifySupportedVecScalarOp(VecScalarOp op, StringRef opName,
   return checkMaskable(op, opName, resultType);
 }
 
-/// Unified v-ops carry an optional `pmode` attribute; `pmode="merge"` needs an
-/// explicit passthru lowering, so report it before the maskable check.
+/// Checks that a unified maskable op has a vreg result and a supported mask
+/// before it is lowered.
 template <typename UnifiedOp, typename MaskableCheck>
 WalkResult verifySupportedUnifiedMaskableOp(UnifiedOp op, StringRef opName,
                                             MaskableCheck checkMaskable) {
-  if (auto pmode = op->template getAttrOfType<StringAttr>("pmode")) {
-    if (pmode.getValue() == "merge") {
-      op.emitError() << kVMIDiagUnsupportedPrefix << opName
-                     << " with pmode=merge requires an explicit passthru "
-                        "lowering";
-      return WalkResult::interrupt();
-    }
-  }
   auto resultType = dyn_cast<VMIVRegType>(op.getResult().getType());
   if (!resultType) {
     return emitMaskableNonVReg(op.getOperation(), opName,
@@ -808,7 +793,7 @@ WalkResult verifySupportedChannelOp(ChannelOp op, int64_t channels,
   if (succeeded(check(op, &reason))) {
     return WalkResult::advance();
   }
-  if (channels != 2 && channels != 4) {
+  if (channels != kDeintFactor2 && channels != kDeintFactor4) {
     op.emitError() << kVMIDiagUnsupportedPrefix << supportedText;
   } else {
     op.emitError() << kVMIDiagUnsupportedPrefix << shapeText << reason << ")";

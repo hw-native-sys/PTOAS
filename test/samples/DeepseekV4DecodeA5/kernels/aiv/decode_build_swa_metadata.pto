@@ -14,7 +14,7 @@ module attributes {pto.target_arch = "a5"} {
   %swa_indices_inline217__ssa_v0_view = pto.make_tensor_view %arg2, shape = [%c8_index, %c128_index], strides = [%c128_index, %c1_index] {layout = #pto.layout<nd>} : !pto.tensor_view<?x?xi32>
   %token_inline1455_inline2841__ssa_v0 = arith.index_cast %__pypto_spmd_block_idx : i32 to index
   %1 = arith.divsi %token_inline1455_inline2841__ssa_v0, %c2_index : index
-  %position_inline1453_inline2840__tile = pto.load_scalar %arg0[%token_inline1455_inline2841__ssa_v0] : !pto.ptr<i32> -> i32
+  %position_inline1453_inline2840__tile = pto.load %arg0[%token_inline1455_inline2841__ssa_v0] : !pto.ptr<i32> -> i32
   %2 = arith.index_cast %position_inline1453_inline2840__tile : i32 to index
   %3 = arith.addi %2, %c1_index : index
   %4 = arith.minsi %3, %c128_index : index
@@ -34,7 +34,7 @@ module attributes {pto.target_arch = "a5"} {
       %11 = arith.remsi %9, %c128_index : index
       %flat_offset_mul = arith.muli %1, %c128_index : index
       %flat_offset = arith.addi %flat_offset_mul, %10 : index
-      %visible_physical_block_inline1449_inline2822__tile = pto.load_scalar %arg1[%flat_offset] : !pto.ptr<i32> -> i32
+      %visible_physical_block_inline1449_inline2822__tile = pto.load %arg1[%flat_offset] : !pto.ptr<i32> -> i32
       %13 = arith.index_cast %visible_physical_block_inline1449_inline2822__tile : i32 to index
       %14 = arith.muli %13, %c128_index : index
       %15 = arith.addi %14, %11 : index

@@ -15,7 +15,7 @@ module attributes {pto.target_arch = "a5"} {
     %0 = arith.divsi %work_idx_inline7__idx_v0, %c8_index : index
     %1 = arith.remsi %work_idx_inline7__idx_v0, %c8_index : index
     %2 = arith.muli %1, %c512_index : index
-    %token_id_inline0__tile = pto.load_scalar %arg1[%0] : !pto.ptr<i64> -> i64
+    %token_id_inline0__tile = pto.load %arg1[%0] : !pto.ptr<i64> -> i64
     %3 = arith.index_cast %token_id_inline0__tile : i64 to index
     %hidden_chunk_inline3__tile = pto.alloc_tile addr = %c0_i64 valid_row = %c1_index valid_col = %c512_index : !pto.tile_buf<loc=vec, dtype=bf16, rows=1, cols=512, v_row=?, v_col=?, blayout=row_major, slayout=none_box, fractal=512, pad=0>
     %4 = arith.maxsi %3, %c0_index : index

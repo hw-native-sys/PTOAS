@@ -18,6 +18,7 @@
 #define MLIR_DIALECT_PTO_IR_VPTOOPS
 
 include "mlir/IR/OpBase.td"
+include "mlir/IR/BuiltinAttributeInterfaces.td"
 include "mlir/Interfaces/SideEffectInterfaces.td"
 include "mlir/Interfaces/InferIntRangeInterface.td"
 include "PTO/IR/VPTOInterfaces.td"
@@ -130,11 +131,6 @@ def PTO_SimtBinaryFloatValueType : AnyTypeOf<
   "f16, f32, bf16, vector<2xf16> or vector<2xbf16>">;
 def PTO_SimtBinaryF16F32ValueType : AnyTypeOf<[F16, F32, PTO_V2F16Type],
                                              "f16, f32 or vector<2xf16>">;
-def PTO_SimtConvertValueType : AnyTypeOf<[I32, I64, F16, BF16, F32,
-                                          PTO_V2F16Type, PTO_V2BF16Type,
-                                          PTO_V2F32Type, PTO_LowPrecisionPackedType,
-                                          PTO_SimtF4ValueType],
-                                         "standard scalar, low-precision scalar payload, or supported vector<2xT> conversion type">;
 def PTO_AtomicValueType : AnyTypeOf<[I32, I64, F16, BF16, F32, PTO_V2F16Type, PTO_V2BF16Type],
                                     "i32, i64, f16, bf16, f32, vector<2xf16> or vector<2xbf16>">;
 def PTO_DevScalarValueType : AnyTypeOf<[I8, I16, I32, I64],
@@ -158,10 +154,17 @@ class PTO_MteOp<string mnemonic, list<Trait> traits = []>
 class PTO_SimtOp<string mnemonic, list<Trait> traits = []>
     : PTO_MicroOp<mnemonic, !listconcat(traits, [SimtOpInterface])>;
 
-def PTOLoadOp : PTO_SimtOp<"load", [
+// Scalar-value operations are execution-domain independent.  Keep this class
+// separate from PTO_SimtOp so pure value semantics and ordinary PTO-pointer
+// accesses do not affect SIMT legality or section-kind inference.
+class PTO_ScalarOp<string mnemonic, list<Trait> traits = []>
+    : PTO_MicroOp<mnemonic, traits>;
+
+def PTOLoadOp : PTO_ScalarOp<"load", [
+    OpPipeInterface,
     DeclareOpInterfaceMethods<MemoryEffectsOpInterface>
   ]> {
-  let summary = "Load one scalar element from a VPTO pointer-like operand.";
+  let summary = "Load one scalar or contiguous vector value from a VPTO pointer-like operand.";
 
   let arguments = (ins
     PTO_BufferLikeType:$ptr,
@@ -172,15 +175,20 @@ def PTOLoadOp : PTO_SimtOp<"load", [
 
   let hasVerifier = 1;
 
+  let extraClassDeclaration = [{
+    ::mlir::pto::PIPE getPipe() { return ::mlir::pto::PIPE::PIPE_S; }
+  }];
+
   let assemblyFormat = [{
     $ptr `[` $offset `]` attr-dict `:` type($ptr) `->` type($value)
   }];
 }
 
-def PTOStoreOp : PTO_SimtOp<"store", [
+def PTOStoreOp : PTO_ScalarOp<"store", [
+    OpPipeInterface,
     DeclareOpInterfaceMethods<MemoryEffectsOpInterface>
   ]> {
-  let summary = "Store one scalar element to a VPTO pointer-like operand.";
+  let summary = "Store one scalar or contiguous vector value to a VPTO pointer-like operand.";
 
   let arguments = (ins
     PTO_BufferLikeType:$ptr,
@@ -191,6 +199,10 @@ def PTOStoreOp : PTO_SimtOp<"store", [
   let results = (outs);
 
   let hasVerifier = 1;
+
+  let extraClassDeclaration = [{
+    ::mlir::pto::PIPE getPipe() { return ::mlir::pto::PIPE::PIPE_S; }
+  }];
 
   let assemblyFormat = [{
     $value `,` $ptr `[` $offset `]` attr-dict `:` type($ptr) `,` type($value)
@@ -582,7 +594,10 @@ def PTO_SetMte2NzParaOp : PTO_UnaryI64ConfigOp<"set_mte2_nz_para">;
 def PTO_SetPadValOutToL1Op : PTO_UnaryI64ConfigOp<"set_pad_val_outtol1">;
 // Reading CTRL is ordered with respect to set_ctrl. It must not be modeled as
 // Pure, otherwise CSE can reuse a value read before an intervening write.
-def PTO_GetCtrlOp : PTO_Op<"get_ctrl", [VPTOSchedulingOpInterface]> {
+def PTO_GetCtrlOp : PTO_Op<"get_ctrl", [
+    VPTOSchedulingOpInterface,
+    DeclareOpInterfaceMethods<PTO_StateAccessOpInterface>
+  ]> {
   let arguments = (ins);
   let results = (outs I64:$result);
   let assemblyFormat = [{ attr-dict `:` type($result) }];
@@ -596,7 +611,41 @@ def PTO_GetVms4SrOp : PTO_Op<"get_vms4_sr", [Pure]> {
   }];
 }
 def PTO_SetCtrlOp : PTO_UnaryI64ConfigOp<
-    "set_ctrl", [VPTOSchedulingOpInterface]>;
+    "set_ctrl", [VPTOSchedulingOpInterface,
+                 DeclareOpInterfaceMethods<PTO_StateAccessOpInterface>]>;
+
+// Internal authoring-to-emission guard for temporary CTRL requirements. Not a
+// hardware instruction; it must be eliminated by VPTOOptimizeCtrlStatePass
+// before emission-stage validation.
+def PTO_CtrlStateGuardOp : PTO_Op<"ctrl_state_guard", [
+    DeclareOpInterfaceMethods<PTO_StateGuardOpInterface>,
+    DeclareOpInterfaceMethods<MemoryEffectsOpInterface>,
+    SingleBlock,
+    NoTerminator,
+    RecursiveMemoryEffects
+  ]> {
+  let summary = "Guard a temporary CTRL requirement for one consumer region";
+  let description = [{
+    Wraps a raw MAD consumer with a statically known temporary CTRL
+    requirement. With the entry logical CTRL `E`, `controlled_bits (C)` and
+    `required_bits (R)`, the consumer executes under
+    `A = (E & ~C) | R`; bits outside `C` inherit `E`, and the logical state
+    after the guard is `E` again. The guard only records semantics; hardware
+    `get_ctrl`/`set_ctrl` materialization is decided by the CTRL state
+    optimization pass. This op exists only between MAD semantic expansion and
+    emission validation and must not survive into emission-stage IR.
+  }];
+  let arguments = (ins I64Attr:$controlled_bits,
+                       I64Attr:$required_bits);
+  let regions = (region SizedRegion<1>:$body);
+  let results = (outs);
+  let hasVerifier = 1;
+  let assemblyFormat = [{
+    `controlled_bits` `(` $controlled_bits `)`
+    `required_bits` `(` $required_bits `)`
+    $body attr-dict
+  }];
+}
 def PTO_SetStoreAtomicCfgOp : PTO_UnaryI64ConfigOp<"set_store_atomic_cfg">;
 def PTO_StoreVfSimtInfoOp : PTO_SimtOp<"store_vfsimt_info"> {
   let summary = "Configure SIMT VF launch dimensions";
@@ -754,46 +803,60 @@ def PTO_ShuffleBflyOp : PTO_SimtOp<"shuffle_bfly", [Pure, AllTypesMatch<["value"
   }];
 }
 
-def PTO_ReduxAddOp : PTO_SimtOp<"redux_add", [Pure, AllTypesMatch<["value", "result"]>]> {
-  let arguments = (ins
-    AnyTypeOf<[I32, F16, F32], "integer/float scalar">:$value,
-    OptionalAttr<PTO_SignednessAttr>:$signedness
-  );
-  let results = (outs AnyTypeOf<[I32, F16, F32], "integer/float scalar">:$result);
+class PTO_ReduxIntegerOp<string mnemonic>
+    : PTO_SimtOp<mnemonic, [Pure, AllTypesMatch<["value", "result"]>]> {
+  let arguments = (ins I32:$value);
+  let results = (outs I32:$result);
   let hasVerifier = 1;
   let assemblyFormat = [{
-    $value (custom<OptionalSignedness>($signedness)^)? attr-dict
+    $value attr-dict `:` type($value) `->` type($result)
+  }];
+}
+
+class PTO_ReduxSignedIntegerOp<string mnemonic>
+    : PTO_SimtOp<mnemonic, [Pure, AllTypesMatch<["value", "result"]>]> {
+  let arguments = (ins I32:$value, PTO_SignednessAttr:$signedness);
+  let results = (outs I32:$result);
+  let hasVerifier = 1;
+  let assemblyFormat = [{
+    $value custom<Signedness>($signedness) attr-dict
     `:` type($value) `->` type($result)
   }];
 }
 
-def PTO_ReduxMaxOp : PTO_SimtOp<"redux_max", [Pure, AllTypesMatch<["value", "result"]>]> {
-  let arguments = (ins
-    AnyTypeOf<[I32, F16, F32], "integer/float scalar">:$value,
-    OptionalAttr<PTO_SignednessAttr>:$signedness
-  );
-  let results = (outs AnyTypeOf<[I32, F16, F32], "integer/float scalar">:$result);
+class PTO_ReduxFloatOp<string mnemonic>
+    : PTO_SimtOp<mnemonic, [Pure, AllTypesMatch<["value", "result"]>]> {
+  let arguments = (ins AnyTypeOf<[F16, F32], "floating-point scalar">:$value);
+  let results = (outs AnyTypeOf<[F16, F32], "floating-point scalar">:$result);
   let hasVerifier = 1;
   let assemblyFormat = [{
-    $value (custom<OptionalSignedness>($signedness)^)? attr-dict
-    `:` type($value) `->` type($result)
+    $value attr-dict `:` type($value) `->` type($result)
   }];
 }
 
-def PTO_ReduxMinOp : PTO_SimtOp<"redux_min", [Pure, AllTypesMatch<["value", "result"]>]> {
-  let arguments = (ins
-    AnyTypeOf<[I32, F16, F32], "integer/float scalar">:$value,
-    OptionalAttr<PTO_SignednessAttr>:$signedness
-  );
-  let results = (outs AnyTypeOf<[I32, F16, F32], "integer/float scalar">:$result);
-  let hasVerifier = 1;
-  let assemblyFormat = [{
-    $value (custom<OptionalSignedness>($signedness)^)? attr-dict
-    `:` type($value) `->` type($result)
-  }];
-}
+def PTO_ReduxAddIOp : PTO_ReduxIntegerOp<"redux_addi">;
+def PTO_ReduxAddFOp : PTO_ReduxFloatOp<"redux_addf">;
+def PTO_ReduxMaxIOp : PTO_ReduxSignedIntegerOp<"redux_maxi">;
+def PTO_ReduxMaxFOp : PTO_ReduxFloatOp<"redux_maxf">;
+def PTO_ReduxMinIOp : PTO_ReduxSignedIntegerOp<"redux_mini">;
+def PTO_ReduxMinFOp : PTO_ReduxFloatOp<"redux_minf">;
 
 class PTO_AtomicBinaryOp<string mnemonic>
+    : PTO_SimtOp<mnemonic, [DeclareOpInterfaceMethods<MemoryEffectsOpInterface>]> {
+  let arguments = (ins
+    PTO_BufferType:$ptr,
+    PTO_AtomicValueType:$value,
+    OptionalAttr<PTO_StL2CacheAttr>:$l2cache
+  );
+  let results = (outs PTO_AtomicValueType:$old);
+  let hasVerifier = 1;
+  let assemblyFormat = [{
+    $ptr `,` $value custom<StL2Cache>($l2cache) attr-dict
+    `:` type($ptr) `,` type($value) `->` type($old)
+  }];
+}
+
+class PTO_AtomicExtremumOp<string mnemonic>
     : PTO_SimtOp<mnemonic, [DeclareOpInterfaceMethods<MemoryEffectsOpInterface>]> {
   let arguments = (ins
     PTO_BufferType:$ptr,
@@ -819,14 +882,12 @@ class PTO_AtomicCasLikeOp<string mnemonic>
     PTO_BufferType:$ptr,
     PTO_AtomicValueType:$compare,
     PTO_AtomicValueType:$value,
-    OptionalAttr<PTO_StL2CacheAttr>:$l2cache,
-    OptionalAttr<PTO_SignednessAttr>:$signedness
+    OptionalAttr<PTO_StL2CacheAttr>:$l2cache
   );
   let results = (outs PTO_AtomicValueType:$old);
   let hasVerifier = 1;
   let assemblyFormat = [{
-    $ptr `,` $compare `,` $value custom<StL2Cache>($l2cache)
-    (custom<OptionalSignedness>($signedness)^)? attr-dict
+    $ptr `,` $compare `,` $value custom<StL2Cache>($l2cache) attr-dict
     `:` type($ptr) `,` type($value) `->` type($old)
   }];
 }
@@ -835,8 +896,8 @@ def PTO_AtomicCasOp : PTO_AtomicCasLikeOp<"atomic_cas">;
 def PTO_AtomicExchOp : PTO_AtomicBinaryOp<"atomic_exch">;
 def PTO_AtomicAddOp : PTO_AtomicBinaryOp<"atomic_add">;
 def PTO_AtomicSubOp : PTO_AtomicBinaryOp<"atomic_sub">;
-def PTO_AtomicMinOp : PTO_AtomicBinaryOp<"atomic_min">;
-def PTO_AtomicMaxOp : PTO_AtomicBinaryOp<"atomic_max">;
+def PTO_AtomicMinOp : PTO_AtomicExtremumOp<"atomic_min">;
+def PTO_AtomicMaxOp : PTO_AtomicExtremumOp<"atomic_max">;
 def PTO_AtomicAndOp : PTO_AtomicBinaryOp<"atomic_and">;
 def PTO_AtomicOrOp : PTO_AtomicBinaryOp<"atomic_or">;
 def PTO_AtomicXorOp : PTO_AtomicBinaryOp<"atomic_xor">;
@@ -886,7 +947,7 @@ def PTO_MulI32ToI64Op : PTO_SimtOp<"mul_i32toi64", [Pure]> {
 }
 
 def PTO_SqrtOp
-    : PTO_SimtOp<"sqrt", [Pure, AllTypesMatch<["value", "result"]>]> {
+    : PTO_ScalarOp<"sqrt", [Pure, AllTypesMatch<["value", "result"]>]> {
   let arguments = (ins PTO_SimtUnaryF16F32ValueType:$value);
   let results = (outs PTO_SimtUnaryF16F32ValueType:$result);
 
@@ -918,20 +979,8 @@ class PTO_BinaryFloatScalarOp<string mnemonic>
   }];
 }
 
-def PTO_AbsFOp
-    : PTO_SimtOp<"absf", [Pure, AllTypesMatch<["value", "result"]>]> {
-  let arguments = (ins AnyTypeOf<[F16, F32, PTO_V2F16Type, PTO_V2BF16Type],
-                                 "f16, f32, vector<2xf16> or vector<2xbf16>">:$value);
-  let results = (outs AnyTypeOf<[F16, F32, PTO_V2F16Type, PTO_V2BF16Type],
-                                "f16, f32, vector<2xf16> or vector<2xbf16>">:$result);
-
-  let assemblyFormat = [{
-    $value attr-dict `:` type($value) `->` type($result)
-  }];
-}
-
 class PTO_UnaryF16F32ScalarOp<string mnemonic>
-    : PTO_SimtOp<mnemonic, [Pure, AllTypesMatch<["value", "result"]>]> {
+    : PTO_ScalarOp<mnemonic, [Pure, AllTypesMatch<["value", "result"]>]> {
   let arguments = (ins PTO_SimtUnaryF16F32ValueType:$value);
   let results = (outs PTO_SimtUnaryF16F32ValueType:$result);
 
@@ -959,70 +1008,36 @@ def PTO_FloorOp : PTO_UnaryFloatScalarOp<"floor">;
 def PTO_RintOp : PTO_UnaryFloatScalarOp<"rint">;
 def PTO_RoundOp : PTO_UnaryFloatScalarOp<"round">;
 
-class PTO_BinaryFloatValueOp<string mnemonic>
-    : PTO_SimtOp<mnemonic, [Pure, AllTypesMatch<["lhs", "rhs", "result"]>]> {
-  let arguments = (ins
-    PTO_SimtBinaryFloatValueType:$lhs,
-    PTO_SimtBinaryFloatValueType:$rhs
-  );
-  let results = (outs PTO_SimtBinaryFloatValueType:$result);
-
-  let assemblyFormat = [{
-    $lhs `,` $rhs attr-dict `:` type($lhs) `,` type($rhs) `->` type($result)
-  }];
-}
-
 class PTO_BinaryF16F32ScalarOp<string mnemonic>
-    : PTO_SimtOp<mnemonic, [Pure, AllTypesMatch<["lhs", "rhs", "result"]>]> {
+    : PTO_ScalarOp<mnemonic, [Pure, AllTypesMatch<["lhs", "rhs", "result"]>]> {
   let arguments = (ins
-    PTO_SimtBinaryF16F32ValueType:$lhs,
-    PTO_SimtBinaryF16F32ValueType:$rhs
+    PTO_GenericFloatType:$lhs,
+    PTO_GenericFloatType:$rhs
   );
-  let results = (outs PTO_SimtBinaryF16F32ValueType:$result);
+  let results = (outs PTO_GenericFloatType:$result);
 
   let assemblyFormat = [{
     $lhs `,` $rhs attr-dict `:` type($lhs) `,` type($rhs) `->` type($result)
   }];
 }
 
-def PTO_FMinOp : PTO_BinaryFloatValueOp<"fmin">;
-def PTO_FMaxOp : PTO_BinaryFloatValueOp<"fmax">;
 def PTO_PowOp : PTO_BinaryF16F32ScalarOp<"pow">;
 
 def PTO_FmaOp
-    : PTO_SimtOp<"fma", [Pure, AllTypesMatch<["lhs", "rhs", "acc", "result"]>]> {
+    : PTO_ScalarOp<"fma", [Pure, AllTypesMatch<["lhs", "rhs", "acc", "result"]>]> {
   let arguments = (ins
-    PTO_SimtUnaryFloatValueType:$lhs,
-    PTO_SimtUnaryFloatValueType:$rhs,
-    PTO_SimtUnaryFloatValueType:$acc
+    PTO_GenericFloatType:$lhs,
+    PTO_GenericFloatType:$rhs,
+    PTO_GenericFloatType:$acc
   );
-  let results = (outs PTO_SimtUnaryFloatValueType:$result);
+  let results = (outs PTO_GenericFloatType:$result);
 
   let assemblyFormat = [{
     $lhs `,` $rhs `,` $acc attr-dict `:` type($lhs) `,` type($rhs) `,` type($acc) `->` type($result)
   }];
 }
 
-def PTO_ConvertOp : PTO_SimtOp<"convert", [Pure]> {
-  let arguments = (ins
-    PTO_SimtConvertValueType:$src,
-    PTO_RoundingAttr:$rounding,
-    PTO_SaturationAttr:$saturation,
-    OptionalAttr<PTO_SignednessAttr>:$signedness
-  );
-  let results = (outs PTO_SimtConvertValueType:$dst);
-  let hasVerifier = 1;
-  let assemblyFormat = [{
-    $src custom<ConvertRounding>($rounding)
-    custom<ConvertSaturation>($saturation)
-    (custom<OptionalSignedness>($signedness)^)? attr-dict
-    `:` type($src) `->` type($dst)
-  }];
-}
-
-def PTO_SyncthreadsOp : PTO_Op<"syncthreads", [
-    MicroOpInterface,
-    SimtOpInterface,
+def PTO_SyncthreadsOp : PTO_SimtOp<"syncthreads", [
     DeclareOpInterfaceMethods<MemoryEffectsOpInterface>
   ]> {
   let summary = "Synchronize all workitems in a SIMT VF entry";
@@ -1538,7 +1553,9 @@ def PTO_LoadCbufToCbMxOp : PTO_MteOp<"load_cbuf_to_cb_mx"> {
   }];
 }
 
-def PTO_CopyMatrixCcToGmOp : PTO_MteOp<"copy_matrix_cc_to_gm"> {
+def PTO_CopyMatrixCcToGmOp : PTO_MteOp<"copy_matrix_cc_to_gm", [
+    DeclareOpInterfaceMethods<PTO_StateAccessOpInterface>
+  ]> {
   let arguments = (ins
     PTO_BufferType:$source,
     PTO_BufferType:$destination,
@@ -1553,7 +1570,9 @@ def PTO_CopyMatrixCcToGmOp : PTO_MteOp<"copy_matrix_cc_to_gm"> {
   }];
 }
 
-def PTO_CopyMatrixCcToCbufOp : PTO_MteOp<"copy_matrix_cc_to_cbuf"> {
+def PTO_CopyMatrixCcToCbufOp : PTO_MteOp<"copy_matrix_cc_to_cbuf", [
+    DeclareOpInterfaceMethods<PTO_StateAccessOpInterface>
+  ]> {
   let arguments = (ins
     PTO_BufferType:$source,
     PTO_BufferType:$destination,
@@ -1569,7 +1588,9 @@ def PTO_CopyMatrixCcToCbufOp : PTO_MteOp<"copy_matrix_cc_to_cbuf"> {
   }];
 }
 
-def PTO_CopyMatrixCcToUbOp : PTO_MteOp<"copy_matrix_cc_to_ub"> {
+def PTO_CopyMatrixCcToUbOp : PTO_MteOp<"copy_matrix_cc_to_ub", [
+    DeclareOpInterfaceMethods<PTO_StateAccessOpInterface>
+  ]> {
   let arguments = (ins
     PTO_BufferType:$source,
     PTO_BufferType:$destination,
@@ -2109,12 +2130,23 @@ def PTO_VnotOp : PTO_UnaryVecOp<"vnot">;
 def PTO_VcaddOp : PTO_UnaryVecOp<"vcadd">;
 
 def PTO_MadOp : PTO_CubeMicroOp<"mad", [
-    DeclareOpInterfaceMethods<PTO_MadSemanticOpInterface, [
-      "isMadMxFamily", "hasBiasOperand", "readsAccumulator",
-      "supportsTf32Mode", "getBiasOrNull"
-    ]>,
+    AttrSizedOperandSegments,
+    DeclareOpInterfaceMethods<PTO_MadSemanticOpInterface>,
     DeclareOpInterfaceMethods<MemoryEffectsOpInterface>
   ]> {
+  let description = [{
+    Semantic cube matmul. The four optional runtime flag operands
+    (`unit_flag_value`, `acc_init_value`, `disable_gemv_value`,
+    `bias_init_value`) take precedence over the corresponding static
+    semantics encoded by the op kind and attributes: a present operand is
+    packed into the xt immediate at expansion time and overrides the
+    kind-selected cmatrix_init/cmatrix_source bit or the static flag. This
+    is what lets a frontend emit one op for a data-dependent choice (e.g.
+    `mad_acc` plus `acc_init` selecting clear-vs-accumulate at runtime).
+    An operand and the same-named static clause (unit_flag/disable_gemv)
+    are mutually exclusive; runtime-vs-kind overlap (acc_init on `mad`,
+    bias_init on `mad_bias`) is the documented override, not an error.
+  }];
   let arguments = (ins
     PTO_BufferType:$lhs,
     PTO_BufferType:$rhs,
@@ -2122,6 +2154,10 @@ def PTO_MadOp : PTO_CubeMicroOp<"mad", [
     I64:$m,
     I64:$n,
     I64:$k,
+    Optional<I32>:$unit_flag_value,
+    Optional<AnyTypeOf<[I1, I32]>>:$acc_init_value,
+    Optional<AnyTypeOf<[I1, I32]>>:$disable_gemv_value,
+    Optional<AnyTypeOf<[I1, I32]>>:$bias_init_value,
     OptionalAttr<PTO_MadUnitFlagModeAttr>:$unit_flag_mode,
     UnitAttr:$disable_gemv,
     OptionalAttr<PTO_MadSatModeAttr>:$sat_mode,
@@ -2129,18 +2165,39 @@ def PTO_MadOp : PTO_CubeMicroOp<"mad", [
     UnitAttr:$n_dir
   );
   let results = (outs);
+
+  // Same-named accessors as the semantic interface methods, but const: the
+  // interface only needs the value, so the op-side definition is a const query.
+  let extraClassDeclaration = [{
+    bool isMadMxFamily() const;
+    bool hasBiasOperand() const;
+    bool readsAccumulator() const;
+    bool supportsTf32Mode() const;
+    ::mlir::Value getBiasOrNull() const;
+  }];
 
   let hasVerifier = 1;
   let hasCustomAssemblyFormat = 1;
 }
 
 def PTO_MadAccOp : PTO_CubeMicroOp<"mad_acc", [
-    DeclareOpInterfaceMethods<PTO_MadSemanticOpInterface, [
-      "isMadMxFamily", "hasBiasOperand", "readsAccumulator",
-      "supportsTf32Mode", "getBiasOrNull"
-    ]>,
+    AttrSizedOperandSegments,
+    DeclareOpInterfaceMethods<PTO_MadSemanticOpInterface>,
     DeclareOpInterfaceMethods<MemoryEffectsOpInterface>
   ]> {
+  let description = [{
+    Semantic cube matmul. The four optional runtime flag operands
+    (`unit_flag_value`, `acc_init_value`, `disable_gemv_value`,
+    `bias_init_value`) take precedence over the corresponding static
+    semantics encoded by the op kind and attributes: a present operand is
+    packed into the xt immediate at expansion time and overrides the
+    kind-selected cmatrix_init/cmatrix_source bit or the static flag. This
+    is what lets a frontend emit one op for a data-dependent choice (e.g.
+    `mad_acc` plus `acc_init` selecting clear-vs-accumulate at runtime).
+    An operand and the same-named static clause (unit_flag/disable_gemv)
+    are mutually exclusive; runtime-vs-kind overlap (acc_init on `mad`,
+    bias_init on `mad_bias`) is the documented override, not an error.
+  }];
   let arguments = (ins
     PTO_BufferType:$lhs,
     PTO_BufferType:$rhs,
@@ -2148,6 +2205,10 @@ def PTO_MadAccOp : PTO_CubeMicroOp<"mad_acc", [
     I64:$m,
     I64:$n,
     I64:$k,
+    Optional<I32>:$unit_flag_value,
+    Optional<AnyTypeOf<[I1, I32]>>:$acc_init_value,
+    Optional<AnyTypeOf<[I1, I32]>>:$disable_gemv_value,
+    Optional<AnyTypeOf<[I1, I32]>>:$bias_init_value,
     OptionalAttr<PTO_MadUnitFlagModeAttr>:$unit_flag_mode,
     UnitAttr:$disable_gemv,
     OptionalAttr<PTO_MadSatModeAttr>:$sat_mode,
@@ -2155,18 +2216,39 @@ def PTO_MadAccOp : PTO_CubeMicroOp<"mad_acc", [
     UnitAttr:$n_dir
   );
   let results = (outs);
+
+  // Same-named accessors as the semantic interface methods, but const: the
+  // interface only needs the value, so the op-side definition is a const query.
+  let extraClassDeclaration = [{
+    bool isMadMxFamily() const;
+    bool hasBiasOperand() const;
+    bool readsAccumulator() const;
+    bool supportsTf32Mode() const;
+    ::mlir::Value getBiasOrNull() const;
+  }];
 
   let hasVerifier = 1;
   let hasCustomAssemblyFormat = 1;
 }
 
 def PTO_MadBiasOp : PTO_CubeMicroOp<"mad_bias", [
-    DeclareOpInterfaceMethods<PTO_MadSemanticOpInterface, [
-      "isMadMxFamily", "hasBiasOperand", "readsAccumulator",
-      "supportsTf32Mode", "getBiasOrNull"
-    ]>,
+    AttrSizedOperandSegments,
+    DeclareOpInterfaceMethods<PTO_MadSemanticOpInterface, ["getBiasOrNull"]>,
     DeclareOpInterfaceMethods<MemoryEffectsOpInterface>
   ]> {
+  let description = [{
+    Semantic cube matmul. The four optional runtime flag operands
+    (`unit_flag_value`, `acc_init_value`, `disable_gemv_value`,
+    `bias_init_value`) take precedence over the corresponding static
+    semantics encoded by the op kind and attributes: a present operand is
+    packed into the xt immediate at expansion time and overrides the
+    kind-selected cmatrix_init/cmatrix_source bit or the static flag. This
+    is what lets a frontend emit one op for a data-dependent choice (e.g.
+    `mad_acc` plus `acc_init` selecting clear-vs-accumulate at runtime).
+    An operand and the same-named static clause (unit_flag/disable_gemv)
+    are mutually exclusive; runtime-vs-kind overlap (acc_init on `mad`,
+    bias_init on `mad_bias`) is the documented override, not an error.
+  }];
   let arguments = (ins
     PTO_BufferType:$lhs,
     PTO_BufferType:$rhs,
@@ -2175,6 +2257,10 @@ def PTO_MadBiasOp : PTO_CubeMicroOp<"mad_bias", [
     I64:$m,
     I64:$n,
     I64:$k,
+    Optional<I32>:$unit_flag_value,
+    Optional<AnyTypeOf<[I1, I32]>>:$acc_init_value,
+    Optional<AnyTypeOf<[I1, I32]>>:$disable_gemv_value,
+    Optional<AnyTypeOf<[I1, I32]>>:$bias_init_value,
     OptionalAttr<PTO_MadUnitFlagModeAttr>:$unit_flag_mode,
     UnitAttr:$disable_gemv,
     OptionalAttr<PTO_MadSatModeAttr>:$sat_mode,
@@ -2183,17 +2269,37 @@ def PTO_MadBiasOp : PTO_CubeMicroOp<"mad_bias", [
   );
   let results = (outs);
 
+  // Same-named accessors as the semantic interface methods, but const: the
+  // interface only needs the value, so the op-side definition is a const query.
+  let extraClassDeclaration = [{
+    bool isMadMxFamily() const;
+    bool hasBiasOperand() const;
+    bool readsAccumulator() const;
+    bool supportsTf32Mode() const;
+  }];
+
   let hasVerifier = 1;
   let hasCustomAssemblyFormat = 1;
 }
 
 def PTO_MadMxOp : PTO_CubeMicroOp<"mad_mx", [
-    DeclareOpInterfaceMethods<PTO_MadSemanticOpInterface, [
-      "isMadMxFamily", "hasBiasOperand", "readsAccumulator",
-      "supportsTf32Mode", "getBiasOrNull", "getTf32ModeAttr"
-    ]>,
+    AttrSizedOperandSegments,
+    DeclareOpInterfaceMethods<PTO_MadSemanticOpInterface>,
     DeclareOpInterfaceMethods<MemoryEffectsOpInterface>
   ]> {
+  let description = [{
+    Semantic cube matmul. The four optional runtime flag operands
+    (`unit_flag_value`, `acc_init_value`, `disable_gemv_value`,
+    `bias_init_value`) take precedence over the corresponding static
+    semantics encoded by the op kind and attributes: a present operand is
+    packed into the xt immediate at expansion time and overrides the
+    kind-selected cmatrix_init/cmatrix_source bit or the static flag. This
+    is what lets a frontend emit one op for a data-dependent choice (e.g.
+    `mad_acc` plus `acc_init` selecting clear-vs-accumulate at runtime).
+    An operand and the same-named static clause (unit_flag/disable_gemv)
+    are mutually exclusive; runtime-vs-kind overlap (acc_init on `mad`,
+    bias_init on `mad_bias`) is the documented override, not an error.
+  }];
   let arguments = (ins
     PTO_BufferType:$lhs,
     PTO_BufferType:$rhs,
@@ -2201,24 +2307,50 @@ def PTO_MadMxOp : PTO_CubeMicroOp<"mad_mx", [
     I64:$m,
     I64:$n,
     I64:$k,
+    Optional<I32>:$unit_flag_value,
+    Optional<AnyTypeOf<[I1, I32]>>:$acc_init_value,
+    Optional<AnyTypeOf<[I1, I32]>>:$disable_gemv_value,
+    Optional<AnyTypeOf<[I1, I32]>>:$bias_init_value,
     OptionalAttr<PTO_MadUnitFlagModeAttr>:$unit_flag_mode,
     UnitAttr:$disable_gemv,
     OptionalAttr<PTO_MadSatModeAttr>:$sat_mode,
     UnitAttr:$n_dir
   );
   let results = (outs);
+
+  // Same-named accessors as the semantic interface methods, but const: the
+  // interface only needs the value, so the op-side definition is a const query.
+  let extraClassDeclaration = [{
+    bool isMadMxFamily() const;
+    bool hasBiasOperand() const;
+    bool readsAccumulator() const;
+    bool supportsTf32Mode() const;
+    ::mlir::Value getBiasOrNull() const;
+    ::mlir::Attribute getTf32ModeAttr() const;
+  }];
 
   let hasVerifier = 1;
   let hasCustomAssemblyFormat = 1;
 }
 
 def PTO_MadMxAccOp : PTO_CubeMicroOp<"mad_mx_acc", [
-    DeclareOpInterfaceMethods<PTO_MadSemanticOpInterface, [
-      "isMadMxFamily", "hasBiasOperand", "readsAccumulator",
-      "supportsTf32Mode", "getBiasOrNull", "getTf32ModeAttr"
-    ]>,
+    AttrSizedOperandSegments,
+    DeclareOpInterfaceMethods<PTO_MadSemanticOpInterface>,
     DeclareOpInterfaceMethods<MemoryEffectsOpInterface>
   ]> {
+  let description = [{
+    Semantic cube matmul. The four optional runtime flag operands
+    (`unit_flag_value`, `acc_init_value`, `disable_gemv_value`,
+    `bias_init_value`) take precedence over the corresponding static
+    semantics encoded by the op kind and attributes: a present operand is
+    packed into the xt immediate at expansion time and overrides the
+    kind-selected cmatrix_init/cmatrix_source bit or the static flag. This
+    is what lets a frontend emit one op for a data-dependent choice (e.g.
+    `mad_acc` plus `acc_init` selecting clear-vs-accumulate at runtime).
+    An operand and the same-named static clause (unit_flag/disable_gemv)
+    are mutually exclusive; runtime-vs-kind overlap (acc_init on `mad`,
+    bias_init on `mad_bias`) is the documented override, not an error.
+  }];
   let arguments = (ins
     PTO_BufferType:$lhs,
     PTO_BufferType:$rhs,
@@ -2226,6 +2358,10 @@ def PTO_MadMxAccOp : PTO_CubeMicroOp<"mad_mx_acc", [
     I64:$m,
     I64:$n,
     I64:$k,
+    Optional<I32>:$unit_flag_value,
+    Optional<AnyTypeOf<[I1, I32]>>:$acc_init_value,
+    Optional<AnyTypeOf<[I1, I32]>>:$disable_gemv_value,
+    Optional<AnyTypeOf<[I1, I32]>>:$bias_init_value,
     OptionalAttr<PTO_MadUnitFlagModeAttr>:$unit_flag_mode,
     UnitAttr:$disable_gemv,
     OptionalAttr<PTO_MadSatModeAttr>:$sat_mode,
@@ -2233,17 +2369,39 @@ def PTO_MadMxAccOp : PTO_CubeMicroOp<"mad_mx_acc", [
   );
   let results = (outs);
 
+  // Same-named accessors as the semantic interface methods, but const: the
+  // interface only needs the value, so the op-side definition is a const query.
+  let extraClassDeclaration = [{
+    bool isMadMxFamily() const;
+    bool hasBiasOperand() const;
+    bool readsAccumulator() const;
+    bool supportsTf32Mode() const;
+    ::mlir::Value getBiasOrNull() const;
+    ::mlir::Attribute getTf32ModeAttr() const;
+  }];
+
   let hasVerifier = 1;
   let hasCustomAssemblyFormat = 1;
 }
 
 def PTO_MadMxBiasOp : PTO_CubeMicroOp<"mad_mx_bias", [
-    DeclareOpInterfaceMethods<PTO_MadSemanticOpInterface, [
-      "isMadMxFamily", "hasBiasOperand", "readsAccumulator",
-      "supportsTf32Mode", "getBiasOrNull", "getTf32ModeAttr"
-    ]>,
+    AttrSizedOperandSegments,
+    DeclareOpInterfaceMethods<PTO_MadSemanticOpInterface, ["getBiasOrNull"]>,
     DeclareOpInterfaceMethods<MemoryEffectsOpInterface>
   ]> {
+  let description = [{
+    Semantic cube matmul. The four optional runtime flag operands
+    (`unit_flag_value`, `acc_init_value`, `disable_gemv_value`,
+    `bias_init_value`) take precedence over the corresponding static
+    semantics encoded by the op kind and attributes: a present operand is
+    packed into the xt immediate at expansion time and overrides the
+    kind-selected cmatrix_init/cmatrix_source bit or the static flag. This
+    is what lets a frontend emit one op for a data-dependent choice (e.g.
+    `mad_acc` plus `acc_init` selecting clear-vs-accumulate at runtime).
+    An operand and the same-named static clause (unit_flag/disable_gemv)
+    are mutually exclusive; runtime-vs-kind overlap (acc_init on `mad`,
+    bias_init on `mad_bias`) is the documented override, not an error.
+  }];
   let arguments = (ins
     PTO_BufferType:$lhs,
     PTO_BufferType:$rhs,
@@ -2252,6 +2410,10 @@ def PTO_MadMxBiasOp : PTO_CubeMicroOp<"mad_mx_bias", [
     I64:$m,
     I64:$n,
     I64:$k,
+    Optional<I32>:$unit_flag_value,
+    Optional<AnyTypeOf<[I1, I32]>>:$acc_init_value,
+    Optional<AnyTypeOf<[I1, I32]>>:$disable_gemv_value,
+    Optional<AnyTypeOf<[I1, I32]>>:$bias_init_value,
     OptionalAttr<PTO_MadUnitFlagModeAttr>:$unit_flag_mode,
     UnitAttr:$disable_gemv,
     OptionalAttr<PTO_MadSatModeAttr>:$sat_mode,
@@ -2259,15 +2421,24 @@ def PTO_MadMxBiasOp : PTO_CubeMicroOp<"mad_mx_bias", [
   );
   let results = (outs);
 
+  // Same-named accessors as the semantic interface methods, but const: the
+  // interface only needs the value, so the op-side definition is a const query.
+  let extraClassDeclaration = [{
+    bool isMadMxFamily() const;
+    bool hasBiasOperand() const;
+    bool readsAccumulator() const;
+    bool supportsTf32Mode() const;
+    ::mlir::Attribute getTf32ModeAttr() const;
+  }];
+
   let hasVerifier = 1;
   let hasCustomAssemblyFormat = 1;
 }
 
 def PTO_MadRawOp : PTO_CubeMicroOp<"mad_raw", [
-    DeclareOpInterfaceMethods<PTO_MadRawOpInterface, [
-      "isMadMxFamily", "hasBiasOperand", "getBiasOrNull"
-    ]>,
-    DeclareOpInterfaceMethods<MemoryEffectsOpInterface>
+    DeclareOpInterfaceMethods<PTO_MadRawOpInterface>,
+    DeclareOpInterfaceMethods<MemoryEffectsOpInterface>,
+    DeclareOpInterfaceMethods<PTO_StateAccessOpInterface>
   ]> {
   let arguments = (ins
     PTO_BufferType:$lhs,
@@ -2276,6 +2447,14 @@ def PTO_MadRawOp : PTO_CubeMicroOp<"mad_raw", [
     I64:$xt
   );
   let results = (outs);
+
+  // Same-named accessors as the semantic interface methods, but const: the
+  // interface only needs the value, so the op-side definition is a const query.
+  let extraClassDeclaration = [{
+    bool isMadMxFamily() const;
+    bool hasBiasOperand() const;
+    ::mlir::Value getBiasOrNull() const;
+  }];
 
   let hasVerifier = 1;
 
@@ -2285,10 +2464,9 @@ def PTO_MadRawOp : PTO_CubeMicroOp<"mad_raw", [
 }
 
 def PTO_MadBiasRawOp : PTO_CubeMicroOp<"mad_bias_raw", [
-    DeclareOpInterfaceMethods<PTO_MadRawOpInterface, [
-      "isMadMxFamily", "hasBiasOperand", "getBiasOrNull"
-    ]>,
-    DeclareOpInterfaceMethods<MemoryEffectsOpInterface>
+    DeclareOpInterfaceMethods<PTO_MadRawOpInterface, ["getBiasOrNull"]>,
+    DeclareOpInterfaceMethods<MemoryEffectsOpInterface>,
+    DeclareOpInterfaceMethods<PTO_StateAccessOpInterface>
   ]> {
   let arguments = (ins
     PTO_BufferType:$lhs,
@@ -2298,6 +2476,13 @@ def PTO_MadBiasRawOp : PTO_CubeMicroOp<"mad_bias_raw", [
     I64:$xt
   );
   let results = (outs);
+
+  // Same-named accessors as the semantic interface methods, but const: the
+  // interface only needs the value, so the op-side definition is a const query.
+  let extraClassDeclaration = [{
+    bool isMadMxFamily() const;
+    bool hasBiasOperand() const;
+  }];
 
   let hasVerifier = 1;
 
@@ -2307,10 +2492,9 @@ def PTO_MadBiasRawOp : PTO_CubeMicroOp<"mad_bias_raw", [
 }
 
 def PTO_MadMxRawOp : PTO_CubeMicroOp<"mad_mx_raw", [
-    DeclareOpInterfaceMethods<PTO_MadRawOpInterface, [
-      "isMadMxFamily", "hasBiasOperand", "getBiasOrNull"
-    ]>,
-    DeclareOpInterfaceMethods<MemoryEffectsOpInterface>
+    DeclareOpInterfaceMethods<PTO_MadRawOpInterface>,
+    DeclareOpInterfaceMethods<MemoryEffectsOpInterface>,
+    DeclareOpInterfaceMethods<PTO_StateAccessOpInterface>
   ]> {
   let arguments = (ins
     PTO_BufferType:$lhs,
@@ -2319,6 +2503,14 @@ def PTO_MadMxRawOp : PTO_CubeMicroOp<"mad_mx_raw", [
     I64:$xt
   );
   let results = (outs);
+
+  // Same-named accessors as the semantic interface methods, but const: the
+  // interface only needs the value, so the op-side definition is a const query.
+  let extraClassDeclaration = [{
+    bool isMadMxFamily() const;
+    bool hasBiasOperand() const;
+    ::mlir::Value getBiasOrNull() const;
+  }];
 
   let hasVerifier = 1;
 
@@ -2328,10 +2520,9 @@ def PTO_MadMxRawOp : PTO_CubeMicroOp<"mad_mx_raw", [
 }
 
 def PTO_MadMxBiasRawOp : PTO_CubeMicroOp<"mad_mx_bias_raw", [
-    DeclareOpInterfaceMethods<PTO_MadRawOpInterface, [
-      "isMadMxFamily", "hasBiasOperand", "getBiasOrNull"
-    ]>,
-    DeclareOpInterfaceMethods<MemoryEffectsOpInterface>
+    DeclareOpInterfaceMethods<PTO_MadRawOpInterface, ["getBiasOrNull"]>,
+    DeclareOpInterfaceMethods<MemoryEffectsOpInterface>,
+    DeclareOpInterfaceMethods<PTO_StateAccessOpInterface>
   ]> {
   let arguments = (ins
     PTO_BufferType:$lhs,
@@ -2341,6 +2532,13 @@ def PTO_MadMxBiasRawOp : PTO_CubeMicroOp<"mad_mx_bias_raw", [
     I64:$xt
   );
   let results = (outs);
+
+  // Same-named accessors as the semantic interface methods, but const: the
+  // interface only needs the value, so the op-side definition is a const query.
+  let extraClassDeclaration = [{
+    bool isMadMxFamily() const;
+    bool hasBiasOperand() const;
+  }];
 
   let hasVerifier = 1;
 
@@ -3621,18 +3819,28 @@ class PTO_BinaryVecMaskedOp<string mnemonic>
 
 def PTO_VpreluOp : PTO_BinaryVecMaskedOp<"vprelu">;
 def PTO_VexpdifOp : PTO_VectorMicroOp<"vexpdif", [Pure]> {
+  let summary = "Fused exp(input - max) for numerically stable softmax";
+  let description = [{
+    `part` selects which 16-bit half of every 32-bit lane feeds the mixed
+    precision subtraction. An `f16` source packs two elements per 32-bit lane,
+    so one instruction consumes only one half of the source storage and must
+    select `"EVEN"` or `"ODD"` explicitly. An `f32` source is covered by a
+    single instruction that computes the whole vector, and the selection is a
+    hardware contract value that the result does not observe, so `part` may be
+    omitted there.
+  }];
   let arguments = (ins
     PTO_VectorType:$input,
     PTO_VectorType:$max,
     PTO_MaskTypeConstraint:$mask,
-    StrAttr:$part
+    OptionalAttr<StrAttr>:$part
   );
   let results = (outs PTO_VectorType:$result);
 
   let hasVerifier = 1;
 
   let assemblyFormat = [{
-    $input `,` $max `,` $mask `,` $part attr-dict `:` type($input) `,` type($max) `,` type($mask) `->` type($result)
+    $input `,` $max `,` $mask ( `,` $part^ )? attr-dict `:` type($input) `,` type($max) `,` type($mask) `->` type($result)
   }];
 }
 

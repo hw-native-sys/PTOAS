@@ -487,6 +487,84 @@ FailureOr<int64_t> getGroupSizeFromNumGroups(VMIVRegType type,
   return type.getElementCount() / numGroups;
 }
 
+/// Block granularity contract of the strided group-load plans.  The block
+/// forms (`vsldb`/`vsstb`) address whole 32-byte blocks, so a strided source
+/// only has a lowering when one group spans a whole number of 32-byte blocks
+/// and the row stride advances by a whole number of them.  Shapes that violate
+/// that contract used to be emulated by the sub-chunk gather, which read a whole
+/// physical carrier and relied on an index vector wider than the data; the
+/// gather is gone, so they are rejected here with the contract spelled out.
+/// Returns the diagnostic when the contract is violated, and `std::nullopt`
+/// when the shape is granular but still has no surviving plan.
+std::optional<std::string> describeStridedGroupLoadGranularityViolation(
+    VMIGroupLoadOp op, VMIVRegType type, int64_t groupSize,
+    std::optional<int64_t> rowStride) {
+  unsigned elementBits = pto::getPTOStorageElemBitWidth(type.getElementType());
+  if (elementBits == 0 || elementBits % 8 != 0) {
+    return std::string("requires a byte-sized element type");
+  }
+  int64_t elementBytes = elementBits / 8;
+  int64_t blockElements = kVMIVCGBlockBytes / elementBytes;
+  if (blockElements <= 0) {
+    return std::string("requires a known 32-byte block element count");
+  }
+  // A group covering one physical part or more is the full-chunk plan's
+  // territory: that plan owns its diagnostics and accepts dynamic row strides.
+  FailureOr<int64_t> lanesPerPart = getDataLanesPerPart(type.getElementType());
+  if (succeeded(lanesPerPart) && groupSize >= *lanesPerPart) {
+    return std::nullopt;
+  }
+
+  int64_t groupBytes = groupSize > 0 ? groupSize * elementBytes : 0;
+  int64_t strideBytes =
+      rowStride && *rowStride > 0 ? *rowStride * elementBytes : 0;
+  bool blockGranularGroup = groupSize > 0 && groupSize % blockElements == 0;
+  bool blockGranularStride =
+      rowStride && *rowStride > 0 && *rowStride % blockElements == 0;
+  std::optional<int64_t> offset = getConstantIndexValue(op.getOffset());
+  bool alignedOffset = !offset || *offset % blockElements == 0;
+  if (blockGranularGroup && blockGranularStride && alignedOffset) {
+    return std::nullopt;
+  }
+
+  std::string message;
+  llvm::raw_string_ostream stream(message);
+  stream << "group_load with a row stride requires one group to be 32, 64, or "
+            "128 bytes and the row stride to be a whole number of 32-byte "
+            "blocks with a 32-byte aligned source; got group = "
+         << groupBytes << " bytes, row_stride = " << strideBytes << " bytes";
+  return message;
+}
+
+/// Whole-block f32 groups (one 32B fragment per group) whose successive groups
+/// are further apart than the group itself also lower through the block-stride
+/// `vsldb` plan.  When that plan consumes exactly one physical part the result
+/// layout stays plain contiguous, which is what distinguishes it from the
+/// `block_deinterleaved` bookkeeping used for two- and four-fragment groups.
+/// The fragment size is derived from the physical part width instead of the
+/// layout block count because a contiguous result carries no block
+/// deinterleaving to read it back from.
+bool isSupportedBlockStrideF32GroupLoad(VMIVRegType type, int64_t groupSize,
+                                        std::optional<int64_t> rowStride,
+                                        int64_t numGroups) {
+  if (!type.getElementType().isF32() || numGroups % 8 != 0) {
+    return false;
+  }
+  FailureOr<int64_t> lanesPerPart = getDataLanesPerPart(type.getElementType());
+  if (failed(lanesPerPart)) {
+    return false;
+  }
+  int64_t fragmentElems = *lanesPerPart / mlir::pto::kValue8;
+  if (fragmentElems <= 0 || groupSize != fragmentElems) {
+    return false;
+  }
+  if (!rowStride || *rowStride <= groupSize ||
+      *rowStride % fragmentElems != 0) {
+    return false;
+  }
+  return type.getElementCount() % groupSize == 0;
+}
+
 LogicalResult checkSupportedGroupChunkShape(VMIVRegType type, int64_t groupSize,
                                             std::string *reason) {
   auto fail = [&reason](const Twine &message) -> LogicalResult {
@@ -676,6 +754,18 @@ LogicalResult
 checkSupportedContiguousGroupLoadShape(VMIGroupLoadOp op,
                                        VMIVRegType resultType,
                                        int64_t groupSize, std::string *reason) {
+  std::optional<int64_t> rowStride = getConstantIndexValue(op.getRowStride());
+  bool unitGroupRowStride = rowStride && *rowStride == groupSize;
+  // The 32-byte block granularity contract is decided before the generic layout
+  // table and source checks: a strided shape that cannot sit on whole 32-byte
+  // blocks has no plan at all, so report that rule rather than a table miss.
+  if (!unitGroupRowStride) {
+    if (std::optional<std::string> violation =
+            describeStridedGroupLoadGranularityViolation(
+                op, resultType, groupSize, rowStride)) {
+      return emitLogicalFailure(reason, *violation);
+    }
+  }
   VMILayoutSupport supports;
   if (failed(supports.getGroupLoadLayoutFact(op, reason))) {
     return failure();
@@ -685,12 +775,33 @@ checkSupportedContiguousGroupLoadShape(VMIGroupLoadOp op,
                                      reason))) {
     return failure();
   }
-  std::optional<int64_t> rowStride = getConstantIndexValue(op.getRowStride());
-  bool unitGroupRowStride = rowStride && *rowStride == groupSize;
   if (unitGroupRowStride) {
     return success();
   }
-  return checkSupportedGroupChunkShape(resultType, groupSize, reason);
+  // Strided source.  Surviving plans: whole-block f32 groups go through the
+  // block-stride vsldb plan, groups of one physical part or more through the
+  // full-chunk plan, and everything else has to sit on the 32-byte block
+  // granularity the block forms address (sub-32B groups used to go through the
+  // sub-chunk gather, which is gone).
+  if (isSupportedBlockStrideF32GroupLoad(resultType, groupSize, rowStride,
+                                        op.getNumGroupsAttr().getInt())) {
+    return checkSupportedBlockDeinterleavedGroupLoadShape(op, resultType,
+                                                          reason);
+  }
+  if (succeeded(
+          checkSupportedGroupChunkShape(resultType, groupSize, nullptr))) {
+    return success();
+  }
+  if (std::optional<std::string> violation =
+          describeStridedGroupLoadGranularityViolation(
+              op, resultType, groupSize, rowStride)) {
+    return emitLogicalFailure(reason, *violation);
+  }
+  return emitLogicalFailure(
+      reason,
+      "requires a supported strided group_load plan: whole-block f32 groups "
+      "lower through the block-stride vsldb plan and groups of one physical "
+      "part or more through the full-chunk plan");
 }
 
 LogicalResult
@@ -1452,7 +1563,7 @@ checkSupportedScatterShape(VMIScatterOp op, std::string *reason) {
 }
 
 LogicalResult
-checkSinglePhysicalStrideAccess(Type dataType, Type maskType,
+checkMatchingStrideAccessChunks(Type dataType, Type maskType,
                                 StringRef errorMessage, std::string *reason) {
   auto fail = [&reason](const Twine &message) -> LogicalResult {
     if (reason) {
@@ -1466,7 +1577,10 @@ checkSinglePhysicalStrideAccess(Type dataType, Type maskType,
   if (!hasArity) {
     return fail("requires computable physical arity");
   }
-  if (*dataArity != 1 || *maskArity != 1) {
+  // A block-strided access is lowered one 256B carrier at a time, pairing
+  // carrier `i` of the value with carrier `i` of the mask, so the two must
+  // split into the same number of physical chunks.
+  if (*dataArity != *maskArity) {
     return fail(errorMessage);
   }
   return success();
@@ -1505,7 +1619,7 @@ static LogicalResult checkStrideMemoryContract(
   if (!isa<PtrType>(contract.pointerType)) {
     return fail(contract.pointerDiagnostic);
   }
-  return checkSinglePhysicalStrideAccess(
+  return checkMatchingStrideAccessChunks(
       contract.dataType, contract.maskType, contract.arityDiagnostic, reason);
 }
 
@@ -1526,7 +1640,7 @@ checkSupportedStrideStoreShape(VMIStrideStoreOp op, std::string *reason) {
       op.getDestination().getType(),
       "value",
       "requires !pto.ptr destination because pto.vsstb is pointer-only",
-      "currently supports one physical value/mask chunk"};
+      "requires matching physical value/mask chunk counts"};
   return checkStrideMemoryContract(contract, reason);
 }
 
@@ -1542,7 +1656,7 @@ checkSupportedStrideLoadShape(VMIStrideLoadOp op, std::string *reason) {
       op.getSource().getType(),
       "result",
       "requires !pto.ptr source because pto.vsldb is pointer-only",
-      "currently supports one physical result/mask chunk"};
+      "requires matching physical result/mask chunk counts"};
   return checkStrideMemoryContract(contract, reason);
 }
 

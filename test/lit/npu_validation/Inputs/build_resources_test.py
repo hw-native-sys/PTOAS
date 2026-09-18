@@ -65,6 +65,8 @@ python3() {
   fi
   if [[ "$2" == pip ]]; then
     echo "wheel:$CMAKE_BUILD_PARALLEL_LEVEL" >> "$TEST_LOG"
+    mkdir -p "$WHEEL_BUILD_PATH"
+    printf '[]\n' > "$WHEEL_BUILD_PATH/compile_commands.json"
   fi
   while [[ $# -gt 0 ]]; do
     if [[ "$1" == --wheel-dir ]]; then
@@ -96,16 +98,14 @@ def check_pipeline(entry, requested, expected_llvm, expected_ptoas, toolchain_fl
         result = subprocess.run([BASH, str(script)], cwd=root, env=env, text=True,
                                 capture_output=True, timeout=10)
         assert result.returncode == 0, result.stdout + result.stderr
-        # package() builds the wheel first and then the packaging tree; the
-        # old pre-wheel native build was dropped, so the first PTOAS compile
-        # pass only runs for build_only.
+        # Packaging builds the wheel once, then only runs CPack's target.
         expected = [f"llvm:{expected_llvm}:{expected_llvm}"]
         if entry == "build_only":
             expected.append(f"native:{expected_ptoas}")
         if entry == "package":
             if toolchain_flags:
                 expected.append(f"compiler-rt:{expected_llvm}:{expected_llvm}")
-            expected.extend([f"wheel:{expected_ptoas}"] + [f"native:{expected_ptoas}"] * 2)
+            expected.extend([f"wheel:{expected_ptoas}", f"native:{expected_ptoas}"])
         expected.append(f"after:{expected_llvm}:{expected_llvm}")
         actual = log.read_text(encoding="utf-8").splitlines()
         assert actual == expected, f"{entry}: expected {expected}, got {actual}"

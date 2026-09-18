@@ -53,9 +53,21 @@ LogicalResult VexpdifOp::verify() {
         "requires source and result to preserve total vector storage width");
   }
 
-  StringRef part = getPart();
-  if (part != "EVEN" && part != "ODD") {
-    return emitOpError("part must be EVEN or ODD");
+  if (auto part = getPart()) {
+    if (*part != "EVEN" && *part != "ODD") {
+      return emitOpError("part must be EVEN or ODD");
+    }
+    return success();
+  }
+
+  // An f16 source packs two elements per 32-bit lane, so one instruction only
+  // consumes the half selected by `part`; require an explicit choice. An f32
+  // source covers the whole vector with a single instruction and the hardware
+  // contract value is not observable in the result, so `part` may be omitted.
+  if (inputElemType.isF16()) {
+    return emitOpError(
+        "requires part (EVEN or ODD) for f16 input: one instruction consumes "
+        "a single 16-bit half of every 32-bit lane");
   }
   return success();
 }

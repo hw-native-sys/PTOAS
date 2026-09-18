@@ -2,7 +2,7 @@
 
 ## 概述
 
-`!pto.ptr<T>` 表示指向全局内存元素 `T` 的指针，是 PTO 程序从外部地址空间进入 PTO 对象模型的基础类型。
+`!pto.ptr<T, space>` 表示指定地址空间中指向元素 `T` 的指针。省略 `space` 的 `!pto.ptr<T>` 默认为全局内存（GM）指针。
 
 ## 语法
 
@@ -10,6 +10,8 @@
 !pto.ptr<f16>
 !pto.ptr<i32>
 !pto.ptr<!pto.hif8>
+!pto.ptr<f32, ub>
+!pto.ptr<f16, l1>
 ```
 
 ## 参数
@@ -17,19 +19,22 @@
 | 参数 | 类型 | 说明 |
 | --- | --- | --- |
 | `T` | 元素类型 | 指针所指向的元素类型 |
+| `space` | 地址空间关键字，可选 | 默认为 `gm`；也支持 `ub`、`l1`、`l0a`、`l0b`、`l0c`、`bt`、`fb` |
+
+本地空间也可写为 `vec`、`mat`、`left`、`right`、`acc`、`bias`、`scaling`，分别对应上表中的 `ub`、`l1`、`l0a`、`l0b`、`l0c`、`bt`、`fb`。
 
 ## 常见构造路径
 
 - 作为函数参数出现
 - 作为 `pto.addptr` 的结果
-- 作为 `pto.inttoptr` 的结果
+- 作为 `pto.castptr` 的结果
 
 ## 常见消费者
 
 - `pto.make_tensor_view`
-- `pto.load_scalar`
-- `pto.store_scalar`
-- `pto.ptrtoint`
+- `pto.load`
+- `pto.store`
+- `pto.castptr`
 
 ## 使用角色
 
@@ -42,8 +47,8 @@
 ## Constraints
 
 - 指针元素类型必须是合法的元素类型
-- 将整数与指针互转时，后续用途必须满足相关验证约束
-- 仅有指针本身并不包含 shape、stride、layout 或 tile 位置语义
+- 将整数与指针互转时，整数地址必须为 signless `i64`；指针之间的类型重解释必须保留地址空间。
+- 指针包含元素类型和地址空间，不包含张量的 shape、stride、layout 或 Tile 有效区域元数据。
 
 ## Example
 

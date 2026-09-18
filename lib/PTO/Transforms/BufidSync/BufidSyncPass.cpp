@@ -34,8 +34,8 @@ namespace {
 // which case this pass must not run.
 static bool hasExistingBufSyncOps(func::FuncOp func) {
   bool found = false;
-  func.walk([&](pto::GetBufOp) { found = true; });
-  func.walk([&](pto::RlsBufOp) { found = true; });
+  func.walk([&found](pto::GetBufOp) { found = true; });
+  func.walk([&found](pto::RlsBufOp) { found = true; });
   return found;
 }
 

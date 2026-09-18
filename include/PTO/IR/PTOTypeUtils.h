@@ -57,6 +57,7 @@ bool isPTOBF16x2Type(Type t);
 bool isPTOFloat4PackedType(Type t);
 bool isPTOPackedLdgStgVectorType(Type t);
 bool isPTOLowPrecisionType(Type t);
+bool isSupportedPTOPointerElementType(Type t);
 
 unsigned getPTOStorageElemBitWidth(Type t);
 unsigned getPTOStorageElemByteSize(Type t);

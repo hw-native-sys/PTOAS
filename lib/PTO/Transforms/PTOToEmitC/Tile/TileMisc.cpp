@@ -21,7 +21,7 @@ namespace pto {
 
 template <typename OpTy>
 struct PTOPipeTileOpToEmitC : public OpConversionPattern<OpTy> {
-  PTOPipeTileOpToEmitC(TypeConverter &typeConverter, MLIRContext *ctx,
+  PTOPipeTileOpToEmitC(const TypeConverter &typeConverter, MLIRContext *ctx,
                        PTOArch targetArch, StringRef calleePrefix)
       : OpConversionPattern<OpTy>(typeConverter, ctx),
         targetArch(targetArch), calleePrefix(calleePrefix.str()) {}
@@ -132,7 +132,7 @@ struct PTOAllocTileToEmitC
       if (dimIdx != packedDim)
         return emitted;
       auto i32Ty = emitc::OpaqueType::get(ctx, "int32_t");
-      Value two = makeEmitCIntConstant(rewriter, loc, i32Ty, 2);
+      Value two = makeEmitCIntConstant(rewriter, loc, i32Ty, mlir::pto::kValue2);
       return rewriter.create<emitc::MulOp>(loc, i32Ty, emitted, two)
           .getResult();
     };

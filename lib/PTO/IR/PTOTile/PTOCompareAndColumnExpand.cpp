@@ -154,10 +154,10 @@ static bool isSupportedTColExpandElem(Type elemTy, PTOArch targetArch,
   if (!allowIntegerTypes) {
     return false;
   }
-  if (elemTy.isInteger(mlir::pto::kValue16) || elemTy.isInteger(32)) {
+  if (elemTy.isInteger(kI16ElemBitWidth) || elemTy.isInteger(kI32ElemBitWidth)) {
       return true;
   }
-  return targetArch == PTOArch::A5 && elemTy.isInteger(mlir::pto::kValue8);
+  return targetArch == PTOArch::A5 && elemTy.isInteger(kByteElemBitWidth);
 }
 
 static LogicalResult verifyTColExpandRowMajor(Operation *op, Type type,

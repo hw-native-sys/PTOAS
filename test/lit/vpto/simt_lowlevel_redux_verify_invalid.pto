@@ -11,9 +11,9 @@
 module attributes {pto.target_arch = "a5", pto.kernel_kind = #pto.kernel_kind<vector>} {
   func.func @kernel() attributes {pto.aicore, pto.simt_entry} {
     %value = arith.constant 7 : i32
-    %bad = pto.redux_max %value : i32 -> i32
+    %bad = "pto.redux_maxi"(%value) : (i32) -> i32
     return
   }
 }
 
-// CHECK: requires explicit signedness for integer redux
+// CHECK: requires attribute 'signedness'

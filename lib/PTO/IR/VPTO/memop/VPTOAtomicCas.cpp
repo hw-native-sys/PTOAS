@@ -20,7 +20,8 @@ LogicalResult AtomicCasOp::verify() {
   }
   return verifyAtomicCommon(getOperation(), getPtr(), getValue().getType(),
                             getOld().getType(), /*bitwise=*/false,
-                            getSignednessAttr());
+                            getOperation()->getAttr("signedness"),
+                            /*acceptsSignedness=*/false);
 }
 
 // ODS OpInterface methods have generated non-const declarations.

@@ -2,7 +2,7 @@
 // case: micro-op/system-runtime-query/get-block-subblock-id
 // family: system-runtime-query
 // target_ops: pto.get_block_idx, pto.get_subblock_idx, pto.get_block_num,
-//   pto.get_subblock_num, pto.store_scalar
+//   pto.get_subblock_num, pto.store
 // scenarios: multi-block, runtime-query
 // -----------------------------------------------------------------------------
 module attributes {pto.target_arch = "a5", pto.kernel_kind = #pto.kernel_kind<vector>} {
@@ -23,13 +23,13 @@ module attributes {pto.target_arch = "a5", pto.kernel_kind = #pto.kernel_kind<ve
     %block_idx = arith.index_cast %block : i64 to index
     %slot_base = arith.muli %block_idx, %c32 : index
 
-    pto.store_scalar %block, %arg0[%slot_base] : !pto.ptr<i64, gm>, i64
+    pto.store %block, %arg0[%slot_base] : !pto.ptr<i64, gm>, i64
     %slot_1 = arith.addi %slot_base, %c1 : index
-    pto.store_scalar %subblock, %arg0[%slot_1] : !pto.ptr<i64, gm>, i64
+    pto.store %subblock, %arg0[%slot_1] : !pto.ptr<i64, gm>, i64
     %slot_2 = arith.addi %slot_base, %c2 : index
-    pto.store_scalar %block_num, %arg0[%slot_2] : !pto.ptr<i64, gm>, i64
+    pto.store %block_num, %arg0[%slot_2] : !pto.ptr<i64, gm>, i64
     %slot_3 = arith.addi %slot_base, %c3 : index
-    pto.store_scalar %subblock_num, %arg0[%slot_3] : !pto.ptr<i64, gm>, i64
+    pto.store %subblock_num, %arg0[%slot_3] : !pto.ptr<i64, gm>, i64
     return
   }
 }

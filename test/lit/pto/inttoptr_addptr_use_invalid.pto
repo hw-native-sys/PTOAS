@@ -1,16 +1,16 @@
-// RUN: not ptoas --pto-arch=a3 %s -o /dev/null 2>&1 | FileCheck %s
+// RUN: ptoas --pto-arch=a3 %s -o - 2>&1 | FileCheck %s
 
 module {
-  func.func @inttoptr_addptr_use_invalid(%addr: i64, %dst: !pto.ptr<ui32>, %idx: index) attributes {pto.kernel_kind = #pto.kernel_kind<vector>} {
+  func.func @castptr_addptr(%addr: i64, %dst: !pto.ptr<ui32>, %idx: index) attributes {pto.kernel_kind = #pto.kernel_kind<vector>} {
     %c0 = arith.constant 0 : index
-    %ptr = pto.inttoptr %addr : i64 -> !pto.ptr<ui32>
+    %ptr = pto.castptr %addr : i64 -> !pto.ptr<ui32>
     %off = pto.addptr %ptr, %idx : !pto.ptr<ui32> -> !pto.ptr<ui32>
-    %val = pto.load_scalar %off[%c0] : !pto.ptr<ui32> -> ui32
-    pto.store_scalar %val, %dst[%c0] : !pto.ptr<ui32>, ui32
+    %val = pto.load %off[%c0] : !pto.ptr<ui32> -> ui32
+    pto.store %val, %dst[%c0] : !pto.ptr<ui32>, ui32
     return
   }
 }
 
-// CHECK: pto.inttoptr
-// CHECK: result may only be used as the pointer operand of pto.load_scalar or pto.store_scalar
-// CHECK: pto.addptr
+// CHECK-LABEL: AICORE void castptr_addptr
+// CHECK: reinterpret_cast<__gm__ uint32_t*>
+// CHECK: +

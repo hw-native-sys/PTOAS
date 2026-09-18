@@ -25,7 +25,7 @@
 ### 直接操作数 + 类型
 
 ```mlir
-%p1 = pto.addptr %p0, %off : !pto.ptr<f16>, index -> !pto.ptr<f16>
+%p1 = pto.addptr %p0, %off : !pto.ptr<f16> -> !pto.ptr<f16>
 ```
 
 适用于指针、标量和部分轻量级辅助操作。

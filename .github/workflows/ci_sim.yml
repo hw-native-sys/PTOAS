@@ -71,7 +71,7 @@ jobs:
               - 'include/PTO/Transforms/*VPTO*'
               - 'include/PTO/Transforms/**/*VPTO*'
               - 'lib/PTO/Transforms/CMakeLists.txt'
-              - 'lib/PTO/Transforms/ExpandTileOp.cpp'
+              - 'lib/PTO/Transforms/TileOp/ExpandTileOp.cpp'
               - 'lib/PTO/Transforms/FoldTileBufIntrinsics.cpp'
               - 'lib/PTO/Transforms/PTOToEmitC.cpp'
               - 'lib/PTO/Transforms/*VPTO*'

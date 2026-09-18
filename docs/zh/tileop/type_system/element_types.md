@@ -6,7 +6,7 @@
 
 ## 概述
 
-元素类型描述存储对象中每个标量单元的数值解释方式。它们通常作为 `!pto.ptr<...>`、`!pto.tensor_view<...>`、`!pto.partition_tensor_view<...>` 和 `!pto.tile_buf<...>` 的参数出现，而不是单独承担复杂对象语义。
+元素类型描述存储对象中每个标量单元的数值解释方式。它们通常作为 `!pto.ptr<...>`、`!pto.tensor_view<...>`、`!pto.partition_tensor_view<...>` 和 `!pto.tile_buf<...>` 的参数出现，而不是单独承载复杂对象语义。
 
 ## 常见类别
 
@@ -36,17 +36,17 @@
 
 ### `!pto.hif8`
 
-- 每个元素 1 byte
+- 每个元素 1 Byte
 - 作为元素类型嵌入更高层 PTO 类型中使用
 
 ### `!pto.f4E1M2x2`
 
-- 每个打包对 1 byte
+- 每个打包对 1 Byte
 - 适合作为 `tile_buf.dtype` 的低精度元素类型
 
 ### `!pto.f4E2M1x2`
 
-- 每个打包对 1 byte
+- 每个打包对 1 Byte
 - 与 `!pto.f4E1M2x2` 类似，也是打包 FP4 对类型
 
 对于打包 FP4 类型，`tile_buf` 中的尺寸描述物理打包后的 extent，而不是逻辑标量元素个数。

@@ -24,9 +24,9 @@ module attributes {pto.target_arch = "a2a3"} {
   %5 = arith.addi %4, %3 : index
   %6 = arith.cmpi slt, %0, %arg7 : index
   scf.if %6 {
-    %t__tile = pto.load_scalar %arg0[%0] : !pto.ptr<i32> -> i32
+    %t__tile = pto.load %arg0[%0] : !pto.ptr<i32> -> i32
     %7 = arith.index_cast %t__tile : i32 to index
-    %chunk_len_b__tile = pto.load_scalar %arg1[%0] : !pto.ptr<i32> -> i32
+    %chunk_len_b__tile = pto.load %arg1[%0] : !pto.ptr<i32> -> i32
     %8 = arith.index_cast %chunk_len_b__tile : i32 to index
     %9 = arith.subi %8, %arg6 : index
     %10 = arith.subi %9, %3 : index
@@ -39,7 +39,7 @@ module attributes {pto.target_arch = "a2a3"} {
         %15 = arith.addi %14, %3 : index
         %16 = arith.addi %15, %ti__idx_v0 : index
         %17 = arith.addi %5, %ti__idx_v0 : index
-        %token_id__tile = pto.load_scalar %arg3[%16] : !pto.ptr<i32> -> i32
+        %token_id__tile = pto.load %arg3[%16] : !pto.ptr<i32> -> i32
         %18 = arith.index_cast %token_id__tile : i32 to index
         scf.for %k0__idx_v0 = %c0_index to %c5120_index step %c256_index {
           %hidden_chunk__tile = pto.alloc_tile addr = %c0_i64 valid_row = %c1_index valid_col = %c256_index : !pto.tile_buf<loc=vec, dtype=bf16, rows=1, cols=256, v_row=?, v_col=?, blayout=row_major, slayout=none_box, fractal=512, pad=0>

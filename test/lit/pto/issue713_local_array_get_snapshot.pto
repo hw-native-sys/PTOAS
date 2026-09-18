@@ -27,7 +27,7 @@ module {
     pto.local_array_set %arr[%c0_index], %new : !pto.local_array<2xi32>, i32
 
     %sum = arith.addi %c100_i32, %cur : i32
-    pto.store_scalar %sum, %out[%c0_index] : !pto.ptr<i32>, i32
+    pto.store %sum, %out[%c0_index] : !pto.ptr<i32>, i32
     return
   }
 }

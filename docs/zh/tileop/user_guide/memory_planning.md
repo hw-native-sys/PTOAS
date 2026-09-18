@@ -12,7 +12,7 @@
 
 - `--plan-memory-order-by-size`
 
-启用后，PTOAS会在同一AddressSpace内优先规划较大的本地buffer，再应用基础的内存复用策略。
+启用后，PTOAS 会在同一AddressSpace内优先规划较大的本地buffer，再应用基础的内存复用策略。
 
 该选项默认关闭。
 

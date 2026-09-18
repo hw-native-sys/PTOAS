@@ -10,6 +10,8 @@
 //===- VMIToVPTOPatternInternals5.inc - VMIToVPTO internals -*- C++ -*-===//
 //===----------------------------------------------------------------------===//
 
+constexpr int64_t kWidePartElemThreshold = 128;
+
 template <typename OpTy, typename GroupReduceOpTy, typename RowReduceOpTy,
           typename CombineOpTy>
 struct OneToNVMIGroupReduceOpPattern : OneToNOpConversionPattern<OpTy> {
@@ -34,18 +36,18 @@ private:
       OneToNPatternRewriter &rewriter) const {
     auto sourceType = cast<VRegType>(source.getType());
     auto elementType = dyn_cast<IntegerType>(sourceType.getElementType());
-    bool needsWidening = elementType && elementType.getWidth() == mlir::pto::kValue8;
+    bool needsWidening = elementType && elementType.getWidth() == kElementBits8;
     if (!needsWidening) {
       return std::make_pair(source, mask);
     }
     // Widen each half inside the instruction lowering, without changing the
     // logical VMI value's one-carrier layout.
     auto wideElementType = IntegerType::get(
-        rewriter.getContext(), mlir::pto::kValue16,
+        rewriter.getContext(), kElementBits16,
         elementType.isSigned() ? IntegerType::SignednessSemantics::Signed
                                : IntegerType::SignednessSemantics::Unsigned);
     auto wideType = VRegType::get(rewriter.getContext(),
-                                  sourceType.getElementCount() / mlir::pto::kValue2,
+                                  sourceType.getElementCount() / kPairWidth,
                                   wideElementType);
     Value part = rewriter.create<arith::ConstantIndexOp>(op.getLoc(), partIndex);
     Value extended = elementType.isSigned()
@@ -217,10 +219,10 @@ private:
     }
     auto logicalType = cast<VMIVRegType>(op.getSource().getType());
     auto integerType = dyn_cast<IntegerType>(logicalType.getElementType());
-    bool twoWideParts = integerType && integerType.getWidth() == mlir::pto::kValue8 &&
-                        logicalType.getElementCount() > mlir::pto::kValue128;
-    SmallVector<std::pair<Value, Value>, 2> inputs;
-    for (int64_t part = 0; part < (twoWideParts ? 2 : 1); ++part) {
+    bool twoWideParts = integerType && integerType.getWidth() == kElementBits8 &&
+                        logicalType.getElementCount() > kWidePartElemThreshold;
+    SmallVector<std::pair<Value, Value>, kPairWidth> inputs;
+    for (int64_t part = 0; part < (twoWideParts ? kPairWidth : 1); ++part) {
       auto input = prepareCompactReduction(op, sourceParts.front(),
                                            maskParts.front(), part, rewriter);
       if (failed(input)) {
@@ -249,7 +251,7 @@ private:
                                                     source, mask);
     if constexpr (std::is_same_v<OpTy, VMIGroupReduceAddIOp>) {
       auto elementType = cast<IntegerType>(resultType.getElementType());
-      if (elementType.getWidth() == mlir::pto::kValue16) {
+      if (elementType.getWidth() == kElementBits16) {
         // A5 VCG integer addition returns eight 32-bit sums. Restore the
         // declared 16-bit group slots by truncating each sum, not by reading
         // alternating low/high halves as distinct logical groups.
@@ -259,7 +261,7 @@ private:
         // gs(8, 2) results requires a separate consumer-layout audit, described
         // in docs/isa/vmi-isa/05-reduce.md.
         auto wideElementType = IntegerType::get(
-            rewriter.getContext(), mlir::pto::kValue32,
+            rewriter.getContext(), kElementBits32,
             IntegerType::SignednessSemantics::Unsigned);
         auto wideType = VRegType::get(
             rewriter.getContext(), resultType.getElementCount() / 2,
@@ -267,7 +269,7 @@ private:
         Value wide = rewriter.create<VbitcastOp>(op.getLoc(), wideType, reduced);
         auto packedType = VRegType::get(
             rewriter.getContext(), resultType.getElementCount(),
-            IntegerType::get(rewriter.getContext(), mlir::pto::kValue16,
+            IntegerType::get(rewriter.getContext(), kElementBits16,
                              IntegerType::SignednessSemantics::Unsigned));
         Value packed = rewriter.create<VpackOp>(op.getLoc(), packedType, wide,
                                                 rewriter.getStringAttr("LOWER"));
@@ -404,9 +406,9 @@ private:
       return rewriter.notifyMatchFailure(
           op, "failed to create four-block group_reduce combine mask");
     }
-    SmallVector<Value, mlir::pto::kValue4> partials;
-    partials.reserve(mlir::pto::kValue4);
-    for (int64_t part = 0; part < mlir::pto::kValue4; ++part) {
+    SmallVector<Value, kQuadWidth> partials;
+    partials.reserve(kQuadWidth);
+    for (int64_t part = 0; part < kQuadWidth; ++part) {
       int64_t sourceIndex = part * resultPartCount + resultIndex;
       Value source = sourceParts[sourceIndex];
       Value mask = maskParts[sourceIndex];
@@ -1101,8 +1103,8 @@ template <typename VMIOp>
 struct HistogramPhysicalPlan {
   ValueRange sourceParts;
   ValueRange maskParts;
-  SmallVector<Value, mlir::pto::kValue2> halves;
-  SmallVector<Value, mlir::pto::kValue2> binConsts;
+  SmallVector<Value, kPairWidth> halves;
+  SmallVector<Value, kPairWidth> binConsts;
   VRegType partType;
   int64_t lanesPerPart;
   size_t halfCount;
@@ -1149,9 +1151,9 @@ static FailureOr<HistogramPhysicalPlan<VMIOp>> prepareHistogramPhysicalPlan(
     return failure();
   }
   Location loc = op.getLoc();
-  SmallVector<Value, mlir::pto::kValue2> binConsts;
+  SmallVector<Value, kPairWidth> binConsts;
   binConsts.push_back(createI32Constant(loc, 0, rewriter));
-  if (halfCount == mlir::pto::kValue2) {
+  if (halfCount == kPairWidth) {
       binConsts.push_back(createI32Constant(loc, 1, rewriter));
   }
   return HistogramPhysicalPlan<VMIOp>{

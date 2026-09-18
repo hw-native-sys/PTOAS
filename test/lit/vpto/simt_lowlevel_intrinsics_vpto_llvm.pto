@@ -86,11 +86,11 @@ module attributes {pto.target_arch = "a5", pto.kernel_kind = #pto.kernel_kind<ve
     %shfl_i64 = pto.shuffle_idx %c_i64, %c2_i32 : i64, i32 -> i64
     %shfl_f32 = pto.shuffle_idx %c_f32, %c2_i32 : f32, i32 -> f32
     %shfl_f16 = pto.shuffle_idx %c_f16, %c2_i32 : f16, i32 -> f16
-    %redux_add = pto.redux_add %grid_dim_y unsigned : i32 -> i32
-    %redux = pto.redux_max %grid_dim_z signed : i32 -> i32
-    %redux_min = pto.redux_min %block_idx_y unsigned : i32 -> i32
-    %redux_f32 = pto.redux_add %c_f32 : f32 -> f32
-    %redux_f16 = pto.redux_min %c_f16 : f16 -> f16
+    %redux_add = pto.redux_addi %grid_dim_y : i32 -> i32
+    %redux = pto.redux_maxi %grid_dim_z signed : i32 -> i32
+    %redux_min = pto.redux_mini %block_idx_y unsigned : i32 -> i32
+    %redux_f32 = pto.redux_addf %c_f32 : f32 -> f32
+    %redux_f16 = pto.redux_minf %c_f16 : f16 -> f16
     pto.threadfence
     pto.threadfence_block
     pto.store %tid_x, %dst_i32[%c0] : !pto.ptr<i32, ub>, i32
@@ -167,7 +167,7 @@ module attributes {pto.target_arch = "a5", pto.kernel_kind = #pto.kernel_kind<ve
 // CHECK-DAG: llvm.call @llvm.hivm.shfl.idx.i64
 // CHECK-DAG: llvm.call @llvm.hivm.shfl.idx.f32
 // CHECK-DAG: llvm.call @llvm.hivm.shfl.idx.f16
-// CHECK-DAG: llvm.call @llvm.hivm.redux.add.u32
+// CHECK-DAG: llvm.call @llvm.hivm.redux.add.s32
 // CHECK-DAG: llvm.call @llvm.hivm.redux.max.s32
 // CHECK-DAG: llvm.call @llvm.hivm.redux.min.u32
 // CHECK-DAG: llvm.call @llvm.hivm.redux.add.f32

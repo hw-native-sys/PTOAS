@@ -15,7 +15,7 @@
 // SELECT-DAG: pre_quant({{.*}}, mode = qf322fp8_pre_vec)
 // SELECT-DAG: pre_quant({{.*}}, mode = qf322hif8_pre_vec)
 // SELECT-DAG: pre_quant({{.*}}, mode = qs322bf16_pre_vec)
-// SELECT-DAG: %[[VEC1:.*]] = arith.constant 1 : i64
+// SELECT-DAG: %[[VEC1:.*]] = pto.constant 1 : i64
 // SELECT-DAG: pto.mte_l0c_ub {{.*}} dst_mode(%[[VEC1]])
 // SELECT-DAG: pto.castptr {{.*}} : !pto.ptr<si32, l0c> -> !pto.ptr<i32, l0c>
 

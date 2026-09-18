@@ -17,7 +17,7 @@ using namespace mlir::pto::memop_detail;
 LogicalResult AtomicMaxOp::verify() {
   return verifyAtomicCommon(getOperation(), getPtr(), getValue().getType(),
                             getOld().getType(), /*bitwise=*/false,
-                            getSignednessAttr());
+                            getSignednessAttr(), /*acceptsSignedness=*/true);
 }
 
 void AtomicMaxOp::getEffects(

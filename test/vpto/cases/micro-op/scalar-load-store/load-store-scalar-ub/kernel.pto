@@ -1,7 +1,7 @@
 // -----------------------------------------------------------------------------
 // case: micro-op/scalar-load-store/load-store-scalar-ub
 // family: scalar-load-store
-// target_ops: pto.load_scalar, pto.store_scalar
+// target_ops: pto.load, pto.store
 // scenarios: core-i16, ub-roundtrip, scalar-rw
 // -----------------------------------------------------------------------------
 module attributes {pto.target_arch = "a5", pto.kernel_kind = #pto.kernel_kind<vector>} {
@@ -31,12 +31,12 @@ module attributes {pto.target_arch = "a5", pto.kernel_kind = #pto.kernel_kind<ve
 
     pto.vecscope {
       scf.for %offset = %c0 to %c8 step %c1 {
-        %loaded = pto.load_scalar %ub_in[%offset] : !pto.ptr<i16, ub> -> i16
+        %loaded = pto.load %ub_in[%offset] : !pto.ptr<i16, ub> -> i16
         %biased = arith.addi %loaded, %c7_i16 : i16
-        pto.store_scalar %biased, %ub_out[%offset] : !pto.ptr<i16, ub>, i16
-        %echo = pto.load_scalar %ub_out[%offset] : !pto.ptr<i16, ub> -> i16
+        pto.store %biased, %ub_out[%offset] : !pto.ptr<i16, ub>, i16
+        %echo = pto.load %ub_out[%offset] : !pto.ptr<i16, ub> -> i16
         %result = arith.subi %echo, %c3_i16 : i16
-        pto.store_scalar %result, %ub_out[%offset] : !pto.ptr<i16, ub>, i16
+        pto.store %result, %ub_out[%offset] : !pto.ptr<i16, ub>, i16
       }
     }
 

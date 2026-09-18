@@ -16,8 +16,8 @@ mlir::LogicalResult mlir::pto::TPowSOp::verify() {
     return failure();
 
   // Same dtype matrix as TPowOp; see comment in TPowOp::verify.
-  bool isIntElem = elem->isInteger(32) || elem->isInteger(16) ||
-                   elem->isInteger(8);
+  bool isIntElem = elem->isInteger(mlir::pto::kValue32) || elem->isInteger(mlir::pto::kValue16) ||
+                   elem->isInteger(mlir::pto::kValue8);
   if (failed(verifyTPowSElemType(*this, *elem, isIntElem))) {
     return failure();
   }
@@ -222,53 +222,105 @@ mlir::LogicalResult mlir::pto::TReshapeOp::verify() {
   return success();
 }
 
-mlir::LogicalResult mlir::pto::BitcastOp::verify() {
-  auto srcTy = llvm::dyn_cast<TileBufType>(getSrc().getType());
-  auto dstTy = llvm::dyn_cast<TileBufType>(getResult().getType());
-  if (!srcTy || !dstTy) {
-    return emitOpError("expects tile_buf src and tile_buf result");
+static LogicalResult verifyNumericBitcastOperands(Operation *op, Type srcType,
+                                                   Type dstType) {
+  auto srcVectorType = dyn_cast<VectorType>(srcType);
+  auto dstVectorType = dyn_cast<VectorType>(dstType);
+  const bool mixesScalarAndVector =
+      static_cast<bool>(srcVectorType) != static_cast<bool>(dstVectorType);
+  if (mixesScalarAndVector) {
+    return op->emitOpError()
+           << "requires both numeric types to be scalar or both to be "
+              "builtin vectors; got "
+           << srcType << " -> " << dstType;
+  }
+  if (srcVectorType &&
+      (srcVectorType.getShape() != dstVectorType.getShape() ||
+       srcVectorType.getScalableDims() != dstVectorType.getScalableDims())) {
+    return op->emitOpError()
+           << "requires numeric vectors to have the same shape; got "
+           << srcType << " -> " << dstType;
   }
 
+  Type srcElementType = getElementTypeOrSelf(srcType);
+  Type dstElementType = getElementTypeOrSelf(dstType);
+  const bool hasUnsupportedElementType =
+      !isa<IntegerType, FloatType>(srcElementType) ||
+      !isa<IntegerType, FloatType>(dstElementType);
+  if (hasUnsupportedElementType) {
+    return op->emitOpError()
+           << "requires integer or floating-point numeric types; got "
+           << srcType << " -> " << dstType;
+  }
+  const bool hasMismatchedElementWidth =
+      srcElementType.getIntOrFloatBitWidth() !=
+      dstElementType.getIntOrFloatBitWidth();
+  if (hasMismatchedElementWidth) {
+    return op->emitOpError() << "requires equal element bit widths; got "
+                             << srcType << " -> " << dstType;
+  }
+  return success();
+}
+
+static LogicalResult verifyTileBitcastOperands(Operation *op, TileBufType srcTy,
+                                               TileBufType dstTy) {
   if (srcTy.getMemorySpace() != dstTy.getMemorySpace()) {
-    return emitOpError("expects src/result to have the same memorySpace");
+    return op->emitOpError("expects src/result to have the same memorySpace");
   }
-
   if (srcTy.getElementType() == dstTy.getElementType()) {
-    return emitOpError(
+    return op->emitOpError(
         "expects src/result to have different element types; use "
         "pto.treshape for shape/config changes");
   }
-
   if (srcTy.getShape() != dstTy.getShape()) {
-    return emitOpError("expects src/result to have the same shape; use pto.treshape for shape changes");
+    return op->emitOpError(
+        "expects src/result to have the same shape; use pto.treshape for shape changes");
   }
-
   if (srcTy.getValidShape() != dstTy.getValidShape()) {
-    return emitOpError("expects src/result to have the same validShape");
+    return op->emitOpError("expects src/result to have the same validShape");
   }
-
-  auto srcCfg = srcTy.getConfigAttr();
-  auto dstCfg = dstTy.getConfigAttr();
-  if (srcCfg != dstCfg) {
-    return emitOpError("expects src/result to have the same tile config");
+  const bool sameConfig = srcTy.getConfigAttr() == dstTy.getConfigAttr();
+  if (!sameConfig) {
+    return op->emitOpError("expects src/result to have the same tile config");
   }
 
   auto numel = getStaticNumElements(srcTy.getShape());
   if (!numel.has_value()) {
-    return emitOpError("expects static shapes for bitcast");
+    return op->emitOpError("expects static shapes for bitcast");
   }
-
   auto srcBytes = getElemBytes(srcTy.getElementType());
   auto dstBytes = getElemBytes(dstTy.getElementType());
   if (!srcBytes.has_value() || !dstBytes.has_value()) {
-    return emitOpError("unsupported element type for bitcast");
+    return op->emitOpError("unsupported element type for bitcast");
   }
-
   int64_t srcTotalBytes = numel.value() * srcBytes.value();
   int64_t dstTotalBytes = numel.value() * dstBytes.value();
   if (dstTotalBytes > srcTotalBytes) {
-    return emitOpError("bitcast result requires more bytes than source storage");
+    return op->emitOpError("bitcast result requires more bytes than source storage");
+  }
+  return success();
+}
+
+mlir::LogicalResult mlir::pto::BitcastOp::verify() {
+  for (StringRef attrName :
+       {"fastmath", "roundingmode", "overflowFlags", "signedness"}) {
+    if ((*this)->hasAttr(attrName)) {
+      return emitOpError() << "does not accept " << attrName;
+    }
   }
 
-  return success();
+  auto srcTy = llvm::dyn_cast<TileBufType>(getSrc().getType());
+  auto dstTy = llvm::dyn_cast<TileBufType>(getResult().getType());
+  const bool mixesTileAndNumeric =
+      static_cast<bool>(srcTy) != static_cast<bool>(dstTy);
+  if (mixesTileAndNumeric) {
+    return emitOpError(
+        "requires both source and result to be tile buffers or both to be "
+        "numeric values");
+  }
+  if (!srcTy) {
+    return verifyNumericBitcastOperands(getOperation(), getSrc().getType(),
+                                        getResult().getType());
+  }
+  return verifyTileBitcastOperands(getOperation(), srcTy, dstTy);
 }

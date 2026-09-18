@@ -99,6 +99,32 @@ bool mlir::pto::isPTOLowPrecisionType(Type t) {
          isPTOBF16x2Type(t);
 }
 
+static bool isSupportedPTOPointerScalarElementType(Type t) {
+  bool isSupportedFloat = t.isF16() || t.isBF16() || t.isF32() || t.isF64();
+  if (isSupportedFloat || isPTOLowPrecisionType(t)) {
+    return true;
+  }
+  auto integer = dyn_cast<IntegerType>(t);
+  if (!integer) {
+    return false;
+  }
+  unsigned width = integer.getWidth();
+  return width == 8 || width == 16 || width == 32 || width == 64;
+}
+
+bool mlir::pto::isSupportedPTOPointerElementType(Type t) {
+  if (!t) {
+    return false;
+  }
+  if (isSupportedPTOPointerScalarElementType(t)) {
+    return true;
+  }
+  auto vector = dyn_cast<VectorType>(t);
+  return vector && !vector.isScalable() && vector.getRank() == 1 &&
+         vector.getDimSize(0) > 0 &&
+         isSupportedPTOPointerScalarElementType(vector.getElementType());
+}
+
 unsigned mlir::pto::getPTOStorageElemBitWidth(Type t) {
   if (isPTOHiFloat8x2Type(t)) {
     return mlir::pto::kValue16;

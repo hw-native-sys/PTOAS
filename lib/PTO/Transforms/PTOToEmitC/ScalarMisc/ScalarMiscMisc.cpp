@@ -19,62 +19,11 @@ using namespace mlir::pto;
 namespace mlir {
 namespace pto {
 
-struct PTOPtrToIntToEmitC : public OpConversionPattern<pto::PtrToIntOp> {
-  using OpConversionPattern<pto::PtrToIntOp>::OpConversionPattern;
-
-  LogicalResult matchAndRewrite(pto::PtrToIntOp op, OpAdaptor adaptor,
-                                ConversionPatternRewriter &rewriter) const override {
-    Value ptr = adaptor.getPtr();
-    Type dstTy = getTypeConverter()->convertType(op.getResult().getType());
-    if (!dstTy)
-      return failure();
-
-    auto dstOpaque = dyn_cast<emitc::OpaqueType>(dstTy);
-    if (!dstOpaque)
-      return failure();
-
-    auto templateArgs =
-        rewriter.getArrayAttr({emitc::OpaqueAttr::get(rewriter.getContext(),
-                                                      dstOpaque.getValue())});
-    auto cast = rewriter.create<emitc::CallOpaqueOp>(
-        op.getLoc(), dstTy, "reinterpret_cast", ArrayAttr{}, templateArgs,
-        ValueRange{ptr});
-    rewriter.replaceOp(op, cast.getResult(0));
-    return success();
-  }
-};
-
-struct PTOIntToPtrToEmitC : public OpConversionPattern<pto::IntToPtrOp> {
-  using OpConversionPattern<pto::IntToPtrOp>::OpConversionPattern;
-
-  LogicalResult matchAndRewrite(pto::IntToPtrOp op, OpAdaptor adaptor,
-                                ConversionPatternRewriter &rewriter) const override {
-    Value addr = adaptor.getAddr();
-    Type dstTy = getTypeConverter()->convertType(op.getResult().getType());
-    if (!dstTy)
-      return failure();
-
-    Type dstElemTy = getPointerLikeElementType(op.getResult().getType());
-    if (!dstElemTy)
-      return failure();
-
-    std::string castType =
-        std::string("__gm__ ") + getEmitCScalarTypeToken(dstElemTy) + "*";
-    auto templateArgs =
-        rewriter.getArrayAttr({emitc::OpaqueAttr::get(rewriter.getContext(),
-                                                      castType)});
-    auto cast = rewriter.create<emitc::CallOpaqueOp>(
-        op.getLoc(), dstTy, "reinterpret_cast", ArrayAttr{}, templateArgs,
-        ValueRange{addr});
-    rewriter.replaceOp(op, cast.getResult(0));
-    return success();
-  }
-};
-
 void populateScalarMiscScalarMiscMiscPatterns(RewritePatternSet &patterns,
                         TypeConverter &typeConverter, MLIRContext *ctx) {
-  patterns.add<PTOPtrToIntToEmitC>(typeConverter, ctx);
-  patterns.add<PTOIntToPtrToEmitC>(typeConverter, ctx);
+  (void)patterns;
+  (void)typeConverter;
+  (void)ctx;
 }
 
 } // namespace pto

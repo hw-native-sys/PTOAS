@@ -11,17 +11,270 @@
 
 from __future__ import annotations
 
-from ._types import (
-    _integer_signedness,
-    _materialize_integer_literal,
-    _restore_integer_signedness,
-    _signless_integer_type,
-    _strip_integer_signedness,
-    _parse_integer_value,
+from ptoas.mlir.ir import (
+    Attribute,
+    BF16Type,
+    DenseElementsAttr,
+    F16Type,
+    F32Type,
+    Float8E4M3FNType,
+    Float8E5M2Type,
+    FloatAttr,
+    IndexType,
+    IntegerAttr,
+    IntegerType,
+    Operation,
+    VectorType,
 )
+from ptoas.mlir.dialects import pto as _pto
 
-from ptoas.mlir.dialects import arith
-from ptoas.mlir.ir import BF16Type, F16Type, F32Type, FloatAttr, IndexType, IntegerType, VectorType
+from ._types import _materialize_integer_literal
+
+
+def _pto_constant(type_obj, value_attr):
+    return Operation.create(
+        "pto.constant", results=[type_obj], attributes={"value": value_attr}
+    ).results[0]
+
+
+def _pto_cast(
+    value, target_type, *, index=False, attributes=None, signedness=None
+):
+    source_type = value.type
+    source_kind = classify_runtime_scalar_type(source_type)
+    target_kind = classify_runtime_scalar_type(target_type)
+    op_attributes = dict(attributes or {})
+
+    if index or _is_index_integer_conversion(source_type, target_type):
+        if op_attributes:
+            raise ValueError(
+                "index/integer casts do not accept numeric conversion attributes"
+            )
+        return _emit_index_cast(value, target_type, signedness=signedness)
+
+    inferred_signedness = _conversion_signedness(source_type, target_type)
+    signedness = signedness or inferred_signedness
+    if source_kind == "integer" and target_kind == "integer":
+        source_width = _integer_element_type(source_type).width
+        target_width = _integer_element_type(target_type).width
+        if source_width < target_width:
+            mnemonic = "pto.exti"
+            op_attributes["signedness"] = _signedness_attr(signedness)
+        elif source_width > target_width:
+            mnemonic = "pto.trunci"
+        else:
+            if op_attributes:
+                raise ValueError(
+                    "same-width integer casts do not accept conversion attributes"
+                )
+            return _restore_authored_integer_type(
+                _to_common_integer_value(value), target_type
+            )
+    elif source_kind == "integer" and target_kind == "float":
+        mnemonic = "pto.itof"
+        op_attributes["signedness"] = _signedness_attr(signedness)
+    elif source_kind == "float" and target_kind == "integer":
+        mnemonic = "pto.ftoi"
+        op_attributes["signedness"] = _signedness_attr(signedness)
+    elif source_kind == "float" and target_kind == "float":
+        mnemonic = "pto.ftof"
+    else:
+        raise TypeError(
+            f"unsupported numeric conversion {source_type} -> {target_type}"
+        )
+
+    common_value = _to_common_integer_value(value)
+    common_target_type = _signless_integer_type(target_type)
+    result = Operation.create(
+        mnemonic,
+        results=[common_target_type],
+        operands=[common_value],
+        attributes=op_attributes,
+    ).results[0]
+    return _restore_authored_integer_type(result, target_type)
+
+
+def _is_index_integer_conversion(source_type, target_type):
+    source_element = _scalar_or_vector_element_type(source_type)
+    target_element = _scalar_or_vector_element_type(target_type)
+    return (
+        IndexType.isinstance(source_element)
+        and IntegerType.isinstance(target_element)
+    ) or (
+        IntegerType.isinstance(source_element)
+        and IndexType.isinstance(target_element)
+    )
+
+
+def _index_conversion_signedness(source_type, target_type):
+    source_element = _scalar_or_vector_element_type(source_type)
+    target_element = _scalar_or_vector_element_type(target_type)
+    if IndexType.isinstance(source_element) and IntegerType.isinstance(target_element):
+        return _integer_signedness(target_type) or "signed"
+    if IntegerType.isinstance(source_element) and IndexType.isinstance(target_element):
+        return _integer_signedness(source_type) or "signed"
+    raise TypeError(
+        "index cast requires exactly one index type and one integer type, got "
+        f"{source_type} -> {target_type}"
+    )
+
+
+def _validate_index_cast_types(source_type, target_type):
+    source_vector = VectorType.isinstance(source_type)
+    target_vector = VectorType.isinstance(target_type)
+    if source_vector != target_vector:
+        raise TypeError(
+            "index/integer casts require both types to be scalar or both to be "
+            f"builtin vectors, got {source_type} -> {target_type}"
+        )
+    if source_vector:
+        source_shape = VectorType(source_type)
+        target_shape = VectorType(target_type)
+        if (
+            tuple(source_shape.shape) != tuple(target_shape.shape)
+            or tuple(source_shape.scalable_dims) != tuple(target_shape.scalable_dims)
+        ):
+            raise TypeError(
+                "index/integer casts require matching builtin-vector shapes, got "
+                f"{source_type} -> {target_type}"
+            )
+    if not _is_index_integer_conversion(source_type, target_type):
+        raise TypeError(
+            "index cast requires exactly one index type and one integer type, got "
+            f"{source_type} -> {target_type}"
+        )
+
+
+def _emit_index_cast(value, target_type, *, signedness=None):
+    source_type = value.type
+    _validate_index_cast_types(source_type, target_type)
+    signedness = signedness or _index_conversion_signedness(
+        source_type, target_type
+    )
+    source = (
+        _to_common_integer_value(value)
+        if IntegerType.isinstance(_scalar_or_vector_element_type(source_type))
+        else value
+    )
+    target = (
+        _signless_integer_type(target_type)
+        if IntegerType.isinstance(_scalar_or_vector_element_type(target_type))
+        else target_type
+    )
+    result = Operation.create(
+        "pto.index_cast",
+        results=[target],
+        operands=[source],
+        attributes={"signedness": _signedness_attr(signedness)},
+    ).results[0]
+    return _restore_authored_integer_type(result, target_type)
+
+
+def _unrealized_type_cast(value, target_type):
+    return Operation.create(
+        "builtin.unrealized_conversion_cast",
+        results=[target_type],
+        operands=[value],
+    ).results[0]
+
+
+def _integer_element_type(type_obj):
+    element_type = _scalar_or_vector_element_type(type_obj)
+    return (
+        IntegerType(element_type)
+        if IntegerType.isinstance(element_type)
+        else None
+    )
+
+
+def _scalar_or_vector_element_type(type_obj):
+    return (
+        VectorType(type_obj).element_type
+        if VectorType.isinstance(type_obj)
+        else type_obj
+    )
+
+
+def _integer_type_with_element(type_obj, converted_element):
+    if not VectorType.isinstance(type_obj):
+        return converted_element
+    vector_type = VectorType(type_obj)
+    return VectorType.get(
+        list(vector_type.shape),
+        converted_element,
+        scalable=list(vector_type.scalable_dims),
+    )
+
+
+def _signless_integer_type(type_obj):
+    element_type = _integer_element_type(type_obj)
+    if element_type is None:
+        return type_obj
+    return _integer_type_with_element(
+        type_obj, IntegerType.get_signless(element_type.width)
+    )
+
+
+def _integer_signedness(type_obj):
+    element_type = _scalar_or_vector_element_type(type_obj)
+    if IndexType.isinstance(element_type):
+        return "signed"
+    integer_type = _integer_element_type(type_obj)
+    if integer_type is None:
+        return None
+    if integer_type.width == 1:
+        return "unsigned"
+    if integer_type.is_unsigned:
+        return "unsigned"
+    return "signed"
+
+
+def _signedness_attr(signedness):
+    if signedness not in {"signed", "unsigned"}:
+        raise ValueError(f"expected signed or unsigned semantics, got {signedness!r}")
+    return Attribute.parse(f"#pto.signedness<{signedness}>")
+
+
+def _conversion_signedness(source_type, target_type):
+    source_signedness = _integer_signedness(source_type)
+    if source_signedness is not None:
+        return source_signedness
+    return _integer_signedness(target_type)
+
+
+def _to_common_integer_value(value):
+    common_type = _signless_integer_type(value.type)
+    if common_type == value.type:
+        return value
+    return _unrealized_type_cast(value, common_type)
+
+
+def _restore_authored_integer_type(value, target_type):
+    if value.type == target_type:
+        return value
+    if _signless_integer_type(target_type) != value.type:
+        return value
+    return _unrealized_type_cast(value, target_type)
+
+
+_FLOAT_SCALAR_TYPE_CLASSES = (BF16Type, F16Type, F32Type, Float8E4M3FNType, Float8E5M2Type)
+_PACKED_FLOAT_TYPE_NAMES = ("HiF8Type", "HiF8x2Type", "F4E1M2x2Type", "F4E2M1x2Type",
+                            "BF16x2Type", "F8E8M0Type")
+_PACKED_VECTOR_FLOAT_TYPE_NAMES = ("HiF8Type", "F4E1M2x2Type", "F4E2M1x2Type")
+
+
+def _is_float_scalar_type(type_obj) -> bool:
+    """True for the float element types shipped with the base MLIR bindings."""
+    return any(cls.isinstance(type_obj) for cls in _FLOAT_SCALAR_TYPE_CLASSES)
+
+
+def _is_packed_float_type(type_obj, names) -> bool:
+    """True when a dynamically exposed pto packed-float carrier matches."""
+    for name in names:
+        packed_type = getattr(_pto, name, None)
+        if packed_type is not None and packed_type.isinstance(type_obj):
+            return True
+    return False
 
 
 def classify_runtime_scalar_type(type_obj):
@@ -29,12 +282,20 @@ def classify_runtime_scalar_type(type_obj):
         return "index"
     if IntegerType.isinstance(type_obj):
         return "integer"
-    if any(cls.isinstance(type_obj) for cls in (BF16Type, F16Type, F32Type)):
+    if _is_float_scalar_type(type_obj):
+        return "float"
+    if _is_packed_float_type(type_obj, _PACKED_FLOAT_TYPE_NAMES):
         return "float"
     if VectorType.isinstance(type_obj):
         element_type = VectorType(type_obj).element_type
-        if any(cls.isinstance(element_type) for cls in (BF16Type, F16Type, F32Type)):
+        if IndexType.isinstance(element_type):
+            return "index"
+        if _is_float_scalar_type(element_type):
             return "float"
+        if _is_packed_float_type(element_type, _PACKED_VECTOR_FLOAT_TYPE_NAMES):
+            return "float"
+        if IntegerType.isinstance(element_type):
+            return "integer"
     raise TypeError(f"runtime scalar operators only support index/int/float values, got {type_obj}")
 
 
@@ -55,10 +316,34 @@ def materialize_scalar_literal(value, target_type, *, context: str):
         )
 
     if target_kind == "float":
-        return arith.ConstantOp(target_type, FloatAttr.get(target_type, float(value))).result
+        if VectorType.isinstance(target_type):
+            element_type = VectorType(target_type).element_type
+            return _pto_constant(
+                target_type,
+                DenseElementsAttr.get_splat(
+                    target_type,
+                    FloatAttr.get(element_type, float(value)),
+                ),
+            )
+        return _pto_constant(
+            target_type, FloatAttr.get(target_type, float(value))
+        )
     if target_kind == "index":
-        return arith.ConstantOp(target_type, int(value)).result
+        return _pto_constant(
+            target_type, IntegerAttr.get(target_type, int(value))
+        )
 
+    if VectorType.isinstance(target_type):
+        common_type = _signless_integer_type(target_type)
+        element_type = VectorType(common_type).element_type
+        result = _pto_constant(
+            common_type,
+            DenseElementsAttr.get_splat(
+                common_type,
+                IntegerAttr.get(element_type, int(value)),
+            ),
+        )
+        return _restore_authored_integer_type(result, target_type)
     return _materialize_integer_literal(target_type, value)
 
 
@@ -76,7 +361,7 @@ def coerce_scalar_value_to_type(value, target_type, *, context: str):
     if source_kind == "index" and target_kind == "integer":
         return coerce_integer_like(value, target_type)
     if source_kind == "integer" and target_kind == "index":
-        return arith.IndexCastOp(target_type, _strip_integer_signedness(value)).result
+        return _pto_cast(value, target_type, index=True)
     if source_kind == "integer" and target_kind == "integer":
         return coerce_integer_like(value, target_type)
     if source_kind == "float" and target_kind == "float":
@@ -93,7 +378,8 @@ def coerce_runtime_index_value(value, *, context: str):
     if isinstance(value, bool):
         raise TypeError(f"{context} does not accept bool values")
     if isinstance(value, int):
-        return arith.ConstantOp(IndexType.get(), value).result
+        index_type = IndexType.get()
+        return _pto_constant(index_type, IntegerAttr.get(index_type, value))
     if not hasattr(value, "type"):
         raise TypeError(
             f"{context} expects a Python int, an index value, or an integer runtime scalar; "
@@ -104,9 +390,81 @@ def coerce_runtime_index_value(value, *, context: str):
     if IndexType.isinstance(value_type):
         return value
     if IntegerType.isinstance(value_type):
-        return arith.IndexCastOp(IndexType.get(), _strip_integer_signedness(value)).result
+        return _pto_cast(value, IndexType.get(), index=True)
 
     raise TypeError(f"{context} expects an index or integer runtime scalar, got {value_type}")
+
+
+def coerce_runtime_loop_bounds(start, stop, step, *, context: str):
+    """Normalize loop bounds while preserving safe signed-integer loops.
+
+    ``scf.for`` accepts signless integer bounds, but its loop condition is
+    signed.  Therefore same-width signless/signed integer bounds remain in
+    that integer type, while index bounds remain index. Unsigned bounds are
+    rejected because converting them to index would not provide unsigned-loop
+    semantics.
+    Python literals follow the selected runtime bound type.
+    """
+    raw_values = (start, stop, step)
+    if any(isinstance(value, bool) for value in raw_values):
+        raise TypeError(f"{context} does not accept bool values")
+    typed_values = tuple(value for value in raw_values if hasattr(value, "type"))
+    if not typed_values:
+        index_type = IndexType.get()
+        return tuple(
+            materialize_scalar_literal(value, index_type, context=context)
+            for value in raw_values
+        )
+
+    bound_types = tuple(value.type for value in typed_values)
+    if any(not (IndexType.isinstance(ty) or IntegerType.isinstance(ty)) for ty in bound_types):
+        raise TypeError(
+            f"{context} expects an index or integer runtime scalar, got "
+            + ", ".join(str(value.type) for value in typed_values)
+        )
+
+    integer_widths = {
+        IntegerType(ty).width for ty in bound_types if IntegerType.isinstance(ty)
+    }
+    if len(integer_widths) > 1:
+        raise TypeError(
+            f"{context} requires integer bounds with matching widths, got "
+            + ", ".join(str(value.type) for value in typed_values)
+        )
+
+    if any(_integer_signedness(value.type) == "unsigned" for value in typed_values):
+        raise TypeError(
+            f"{context} does not support unsigned integer bounds; "
+            "convert the bound to index or a signed integer explicitly"
+        )
+
+    if any(IndexType.isinstance(ty) for ty in bound_types):
+        target_type = IndexType.get()
+    else:
+        target_type = IntegerType.get_signless(integer_widths.pop())
+
+    return tuple(
+        _normalize_runtime_bound(value, target_type, context=context)
+        for value in raw_values
+    )
+
+
+def _normalize_runtime_bound(value, target_type, *, context: str):
+    """Normalize one authored loop bound to the selected runtime bound type."""
+    if not hasattr(value, "type"):
+        return materialize_scalar_literal(value, target_type, context=context)
+    value_kind = classify_runtime_scalar_type(value.type)
+    if value_kind == "index" and IndexType.isinstance(target_type):
+        return value
+    if value_kind == "integer" and IntegerType.isinstance(target_type):
+        if _integer_element_type(value.type).width != IntegerType(target_type).width:
+            raise TypeError(f"{context} requires integer bounds with matching widths")
+        return _to_common_integer_value(value)
+    if value_kind == "integer" and IndexType.isinstance(target_type):
+        return _emit_index_cast(value, target_type)
+    if value_kind == "index" and IntegerType.isinstance(target_type):
+        raise TypeError(f"{context} cannot mix index and integer bounds")
+    raise TypeError(f"{context} expects index or integer bounds, got {value.type}")
 
 
 def coerce_runtime_integer_value(value, target_type, *, context: str):
@@ -130,18 +488,34 @@ def coerce_runtime_integer_to_i1(value, *, context: str):
         raise TypeError(f"{context} expects an integer-like runtime scalar, got {value!r}")
 
     if IndexType.isinstance(value.type):
-        zero = arith.ConstantOp(IndexType.get(), 0).result
-        return arith.CmpIOp(arith.CmpIPredicate.ne, value, zero).result
+        zero = _pto_constant(IndexType.get(), IntegerAttr.get(IndexType.get(), 0))
+        return Operation.create(
+            "pto.cmpi",
+            results=[IntegerType.get_signless(1)],
+            operands=[value, zero],
+            attributes={
+                "predicate": Attribute.parse("#pto.scalar_cmp_predicate<ne>"),
+                "signedness": _signedness_attr("signed"),
+            },
+        ).results[0]
 
     if not IntegerType.isinstance(value.type):
         raise TypeError(f"{context} expects an integer-like runtime scalar, got {value.type}")
 
     signless_type = _signless_integer_type(value.type)
-    signless_value = _strip_integer_signedness(value)
+    signless_value = _to_common_integer_value(value)
     if IntegerType(signless_type).width == 1:
         return signless_value
-    zero = arith.ConstantOp(signless_type, 0).result
-    return arith.CmpIOp(arith.CmpIPredicate.ne, signless_value, zero).result
+    zero = _pto_constant(signless_type, IntegerAttr.get(signless_type, 0))
+    return Operation.create(
+        "pto.cmpi",
+        results=[IntegerType.get_signless(1)],
+        operands=[signless_value, zero],
+        attributes={
+            "predicate": Attribute.parse("#pto.scalar_cmp_predicate<ne>"),
+            "signedness": _signedness_attr(_integer_signedness(value.type)),
+        },
+    ).results[0]
 
 
 def coerce_runtime_i1_value(value, *, context: str):
@@ -162,7 +536,7 @@ def coerce_runtime_i1_value(value, *, context: str):
     return coerce_runtime_integer_to_i1(value, context=context)
 
 
-def normalize_runtime_binary_operands(lhs, rhs):
+def normalize_runtime_binary_operands(lhs, rhs, *, require_matching_signedness=False):
     lhs_is_value = is_mlir_value(lhs)
     rhs_is_value = is_mlir_value(rhs)
 
@@ -170,52 +544,44 @@ def normalize_runtime_binary_operands(lhs, rhs):
         raise TypeError("runtime scalar operators require at least one traced runtime operand")
 
     if lhs_is_value and rhs_is_value:
-        return reconcile_typed_runtime_binary_operands(lhs, rhs)
+        return reconcile_typed_runtime_binary_operands(
+            lhs, rhs, require_matching_signedness=require_matching_signedness)
 
     anchor_type = lhs.type if lhs_is_value else rhs.type
     lhs = lhs if lhs_is_value else _materialize_runtime_literal(lhs, anchor_type)
     rhs = rhs if rhs_is_value else _materialize_runtime_literal(rhs, anchor_type)
-    return reconcile_typed_runtime_binary_operands(lhs, rhs)
+    return reconcile_typed_runtime_binary_operands(
+        lhs, rhs, require_matching_signedness=require_matching_signedness)
 
 
-def reconcile_typed_runtime_binary_operands(lhs, rhs):
+def reconcile_typed_runtime_binary_operands(lhs, rhs, *, require_matching_signedness=False):
     lhs_type = lhs.type
     rhs_type = rhs.type
 
     if lhs_type == rhs_type:
-        return lhs, rhs, classify_runtime_scalar_type(lhs_type), lhs_type
+        return lhs, rhs, classify_runtime_scalar_type(lhs_type)
 
     if IndexType.isinstance(lhs_type) and IntegerType.isinstance(rhs_type):
-        rhs = arith.IndexCastOp(IndexType.get(), _strip_integer_signedness(rhs)).result
-        return lhs, rhs, "index", lhs_type
+        rhs = _pto_cast(rhs, IndexType.get(), index=True)
+        return lhs, rhs, "index"
 
     if IntegerType.isinstance(lhs_type) and IndexType.isinstance(rhs_type):
-        lhs = arith.IndexCastOp(IndexType.get(), _strip_integer_signedness(lhs)).result
-        return lhs, rhs, "index", rhs_type
+        lhs = _pto_cast(lhs, IndexType.get(), index=True)
+        return lhs, rhs, "index"
 
     if IntegerType.isinstance(lhs_type) and IntegerType.isinstance(rhs_type):
+        if (require_matching_signedness and lhs_type != rhs_type and
+                _integer_signedness(lhs_type) != _integer_signedness(rhs_type)):
+            raise TypeError(
+                "sign-sensitive runtime scalar operators require matching signedness; "
+                f"got {lhs_type} and {rhs_type}; cast explicitly before the operation"
+            )
         lhs_width = IntegerType(lhs_type).width
         rhs_width = IntegerType(rhs_type).width
         target_type = lhs_type if lhs_width >= rhs_width else rhs_type
-        # Arithmetic operands are signless.  When a signed/unsigned runtime
-        # value is combined with a literal (which is intentionally emitted as
-        # signless), keep the common operand type signless through the op and
-        # restore the authored signedness only on the result.  This avoids
-        # manufacturing a signed literal cast that can be reused with stale
-        # type metadata by the tracer.
-        authored_type = target_type
-        target_width = max(lhs_width, rhs_width)
-        lhs_signedness = _integer_signedness(lhs_type)
-        rhs_signedness = _integer_signedness(rhs_type)
-        if lhs_signedness == "signless" and rhs_signedness != "signless":
-            authored_type = _integer_type_with_signedness(target_width, rhs_signedness)
-        elif rhs_signedness == "signless" and lhs_signedness != "signless":
-            authored_type = _integer_type_with_signedness(target_width, lhs_signedness)
-        if _integer_signedness(lhs_type) == "signless" or _integer_signedness(rhs_type) == "signless":
-            target_type = _signless_integer_type(target_type)
         lhs = coerce_integer_like(lhs, target_type)
         rhs = coerce_integer_like(rhs, target_type)
-        return lhs, rhs, "integer", authored_type
+        return lhs, rhs, "integer"
 
     raise TypeError(
         "runtime scalar operators require matching scalar types or an index/integer pair; "
@@ -239,28 +605,16 @@ def coerce_integer_like(value, target_type):
     if value.type == target_type:
         return value
     if IndexType.isinstance(value.type):
-        signless_target = _signless_integer_type(target_type)
-        adapted = arith.IndexCastOp(signless_target, value).result
-        return _restore_integer_signedness(adapted, target_type)
+        return _pto_cast(value, target_type, index=True)
 
     source_type = value.type
     source_width = IntegerType(source_type).width
     target_width = IntegerType(target_type).width
-    signless_source = _strip_integer_signedness(value)
-    signless_target = _signless_integer_type(target_type)
-
-    if source_width < target_width:
-        source_signedness = _integer_signedness(source_type)
+    if source_width != target_width or source_type != target_type:
         # i1 carries boolean truth values; widening must preserve 0/1 storage.
-        if source_width == 1 or source_signedness == "unsigned":
-            widened = arith.ExtUIOp(signless_target, signless_source).result
-        else:
-            widened = arith.ExtSIOp(signless_target, signless_source).result
-        return _restore_integer_signedness(widened, target_type)
-    if source_width > target_width:
-        truncated = arith.TruncIOp(signless_target, signless_source).result
-        return _restore_integer_signedness(truncated, target_type)
-    return _restore_integer_signedness(signless_source, target_type)
+        signedness = "unsigned" if source_width == 1 else None
+        return _pto_cast(value, target_type, signedness=signedness)
+    return value
 
 
 def _materialize_runtime_literal(value, anchor_type):
@@ -274,18 +628,9 @@ def _materialize_runtime_literal(value, anchor_type):
             f"against non-floating operand type {anchor_type}"
         )
 
-    if kind == "float":
-        return arith.ConstantOp(anchor_type, FloatAttr.get(anchor_type, float(value))).result
-    if kind == "index":
-        return arith.ConstantOp(anchor_type, int(value)).result
-
-    # Runtime arithmetic is lowered through builtin ``arith`` integer ops,
-    # whose operands are signless.  Materialize literals directly as signless
-    # constants instead of constructing a signed value and immediately
-    # stripping it again (the latter used to print malformed ``siN to iN``
-    # casts for expressions such as ``num_tokens + 3``).
-    signless_type = _signless_integer_type(anchor_type)
-    return arith.ConstantOp(signless_type, _parse_integer_value(value, target_type=anchor_type)).result
+    return materialize_scalar_literal(
+        value, anchor_type, context="runtime scalar operator"
+    )
 
 
 def _coerce_float_like(value, target_type):
@@ -303,9 +648,9 @@ def _coerce_float_like(value, target_type):
     source_width = _float_bytewidth(value.type)
     target_width = _float_bytewidth(target_type)
     if source_width < target_width:
-        return arith.ExtFOp(target_type, value).result
+        return _pto_cast(value, target_type)
     if source_width > target_width:
-        return arith.TruncFOp(target_type, value).result
+        return _pto_cast(value, target_type)
     raise TypeError(
         "cannot coerce between different floating-point types of the same width: "
         f"{value.type} and {target_type}"
@@ -321,6 +666,8 @@ def _float_shape(type_obj):
 def _float_bytewidth(type_obj):
     if VectorType.isinstance(type_obj):
         return _float_bytewidth(VectorType(type_obj).element_type)
+    if Float8E4M3FNType.isinstance(type_obj) or Float8E5M2Type.isinstance(type_obj):
+        return 1
     if BF16Type.isinstance(type_obj) or F16Type.isinstance(type_obj):
         return 2
     if F32Type.isinstance(type_obj):

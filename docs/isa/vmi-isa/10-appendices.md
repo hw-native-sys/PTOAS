@@ -61,24 +61,3 @@
 | 53 | `pto.vmi.vsubc` | 3: Eltwise | A | 32-bit integer subtract with per-lane not-borrow output |
 | 54 | `pto.vmi.vaddcs` | 3: Eltwise | A | 32-bit integer add with carry input and output |
 | 55 | `pto.vmi.vsubcs` | 3: Eltwise | A | 32-bit integer subtract with carry input and output |
-
----
-
-## Appendix C: MERGE Mode on A5
-
-On A5, the hardware predicates only in **ZEROING** mode (inactive lanes → 0).
-MERGE mode is **not implemented yet**:
-
-Until emulated or native MERGE support lands, write the merge explicitly with
-`vsel` against the old destination value:
-
-```mlir
-// Explicit merge:  dst = Pg ? op(a, b) : dst_old
-%new = pto.vmi.<op> %a, %b, %pg           // ZEROING: inactive lanes → 0
-%dst = pto.vmi.vsel %pg, %new, %dst_old   // keep old value on inactive lanes
-```
-
-Once emulation is implemented, the compiler is expected to expand MERGE as
-`vnot` + zeroing op + `vand`/`vor` (cost: `+1 vnot` per distinct `Pg`, plus
-`+K vsel`/`vor`); on A6, merge-capable ops are expected to take the mode
-natively and collapse to the single predicated op.

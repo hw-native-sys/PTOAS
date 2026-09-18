@@ -64,6 +64,8 @@ jobs:
             export GE_ST_RT2=${{ inputs.ge_st_rt2 }}
             export GIT_TARGET_BRANCH=${{ env.TARGET_BRANCH }}
             export OS_TYPE=${{ inputs.arch == 'arm64' && 'aarch64' || 'x86_64' }}
+            export CMAKE_C_COMPILER_LAUNCHER=/tmp/codearts/cloudcache/xcache
+            export CMAKE_CXX_COMPILER_LAUNCHER=/tmp/codearts/cloudcache/xcache
             BuildAccelerate bash compile.sh
           AC_SERVER_IP: ${{ vars.AC_SERVER_IP }}
       -

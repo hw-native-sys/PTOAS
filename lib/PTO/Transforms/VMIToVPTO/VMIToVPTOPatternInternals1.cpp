@@ -10,8 +10,10 @@
 //===- VMIToVPTOPatternInternals1.inc - VMIToVPTO internals -*- C++ -*-===//
 //===----------------------------------------------------------------------===//
 
+constexpr unsigned kGroupSlotVectorBits = 256;
+constexpr int64_t kGroupSlotLoadMaxSlots = 8;
+
 /// Loads the one live element of a single-lane value.
-///
 /// `pto.vsldb` is a 32B block load whose base must be 32B aligned, which is
 /// stronger than the element alignment a `base + k` address guarantees.  VLD
 /// BRC reads that element from the effective address and broadcasts it; only
@@ -231,12 +233,12 @@ private:
   LogicalResult lowerDeinterleaved2(
       VMILoadOp op, OneToNPatternRewriter &rewriter, Value source, Value offset,
       ArrayRef<Type> resultTypes, int64_t lanesPerPart, StringRef dist) const {
-    bool invalidFactor2Arity = resultTypes.size() % 2 != 0;
+    bool invalidFactor2Arity = resultTypes.size() % kDeintFactor2 != 0;
     if (invalidFactor2Arity) {
       return rewriter.notifyMatchFailure(
           op, "vldsx2 deinterleaved=2 load requires even physical arity");
     }
-    int64_t groups = resultTypes.size() / 2;
+    int64_t groups = resultTypes.size() / kDeintFactor2;
     SmallVector<Value> lows;
     SmallVector<Value> highs;
     lows.reserve(groups);
@@ -264,7 +266,7 @@ private:
                                   *this->getTypeConverter());
   }
 
-  FailureOr<std::array<Value, 4>> materializeDeinterleaved4LoadGroup(
+  FailureOr<std::array<Value, kDeintFactor4>> materializeDeinterleaved4LoadGroup(
       VMILoadOp op, OneToNPatternRewriter &rewriter, Value source,
       Value offset, ArrayRef<Type> resultTypes, int64_t groups,
       int64_t group, int64_t lanesPerPart, StringRef dist) const {
@@ -291,32 +293,32 @@ private:
         op.getLoc(), types[0], types[2], first.getLow(), second.getLow());
     auto odd = rewriter.create<VdintlvOp>(
         op.getLoc(), types[1], types[3], first.getHigh(), second.getHigh());
-    return std::array<Value, 4>{even.getLow(), odd.getLow(), even.getHigh(),
+    return std::array<Value, kDeintFactor4>{even.getLow(), odd.getLow(), even.getHigh(),
                                 odd.getHigh()};
   }
 
   LogicalResult lowerDeinterleaved4(
       VMILoadOp op, OneToNPatternRewriter &rewriter, Value source, Value offset,
       ArrayRef<Type> resultTypes, int64_t lanesPerPart, StringRef dist) const {
-    bool invalidFactor4Arity = resultTypes.size() % 4 != 0;
+    bool invalidFactor4Arity = resultTypes.size() % kDeintFactor4 != 0;
     if (invalidFactor4Arity) {
       return rewriter.notifyMatchFailure(
           op, "vldsx2 deinterleaved=4 load requires physical arity divisible by 4");
     }
-    int64_t groups = resultTypes.size() / 4;
-    SmallVector<Value> parts[4];
+    int64_t groups = resultTypes.size() / kDeintFactor4;
+    SmallVector<Value> parts[kDeintFactor4];
     for (auto &part : parts) {
       part.reserve(groups);
     }
     for (int64_t group = 0; group < groups; ++group) {
-      FailureOr<std::array<Value, 4>> groupValues =
+      FailureOr<std::array<Value, kDeintFactor4>> groupValues =
           materializeDeinterleaved4LoadGroup(
               op, rewriter, source, offset, resultTypes, groups, group,
               lanesPerPart, dist);
       if (failed(groupValues)) {
         return failure();
       }
-      for (size_t part = 0; part < 4; ++part) {
+      for (size_t part = 0; part < kDeintFactor4; ++part) {
         parts[part].push_back((*groupValues)[part]);
       }
     }
@@ -460,7 +462,7 @@ private:
       return std::nullopt;
     }
     int64_t factor = resultLayout.getFactor();
-    bool supportedFactor = factor == 2 || factor == 4;
+    bool supportedFactor = factor == kDeintFactor2 || factor == kDeintFactor4;
     if (!supportedFactor) {
       return std::nullopt;
     }
@@ -477,7 +479,7 @@ private:
     if (!canUseDist || !validArity) {
       return std::nullopt;
     }
-    if (factor == 2) {
+    if (factor == kDeintFactor2) {
       return lowerDeinterleaved2(op, rewriter, source, offset, resultTypes,
                                  lanesPerPart, *dist);
     }
@@ -758,7 +760,6 @@ private:
                        input.highTypes, input.lanesPerPart, input.dist);
   }
 
-
 public:
 
   LogicalResult
@@ -977,9 +978,22 @@ private:
       return rewriter.notifyMatchFailure(
           op, "group_load requires num_groups to evenly divide lane count");
     }
+    // The block stride plan moves whole 32B fragments.  A group covering a
+    // single fragment packs into the plain contiguous result, while the two and
+    // four fragment groups split across physical parts and register as
+    // block_deinterleaved.
+    FailureOr<int64_t> lanesPerPart =
+        getDataLanesPerPart(resultVMIType.getElementType());
+    int64_t fragmentElems =
+        succeeded(lanesPerPart) ? *lanesPerPart / mlir::pto::kValue8 : 0;
+    bool wholeBlockContiguous =
+        resultLayout && resultLayout.isContiguous() &&
+        resultLayout.getLaneStride() == 1 && fragmentElems > 0 &&
+        *groupSize == fragmentElems;
     bool validFactorShape =
-        (*groupSize == 16 && resultLayout.getFactor() == 2) ||
-        (*groupSize == 32 && resultLayout.getFactor() == 4);
+        (*groupSize == 16 && resultLayout.getFactor() == kDeintFactor2) ||
+        (*groupSize == 32 && resultLayout.getFactor() == kDeintFactor4) ||
+        wholeBlockContiguous;
     std::optional<int64_t> constantRowStride =
         getConstantIndexValue(op.getRowStride());
     bool validRowStride = constantRowStride && *constantRowStride > 0 &&
@@ -989,7 +1003,8 @@ private:
         !isa<PtrType>(source.getType())) {
       return rewriter.notifyMatchFailure(
           op, !validFactorShape
-                  ? "block_deinterleaved group_load requires S=16/factor=2 or S=32/factor=4"
+                  ? "block_deinterleaved group_load requires S=16/factor=2, "
+                    "S=32/factor=4, or a whole-block contiguous group"
                   : !validGroupCount
                         ? "block_deinterleaved group_load requires num_groups multiple of 8"
                         : !validRowStride
@@ -1050,6 +1065,20 @@ private:
     bool isBlockF32 = resultLayout && resultLayout.isBlockDeinterleaved() &&
                       resultVMIType.getElementType().isF32();
     if (isBlockF32) {
+      return lowerBlockF32(op, rewriter, source, offset, rowStride,
+                           resultVMIType, resultLayout);
+    }
+    // Whole-block f32 groups whose fragments sit further apart than the group
+    // itself use the same block-stride vsldb plan; a plan that consumes exactly
+    // one physical part leaves the result plain contiguous.
+    FailureOr<int64_t> groupSize = getGroupSizeFromNumGroups(
+        resultVMIType, op.getNumGroupsAttr().getInt());
+    bool denseContiguous = resultLayout && resultLayout.isContiguous() &&
+                           resultLayout.getLaneStride() == 1;
+    if (denseContiguous && succeeded(groupSize) &&
+        isSupportedBlockStrideF32GroupLoad(
+            resultVMIType, *groupSize, getConstantIndexValue(op.getRowStride()),
+            op.getNumGroupsAttr().getInt())) {
       return lowerBlockF32(op, rewriter, source, offset, rowStride,
                            resultVMIType, resultLayout);
     }
@@ -1237,7 +1266,7 @@ static LogicalResult lowerGroupSlotLoadSlots1(
     OneToNPatternRewriter &rewriter, SmallVectorImpl<Value> &results) {
   unsigned elementBits =
       pto::getPTOStorageElemBitWidth(resultVMIType.getElementType());
-  if (elementBits == 0 || 256 % elementBits != 0) {
+  if (elementBits == 0 || kGroupSlotVectorBits % elementBits != 0) {
     return rewriter.notifyMatchFailure(
         op, "slots=1 group_slot_load requires supported element width");
   }
@@ -1286,7 +1315,7 @@ static FailureOr<int64_t> getGroupSlotLoadSlots(
     (void)rewriter.notifyMatchFailure(op, "group_slot_load arity mismatch");
     return failure();
   }
-  if (slots != 8 && slots != 1) {
+  if (slots != kGroupSlotLoadMaxSlots && slots != 1) {
     (void)rewriter.notifyMatchFailure(
         op, "group_slot_load supports only slots=8 or slots=1");
     return failure();
@@ -1305,7 +1334,7 @@ static LogicalResult lowerGroupSlotLoadParts(
   }
   int64_t slots = *maybeSlots;
   results.reserve(results.size() + resultTypes.size());
-  if (slots == 8) {
+  if (slots == kGroupSlotLoadMaxSlots) {
     return lowerGroupSlotLoadSlots8(op, source, offset, sourceGroupStride,
                                     resultVMIType, resultTypes, numGroups,
                                     rewriter, results);
@@ -1991,5 +2020,3 @@ static LogicalResult lowerGroupBroadcastParts(
       op, sourceParts, resultVMIType, resultTypes, *fact, context,
       *firstSourceType, rewriter, results);
 }
-
-

@@ -5,7 +5,7 @@
 // THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
 // INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
 // See LICENSE in the root of the software repository for the full text of the License.
-//===- VPTOReduxMax.cpp - pto.ReduxMax methods ----------------------------===//
+//===- VPTOReduxMax.cpp - pto.ReduxMaxI/ReduxMaxF methods -----------------===//
 //===----------------------------------------------------------------------===//
 
 #include "../VPTOVecOpInternal.h"
@@ -14,7 +14,10 @@ using namespace mlir;
 using namespace mlir::pto;
 using namespace mlir::pto::vecop_detail;
 
-LogicalResult ReduxMaxOp::verify() {
-  return verifyReduxSemanticType(getOperation(), getValue().getType(),
-                                  getSignednessAttr(), /*requireSignedness=*/true);
+LogicalResult ReduxMaxIOp::verify() {
+  return verifyReduxSemanticAttrs(getOperation(), /*acceptsSignedness=*/true);
+}
+
+LogicalResult ReduxMaxFOp::verify() {
+  return verifyReduxSemanticAttrs(getOperation(), /*acceptsSignedness=*/false);
 }

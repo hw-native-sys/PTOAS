@@ -1,0 +1,44 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+
+// Single-block A3 vector addition: c[i] = a[i] + b[i], 0 <= i < 1024.
+// Compile with --pto-arch=a3 --pto-backend=emitc --enable-insert-sync.
+!vec_tile = !pto.tile_buf<vec, 1x1024xf32>
+
+module attributes {pto.target_arch = "a3"} {
+  func.func @vec_add(%a: !pto.ptr<f32>, %b: !pto.ptr<f32>, %c: !pto.ptr<f32>)
+      attributes {pto.entry, pto.kernel_kind = #pto.kernel_kind<vector>} {
+    %c0 = arith.constant 0 : index
+    %c1 = arith.constant 1 : index
+    %c1024 = arith.constant 1024 : index
+
+    %a_view = pto.make_tensor_view %a, shape = [%c1, %c1024], strides = [%c1024, %c1]
+        : !pto.tensor_view<?x?xf32>
+    %b_view = pto.make_tensor_view %b, shape = [%c1, %c1024], strides = [%c1024, %c1]
+        : !pto.tensor_view<?x?xf32>
+    %c_view = pto.make_tensor_view %c, shape = [%c1, %c1024], strides = [%c1024, %c1]
+        : !pto.tensor_view<?x?xf32>
+
+    %a_part = pto.partition_view %a_view, offsets = [%c0, %c0], sizes = [%c1, %c1024]
+        : !pto.tensor_view<?x?xf32> -> !pto.partition_tensor_view<1x1024xf32>
+    %b_part = pto.partition_view %b_view, offsets = [%c0, %c0], sizes = [%c1, %c1024]
+        : !pto.tensor_view<?x?xf32> -> !pto.partition_tensor_view<1x1024xf32>
+    %c_part = pto.partition_view %c_view, offsets = [%c0, %c0], sizes = [%c1, %c1024]
+        : !pto.tensor_view<?x?xf32> -> !pto.partition_tensor_view<1x1024xf32>
+
+    %a_tile = pto.alloc_tile : !vec_tile
+    %b_tile = pto.alloc_tile : !vec_tile
+    %c_tile = pto.alloc_tile : !vec_tile
+
+    pto.tload ins(%a_part : !pto.partition_tensor_view<1x1024xf32>) outs(%a_tile : !vec_tile)
+    pto.tload ins(%b_part : !pto.partition_tensor_view<1x1024xf32>) outs(%b_tile : !vec_tile)
+    pto.tadd ins(%a_tile, %b_tile : !vec_tile, !vec_tile) outs(%c_tile : !vec_tile)
+    pto.tstore ins(%c_tile : !vec_tile) outs(%c_part : !pto.partition_tensor_view<1x1024xf32>)
+    return
+  }
+}

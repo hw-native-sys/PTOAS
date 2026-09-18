@@ -57,7 +57,6 @@ static LogicalResult verifyMatmulLike(Operation *op, Type aTy, Type bTy, Type ds
   bool aValid = isa<RankedTensorType, pto::TileBufType, pto::PartitionTensorViewType>(aTy);
   bool bValid = isa<RankedTensorType, pto::TileBufType, pto::PartitionTensorViewType>(bTy);
   bool dValid = isa<RankedTensorType, pto::TileBufType, pto::PartitionTensorViewType>(dstTy);
-
   if (!aValid || !bValid || !dValid) {
     return op->emitOpError("expects inputs/outputs to be tensors or PTO tile types");
   }
@@ -77,29 +76,6 @@ static LogicalResult verifyMatmulLike(Operation *op, Type aTy, Type bTy, Type ds
   }
 
   return success();
-}
-
-static LogicalResult verifyScalarPointerAccess(Operation *op, Value ptr,
-                                               Type valueType,
-                                               StringRef valueName) {
-  auto ptrType = dyn_cast<mlir::pto::PtrType>(ptr.getType());
-  if (!ptrType)
-    return op->emitOpError("expects ptr to be !pto.ptr type");
-  if (valueType != ptrType.getElementType())
-    return op->emitOpError()
-           << "expects " << valueName << " type to match ptr element type";
-  return success();
-}
-
-// ---- LoadScalarOp ----
-LogicalResult LoadScalarOp::verify() {
-  return verifyScalarPointerAccess(getOperation(), getPtr(),
-                                   getValue().getType(), "result");
-}
-// ---- StoreScalarOp ----
-LogicalResult StoreScalarOp::verify() {
-  return verifyScalarPointerAccess(getOperation(), getPtr(),
-                                   getValue().getType(), "value");
 }
 
 // ---- CmoCacheInvalidOp ----

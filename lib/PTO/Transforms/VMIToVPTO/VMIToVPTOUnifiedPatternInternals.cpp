@@ -40,18 +40,6 @@ inline constexpr bool kUnifiedMaskedHasMandatoryMask =
     std::is_same_v<SourceOp, VMIVlreluOp> ||
     std::is_same_v<SourceOp, VMIVpreluOp>;
 
-/// Unified v-ops keep `pmode="merge"` out of direct lowering: the mode needs an
-/// explicit passthru lowering, so the conversion declines the match.
-LogicalResult rejectUnifiedMergePmode(Operation *op,
-                                      PatternRewriter &rewriter) {
-  auto pmode = op->getAttrOfType<StringAttr>("pmode");
-  if (pmode && pmode.getValue() == "merge") {
-    return rewriter.notifyMatchFailure(
-        op, "merge predicate mode requires an explicit passthru lowering");
-  }
-  return success();
-}
-
 /// Resolves the predicate that belongs to one physical result part, deriving an
 /// all-active predicate when the unified op carries no explicit mask.
 FailureOr<Value> getUnifiedPartMask(Operation *op, ValueRange maskParts,
@@ -297,15 +285,11 @@ FailureOr<Value> createUnifiedMaskedTarget(PatternRewriter &rewriter,
   }
 }
 
-/// Shared entry of the unified mask-preserving patterns: rejects
-/// `pmode="merge"` and resolves the physical result types before lowering.
+/// Shared entry of the unified mask-preserving patterns: resolves the physical
+/// result types before lowering.
 template <typename SourceOp>
 FailureOr<SmallVector<Type>> getUnifiedMaskedResultTypes(
-    SourceOp op, OneToNPatternRewriter &rewriter,
-    const TypeConverter &typeConverter) {
-  if (failed(rejectUnifiedMergePmode(op, rewriter))) {
-    return failure();
-  }
+    SourceOp op, const TypeConverter &typeConverter) {
   return getConvertedResultTypes(op, 0, typeConverter);
 }
 
@@ -322,7 +306,7 @@ struct OneToNUnifiedMaskedOpPattern : OneToNOpConversionPattern<SourceOp> {
       typename OneToNOpConversionPattern<SourceOp>::OpAdaptor adaptor,
       OneToNPatternRewriter &rewriter) const override {
     FailureOr<SmallVector<Type>> resultTypes =
-        getUnifiedMaskedResultTypes(op, rewriter, *this->getTypeConverter());
+        getUnifiedMaskedResultTypes(op, *this->getTypeConverter());
     if (failed(resultTypes)) {
       return failure();
     }

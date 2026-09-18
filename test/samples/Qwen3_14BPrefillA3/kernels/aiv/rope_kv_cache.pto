@@ -64,7 +64,7 @@ module attributes {pto.target_arch = "a2a3"} {
     %sin_hi_inline400__tile = pto.alloc_tile addr = %c768_i64 valid_row = %c1_index valid_col = %c64_index : !pto.tile_buf<loc=vec, dtype=f32, rows=1, cols=64, v_row=?, v_col=?, blayout=row_major, slayout=none_box, fractal=512, pad=0>
     %50 = pto.subview %sin_row_inline348__tile[%c0_index, %c64_index] sizes [1, 64] : !pto.tile_buf<loc=vec, dtype=f32, rows=1, cols=128, v_row=?, v_col=?, blayout=row_major, slayout=none_box, fractal=512, pad=0> -> !pto.tile_buf<loc=vec, dtype=f32, rows=1, cols=64, v_row=1, v_col=64, blayout=row_major, slayout=none_box, fractal=512, pad=0>
     %52 = arith.addi %arg16, %40 : index
-    %51 = pto.load_scalar %arg5[%52] : !pto.ptr<i32> -> i32
+    %51 = pto.load %arg5[%52] : !pto.ptr<i32> -> i32
     %53 = arith.index_cast %51 : i32 to index
     %54 = arith.divsi %53, %c128_index : index
     %55 = arith.muli %54, %c128_index : index

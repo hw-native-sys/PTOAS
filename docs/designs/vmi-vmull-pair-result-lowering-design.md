@@ -66,7 +66,6 @@ while retaining VMI's logical lane count.
 - Supporting lane counts other than 64, 128, and 256.
 - Reconstructing a logical `Lxi64` value from the low/high result pair.
 - Adding a new VPTO op or changing the existing VPTO emitter.
-- Supporting merge predication without explicit low/high passthrough values.
 - Adding partial-register or tail-specific VMULL behavior.
 - Supporting `block_deinterleaved` VMULL layouts.
 - Implementing the code in the design-only pull request.
@@ -147,7 +146,7 @@ selected signedness.
 
 ### 3.4 Predicate mode
 
-The first implementation is zeroing-only:
+The only predicate mode is zeroing:
 
 ```text
 mask[i] == true:
@@ -161,12 +160,6 @@ mask[i] == false:
 For minimum assembly churn, `OptionalAttr<StrAttr>:$pmode` may remain in ODS,
 but the verifier accepts only an omitted attribute or `pmode = "zero"`. An
 omitted attribute means zeroing.
-
-`pmode = "merge"` must be rejected by the verifier. The operation is pure and
-has no old `%low` or `%high` passthrough operands, so there is no SSA value from
-which inactive lanes could be preserved. Supporting merge later requires an
-explicit API decision, such as adding two passthrough operands; it cannot be
-implemented correctly by the conversion pattern alone.
 
 ## 4. Layout contract
 
@@ -321,9 +314,9 @@ The complete implementation crosses the following layers:
 | ODS | `include/PTO/IR/VMIOps.td` | Change one `Lxi64` result to `(low, high)` `Lxi32` results and update syntax/description |
 | Verifier | `lib/PTO/IR/VMI.cpp` | Enforce legal lane counts, exact signless/unsigned types, pair equality, mask shape, and zero-only pmode |
 | Mask assignment | `lib/PTO/Transforms/VMIMaskGranularityAssignment.cpp` | Request `b32` for the mask use |
-| Layout assignment | `lib/PTO/Transforms/VMILayoutAssignment.cpp` | Use ordinary elementwise `unite()` bookkeeping for both inputs and both results; do not use `uniteDataEquivalent` |
-| Layout propagation | `lib/PTO/Transforms/VMILayoutPropagation.cpp` | Register VMULL as a same-layout relation |
-| Unified bridge | `lib/PTO/Transforms/VMILowerUnifiedToLegacy.cpp` | Keep VMULL on the direct-to-VPTO path; update comments only if needed |
+| Layout assignment | `lib/PTO/Transforms/VMI/VMILayoutAssignment.cpp` | Use ordinary elementwise `unite()` bookkeeping for both inputs and both results; do not use `uniteDataEquivalent` |
+| Layout propagation | `lib/PTO/Transforms/VMI/VMILayoutPropagation.cpp` | Register VMULL as a same-layout relation |
+| Unified bridge | `lib/PTO/Transforms/VMI/VMILowerUnifiedToLegacy.cpp` | Keep VMULL on the direct-to-VPTO path; update comments only if needed |
 | Physicalization | `lib/PTO/Transforms/VMIToVPTO.cpp` | Add preflight validation, pair-result 1:N pattern, and pattern registration |
 | PTODSL | `ptodsl/ptodsl/_vmi_namespace.py` | Return two results and infer their types from the inputs |
 | User docs | VMI ISA and PTODSL guide | Replace the single widened result with the pair-result contract |
@@ -376,7 +369,7 @@ Add negative coverage for:
 - low/high type, signedness, or lane-count mismatch;
 - mask lane-count mismatch;
 - the old single `Lxi64` result form;
-- `pmode = "merge"` and unknown pmode strings.
+- unknown pmode strings.
 
 ### 8.2 Mask and layout tests
 
@@ -508,15 +501,14 @@ The implementation is complete when:
    `pto.vmull` operations.
 4. Low and high result parts are associated with the correct logical result.
 5. Signed and unsigned forms select their existing physical backend forms.
-6. Merge predication is rejected before physical conversion.
-7. Deinterleaved factor-2 and factor-4 pass mandatory arity, part-alignment,
+6. Deinterleaved factor-2 and factor-4 pass mandatory arity, part-alignment,
    result-grouping, and mask-alignment tests, while `block_deinterleaved`
    receives a preflight diagnostic.
-8. CPU simulator or A5 numerical validation confirms signed/unsigned high and
+7. CPU simulator or A5 numerical validation confirms signed/unsigned high and
    low halves and zeroing for sparse inactive lanes observed through full-lane
    output stores.
-9. The full pipeline contains no residual VMI op or VMI type.
-10. ODS, verifier, lowering, PTODSL, user documentation, and tests land
+8. The full pipeline contains no residual VMI op or VMI type.
+9. ODS, verifier, lowering, PTODSL, user documentation, and tests land
    together in the follow-up implementation pull request.
 
 ## 11. Decisions requested from review
@@ -526,8 +518,7 @@ implemented:
 
 1. Use two logical `Lxi32/ui32` results instead of one logical `Lxi64/ui64`
    result.
-2. Define the first implementation as zeroing-only and reject merge until the
-   operation has explicit passthrough semantics.
+2. Define predication as zeroing: inactive lanes produce 0.
 
 Once those decisions are accepted, the implementation path is fully defined
 by the contracts above.

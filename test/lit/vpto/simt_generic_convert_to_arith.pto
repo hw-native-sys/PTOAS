@@ -1,0 +1,41 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+
+// RUN: ( mkdir -p %T && ptoas --pto-arch=a5 --pto-backend=vpto %s -o %t --mlir-print-ir-after=pto-lower-generic-ops 2>&1 || true ) | FileCheck %s
+
+// A SIMT scope alone must not select HIVM conversion semantics. These forms
+// carry neither explicit rounding/saturation control nor a packed payload.
+module attributes {pto.target_arch = "a5", pto.kernel_kind = #pto.kernel_kind<vector>} {
+  func.func @generic_convert_kernel(%integer: i32, %float: f32, %dst_i32: !pto.ptr<i32, ub>, %dst_f32: !pto.ptr<f32, ub>, %dst_f16: !pto.ptr<f16, ub>) attributes {pto.aicore} {
+    %dim_z = arith.constant 1 : i32
+    %dim_y = arith.constant 1 : i32
+    %dim_x = arith.constant 32 : i32
+    pto.store_vfsimt_info %dim_z, %dim_y, %dim_x : i32, i32, i32
+    func.call @generic_convert_body(%integer, %float, %dst_i32, %dst_f32, %dst_f16) : (i32, f32, !pto.ptr<i32, ub>, !pto.ptr<f32, ub>, !pto.ptr<f16, ub>) -> ()
+    return
+  }
+
+  func.func @generic_convert_body(%integer: i32, %float: f32, %dst_i32: !pto.ptr<i32, ub>, %dst_f32: !pto.ptr<f32, ub>, %dst_f16: !pto.ptr<f16, ub>) attributes {pto.simt_entry} {
+    %c0 = arith.constant 0 : index
+    %itof = pto.itof %integer signed : i32 -> f32
+    %ftoi = pto.ftoi %float signed : f32 -> i32
+    %ftof = pto.ftof %float : f32 -> f16
+    pto.store %itof, %dst_f32[%c0] : !pto.ptr<f32, ub>, f32
+    pto.store %ftoi, %dst_i32[%c0] : !pto.ptr<i32, ub>, i32
+    pto.store %ftof, %dst_f16[%c0] : !pto.ptr<f16, ub>, f16
+    return
+  }
+}
+
+// CHECK-LABEL: func.func @generic_convert_body
+// CHECK: arith.sitofp
+// CHECK: arith.fptosi
+// CHECK: arith.truncf
+// CHECK-NOT: pto.itof
+// CHECK-NOT: pto.ftoi
+// CHECK-NOT: pto.ftof

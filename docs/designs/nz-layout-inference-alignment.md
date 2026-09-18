@@ -70,7 +70,7 @@ PTOAS 当前在三处重复实现 layout 推断：
 
 | 位置 | 用途 |
 |---|---|
-| `lib/PTO/Transforms/InferPTOLayout.cpp` | 给 view、memref view 和 load/store 附加 layout |
+| `lib/PTO/Transforms/Passes/InferPTOLayout.cpp` | 给 view、memref view 和 load/store 附加 layout |
 | `lib/PTO/IR/PTO.cpp` | verifier 获取逻辑 layout |
 | `lib/PTO/Transforms/PTOToEmitC.cpp` | EmitC 缺少 layout 属性时兜底 |
 

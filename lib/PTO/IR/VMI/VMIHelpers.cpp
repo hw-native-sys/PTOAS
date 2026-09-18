@@ -1077,12 +1077,8 @@ LogicalResult verifyReductionGroupAndPmode(
   if (sourceType.getElementType() != resultType.getElementType()) {
     return op->emitOpError("source and result element types must match");
   }
-  if (pmode) {
-    StringRef val = *pmode;
-    if (val != "zero" && val != "merge") {
-      return op->emitOpError("pmode must be \"zero\" or \"merge\", got \"")
-             << val << "\"";
-    }
+  if (failed(verifyVMIPMode(op, pmode))) {
+    return failure();
   }
   return success();
 }

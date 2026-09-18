@@ -16,6 +16,7 @@
 #include "mlir/Dialect/ControlFlow/IR/ControlFlowOps.h"
 #include "mlir/Dialect/Func/IR/FuncOps.h"
 #include "mlir/Dialect/LLVMIR/LLVMDialect.h"
+#include "mlir/Dialect/Math/IR/Math.h"
 #include "mlir/Dialect/MemRef/IR/MemRef.h"
 #include "mlir/Dialect/SCF/IR/SCF.h"
 #include "mlir/IR/DialectRegistry.h"
@@ -26,8 +27,8 @@ int main(int argc, char **argv) {
   mlir::DialectRegistry registry;
   registry.insert<mlir::pto::PTODialect, mlir::func::FuncDialect,
                   mlir::arith::ArithDialect, mlir::memref::MemRefDialect,
-                  mlir::scf::SCFDialect, mlir::cf::ControlFlowDialect,
-                  mlir::LLVM::LLVMDialect>();
+                  mlir::math::MathDialect, mlir::scf::SCFDialect,
+                  mlir::cf::ControlFlowDialect, mlir::LLVM::LLVMDialect>();
 
   mlir::registerAllPasses();
   mlir::pto::registerPTOPasses();

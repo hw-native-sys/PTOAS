@@ -166,7 +166,7 @@ module {
   }
 }
 
-// CHECK: 'pto.vmi.vmull' op pmode must be 'zero' when specified
+// CHECK: 'pto.vmi.vmull' op invalid pmode "{{.*}}"; expected "zero"
 
 // -----
 
@@ -182,7 +182,7 @@ module {
   }
 }
 
-// CHECK: 'pto.vmi.vmull' op pmode must be 'zero' when specified
+// CHECK: 'pto.vmi.vmull' op invalid pmode "{{.*}}"; expected "zero"
 
 // -----
 

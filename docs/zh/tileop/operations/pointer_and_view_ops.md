@@ -7,8 +7,7 @@
 ## 目录
 
 - [`pto.addptr` — 指针加法](#ptoaddptr--指针加法)
-- [`pto.ptrtoint` — 指针转整数](#ptoptrtoint--指针转整数)
-- [`pto.inttoptr` — 整数转指针](#ptointtoptr--整数转指针)
+- [`pto.castptr` — 指针域类型转换](#ptocastptr--指针域类型转换)
 - [`pto.make_tensor_view` — 构造张量视图](#ptomake_tensor_view--构造张量视图)
 - [`pto.get_tensor_view_dim` — 获取张量视图维度](#ptoget_tensor_view_dim--获取张量视图维度)
 - [`pto.partition_view` — 分割视图](#ptopartition_view--分割视图)
@@ -60,73 +59,45 @@ result = ptr + offset  // offset is in elements, not Bytes
 
 ---
 
-### `pto.ptrtoint` — 指针转整数
+### `pto.castptr` — 指针域类型转换
 
 ```mlir
-pto.ptrtoint <ptr> : !pto.ptr<elementType> -> i64
+%result = pto.castptr <input> : <input_type> -> <result_type>
 ```
 
 **语义：**
 
 ```text
-result = reinterpret_cast<i64>(ptr)
-// 若源指针由 pto.addptr 生成：
-// pto.ptrtoint(pto.addptr %p, %idx) == pto.ptrtoint(%p) + idx * sizeof(elementType)
+指针 -> i64：返回指针的字节地址。
+i64 -> 指针：以给定字节地址构造指定元素类型和地址空间的指针。
+指针 -> 指针：保持地址和地址空间，重解释指针元素类型，不转换所指数据。
+memref -> 指针：提取 memref 的对齐基地址，不进行分配或复制。
 ```
 
 **参数：**
 
 | Name | Type | Description |
 | ---- | ---- | ----------- |
-| `ptr` | `!pto.ptr<elementType>` | 源全局指针 |
+| `input` | `i64`、`!pto.ptr<T, space>` 或 `memref` | 源字节地址、指针或内存描述符 |
 
-**返回值：** `i64` — 字节地址。
+**返回值：** `i64` 字节地址，或 `!pto.ptr<T, space>` 指针。省略指针地址空间时默认为 GM。
 
 **约束：**
 
-- **实现检查（A2A3/A5）**
-  - 纯操作（无副作用）。
+- 支持 `i64` 与指针互转、同地址空间的指针元素类型重解释，以及 `memref` 到指针。
+- 整数地址必须为 signless `i64`，不能使用 `index`、`i32` 或 `ui64`。
+- 指针之间不能跨地址空间转换，例如 GM 指针不能直接转换成 UB 指针。
+- 从带 PTO 地址空间的 `memref` 提取指针时，结果必须保留该地址空间；不支持 `memref` 到整数或整数到整数的转换。
+- 指针元素类型必须是支持的标量元素类型；转换本身不保证地址有效、对齐或容量足够，这些条件由后续访问要求决定。
 
 **示例：**
 
 ```mlir
-%addr = pto.ptrtoint %ptr : !pto.ptr<f32> -> i64
-```
-
----
-
-### `pto.inttoptr` — 整数转指针
-
-```mlir
-pto.inttoptr <addr> : i64 -> !pto.ptr<resultElementType>
-```
-
-**语义：**
-
-```text
-result = reinterpret_cast<resultElementType *>(addr)
-```
-
-**参数：**
-
-| Name | Type | Description |
-| ---- | ---- | ----------- |
-| `addr` | `i64` | 源字节地址 |
-
-**返回值：** `!pto.ptr<resultElementType>` — 指定元素类型的指针。
-
-**约束：**
-
-- **实现检查（A2A3/A5）**
-  - 结果被限制为仅标量内存访问：其所有直接使用必须是 `pto.load_scalar` 或 `pto.store_scalar` 的指针操作数。不能馈入 `pto.addptr`、`pto.make_tensor_view`、返回值或其他通用指针用户。
-  - 结果元素类型必须为 EmitC 标量指针可表示的类型：`f16`、`bf16`、`f32`、`f64`、8/16/32/64 位整数类型、PTO 低精度类型。非标量类型（如 `index`）被拒绝。
-
-**示例：**
-
-```mlir
-%addr = pto.constant 1024 : i64
-%ptr = pto.inttoptr %addr : i64 -> !pto.ptr<f32>
-pto.store_scalar %ptr, %value : !pto.ptr<f32>, f32
+// 从有效 GM 指针取得地址，再恢复同类型指针。
+%addr = pto.castptr %ptr : !pto.ptr<f32> -> i64
+%restored = pto.castptr %addr : i64 -> !pto.ptr<f32>
+// 保持地址，以字节为单位访问同一存储。
+%bytes = pto.castptr %restored : !pto.ptr<f32> -> !pto.ptr<i8>
 ```
 
 ---
@@ -135,7 +106,7 @@ pto.store_scalar %ptr, %value : !pto.ptr<f32>, f32
 
 ```mlir
 pto.make_tensor_view <ptr>, shape = [<d0>, <d1>, ...], strides = [<s0>, <s1>, ...]
-                     : !pto.ptr<elementType> -> !pto.tensor_view<...>
+                     : !pto.tensor_view<...>
 ```
 
 **语义：**
@@ -151,7 +122,7 @@ result = tensor_view(ptr, shape, strides, layout)
 | ---- | ---- | ----------- |
 | `ptr` | `!pto.ptr<elementType>` | 源指针 |
 | `shape` | 可变 `index` | 动态形状维度 |
-| `strides` | 可变 `index` | 动态步长 |
+| `strides` | 可变 `index` | 以元素为单位的动态步长 |
 
 **返回值：** `!pto.tensor_view<...>` — 构造的张量视图。
 
@@ -164,7 +135,6 @@ result = tensor_view(ptr, shape, strides, layout)
 - **实现检查（A2A3/A5）**
   - `ptr` 必须为 `!pto.ptr<...>`，其元素类型与结果匹配。
   - `shape` 和 `strides` 操作数计数必须与张量视图秩匹配。
-  - `pto.inttoptr` 的结果不能馈入 `pto.make_tensor_view`。
 
 **示例：**
 
@@ -174,7 +144,7 @@ result = tensor_view(ptr, shape, strides, layout)
 %s0 = pto.constant 256 : index
 %s1 = pto.constant 1 : index
 %tv = pto.make_tensor_view %ptr, shape = [%m, %n], strides = [%s0, %s1]
-    : !pto.ptr<f32> -> !pto.tensor_view<?x?xf32>
+    : !pto.tensor_view<?x?xf32>
 ```
 
 ---
@@ -553,9 +523,10 @@ dst = scale_view_of(src)
   - 不支持此操作。
 
 - **实现检查（A5）**
-  - `src` 必须为有效的 tile_buf。`dst` 必须使用 `loc=scaling`。
-  - `src` 和 `dst` 必须具有相同的秩、shape 和有效 shape。
-  - `src` 的元素类型必须支持 MX 缩放（如 `f8E4M3FN`）。
+  - `src` 位于 `left` 或 `right`，`dst` 位于 `scaling`；物理和有效形状均为 rank-2。
+  - 对 left 源，令 K 为源有效列数：目标物理形状为 `[src.rows,ceil(K/32)]`，有效形状为 `[src.v_row,ceil(K/32)]`。
+  - 对 right 源，令 K 为源有效行数：目标物理形状为 `[ceil(K/32),src.cols]`，有效形状为 `[ceil(K/32),src.v_col]`。
+  - 目标只是绑定源的缩放地址，不复制或生成缩放数据；后续 MX 操作还会约束该视图的布局。
 
 **示例：**
 
@@ -565,7 +536,7 @@ pto.tget_scale_addr
     ins(%src : !pto.tile_buf<loc=left, dtype=f8E4M3FN, rows=1, cols=128,
                              v_row=1, v_col=128, blayout=col_major,
                              slayout=row_major, fractal=512, pad=0>)
-    outs(%scale : !pto.tile_buf<loc=scaling, dtype=f16, rows=1, cols=128,
-                                v_row=1, v_col=128, blayout=row_major,
-                                slayout=row_major, fractal=512, pad=0>)
+    outs(%scale : !pto.tile_buf<loc=scaling, dtype=f16, rows=1, cols=4,
+                                v_row=1, v_col=4, blayout=row_major,
+                                slayout=row_major, fractal=32, pad=0>)
 ```

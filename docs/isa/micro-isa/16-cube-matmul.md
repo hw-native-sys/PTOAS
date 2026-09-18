@@ -355,6 +355,12 @@ pto.mte_gm_l1 %src, %dst, %len_burst
 - `nburst(...)` is required.
 - Each `loop(...)` group must provide all three operands.
 - For a contiguous 16-element f16 vector, use `%len_burst = 32`.
+- `%len_burst` is a byte count; the L1 side of the transfer is written in whole
+  32B blocks, so the bytes from `%len_burst` up to the next 32B boundary belong to
+  the burst as well and carry source data. This op has no `pad(...)` group, so
+  use a 32B-aligned `%len_burst` when the tail must be deterministic.
+  *Diagnostics*: a constant `%len_burst` that is not a multiple of 32 is reported
+  with a warning.
 
 **Example:**
 

@@ -92,6 +92,24 @@ def ConvertToPTOOp : Pass<"convert-to-pto-op"> {
   ];
 }
 
+def PTOLowerGenericOps
+    : Pass<"pto-lower-generic-ops", "func::FuncOp"> {
+  let summary = "Lower frontend PTO generic operations to core MLIR dialects";
+  let description = [{
+    Legalizes execution-domain-independent scalar and builtin-vector operations
+    authored as `pto.*` into arith/math/LLVM operations after frontend scope
+    classification. Packed and target-specialized PTO operations remain in the
+    PTO dialect.
+  }];
+  let constructor = "mlir::pto::createPTOLowerGenericOpsPass()";
+  let dependentDialects = [
+    "mlir::arith::ArithDialect",
+    "mlir::LLVM::LLVMDialect",
+    "mlir::math::MathDialect",
+    "mlir::pto::PTODialect"
+  ];
+}
+
 def InferPTOLayout : Pass<"pto-infer-layout", "ModuleOp"> {
   let summary = "Infer and propagate GlobalTensor layout (ND/DN/NZ)";
   let description = [{
@@ -729,22 +747,6 @@ def PTOVerifyTFree : Pass<"pto-verify-tfree", "func::FuncOp"> {
 
   let dependentDialects = [
     "mlir::pto::PTODialect"
-  ];
-}
-
-def PTOValidateIntToPtrUses : Pass<"pto-validate-inttoptr-uses", "func::FuncOp"> {
-  let summary = "Validate restricted uses of PTO inttoptr results";
-  let description = [{
-    Verifies that `pto.inttoptr` results do not escape into general pointer IR.
-    The result may only be used directly as the pointer operand of
-    `pto.load_scalar` or `pto.store_scalar`.
-  }];
-
-  let constructor = "mlir::pto::createPTOValidateIntToPtrUsesPass()";
-
-  let dependentDialects = [
-    "mlir::pto::PTODialect",
-    "mlir::func::FuncDialect"
   ];
 }
 
@@ -1686,6 +1688,37 @@ def VPTOOptimizeVcvt
   }];
   let constructor = "mlir::pto::createVPTOOptimizeVcvtPass()";
   let dependentDialects = ["mlir::pto::PTODialect"];
+}
+
+def VPTOOptimizeCtrlState
+    : Pass<"vpto-optimize-ctrl-state", "func::FuncOp"> {
+  let summary =
+      "Materialize minimal CTRL accesses from ctrl_state_guard requirements";
+  let description = [{
+    Lowers pto.ctrl_state_guard ops produced by MAD semantic-to-raw expansion
+    into the minimal set of pto.get_ctrl/pto.sbitset*/pto.set_ctrl accesses.
+    The pass first summarizes every scf.for subtree bottom-up: CTRL
+    cleanliness (no CTRL-observing or changing operation other than guards),
+    a unique guard requirement, and a statically proven at-least-once trip
+    count. One shared configuration is then hoisted to the entry of the
+    outermost loop whose entire chain down to every guard is statically
+    positive and CTRL-clean, all covered guards in that subtree are unwrapped
+    to run under the installed state, and the logical state is restored once
+    after the loop. Loops with a dynamic or possibly zero trip count, mixed
+    requirements, or explicit CTRL accesses inside are not hoisted; their
+    guards fall through to a per-block forward scan that shares one logical
+    CTRL entry read across compatible guards, reuses the installed active
+    state when the next guard has the same requirement, and defers the
+    restore write to the first real observation point: an explicit
+    get_ctrl/set_ctrl, a CTRL consumer outside a guard, an unknown operation,
+    or the block end. Guards inside scf.if regions are materialized
+    branch-locally. The pass always removes every ctrl_state_guard op.
+  }];
+  let constructor = "mlir::pto::createVPTOOptimizeCtrlStatePass()";
+  let dependentDialects = ["mlir::func::FuncDialect",
+                           "mlir::pto::PTODialect",
+                           "mlir::arith::ArithDialect",
+                           "mlir::scf::SCFDialect"];
 }
 
 def VPTOCombineReductions

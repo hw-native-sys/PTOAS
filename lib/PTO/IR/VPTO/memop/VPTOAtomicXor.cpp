@@ -17,7 +17,8 @@ using namespace mlir::pto::memop_detail;
 LogicalResult AtomicXorOp::verify() {
   return verifyAtomicCommon(getOperation(), getPtr(), getValue().getType(),
                             getOld().getType(), /*bitwise=*/true,
-                            getSignednessAttr());
+                            getOperation()->getAttr("signedness"),
+                            /*acceptsSignedness=*/false);
 }
 
 // NOLINTNEXTLINE(readability-make-member-function-const): ODS-generated side-effect callback has a non-const signature.

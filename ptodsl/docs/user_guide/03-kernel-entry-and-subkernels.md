@@ -86,6 +86,39 @@ def kernel(rows: pto.i32):
 ```
 
 
+### 3.1.1 Standard library — `pto.init_core()`
+
+PTODSL ships a first-party standard library so that kernels call common
+core-state initialization through the normal `pto.*` surface without any
+extra import or registration. Its first entry is `pto.init_core()`, a
+`@pto.func` helper that emits the canonical A5 VPTO core-state initialization
+sequence in source order:
+
+1. `pto.get_ctrl` → `arith.andi` → `arith.ori` → `pto.set_ctrl` – preserve
+   selected running CTRL bits and force the default preset bits.
+2. Vector kernels: `pto.set_loop_size_ubtoout(1, 1)` /
+   `pto.set_loop_size_outtoub(1, 1)` to restore default DMA loop sizes.
+   Explicit `kernel_kind="cube"` kernels receive `pto.set_mov_pad_val(0)`
+   instead, mirroring the reference `__DAV_CUBE__` / `__DAV_VEC__` split.
+3. `pto.set_store_atomic_cfg(0b00100100)` – restore the default scalar
+   store-atomic configuration.
+
+`pto.init_core()` behaves like a normal PTODSL traced callable: it may only be
+called while tracing a compatible kernel, and the VPTO pipeline inlines the
+helper body at the call site before VMI layout assignment and scheduling so
+the initialization operations participate in later semantic, layout,
+scheduling, and code-generation passes. V1 targets A5 + VPTO + `mode="explicit"`;
+calls under any other backend (e.g. EmitC) are rejected.
+
+<!-- ptodsl-doc-test: {"mode":"compile","symbol":"init_core_example","compile":{}} -->
+```python
+@pto.jit(target="a5", mode="explicit")
+def init_core_example(inp: pto.ptr(pto.f32, "gm"), out: pto.ptr(pto.f32, "gm")):
+    pto.init_core()
+    # ... main computation ...
+```
+
+
 ## 3.2 `entry=True` — host-launchable kernel entry
 
 ### Signature
@@ -1010,7 +1043,7 @@ materializes the corresponding section after tracing.
 **Role**: `@pto.simt` is the custom tile op for per-element scalar-parallel
 compute on the SIMT unit. SIMT (Single Instruction, Multiple Threads) is a
 programming model where you write instructions in scalar syntax
-(`scalar.load`, `scalar.store`, `a + b`), and the hardware executes them in
+(`pto.load`, `pto.store`, `a + b`), and the hardware executes them in
 parallel across many threads — analogous to how a GPU SM runs a CUDA kernel.
 Parameters are `Tile` references, typed UB pointers, and PTO scalars. The
 sub-kernel reads and writes individual elements through tile handles; results
@@ -1041,13 +1074,13 @@ def blend_output_rows(
     row_start: pto.i32, row_stop: pto.i32, valid_dim: pto.i32,
 ):
     for row in range(row_start, row_stop, 1):
-        alpha = scalar.load(alpha_tile[row, 0])
-        beta = scalar.load(beta_tile[row, 0])
+        alpha = pto.load(alpha_tile[row, 0])
+        beta = pto.load(beta_tile[row, 0])
         for col in range(0, valid_dim, 1):
-            o_prev = scalar.load(o_prev_tile[row, col])
-            pv_val = scalar.load(pv_tile[row, col])
+            o_prev = pto.load(o_prev_tile[row, col])
+            pv_val = pto.load(pv_tile[row, col])
             o_next = alpha * o_prev + beta * pv_val
-            scalar.store(o_next, o_next_tile[row, col])
+            pto.store(o_next, o_next_tile[row, col])
 ```
 
 SIMT kernels read and write individual scalar elements from tiles or typed
@@ -1083,7 +1116,7 @@ resource partition.
 @pto.simt(max_threads=256)
 def write_tid(dst: pto.ptr(pto.i32, "gm")):
     tid = pto.get_tid_x()
-    idx = scalar.index_cast(tid)
+    idx = tid
     pto.stg(tid, dst, idx)
 
 
@@ -1128,7 +1161,7 @@ pto.simt_launch(body, *args, dims=(dim_x, dim_y, dim_z), **static_kwargs)
 @pto.simt
 def fill_tid(dst: pto.ptr(pto.i32, "gm")):
     tid = pto.get_tid_x()
-    pto.stg(tid, dst, scalar.index_cast(tid))
+    pto.stg(tid, dst, tid)
 
 
 @pto.jit(target="a5")
@@ -1166,16 +1199,16 @@ with pto.tileop():
 <!-- ptodsl-doc-test: {"mode":"compile_fragment","fixture":"kernel_entry.inline_simt_scope","symbol":"kernel_entry_inline_simt_scope_probe","compile":{"BLOCK":8}} -->
 ```python
 with pto.simt():
-    alpha = scalar.load(alpha_tile[row, 0])
-    beta = scalar.load(beta_tile[row, 0])
+    alpha = pto.load(alpha_tile[row, 0])
+    beta = pto.load(beta_tile[row, 0])
     o_next = alpha * o_prev + beta * pv_val
-    scalar.store(o_next, o_next_tile[row, col])
+    pto.store(o_next, o_next_tile[row, col])
 ```
 
 ```python
 with pto.simt(128, 1, 1):
     tid = pto.get_tid_x()
-    scalar.store(tid, scratch_ub, scalar.index_cast(tid))
+    pto.store(tid, scratch_ub, tid)
 ```
 
 <!-- ptodsl-doc-test: {"mode":"compile_fragment","fixture":"kernel_entry.inline_cube_scope","symbol":"kernel_entry_inline_cube_scope_probe","compile":{"BLOCK_M":16,"BLOCK_K":16,"BLOCK_N":16}} -->

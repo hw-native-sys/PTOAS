@@ -445,11 +445,6 @@ static const std::set<StringRef> &validStoreDistModes() {
   return modes;
 }
 
-static const std::set<StringRef> &validPModes() {
-  static const std::set<StringRef> modes = {"zero", "merge"};
-  return modes;
-}
-
 LogicalResult VMIVgatherOp::verify() {
   auto offsetsType = cast<VMIVRegType>(getOffsets().getType());
   auto maskType = cast<VMIMaskType>(getMask().getType());
@@ -492,10 +487,8 @@ LogicalResult VMIVgatherOp::verify() {
         "offsets, or i8/ui8 -> i16/ui16 integer promotion");
   }
 
-  if (auto pmode = getPmode()) {
-    if (pmode.value() != "merge" && pmode.value() != "zero") {
-      return emitOpError("pmode must be 'merge' or 'zero'");
-    }
+  if (failed(verifyVMIPMode(getOperation(), getPmode()))) {
+    return failure();
   }
   return success();
 }
@@ -571,10 +564,8 @@ LogicalResult VMIVscatterOp::verify() {
     return failure();
   }
 
-  if (auto pmode = getPmode()) {
-    if (pmode.value() != "merge" && pmode.value() != "zero") {
-      return emitOpError("pmode must be 'merge' or 'zero'");
-    }
+  if (failed(verifyVMIPMode(getOperation(), getPmode()))) {
+    return failure();
   }
   return success();
 }
@@ -854,9 +845,9 @@ static LogicalResult verifyVStoreGroupAndBlockModes(
   return success();
 }
 
-static LogicalResult verifyVStoreDistModeAndPmode(
+static LogicalResult verifyVStoreDistModeAndMaskCount(
     Operation *op, std::optional<StringRef> distMode, size_t nValues,
-    size_t maskCount, std::optional<StringRef> pmode) {
+    size_t maskCount) {
   if (distMode && validStoreDistModes().find(*distMode) == validStoreDistModes().end()) {
     return op->emitOpError("invalid dist-mode: \"") << *distMode << "\"";
   }
@@ -873,15 +864,6 @@ static LogicalResult verifyVStoreDistModeAndPmode(
   }
   if (maskCount > 1) {
     return op->emitOpError("at most one mask allowed");
-  }
-  if (pmode && validPModes().find(*pmode) == validPModes().end()) {
-    return op->emitOpError("invalid pmode: \"") << *pmode << "\"";
-  }
-  if (pmode && *pmode != "zero") {
-    return op->emitOpError("pmode \"merge\" is not supported for stores: the "
-                           "legacy store lowering is mask-governed only and "
-                           "cannot retain prior destination contents on inactive "
-                           "lanes; omit pmode (defaults to \"zero\")");
   }
   return success();
 }
@@ -934,8 +916,8 @@ LogicalResult VMIvStoreOp::verify() {
           hasGroup ? getGroupAttr().getInt() : 0, nValues, getValues()))) {
     return failure();
   }
-  if (failed(verifyVStoreDistModeAndPmode(getOperation(), distMode, nValues,
-                                         getMask().size(), getPmode()))) {
+  if (failed(verifyVStoreDistModeAndMaskCount(getOperation(), distMode, nValues,
+                                             getMask().size()))) {
     return failure();
   }
   return verifyVStoreValueMaskTypes(getOperation(), hasGroup, getValues(),
@@ -957,15 +939,6 @@ LogicalResult VMIVsstbOp::verify() {
       failed(verifyUBBackedMemory(getOperation(), getDestination().getType(),
                                   "destination"))) {
     return failure();
-  }
-  if (auto pmode = getPmode(); pmode && validPModes().find(*pmode) == validPModes().end()) {
-    return emitOpError("invalid pmode: \"") << *pmode << "\"";
-  }
-  if (auto pmode = getPmode(); pmode && *pmode != "zero") {
-    return emitOpError("pmode \"merge\" is not supported for stores: the "
-                       "legacy store lowering is mask-governed only and "
-                       "cannot retain prior destination contents on inactive "
-                       "blocks; omit pmode (defaults to \"zero\")");
   }
   return verifyMaskMatchesData(getOperation(), maskType, valueType);
 }
@@ -1135,8 +1108,8 @@ static LogicalResult verifyVLoadDistModeAndPmode(
     return op->emitOpError("requires exactly 1 result for dist-mode \"")
            << (distMode ? *distMode : "continuous") << "\"";
   }
-  if (pmode && validPModes().find(*pmode) == validPModes().end()) {
-    return op->emitOpError("invalid pmode: \"") << *pmode << "\"";
+  if (failed(verifyVMIPMode(op, pmode))) {
+    return failure();
   }
   return success();
 }

@@ -62,7 +62,7 @@ mlir::LogicalResult mlir::pto::TRowExpandDivOp::verify() {
     bool supported =
         elem.isF16() || elem.isF32() ||
         (targetArch == PTOArch::A5 &&
-         (elem.isInteger(8) || elem.isInteger(16) || elem.isInteger(32)));
+         (elem.isInteger(mlir::pto::kValue8) || elem.isInteger(mlir::pto::kValue16) || elem.isInteger(mlir::pto::kValue32)));
     if (!supported) {
       if (targetArch == PTOArch::A5) {
         return emitOpError(
@@ -95,9 +95,9 @@ static LogicalResult verifyTRowExpandMulSub(
                                         static_cast<bool>(tmp));
   if (failed(elem))
     return failure();
-  bool supported = elem->isF16() || elem->isF32() || elem->isInteger(16) ||
-                   elem->isInteger(32) ||
-                   (targetArch == PTOArch::A5 && elem->isInteger(8));
+  bool supported = elem->isF16() || elem->isF32() || elem->isInteger(mlir::pto::kValue16) ||
+                   elem->isInteger(mlir::pto::kValue32) ||
+                   (targetArch == PTOArch::A5 && elem->isInteger(mlir::pto::kValue8));
   if (!supported)
     return op->emitOpError()
            << "expects " << (targetArch == PTOArch::A5 ? "A5 " : "A2/A3 ")
@@ -150,9 +150,9 @@ static FailureOr<Type> verifyTRowExpandAddCore(TRowExpandAddOp op,
     return op.emitOpError("expects src0 to use row-major layout");
   }
   Type elem = *elemOr;
-  bool supported = elem.isF16() || elem.isF32() || elem.isInteger(16) ||
-                   elem.isInteger(32) ||
-                   (targetArch == PTOArch::A5 && elem.isInteger(8));
+  bool supported = elem.isF16() || elem.isF32() || elem.isInteger(mlir::pto::kValue16) ||
+                   elem.isInteger(mlir::pto::kValue32) ||
+                   (targetArch == PTOArch::A5 && elem.isInteger(mlir::pto::kValue8));
   if (!supported) {
     if (targetArch == PTOArch::A5) {
       return op.emitOpError(
@@ -179,9 +179,9 @@ static LogicalResult verifyTRowExpandAddSrc1(TRowExpandAddOp op, Type elem,
     return op.emitOpError("expects src1 valid_shape[0] to equal dst valid_shape[0]");
   }
   bool src1IsRowMajor = isRowMajorTileBuf(src1Ty);
-  int64_t expectedCol = elem.isInteger(8)
+  int64_t expectedCol = elem.isInteger(mlir::pto::kValue8)
                             ? 32
-                            : ((elem.isF16() || elem.isInteger(16)) ? 16 : 8);
+                            : ((elem.isF16() || elem.isInteger(mlir::pto::kValue16)) ? 16 : 8);
   int64_t src1Col = src1Valid[1];
   if (src1IsRowMajor) {
     if (src1Col != ShapedType::kDynamic && src1Col != expectedCol) {
@@ -240,8 +240,8 @@ static FailureOr<Type> verifyTRowExpandReduceTypes(
   }
   bool supported = elem.isF16() || elem.isF32() ||
                    (allowIntegerTypes &&
-                    (elem.isInteger(16) || elem.isInteger(32) ||
-                     (targetArch == PTOArch::A5 && elem.isInteger(8))));
+                    (elem.isInteger(mlir::pto::kValue16) || elem.isInteger(mlir::pto::kValue32) ||
+                     (targetArch == PTOArch::A5 && elem.isInteger(mlir::pto::kValue8))));
   if (supported)
     return elem;
   if (!allowIntegerTypes)

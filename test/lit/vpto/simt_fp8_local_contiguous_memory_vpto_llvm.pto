@@ -22,8 +22,8 @@ module attributes {pto.target_arch = "a5", pto.kernel_kind = #pto.kernel_kind<ve
       %src_addr = pto.castptr %src : !pto.ptr<f32, ub> -> i64
       %src_ptr = llvm.inttoptr %src_addr : i64 to !llvm.ptr<6>
       %src_pair = llvm.load %src_ptr : !llvm.ptr<6> -> vector<2xf32>
-      %e4_pair = pto.convert %src_pair round(r) sat : vector<2xf32> -> vector<2xf8E4M3FN>
-      %e5_pair = pto.convert %src_pair round(r) sat : vector<2xf32> -> vector<2xf8E5M2>
+      %e4_pair = pto.ftof %src_pair round(r) sat : vector<2xf32> -> vector<2xf8E4M3FN>
+      %e5_pair = pto.ftof %src_pair round(r) sat : vector<2xf32> -> vector<2xf8E5M2>
       llvm.store %e4_pair, %local_e4 : vector<2xf8E4M3FN>, !llvm.ptr
       llvm.store %e5_pair, %local_e5 : vector<2xf8E5M2>, !llvm.ptr
 

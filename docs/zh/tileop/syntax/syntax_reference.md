@@ -7,7 +7,7 @@
 - 顶层 `module` 与 `func.func`
 - SSA 值、block、region
 - PTO 类型、属性与操作在文本中的出现位置
-- PTO 常见自定义 assembly 形式
+- PTO 常见自定义汇编形式
 - 一个最小可读的完整 PTO 程序骨架
 
 本页只描述第三章的总体组织和全局规则。类型本体的定义、参数和构造方式参见第四章；具体操作语法参见第六章。
@@ -53,7 +53,7 @@ module {
 
 - PTO 操作之间通过 SSA 值连接
 - block 参数表示控制流边界上的值传递
-- `scf`、`cf`、`arith` 等标准 dialect 可与 PTO 操作混用
+- `scf`、`cf`、`arith` 等标准方言可与 PTO 操作混用
 
 详见：[SSA 值与 Region](./ssa_and_region.md)
 
@@ -73,7 +73,7 @@ module {
 
 ### Operation Assembly
 
-- PTO 既使用通用 MLIR 语法，也广泛使用自定义 assembly format
+- PTO 既使用通用 MLIR 语法，也广泛使用自定义汇编形式
 - 数据搬运、矩阵计算、同步等操作通常采用 `ins(...)` / `outs(...)` 风格
 
 详见：[Operation 汇编格式](./operation_assembly.md)
@@ -119,7 +119,7 @@ pto.tload ins(%pv : !pto.partition_tensor_view<16x16xf16>)
 
 - PTO 文本必须满足标准 MLIR 的符号、SSA 和 region 规则
 - PTO 自定义类型和属性必须满足本手册定义的文本写法
-- 自定义 assembly 只是文本形式；最终合法性仍由语义约束决定
+- 自定义汇编只是文本形式；最终合法性仍由语义约束决定
 - 第六章中的很多操作对位置、布局、有效区域和元素类型还有额外约束
 
 ## 最小完整示例

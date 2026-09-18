@@ -103,7 +103,8 @@ def main():
 
     result_type, text = build("create_mask", 128, active=96)
     assert result_type == "!pto.vmi.mask<128xpred>", result_type
-    assert "arith.constant 96" in text
+    # The unified scalar surface authors the active prefix through pto.constant.
+    assert "pto.constant 96" in text
 
 
 if __name__ == "__main__":

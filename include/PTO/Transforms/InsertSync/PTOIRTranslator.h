@@ -85,7 +85,7 @@ private:
   void UpdateAliasBufferInfo(Value result, Value source);
   void UpdateConservativeAliasBufferInfo(Value result, Value source);
   void UpdateTileSubViewAliasBufferInfo(pto::SubViewOp op);
-  LogicalResult UpdateIntToPtrOpMemInfo(pto::IntToPtrOp op);
+  LogicalResult UpdateIntegerToPtrCastMemInfo(pto::CastPtrOp op);
   void UpdateMultiTileGetAliasBufferInfo(pto::MultiTileGetOp op);
   void UpdateSlotSelectedAliasBufferInfo(Value result, Value source,
                                          Value slot);

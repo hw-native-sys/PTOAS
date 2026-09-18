@@ -48,7 +48,7 @@ module attributes {pto.target_arch = "a5", pto.kernel_kind = #pto.kernel_kind<ve
       %sum = pto.vmi.vadd %x, %rhs
           : !pto.vmi.vreg<64xf32>, !pto.vmi.vreg<64xf32>
           -> !pto.vmi.vreg<64xf32>
-      %passthrough = pto.vmi.vsel %mask, %sum, %x {pmode = "merge"}
+      %passthrough = pto.vmi.vsel %mask, %sum, %x
           : !pto.vmi.mask<64xpred>, !pto.vmi.vreg<64xf32>,
             !pto.vmi.vreg<64xf32> -> !pto.vmi.vreg<64xf32>
       pto.vmi.vstore %passthrough, %ub_dense[%c0]

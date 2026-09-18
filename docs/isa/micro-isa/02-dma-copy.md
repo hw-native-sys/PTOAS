@@ -54,6 +54,8 @@ pto.mte_gm_ub %gm_src, %ub_dst, %l2_cache_ctl, %len_burst
 - If either left or right padding count is provided, both counts must be provided.
 - `pad(...)` is independent of the optional `loop(...)` groups.
 - A DMA load may use `nburst(...) pad(...)` without any `loop(...)` group.
+- `%len_burst` is a byte count and is not required to be a multiple of 32; the
+  transfer still moves whole 32B blocks, see the alignment constraints below.
 
 **Example:**
 
@@ -196,13 +198,28 @@ start-to-start byte distance from one burst row to the next row.
 ```
 burst    = lenBurst contiguous bytes transferred per row
 stride   = distance (bytes) from start of row[r] to start of row[r+1]
-pad      = ub_stride - lenBurst, padded to the 32B alignment boundary
+pad      = bytes between lenBurst and the next 32B boundary of the row
 ```
 
 ### Alignment Constraints
 
 - **UB addresses** (both source and destination) must be **32-byte aligned**.
-- **GM→UB padding**: When `pad(...)` is present on `pto.mte_gm_ub`, each UB row is padded from `lenBurst` up to the **32B-aligned boundary** of `ub_stride` with `pad_val`. This ensures every UB row starts at a 32B-aligned offset.
+- **UB write granularity (GM→UB)**: the transfer always writes whole **32B blocks**.
+  `%len_burst` may be any byte count, but the block that holds its tail
+  `[lenBurst, roundUp(lenBurst, 32))` is written as well. What that block holds
+  follows from the `pad(...)` group: with a pad group the tail carries `pad_val`,
+  without one it carries source data — the same default as the AscendC
+  `DataCopyPad` interface with `isPad = false`.
+  Pass `pad(...)` when the bytes beyond `%len_burst` must be deterministic; the
+  pad value alone is enough, the padding counts may stay 0. Mask the tail lanes
+  when consuming an unaligned burst.
+  *Diagnostics*: a constant `%len_burst` that is not a multiple of 32 and has no
+  `pad(...)` group is reported with a warning; runtime lengths are not diagnosed.
+- **GM→UB padding**: When `pad(...)` is present on `pto.mte_gm_ub`, the bytes from
+  `lenBurst` up to `roundUp(left * sizeof(T) + lenBurst + right * sizeof(T), 32)`
+  are filled with `pad_val`. Filling the whole gap up to `ub_stride` therefore
+  requires the matching `right` count; with omitted counts only the remainder of
+  the 32B block is padded.
 - **UB→GM de-padding**: MTE3 reads `lenBurst` bytes from each 32B-aligned UB row (skipping any padding that was added during load), writing only valid data to GM. This effectively strips padding on store.
 
 ---

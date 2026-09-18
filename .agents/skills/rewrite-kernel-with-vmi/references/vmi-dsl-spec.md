@@ -48,8 +48,8 @@ Useful options:
 - `block_stride=...`, `repeat_stride=...` select block-strided access.
 - `vload` does not take `mask`.
 - `group` store does not take `mask`.
-- `pmode="zero"` is the default masked-store behavior; `pmode="merge"` preserves
-  inactive lanes.
+- `pmode="zero"` is the default masked-store behavior; inactive lanes are
+  written as zero.
 
 Backend note: prefer putting dynamic tail masks on compute/store. Do not rely on
 masked loads unless the current backend explicitly supports the form.

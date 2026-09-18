@@ -80,11 +80,11 @@ For each element (i, j):
 
 - **实现检查（A2A3）**
   - tile 元素类型必须为以下之一：`i32`、`i16`、`f16` 或 `f32`。
-  - tile 必须使用行优先布局 (`blayout=row_major`)。
+  - tile 必须使用行优先布局（`blayout=row_major`）。
 
 - **实现检查（A5）**
   - tile 元素类型必须为以下之一：`i32`、`f32`、`i16`、`f16`、`bf16` 或 `i8`。
-  - tile 必须使用行优先布局 (`blayout=row_major`)。
+  - tile 必须使用行优先布局（`blayout=row_major`）。
 
 **示例：**
 
@@ -132,7 +132,7 @@ For each element (i, j):
   - `src` 和 `dst` 必须使用 `loc=vec`。
   - 有效区域必须在静态 tile 形状范围内。
   - `src` 和 `dst` 必须具有相同的有效区域。
-  - tile 必须使用行优先布局 (`blayout=row_major`)。
+  - tile 必须使用行优先布局（`blayout=row_major`）。
 
 **示例：**
 
@@ -176,25 +176,25 @@ For each element (i, j):
 - **实现检查（A2A3）**
   - `src0`、`src1` 和 `dst` 元素类型必须一致。
   - 共享元素类型必须为 `i8` 或 `i16`。
-  - 三个 tile 必须使用行优先布局 (`blayout=row_major`)。
+  - 三个 tile 必须使用行优先布局（`blayout=row_major`）。
   - `src0`、`src1` 必须分别与 `dst` 具有相同有效区域。
 
 - **实现检查（A5）**
   - `src0`、`src1` 和 `dst` 元素类型必须一致。
   - 共享元素类型必须为 `i8`、`i16` 或 `i32`。
-  - 三个 tile 必须使用行优先布局 (`blayout=row_major`)。
+  - 三个 tile 必须使用行优先布局（`blayout=row_major`）。
   - `src0`、`src1` 必须分别与 `dst` 具有相同有效区域。
 
 **示例：**
 
 ```mlir
-pto.tand ins(%a, %b : !pto.tile_buf<loc=vec, dtype=i32, rows=16, cols=16,
+pto.tand ins(%a, %b : !pto.tile_buf<loc=vec, dtype=i16, rows=16, cols=16,
              v_row=16, v_col=16, blayout=row_major, slayout=none_box,
              fractal=512, pad=0>,
-             !pto.tile_buf<loc=vec, dtype=i32, rows=16, cols=16,
+             !pto.tile_buf<loc=vec, dtype=i16, rows=16, cols=16,
              v_row=16, v_col=16, blayout=row_major, slayout=none_box,
              fractal=512, pad=0>)
-         outs(%c : !pto.tile_buf<loc=vec, dtype=i32, rows=16, cols=16,
+         outs(%c : !pto.tile_buf<loc=vec, dtype=i16, rows=16, cols=16,
              v_row=16, v_col=16, blayout=row_major, slayout=none_box,
              fractal=512, pad=0>)
 ```
@@ -230,25 +230,25 @@ For each element (i, j):
 - **实现检查（A2A3）**
   - `src0`、`src1` 和 `dst` 元素类型必须一致。
   - 共享元素类型必须为 `i8` 或 `i16`。
-  - 三个 tile 必须使用行优先布局 (`blayout=row_major`)。
+  - 三个 tile 必须使用行优先布局（`blayout=row_major`）。
   - `src0`、`src1` 必须分别与 `dst` 具有相同有效区域。
 
 - **实现检查（A5）**
   - `src0`、`src1` 和 `dst` 元素类型必须一致。
   - 共享元素类型必须为 `i8`、`i16` 或 `i32`。
-  - 三个 tile 必须使用行优先布局 (`blayout=row_major`)。
+  - 三个 tile 必须使用行优先布局（`blayout=row_major`）。
   - `src0`、`src1` 必须分别与 `dst` 具有相同有效区域。
 
 **示例：**
 
 ```mlir
-pto.tor ins(%a, %b : !pto.tile_buf<loc=vec, dtype=i32, rows=16, cols=16,
+pto.tor ins(%a, %b : !pto.tile_buf<loc=vec, dtype=i16, rows=16, cols=16,
             v_row=16, v_col=16, blayout=row_major, slayout=none_box,
             fractal=512, pad=0>,
-            !pto.tile_buf<loc=vec, dtype=i32, rows=16, cols=16,
+            !pto.tile_buf<loc=vec, dtype=i16, rows=16, cols=16,
             v_row=16, v_col=16, blayout=row_major, slayout=none_box,
             fractal=512, pad=0>)
-        outs(%c : !pto.tile_buf<loc=vec, dtype=i32, rows=16, cols=16,
+        outs(%c : !pto.tile_buf<loc=vec, dtype=i16, rows=16, cols=16,
             v_row=16, v_col=16, blayout=row_major, slayout=none_box,
             fractal=512, pad=0>)
 ```
@@ -283,13 +283,13 @@ For each element (i, j):
 
 - **实现检查（A2A3）**
   - tile 元素类型必须为 `i32`、`i16`、`f16` 或 `f32`。
-  - tile 必须使用行优先布局 (`blayout=row_major`)。
+  - tile 必须使用行优先布局（`blayout=row_major`）。
   - 有效区域必须在静态 tile 形状范围内。
   - `src0`、`src1` 和 `dst` 应具有相同的 `validRow/validCol`。
 
 - **实现检查（A5）**
   - tile 元素类型必须为 `i32`、`i16`、`i8`、`f32` 或 `f16`。
-  - tile 必须使用行优先布局 (`blayout=row_major`)。
+  - tile 必须使用行优先布局（`blayout=row_major`）。
   - 有效区域必须在静态 tile 形状范围内。
   - `src0`、`src1` 和 `dst` 应具有相同的 `validRow/validCol`。
 
@@ -337,13 +337,13 @@ For each element (i, j):
 
 - **实现检查（A2A3）**
   - tile 元素类型必须为 `i32`、`i16`、`f16` 或 `f32`。
-  - tile 必须使用 `loc=vec` 和行优先布局 (`blayout=row_major`)。
+  - tile 必须使用 `loc=vec` 和行优先布局（`blayout=row_major`）。
   - 有效区域必须在静态 tile 形状范围内。
   - `src0`、`src1` 和 `dst` 应具有相同的 `validRow/validCol`。
 
 - **实现检查（A5）**
   - tile 元素类型必须为 `i32`、`f32`、`i16` 或 `f16`。
-  - tile 必须使用 `loc=vec` 和行优先布局 (`blayout=row_major`)。
+  - tile 必须使用 `loc=vec` 和行优先布局（`blayout=row_major`）。
   - 有效区域必须在静态 tile 形状范围内。
   - `src0`、`src1` 和 `dst` 应具有相同的 `validRow/validCol`。
 
@@ -391,13 +391,13 @@ For each element (i, j):
 
 - **实现检查（A2A3）**
   - tile 元素类型必须为 `i32`、`i16`、`f16` 或 `f32`。
-  - tile 必须使用行优先布局 (`blayout=row_major`)。
+  - tile 必须使用行优先布局（`blayout=row_major`）。
   - 有效区域必须在静态 tile 形状范围内。
   - `src0`、`src1` 和 `dst` 应具有相同的 `validRow/validCol`。
 
 - **实现检查（A5）**
   - tile 元素类型必须为 `i32`、`i16`、`i8`、`f32`、`f16` 或 `bf16`。
-  - tile 必须使用行优先布局 (`blayout=row_major`)。
+  - tile 必须使用行优先布局（`blayout=row_major`）。
   - 有效区域必须在静态 tile 形状范围内。
   - `src0`、`src1` 和 `dst` 应具有相同的 `validRow/validCol`。
 
@@ -445,13 +445,13 @@ For each element (i, j):
 
 - **实现检查（A2A3）**
   - tile 元素类型必须为 `i32`、`i16`、`f16` 或 `f32`。
-  - tile 必须使用行优先布局 (`blayout=row_major`)。
+  - tile 必须使用行优先布局（`blayout=row_major`）。
   - 有效区域必须在静态 tile 形状范围内。
   - `src0`、`src1` 和 `dst` 应具有相同的 `validRow/validCol`。
 
 - **实现检查（A5）**
   - tile 元素类型必须为 `i32`、`i16`、`i8`、`f32` 或 `f16`。
-  - tile 必须使用行优先布局 (`blayout=row_major`)。
+  - tile 必须使用行优先布局（`blayout=row_major`）。
   - 有效区域必须在静态 tile 形状范围内。
   - `src0`、`src1` 和 `dst` 应具有相同的 `validRow/validCol`。
 
@@ -568,12 +568,12 @@ For each element (i, j):
 
 - **实现检查（A2A3）**
   - tile 元素类型必须为 `f16` 或 `f32`。
-  - `src0`、`src1` 和 `dst` 必须元素类型一致，并使用行优先布局 (`blayout=row_major`)。
+  - `src0`、`src1` 和 `dst` 必须元素类型一致，并使用行优先布局（`blayout=row_major`）。
   - 有效区域必须在静态 tile 形状范围内，且三个 tile 有效区域一致。
 
 - **实现检查（A5）**
   - tile 元素类型必须为 `i32`、`i16`、`f16` 或 `f32`。
-  - `src0`、`src1` 和 `dst` 必须元素类型一致，并使用行优先布局 (`blayout=row_major`)。
+  - `src0`、`src1` 和 `dst` 必须元素类型一致，并使用行优先布局（`blayout=row_major`）。
   - 有效区域必须在静态 tile 形状范围内，且三个 tile 有效区域一致。
 
 - **除零行为**
@@ -624,7 +624,7 @@ For each element (i, j):
 - **实现检查（A2A3/A5）**
   - `src0` 和 `src1` 元素类型必须一致。
   - 共享元素类型必须为 `i8`、`i16` 或 `i32`。
-  - `src0`、`src1` 和 `dst` 必须使用行优先布局 (`blayout=row_major`)。
+  - `src0`、`src1` 和 `dst` 必须使用行优先布局（`blayout=row_major`）。
   - `src0`、`src1` 必须分别与 `dst` 具有相同有效区域。
 
 **示例：**
@@ -672,7 +672,7 @@ For each element (i, j):
 - **实现检查（A2A3/A5）**
   - `src0` 和 `src1` 元素类型必须一致。
   - 共享元素类型必须为 `i8`、`i16` 或 `i32`。
-  - `src0`、`src1` 和 `dst` 必须使用行优先布局 (`blayout=row_major`)。
+  - `src0`、`src1` 和 `dst` 必须使用行优先布局（`blayout=row_major`）。
   - `src0`、`src1` 必须分别与 `dst` 具有相同有效区域。
 
 **示例：**
@@ -721,13 +721,13 @@ For each element (i, j):
 - **实现检查（A2A3）**
   - `src0`、`src1`、`tmp` 和 `dst` 元素类型必须一致。
   - 共享元素类型必须为 `i8` 或 `i16`。
-  - 四个 tile 必须使用行优先布局 (`blayout=row_major`)。
+  - 四个 tile 必须使用行优先布局（`blayout=row_major`）。
   - `src0`、`src1`、`tmp` 必须分别与 `dst` 具有相同有效区域。
 
 - **实现检查（A5）**
   - `src0`、`src1` 和 `dst` 元素类型必须一致。
   - 共享元素类型必须为 `i8`、`i16` 或 `i32`。
-  - `src0`、`src1` 和 `dst` 必须使用行优先布局 (`blayout=row_major`)。
+  - `src0`、`src1` 和 `dst` 必须使用行优先布局（`blayout=row_major`）。
   - `src0`、`src1` 必须分别与 `dst` 具有相同有效区域。
   - `tmp` 在 A5 路径中仅作为占位参数。
 
@@ -736,16 +736,16 @@ For each element (i, j):
 ```mlir
 // A2/A3：需要独立的 tmp tile
 pto.txor ins(%src0, %src1, %tmp :
-             !pto.tile_buf<loc=vec, dtype=i32, rows=16, cols=16,
+             !pto.tile_buf<loc=vec, dtype=i16, rows=16, cols=16,
              v_row=16, v_col=16, blayout=row_major, slayout=none_box,
              fractal=512, pad=0>,
-             !pto.tile_buf<loc=vec, dtype=i32, rows=16, cols=16,
+             !pto.tile_buf<loc=vec, dtype=i16, rows=16, cols=16,
              v_row=16, v_col=16, blayout=row_major, slayout=none_box,
              fractal=512, pad=0>,
-             !pto.tile_buf<loc=vec, dtype=i32, rows=16, cols=16,
+             !pto.tile_buf<loc=vec, dtype=i16, rows=16, cols=16,
              v_row=16, v_col=16, blayout=row_major, slayout=none_box,
              fractal=512, pad=0>)
-         outs(%dst : !pto.tile_buf<loc=vec, dtype=i32, rows=16, cols=16,
+         outs(%dst : !pto.tile_buf<loc=vec, dtype=i16, rows=16, cols=16,
              v_row=16, v_col=16, blayout=row_major, slayout=none_box,
              fractal=512, pad=0>)
 
@@ -803,7 +803,7 @@ For each element (i, j):
   - tile 元素类型必须为 `f32` 或 `f16`。
   - `src` 和 `dst` 必须使用 `loc=vec`。
   - 有效区域必须在静态 tile 形状范围内，且 `src` 与 `dst` 有效区域一致。
-  - tile 必须使用行优先布局 (`blayout=row_major`)。
+  - tile 必须使用行优先布局（`blayout=row_major`）。
 
 - **定义域行为**
   - 对 `src <= 0` 等输入的行为由目标实现定义。
@@ -855,7 +855,7 @@ For each element (i, j):
 
 - **NPU 约束**
   - tile 元素类型必须为 `f32` 或 `f16`。
-  - tile 必须使用 `loc=vec` 和行优先布局 (`blayout=row_major`)。
+  - tile 必须使用 `loc=vec` 和行优先布局（`blayout=row_major`）。
   - 有效区域必须在静态 tile 形状范围内。
   - `src` 和 `dst` 必须具有相同的有效区域。
   - A3 的 `TRECIP` 指令不支持源 tile 与目标 tile 使用同一段内存。
@@ -905,21 +905,21 @@ For each element (i, j):
 
 - **实现检查（A2A3）**
   - `dst/src0/src1` 元素类型必须一致，且必须为 `f16` 或 `f32`。
-  - `tmp` 元素类型必须为 `u8`。
-  - 所有相关 tile 必须使用行优先布局 (`blayout=row_major`)。
+  - `tmp` 元素类型使用 `ui8`。令 R/C 为目标有效行列数：临时空间物理行数至少 R+1，有效列数至少 `ceil(C/8)`，总容量至少 `(R+1)*align_up(ceil(C/8),32)` 字节。目标有效区域必须为静态尺寸。
+  - 所有相关 tile 必须使用行优先布局（`blayout=row_major`）。
   - `src0`、`src1` 必须分别与 `dst` 具有相同有效区域。
   - A3 中两个源 tile、目标 tile、临时空间不得内存重叠。
 
 - **实现检查（A5）**
   - `dst/src0/src1` 元素类型必须一致，且必须为 `f16` 或 `f32`。
-  - 所有相关 tile 必须使用行优先布局 (`blayout=row_major`)。
+  - 所有相关 tile 必须使用行优先布局（`blayout=row_major`）。
   - `src0`、`src1` 必须分别与 `dst` 具有相同有效区域。
   - `tmp` 在 A5 路径中可作为占位参数。
 
 **示例：**
 
 ```mlir
-// A2/A3：需要独立的 tmp tile（元素类型为 u8）
+// A2/A3：需要独立的 tmp tile（元素类型为 ui8）
 pto.tprelu ins(%a, %slopes, %tmp :
                !pto.tile_buf<loc=vec, dtype=f16, rows=16, cols=16,
                v_row=16, v_col=16, blayout=row_major, slayout=none_box,
@@ -927,13 +927,17 @@ pto.tprelu ins(%a, %slopes, %tmp :
                !pto.tile_buf<loc=vec, dtype=f16, rows=16, cols=16,
                v_row=16, v_col=16, blayout=row_major, slayout=none_box,
                fractal=512, pad=0>,
-               !pto.tile_buf<loc=vec, dtype=u8, rows=16, cols=16,
-               v_row=16, v_col=16, blayout=row_major, slayout=none_box,
+               !pto.tile_buf<loc=vec, dtype=ui8, rows=17, cols=32,
+               v_row=17, v_col=32, blayout=row_major, slayout=none_box,
                fractal=512, pad=0>)
            outs(%c : !pto.tile_buf<loc=vec, dtype=f16, rows=16, cols=16,
                v_row=16, v_col=16, blayout=row_major, slayout=none_box,
                fractal=512, pad=0>)
+```
 
+A5 使用目标 Tile 作为占位参数：
+
+```mlir
 // A5：tmp 可复用 dst 作为占位
 pto.tprelu ins(%a, %slopes, %c :
                !pto.tile_buf<loc=vec, dtype=f16, rows=16, cols=16,
@@ -1152,12 +1156,12 @@ For each element (i, j):
 - **实现检查（A2A3）**
   - `src0`、`src1` 和 `dst` 元素类型必须一致。
   - 共享元素类型必须为 `i16`、`i32`、`f16`、`bf16` 或 `f32`。
-  - `src0`、`src1` 和 `dst` 必须使用行优先布局 (`blayout=row_major`)。
+  - `src0`、`src1` 和 `dst` 必须使用行优先布局（`blayout=row_major`）。
 
 - **实现检查（A5）**
   - `src0`、`src1` 和 `dst` 元素类型必须一致。
   - 共享元素类型必须为 `i8`、`i16`、`i32`、`f16`、`bf16` 或 `f32`。
-  - `src0`、`src1` 和 `dst` 必须使用行优先布局 (`blayout=row_major`)。
+  - `src0`、`src1` 和 `dst` 必须使用行优先布局（`blayout=row_major`）。
 
 - **临时 tile**
   - `tmp` 是当前 DPS/ISA 形式要求的临时 scratch tile。
@@ -1232,7 +1236,7 @@ For each element (i, j):
   - tile 元素类型必须为 `f32` 或 `f16`。
   - `src` 和 `dst` 必须使用 `loc=vec`。
   - 有效区域必须在静态 tile 形状范围内，且 `src` 与 `dst` 有效区域一致。
-  - tile 必须使用行优先布局 (`blayout=row_major`)。
+  - tile 必须使用行优先布局（`blayout=row_major`）。
 
 - **定义域行为**
   - 对 `src == 0` 或负数等输入的行为由目标实现定义。
@@ -1297,7 +1301,7 @@ For each element (i, j):
   - tile 元素类型必须为 `f32` 或 `f16`。
   - `src` 和 `dst` 必须使用 `loc=vec`。
   - 有效区域必须在静态 tile 形状范围内，且 `src` 与 `dst` 有效区域一致。
-  - tile 必须使用行优先布局 (`blayout=row_major`)。
+  - tile 必须使用行优先布局（`blayout=row_major`）。
 
 - **定义域行为**
   - 对负数输入等情况的行为由目标实现定义。
@@ -1349,7 +1353,7 @@ For each element (i, j):
   - tile 元素类型必须为 `f32` 或 `f16`。
   - `src` 和 `dst` 必须使用 `loc=vec`。
   - 有效区域必须在静态 tile 形状范围内，且 `src` 与 `dst` 有效区域一致。
-  - tile 必须使用行优先布局 (`blayout=row_major`)。
+  - tile 必须使用行优先布局（`blayout=row_major`）。
 
 **示例：**
 
@@ -1392,13 +1396,13 @@ For each element (i, j):
 - **实现检查（A2A3）**
   - tile 元素类型必须为 `i16`。
   - `src` 和 `dst` 元素类型必须一致。
-  - tile 必须使用 `loc=vec` 和行优先布局 (`blayout=row_major`)。
+  - tile 必须使用 `loc=vec` 和行优先布局（`blayout=row_major`）。
   - 有效区域必须在静态 tile 形状范围内，且 `src` 与 `dst` 有效区域一致。
 
 - **实现检查（A5）**
   - tile 元素类型必须为 `i32`、`i16` 或 `i8`。
   - `src` 和 `dst` 元素类型必须一致。
-  - tile 必须使用 `loc=vec` 和行优先布局 (`blayout=row_major`)。
+  - tile 必须使用 `loc=vec` 和行优先布局（`blayout=row_major`）。
   - 有效区域必须在静态 tile 形状范围内，且 `src` 与 `dst` 有效区域一致。
 
 **示例：**
@@ -1441,7 +1445,7 @@ For each element (i, j):
 
 - **实现检查（A2A3/A5）**
   - tile 元素类型必须为 `f16`、`f32` 或 `i32`。
-  - tile 必须使用 `loc=vec` 和行优先布局 (`blayout=row_major`)。
+  - tile 必须使用 `loc=vec` 和行优先布局（`blayout=row_major`）。
   - 有效区域必须在静态 tile 形状范围内。
   - `src` 和 `dst` 应具有相同的 `validRow/validCol`。
 
@@ -1544,7 +1548,7 @@ For each element (i, j):
   - 实现使用 `dst` 的有效行/列作为迭代域。
   - `src0`、`src1` 和 `dst` 元素类型必须一致。
   - `tmp` 元素类型必须与 `dst` 一致。
-  - `src0`、`src1`、`tmp` 和 `dst` 必须使用行优先布局 (`blayout=row_major`)。
+  - `src0`、`src1`、`tmp` 和 `dst` 必须使用行优先布局（`blayout=row_major`）。
   - `src0`、`src1` 和 `dst` 必须具有相同有效区域。
   - `tmp` 至少提供 1 个有效行，且 `tmp.validCol >= dst.validCol`。
 
@@ -1609,7 +1613,7 @@ For each element (i, j):
   - `src0`、`src1` 和 `dst` 元素类型必须一致。
   - tile 元素类型必须为 `i32`、`i16`、`f16` 或 `f32`。
   - 三个 tile 必须满足二元 tile 操作的形状/有效区域一致性检查。
-  - tile 必须使用行优先布局 (`blayout=row_major`)。
+  - tile 必须使用行优先布局（`blayout=row_major`）。
 
 **示例：**
 

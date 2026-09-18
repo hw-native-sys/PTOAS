@@ -456,7 +456,8 @@ the base event ID and `base_id + 16`.
 ```python
 # MTE3 waits for the Cube-to-UB handoff for each AIV subblock.
 with pto.for_(0, 2, step=1) as sid:
-    pto.wait_intra_block(pto.Pipe.MTE3, sid * 16 + 6)
+    event_id = pto.cast(sid * 16 + 6, pto.i32)
+    pto.wait_intra_block(pto.Pipe.MTE3, event_id)
 ```
 
 ## 10.6 Synchronization in the authoring model

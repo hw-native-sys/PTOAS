@@ -63,9 +63,28 @@ using namespace mlir::pto;
            isVector2F16OrBF16Type(type);
   }
 
+  [[maybe_unused]] inline LogicalResult verifyPackedAtomicCommon(Operation *op, Type valueType) {
+    if (!isVector2F16OrBF16Type(valueType)) {
+      return success();
+    }
+    if (!isInsideSimtExecutionScope(op)) {
+      return op->emitOpError() << "requires packed atomics to be inside a "
+                                  "pto.simt_entry function or pto.section.simt on beta.1";
+    }
+    if (!op->getResult(0).use_empty()) {
+      return op->emitOpError() << "does not support using the old value result for "
+                                  "packed atomics on beta.1; leave the result unused";
+    }
+    return success();
+  }
+
   [[maybe_unused]] inline LogicalResult verifyAtomicCommon(Operation *op, Value ptr, Type valueType,
                                           Type resultType, bool bitwise,
-                                          Attribute signednessAttr) {
+                                          Attribute signednessAttr,
+                                          bool acceptsSignedness) {
+    if (signednessAttr && !acceptsSignedness) {
+      return op->emitOpError() << "does not accept signedness";
+    }
     if (!isSupportedAtomicScalarType(valueType)) {
       return op->emitOpError() << "requires i32, i64, f16, bf16, f32, "
                                   "vector<2xf16> or vector<2xbf16> atomic value type";
@@ -102,17 +121,7 @@ using namespace mlir::pto;
       return op->emitOpError()
              << "does not accept signedness for floating-point atomics";
     }
-    if (isVector2F16OrBF16Type(valueType)) {
-      if (!isInsideSimtExecutionScope(op)) {
-        return op->emitOpError() << "requires packed atomics to be inside a "
-                                      "pto.simt_entry function or pto.section.simt on beta.1";
-      }
-      if (!op->getResult(0).use_empty()) {
-        return op->emitOpError() << "does not support using the old value result for "
-                                      "packed atomics on beta.1; leave the result unused";
-      }
-    }
-    return success();
+    return verifyPackedAtomicCommon(op, valueType);
   }
 
   [[maybe_unused]] inline LogicalResult verifyLdgStgAccess(Operation *op, Type ptrType,

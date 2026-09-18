@@ -12,24 +12,24 @@ module {
   func.func @scalar_gm_store_flush(%dst0: !pto.ptr<i32>, %dst1: !pto.ptr<i32>, %src: !pto.ptr<i32>, %idx: index)
       attributes {pto.kernel_kind = #pto.kernel_kind<vector>} {
     %c0 = arith.constant 0 : index
-    %val = pto.load_scalar %src[%c0] : !pto.ptr<i32> -> i32
-    pto.store_scalar %val, %dst0[%idx] : !pto.ptr<i32>, i32
-    pto.store_scalar %val, %dst1[%c0] : !pto.ptr<i32>, i32
-    pto.store_scalar %val, %dst0[%c0] : !pto.ptr<i32>, i32
+    %val = pto.load %src[%c0] : !pto.ptr<i32> -> i32
+    pto.store %val, %dst0[%idx] : !pto.ptr<i32>, i32
+    pto.store %val, %dst1[%c0] : !pto.ptr<i32>, i32
+    pto.store %val, %dst0[%c0] : !pto.ptr<i32>, i32
     return
   }
 
   func.func @scalar_gm_store_multi_exit(%dst: !pto.ptr<i32>, %src: !pto.ptr<i32>, %idx: index)
       attributes {pto.kernel_kind = #pto.kernel_kind<vector>} {
     %c0 = arith.constant 0 : index
-    %val = pto.load_scalar %src[%c0] : !pto.ptr<i32> -> i32
-    pto.store_scalar %val, %dst[%idx] : !pto.ptr<i32>, i32
+    %val = pto.load %src[%c0] : !pto.ptr<i32> -> i32
+    pto.store %val, %dst[%idx] : !pto.ptr<i32>, i32
     %is_zero = arith.cmpi eq, %idx, %c0 : index
     cf.cond_br %is_zero, ^early, ^tail
   ^early:
     return
   ^tail:
-    pto.store_scalar %val, %dst[%c0] : !pto.ptr<i32>, i32
+    pto.store %val, %dst[%c0] : !pto.ptr<i32>, i32
     return
   }
 
@@ -41,15 +41,15 @@ module {
   ^early:
     return
   ^tail:
-    %ptr = pto.inttoptr %addr : i64 -> !pto.ptr<i32>
-    %val = pto.load_scalar %src[%c0] : !pto.ptr<i32> -> i32
-    pto.store_scalar %val, %ptr[%idx] : !pto.ptr<i32>, i32
+    %ptr = pto.castptr %addr : i64 -> !pto.ptr<i32>
+    %val = pto.load %src[%c0] : !pto.ptr<i32> -> i32
+    pto.store %val, %ptr[%idx] : !pto.ptr<i32>, i32
     return
   }
 
   func.func @scalar_gm_load_only(%src: !pto.ptr<i32>) attributes {pto.kernel_kind = #pto.kernel_kind<vector>} {
     %c0 = arith.constant 0 : index
-    %val = pto.load_scalar %src[%c0] : !pto.ptr<i32> -> i32
+    %val = pto.load %src[%c0] : !pto.ptr<i32> -> i32
     return
   }
 }

@@ -1,17 +1,17 @@
 # 数据搬运操作
 
-本节描述了 PTO ISA 中用于数据搬运的指令族，包括从全局内存到本地缓冲区的数据转移、本地内存域之间的数据移动，以及标量元素的读写操作。这些操作采用"目标传递风格"（Destination-Passing Style，DPS）：操作本身不产生 SSA 返回值，而是直接将结果写入预先分配好的目标缓冲区或指针位置。
+本节描述全局内存与本地缓冲区之间的数据转移、本地内存域之间的数据移动，以及标量读写。Tile 搬运形式采用“目标传递风格”（Destination-Passing Style，DPS），写入预先分配的目标；`pto.load` 返回读取值，`pto.tprefetch_async` 返回异步事件。
 
 数据搬运操作通常涉及以下场景：
 
 - **GM 到本地 Tile 缓冲区转移**：通过 `pto.tload` 和 `pto.tprefetch` 将全局内存分区视图加载到本地 tile buffer
 - **异步预取**：使用 `pto.tprefetch_async` 启动 SDMA 驱动的异步预取，并返回同步事件
 - **本地缓冲区存储回全局内存**：通过 `pto.tstore` 将 tile buffer 写回全局内存分区，支持原子操作和量化转换
-- **带缩放因子的累加器存储**：通过 `pto.tstore_fp` 使用缩放 tile 对累加器数据进行向量量化后存储到全局内存
-- **聚集/散射操作**：通过 `pto.mgather` 和 `pto.mscatter` 基于索引 tile 在全局内存与本地 tile 之间进行非连续数据搬运（仅 A5）
+- **带缩放因子的累加器存储**：通过 `pto.tstore` 的 `fp` 参数使用缩放 Tile 对累加器数据进行转换后存储到全局内存
+- **聚集/散射操作**：通过 `pto.mgather` 和 `pto.mscatter` 基于索引在全局内存与本地 Tile 之间进行非连续数据搬运，基础形式支持 A3/A5
 - **本地内存域间数据移动**：使用 `pto.tmov` 在 `mat`、`vec`、`acc`、`bias` 等本地存储域之间转移数据
 - **Tile 转置**：通过 `pto.ttrans` 对 tile buffer 进行矩阵转置
-- **标量读写**：通过 `pto.load_scalar` 和 `pto.store_scalar` 对全局内存中的单个标量元素进行读写操作
+- **标量读写**：通过 `pto.load` 和 `pto.store` 对指定指针地址空间中的元素进行读写
 
 ---
 
@@ -21,14 +21,14 @@
 - [`pto.tprefetch` — 预取加载](#ptotprefetch--预取加载)
 - [`pto.tprefetch_async` — 异步预取](#ptotprefetch_async--异步预取)
 - [`pto.tstore` — Tile 缓冲区存储](#ptotstore--tile-缓冲区存储)
-- [`pto.tstore_fp` — 带缩放因子的累加器存储](#ptotstore_fp--带缩放因子的累加器存储)
+- [`pto.tstore` 的 `fp` 形式](#ptotstore-的-fp-形式)
 - [`pto.mgather` — 聚集加载](#ptomgather--聚集加载)
 - [`pto.mscatter` — 散射存储](#ptomscatter--散射存储)
-- [`pto.load_scalar` — 标量加载](#ptoload_scalar--标量加载)
-- [`pto.store_scalar` — 标量存储](#ptostore_scalar--标量存储)
+- [`pto.load` — 标量加载](#ptoload--标量加载)
+- [`pto.store` — 标量存储](#ptostore--标量存储)
 - [`pto.tmov` — 本地内存域间数据移动](#ptotmov--本地内存域间数据移动)
 - [`pto.ttrans` — Tile 转置](#ptottrans--tile-转置)
-- [`pto.tmov.fp` — 带缩放因子的累加器移动](#ptotmovfp--带缩放因子的累加器移动)
+- [`pto.tmov` 的 `fp` 形式](#ptotmov-的-fp-形式)
 
 ---
 
@@ -178,7 +178,7 @@ pto.tstore ins(<src> : <src_type>)
            {attributes}
 
 // 支持可选的 preQuantScalar 参数：
-pto.tstore ins(<src>, <preQuantScalar> : <src_type>, i64)
+pto.tstore ins(<src> : <src_type>, <preQuantScalar> : i64)
            outs(<dst> : <dst_type>)
            {attributes}
 ```
@@ -198,7 +198,8 @@ For each element (i, j) in tile valid region:
 | ---- | ---- | ----------- |
 | `src` | `pto.tile_buf` | 源 tile buffer，位置为 `vec`、`mat` 或 `acc` |
 | `dst` | `pto.partition_tensor_view<...>` | 目标全局内存分区视图 |
-| `preQuantScalar` | `i64` （可选） | 量化前的标量值（仅在特定类型组合下使用） |
+| `preQuantScalar` | `i64`（可选）| 量化前的标量值，与 fp 互斥 |
+| `fp` | `!pto.tile_buf<loc=scaling, ...>`（可选）| 逐列缩放/量化参数，见本节 fp 形式 |
 
 **返回值：** 无。以 DPS 的形式写入 `dst`。
 
@@ -276,154 +277,104 @@ pto.tstore ins(%acc : !pto.tile_buf<loc=acc, dtype=i32, rows=32, cols=32,
 
 ---
 
-### `pto.tstore_fp` — 带缩放因子的累加器存储
+### `pto.tstore` 的 `fp` 形式
 
 ```mlir
-pto.tstore_fp ins(<src>, <fp> : <src_type>, <fp_type>)
-              outs(<dst> : <dst_type>)
+pto.tstore ins(<src> : <src_type> fp <fp> : <fp_type>)
+  outs(<dst> : <dst_type>) {attributes}
 ```
 
-**语义：**
+**语义：** 使用逐列缩放/量化参数 fp 对累加器的有效区域进行转换，并存储到 GM 目标视图。fp 是独立的缩放 Tile，不是新的数据源或标量字节地址。
 
-```text
-For each element (i, j):
-    dst[i, j] = Convert(src[i, j]; fp)
-```
-
-将累加器 tile 中的数据使用缩放（`fp`）tile 进行向量量化转换后存储到全局内存。
-
-**参数：**
-
-| Name | Type | Description |
-| ---- | ---- | ----------- |
-| `src` | `pto.tile_buf<...>` | 源累加器 tile |
-| `fp` | `pto.tile_buf<...>` | 缩放因子 tile，用于配置缩放/FPC 状态 |
-| `dst` | `pto.partition_tensor_view<...>` | 目标全局内存 |
-
-**返回值：** 无。以 DPS 的形式写入 `dst`。
-
-**约束：**
-
-- **实现检查（A2A3）**
-  - `src` 的地址空间必须为 `loc=acc`。
-  - `src` 元素类型必须为 `i32` 或 `f32`。
-  - 列数约束：`1 <= cols <= 4095`。
-  - 运行时：`1 <= src valid column <= 4095`。
-  - `fp` 用于配置缩放/FPC 状态；对其形状不强制额外的 PTO 层面静态约束。
-
-- **实现检查（A5）**
-  - `src` 的地址空间必须为 `loc=acc`。
-  - `fp` 用于配置缩放/FPC 状态；对其形状不强制额外的 PTO 层面静态约束。
-
-- **硬件管道**
-  - 在 DMA 管道上执行（`PIPE_MTE3`）。
+**参数与约束：** src 位于 `acc`，元素类型为 `f32` 或 32 位整数；fp 位于 `scaling`；dst 为 GM 分区视图。fp 与 preQuantScalar 互斥；源布局使用 `col_major/row_major`，有效列数在 `[1,4095]`；精度转换、ReLU、原子和阶段属性遵循 `tstore` 的相应规则。没有 SSA 返回值。
 
 **示例：**
 
 ```mlir
-pto.tstore_fp ins(%acc : !pto.tile_buf<loc=acc, dtype=f32, rows=16, cols=32,
-                      v_row=16, v_col=32, blayout=col_major, slayout=row_major,
-                      fractal=1024, pad=0>,
-                  %fp : !pto.tile_buf<loc=vec, dtype=ui64, rows=1, cols=16,
-                      v_row=1, v_col=16, blayout=row_major, slayout=none_box,
-                      fractal=512, pad=0>)
-              outs(%dst : !pto.partition_tensor_view<16x32xf16>)
+pto.tstore
+  ins(%acc : !pto.tile_buf<loc=acc, dtype=f32, rows=16, cols=32,
+    v_row=16, v_col=32, blayout=col_major, slayout=row_major,
+    fractal=1024, pad=0>
+    fp %fp : !pto.tile_buf<loc=scaling, dtype=f16, rows=1, cols=32,
+    v_row=1, v_col=32, blayout=row_major, slayout=none_box,
+    fractal=512, pad=0>)
+  outs(%dst : !pto.partition_tensor_view<16x32xf16>)
 ```
 
 ---
+
 
 ### `pto.mgather` — 聚集加载
 
 ```mlir
 pto.mgather ins(<mem>, <idx> : <mem_type>, <idx_type>)
-            outs(<dst> : <dst_type>)
+  outs(<dst> : <dst_type>) {coalesce = #pto<coalesce row|elem>}
 
-// 带 OOB 模式（仅 A5）
-pto.mgather ins(<mem>, <idx> : <mem_type>, <idx_type>)
-            outs(<dst> : <dst_type>)
-            {gatherOob = <mode>}
+// GM -> L1 的元素模式另需 GM 临时视图。
+pto.mgather ins(<mem>, <idx>, <scratch> : <mem_type>, <idx_type>, <scratch_type>)
+  outs(<dst> : <dst_type>) {coalesce = #pto<coalesce elem>}
 ```
 
-**语义：**
+**语义：** 从 GM 视图按行索引或逐元素索引读取数据，写入目标 Tile。
 
 ```text
-Row mode (default):
-    For each element (r, j):
-        dst[r, j] = mem[idx[r], j]
-
-Element mode:
-    For each element (i, j):
-        dst[i, j] = mem[idx[i, j]]
+coalesce=row:
+    dst[r,j] = mem[row_index[r],j]
+coalesce=elem:
+    dst[r,j] = flat_mem[indexes[r,j]]
 ```
 
-使用逐元素索引从全局内存表中聚集加载数据到 VEC tile。
+row 模式的索引单位为源行；elem 模式的索引单位为源元素，按 GM 表的连续元素序号寻址。`coalesce` 必须显式指定，不能省略为默认模式。
 
-**参数：**
+**参数与返回值：**
 
-| Name | Type | Description |
-| ---- | ---- | ----------- |
-| `mem` | `pto.partition_tensor_view<...>` | 全局源数据表 |
-| `idx` | `pto.tile_buf<...>` | 索引 tile |
-| `dst` | `pto.tile_buf<...>` | 目标 VEC tile |
+| 参数 | 类型与角色 |
+| --- | --- |
+| mem | GM `!pto.partition_tensor_view`，源数据表 |
+| idx | 32 位整数索引；GM→VEC 使用 `vec` Tile，GM→L1 使用 GM 分区视图 |
+| scratch | 仅 GM→L1 的 elem 模式使用，元素类型与目标相同的 GM 分区视图 |
+| dst | 预先分配的 `vec` 或 `mat` Tile |
 
-**返回值：** 无。以 DPS 的形式写入 `dst`。
+无 SSA 返回值。
 
 **属性：**
 
-- `gatherOob` — 越界处理模式（仅 A5）。默认值为 `undefined`。
-  - `#pto<gather_oob undefined>` — 未定义行为
-  - `#pto<gather_oob clamp>` — 钳位到有效范围
-  - `#pto<gather_oob wrap>` — 环绕取模
-  - `#pto<gather_oob zero>` — 越界元素置零
+- `coalesce = #pto<coalesce row>`：按行读取；`#pto<coalesce elem>`：逐元素读取。
+- `gatherOob` 默认为 `#pto<gather_oob undefined>`，要求索引在有效范围内；A5 可显式选择 `clamp`（钳位）、`wrap`（环绕）或 `zero`（越界结果为零）。
 
 **约束：**
 
-- **仅 A5 支持**
-  - `pto.mgather` 仅在 A5 目标上受支持。
-
-- **类型约束（数据和索引）**
-  - `mem` 和 `dst` 的元素类型必须相同。支持的类型：`i8`/`i16`/`i32`/`f16`/`bf16`/`f32`。A5 额外支持 `float8_e4m3`/`float8_e5m2` 系列。
-  - `idx` 的元素类型必须为 MLIR signless `i32`；不是 `ui32`。
-
-- **Tile / 内存角色**
-  - `dst` 必须为 `loc=vec`、`blayout=row_major`、`slayout=none_box`。
-  - `idx` 必须为 `loc=vec`、`slayout=none_box`。行模式下 `row_major` 和 `col_major` 均可接受。
-  - `mem` 必须为 GM 内存中的 GlobalTensor。
-  - `mem` 在可推断布局时必须使用 `ND` 布局。
-
-- **形状约束**
-  - 元素模式：`idx valid_shape == dst valid_shape`。
-  - 行模式：`idx valid_shape` 可为 `[1, dst.valid_row]` 或 `[dst.valid_row, 1]`。
-  - `[1, R]` 行模式变体使用 `row_major`；`[R, 1]` 行模式变体使用 `col_major`。
-  - 若 `mem` 为 rank-5 静态 `!pto.partition_tensor_view`，必须满足 `<1, 1, 1, Rows, RowWidth>` 形式。
-
-- **越界模式**
-  - 默认 `gatherOob = undefined` 降低为默认 `MGATHER(dst, mem, idx)` 重载。
-  - 非默认 `gatherOob` 值仅在 **A5** 上支持，降低为 `MGATHER<GatherOOB::...>(dst, mem, idx)`。
-
-**硬件管道：** PIPE_MTE2（DMA 聚集加载）
+- A3/A5 均支持基础聚集形式；非默认越界模式仅用于 A5。
+- mem/dst 元素类型相同，支持 8/16/32 位整数、`f16`、`bf16`、`f32`；A5 额外支持 FP8 和 HiFloat8 类型。
+- 源 GM 分区在可推断布局时使用 ND。
+- GM→VEC：dst 为 `row_major/none_box`；idx 位于 `vec`，使用 `none_box`。row 模式的有效索引形状为 row_major 的 `[1,R]` 或 col_major 的 `[R,1]`，R 为目标有效行数；elem 模式与目标有效形状相同。不提供 scratch。
+- GM→L1：dst 位于 `mat`，使用 `col_major/row_major`、`fractal=512`；物理行数为 16 的倍数，物理列数为 `32/sizeof(dtype)` 的倍数。idx 是 GM 分区视图，不能用 VEC Tile；row 模式不提供 scratch，elem 模式必须提供连续且容量足够的 GM scratch。
+- 索引值和临时空间容量由调用者保证；默认 undefined 越界模式不提供越界保护。
 
 **示例：**
 
 ```mlir
-// 基本聚集加载
-pto.mgather ins(%mem : !pto.partition_tensor_view<1024x32xi32>,
-                %idx : !pto.tile_buf<loc=vec, dtype=i32, rows=1, cols=32,
-                    v_row=1, v_col=32, blayout=row_major, slayout=none_box,
-                    fractal=512, pad=0>)
-            outs(%dst : !pto.tile_buf<loc=vec, dtype=i32, rows=32, cols=32,
-                    v_row=32, v_col=32, blayout=row_major, slayout=none_box,
-                    fractal=512, pad=0>)
+// A3/A5：从 1024 行表中聚集 32 行。
+pto.mgather ins(%mem, %idx : !pto.partition_tensor_view<1024x32xi32>,
+  !pto.tile_buf<loc=vec, dtype=i32, rows=1, cols=32,
+    v_row=1, v_col=32, blayout=row_major, slayout=none_box,
+    fractal=512, pad=0>)
+  outs(%dst : !pto.tile_buf<loc=vec, dtype=i32, rows=32, cols=32,
+    v_row=32, v_col=32, blayout=row_major, slayout=none_box,
+    fractal=512, pad=0>)
+  {coalesce = #pto<coalesce row>}
+```
 
-// A5：带越界置零模式
-pto.mgather ins(%mem : !pto.partition_tensor_view<1024x32xi32>,
-                %idx : !pto.tile_buf<loc=vec, dtype=i32, rows=1, cols=32,
-                    v_row=1, v_col=32, blayout=row_major, slayout=none_box,
-                    fractal=512, pad=0>)
-            outs(%dst : !pto.tile_buf<loc=vec, dtype=i32, rows=32, cols=32,
-                    v_row=32, v_col=32, blayout=row_major, slayout=none_box,
-                    fractal=512, pad=0>)
-            {gatherOob = #pto<gather_oob zero>}
+```mlir
+// A5：相同的行聚集，越界行补零。
+pto.mgather ins(%mem, %idx : !pto.partition_tensor_view<1024x32xi32>,
+  !pto.tile_buf<loc=vec, dtype=i32, rows=1, cols=32,
+    v_row=1, v_col=32, blayout=row_major, slayout=none_box,
+    fractal=512, pad=0>)
+  outs(%dst : !pto.tile_buf<loc=vec, dtype=i32, rows=32, cols=32,
+    v_row=32, v_col=32, blayout=row_major, slayout=none_box,
+    fractal=512, pad=0>)
+  {coalesce = #pto<coalesce row>, gatherOob = #pto<gather_oob zero>}
 ```
 
 ---
@@ -432,190 +383,106 @@ pto.mgather ins(%mem : !pto.partition_tensor_view<1024x32xi32>,
 
 ```mlir
 pto.mscatter ins(<src>, <idx> : <src_type>, <idx_type>)
-             outs(<mem> : <mem_type>)
-
-// 带原子和 OOB 模式（仅 A5）
-pto.mscatter ins(<src>, <idx> : <src_type>, <idx_type>)
-             outs(<mem> : <mem_type>)
-             {scatterAtomicOp = <atomic>, scatterOob = <oob>}
+  outs(<mem> : <mem_type>) {coalesce = #pto<coalesce row|elem>}
 ```
 
-**语义：**
+**语义：** 从 VEC Tile 读取数据，按行索引或逐元素索引写入 GM 目标表。
 
 ```text
-Row mode (default):
-    For each element (r, j):
-        mem[idx[r], j] = src[r, j]
-
-Element mode:
-    For each element (i, j):
-        mem[idx[i, j]] = src[i, j]
+coalesce=row:
+    mem[row_index[r],j] = src[r,j]
+coalesce=elem:
+    flat_mem[indexes[r,j]] = src[r,j]
+// 原子模式将赋值替换为指定的 add/max/min 更新。
 ```
 
-使用逐元素索引将 VEC tile 中的数据散射存储到全局内存表。
+row 模式的索引单位为目标行，elem 模式为目标元素。未写入的 GM 位置保持原值。无原子模式时，用户应避免重复目标索引，不能依赖冲突写入的先后顺序。
 
-**参数：**
-
-| Name | Type | Description |
-| ---- | ---- | ----------- |
-| `src` | `pto.tile_buf<...>` | 源 VEC tile |
-| `idx` | `pto.tile_buf<...>` | 索引 tile |
-| `mem` | `pto.partition_tensor_view<...>` | 全局目标数据表 |
-
-**返回值：** 无。以 DPS 的形式写入 `mem`。
+**参数与返回值：** src 为 `vec` Tile，idx 为 `vec` 中的 32 位整数索引 Tile，mem 为 GM `!pto.partition_tensor_view`；没有 SSA 返回值。
 
 **属性：**
 
-- `scatterAtomicOp` — 原子操作模式（仅 A5）。默认值为 `none`。
-  - `#pto<scatter_atomic_op none>` — 无原子操作
-  - `#pto<scatter_atomic_op add>` — 原子加（要求 `i32`/`f16`/`f32`）
-  - `#pto<scatter_atomic_op max>` — 原子取最大值（要求 `i32` 或 `f32`）
-  - `#pto<scatter_atomic_op min>` — 原子取最小值（要求 `i32` 或 `f32`）
-
-- `scatterOob` — 越界处理模式（仅 A5）。默认值为 `undefined`。
-  - `#pto<scatter_oob undefined>` — 未定义行为
-  - `#pto<scatter_oob skip>` — 跳过越界元素
-  - `#pto<scatter_oob clamp>` — 钳位到有效范围
-  - `#pto<scatter_oob wrap>` — 环绕取模
+- `coalesce`：显式 `row` 或 `elem`。省略时仅支持从索引形状区分的基础形式：row_major 的 `[R,1]` 行索引，或与 src 有效形状相同的元素索引。建议显式写出模式。
+- `scatterAtomicOp`：默认 `#pto<scatter_atomic_op none>`，A5 可选择 `add`、`max`、`min`。add 支持 32 位整数、`f16`、`f32`；max/min 支持 32 位整数、`f32`。
+- `scatterOob`：默认 `#pto<scatter_oob undefined>`；A5 可选择 `skip`（跳过越界）、`clamp`（钳位）、`wrap`（环绕）。
+- 指定非默认 atomic/oob 或 scatterConflict 时，必须显式指定 coalesce；这些扩展不改变索引单位。
 
 **约束：**
 
-- **仅 A5 支持**
-  - `pto.mscatter` 仅在 A5 目标上受支持。
-
-- **类型约束（数据和索引）**
-  - `src` 和 `mem` 的元素类型必须相同。支持的类型：`i8`/`i16`/`i32`/`f16`/`bf16`/`f32`。A5 额外支持 `float8_e4m3`/`float8_e5m2` 系列。
-  - `idx` 的元素类型必须为 MLIR signless `i32`；不是 `ui32`。
-
-- **Tile / 内存角色**
-  - `src` 必须为 `loc=vec`、`blayout=row_major`、`slayout=none_box`。
-  - `idx` 必须为 `loc=vec`、`slayout=none_box`。行模式下 `row_major` 和 `col_major` 均可接受。
-  - `mem` 必须为 GM 内存中的 GlobalTensor。
-  - `mem` 在可推断布局时必须使用 `ND` 布局。
-
-- **形状约束**
-  - 元素模式：`idx valid_shape == src valid_shape`。
-  - 行模式：`idx valid_shape` 可为 `[1, src.valid_row]` 或 `[src.valid_row, 1]`。
-  - `[1, R]` 行模式变体使用 `row_major`；`[R, 1]` 行模式变体使用 `col_major`。
-  - 若 `mem` 为 rank-5 静态 `!pto.partition_tensor_view`，必须满足 `<1, 1, 1, Rows, RowWidth>` 形式。
-
-- **原子模式**
-  - 默认 `scatterAtomicOp = none` 降低为默认 `MSCATTER(mem, src, idx)` 重载。
-  - 非默认 `scatterAtomicOp` 值仅在 **A5** 上支持。
-  - `add` 要求元素类型为 `i32`/`f16`/`f32`。
-  - `max`/`min` 要求元素类型为 signless `i32` 或 `f32`。
-
-- **越界模式**
-  - 默认 `scatterOob = undefined` 在仅指定 atomic 时降低为 `MSCATTER<Atomic>(mem, src, idx)` 形式，两个属性均为默认时降低为默认重载。
-  - 非默认 `scatterOob` 值仅在 **A5** 上支持，降低为 `MSCATTER<ScatterAtomicOp::..., ScatterOOB::...>(mem, src, idx)`。
-
-**硬件管道：** PIPE_MTE3（DMA 散射存储）
+- A3/A5 均支持基础形式；非默认原子和越界模式仅用于 A5。
+- src/mem 元素类型相同，支持 8/16/32 位整数、`f16`、`bf16`、`f32`；A5 额外支持 FP8 和 HiFloat8。
+- src 使用 `row_major/none_box`；idx 使用 `none_box`；GM 视图在可推断时为 ND。
+- 显式 row 模式的有效索引形状为 row_major 的 `[1,R]` 或 col_major 的 `[R,1]`，R 为源有效行数；显式 elem 模式的索引有效形状与 src 相同。
+- 默认 undefined 模式不保护越界访问，调用者应提供有效范围内的索引。
 
 **示例：**
 
 ```mlir
-// 基本散射存储
-pto.mscatter ins(%src : !pto.tile_buf<loc=vec, dtype=i32, rows=32, cols=32,
-                     v_row=32, v_col=32, blayout=row_major, slayout=none_box,
-                     fractal=512, pad=0>,
-                 %idx : !pto.tile_buf<loc=vec, dtype=i32, rows=1, cols=32,
-                     v_row=1, v_col=32, blayout=row_major, slayout=none_box,
-                     fractal=512, pad=0>)
-             outs(%mem : !pto.partition_tensor_view<1024x32xi32>)
+// A3/A5：将 32 行写到 GM 表中的指定行。
+pto.mscatter ins(%src, %idx :
+  !pto.tile_buf<loc=vec, dtype=i32, rows=32, cols=32,
+    v_row=32, v_col=32, blayout=row_major, slayout=none_box,
+    fractal=512, pad=0>,
+  !pto.tile_buf<loc=vec, dtype=i32, rows=1, cols=32,
+    v_row=1, v_col=32, blayout=row_major, slayout=none_box,
+    fractal=512, pad=0>)
+  outs(%mem : !pto.partition_tensor_view<1024x32xi32>)
+  {coalesce = #pto<coalesce row>}
+```
 
-// A5：带原子加
-pto.mscatter ins(%src : !pto.tile_buf<loc=vec, dtype=i32, rows=32, cols=32,
-                     v_row=32, v_col=32, blayout=row_major, slayout=none_box,
-                     fractal=512, pad=0>,
-                 %idx : !pto.tile_buf<loc=vec, dtype=i32, rows=1, cols=32,
-                     v_row=1, v_col=32, blayout=row_major, slayout=none_box,
-                     fractal=512, pad=0>)
-             outs(%mem : !pto.partition_tensor_view<1024x32xi32>)
-             {scatterAtomicOp = #pto<scatter_atomic_op add>}
-
-// A5：带原子加和越界跳过
-pto.mscatter ins(%src : !pto.tile_buf<loc=vec, dtype=i32, rows=32, cols=32,
-                     v_row=32, v_col=32, blayout=row_major, slayout=none_box,
-                     fractal=512, pad=0>,
-                 %idx : !pto.tile_buf<loc=vec, dtype=i32, rows=1, cols=32,
-                     v_row=1, v_col=32, blayout=row_major, slayout=none_box,
-                     fractal=512, pad=0>)
-             outs(%mem : !pto.partition_tensor_view<1024x32xi32>)
-             {scatterAtomicOp = #pto<scatter_atomic_op add>,
-              scatterOob = #pto<scatter_oob skip>}
+```mlir
+// A5：原子累加并跳过越界行。
+pto.mscatter ins(%src, %idx :
+  !pto.tile_buf<loc=vec, dtype=i32, rows=32, cols=32,
+    v_row=32, v_col=32, blayout=row_major, slayout=none_box,
+    fractal=512, pad=0>,
+  !pto.tile_buf<loc=vec, dtype=i32, rows=1, cols=32,
+    v_row=1, v_col=32, blayout=row_major, slayout=none_box,
+    fractal=512, pad=0>)
+  outs(%mem : !pto.partition_tensor_view<1024x32xi32>)
+  {coalesce = #pto<coalesce row>,
+   scatterAtomicOp = #pto<scatter_atomic_op add>,
+   scatterOob = #pto<scatter_oob skip>}
 ```
 
 ---
 
-### `pto.load_scalar` — 标量加载
+### `pto.load` — 标量加载
 
 ```mlir
-%val = pto.load_scalar %ptr[%offset] : !pto.ptr<type> -> type
+%value = pto.load <ptr>[<offset>] : <ptr_type> -> <element_type>
 ```
 
-**语义：**
+**语义：** 返回 `ptr[offset]`，不改变存储。
 
-```text
-value = ptr[offset]
-```
-
-**参数：**
-
-| Name | Type | Description |
-| ---- | ---- | ----------- |
-| `ptr` | `pto.ptr<...>` | 指向目标元素的指针 |
-| `offset` | `index` | 相对于指针的字节偏移量 |
-
-**返回值：** AnyType — 与指针元素类型相同的标量值。
-
-**约束：**
-
-- **实现检查（A2A3/A5）**
-  - 指针的元素类型必须与返回值类型匹配。
-
-**硬件操作：** 从全局内存加载单个标量元素
+**参数与返回值：** ptr 为 `!pto.ptr<T,space>` 或 `memref`；offset 为 `index`，以指针元素为单位，不能传入字节偏移；结果类型必须等于指针或 memref 的元素类型。访问地址须有效且满足元素对齐与容量要求。
 
 **示例：**
 
 ```mlir
-%val = pto.load_scalar %ptr[%offset] : !pto.ptr<f32> -> f32
+%offset = pto.constant 3 : index
+%value = pto.load %ptr[%offset] : !pto.ptr<f32> -> f32
 ```
+
+这里读取第 4 个 f32 元素，即相对基地址 12 字节的位置。
 
 ---
 
-### `pto.store_scalar` — 标量存储
+### `pto.store` — 标量存储
 
 ```mlir
-pto.store_scalar %val, %ptr[%offset] : type, !pto.ptr<type>
+pto.store <value>, <ptr>[<offset>] : <ptr_type>, <element_type>
 ```
 
-**语义：**
+**语义：** 将 value 写到 `ptr[offset]`；没有 SSA 返回值。
 
-```text
-ptr[offset] = value
-```
-
-**参数：**
-
-| Name | Type | Description |
-| ---- | ---- | ----------- |
-| `value` | AnyType | 要存储的标量值 |
-| `ptr` | `pto.ptr<...>` | 指向目标位置的指针 |
-| `offset` | `index` | 相对于指针的字节偏移量 |
-
-**返回值：** 无。
-
-**约束：**
-
-- **实现检查（A2A3/A5）**
-  - `value` 的类型必须与指针的元素类型匹配。
-
-**硬件操作：** 向全局内存存储单个标量元素
+**参数与约束：** ptr 为 `!pto.ptr<T,space>` 或 `memref`；offset 为以元素计数的 `index`；value 类型必须等于指针或 memref 的元素类型。类型列表先写指针类型，再写值类型；地址有效性、对齐与容量由调用者保证。
 
 **示例：**
 
 ```mlir
-pto.store_scalar %val, %ptr[%offset] : f32, !pto.ptr<f32>
+%offset = pto.constant 3 : index
+pto.store %value, %ptr[%offset] : !pto.ptr<f32>, f32
 ```
 
 ---
@@ -628,12 +495,12 @@ pto.tmov ins(<src> : <src_type>)
          outs(<dst> : <dst_type>)
 
 // 带 fp（scaling 缓冲区）和属性的形式
-pto.tmov ins(<src>, <fp> : <src_type>, !pto.tile_buf<loc=scaling, ...>)
+pto.tmov ins(<src> : <src_type>, <fp> : <fp_type>)
          outs(<dst> : <dst_type>)
          {accToVecMode = ..., reluPreMode = ...}
 
 // 带 preQuantScalar 的形式
-pto.tmov ins(<src>, <preQuantScalar> : <src_type>, i64)
+pto.tmov ins(<src> : <src_type>, <preQuantScalar> : i64)
          outs(<dst> : <dst_type>)
          {attributes}
 ```
@@ -653,18 +520,18 @@ For each element (i, j):
 | ---- | ---- | ----------- |
 | `src` | `pto.tile_buf` | 源 tile buffer，位置为 `mat`、`vec` 或 `acc` |
 | `dst` | `pto.tile_buf` | 目标 tile buffer，位置为 `left`、`right`、`bias`、`scaling` 等 |
-| `fp` | `pto.tile_buf<loc=scaling>` （可选） | 浮点精度缓冲区，仅在特定转换中使用 |
-| `preQuantScalar` | `i64` （可选） | 量化前的标量值 |
+| `fp` | `pto.tile_buf<loc=scaling>`（可选）| 浮点精度缓冲区，仅在特定转换中使用 |
+| `preQuantScalar` | `i64`（可选）| 量化前的标量值 |
 
 **返回值：** 无。以 DPS 的形式写入 `dst`。
 
 **属性：**
 
 - `accToVecMode` — Accumulator 到 vec 的转换模式。仅在 `src.loc=acc` 且 `dst.loc=vec` 时使用。
-  - `#pto<acc_to_vec_mode cast>` — 类型转换模式
-  - `#pto<acc_to_vec_mode round>` — 舍入转换模式
-  - `#pto<acc_to_vec_mode saturate>` — 饱和转换模式
-  - 其他支持的转换模式（具体值参照 ODS 定义）
+  - `#pto<acc_to_vec_mode single_mode_vec0>` — 单向量执行单元模式，选择 vec0
+  - `#pto<acc_to_vec_mode single_mode_vec1>` — 单向量执行单元模式，选择 vec1
+  - `#pto<acc_to_vec_mode dual_mode_split_m>` — 双向量执行单元模式，沿行维 M 拆分
+  - `#pto<acc_to_vec_mode dual_mode_split_n>` — 双向量执行单元模式，沿列维 N 拆分
 
 - `reluPreMode` — ReLU 前置处理模式。默认值为 `no_relu`。仅当 `src.loc=acc` 时支持。
   - `#pto<relu_pre_mode no_relu>` — 不进行 ReLU 处理
@@ -697,13 +564,15 @@ For each element (i, j):
 
 ```mlir
 // 基本 acc 到 vec 转换
-pto.tmov ins(%src : !pto.tile_buf<loc=acc, dtype=f16, rows=16, cols=16,
+pto.tmov ins(%src : !pto.tile_buf<loc=acc, dtype=f32, rows=16, cols=16,
                   v_row=16, v_col=16, blayout=col_major, slayout=row_major,
                   fractal=1024, pad=0>)
          outs(%dst : !pto.tile_buf<loc=vec, dtype=f16, rows=16, cols=16,
                   v_row=16, v_col=16, blayout=row_major, slayout=none_box,
                   fractal=512, pad=0>)
+```
 
+```mlir
 // 带 ReLU 的 acc 到 vec 转换
 pto.tmov ins(%src : !pto.tile_buf<loc=acc, dtype=f32, rows=32, cols=32,
                   v_row=32, v_col=32, blayout=col_major, slayout=row_major,
@@ -712,7 +581,9 @@ pto.tmov ins(%src : !pto.tile_buf<loc=acc, dtype=f32, rows=32, cols=32,
                   v_row=32, v_col=32, blayout=row_major, slayout=none_box,
                   fractal=512, pad=0>)
          {reluPreMode = #pto<relu_pre_mode normal_relu>}
+```
 
+```mlir
 // mat 到 scaling 的移动
 pto.tmov ins(%src : !pto.tile_buf<loc=mat, dtype=f16, rows=16, cols=16,
                   v_row=16, v_col=16, blayout=row_major, slayout=none_box,
@@ -783,53 +654,26 @@ pto.ttrans ins(%src, %tmp : !pto.tile_buf<loc=vec, dtype=f16, rows=16, cols=16,
 
 ---
 
-### `pto.tmov.fp` — 带缩放因子的累加器移动
+### `pto.tmov` 的 `fp` 形式
 
 ```mlir
-pto.tmov.fp ins(<src>, <fp> : <src_type>, <fp_type>)
-            outs(<dst> : <dst_type>)
+pto.tmov ins(<src> : <src_type>, <fp> : <fp_type>)
+  outs(<dst> : <dst_type>) {attributes}
 ```
 
-**语义：**
+**语义：** 使用缩放 Tile fp 对累加器数据进行支持的精度转换，写入目标本地 Tile；不产生 SSA 返回值。
 
-```text
-For each element (i, j):
-    dst[i, j] = dequant_move(src[i, j], fp)
-// 将累加器（loc=acc）中的数据通过缩放因子 tile（fp）进行反量化移动到矩阵缓冲区（loc=mat）
-// 本质为 ACC → MAT 数据搬运，附带 vector 量化参数
-```
-
-**参数：**
-
-| Name | Type | Description |
-| ---- | ---- | ----------- |
-| `src` | `pto.tile_buf` | 源 tile buffer（通常 `loc=acc`） |
-| `fp` | `pto.tile_buf` | 缩放因子 tile buffer（通常 `loc=vec`，SCALING 区域） |
-| `dst` | `pto.tile_buf` | 目标 tile buffer（通常 `loc=mat`） |
-
-**返回值：** 无。以 DPS 的形式写入 `dst`。
-
-**约束：**
-
-- **实现检查（A2A3）**
-  - `src` 通常位于 `loc=acc`，`dst` 位于 `loc=mat`。
-  - 通过 `verifyTMovFpCommon` 和 `verifyTMovFpA2A3` 进行类型兼容性验证。
-
-- **实现检查（A5）**
-  - 同上，但通过 `verifyTMovFpA5` 验证，支持更多类型组合。
+**约束：** src 位于 acc，元素类型为 f32 或 32 位整数；fp 位于 scaling；fp 与 preQuantScalar 互斥。源使用 col_major/row_major 布局，目标路径与布局、转换类型及 ReLU 遵循 `tmov` 的约束。A3 的 acc→mat 目标 fractal 为 512，源与目标物理形状匹配；A5 不要求该目标 fractal 值。
 
 **示例：**
 
 ```mlir
-pto.tmov.fp
-    ins(%src, %fp :
-        !pto.tile_buf<loc=acc, dtype=f32, rows=16, cols=256,
-                      v_row=16, v_col=256, blayout=col_major,
-                      slayout=row_major, fractal=1024, pad=0>,
-        !pto.tile_buf<loc=vec, dtype=f32, rows=16, cols=1,
-                      v_row=16, v_col=1, blayout=row_major,
-                      slayout=none_box, fractal=512, pad=0>)
-    outs(%dst : !pto.tile_buf<loc=mat, dtype=bf16, rows=16, cols=256,
-                              v_row=16, v_col=256, blayout=col_major,
-                              slayout=row_major, fractal=512, pad=0>)
+pto.tmov ins(%src : !pto.tile_buf<loc=acc, dtype=f32, rows=16, cols=256,
+    v_row=16, v_col=256, blayout=col_major, slayout=row_major,
+    fractal=1024, pad=0>, %fp : !pto.tile_buf<loc=scaling, dtype=f32, rows=16, cols=256,
+    v_row=16, v_col=256, blayout=row_major, slayout=row_major,
+    fractal=512, pad=0>)
+  outs(%dst : !pto.tile_buf<loc=mat, dtype=i8, rows=16, cols=256,
+    v_row=16, v_col=256, blayout=col_major, slayout=row_major,
+    fractal=512, pad=0>)
 ```

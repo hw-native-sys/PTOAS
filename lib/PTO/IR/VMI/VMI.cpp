@@ -41,12 +41,8 @@ LogicalResult verifyVMIPmodeMask(Operation *op, VMIMaskType maskType,
   if (failed(verifyMaskMatchesData(op, maskType, dataType))) {
     return failure();
   }
-  if (pmode.has_value()) {
-    StringRef mode = pmode.value();
-    if (mode != "merge" && mode != "zero") {
-      return op->emitOpError("pmode must be \"merge\" or \"zero\", got \"")
-             << mode << "\"";
-    }
+  if (failed(verifyVMIPMode(op, pmode))) {
+    return failure();
   }
   return success();
 }
@@ -56,12 +52,8 @@ LogicalResult verifyVMIVariadicPmodeMask(Operation *op,
                                                 ValueRange maskParts,
                                                 VMIVRegType dataType,
                                                 std::optional<StringRef> pmode) {
-  if (pmode.has_value()) {
-    StringRef mode = pmode.value();
-    if (mode != "merge" && mode != "zero") {
-      return op->emitOpError("pmode must be \"merge\" or \"zero\", got \"")
-             << mode << "\"";
-    }
+  if (failed(verifyVMIPMode(op, pmode))) {
+    return failure();
   }
   if (maskParts.empty()) {
     return success();

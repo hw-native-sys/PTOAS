@@ -9,6 +9,19 @@
 // Internal helper declarations shared within the Tile lowering domain.
 #pragma once
 
+#include <string>
+#include <type_traits>
+#include <utility>
+
+#include "PTO/IR/PTO.h"
+#include "PTO/Support/CodeConstants.h"
+#include "mlir/IR/Builders.h"
+#include "mlir/IR/BuiltinTypes.h"
+#include "mlir/IR/PatternMatch.h"
+#include "mlir/IR/Value.h"
+#include "mlir/Transforms/DialectConversion.h"
+
+// Declares the shared pipe/fixpipe helpers used by resolvePipeTileConfigToken.
 #include "../PTOToEmitCEmitters.h"
 
 namespace mlir {

@@ -34,10 +34,10 @@ module attributes {pto.target_arch = "a5", pto.kernel_kind = #pto.kernel_kind<ve
     pto.set_flag["PIPE_V", "PIPE_S", "EVENT_ID0"]
     pto.wait_flag["PIPE_V", "PIPE_S", "EVENT_ID0"]
     %list0, %list1, %list2, %list3 = pto.get_vms4_sr : i16, i16, i16, i16
-    pto.store_scalar %list0, %arg2[%c0] : !pto.ptr<i16, gm>, i16
-    pto.store_scalar %list1, %arg2[%c1] : !pto.ptr<i16, gm>, i16
-    pto.store_scalar %list2, %arg2[%c2] : !pto.ptr<i16, gm>, i16
-    pto.store_scalar %list3, %arg2[%c3] : !pto.ptr<i16, gm>, i16
+    pto.store %list0, %arg2[%c0] : !pto.ptr<i16, gm>, i16
+    pto.store %list1, %arg2[%c1] : !pto.ptr<i16, gm>, i16
+    pto.store %list2, %arg2[%c2] : !pto.ptr<i16, gm>, i16
+    pto.store %list3, %arg2[%c3] : !pto.ptr<i16, gm>, i16
 
     pto.set_flag["PIPE_V", "PIPE_MTE3", "EVENT_ID0"]
     pto.wait_flag["PIPE_V", "PIPE_MTE3", "EVENT_ID0"]

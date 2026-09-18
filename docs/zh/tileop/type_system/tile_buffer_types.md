@@ -23,16 +23,16 @@
 
 | 参数 | 类型 | 说明 |
 | --- | --- | --- |
-| `loc` | 关键字 | 局部位置，如 `vec`、`mat`、`left`、`right`、`acc`、`bias` |
+| `loc` | 关键字 | 局部位置，如 `vec`、`mat`、`left`、`right`、`acc`、`bias`、`scaling` |
 | `dtype` | 元素类型 | tile 中元素的数据类型 |
 | `rows` | `int64` | 物理行数 |
 | `cols` | `int64` | 物理列数 |
 | `v_row` | `int64` 或 `?` | 有效行数 |
 | `v_col` | `int64` 或 `?` | 有效列数 |
-| `blayout` | 布局助记符 | 基础布局 |
-| `slayout` | 布局助记符 | 次级布局 |
-| `fractal` | `int32` | 分形相关参数 |
-| `pad` | 助记符或整数 | padding 策略或值 |
+| `blayout` | 布局助记符 | 基础布局：`row_major` 或 `col_major` |
+| `slayout` | 布局助记符 | 次级布局：`none_box`、`row_major` 或 `col_major` |
+| `fractal` | `int32` | 分形块大小，以字节为单位；合法值为 `32`、`512`、`1024`，具体操作可进一步限制 |
+| `pad` | 助记符或整数 | padding 策略：`null`（0）、`zero`（1）、`max`（2）、`min`（3）；整数编码不是任意填充值 |
 
 ## 类型承载的信息
 

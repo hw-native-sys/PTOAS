@@ -59,20 +59,6 @@ def VMILayoutAttr : PTO_Attr<"VMILayout", "vmi.layout"> {
 }
 
 //===----------------------------------------------------------------------===//
-// VMI Predication Mode — [pmode]
-// Controls inactive/predicated-off lane behavior on vector operations.
-//===----------------------------------------------------------------------===//
-
-def VMI_PMode_Merge : I32EnumAttrCase<"Merge", 0, "merge">;
-def VMI_PMode_Zero  : I32EnumAttrCase<"Zero",  1, "zero">;
-def VMIPredicationMode : I32EnumAttr<"PredicationMode",
-    "VMI predication mode: merge (keep old value) or zero (fill with 0)", [
-  VMI_PMode_Merge, VMI_PMode_Zero
-]> {
-  let cppNamespace = "::mlir::pto";
-}
-
-//===----------------------------------------------------------------------===//
 // VMI Distribution Mode — {dist-mode}
 // Controls the data-layout interpretation of load/store operations.
 //===----------------------------------------------------------------------===//

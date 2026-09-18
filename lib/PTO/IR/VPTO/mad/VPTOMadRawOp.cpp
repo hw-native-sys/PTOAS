@@ -27,6 +27,6 @@ LogicalResult MadRawOp::verify() {
                                getDst().getType());
 }
 
-bool MadRawOp::isMadMxFamily() { return false; }
-bool MadRawOp::hasBiasOperand() { return false; }
-Value MadRawOp::getBiasOrNull() { return {}; }
+bool MadRawOp::isMadMxFamily() const { return false; }
+bool MadRawOp::hasBiasOperand() const { return false; }
+Value MadRawOp::getBiasOrNull() const { return {}; }

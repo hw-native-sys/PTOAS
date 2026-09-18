@@ -1,0 +1,65 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software; you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+
+// RUN: pto-test-opt '--pass-pipeline=builtin.module(func.func(pto-lower-generic-ops))' %s | FileCheck %s
+
+module {
+  func.func @index_signedness(%lhs: index, %rhs: index) {
+    %div_s = pto.divi %lhs, %rhs signed : index
+    %div_u = pto.divi %lhs, %rhs unsigned : index
+    %floor_s = pto.floordiv %lhs, %rhs signed : index
+    %floor_u = pto.floordiv %lhs, %rhs unsigned : index
+    %ceil_s = pto.ceildiv %lhs, %rhs signed : index
+    %ceil_u = pto.ceildiv %lhs, %rhs unsigned : index
+    %rem_s = pto.remi %lhs, %rhs signed : index
+    %rem_u = pto.remi %lhs, %rhs unsigned : index
+    %cmp_s = pto.cmpi lt %lhs, %rhs signed : index
+    %cmp_u = pto.cmpi lt %lhs, %rhs unsigned : index
+    %max_s = pto.maxi %lhs, %rhs signed : index
+    %max_u = pto.maxi %lhs, %rhs unsigned : index
+    %min_s = pto.mini %lhs, %rhs signed : index
+    %min_u = pto.mini %lhs, %rhs unsigned : index
+    %low_s, %high_s = pto.mul_extended %lhs, %rhs signed : index
+    %low_u, %high_u = pto.mul_extended %lhs, %rhs unsigned : index
+    %abs_s = pto.absi %lhs signed : index
+    %abs_u = pto.absi %lhs unsigned : index
+    func.call @consume(
+      %div_s, %div_u, %floor_s, %floor_u, %ceil_s, %ceil_u, %rem_s, %rem_u,
+      %cmp_s, %cmp_u, %max_s, %max_u, %min_s, %min_u,
+      %low_s, %high_s, %low_u, %high_u, %abs_s, %abs_u)
+      : (index, index, index, index, index, index, index, index,
+         i1, i1, index, index, index, index,
+         index, index, index, index, index, index) -> ()
+    return
+  }
+
+  func.func private @consume(
+    index, index, index, index, index, index, index, index,
+    i1, i1, index, index, index, index,
+    index, index, index, index, index, index)
+}
+
+// CHECK-LABEL: func.func @index_signedness
+// CHECK-DAG: arith.divsi
+// CHECK-DAG: arith.divui
+// CHECK-DAG: arith.floordivsi
+// CHECK-DAG: arith.ceildivsi
+// CHECK-DAG: arith.ceildivui
+// CHECK-DAG: arith.remsi
+// CHECK-DAG: arith.remui
+// CHECK-DAG: arith.cmpi slt
+// CHECK-DAG: arith.cmpi ult
+// CHECK-DAG: arith.maxsi
+// CHECK-DAG: arith.maxui
+// CHECK-DAG: arith.minsi
+// CHECK-DAG: arith.minui
+// CHECK-DAG: arith.mulsi_extended
+// CHECK-DAG: arith.mului_extended
+// CHECK-DAG: math.absi
+// CHECK-NOT: pto.
+// CHECK: return

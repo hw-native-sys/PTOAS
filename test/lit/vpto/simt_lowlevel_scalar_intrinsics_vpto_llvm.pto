@@ -68,5 +68,4 @@ module attributes {pto.target_arch = "a5", pto.kernel_kind = #pto.kernel_kind<ve
 // CHECK-DAG: llvm.icmp "slt"
 // CHECK-DAG: llvm.sub
 // CHECK-DAG: llvm.select
-// CHECK-DAG: llvm.call @llvm.sqrt.f32
-// CHECK-DAG: llvm.call @llvm.sqrt.f16
+// CHECK-DAG: llvm.intr.sqrt

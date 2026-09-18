@@ -36,7 +36,7 @@ module attributes {pto.target_arch = "a5"} {
   %q_pe_batch__tile = pto.alloc_tile addr = %c168320_i64 valid_row = %c16_index valid_col = %c64_index : !pto.tile_buf<loc=vec, dtype=f32, rows=16, cols=64, v_row=?, v_col=?, blayout=row_major, slayout=none_box, fractal=512, pad=0>
   %q_pe_batch__ssa_v0_pview = pto.partition_view %q_pe_batch__ssa_v0_view, offsets = [%c0_index, %c0_index], sizes = [%c16_index, %c64_index] : !pto.tensor_view<?x?xf32> -> !pto.partition_tensor_view<16x64xf32>
   pto.tload ins(%q_pe_batch__ssa_v0_pview : !pto.partition_tensor_view<16x64xf32>) outs(%q_pe_batch__tile : !pto.tile_buf<loc=vec, dtype=f32, rows=16, cols=64, v_row=?, v_col=?, blayout=row_major, slayout=none_box, fractal=512, pad=0>)
-  %topk_pos0__tile = pto.load_scalar %arg0[%arg6] : !pto.ptr<i32> -> i32
+  %topk_pos0__tile = pto.load %arg0[%arg6] : !pto.ptr<i32> -> i32
   %24 = arith.muli %arg7, %c4096_index : index
   %25 = arith.index_cast %topk_pos0__tile : i32 to index
   %26 = arith.addi %24, %25 : index
@@ -90,7 +90,7 @@ module attributes {pto.target_arch = "a5"} {
   %li__tile = pto.alloc_tile addr = %c98496_i64 valid_row = %c16_index valid_col = %c1_index : !pto.tile_buf<loc=vec, dtype=f32, rows=16, cols=1, v_row=?, v_col=?, blayout=col_major, slayout=none_box, fractal=512, pad=0>
   scf.for %kk__idx_v0 = %c1_index to %arg8 step %c1_index {
     %29 = arith.addi %arg6, %kk__idx_v0 : index
-    %topk_pos__tile = pto.load_scalar %arg0[%29] : !pto.ptr<i32> -> i32
+    %topk_pos__tile = pto.load %arg0[%29] : !pto.ptr<i32> -> i32
     %30 = arith.muli %arg7, %c4096_index : index
     %31 = arith.index_cast %topk_pos__tile : i32 to index
     %32 = arith.addi %30, %31 : index

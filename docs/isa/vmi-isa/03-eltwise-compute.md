@@ -20,7 +20,7 @@
 
   ```c
   for (int i = 0; i < N; i++)
-      dst[i] = mask[i] ? lhs[i] + rhs[i] : (pmode_merge ? dst_old[i] : 0);
+      dst[i] = mask[i] ? lhs[i] + rhs[i] : 0;
   ```
 
 - **syntax:**
@@ -45,7 +45,7 @@
 
   | Attribute | Values | Default | Description |
   |---|---|---|---|
-  | `pmode` | `"zero"`, `"merge"` | `"zero"` | Inactive-lane behavior |
+  | `pmode` | `"zero"` | `"zero"` | Inactive-lane behavior |
 
 - **datatypes:** `i8`–`i32`, `f16`, `bf16`, `f32`
 - **lowering to `pto.mi`:**
@@ -72,8 +72,8 @@
       -> !pto.vmi.vreg<128×f32>
   // → pto.as: 2 × pto.vadd (EVEN/ODD), each with create_mask all-active mask
 
-  // Masked add with merge mode
-  %s = pto.vmi.vadd %a, %b, %mask {pmode = "merge"}
+  // Masked add
+  %s = pto.vmi.vadd %a, %b, %mask {pmode = "zero"}
       : !pto.vmi.vreg<64×f32>, !pto.vmi.vreg<64×f32>, !pto.vmi.mask<64> -> !pto.vmi.vreg<64×f32>
   ```
 
@@ -112,7 +112,7 @@ borrow occurred. In `vsubcs`, a carry-in of 0 propagates a borrow.
 
   ```c
   for (int i = 0; i < L; i++)
-      dst[i] = mask[i] ? lhs[i] / rhs[i] : (pmode_merge ? dst_old[i] : 0);
+      dst[i] = mask[i] ? lhs[i] / rhs[i] : 0;
   ```
 
 - **syntax:**
@@ -132,7 +132,7 @@ borrow occurred. In `vsubcs`, a carry-in of 0 propagates a borrow.
 
   ```c
   for (int i = 0; i < L; i++)
-      dst[i] = mask[i] ? max(lhs[i], rhs[i]) : (pmode_merge ? dst_old[i] : 0);
+      dst[i] = mask[i] ? max(lhs[i], rhs[i]) : 0;
   ```
 
 - **syntax:**
@@ -157,7 +157,7 @@ borrow occurred. In `vsubcs`, a carry-in of 0 propagates a borrow.
 
   ```c
   for (int i = 0; i < L; i++)
-      dst[i] = mask[i] ? abs(src[i]) : (pmode_merge ? dst_old[i] : 0);
+      dst[i] = mask[i] ? abs(src[i]) : 0;
   ```
 
 - **syntax:**
@@ -179,7 +179,7 @@ borrow occurred. In `vsubcs`, a carry-in of 0 propagates a borrow.
 
   ```c
   for (int i = 0; i < L; i++)
-      dst[i] = mask[i] ? -src[i] : (pmode_merge ? dst_old[i] : 0);
+      dst[i] = mask[i] ? -src[i] : 0;
   ```
 
 - **syntax:**
@@ -199,7 +199,7 @@ borrow occurred. In `vsubcs`, a carry-in of 0 propagates a borrow.
 
   ```c
   for (int i = 0; i < L; i++)
-      dst[i] = mask[i] ? max(0, src[i]) : (pmode_merge ? dst_old[i] : 0);
+      dst[i] = mask[i] ? max(0, src[i]) : 0;
   ```
 
 - **syntax:**
@@ -219,11 +219,11 @@ borrow occurred. In `vsubcs`, a carry-in of 0 propagates a borrow.
 
   ```c
   for (int i = 0; i < L; i++)
-      dst[i] = mask[i] ? exp(src[i]) : (pmode_merge ? dst_old[i] : 0);   // vexp
+      dst[i] = mask[i] ? exp(src[i]) : 0;   // vexp
   for (int i = 0; i < L; i++)
-      dst[i] = mask[i] ? ln(src[i])  : (pmode_merge ? dst_old[i] : 0);   // vln
+      dst[i] = mask[i] ? ln(src[i])  : 0;   // vln
   for (int i = 0; i < L; i++)
-      dst[i] = mask[i] ? sqrt(src[i]) : (pmode_merge ? dst_old[i] : 0);  // vsqrt
+      dst[i] = mask[i] ? sqrt(src[i]) : 0;  // vsqrt
   ```
 
 - **syntax:**
@@ -252,7 +252,7 @@ borrow occurred. In `vsubcs`, a carry-in of 0 propagates a borrow.
 
   ```c
   for (int i = 0; i < L; i++)
-      dst[i] = mask[i] ? (lhs[i] & rhs[i]) : (pmode_merge ? dst_old[i] : 0);
+      dst[i] = mask[i] ? (lhs[i] & rhs[i]) : 0;
   ```
 
 - **syntax:**
@@ -288,7 +288,7 @@ borrow occurred. In `vsubcs`, a carry-in of 0 propagates a borrow.
 
   ```c
   for (int i = 0; i < L; i++)
-      dst[i] = mask[i] ? ~src[i] : (pmode_merge ? dst_old[i] : 0);
+      dst[i] = mask[i] ? ~src[i] : 0;
   ```
 
 - **syntax:**
@@ -321,9 +321,9 @@ borrow occurred. In `vsubcs`, a carry-in of 0 propagates a borrow.
 
   ```c
   for (int i = 0; i < L; i++)
-      dst[i] = mask[i] ? (lhs[i] << rhs[i]) : (pmode_merge ? dst_old[i] : 0);  // vshl
+      dst[i] = mask[i] ? (lhs[i] << rhs[i]) : 0;  // vshl
   for (int i = 0; i < L; i++)
-      dst[i] = mask[i] ? (lhs[i] >> rhs[i]) : (pmode_merge ? dst_old[i] : 0);  // vshr (signed: arithmetic; unsigned: logical)
+      dst[i] = mask[i] ? (lhs[i] >> rhs[i]) : 0;  // vshr (signed: arithmetic; unsigned: logical)
   ```
 
 - **syntax:**
@@ -351,12 +351,12 @@ scalar type must match the vector element type.
 
   ```c
   for (int i = 0; i < L; i++)
-      dst[i] = mask[i] ? src[i] + scalar : (pmode_merge ? dst_old[i] : 0);
+      dst[i] = mask[i] ? src[i] + scalar : 0;
   ```
 
 - **syntax:**
   ```mlir
-  %r = pto.vmi.vadds %src, %scalar, %mask {pmode = "merge"} : !pto.vmi.vreg<L×T>, T, !pto.vmi.mask<L> -> !pto.vmi.vreg<L×T>
+  %r = pto.vmi.vadds %src, %scalar, %mask {pmode = "zero"} : !pto.vmi.vreg<L×T>, T, !pto.vmi.mask<L> -> !pto.vmi.vreg<L×T>
   ```
 - **operands:**
 
@@ -403,9 +403,9 @@ scalar type must match the vector element type.
 
   ```c
   for (int i = 0; i < L; i++)
-      dst[i] = mask[i] ? (src[i] << scalar) : (pmode_merge ? dst_old[i] : 0);  // vshls
+      dst[i] = mask[i] ? (src[i] << scalar) : 0;  // vshls
   for (int i = 0; i < L; i++)
-      dst[i] = mask[i] ? (src[i] >> scalar) : (pmode_merge ? dst_old[i] : 0);  // vshrs
+      dst[i] = mask[i] ? (src[i] >> scalar) : 0;  // vshrs
   ```
 
 - **syntax:**
@@ -462,7 +462,7 @@ scalar type must match the vector element type.
   |---|---|---|---|
   | `cmp` | `eq`, `ne`, `lt`, `le`, `gt`, `ge` | *(required)* | Comparison mode (fp unordered / integer; integer signedness comes from the element type: `siN` vs `iN`/`uiN`) |
   | | `oeq`, `one`, `olt`, `ole`, `ogt`, `oge` | | FP ordered forms |
-  | `pmode` | `"zero"`, `"merge"` | `"zero"` | Inactive-lane behavior |
+  | `pmode` | `"zero"` | `"zero"` | Inactive-lane behavior |
 
 - **datatypes:** `i8`/`si8`/`ui8` – `i32`/`si32`/`ui32`, `f16`, `bf16`, `f32`.
   Integer signedness is taken from the element type; signless `iN` is treated
@@ -576,7 +576,7 @@ scalar type must match the vector element type.
 
   | Attribute | Values | Default | Description |
   |---|---|---|---|
-  | `pmode` | `"zero"`, `"merge"` | `"zero"` | Result handling when selector inactive: `"merge"` retains `false_value` lanes |
+  | `pmode` | `"zero"` | `"zero"` | Inactive-lane behavior: inactive lanes write 0 |
 
 - **datatypes:** `i8`–`i32`, `f16`, `bf16`, `f32`
 - **lowering to `pto.mi`:**

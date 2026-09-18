@@ -12,7 +12,6 @@
 from dataclasses import dataclass
 
 from ptodsl import pto
-from ptodsl import scalar
 import ptodsl.tilelib as tilelib
 
 
@@ -91,9 +90,9 @@ def _trandom_state_init(key0, key1, counter):
 def _trandom_advance_counter(state, valid_cols, lanes, repeats, repeat):
     """Advance the Philox counter by one lane-group after each repeat."""
     tail_counter_add = (valid_cols - 1) % lanes + 1
-    counter_add = scalar.select(
+    counter_add = pto.select(
         repeat == repeats - 1,
-        scalar.index_cast(pto.i32, tail_counter_add),
+        pto.cast(tail_counter_add, pto.i32),
         pto.const(lanes, dtype=pto.i32),
     )
     counter_add = pto.vbr(counter_add)

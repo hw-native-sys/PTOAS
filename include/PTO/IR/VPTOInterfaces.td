@@ -53,6 +53,59 @@ def VPTOSchedulingOpInterface : OpInterface<"VPTOSchedulingOpInterface"> {
   ];
 }
 
+def PTO_StateAccessOpInterface : OpInterface<"StateAccessOpInterface"> {
+  let description = [{
+    Describes one access point to an implicit PTO hardware state resource.
+    The interface separates the accessed resource from the access kind, so a
+    state-analysis pass never has to match op names or the SSA shape of
+    get/set helper sequences. `Query` reads the full state and produces an
+    SSA result, `Write` installs the operand value, `Consume` implicitly
+    depends on the current state without producing one, and `Clobber` may
+    change the state arbitrarily. This interface only
+    describes ordered semantics; whether a specific read can be forwarded
+    is decided by the state-analysis pass, so implementers must not add
+    the `Pure` trait on the strength of this interface alone. Whether an
+    access runs under an installed guard configuration is structural: the
+    ctrl-state analysis only ever scans ops outside guards.
+  }];
+  let cppNamespace = "::mlir::pto";
+  let methods = [
+    InterfaceMethod<"Return the accessed state resource.",
+      "::mlir::pto::StateResource", "getStateResource">,
+    InterfaceMethod<"Return the access kind.",
+      "::mlir::pto::StateAccessKind", "getStateAccessKind">,
+    InterfaceMethod<
+      "Return the SSA value read from or written to the state; empty for Consume and Clobber.",
+      "::mlir::Value", "getAccessedStateValue">
+  ];
+}
+
+def PTO_StateGuardOpInterface : OpInterface<"StateGuardOpInterface"> {
+  let description = [{
+    Describes a temporary state scope: the guard overrides a statically known
+    subset of one implicit state resource while its body executes, and the
+    logical state is restored after the guard exits. Bits outside
+    `controlledStateBits` keep their entry values; controlled bits take the
+    value implied by `requiredStateBits`. The guard stores no saved value and
+    does not decide where configuration or restore hardware accesses are
+    emitted; those decisions belong to the state-optimization pass. The
+    `uint64_t` bit sets only model compile-time-known partial coverage of at
+    most 64 bits.
+  }];
+  let cppNamespace = "::mlir::pto";
+  let methods = [
+    InterfaceMethod<"Return the guarded state resource.",
+      "::mlir::pto::StateResource", "getStateResource">,
+    InterfaceMethod<"Return the state bits owned by this guard.",
+      "uint64_t", "getControlledStateBits">,
+    InterfaceMethod<
+      "Return the controlled bits whose required value is one.",
+      "uint64_t", "getRequiredStateBits">,
+    InterfaceMethod<"Return the guarded body.",
+      "::mlir::Region &", "getGuardedBody">
+  ];
+}
+
 def PTO_MadSemanticOpInterface : OpInterface<"MadSemanticOpInterface"> {
   let description = [{
     Interface for semantic MAD-family ops. The interface is only a uniform view
@@ -80,15 +133,20 @@ def PTO_MadSemanticOpInterface : OpInterface<"MadSemanticOpInterface"> {
       "::mlir::Value", "getK", (ins), [{}],
       /*defaultImplementation=*/[{ return $_op.getK(); }]>,
     InterfaceMethod<"Return true for MX MAD forms.",
-      "bool", "isMadMxFamily">,
+      "bool", "isMadMxFamily", (ins), [{}],
+      /*defaultImplementation=*/[{ return $_op.isMadMxFamily(); }]>,
     InterfaceMethod<"Return true if the op carries a bias operand.",
-      "bool", "hasBiasOperand">,
+      "bool", "hasBiasOperand", (ins), [{}],
+      /*defaultImplementation=*/[{ return $_op.hasBiasOperand(); }]>,
     InterfaceMethod<"Return true if the op reads the existing accumulator.",
-      "bool", "readsAccumulator">,
+      "bool", "readsAccumulator", (ins), [{}],
+      /*defaultImplementation=*/[{ return $_op.readsAccumulator(); }]>,
     InterfaceMethod<"Return true if TF32 mode is a legal semantic attribute.",
-      "bool", "supportsTf32Mode">,
+      "bool", "supportsTf32Mode", (ins), [{}],
+      /*defaultImplementation=*/[{ return $_op.supportsTf32Mode(); }]>,
     InterfaceMethod<"Return the bias operand, or null for non-bias forms.",
-      "::mlir::Value", "getBiasOrNull">,
+      "::mlir::Value", "getBiasOrNull", (ins), [{}],
+      /*defaultImplementation=*/[{ return $_op.getBiasOrNull(); }]>,
     InterfaceMethod<"Return true if the accumulator source is bias.",
       "bool", "initializesAccumulatorWithBias", (ins), [{}],
       /*defaultImplementation=*/[{ return $_op.hasBiasOperand(); }]>,
@@ -107,10 +165,23 @@ def PTO_MadSemanticOpInterface : OpInterface<"MadSemanticOpInterface"> {
       "::mlir::Attribute", "getSatModeAttr", (ins), [{}],
       /*defaultImplementation=*/[{ return $_op.getSatModeAttr(); }]>,
     InterfaceMethod<"Return tf32_mode.",
-      "::mlir::Attribute", "getTf32ModeAttr">,
+      "::mlir::Attribute", "getTf32ModeAttr", (ins), [{}],
+      /*defaultImplementation=*/[{ return $_op.getTf32ModeAttr(); }]>,
     InterfaceMethod<"Return true if n_dir is set.",
       "bool", "getNDir", (ins), [{}],
-      /*defaultImplementation=*/[{ return $_op.getNDir(); }]>
+      /*defaultImplementation=*/[{ return $_op.getNDir(); }]>,
+    InterfaceMethod<"Return the runtime unit_flag operand, or null.",
+      "::mlir::Value", "getUnitFlagValueOrNull", (ins), [{}],
+      /*defaultImplementation=*/[{ return $_op.getUnitFlagValue(); }]>,
+    InterfaceMethod<"Return the runtime acc-init operand, or null.",
+      "::mlir::Value", "getAccInitValueOrNull", (ins), [{}],
+      /*defaultImplementation=*/[{ return $_op.getAccInitValue(); }]>,
+    InterfaceMethod<"Return the runtime disable-gemv operand, or null.",
+      "::mlir::Value", "getDisableGemvValueOrNull", (ins), [{}],
+      /*defaultImplementation=*/[{ return $_op.getDisableGemvValue(); }]>,
+    InterfaceMethod<"Return the runtime bias-init operand, or null.",
+      "::mlir::Value", "getBiasInitValueOrNull", (ins), [{}],
+      /*defaultImplementation=*/[{ return $_op.getBiasInitValue(); }]>
   ];
 }
 
@@ -135,11 +206,14 @@ def PTO_MadRawOpInterface : OpInterface<"MadRawOpInterface"> {
       "::mlir::Value", "getXt", (ins), [{}],
       /*defaultImplementation=*/[{ return $_op.getXt(); }]>,
     InterfaceMethod<"Return true for MX MAD forms.",
-      "bool", "isMadMxFamily">,
+      "bool", "isMadMxFamily", (ins), [{}],
+      /*defaultImplementation=*/[{ return $_op.isMadMxFamily(); }]>,
     InterfaceMethod<"Return true if the op carries a bias operand.",
-      "bool", "hasBiasOperand">,
+      "bool", "hasBiasOperand", (ins), [{}],
+      /*defaultImplementation=*/[{ return $_op.hasBiasOperand(); }]>,
     InterfaceMethod<"Return the bias operand, or null for non-bias forms.",
-      "::mlir::Value", "getBiasOrNull">
+      "::mlir::Value", "getBiasOrNull", (ins), [{}],
+      /*defaultImplementation=*/[{ return $_op.getBiasOrNull(); }]>
   ];
 }
 

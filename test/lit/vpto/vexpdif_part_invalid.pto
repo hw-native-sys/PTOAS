@@ -1,0 +1,48 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+// RUN: pto-test-opt %s -verify-diagnostics -split-input-file
+
+// An f16 source only consumes one 16-bit half of every 32-bit lane per
+// instruction, so omitting `part` cannot compute the whole vector.
+module {
+  func.func @vexpdif_f16_missing_part(
+      %input: !pto.vreg<128xf16>,
+      %max: !pto.vreg<128xf16>,
+      %mask: !pto.mask<b16>) -> !pto.vreg<64xf32> {
+    // expected-error @+1 {{requires part (EVEN or ODD) for f16 input: one instruction consumes a single 16-bit half of every 32-bit lane}}
+    %result = pto.vexpdif %input, %max, %mask : !pto.vreg<128xf16>, !pto.vreg<128xf16>, !pto.mask<b16> -> !pto.vreg<64xf32>
+    return %result : !pto.vreg<64xf32>
+  }
+}
+
+// -----
+
+// A present token is still restricted to the EVEN/ODD vocabulary.
+module {
+  func.func @vexpdif_f32_invalid_part(
+      %input: !pto.vreg<64xf32>,
+      %max: !pto.vreg<64xf32>,
+      %mask: !pto.mask<b32>) -> !pto.vreg<64xf32> {
+    // expected-error @+1 {{part must be EVEN or ODD}}
+    %result = pto.vexpdif %input, %max, %mask, "P0" : !pto.vreg<64xf32>, !pto.vreg<64xf32>, !pto.mask<b32> -> !pto.vreg<64xf32>
+    return %result : !pto.vreg<64xf32>
+  }
+}
+
+// -----
+
+module {
+  func.func @vexpdif_f16_invalid_part(
+      %input: !pto.vreg<128xf16>,
+      %max: !pto.vreg<128xf16>,
+      %mask: !pto.mask<b16>) -> !pto.vreg<64xf32> {
+    // expected-error @+1 {{part must be EVEN or ODD}}
+    %result = pto.vexpdif %input, %max, %mask, "LOWER" : !pto.vreg<128xf16>, !pto.vreg<128xf16>, !pto.mask<b16> -> !pto.vreg<64xf32>
+    return %result : !pto.vreg<64xf32>
+  }
+}

@@ -62,12 +62,12 @@ module attributes {pto.target_arch = "a5", pto.kernel_kind = #pto.kernel_kind<ve
     %shfl_bfly = pto.shuffle_bfly %value, %c1_i32 : i32, i32 -> i32
 
     %lane_plus_one = arith.addi %laneid, %c1_i32 : i32
-    %redux_add = pto.redux_add %lane_plus_one signed : i32 -> i32
-    %redux_max = pto.redux_max %lane_plus_one signed : i32 -> i32
-    %redux_min = pto.redux_min %lane_plus_one signed : i32 -> i32
+    %redux_add = pto.redux_addi %lane_plus_one : i32 -> i32
+    %redux_max = pto.redux_maxi %lane_plus_one signed : i32 -> i32
+    %redux_min = pto.redux_mini %lane_plus_one signed : i32 -> i32
     %one_f32 = arith.constant 1.000000e+00 : f32
-    %redux_f32 = pto.redux_add %one_f32 : f32 -> f32
-    %redux_f32_i32 = pto.convert %redux_f32 round(r) sat signed : f32 -> i32
+    %redux_f32 = pto.redux_addf %one_f32 : f32 -> f32
+    %redux_f32_i32 = pto.ftoi %redux_f32 signed round(r) sat : f32 -> i32
 
     %base_i32 = arith.muli %laneid, %c_fields_i32 : i32
     %base = arith.index_castui %base_i32 : i32 to index

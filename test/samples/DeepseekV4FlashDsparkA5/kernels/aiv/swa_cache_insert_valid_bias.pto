@@ -19,7 +19,7 @@ module attributes {pto.target_arch = "a5"} {
   %sparse_bias_inline286__ssa_v0_view = pto.make_tensor_view %arg3, shape = [%arg9, %c128_index], strides = [%c128_index, %c1_index] {layout = #pto.layout<nd>} : !pto.tensor_view<?x?xf32>
   %swa_lens__ssa_v0_view = pto.make_tensor_view %arg4, shape = [%arg8], strides = [%c1_index] {layout = #pto.layout<nd>} : !pto.tensor_view<?xi32>
   scf.for %write_t_inline285__idx_v0 = %c0_index to %arg9 step %c1_index {
-    %write_row_i64_inline284__tile = pto.load_scalar %arg1[%write_t_inline285__idx_v0] : !pto.ptr<i64> -> i64
+    %write_row_i64_inline284__tile = pto.load %arg1[%write_t_inline285__idx_v0] : !pto.ptr<i64> -> i64
     %9 = arith.index_cast %write_row_i64_inline284__tile : i64 to index
     %10 = arith.cmpi sle, %c0_index, %9 : index
     scf.if %10 {

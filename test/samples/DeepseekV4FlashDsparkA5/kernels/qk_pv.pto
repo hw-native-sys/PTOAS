@@ -57,7 +57,7 @@ module attributes {pto.target_arch = "a5"} {
   scf.for %qk_it_inline1849__idx_v0 = %c0_index to %35 step %c1_index {
     %36 = arith.muli %qk_it_inline1849__idx_v0, %c24_index : index
     %37 = arith.addi %qk_core_inline1836__ssa_v0, %36 : index
-    %38 = pto.load_scalar %arg3[%37] : !pto.ptr<i32> -> i32
+    %38 = pto.load %arg3[%37] : !pto.ptr<i32> -> i32
     %39 = arith.index_cast %38 : i32 to index
     %40 = arith.divsi %39, %c5_index : index
     %41 = arith.muli %40, %c5_index : index
@@ -67,7 +67,7 @@ module attributes {pto.target_arch = "a5"} {
     %45 = arith.muli %42, %c128_index : index
     %flat_offset_mul = arith.muli %40, %c5_index : index
     %flat_offset = arith.addi %flat_offset_mul, %42 : index
-    %qk_block_valid_inline1823__tile = pto.load_scalar %arg5[%flat_offset] : !pto.ptr<i32> -> i32
+    %qk_block_valid_inline1823__tile = pto.load %arg5[%flat_offset] : !pto.ptr<i32> -> i32
     %46 = arith.index_cast %qk_block_valid_inline1823__tile : i32 to index
     %47 = arith.cmpi slt, %c0_index, %46 : index
     scf.if %47 {
@@ -78,7 +78,7 @@ module attributes {pto.target_arch = "a5"} {
       scf.if %50 {
         %52 = arith.muli %40, %c1_index : index
         %53 = arith.addi %52, %c0_index : index
-        %51 = pto.load_scalar %arg6[%53] : !pto.ptr<i32> -> i32
+        %51 = pto.load %arg6[%53] : !pto.ptr<i32> -> i32
         %54 = arith.index_cast %51 : i32 to index
         %55 = arith.addi %54, %c1_index : index
         %56 = arith.minsi %55, %c128_index : index
@@ -96,7 +96,7 @@ module attributes {pto.target_arch = "a5"} {
           %67 = arith.addi %45, %c0_index : index
           %68 = arith.muli %40, %c128_index : index
           %69 = arith.addi %68, %67 : index
-          %qk_run_raw_inline1801__tile = pto.load_scalar %arg7[%69] : !pto.ptr<i32> -> i32
+          %qk_run_raw_inline1801__tile = pto.load %arg7[%69] : !pto.ptr<i32> -> i32
           %70 = arith.index_cast %qk_run_raw_inline1801__tile : i32 to index
           %71 = arith.maxsi %70, %c0_index : index
           %0 = pto.alloc_tile addr = %c65536_i64 valid_row = %c128_index valid_col = %c512_index : !pto.tile_buf<loc=mat, dtype=bf16, rows=128, cols=512, v_row=?, v_col=?, blayout=col_major, slayout=row_major, fractal=512, pad=0>
@@ -113,7 +113,7 @@ module attributes {pto.target_arch = "a5"} {
           %78 = arith.addi %45, %75 : index
           %79 = arith.muli %40, %c128_index : index
           %80 = arith.addi %79, %78 : index
-          %77 = pto.load_scalar %arg7[%80] : !pto.ptr<i32> -> i32
+          %77 = pto.load %arg7[%80] : !pto.ptr<i32> -> i32
           %81 = arith.index_cast %77 : i32 to index
           %82 = arith.maxsi %81, %c0_index : index
           %1 = pto.alloc_tile addr = %c65536_i64 valid_row = %c128_index valid_col = %c512_index : !pto.tile_buf<loc=mat, dtype=bf16, rows=128, cols=512, v_row=?, v_col=?, blayout=col_major, slayout=row_major, fractal=512, pad=0>
@@ -142,7 +142,7 @@ module attributes {pto.target_arch = "a5"} {
         scf.if %94 {
           %95 = arith.muli %40, %c512_index : index
           %96 = arith.addi %95, %93 : index
-          %qk_ridx_inline1797__tile = pto.load_scalar %arg9[%96] : !pto.ptr<i32> -> i32
+          %qk_ridx_inline1797__tile = pto.load %arg9[%96] : !pto.ptr<i32> -> i32
           %97 = arith.index_cast %qk_ridx_inline1797__tile : i32 to index
           %98 = arith.cmpi sle, %c0_index, %97 : index
           scf.if %98 {
@@ -150,7 +150,7 @@ module attributes {pto.target_arch = "a5"} {
             %101 = arith.divsi %100, %c128_index : index
             %102 = arith.muli %43, %c32_index : index
             %103 = arith.addi %102, %101 : index
-            %99 = pto.load_scalar %arg10[%103] : !pto.ptr<i32> -> i32
+            %99 = pto.load %arg10[%103] : !pto.ptr<i32> -> i32
             %104 = arith.index_cast %99 : i32 to index
             %105 = arith.muli %104, %c128_index : index
             %106 = arith.index_cast %qk_ridx_inline1797__tile : i32 to index
@@ -377,7 +377,7 @@ module attributes {pto.target_arch = "a5"} {
   scf.for %qk_it_inline1849__idx_v0 = %c0_index to %7 step %c1_index {
     %8 = arith.muli %qk_it_inline1849__idx_v0, %c24_index : index
     %9 = arith.addi %qk_core_inline1836__ssa_v0, %8 : index
-    %10 = pto.load_scalar %arg3[%9] : !pto.ptr<i32> -> i32
+    %10 = pto.load %arg3[%9] : !pto.ptr<i32> -> i32
     %11 = arith.index_cast %10 : i32 to index
     %12 = arith.divsi %11, %c5_index : index
     %13 = arith.muli %12, %c5_index : index
@@ -391,7 +391,7 @@ module attributes {pto.target_arch = "a5"} {
     pto.tload ins(%sparse_bias_inline1892__rv_v2_pview : !pto.partition_tensor_view<1x128xf32>) outs(%qk_bias_row_inline1827__tile : !pto.tile_buf<loc=vec, dtype=f32, rows=1, cols=128, v_row=?, v_col=?, blayout=row_major, slayout=none_box, fractal=512, pad=0>)
     %flat_offset_mul = arith.muli %12, %c5_index : index
     %flat_offset = arith.addi %flat_offset_mul, %14 : index
-    %qk_block_valid_inline1823__tile = pto.load_scalar %arg5[%flat_offset] : !pto.ptr<i32> -> i32
+    %qk_block_valid_inline1823__tile = pto.load %arg5[%flat_offset] : !pto.ptr<i32> -> i32
     %19 = arith.index_cast %qk_block_valid_inline1823__tile : i32 to index
     %20 = arith.cmpi slt, %c0_index, %19 : index
     scf.if %20 {
@@ -461,11 +461,11 @@ module attributes {pto.target_arch = "a5"} {
           %45 = arith.addi %44, %qk_hr_inline1782__idx_v0 : index
           %46 = arith.muli %45, %c1_index : index
           %47 = arith.addi %46, %c0_index : index
-          pto.store_scalar %cst_23, %arg1[%47] : !pto.ptr<f32>, f32
+          pto.store %cst_23, %arg1[%47] : !pto.ptr<f32>, f32
           %48 = arith.addi %44, %qk_hr_inline1782__idx_v0 : index
           %49 = arith.muli %48, %c1_index : index
           %50 = arith.addi %49, %c0_index : index
-          pto.store_scalar %cst_21, %arg0[%50] : !pto.ptr<f32>, f32
+          pto.store %cst_21, %arg0[%50] : !pto.ptr<f32>, f32
         }
         %51 = arith.maxsi %44, %c0_index : index
         %sparse_blk_oi_inline1864__iter_v7_pview = pto.partition_view %sparse_blk_oi_inline1864__ssa_v0_view, offsets = [%51, %c0_index], sizes = [%c16_index, %c512_index] : !pto.tensor_view<?x?xf32> -> !pto.partition_tensor_view<16x512xf32>

@@ -58,7 +58,7 @@ def build():
                     pto.sync_wait(pipe_v, c3)
                     scf.YieldOp([])
 
-                pto.store_scalar(entry.arguments[1], c0, one)
+                pto.store(entry.arguments[1], c0, one)
                 func.ReturnOp([])
 
             module.operation.verify()

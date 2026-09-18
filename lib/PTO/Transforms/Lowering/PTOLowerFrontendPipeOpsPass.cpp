@@ -389,7 +389,7 @@ static bool collectFrontendInitOps(func::FuncOp funcOp,
     return inserted;
   };
   bool allUnique = true;
-  funcOp.walk([&](Operation *op) {
+  funcOp.walk([&allUnique, &recordInitOp](Operation *op) {
     if (auto init = dyn_cast<AicInitializePipeOp>(op)) {
       allUnique = allUnique && recordInitOp(op, init.getId());
     } else if (auto init = dyn_cast<AivInitializePipeOp>(op)) {
@@ -405,7 +405,7 @@ static LogicalResult
 lowerCollectedInitOp(Operation *op, IRRewriter &rewriter,
                      FrontendPipeHandleMap &handlesById) {
   return TypeSwitch<Operation *, LogicalResult>(op)
-      .Case([&](AicInitializePipeOp init) {
+      .Case([&rewriter, &handlesById](AicInitializePipeOp init) {
         auto loweredOr = lowerAndEraseFrontendInit(init, rewriter);
         if (failed(loweredOr)) {
           return failure();
@@ -413,7 +413,7 @@ lowerCollectedInitOp(Operation *op, IRRewriter &rewriter,
         handlesById.try_emplace(init.getId(), *loweredOr);
         return success();
       })
-      .Case([&](AivInitializePipeOp init) {
+      .Case([&rewriter, &handlesById](AivInitializePipeOp init) {
         auto loweredOr = lowerAndEraseFrontendInit(init, rewriter);
         if (failed(loweredOr)) {
           return failure();
@@ -432,7 +432,7 @@ static FailureOr<FrontendPipeHandleMap> lowerInitIfPresent(func::FuncOp funcOp,
   bool hasAicInit = false;
   bool hasAivInit = false;
 
-  funcOp.walk([&](Operation *op) {
+  funcOp.walk([&hasAicInit, &hasAivInit](Operation *op) {
     if (isa<AicInitializePipeOp>(op)) {
       hasAicInit = true;
     } else if (isa<AivInitializePipeOp>(op)) {
@@ -461,7 +461,7 @@ static FailureOr<FrontendPipeHandleMap> lowerInitIfPresent(func::FuncOp funcOp,
 
 static bool hasFrontendPipeOps(func::FuncOp funcOp) {
   bool found = false;
-  funcOp.walk([&](Operation *op) {
+  funcOp.walk([&found](Operation *op) {
     if (isa<AicInitializePipeOp, AivInitializePipeOp, TAllocToAivOp,
             TAllocToAicOp, TPushToAivOp, TPushToAicOp, TPopFromAicOp,
             TPopFromAivOp, TFreeFromAicOp, TFreeFromAivOp>(op)) {
@@ -609,7 +609,7 @@ lowerFrontendPushOp(OpTy push, Value FrontendPipeHandles::*pipeSel,
                     const FrontendDataLowering &ctx, IRRewriter &rewriter) {
   return lowerFrontendDataWithPipe(
       push, pipeSel, dirName, ctx,
-      [&](const FrontendPipeHandles &handles) {
+      [&rewriter, &push, &pipeSel, &subblockid](const FrontendPipeHandles &handles) {
         rewriter.replaceOpWithNewOp<TPushOp>(push, push.getTile(),
                                              handles.*pipeSel, subblockid,
                                              push.getSplitAttr());
@@ -625,7 +625,7 @@ lowerFrontendPopOp(OpTy pop, Value FrontendPipeHandles::*pipeSel,
                    const FrontendDataLowering &ctx, IRRewriter &rewriter) {
   return lowerFrontendDataWithPipe(
       pop, pipeSel, dirName, ctx,
-      [&](const FrontendPipeHandles &handles) {
+      [&rewriter, &pop, &pipeSel, &subblockid](const FrontendPipeHandles &handles) {
         Value entry = createPopDestination(pop, handles, rewriter);
         rewriter.create<TPopOp>(pop.getLoc(), entry, handles.*pipeSel,
                                 subblockid, pop.getSplitAttr());
@@ -642,7 +642,7 @@ lowerFrontendFreeOp(OpTy free, Value FrontendPipeHandles::*pipeSel,
                     IRRewriter &rewriter) {
   return lowerFrontendDataWithPipe(
       free, pipeSel, dirName, ctx,
-      [&](const FrontendPipeHandles &handles) {
+      [&rewriter, &free, &pipeSel](const FrontendPipeHandles &handles) {
         rewriter.replaceOpWithNewOp<TFreeOp>(free, free.getEntry(),
                                              handles.*pipeSel,
                                              free.getSplitAttr());
@@ -663,34 +663,34 @@ static LogicalResult lowerOneFrontendDataOp(Operation *op,
   constexpr StrideSel kV2cStrides = &FrontendPipeHandles::v2cSlotStrides;
 
   return TypeSwitch<Operation *, LogicalResult>(op)
-      .Case([&](TAllocToAivOp alloc) {
+      .Case([&ctx, &rewriter](TAllocToAivOp alloc) {
         return lowerFrontendAllocOp(alloc, kC2vPipe, kC2vStrides, "C2V", ctx,
                                     rewriter);
       })
-      .Case([&](TAllocToAicOp alloc) {
+      .Case([&ctx, &rewriter](TAllocToAicOp alloc) {
         return lowerFrontendAllocOp(alloc, kV2cPipe, kV2cStrides, "V2C", ctx,
                                     rewriter);
       })
-      .Case([&](TPushToAivOp push) {
+      .Case([&ctx, &rewriter](TPushToAivOp push) {
         return lowerFrontendPushOp(push, kC2vPipe, "C2V", Value{}, ctx,
                                    rewriter);
       })
-      .Case([&](TPushToAicOp push) {
+      .Case([&ctx, &rewriter](TPushToAicOp push) {
         return lowerFrontendPushOp(push, kV2cPipe, "V2C",
                                    push.getAivSubblockid(), ctx, rewriter);
       })
-      .Case([&](TPopFromAicOp pop) {
+      .Case([&ctx, &rewriter](TPopFromAicOp pop) {
         return lowerFrontendPopOp(pop, kC2vPipe, "C2V",
                                   pop.getAivSubblockid(), ctx, rewriter);
       })
-      .Case([&](TPopFromAivOp pop) {
+      .Case([&ctx, &rewriter](TPopFromAivOp pop) {
         return lowerFrontendPopOp(pop, kV2cPipe, "V2C", Value{}, ctx,
                                   rewriter);
       })
-      .Case([&](TFreeFromAicOp free) {
+      .Case([&ctx, &rewriter](TFreeFromAicOp free) {
         return lowerFrontendFreeOp(free, kC2vPipe, "C2V", ctx, rewriter);
       })
-      .Case([&](TFreeFromAivOp free) {
+      .Case([&ctx, &rewriter](TFreeFromAivOp free) {
         return lowerFrontendFreeOp(free, kV2cPipe, "V2C", ctx, rewriter);
       })
       .Default([](Operation *) { return success(); });
@@ -703,7 +703,7 @@ static LogicalResult lowerFrontendDataOps(func::FuncOp funcOp,
   FrontendDataLowering ctx{dom, handlesById};
 
   SmallVector<Operation *> frontendOps;
-  funcOp.walk([&](Operation *op) {
+  funcOp.walk([&frontendOps](Operation *op) {
     if (isa<TAllocToAivOp, TAllocToAicOp, TPushToAivOp, TPushToAicOp,
             TPopFromAicOp, TPopFromAivOp, TFreeFromAicOp, TFreeFromAivOp>(op)) {
       frontendOps.push_back(op);

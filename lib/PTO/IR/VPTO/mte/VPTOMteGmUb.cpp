@@ -175,5 +175,11 @@ LogicalResult MteGmUbOp::verify() {
              << valueType;
     }
   }
+  // A GM->UB transfer always moves whole 32B blocks, so a len_burst that is not
+  // a multiple of 32 makes the hardware fill the tail block
+  // [len_burst, roundUp(len_burst, 32)) with GM data. The op stays valid; warn
+  // so the author can make that tail content explicit through a pad group.
+  warnUnalignedBurstLengthWithoutPad(getOperation(), getLenBurst(),
+                                     getPadValue(), "UB", "a pad(...) group");
   return success();
 }

@@ -10,7 +10,8 @@ module attributes {pto.target_arch = "a5"} {
     %mat = pto.castptr %c0 : i64 -> !pto.ptr<i16, l1>
 
     pto.section.vector {
-      pto.mte_gm_ub %arg0, %ub, %c0, %c1
+      %c32 = arith.constant 32 : i64
+      pto.mte_gm_ub %arg0, %ub, %c0, %c32
         nburst(%c1, %c1, %c1)
         : !pto.ptr<i16, gm>, !pto.ptr<i16, ub>, i64, i64, i64, i64, i64
     }

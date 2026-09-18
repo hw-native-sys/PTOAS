@@ -40,11 +40,19 @@
 ### `pto.aic_initialize_pipe` — Cube 侧 Pipe 初始化
 
 ```mlir
-pto.aic_initialize_pipe {id = <id>, dir_mask = <dir>, slot_size = <size>,
-                         slot_num = <num>, local_slot_num = <local_num>,
-                         nosplit = <bool>,
-                         gm_slot_buffer = <buf>, gm_slot_tensor = <tensor>,
-                         c2v_consumer_buf = <c2v>, v2c_consumer_buf = <v2c>}
+pto.aic_initialize_pipe {
+                        id = <id>,
+                        dir_mask = <dir>,
+                        slot_size = <size>,
+                        slot_num = <num>,
+                        local_slot_num = <local_num>,
+                        nosplit = <bool>
+                      } (
+                        gm_slot_buffer = <buf> : !pto.ptr<T>,
+                        gm_slot_tensor = <tensor> : !pto.tensor_view<...>,
+                        c2v_consumer_buf = <c2v> : i32,
+                        v2c_consumer_buf = <v2c> : i32
+                      )
 ```
 
 **语义：**
@@ -343,7 +351,7 @@ pto.tfree_from_aic(<entry> : <pipe_entry_type>)
 
 | Name | Type | Description |
 | ---- | ---- | ----------- |
-| `entry` （可选） | `!pto.tensor_view<...>` | 针对全局内存条目的释放描述符（仅在释放 GM 条目时需要） |
+| `entry`（可选）| `!pto.tensor_view<...>` | 针对全局内存条目的释放描述符（仅在释放 GM 条目时需要） |
 
 **返回值：** 无。操作执行释放并返回。
 
@@ -391,7 +399,7 @@ pto.tfree_from_aiv(<entry> : <pipe_entry_type>)
 
 | Name | Type | Description |
 | ---- | ---- | ----------- |
-| `entry` （可选） | `!pto.tensor_view<...>` | 针对全局内存条目的释放描述符 |
+| `entry`（可选）| `!pto.tensor_view<...>` | 针对全局内存条目的释放描述符 |
 
 **返回值：** 无。操作执行释放并返回。
 
@@ -744,7 +752,7 @@ pto.initialize_l2l_pipe {dir_mask = <N>, slot_size = <S>, slot_num = <M>
 
 ```text
 pipe = init_l2l_pipe(dir_mask, slot_size, slot_num, local_addr, ...)
-// 初始化一个 Local→Local 管线句柄，用于直接本地内存的跨核数据传输（无 GM 中转）
+// 初始化一个 Local→Local 管线句柄，用于直接通过本地内存的跨核数据传输（无 GM 中转）
 ```
 
 **参数：**

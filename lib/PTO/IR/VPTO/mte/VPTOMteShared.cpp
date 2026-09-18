@@ -19,7 +19,34 @@
 
 #include "VPTOMteInternal.h"
 
+#include "PTO/Support/CodeConstants.h"
+#include "mlir/IR/Matchers.h"
+
 namespace mlir::pto::mte_detail {
+
+  void warnUnalignedBurstLengthWithoutPad(Operation *op, Value lenBurst,
+                                          Value padValue,
+                                          StringRef destinationSpace,
+                                          StringRef remedy) {
+    if (padValue) {
+      return;
+    }
+    std::optional<int64_t> length = getConstantIntValue(lenBurst);
+    if (!length || *length % kValue32 == 0) {
+      return;
+    }
+    // The transfer itself stays valid: the 32B tail block simply carries source
+    // data. Warn so the author can decide whether that is intended. The warning
+    // goes through the location (not Operation::emitWarning, which appends the
+    // operation itself and re-prints the IR while the verifier still runs).
+    mlir::emitWarning(op->getLoc())
+        << op->getName().getStringRef() << " len_burst (" << *length
+        << " bytes) is not a multiple of " << kValue32 << ": the "
+        << destinationSpace
+        << " side of the transfer always writes whole 32B blocks, so the tail "
+           "block [len_burst, roundUp(len_burst, 32)) carries source data; pass "
+        << remedy << " to make it deterministic";
+  }
 
   // Batch12: DmaLoopConfig expansion shared
   void addDmaLoopConfigOperands(OperationState &state,

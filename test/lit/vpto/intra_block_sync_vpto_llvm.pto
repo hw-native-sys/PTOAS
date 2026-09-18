@@ -23,8 +23,8 @@ module attributes {pto.target_arch = "a5", pto.kernel_kind = #pto.kernel_kind<ve
     return
   }
 
-  func.func @intra_block_sync_v_dynamic(%event_id: index) attributes {pto.kernel} {
-    pto.set_intra_block <PIPE_V>, %event_id
+  func.func @intra_block_sync_v_dynamic(%event_id: i32) attributes {pto.kernel} {
+    pto.set_intra_block <PIPE_V>, %event_id : i32
     return
   }
 }

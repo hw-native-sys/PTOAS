@@ -50,9 +50,9 @@ include/PTO/IR/VMIAttrs.td
 include/PTO/IR/VMITypeDefs.td
 include/PTO/IR/VMIOps.td
 lib/PTO/IR/VMI.cpp
-lib/PTO/Transforms/VMILayoutAssignment.cpp
+lib/PTO/Transforms/VMI/VMILayoutAssignment.cpp
 lib/PTO/Transforms/VMIToVPTO.cpp
-lib/PTO/Transforms/PTOValidateVMIIR.cpp
+lib/PTO/Transforms/Passes/PTOValidateVMIIR.cpp
 test/lit/vmi_new/
 ```
 
@@ -214,19 +214,19 @@ IR layer:
   这一层不能知道 layout assignment 的全局选择，也不能直接依赖 VPTO lowering pass。
 
 Semantic validation layer:
-  lib/PTO/Transforms/PTOValidateVMIIR.cpp
+  lib/PTO/Transforms/Passes/PTOValidateVMIIR.cpp
 
   只检查阶段输入/输出是否满足 contract。它是 hard gate，不做 repair。
 
 Layout solving layer:
-  lib/PTO/Transforms/VMILayoutAssignment.cpp
+  lib/PTO/Transforms/VMI/VMILayoutAssignment.cpp
 
   负责从 producer/consumer/control-flow/call 关系解出每个 logical value 的 layout，
   然后把结果写回 type 或 ensure_* helper。
 
 Layout support query layer:
   include/PTO/Transforms/VMILayoutSupport.h
-  lib/PTO/Transforms/VMILayoutSupport.cpp
+  lib/PTO/Transforms/VMI/VMILayoutSupport.cpp
 
   只放跨阶段共享的纯查询：cast layout fact、group_reduce layout fact、
   ensure_* materialization support、layout-aware store support 等。它可以被
@@ -241,7 +241,7 @@ Layout support query layer:
 Layout optimization layer:
   lib/PTO/Transforms/VMILayoutFold.cpp
   lib/PTO/Transforms/VMILayoutRematerialize.cpp
-  lib/PTO/Transforms/VMILayoutSinkMaterialization.cpp
+  lib/PTO/Transforms/VMI/VMILayoutSinkMaterialization.cpp
   lib/PTO/Transforms/VMILegalizeArithSelect.cpp
 
   负责在 layout-assigned VMI IR 内做 legal-to-legal 改写。它可以让公共 canonicalize/cse
@@ -324,7 +324,7 @@ final residual verifier      physical VPTO candidate       no pto.vmi.*, no !pto
 当前实现应该能按文件直接审计。每个 pass 的核心类、MLIR 机制和失败边界如下：
 
 ```text
-lib/PTO/Transforms/PTOValidateVMIIR.cpp
+lib/PTO/Transforms/Passes/PTOValidateVMIIR.cpp
   pass:
     PTOValidateVMIIRPass
     PTOValidateVMILayoutIRPass
@@ -341,7 +341,7 @@ lib/PTO/Transforms/PTOValidateVMIIR.cpp
     create ConversionTarget
     repair illegal helper/type leakage
 
-lib/PTO/Transforms/VMILayoutAssignment.cpp
+lib/PTO/Transforms/VMI/VMILayoutAssignment.cpp
   pass:
     VMILayoutAssignmentPass
   core object:
@@ -365,7 +365,7 @@ lib/PTO/Transforms/VMILayoutAssignment.cpp
 
 lib/PTO/Transforms/VMILayoutFold.cpp
 lib/PTO/Transforms/VMILayoutRematerialize.cpp
-lib/PTO/Transforms/VMILayoutSinkMaterialization.cpp
+lib/PTO/Transforms/VMI/VMILayoutSinkMaterialization.cpp
 lib/PTO/Transforms/VMILegalizeArithSelect.cpp
   pass:
     VMILayoutFoldPass
@@ -435,14 +435,14 @@ producer natural layout、consumer request、CFG join 和 call-return slot 这�
 ```text
 source file                                pass                         primary MLIR facility
 -----------------------------------------  ---------------------------  ---------------------------------------------
-lib/PTO/Transforms/PTOValidateVMIIR.cpp    pto-validate-vmi-ir          Operation::walk + recursive type/attr scan
-lib/PTO/Transforms/PTOValidateVMIIR.cpp    pto-validate-vmi-layout-ir   Operation::walk + recursive type/attr scan
-lib/PTO/Transforms/VMILayoutAssignment.cpp vmi-layout-assignment        module-level union-find solver + IRRewriter
+lib/PTO/Transforms/Passes/PTOValidateVMIIR.cpp    pto-validate-vmi-ir          Operation::walk + recursive type/attr scan
+lib/PTO/Transforms/Passes/PTOValidateVMIIR.cpp    pto-validate-vmi-layout-ir   Operation::walk + recursive type/attr scan
+lib/PTO/Transforms/VMI/VMILayoutAssignment.cpp vmi-layout-assignment        module-level union-find solver + IRRewriter
 lib/PTO/Transforms/VMILayoutFold.cpp
                                           vmi-layout-fold     Pattern-free local IR rewrite
 lib/PTO/Transforms/VMILayoutRematerialize.cpp
                                           vmi-layout-rematerialize      Pattern-free local IR rewrite
-lib/PTO/Transforms/VMILayoutSinkMaterialization.cpp
+lib/PTO/Transforms/VMI/VMILayoutSinkMaterialization.cpp
                                           vmi-layout-sink-materialization
                                                                        Pattern-free local IR rewrite
 lib/PTO/Transforms/VMILegalizeArithSelect.cpp
@@ -2438,7 +2438,7 @@ VMI core implementation starts from VMI IR. Producer-specific import is outside 
 ```text
 recommended pass name: pto-validate-vmi-ir
 anchor: func::FuncOp or ModuleOp
-source file: lib/PTO/Transforms/PTOValidateVMIIR.cpp
+source file: lib/PTO/Transforms/Passes/PTOValidateVMIIR.cpp
 ```
 
 Boundary verifier checks:
@@ -2476,7 +2476,7 @@ Slice 2 完成条件：
 ```text
 recommended pass name: vmi-layout-assignment
 anchor: ModuleOp
-source file: lib/PTO/Transforms/VMILayoutAssignment.cpp
+source file: lib/PTO/Transforms/VMI/VMILayoutAssignment.cpp
 ```
 
 `vmi-layout-assignment` 必须是 module 级 pass。函数参数、`func.return` operand、
@@ -4326,7 +4326,7 @@ Current implementation status:
 
 ```text
 include/PTO/Transforms/VMILayoutSupport.h
-lib/PTO/Transforms/VMILayoutSupport.cpp
+lib/PTO/Transforms/VMI/VMILayoutSupport.cpp
   central table-driven source for legal/preferred layout facts:
     dense/group load and store layouts
     masked load/store data-mask layout relations
@@ -4472,11 +4472,11 @@ If any answer is no, the slice is not ready to be treated as complete.
    lib/PTO/IR/VMI.cpp
 
 3. layout assignment facts:
-   lib/PTO/Transforms/VMILayoutAssignment.cpp
+   lib/PTO/Transforms/VMI/VMILayoutAssignment.cpp
 
 4. shared layout support, when the fact crosses stages:
    include/PTO/Transforms/VMILayoutSupport.h
-   lib/PTO/Transforms/VMILayoutSupport.cpp
+   lib/PTO/Transforms/VMI/VMILayoutSupport.cpp
 
 5. vmi-to-vpto preflight:
    lib/PTO/Transforms/VMIToVPTO.cpp::verifySupportedVMIToVPTOOps

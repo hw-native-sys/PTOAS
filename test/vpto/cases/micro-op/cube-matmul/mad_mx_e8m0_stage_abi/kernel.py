@@ -205,7 +205,7 @@ def _mx_x_steps(mlir_text, op_name):
     constants = {
         match.group("ssa"): int(match.group("value"))
         for match in re.finditer(
-            r"(?P<ssa>%[A-Za-z0-9_.$]+) = arith.constant "
+            r"(?P<ssa>%[A-Za-z0-9_.$]+) = (?:arith|pto).constant "
             r"(?P<value>\d+) : i64",
             mlir_text,
         )

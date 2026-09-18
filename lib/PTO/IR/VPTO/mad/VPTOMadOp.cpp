@@ -12,13 +12,12 @@
 
 using namespace mlir;
 using namespace mlir::pto;
+using namespace mlir::pto::mad_detail;
 
 void MadOp::getEffects(
     SmallVectorImpl<SideEffects::EffectInstance<MemoryEffects::Effect>>
         &effects) {
-  effects.emplace_back(MemoryEffects::Read::get(), &getLhsMutable());
-  effects.emplace_back(MemoryEffects::Read::get(), &getRhsMutable());
-  effects.emplace_back(MemoryEffects::Write::get(), &getDstMutable());
+  collectMadSemanticEffects(*this, effects, /*accumulates=*/false);
 }
 
 LogicalResult MadOp::verify() { return verifyMadSemanticWithTf32(*this); }
@@ -32,8 +31,8 @@ void MadOp::print(OpAsmPrinter &p) {
   printMadSemanticOpNoBias(p, *this, /*allowTf32Mode=*/true);
 }
 
-bool MadOp::isMadMxFamily() { return false; }
-bool MadOp::hasBiasOperand() { return false; }
-bool MadOp::readsAccumulator() { return false; }
-bool MadOp::supportsTf32Mode() { return true; }
-Value MadOp::getBiasOrNull() { return {}; }
+bool MadOp::isMadMxFamily() const { return false; }
+bool MadOp::hasBiasOperand() const { return false; }
+bool MadOp::readsAccumulator() const { return false; }
+bool MadOp::supportsTf32Mode() const { return true; }
+Value MadOp::getBiasOrNull() const { return {}; }

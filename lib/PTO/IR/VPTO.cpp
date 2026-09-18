@@ -44,6 +44,8 @@ static void setNonNegativeI32Range(Value result, uint64_t umax,
                  ConstantIntRanges::fromUnsigned(uminAP, umaxAP));
 }
 
+constexpr unsigned kSimtZAxisIndex = 2;
+
 static uint64_t simtThreadDimUpperBound(Operation *op, unsigned axis) {
   for (Operation *curr = op; curr != nullptr; curr = curr->getParentOp()) {
     if (auto section = dyn_cast<pto::SectionSimtOp>(curr)) {
@@ -82,7 +84,7 @@ void pto::GetTidZOp::inferResultRanges(
     ::llvm::ArrayRef<::mlir::ConstantIntRanges> operandRanges,
     ::mlir::SetIntRangeFn setResultRange) {
   inferNonNegativeIdRange(*this, this->getResult(),
-                          simtThreadDimUpperBound(*this, 2), setResultRange);
+                          simtThreadDimUpperBound(*this, kSimtZAxisIndex), setResultRange);
 }
 
 void pto::GetBlockIdxXOp::inferResultRanges(
@@ -536,10 +538,11 @@ static LogicalResult verifyConvertControls(Operation *op, Type srcType,
   return op->emitOpError() << "unsupported conversion type pair";
 }
 
-LogicalResult ConvertOp::verify() {
-  return verifyConvertControls(getOperation(), getSrc().getType(),
-                               getDst().getType(), getRounding(),
-                               getSaturation(), getSignednessAttr());
+LogicalResult mlir::pto::verifySimtConversionControls(
+    Operation *op, Type srcType, Type dstType, pto::Rounding rounding,
+    pto::Saturation saturation, Attribute signednessAttr) {
+  return verifyConvertControls(op, srcType, dstType, rounding, saturation,
+                               signednessAttr);
 }
 
 LogicalResult verifyNotNestedInVecScope(Operation *op,

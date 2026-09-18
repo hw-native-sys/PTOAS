@@ -5,7 +5,7 @@
 // THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
 // INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
 // See LICENSE in the root of the software repository for the full text of the License.
-//===- VPTOReduxAdd.cpp - pto.ReduxAdd methods ----------------------------===//
+//===- VPTOReduxAdd.cpp - pto.ReduxAddI/ReduxAddF methods -----------------===//
 //===----------------------------------------------------------------------===//
 
 #include "../VPTOVecOpInternal.h"
@@ -14,7 +14,10 @@ using namespace mlir;
 using namespace mlir::pto;
 using namespace mlir::pto::vecop_detail;
 
-LogicalResult ReduxAddOp::verify() {
-  return verifyReduxSemanticType(getOperation(), getValue().getType(),
-                                  getSignednessAttr(), /*requireSignedness=*/false);
+LogicalResult ReduxAddIOp::verify() {
+  return verifyReduxSemanticAttrs(getOperation(), /*acceptsSignedness=*/false);
+}
+
+LogicalResult ReduxAddFOp::verify() {
+  return verifyReduxSemanticAttrs(getOperation(), /*acceptsSignedness=*/false);
 }

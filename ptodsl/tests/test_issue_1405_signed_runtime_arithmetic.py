@@ -12,7 +12,7 @@
 
 import re
 
-from ptodsl import pto, scalar
+from ptodsl import pto
 
 
 @pto.jit(target="a5")
@@ -24,7 +24,7 @@ def signed_runtime_arithmetic_probe(
     # parameter is combined with Python literals and then used as an index.
     waves = (num_tokens + 3) // 4
     index = waves - 1
-    scalar.store(num_tokens + 1, out_ptr, index)
+    pto.store(num_tokens + 1, out_ptr, index)
 
 
 def test_signed_runtime_arithmetic_roundtrip():
@@ -50,10 +50,10 @@ def unsigned_runtime_arithmetic_probe(
     quotient = (value + "0x3") // 4
     remainder = value % 4
     is_small = value < 7
-    bounded_max = scalar.max(value, 7)
-    bounded_min = scalar.min(value, 7)
-    scalar.store(quotient + remainder + bounded_max + bounded_min, out_ptr, 0)
-    scalar.store(is_small, out_ptr, 1)
+    bounded_max = pto.max(value, 7)
+    bounded_min = pto.min(value, 7)
+    pto.store(quotient + remainder + bounded_max + bounded_min, out_ptr, 0)
+    pto.store(is_small, out_ptr, 1)
 
 
 def test_unsigned_runtime_arithmetic_preserves_unsigned_ops():
@@ -71,8 +71,8 @@ def signed_mixed_width_probe(
     narrow: pto.si8,
     wide: pto.si32,
 ):
-    scalar.store(narrow + wide, out_ptr, 0)
-    scalar.store(wide + narrow, out_ptr, 1)
+    pto.store(narrow + wide, out_ptr, 0)
+    pto.store(wide + narrow, out_ptr, 1)
 
 
 @pto.jit(target="a5")
@@ -81,8 +81,8 @@ def unsigned_mixed_width_probe(
     narrow: pto.ui8,
     wide: pto.ui32,
 ):
-    scalar.store(narrow + wide, out_ptr, 0)
-    scalar.store(wide + narrow, out_ptr, 1)
+    pto.store(narrow + wide, out_ptr, 0)
+    pto.store(wide + narrow, out_ptr, 1)
 
 
 def test_mixed_width_results_use_promoted_type_in_both_orders():

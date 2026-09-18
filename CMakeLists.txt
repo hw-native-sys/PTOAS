@@ -48,8 +48,20 @@ endif()
 
 project(ptoas VERSION 0.63)
 
+# cann-cmake otherwise replaces an explicit CI launcher with its local ccache.
+if(CMAKE_C_COMPILER_LAUNCHER OR CMAKE_CXX_COMPILER_LAUNCHER)
+  set(ENABLE_CCACHE OFF)
+endif()
 init_cann_project()
 add_cann_target_options()
+
+# The installer consumes the wheel and its CMake metadata without configuring
+# LLVM/MLIR or registering native targets a second time.
+option(PTOAS_PACKAGE_ONLY "Package an already built PTOAS wheel" OFF)
+if(PTOAS_PACKAGE_ONLY)
+  include(cmake/PackageWheel.cmake)
+  return()
+endif()
 
 # Wheel builds carry the same Linux hardening policy as release CMake builds.
 # Including the cache settings here keeps the policy backend-independent.
@@ -365,12 +377,15 @@ install(DIRECTORY ${PROJECT_BINARY_DIR}/include/PTO
 
 # 6. 定义 CMake 配置文件安装位置 (例如 lib/cmake/PTOAS)
 set(PTOAS_CMAKE_INSTALL_DIR "${CMAKE_INSTALL_LIBDIR}/cmake/PTOAS")
+# Keep the native build's exact install layout available to package-only mode.
+set(PTOAS_CMAKE_INSTALL_DIR "${PTOAS_CMAKE_INSTALL_DIR}" CACHE INTERNAL "PTOAS CMake metadata directory" FORCE)
 
 # 7. 导出 Targets (PTOASTargets.cmake) 供 find_package 使用
 install(EXPORT PTOASTargets
         FILE PTOASTargets.cmake
         NAMESPACE PTOAS::
         DESTINATION ${PTOAS_CMAKE_INSTALL_DIR}
+        COMPONENT PTOAS_CMake
 )
 
 # 8. 生成 Config 文件 (PTOASConfig.cmake)
@@ -386,6 +401,7 @@ configure_package_config_file(
 install(FILES
     "${CMAKE_CURRENT_BINARY_DIR}/PTOASConfig.cmake"
     DESTINATION ${PTOAS_CMAKE_INSTALL_DIR}
+    COMPONENT PTOAS_CMake
 )
 
 if(NOT DEFINED PACKAGE_TYPE)

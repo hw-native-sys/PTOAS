@@ -30,70 +30,6 @@ LogicalResult mlir::pto::AddPtrOp::verify()
     return success();
 }
 
-static Type getPointerLikeElementType(Type type)
-{
-    if (auto ptrTy = dyn_cast<mlir::pto::PtrType>(type)) {
-        return ptrTy.getElementType();
-    }
-    return Type();
-}
-
-static bool isEmitCSupportedScalarType(Type type)
-{
-    if (!type) {
-        return false;
-    }
-    if (type.isF16() || type.isBF16() || type.isF32() || type.isF64()) {
-        return true;
-    }
-    if (auto intTy = dyn_cast<IntegerType>(type)) {
-        return intTy.getWidth() == mlir::pto::kValue8 ||
-               intTy.getWidth() == mlir::pto::kValue16 ||
-               intTy.getWidth() == mlir::pto::kValue32 ||
-               intTy.getWidth() == mlir::pto::kValue64;
-    }
-    if (mlir::pto::isPTOFloat8Type(type)) {
-        return true;
-    }
-    if (isa<mlir::pto::HiF8Type, mlir::pto::F4E1M2x2Type, mlir::pto::F4E2M1x2Type>(type)) {
-        return true;
-    }
-    return false;
-}
-
-LogicalResult mlir::pto::PtrToIntOp::verify()
-{
-    Type resultTy = getResult().getType();
-    auto intTy = dyn_cast<IntegerType>(resultTy);
-    if (!intTy || intTy.getWidth() != mlir::pto::kValue64) {
-        return emitOpError("result must be i64");
-    }
-
-    if (!isa<mlir::pto::PtrType>(getPtr().getType())) {
-        return emitOpError("ptr operand must be !pto.ptr<...>");
-    }
-    return success();
-}
-
-LogicalResult mlir::pto::IntToPtrOp::verify()
-{
-    auto addrTy = dyn_cast<IntegerType>(getAddr().getType());
-    if (!addrTy || addrTy.getWidth() != mlir::pto::kValue64) {
-        return emitOpError("address operand must be i64");
-    }
-
-    if (!isa<mlir::pto::PtrType>(getResult().getType())) {
-        return emitOpError("result must be !pto.ptr<...>");
-    }
-
-    Type dstElem = getPointerLikeElementType(getResult().getType());
-    if (!isEmitCSupportedScalarType(dstElem)) {
-        return emitOpError("result element type is not supported by EmitC: ") << dstElem;
-    }
-
-    return success();
-}
-
 LogicalResult mlir::pto::LocalArrayGetOp::verify()
 {
     auto arrayTy = getArray().getType();
@@ -219,44 +155,94 @@ LogicalResult mlir::pto::StructSetOp::verify()
                               "value");
 }
 
-LogicalResult mlir::pto::CastPtrOp::verify()
+static bool isSignlessI64AddressType(Type type)
 {
-    Type inputType = getInput().getType();
-    Type resultType = getResult().getType();
+    auto integer = dyn_cast<IntegerType>(type);
+    return integer && integer.getWidth() == 64 && integer.isSignless();
+}
 
-    auto inputPtrType = dyn_cast<mlir::pto::PtrType>(inputType);
-    auto resultPtrType = dyn_cast<mlir::pto::PtrType>(resultType);
-    auto inputMemRefType = dyn_cast<BaseMemRefType>(inputType);
+static LogicalResult verifyCastPtrKindSurface(Operation *op, Type inputType, Type resultType)
+{
     bool inputIsInteger = isa<IntegerType>(inputType);
     bool resultIsInteger = isa<IntegerType>(resultType);
 
-    if (!inputPtrType && !inputMemRefType && !inputIsInteger) {
-        return emitOpError("input must be an integer, memref, or !pto.ptr<...>");
-    }
-    if (!resultPtrType && !resultIsInteger) {
-        return emitOpError("result must be an integer or !pto.ptr<...>");
-    }
+    const bool inputKindSupported =
+        isa<mlir::pto::PtrType, mlir::BaseMemRefType>(inputType) || inputIsInteger;
+    const bool resultKindSupported = isa<mlir::pto::PtrType>(resultType) || resultIsInteger;
 
+    if (!inputKindSupported) {
+        return op->emitOpError("input must be an integer, memref, or !pto.ptr<...>");
+    }
+    if (!resultKindSupported) {
+        return op->emitOpError("result must be an integer or !pto.ptr<...>");
+    }
     if (inputIsInteger && resultIsInteger) {
-        return emitOpError("integer-to-integer cast is not a ptr cast");
+        return op->emitOpError("integer-to-integer cast is not a ptr cast");
     }
+    if (inputIsInteger && !isSignlessI64AddressType(inputType)) {
+        return op->emitOpError("integer address input must be signless i64");
+    }
+    if (resultIsInteger && !isSignlessI64AddressType(resultType)) {
+        return op->emitOpError("integer address result must be signless i64");
+    }
+    return success();
+}
 
-    if (inputMemRefType && resultIsInteger) {
-        return emitOpError("memref-to-integer cast is unsupported");
+static LogicalResult verifyCastPtrElementTypes(Operation *op, Type inputType, Type resultType)
+{
+    auto inputPtrType = dyn_cast<mlir::pto::PtrType>(inputType);
+    auto resultPtrType = dyn_cast<mlir::pto::PtrType>(resultType);
+
+    if (inputPtrType &&
+        !isSupportedPTOPointerElementType(inputPtrType.getElementType())) {
+        return op->emitOpError("input pointer element type is not supported by PTO: ")
+               << inputPtrType.getElementType();
+    }
+    if (resultPtrType &&
+        !isSupportedPTOPointerElementType(resultPtrType.getElementType())) {
+        return op->emitOpError("result pointer element type is not supported by PTO: ")
+               << resultPtrType.getElementType();
+    }
+    return success();
+}
+
+static LogicalResult verifyCastPtrMemorySpaces(Operation *op, Type inputType, Type resultType)
+{
+    auto inputPtrType = dyn_cast<mlir::pto::PtrType>(inputType);
+    auto resultPtrType = dyn_cast<mlir::pto::PtrType>(resultType);
+    auto inputMemRefType = dyn_cast<mlir::BaseMemRefType>(inputType);
+
+    if (inputMemRefType && isa<IntegerType>(resultType)) {
+        return op->emitOpError("memref-to-integer cast is unsupported");
     }
 
     if (inputMemRefType && resultPtrType) {
         auto memrefSpace = dyn_cast_or_null<mlir::pto::AddressSpaceAttr>(inputMemRefType.getMemorySpace());
         auto resultSpace = resultPtrType.getMemorySpace();
         if (memrefSpace && memrefSpace != resultSpace) {
-            return emitOpError("memref-to-ptr cast must stay within the same PTO memory space");
+            return op->emitOpError("memref-to-ptr cast must stay within the same PTO memory space");
         }
     }
 
     if (inputPtrType && resultPtrType && inputPtrType.getMemorySpace() != resultPtrType.getMemorySpace()) {
-        return emitOpError("ptr-to-ptr cast must stay within the same PTO memory space");
+        return op->emitOpError("ptr-to-ptr cast must stay within the same PTO memory space");
     }
+    return success();
+}
 
+LogicalResult mlir::pto::CastPtrOp::verify()
+{
+    Type inputType = getInput().getType();
+    Type resultType = getResult().getType();
+    if (failed(verifyCastPtrKindSurface(getOperation(), inputType, resultType))) {
+        return failure();
+    }
+    if (failed(verifyCastPtrElementTypes(getOperation(), inputType, resultType))) {
+        return failure();
+    }
+    if (failed(verifyCastPtrMemorySpaces(getOperation(), inputType, resultType))) {
+        return failure();
+    }
     return success();
 }
 
