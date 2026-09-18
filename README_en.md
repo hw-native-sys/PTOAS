@@ -266,6 +266,18 @@ ptoas test/lit/pto/empty_func.pto --pto-level=level3 -o outputfile.cpp
 ptoas --version
 ```
 
+The stage-1 C/V cost model exchange supports static A5 four-stage serial inputs:
+
+```bash
+ptoas costmodel export test/samples/CVCostModel/four_stage_serial.pto \
+  --profile test/samples/CVCostModel/a5_profile.json --output cv-package
+ptoas costmodel import cv-package --plan plan.json --output cv-result
+```
+
+Import attaches pending preload and per-buffer slot annotations and reports `annotation_only`.
+See the [exchange contract](docs/designs/ptoas-cv-costmodel-exchange-v1.md) and
+[reproducible fixture](test/samples/CVCostModel/README.md) for supported inputs and the plan format.
+
 ### 5.2 Python API
 
 In a supported `ptoas` install environment, both the PTO Dialect and PTODSL
@@ -332,3 +344,9 @@ Notes:
 - `test/samples/MatMul/npu_validation/tmatmulk/` will contain `tmatmulk_kernel.cpp`, `main.cpp`, `golden.py`, `compare.py`, `run.sh`, and `CMakeLists.txt`.
 - `golden.py` generates random inputs by default; outputs default to all zeros (only the count, shape, and data type of inputs/outputs match the kernel parameters).
 - `compare.py` compares `golden*.bin` against `output*.bin` and reports an error if they differ.
+<!-- Cost model v2 is opt-in and does not enable performance transformations by default. -->
+
+The optional `ptoas costmodel v2` interface adds typed program exchange, independent model processes,
+bound candidate schedules and static candidate compilation while preserving v1 compatibility.
+See the [2.0 exchange design](docs/designs/ptoas-costmodel-exchange-v2.md) and
+[C/V sample](test/samples/CVCostModel/README.md). Compilation does not establish device correctness or performance certification.

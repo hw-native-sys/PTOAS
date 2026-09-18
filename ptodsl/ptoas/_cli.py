@@ -1,4 +1,3 @@
-# coding=utf-8
 # Copyright (c) 2026 Huawei Technologies Co., Ltd.
 # This program is free software, you can redistribute it and/or modify it under the terms and conditions of
 # CANN Open Software License Agreement Version 2.0 (the "License").
@@ -49,6 +48,10 @@ def _resolve_tileops_dir(native_module) -> Path:
 
 
 def launch(user_args: Sequence[str], *, wrapper: Path | None = None) -> int:
+    if user_args and user_args[0] == "costmodel":
+        from ptoas.costmodel import main as costmodel_main
+
+        return costmodel_main(list(user_args[1:]))
     native_module = _load_native_module()
     tileops_dir = _resolve_tileops_dir(native_module)
     wrapper = wrapper.resolve() if wrapper is not None else _resolve_wrapper_path()

@@ -19,6 +19,16 @@
 using namespace mlir;
 using namespace pto;
 
+static llvm::cl::opt<bool> emitCVCostModelIR(
+    "emit-cv-costmodel-ir",
+    llvm::cl::desc("Emit A5 serial PTO after pipe validation for CV cost model exchange"),
+    llvm::cl::init(false));
+
+static llvm::cl::opt<std::string> cvCostModelFinalIRFile(
+    "cv-costmodel-final-ir-file",
+    llvm::cl::desc("Write final pre-EmitC PTO from the same compilation"),
+    llvm::cl::value_desc("path"), llvm::cl::init(""));
+
 namespace {
 /// Materialize the implicit no-inline semantics of `pto.simt_entry` using the
 /// standard Func dialect attribute understood by MLIR's public inliner
@@ -1023,7 +1033,15 @@ struct CompilePipelineState {
 };
 
 static LogicalResult validateCompileBackendFlags(PTOBackend backend,
-                                                 llvm::StringRef arch) {
+                                               llvm::StringRef arch) {
+  const bool invalidFeedback = backend != PTOBackend::EmitC || arch != "a5" ||
+                               emitCVCostModelIR || emitMlirIR || cvCostModelFinalIRFile == "-";
+  const bool hasFeedback = !cvCostModelFinalIRFile.empty();
+  if (hasFeedback && invalidFeedback) {
+    llvm::errs() << "Error: --cv-costmodel-final-ir-file requires A5 EmitC "
+                    "code generation and a file path.\n";
+    return failure();
+  }
   VPTOSchedulerCLIMode schedulerMode = getEffectiveVPTOSchedulerMode(arch);
   if (backend != PTOBackend::VPTO &&
       (emitVPTO || emitVPTOLLVMDialect || ptoPrintSeamIR ||
@@ -1264,6 +1282,31 @@ static LogicalResult validateCompileOptions(ModuleOp module,
                  !validateReserveBufferLevelRules(module, level)
              ? failure()
              : success();
+}
+
+static LogicalResult emitCVCostModelCheckpoint(ModuleOp module,
+                                              PTOASCompileResult &result) {
+  auto arch = module->getAttrOfType<StringAttr>("pto.target_arch");
+  const bool isA5 = arch && arch.getValue() == "a5";
+  if (!isA5) {
+    return module.emitError("--emit-cv-costmodel-ir requires --pto-arch=a5");
+  }
+  PassManager pm(module.getContext());
+  pm.enableVerifier();
+  pm.addPass(createSerialFrontendPipeLoweringPass());
+  pm.addPass(pto::createPTOInferValidatePipeInitPass());
+  pm.addNestedPass<func::FuncOp>(pto::createPTOVerifyTFreePass());
+  if (failed(pm.run(module))) {
+    return failure();
+  }
+  module->setAttr("pto.costmodel.checkpoint_version",
+                  IntegerAttr::get(IntegerType::get(module.getContext(), 64), 1));
+  module->setAttr("pto.costmodel.compiler_version",
+                  StringAttr::get(module.getContext(), PTOAS_RELEASE_VERSION));
+  llvm::raw_string_ostream stream(result.textOutput);
+  module.print(stream, OpPrintingFlags().useLocalScope().printGenericOpForm());
+  stream << "\n";
+  return success();
 }
 
 static LogicalResult runPreBackendNormalization(ModuleOp module) {
@@ -1599,6 +1642,9 @@ static void runCppPostRewrites(std::string &cppOutput) {
 static int runEmitCTextEmission(OwningOpRef<ModuleOp> &module,
                                 const CompilePipelineState &state,
                                 PTOASCompileResult &result) {
+  if (failed(emitSharedPreBackendSeamIR(*module, cvCostModelFinalIRFile))) {
+    return 1;
+  }
   if (ptoPrintSeamIR) {
     printSharedPreBackendSeamIR(*module);
   }
@@ -1661,6 +1707,9 @@ int mlir::pto::compilePTOASModule(
   }
   if (failed(runPreBackendNormalization(*module))) {
     return 1;
+  }
+  if (emitCVCostModelIR) {
+    return failed(emitCVCostModelCheckpoint(*module, result)) ? 1 : 0;
   }
   state.hasTileOpsToExpand = hasUnexpandedTileOps(*module);
 

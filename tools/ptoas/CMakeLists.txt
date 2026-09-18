@@ -193,6 +193,16 @@ add_mlir_python_sources_target(PTOASRuntimePythonSourcesStage
 
 add_dependencies(PTOASRuntimePythonSourcesStage PTODSLPackageStage)
 
+declare_mlir_python_sources(PTOCostModelSources
+  ROOT_DIR "${CMAKE_SOURCE_DIR}/ptodsl/pto_costmodel"
+  SOURCES_GLOB "*.py" "*.json"
+)
+add_mlir_python_sources_target(PTOCostModelSourcesStage
+  OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/python/pto_costmodel"
+  SOURCES_TARGETS PTOCostModelSources
+)
+add_dependencies(PTOASRuntimePythonSourcesStage PTOCostModelSourcesStage)
+
 file(GLOB_RECURSE _ptoas_tileops_py_sources CONFIGURE_DEPENDS
   RELATIVE "${CMAKE_SOURCE_DIR}/lib/TileOps"
   "${CMAKE_SOURCE_DIR}/lib/TileOps/*.py"
@@ -481,4 +491,3 @@ if(PTOAS_ENABLE_ONLINE_CORE_COMPILE)
     endif()
   endforeach()
 endif()
-

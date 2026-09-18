@@ -43,6 +43,14 @@ install(
 )
 
 install(
+  DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}/pto_costmodel"
+  DESTINATION "."
+  COMPONENT PTOAS_CompilerArchive
+  PATTERN "__pycache__" EXCLUDE
+  PATTERN "*.pyc" EXCLUDE
+)
+
+install(
   DIRECTORY "${TILEOPS_PACKAGE_SRC_DIR}"
   DESTINATION "share/ptoas"
   COMPONENT PTOAS_Runtime

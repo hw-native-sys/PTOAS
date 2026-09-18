@@ -434,6 +434,12 @@ static LogicalResult resolveTileNativeMultiGets(ModuleOp module,
         op.getLoc(), op.getResult().getType(), selectedAddr,
         alloc.getValidRow() ? alloc.getValidRow() : Value(),
         alloc.getValidCol() ? alloc.getValidCol() : Value());
+    if (auto source = alloc->getAttr("pto.costmodel.buffer_id")) {
+      slotHandle->setAttr("pto.costmodel.buffer_id", source);
+      if (constSlotAttr) {
+        slotHandle->setAttr("pto.costmodel.slot", constSlotAttr);
+      }
+    }
     rewriter.replaceOp(op, slotHandle.getResult());
   }
 
@@ -443,6 +449,21 @@ static LogicalResult resolveTileNativeMultiGets(ModuleOp module,
     if (!alloc.getResult().use_empty()) {
       return alloc.emitError(
           "has unsupported uses after resolving pto.multi_tile_get");
+    }
+    auto source = alloc->getAttrOfType<StringAttr>("pto.costmodel.buffer_id");
+    auto planned = alloc->getAttrOfType<DenseI64ArrayAttr>(
+        pto::kPtoMultiBufferAddrsAttrName);
+    if (source && planned) {
+      SmallVector<Attribute> layouts;
+      if (auto previous = module->getAttrOfType<ArrayAttr>(
+              "pto.costmodel.slot_layouts")) {
+        layouts.append(previous.begin(), previous.end());
+      }
+      Builder builder(ctx);
+      layouts.push_back(builder.getDictionaryAttr({
+          builder.getNamedAttr("buffer_id", source),
+          builder.getNamedAttr("addresses", planned)}));
+      module->setAttr("pto.costmodel.slot_layouts", builder.getArrayAttr(layouts));
     }
     alloc.erase();
   }

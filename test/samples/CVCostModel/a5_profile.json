@@ -1,0 +1,25 @@
+{
+  "schema_version": "pto.cv_costmodel.v1",
+  "profile_id": "a5-planmemory-v1",
+  "arch": "a5",
+  "aic_count": 1,
+  "aiv_count": 2,
+  "capacity_bytes": {
+    "mat": 524288,
+    "left": 65536,
+    "right": 65536,
+    "acc": 262144,
+    "vec": 253952
+  },
+  "alignment_bytes": {
+    "mat": 256,
+    "left": 4096,
+    "right": 4096,
+    "acc": 4096,
+    "vec": 256
+  },
+  "l2": {
+    "policy": "off",
+    "capacity_bytes": 0
+  }
+}
