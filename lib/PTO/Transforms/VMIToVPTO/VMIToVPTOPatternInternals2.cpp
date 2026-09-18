@@ -703,17 +703,71 @@ private:
 
 public:
 
+  static FailureOr<Value> createLaneStrideStoreMask(
+      VMIStoreOp op, VMIVRegType valueVMIType, int64_t activeLanes,
+      StringRef maskGranularity, OneToNPatternRewriter &rewriter) {
+    FailureOr<int64_t> maskLanesPerPart =
+        getMaskLanesPerPart(maskGranularity);
+    if (failed(maskLanesPerPart)) {
+      return rewriter.notifyMatchFailure(
+          op, "failed to query mask lanes per part for lane_stride store");
+    }
+    int64_t maskGranBits =
+        static_cast<int64_t>(mlir::pto::kValue256 * mlir::pto::kValue8) /
+        *maskLanesPerPart;
+    unsigned elementBits =
+        pto::getPTOStorageElemBitWidth(valueVMIType.getElementType());
+    int64_t outputPairBits =
+        static_cast<int64_t>(elementBits) *
+        valueVMIType.getLayoutAttr().getLaneStride();
+    int64_t maskBitsPerOutput = outputPairBits / maskGranBits;
+    int64_t physActiveMaskLanes =
+        std::min(activeLanes * maskBitsPerOutput, *maskLanesPerPart);
+    // Use getPrefixPattern so a full mask emits PAT_ALL rather than PAT_VL64.
+    std::optional<std::string> maskPattern =
+        getPrefixPattern(physActiveMaskLanes, *maskLanesPerPart);
+    if (!maskPattern) {
+      return rewriter.notifyMatchFailure(
+          op, "failed to determine mask pattern for lane_stride store");
+    }
+    auto maskType = MaskType::get(rewriter.getContext(), maskGranularity);
+    FailureOr<Value> mask =
+        createPrefixMask(op.getLoc(), maskType, *maskPattern, rewriter);
+    if (failed(mask)) {
+      return rewriter.notifyMatchFailure(
+          op, "failed to create lane_stride store mask");
+    }
+    return *mask;
+  }
+
+  static LogicalResult emitLaneStrideStorePart(
+      VMIStoreOp op, Value destination, Value offset, Value value,
+      VMIVRegType valueVMIType, int64_t activeLanes, int64_t semanticOffset,
+      StringRef laneStrideDist, StringRef maskGranularity,
+      OneToNPatternRewriter &rewriter) {
+    if (!isa<VRegType>(value.getType())) {
+      return rewriter.notifyMatchFailure(op, "store value must be vreg");
+    }
+
+    FailureOr<Value> mask = createLaneStrideStoreMask(
+        op, valueVMIType, activeLanes, maskGranularity, rewriter);
+    if (failed(mask)) {
+      return failure();
+    }
+    Value chunkOffset =
+        createChunkOffset(op.getLoc(), offset, semanticOffset, rewriter);
+    rewriter.create<VstsOp>(op.getLoc(), /*updated_base=*/Type{}, value,
+                            destination, chunkOffset,
+                            rewriter.getStringAttr(laneStrideDist), *mask);
+    return success();
+  }
+
   static LogicalResult emitLaneStrideStore(
       VMIStoreOp op, Value destination, Value offset, ValueRange valueParts,
       VMIVRegType valueVMIType, StringRef laneStrideDist,
       StringRef maskGranularity, OneToNPatternRewriter &rewriter) {
     int64_t semanticOffset = 0;
     for (auto [index, value] : llvm::enumerate(valueParts)) {
-      (void)index;
-      auto vregType = dyn_cast<VRegType>(value.getType());
-      if (!vregType) {
-        return rewriter.notifyMatchFailure(op, "store value must be vreg");
-      }
       FailureOr<int64_t> activeLanes =
           getActiveDataLanesInPhysicalChunk(valueVMIType, index);
       if (failed(activeLanes)) {
@@ -723,18 +777,11 @@ public:
       if (*activeLanes == 0) {
         continue;
       }
-      auto maskType = MaskType::get(rewriter.getContext(), maskGranularity);
-      FailureOr<Value> mask = createPrefixMaskForActiveLanes(
-          op.getLoc(), maskType, *activeLanes, rewriter);
-      if (failed(mask)) {
-        return rewriter.notifyMatchFailure(
-            op, "failed to create lane_stride store mask");
+      if (failed(emitLaneStrideStorePart(
+              op, destination, offset, value, valueVMIType, *activeLanes,
+              semanticOffset, laneStrideDist, maskGranularity, rewriter))) {
+        return failure();
       }
-      Value chunkOffset =
-          createChunkOffset(op.getLoc(), offset, semanticOffset, rewriter);
-      rewriter.create<VstsOp>(op.getLoc(), /*updated_base=*/Type{}, value,
-                              destination, chunkOffset,
-                              rewriter.getStringAttr(laneStrideDist), *mask);
       semanticOffset += *activeLanes;
     }
     return success();

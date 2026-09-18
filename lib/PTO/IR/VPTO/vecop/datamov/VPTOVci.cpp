@@ -26,9 +26,9 @@ LogicalResult VciOp::verify() {
                        intType.getWidth() == mlir::pto::kValue16 ||
                        intType.getWidth() == mlir::pto::kValue32;
   }
-  bool supportedFloat = resultElemType.isF16() || resultElemType.isF32();
+  bool supportedFloat = resultElemType.isF16() || resultElemType.isBF16() || resultElemType.isF32();
   if (!supportedInteger && !supportedFloat) {
-    return emitOpError("result element type must be integer or f16/f32");
+    return emitOpError("result element type must be integer or f16/bf16/f32");
   }
   if (!isCompatibleScalarForSemanticType(resultElemType, getIndex().getType())) {
     return emitOpError("index type must match result element type");

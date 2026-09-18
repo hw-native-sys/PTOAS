@@ -37,12 +37,30 @@ FailureOr<Value> adaptMaskToVRegGranularity(Location loc, Value mask,
   return currentMask;
 }
 
+static void includeStridePaddingInPrefix(SmallVectorImpl<int8_t> &activeLanes) {
+  auto lastActive = activeLanes.end();
+  for (auto it = activeLanes.begin(); it != activeLanes.end(); ++it) {
+    if (*it != 0) {
+      lastActive = it;
+    }
+  }
+  if (lastActive != activeLanes.end()) {
+    std::fill(activeLanes.begin(), std::next(lastActive), 1);
+  }
+}
+
 FailureOr<Value> materializeAllLogicalLanesMaskPart(Location loc,
-                                                    VMIMaskType vmiType,
+                                                    Type vmiType,
                                                     MaskType physicalType,
                                                     size_t targetIndex,
+                                                    bool includeStridePadding,
                                                     PatternRewriter &rewriter) {
-  VMILayoutAttr layout = vmiType.getLayoutAttr();
+  VMILayoutAttr layout;
+  if (auto dataType = dyn_cast<VMIVRegType>(vmiType)) {
+    layout = dataType.getLayoutAttr();
+  } else if (auto maskType = dyn_cast<VMIMaskType>(vmiType)) {
+    layout = maskType.getLayoutAttr();
+  }
   FailureOr<int64_t> lanesPerPart =
       getMaskLanesPerPart(physicalType.getGranularity());
   if (!layout || failed(lanesPerPart)) {
@@ -65,6 +83,9 @@ FailureOr<Value> materializeAllLogicalLanesMaskPart(Location loc,
           activeLanes[lane] = 1;
         }
       }
+      if (anyLane && includeStridePadding) {
+        includeStridePaddingInPrefix(activeLanes);
+      }
       if (!anyLane) {
         break;
       }
@@ -76,6 +97,41 @@ FailureOr<Value> materializeAllLogicalLanesMaskPart(Location loc,
     }
   }
   return failure();
+}
+
+struct ImplicitMaskPlan {
+  Type logicalType;
+  SmallVector<Type> physicalTypes;
+  bool includeStridePadding = false;
+};
+
+static FailureOr<ImplicitMaskPlan> getImplicitMaskPlan(
+    VMIVRegType logicalDataType, VRegType physicalDataType,
+    StringRef granularity, const TypeConverter &typeConverter,
+    PatternRewriter &rewriter) {
+  ImplicitMaskPlan plan;
+  plan.logicalType = VMIMaskType::get(
+      rewriter.getContext(), logicalDataType.getElementCount(), granularity,
+      logicalDataType.getLayoutAttr());
+  if (succeeded(
+          typeConverter.convertType(plan.logicalType, plan.physicalTypes))) {
+    return plan;
+  }
+
+  // A b32 lane-stride mask would require an unsupported b64 carrier. Use the
+  // data predicate granularity and include harmless gaps up to the last lane.
+  plan.logicalType = logicalDataType;
+  plan.includeStridePadding = true;
+  FailureOr<MaskType> fallbackType =
+      getMaskTypeForVReg(physicalDataType, rewriter.getContext());
+  FailureOr<int64_t> dataArity = getVMIPhysicalArity(logicalDataType);
+  bool invalidFallback =
+      failed(fallbackType) || failed(dataArity) || *dataArity < 0;
+  if (invalidFallback) {
+    return failure();
+  }
+  plan.physicalTypes.assign(*dataArity, *fallbackType);
+  return plan;
 }
 
 FailureOr<Value> getUnifiedMaskPart(Operation *op, ValueRange maskParts,
@@ -101,20 +157,19 @@ FailureOr<Value> getUnifiedMaskPart(Operation *op, ValueRange maskParts,
       return failure();
     }
 
-    auto logicalMaskType =
-        VMIMaskType::get(op->getContext(), logicalDataType.getElementCount(),
-                         granularity, logicalDataType.getLayoutAttr());
-    SmallVector<Type> physicalMaskTypes;
-    if (failed(typeConverter.convertType(logicalMaskType, physicalMaskTypes)) ||
-        index >= physicalMaskTypes.size()) {
+    FailureOr<ImplicitMaskPlan> plan = getImplicitMaskPlan(
+        logicalDataType, dataType, granularity, typeConverter, rewriter);
+    bool invalidPlan = failed(plan) || index >= plan->physicalTypes.size();
+    if (invalidPlan) {
       return failure();
     }
-    auto physicalMaskType = dyn_cast<MaskType>(physicalMaskTypes[index]);
+    auto physicalMaskType = dyn_cast<MaskType>(plan->physicalTypes[index]);
     if (!physicalMaskType) {
       return failure();
     }
     FailureOr<Value> allLogicalLanes = materializeAllLogicalLanesMaskPart(
-        op->getLoc(), logicalMaskType, physicalMaskType, index, rewriter);
+        op->getLoc(), plan->logicalType, physicalMaskType, index,
+        plan->includeStridePadding, rewriter);
     if (failed(allLogicalLanes)) {
       return failure();
     }

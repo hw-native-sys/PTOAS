@@ -1704,3 +1704,96 @@ Each step should keep existing group-slot `lane_stride` tests passing. The first
 functional optimization can be the `f16/bf16 lane_stride=2 -> f32 contiguous`
 single-part conversion, but the IR and helper changes should already be generic
 over type width and lane-map fields.
+
+## 11. Lane-Strided Iota Lowering
+
+### 11.1 Lowering Approach: vmuls+vadds vs c→ls2
+
+`vmi.vci` (logical iota) with a `contiguous, lane_stride=LS` result layout is
+lowered in `createIotaLaneStrideChunk` using a three-instruction sequence:
+
+```text
+vci(0)           ; physical indices 0, 1, 2, ..., N-1
+vmuls(×1/LS)     ; scale: 0, 1/LS, 2/LS, ..., (N-1)/LS
+vadds(+base)     ; shift: base, base+1/LS, ..., base+(N-1)/LS
+```
+
+Physical lane `i*LS` observes `base+i`, which is the correct logical value.
+Lanes between multiples of LS receive rounding fill (e.g. `base+i+0.5` for LS=2)
+and must not be consumed; this is enforced by the lane-strided layout contract.
+
+An alternative path exists: materialize a contiguous iota first, then convert to
+the lane-strided layout using `VMIEnsureLayoutOp`:
+
+```text
+vci(base)                       ; contiguous iota
+ensure_layout(contiguous → ls2) ; vzunpack placement: vci(0) into even slots
+```
+
+The `ensure_layout(contiguous → lane_stride)` path is a well-established
+pattern in the codebase.  The two technical concerns (layout-fold exposing odd
+lanes and odd-lane semantics) are statically resolved:
+
+- `vmi-layout-fold` targets load producers and store consumers; it does not
+  fold iota producers, so odd-lane fill is not exposed to contiguous consumers.
+- Both paths produce undefined fill in odd/non-sampled physical lanes: the
+  vmuls path rounds `base+i+0.5`, while the vzunpack path inserts zero.  Any
+  consumer that reads these lanes violates the layout contract regardless of
+  which materialization was used.
+
+The current implementation uses the vmuls+vadds approach.  The tradeoff:
+
+| Criterion | vmuls+vadds (float) / vshrs+vadds (int) | vci+vzunpack (alternative) |
+|---|---|---|
+| Instruction count | 3 float / 5–6 int (inc. 2 vbitcast for logical shift) | 2 (vci+vzunpack) |
+| Float type support | f16/bf16/f32 | same |
+| Integer type support | i8/i16/i32 (vshrs) | same |
+| Dependency on ensure_layout | none | requires contiguous→LS materialization path |
+
+The vmuls+vadds / vshrs approach is retained because:
+
+1. The instruction-count difference (3 vs 2) is not significant for the targeted
+   compact-store producer shape; the bottleneck is the PK_B32 store.
+2. Removing the ensure_layout dependency keeps the iota lowering self-contained
+   and avoids a coupling to the contiguous↔lane_stride register materialization
+   path, which itself has limited type coverage for b32 and floating-point
+   carriers (see §1.2).
+
+If a future measured register-pressure benefit from the 2-instruction path
+appears, switch to `c→ls2` at that point and update the implementation-nail
+comments in the lit tests accordingly.
+
+### 11.2 Integer Lane-Strided Iota: vshrs-Based Implementation
+
+Prior to MR-22, integer `vmi.vci` with `lane_stride > 1` silently produced
+wrong values: `vmuls` on an integer ramp would scale by a float constant,
+yielding undefined behavior.  After MR-22, the integer path was initially
+guarded with an explicit `op.emitError()`.
+
+The current implementation uses `pto.vshrs` (vector arithmetic right shift by
+scalar `i16`) to implement integer lane-strided iota without a float dependency:
+
+```text
+ASC  (3 instructions): vci(0) → vshrs(>>log2(LS)) → vadds(+base)
+DESC (4 instructions): vci(0) → vshrs(>>log2(LS)) → vneg → vadds(+base)
+```
+
+For `laneStride=2`, `log2(LS)=1`; for `laneStride=4`, `log2(LS)=2`.  The shift
+maps each physical lane index `i` to its logical index `⌊i/laneStride⌋`, so
+that every `laneStride`-th physical lane observes the correct integer value.
+This holds correctly for all supported integer types: `i16` and `i32` have at
+most 128 and 64 physical lanes respectively, so `vci(0)` indices never reach
+the signed range boundary; for 8-bit types (`i8`/`si8`) the full 256-lane
+carrier would have indices 128–255 which exceed the signed i8 range (−128..127),
+so `vshrs` must be a logical (zero-filling) shift — the implementation
+reinterprets the `vci` result as `ui8` via `vbitcast` before the shift and
+casts back afterwards, ensuring the `u`-variant callee is selected regardless
+of the nominal signedness of the output type.
+Intermediate (non-sampled) lanes hold shifted values that are undefined to
+consumers; the lane-strided layout contract guarantees that only every
+`laneStride`-th lane is consumed (e.g. by PK_B32 stores).
+
+DESC uses `vneg` to negate the shifted ramp before adding `base`, equivalent to
+computing `base − ⌊i/LS⌋` without a scalar-minus-vector instruction.  The extra
+instruction (4 vs 3 for float DESC) is acceptable because integer DESC
+lane-strided iota is expected to be rare in practice.

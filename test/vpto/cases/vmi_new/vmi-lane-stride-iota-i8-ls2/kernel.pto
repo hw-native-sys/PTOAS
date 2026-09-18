@@ -1,0 +1,60 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+
+// Regression for #1411 – integer lane-strided iota must use logical right shift.
+//
+// This kernel is written at the VMI level so that the full VMIToVPTO lowering
+// pipeline is exercised.  No explicit layout annotation is needed: the
+// preferred store layout for i8 VL=128 is lane_stride=2
+// (kDenseStoreLayoutPatterns: {bits<8>(), ls(2), N<128>(), preferred=true}),
+// which VMILayoutAssignment propagates backward through vadd to the vci.
+//
+// Lowering path exercised (createIotaLaneStrideIntRamp):
+//   vci(0) → physical [0..255] as i8 (values 128–255 = −128..−1 in signed i8)
+//   vbitcast(→ui8) → vshrs(>>1, logical) → vbitcast(→i8) → vadds(+base=0)
+//
+// Without the fix (arithmetic >>1): physical lane 128 = 0x80 = −128 in i8;
+//   arithmetic >>1 = −64, but logical index should be 64. Output bytes
+//   64–127 would be [−64..−1] instead of [64..127].
+//
+// Expected output: 128 bytes [0x00..0x7F].
+
+module attributes {pto.target_arch = "a5", pto.kernel_kind = #pto.kernel_kind<vector>} {
+  func.func @vmi_lane_stride_iota_i8_ls2_kernel(
+      %dst_gm: !pto.ptr<i8, gm>) attributes {pto.kernel} {
+    %c0       = arith.constant 0   : index
+    %c0_i8    = arith.constant 0   : i8
+    %c0_i64   = arith.constant 0   : i64
+    %c1_i64   = arith.constant 1   : i64
+    %c128_i64 = arith.constant 128 : i64
+
+    %ub_dst = pto.castptr %c0_i64 : i64 -> !pto.ptr<i8, ub>
+
+    pto.vecscope {
+      %mask = pto.vmi.pset "PAT_ALL" : !pto.vmi.mask<128xpred>
+      // VL=128 i8: store preferred layout = lane_stride=2, propagated back to vci.
+      %iota = pto.vmi.vci %c0_i8
+          : i8 -> !pto.vmi.vreg<128xi8>
+      // vadds(+0) acts as a transparent layout sink; the base=0 keeps values
+      // as pure logical indices.
+      %result = pto.vmi.vadds %iota, %c0_i8, %mask
+          : !pto.vmi.vreg<128xi8>, i8, !pto.vmi.mask<128xpred>
+          -> !pto.vmi.vreg<128xi8>
+      pto.vmi.vstore %result, %ub_dst[%c0]
+          : !pto.vmi.vreg<128xi8>, !pto.ptr<i8, ub>
+    }
+
+    pto.set_flag["PIPE_V", "PIPE_MTE3", "EVENT_ID0"]
+    pto.wait_flag["PIPE_V", "PIPE_MTE3", "EVENT_ID0"]
+    pto.mte_ub_gm %ub_dst, %dst_gm, %c128_i64
+      nburst(%c1_i64, %c128_i64, %c128_i64)
+      : !pto.ptr<i8, ub>, !pto.ptr<i8, gm>, i64, i64, i64, i64
+    pto.barrier #pto.pipe<PIPE_ALL>
+    return
+  }
+}
