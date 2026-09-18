@@ -1,0 +1,55 @@
+module attributes {pto.target_arch = "a5", pto.kernel_kind = #pto.kernel_kind<vector>} {
+  func.func @simt_fp32_precision_kernel(
+      %a: !pto.ptr<f32, gm>, %b: !pto.ptr<f32, gm>,
+      %c: !pto.ptr<f32, gm>, %lhs: !pto.ptr<f32, gm>,
+      %rhs: !pto.ptr<f32, gm>, %out: !pto.ptr<f32, gm>)
+      attributes {pto.aicore} {
+    %dim_x = arith.constant 256 : i32
+    %dim_y = arith.constant 1 : i32
+    %dim_z = arith.constant 1 : i32
+    pto.simt_launch @simt_fp32_precision_body<<<%dim_x, %dim_y, %dim_z>>>(
+        %a, %b, %c, %lhs, %rhs, %out)
+        : (!pto.ptr<f32, gm>, !pto.ptr<f32, gm>, !pto.ptr<f32, gm>,
+           !pto.ptr<f32, gm>, !pto.ptr<f32, gm>, !pto.ptr<f32, gm>) -> ()
+    return
+  }
+
+  func.func @simt_fp32_precision_body(
+      %a: !pto.ptr<f32, gm>, %b: !pto.ptr<f32, gm>,
+      %c: !pto.ptr<f32, gm>, %lhs: !pto.ptr<f32, gm>,
+      %rhs: !pto.ptr<f32, gm>, %out: !pto.ptr<f32, gm>)
+      attributes {pto.simt_entry} {
+    %c256 = arith.constant 256 : i32
+    %c512 = arith.constant 512 : i32
+    %tid = pto.get_tid_x : i32
+    %idx = arith.index_castui %tid : i32 to index
+    %fma_off_i32 = arith.addi %tid, %c256 : i32
+    %div_off_i32 = arith.addi %tid, %c512 : i32
+    %fma_idx = arith.index_castui %fma_off_i32 : i32 to index
+    %div_idx = arith.index_castui %div_off_i32 : i32 to index
+
+    %av = pto.ldg %a[%idx] l1cache(cache) l2cache(nmfv)
+        : !pto.ptr<f32, gm> -> f32
+    %bv = pto.ldg %b[%idx] l1cache(cache) l2cache(nmfv)
+        : !pto.ptr<f32, gm> -> f32
+    %cv = pto.ldg %c[%idx] l1cache(cache) l2cache(nmfv)
+        : !pto.ptr<f32, gm> -> f32
+    %product = arith.mulf %av, %bv : f32
+    %separate = arith.addf %cv, %product : f32
+    %fused = pto.fma %av, %bv, %cv : f32, f32, f32 -> f32
+
+    %lhs_v = pto.ldg %lhs[%idx] l1cache(cache) l2cache(nmfv)
+        : !pto.ptr<f32, gm> -> f32
+    %rhs_v = pto.ldg %rhs[%idx] l1cache(cache) l2cache(nmfv)
+        : !pto.ptr<f32, gm> -> f32
+    %quotient = arith.divf %lhs_v, %rhs_v : f32
+
+    pto.stg %separate, %out[%idx] l1cache(cache) l2cache(nmfv)
+        : !pto.ptr<f32, gm>, f32
+    pto.stg %fused, %out[%fma_idx] l1cache(cache) l2cache(nmfv)
+        : !pto.ptr<f32, gm>, f32
+    pto.stg %quotient, %out[%div_idx] l1cache(cache) l2cache(nmfv)
+        : !pto.ptr<f32, gm>, f32
+    return
+  }
+}

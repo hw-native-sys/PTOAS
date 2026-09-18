@@ -721,7 +721,10 @@ static void appendHostStubIncludeAndOptimizeArgs(
       "-fhalf-no-semantic-interposition",
       "-mframe-pointer=none",
       "-fmath-errno",
-      "-ffp-contract=on",
+      // Keep independent arith.mulf/arith.addf operations independently
+      // rounded by default.  Contraction is an explicit SIMT fast-math
+      // opt-in (see --simt-fastmath), matching the MLIR semantics.
+      enableSimtFastMath ? "-ffp-contract=on" : "-ffp-contract=off",
       "-fno-rounding-math",
       "-mconstructor-aliases",
       "-funwind-tables=2",
