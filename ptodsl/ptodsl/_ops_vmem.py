@@ -1,4 +1,3 @@
-# coding=utf-8
 # Copyright (c) 2026 Huawei Technologies Co., Ltd.
 # This program is free software, you can redistribute it and/or modify it under the terms and conditions of
 # CANN Open Software License Agreement Version 2.0 (the "License").
@@ -519,6 +518,49 @@ def _infer_vpack_result_type(src):
     return result_type
 
 
+def _infer_vunpack_result_type(src, *, sign_extend: bool, context: str):
+    lanes, elem_type = _infer_vreg_metadata(src)
+    if not IntegerType.isinstance(elem_type):
+        raise TypeError(f"{context} expects an integer source vreg, got {elem_type}")
+
+    src_int_type = IntegerType(elem_type)
+    src_width = src_int_type.width
+    if src_width not in {8, 16}:
+        raise TypeError(
+            f"{context} currently supports only the source/result shape pairs "
+            "s8/i8 -> s16/i16, s16/i16 -> s32/i32, u8 -> u16, and u16 -> u32"
+        )
+
+    if sign_extend and src_int_type.is_unsigned:
+        raise TypeError(f"{context} expects a signed or signless integer source vreg, got {elem_type}")
+    if not sign_extend and not src_int_type.is_unsigned:
+        raise TypeError(f"{context} expects an unsigned integer source vreg, got {elem_type}")
+
+    result_width = src_width * 2
+    if src_int_type.is_unsigned:
+        result_elem_type = IntegerType.get_unsigned(result_width)
+    elif src_int_type.is_signed:
+        result_elem_type = IntegerType.get_signed(result_width)
+    else:
+        result_elem_type = IntegerType.get_signless(result_width)
+    return _resolve(vreg_type(lanes // 2, result_elem_type))
+
+
+def _normalize_vunpack_part(part, *, context: str):
+    token = _normalize_vpack_part(part, context=context)
+    return _coerce_index(0 if token == "LOWER" else 1, context=context)
+
+
+def _emit_vunpack(op_ctor, src, part, *, sign_extend: bool, context: str):
+    return wrap_surface_value(
+        op_ctor(
+            _infer_vunpack_result_type(src, sign_extend=sign_extend, context=context),
+            unwrap_surface_value(src),
+            _normalize_vunpack_part(part, context=context),
+        ).result
+    )
+
+
 def vcvt(src, to_dtype, mask, *, rnd=None, sat=None, part=None):
     """``pto.vcvt`` – explicit vector type conversion."""
     kwargs = {}
@@ -553,6 +595,51 @@ def vpack(src, part):
             unwrap_surface_value(src),
             _normalize_vpack_part(part, context="vpack(src, part)"),
         ).result
+    )
+
+
+def vsunpack(src, part):
+    """``pto.vsunpack`` – sign-extend the selected half of an integer vector."""
+    return _emit_vunpack(
+        _pto.VsunpackOp,
+        src,
+        part,
+        sign_extend=True,
+        context="vsunpack(src, part)",
+    )
+
+
+def vzunpack(src, part):
+    """``pto.vzunpack`` – zero-extend the selected half of an unsigned vector."""
+    return _emit_vunpack(
+        _pto.VzunpackOp,
+        src,
+        part,
+        sign_extend=False,
+        context="vzunpack(src, part)",
+    )
+
+
+def vunpack(src, part):
+    """``pto.vunpack`` – widen one vector half using source signedness."""
+    context = "vunpack(src, part)"
+    _, elem_type = _infer_vreg_metadata(src)
+    if not IntegerType.isinstance(elem_type):
+        raise TypeError(f"{context} expects an integer source vreg, got {elem_type}")
+    if IntegerType(elem_type).is_unsigned:
+        return _emit_vunpack(
+            _pto.VzunpackOp,
+            src,
+            part,
+            sign_extend=False,
+            context=context,
+        )
+    return _emit_vunpack(
+        _pto.VsunpackOp,
+        src,
+        part,
+        sign_extend=True,
+        context=context,
     )
 
 
