@@ -608,6 +608,86 @@ def VMIChannelMergeOp : VMI_Op<"channel_merge"> {
   let hasVerifier = 1;
 }
 
+def VMIVUnzipOp : VMI_Op<"vunzip", [Pure]> {
+  let summary = "VMI split every element into its low and high half-width halves";
+  let description = [{
+    Unzip one logical vector register into two vectors.  The lane count is
+    preserved and the element width is halved, so the source reads as a stream
+    of half-width sub-elements whose even and odd entries are separated:
+
+      %lo, %hi = pto.vmi.vunzip %src
+          : !pto.vmi.vreg<NxT> -> (!pto.vmi.vreg<Nx(T/2)>, !pto.vmi.vreg<Nx(T/2)>)
+
+    %lo holds the low half of every source element and %hi the high half, both
+    lane-aligned with the source.  This is the element-granularity counterpart
+    of pto.vmi.vdintlv, which deinterleaves whole lanes.
+
+    Constraints:
+
+    - Lane counts are preserved: low, high and the source all carry N lanes.
+    - The low and high results share one element type.
+    - The wide element storage width is exactly twice the half storage width.
+      The op is a bit split, so the element type itself is free: f32 ->
+      (ui16, ui16) and f32 -> (bf16, bf16) are the same operation.
+    - Logical VMI elements are limited to 8/16/32 bits, so the pairs that type
+      and lower are 32 -> 16 and 16 -> 8.  64 -> 32 and 8 -> 4 do not exist:
+      the first has no VMI element type, the second has no 4-bit element type.
+
+    Lowering reads the halves apart with pto.vdintlv: bitcasting a wide source
+    register to its half-width carrier interleaves the two halves of every
+    element, so one deinterleave yields both results at once.
+
+    Because a half-width register holds twice as many lanes per register as a
+    wide one, a wide register feeds either two half registers (when the half
+    result fills whole registers, e.g. 256 lanes of a 16 -> 8 split) or a half
+    register that stays half full (e.g. 128 lanes of a 16 -> 8 split); both a
+    2:1 and a 1:1 register pairing lower.  A half-full result reuses its only
+    source register as both pto.vdintlv operands, and its unused upper lanes
+    are padding.
+
+    The op is a pure layout pass-through: the halves and the wide operand
+    always share one layout, whichever side fixes it, and the split re-reads
+    the wide operand part by part.  When layouts are present they must all be
+    present and equal.  block_deinterleaved is not supported: its per-part
+    block size is derived from the element width, so the wide and half operands
+    would use different logical-lane to physical-part mappings.
+  }];
+  let arguments = (ins VMI_VRegTypeConstraint:$source);
+  let results = (outs VMI_VRegTypeConstraint:$low, VMI_VRegTypeConstraint:$high);
+  let hasVerifier = 1;
+  let assemblyFormat = [{
+    $source attr-dict `:` type($source) `->` type($low) `,` type($high)
+  }];
+}
+
+def VMIVZipOp : VMI_Op<"vzip", [Pure]> {
+  let summary = "VMI merge low and high half-width halves back into whole elements";
+  let description = [{
+    Inverse of pto.vmi.vunzip: zip the low and high half of every lane back
+    into one element, keeping the lane count and doubling the element width.
+
+      %wide = pto.vmi.vzip %lo, %hi
+          : (!pto.vmi.vreg<Nx(T/2)>, !pto.vmi.vreg<Nx(T/2)>) -> !pto.vmi.vreg<NxT>
+
+    Constraints mirror pto.vmi.vunzip: the two operands share one element type
+    and the result lane count, the result storage width is exactly twice the
+    operand storage width, and the element type itself is free (a bit zip).
+    The pairs that lower are 8 + 8 -> 16 and 16 + 16 -> 32; the result is built
+    with the matching pto.vintlv, for both the 2:1 and the 1:1 register pairing
+    described on pto.vmi.vunzip.  Like pto.vmi.vunzip it is a pure layout
+    pass-through: all three values share one layout, whichever side fixes it,
+    so no layout is singled out.  When layouts are present they must all be
+    present and equal.  As with pto.vmi.vunzip, block_deinterleaved is not
+    supported because its block size changes with the element width.
+  }];
+  let arguments = (ins VMI_VRegTypeConstraint:$low, VMI_VRegTypeConstraint:$high);
+  let results = (outs VMI_VRegTypeConstraint:$result);
+  let hasVerifier = 1;
+  let assemblyFormat = [{
+    $low `,` $high attr-dict `:` type($low) `,` type($high) `->` type($result)
+  }];
+}
+
 def VMIEnsureLayoutOp : VMI_Op<"ensure_layout", [Pure]> {
   let summary = "Internal VMI data layout materialization helper";
   let arguments = (ins VMI_VRegTypeConstraint:$source);

@@ -1429,6 +1429,138 @@ class _VMINamespace:
             ip=ip,
         )
 
+    @staticmethod
+    def channel_split(source, channels=2, *, loc=None, ip=None):
+        """Split one vector into N interleaved logical channels.
+
+        One-in / N-out halving deinterleave: channel 0 takes the even elements
+        and channel 1 the odd ones (see the VMIToVPTO lowering).
+        """
+        context = "pto.vmi.channel_split(...)"
+        if channels not in (2, 4):
+            raise ValueError(f"{context} supports 2 or 4 channels; got {channels!r}")
+        source_type = _as_vmi_vreg_type(_type_of(source), context=context)
+        source_lanes = _vmi_vreg_element_count(source_type, context=context)
+        if source_lanes % channels != 0:
+            raise ValueError(
+                f"{context} requires the source lane count to be divisible by "
+                f"channels; got {source_lanes} with {channels} channels"
+            )
+        elem = _vmi_element_type(source_type, context=context)
+        result_type = _pto.VMIVRegType.get(source_lanes // channels, elem)
+        result_types = [result_type for _ in range(channels)]
+        return _call_value("channel_split", result_types, _raw(source), loc=loc, ip=ip)
+
+    @staticmethod
+    def channel_merge(*channels, loc=None, ip=None):
+        """Merge logical channels by interleaving (inverse of channel_split)."""
+        context = "pto.vmi.channel_merge(...)"
+        if len(channels) not in (2, 4):
+            raise ValueError(f"{context} supports 2 or 4 channels; got {len(channels)}")
+        first_type = _as_vmi_vreg_type(_type_of(channels[0]), context=context)
+        lanes = _vmi_vreg_element_count(first_type, context=context)
+        elem = _vmi_element_type(first_type, context=context)
+        for channel in channels[1:]:
+            channel_type = _as_vmi_vreg_type(_type_of(channel), context=context)
+            if (
+                _vmi_vreg_element_count(channel_type, context=context) != lanes
+                or _vmi_element_type(channel_type, context=context) != elem
+            ):
+                raise TypeError(
+                    f"{context} requires every channel to share element type and lane count"
+                )
+        result_lanes = lanes * len(channels)
+        if result_lanes not in VMI_LANE_COUNTS:
+            raise ValueError(
+                f"{context} result lane count must be one of {VMI_LANE_COUNTS}; got {result_lanes}"
+            )
+        result_type = _pto.VMIVRegType.get(result_lanes, elem)
+        return _call_value(
+            "channel_merge",
+            result_type,
+            [_raw(channel) for channel in channels],
+            loc=loc,
+            ip=ip,
+        )
+
+
+
+    @staticmethod
+    def vunzip(source, to_dtype=None, *, loc=None, ip=None):
+        """Unzip every element into its low and high half-width halves.
+
+        to_dtype selects the half element type and defaults to the unsigned
+        half-width integer of the source element.
+        """
+        context = "pto.vmi.vunzip(...)"
+        source_type = _as_vmi_vreg_type(_type_of(source), context=context)
+        lanes = _vmi_vreg_element_count(source_type, context=context)
+        src_bits = _type_bit_width(
+            _vmi_element_type(source_type, context=context), context=context
+        )
+        if src_bits not in (16, 32):
+            raise ValueError(
+                f"{context} requires a 16- or 32-bit source element so the half "
+                f"is 8 or 16 bits; got {src_bits}"
+            )
+        if to_dtype is None:
+            half_type = IntegerType.get_unsigned(src_bits // 2)
+        else:
+            half_type = _ensure_tensor_storage_dtype(to_dtype, context=context)
+            half_bits = _type_bit_width(half_type, context=context)
+            if half_bits * 2 != src_bits:
+                raise ValueError(
+                    f"{context} requires the target element storage width to be "
+                    f"exactly half the source width; got {half_bits} for a "
+                    f"{src_bits}-bit source"
+                )
+        result_type = _pto.VMIVRegType.get(lanes, half_type)
+        return _call_value(
+            "vunzip", result_type, result_type, _raw(source), loc=loc, ip=ip
+        )
+
+    @staticmethod
+    def vzip(low, high, to_dtype=None, *, loc=None, ip=None):
+        """Zip low/high half-width halves back into one wide vector.
+
+        to_dtype selects the wide element type and defaults to the unsigned
+        double-width integer of the half element.
+        """
+        context = "pto.vmi.vzip(...)"
+        low_type = _as_vmi_vreg_type(_type_of(low), context=context)
+        high_type = _as_vmi_vreg_type(_type_of(high), context=context)
+        lanes = _vmi_vreg_element_count(low_type, context=context)
+        high_lanes = _vmi_vreg_element_count(high_type, context=context)
+        half_elem = _vmi_element_type(low_type, context=context)
+        high_elem = _vmi_element_type(high_type, context=context)
+        if high_lanes != lanes or high_elem != half_elem:
+            raise ValueError(
+                f"{context} requires low and high to share one lane count and "
+                f"element type; got {lanes}x{half_elem} and "
+                f"{high_lanes}x{high_elem}"
+            )
+        half_bits = _type_bit_width(half_elem, context=context)
+        if half_bits not in (8, 16):
+            raise ValueError(
+                f"{context} requires an 8- or 16-bit half element so the wide "
+                f"element is 16 or 32 bits; got {half_bits}"
+            )
+        if to_dtype is None:
+            wide_type = IntegerType.get_unsigned(half_bits * 2)
+        else:
+            wide_type = _ensure_tensor_storage_dtype(to_dtype, context=context)
+            wide_bits = _type_bit_width(wide_type, context=context)
+            if wide_bits != half_bits * 2:
+                raise ValueError(
+                    f"{context} requires the wide element storage width to be "
+                    f"exactly twice the half width; got {wide_bits} for a "
+                    f"{half_bits}-bit half"
+                )
+        result_type = _pto.VMIVRegType.get(lanes, wide_type)
+        return _call_value(
+            "vzip", result_type, _raw(low), _raw(high), loc=loc, ip=ip
+        )
+
 
 def _is_vmi_vreg_type(type_obj) -> bool:
     vreg_type_cls = getattr(_pto, "VMIVRegType", None)

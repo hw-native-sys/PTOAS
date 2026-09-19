@@ -6,6 +6,9 @@
 // INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
 // See LICENSE in the root of the software repository for the full text of the License.
 
+#ifndef VMILAYOUTSUPPORTGROUPCAPABILITIES_INC
+#define VMILAYOUTSUPPORTGROUPCAPABILITIES_INC
+
 // Shape-only checks share the executable layout facts used by assignment and
 // lowering. Keep diagnostics about the logical request, not internal layouts.
 LogicalResult VMILayoutSupport::getGroupReduceShapeSupport(
@@ -99,7 +102,7 @@ LogicalResult VMILayoutSupport::getGroupBroadcastShapeSupport(
 
 LogicalResult VMILayoutSupport::getGroupOperationShapeSupport(
     Operation *op, std::string *reason) const {
-  auto reduce = [&](auto groupReduce) {
+  auto reduce = [this, reason](auto groupReduce) {
     return getGroupReduceShapeSupport(
         cast<VMIVRegType>(groupReduce.getSource().getType()),
         groupReduce.getNumGroupsAttr().getInt(), reason);
@@ -115,3 +118,5 @@ LogicalResult VMILayoutSupport::getGroupOperationShapeSupport(
       })
       .Default([](Operation *) { return success(); });
 }
+
+#endif // VMILAYOUTSUPPORTGROUPCAPABILITIES_INC

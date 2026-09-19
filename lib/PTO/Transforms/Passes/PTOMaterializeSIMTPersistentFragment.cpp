@@ -171,7 +171,7 @@ isFragmentActiveInSection(const PersistentFragmentAnalysis &fragment,
 // the operation-owned lane mapping.
 static LogicalResult
 validateWorklistElement(const PersistentFragmentAnalysis &fragment,
-                        const ResidentElementPlan &expectedElement,
+                        [[maybe_unused]] const ResidentElementPlan &expectedElement,
                         const PersistentElementWorkItem &element,
                         unsigned expectedElementIndex,
                         pto::SectionSimtOp section,

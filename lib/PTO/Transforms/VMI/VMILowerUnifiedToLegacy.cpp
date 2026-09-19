@@ -604,7 +604,7 @@ static bool isDenseAliasedGroupStore(VMIvStoreOp op) {
     return false;
   }
   int64_t groupSize = elementCount / numGroups;
-  if (groupSize < 2) {
+  if (groupSize < mlir::pto::kValue2) {
     return false;
   }
   std::optional<int64_t> rowStride = getConstantIndexValue(op.getStride());

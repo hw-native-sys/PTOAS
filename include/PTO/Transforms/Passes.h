@@ -59,8 +59,6 @@ std::unique_ptr<Pass> createEmitPTOManualPass();
 std::unique_ptr<Pass> createEmitPTOManualPass(PTOArch arch);
 
 
-/// Create a pass to convert ops from other dialects to PTO Ops.
-std::unique_ptr<Pass> createConvertToPTOOpPass();
 std::unique_ptr<Pass> createPTOLowerGenericOpsPass();
 
 /// Create a pass to infer, propagate, and add memory scope information to
@@ -126,7 +124,7 @@ LogicalResult validateVMIProducerBoundaryIR(ModuleOp module,
                                             llvm::raw_ostream *diagOS = nullptr);
 LogicalResult validateVMILayoutAssignedIR(ModuleOp module,
                                           llvm::raw_ostream *diagOS = nullptr,
-                                          bool verifyHelperSupport = true);
+                                          bool verifyHelperSupports = true);
 std::unique_ptr<Pass> createPTOValidateVMIIRPass();
 std::unique_ptr<Pass> createPTOValidateVMILayoutIRPass();
 std::unique_ptr<Pass> createVMIPreAssignmentCombinePass();

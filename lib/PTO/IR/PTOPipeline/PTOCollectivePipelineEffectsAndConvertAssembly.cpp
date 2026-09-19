@@ -240,7 +240,7 @@ parseOptionalGenericRounding(OpAsmParser &parser,
   return success();
 }
 
-static void printOptionalGenericRounding(OpAsmPrinter &printer, Operation *op,
+static void printOptionalGenericRounding(OpAsmPrinter &printer, [[maybe_unused]] Operation *op,
                                          FloatRoundingModeAttr rounding) {
   if (!rounding) {
     return;
@@ -264,7 +264,7 @@ parseOptionalSaturation(OpAsmParser &parser, SaturationAttr &saturationAttr) {
   return success();
 }
 
-static void printOptionalSaturation(OpAsmPrinter &printer, const Operation *op,
+static void printOptionalSaturation(OpAsmPrinter &printer, [[maybe_unused]] const Operation *op,
                                     SaturationAttr saturation) {
   bool isEnabled =
       saturation && saturation.getValue() != Saturation::Disable;
@@ -313,7 +313,7 @@ parseScalarCmpPredicate(OpAsmParser &parser,
   return success();
 }
 
-static void printScalarCmpPredicate(OpAsmPrinter &printer, Operation *op,
+static void printScalarCmpPredicate(OpAsmPrinter &printer, [[maybe_unused]] Operation *op,
                                     ScalarCmpPredicateAttr predicate) {
   printer << stringifyScalarCmpPredicate(predicate.getValue());
 }
@@ -341,7 +341,7 @@ static ParseResult parseSelectType(OpAsmParser &parser, Type &conditionType,
   return success();
 }
 
-static void printSelectType(OpAsmPrinter &printer, Operation *op,
+static void printSelectType(OpAsmPrinter &printer, [[maybe_unused]] Operation *op,
                             Type conditionType, Type resultType) {
   if (conditionType != getPTOI1SameShape(resultType)) {
     printer << conditionType << ", ";

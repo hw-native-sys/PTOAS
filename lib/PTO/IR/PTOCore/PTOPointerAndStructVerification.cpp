@@ -158,7 +158,8 @@ LogicalResult mlir::pto::StructSetOp::verify()
 static bool isSignlessI64AddressType(Type type)
 {
     auto integer = dyn_cast<IntegerType>(type);
-    return integer && integer.getWidth() == 64 && integer.isSignless();
+    return integer && integer.getWidth() == mlir::pto::kValue64 &&
+           integer.isSignless();
 }
 
 static LogicalResult verifyCastPtrKindSurface(Operation *op, Type inputType, Type resultType)

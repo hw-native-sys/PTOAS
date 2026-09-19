@@ -29,7 +29,7 @@ static ParseResult parseL1Cache(OpAsmParser &parser, L1CacheAttr &l1cache) {
   return success();
 }
 
-static void printL1Cache(OpAsmPrinter &printer, Operation *op,
+static void printL1Cache(OpAsmPrinter &printer, [[maybe_unused]] Operation *op,
                          L1CacheAttr l1cache) {
   if (!l1cache) {
     return;
@@ -58,7 +58,7 @@ static ParseResult parseLdL2Cache(OpAsmParser &parser,
   l2cache = LdL2CacheAttr::get(parser.getContext(), *parsed);
   return success();
 }
-static void printLdL2Cache(OpAsmPrinter &printer, Operation *op,
+static void printLdL2Cache(OpAsmPrinter &printer, [[maybe_unused]] Operation *op,
                            LdL2CacheAttr l2cache) {
   if (!l2cache) {
     return;
@@ -88,7 +88,7 @@ static ParseResult parseStL2Cache(OpAsmParser &parser,
   return success();
 }
 
-static void printStL2Cache(OpAsmPrinter &printer, Operation *op,
+static void printStL2Cache(OpAsmPrinter &printer, [[maybe_unused]] Operation *op,
                            StL2CacheAttr l2cache) {
   if (!l2cache) {
     return;
@@ -120,12 +120,12 @@ static ParseResult parseStructPath(OpAsmParser &parser,
   return success();
 }
 
-static void printStructPath(OpAsmPrinter &printer, Operation *op,
+static void printStructPath(OpAsmPrinter &printer, [[maybe_unused]] Operation *op,
                             DenseI64ArrayAttr path) {
   printer << "[";
   llvm::ArrayRef<int64_t> indices = path.asArrayRef();
   for (size_t i = 0; i < indices.size(); ++i) {
-    if (i) {
+    if (i != 0) {
       printer << ", ";
     }
     printer << indices[i];

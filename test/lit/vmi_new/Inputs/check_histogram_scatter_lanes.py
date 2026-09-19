@@ -81,13 +81,22 @@ for n in LANES:
             if n == 256:
                 assert "pto.vlds " in out and "pto.vsldb " not in out, out
 
-# The three misaligned reads are rejected by the bounded contiguous load
-# preflight, which runs before the load safety policy is read, so they stay on
-# the default pipeline. 33 bytes is not a bounded contiguous load at all: it
-# falls back to the generic full-carrier read, whose acceptance the policy
-# decides, and only load-safety=error still rejects it.
-for n, offset, load_safety in ((33, "0", "error"), (64, "1", None),
-                               (128, "16", None), (64, None, None)):
+# 33 bytes is not a bounded contiguous load: it falls back to a full-carrier
+# read. Strict load safety rejects the unproven physical read; the default
+# policy accepts the same shape. This 33-lane shape covers IR robustness only;
+# PTODSL's public VMI lane whitelist excludes 33.
+compile_ir("unsafe_load_33_0", """module {
+  func.func @probe(%p: !pto.ptr<ui8, ub>) -> !pto.vmi.vreg<33xui8> {
+    %off = arith.constant 0 : index
+    %s = pto.vmi.vload %p[%off] : !pto.ptr<ui8, ub> -> !pto.vmi.vreg<33xui8>
+    return %s : !pto.vmi.vreg<33xui8>
+  }
+}""", succeeds=False, load_safety="error")
+
+# PtrType sources with non-32-byte-aligned offsets now use the stateful
+# vldas+vldus fallback (introduced by 5eb87c2), so these succeed with the
+# default load-safety=warn policy.
+for n, offset in ((64, "1"), (128, "16"), (64, None)):
     offset_ir = "" if offset is None else f"%off = arith.constant {offset} : index"
     arg = ", %off: index" if offset is None else ""
     compile_ir(f"unsafe_load_{n}_{offset}", f"""module {{
@@ -96,6 +105,6 @@ for n, offset, load_safety in ((33, "0", "error"), (64, "1", None),
     %s = pto.vmi.vload %p[%off] : !pto.ptr<ui8, ub> -> !pto.vmi.vreg<{n}xui8>
     return %s : !pto.vmi.vreg<{n}xui8>
   }}
-}}""", succeeds=False, load_safety=load_safety)
+}}""")
 
 print("64 histogram/scatter/load compilation cases passed")

@@ -1,0 +1,68 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+
+// RUN: ptoas --pto-level=level3 --pto-arch=a3 %s 2>&1 \
+// RUN:   | FileCheck %s --implicit-check-not=TLoadL2Hint
+// RUN: ptoas --pto-level=level3 --pto-arch=a5 %s 2>&1 \
+// RUN:   | FileCheck %s --implicit-check-not=TLoadL2Hint
+// RUN: sed -E 's/ addr = %[A-Za-z0-9_]+//g' %s > %t.level2.pto
+// RUN: ptoas --pto-level=level2 --pto-arch=a3 %t.level2.pto 2>&1 \
+// RUN:   | FileCheck %s --implicit-check-not=TLoadL2Hint
+// RUN: ptoas --pto-level=level2 --pto-arch=a5 %t.level2.pto 2>&1 \
+// RUN:   | FileCheck %s --implicit-check-not=TLoadL2Hint
+
+module {
+  func.func @partition_bypass_large_offset(%src: !pto.ptr<f16>, %row_stride: index) {
+    %c0 = arith.constant 0 : i64
+    %c1 = arith.constant 1 : index
+    %c2 = arith.constant 2 : index
+    %c16 = arith.constant 16 : index
+    %c32 = arith.constant 32 : index
+    %offset = arith.constant 8796093022208 : i64
+    %view = pto.make_tensor_view %src,
+      shape = [%c32, %c32], strides = [%row_stride, %c1]
+      : !pto.tensor_view<?x?xf16>
+    %part = pto.partition_view %view,
+      offsets = [%c1, %c2], sizes = [%c16, %c16]
+      : !pto.tensor_view<?x?xf16> -> !pto.partition_tensor_view<16x16xf16>
+    %tile = pto.alloc_tile addr = %c0 : !pto.tile_buf<vec, 16x16xf16>
+    pto.tload ins(%part : !pto.partition_tensor_view<16x16xf16>)
+              outs(%tile : !pto.tile_buf<vec, 16x16xf16>)
+              {cache_policy = #pto.load_cache_policy<l2_bypass>}
+              offset = %offset : i64
+    pto.tload ins(%part : !pto.partition_tensor_view<16x16xf16>)
+              outs(%tile : !pto.tile_buf<vec, 16x16xf16>)
+    return
+  }
+
+  func.func private @zero_offset(%src: !pto.partition_tensor_view<16x16xf32>,
+                               %dst: !pto.tile_buf<vec, 16x16xf32>) {
+    %zero = arith.constant 0 : i64
+    pto.tload ins(%src : !pto.partition_tensor_view<16x16xf32>)
+              outs(%dst : !pto.tile_buf<vec, 16x16xf32>)
+              {cache_policy = #pto.load_cache_policy<l2_bypass>}
+              offset = %zero : i64
+    return
+  }
+}
+
+// CHECK-LABEL: partition_bypass_large_offset(
+// CHECK-DAG: const int64_t [[OFFSET:v[0-9]+]] = 8796093022208;
+// CHECK: GlobalTensor<half, pto::Shape<1, 1, 1, 16, 16>, pto::Stride<-1, -1, -1, -1, -1>, pto::Layout::ND> [[PART:v[0-9]+]] =
+// CHECK: PTOAS__GLOBAL_TENSOR_DATA([[PART]]);
+// CHECK: __gm__ uint8_t* [[BYTES:v[0-9]+]] = reinterpret_cast<__gm__ uint8_t*>(
+// CHECK: __gm__ half* [[DATA:v[0-9]+]] = (__gm__ half*) ([[BYTES]] + [[OFFSET]]);
+// CHECK: [[COPY:v[0-9]+]] = [[PART]];
+// CHECK-NEXT: TASSIGN([[COPY]], [[DATA]]);
+// CHECK-NEXT: TLOAD([[DST:v[0-9]+]], [[COPY]]);
+// CHECK-NEXT: TLOAD([[DST]], [[PART]]);
+// CHECK-LABEL: zero_offset(
+// CHECK: const int64_t [[ZERO:v[0-9]+]] = 0;
+// CHECK: __gm__ float* {{.*}} = (__gm__ float*) ({{.*}} + [[ZERO]]);
+// CHECK: TASSIGN(
+// CHECK-NEXT: TLOAD(

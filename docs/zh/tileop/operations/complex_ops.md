@@ -136,8 +136,8 @@ pto.tgatherb ins(%src, %offsets :
                  !pto.tile_buf<loc=vec, dtype=f32, rows=8, cols=32,
                      v_row=8, v_col=32, blayout=row_major, slayout=none_box,
                      fractal=512, pad=0>,
-                 !pto.tile_buf<loc=vec, dtype=i32, rows=8, cols=32,
-                     v_row=8, v_col=32, blayout=row_major, slayout=none_box,
+                 !pto.tile_buf<loc=vec, dtype=i32, rows=8, cols=8,
+                     v_row=8, v_col=8, blayout=row_major, slayout=none_box,
                      fractal=512, pad=0>)
              outs(%dst : !pto.tile_buf<loc=vec, dtype=f32, rows=8, cols=32,
                      v_row=8, v_col=32, blayout=row_major, slayout=none_box,

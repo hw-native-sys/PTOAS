@@ -28,35 +28,38 @@ bash cann-pto-as_9.2.0_linux-x86_64.run --full --install-path=xxx
 
 安装脚本支持`run`、`full`和`devel`三种安装模式，一次安装只能指定其中一种。
 
-> [!NOTE]说明
-> 本文以`full`模式为例，不展开说明`run`、`full`和`devel`三种安装模式的内容差异。
+### 说明
+
+本文以 `full` 模式为例，不展开说明 `run`、`full` 和 `devel` 三种安装模式的内容差异。
 
 ## 配置环境变量
 
-如果安装时未使用`--setenv`，在使用PTO-AS前需要配置`ASCEND_PTO_AS_PATH`：
+### 安装时使用 --setenv
+
+安装时可以使用`--setenv`配置运行所需的环境变量：
 
 ```bash
-export ASCEND_PTO_AS_PATH=<install_path>/cann/pto_as
+bash cann-pto-as_9.2.0_linux-x86_64.run --full --install-path=xxx --setenv
 ```
 
-其中，`<install_path>`为`--install-path`指定的安装根目录。该变量用于定位 PTO-AS 组件；命令搜索路径和 Python 包搜索路径通过 CANN toolkit 环境脚本加载：
+使用 `--setenv` 安装之后新打开的登录/交互式 shell 会自动加载 PTO-AS 运行所需的环境；当前已打开的 shell 以及脚本、CI 等非交互式场景不受影响，仍需按下文手动加载环境。
+
+### 安装时未使用 --setenv
+
+如果安装时未使用`--setenv`，在使用PTO-AS前需要手动加载环境变量：
 
 ```bash
-source <install_path>/cann/set_env.sh
+source <version_root>/set_env.sh
 ```
 
-请使用实际安装位置的 `set_env.sh`。脚本将当前 CANN 版本的 `bin` 加入 PATH，并将 `python/site-packages` 加入 PYTHONPATH；安装时的 `--setenv` 设置不能代替此处的 toolkit 环境加载。
+`<version_root>` 表示 CANN 版本根目录。
+
+### 默认安装路径
 
 如果安装时未指定`--install-path`，默认安装根目录如下：
 
 - 普通用户：`${HOME}/Ascend`
 - root用户：`/usr/local/Ascend`
-
-安装时也可以使用`--setenv`配置运行所需的环境变量：
-
-```bash
-bash cann-pto-as_9.2.0_linux-x86_64.run --full --install-path=xxx --setenv
-```
 
 ## 其他安装选项
 
@@ -76,7 +79,7 @@ bash cann-pto-as_9.2.0_linux-x86_64.run --pre-check
 
 安装PTO-AS组件时，安装程序会自动安装PTOAS wheel，并部署PTOAS相关运行文件。
 
-以下 `<version_root>` 表示 CANN 版本根目录。默认布局中为 `<install_path>/cann`；安装时也可以直接指定版本目录，其实际位置以安装结果及环境脚本为准。
+以下 `<version_root>` 表示 CANN 版本根目录。默认布局中 `<version_root>` 为 `<install_path>/cann`，`<install_path>` 为 `--install-path` 指定的安装根目录；安装时也可以直接指定版本目录，其实际位置以安装结果及环境脚本为准。
 
 ```text
 <version_root>/

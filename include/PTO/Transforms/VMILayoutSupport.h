@@ -301,9 +301,20 @@ public:
   getEnsureMaskLayoutFact(VMIMaskType sourceType, VMIMaskType resultType,
                           std::string *reason = nullptr) const;
 
+  // Preferred cast relation.  \p allowLaneStridePreference decides whether the
+  // lane-stride *cost* rows may answer ahead of the default preferred table:
+  // the one-chunk high-priority relations and the
+  // kPreferredLaneStrideNarrowCastLayoutPatterns rows.  Passing false leaves
+  // only the table's own default row for the width pair, which for every
+  // widening pair is {c(), d(f)} - i.e. the narrow side stays contiguous and
+  // the wide side takes the deinterleaved form the per-part vcvt actually
+  // produces.  It is a caller-supplied fact rather than a property of the width
+  // pair, because whether the lane stride is worth paying is decided by what the
+  // narrow side is used for, not by the cast.
   FailureOr<VMICastLayoutFact>
   getPreferredCastLayoutFact(VMIVRegType sourceType, VMIVRegType resultType,
-                             std::string *reason = nullptr) const;
+                             std::string *reason = nullptr,
+                             bool allowLaneStridePreference = true) const;
 
   // Spine-*scoped* cast layout query.
   // These queries are the only way to reach kSpineScopedCastLayoutPatterns /
@@ -542,6 +553,12 @@ public:
 
   LogicalResult getExtFSupport(VMIExtFOp op,
                                std::string *reason = nullptr) const;
+
+  LogicalResult getVUnzipSupport(VMIVUnzipOp op,
+                                std::string *reason = nullptr) const;
+
+  LogicalResult getVZipSupport(VMIVZipOp op,
+                              std::string *reason = nullptr) const;
 
   LogicalResult getExtSISupport(VMIExtSIOp op,
                                 std::string *reason = nullptr) const;

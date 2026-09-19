@@ -280,7 +280,7 @@ static bool hasCompatibleElementwiseSink(
   sourceType =
       cast<VMIVRegType>(collected.dataEnsures.front().getSource().getType());
   bool mixedSources =
-      llvm::any_of(collected.dataEnsures, [&](VMIEnsureLayoutOp ensure) {
+      llvm::any_of(collected.dataEnsures, [&sourceType](VMIEnsureLayoutOp ensure) {
         return ensure.getSource().getType() != sourceType;
       });
   if (mixedSources || !hasEnsureLayoutSupport(sourceType, resultType)) {

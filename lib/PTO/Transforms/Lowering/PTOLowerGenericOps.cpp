@@ -17,6 +17,7 @@
 
 #include "PTO/IR/PTO.h"
 #include "PTO/IR/PTOTypeUtils.h"
+#include "PTO/Support/CodeConstants.h"
 #include "PTO/Transforms/Passes.h"
 
 #include "mlir/Dialect/Arith/IR/Arith.h"
@@ -210,7 +211,7 @@ static bool isExpectedGenericResidual(Operation *op) {
 
 static bool isPackedTwoLaneF16(Type type) {
   auto vectorType = dyn_cast<VectorType>(type);
-  return vectorType && vectorType.getNumElements() == 2 &&
+  return vectorType && vectorType.getNumElements() == mlir::pto::kValue2 &&
          vectorType.getElementType().isF16();
 }
 

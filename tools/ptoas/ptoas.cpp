@@ -154,6 +154,15 @@ llvm::cl::opt<bool> planMemoryOrderBySize(
                    "(largest-first ordering is opt-in)"),
     llvm::cl::init(false));
 
+llvm::cl::opt<bool> enablePlanMemory(
+    "enable-plan-memory",
+    llvm::cl::desc("Enable automatic local memory planning (pto-plan-memory) "
+                   "for pto.alloc_tile without an explicit addr. On by "
+                   "default; disable with --enable-plan-memory=false. "
+                   "--pto-level=level3 always skips planning because there the "
+                   "user supplies every address explicitly."),
+    llvm::cl::init(true));
+
 llvm::cl::opt<bool> enableBufidSync(
     "enable-bufid_sync",
     llvm::cl::desc("Enable A5 buffer-id synchronization insertion pass"),

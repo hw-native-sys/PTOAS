@@ -155,7 +155,7 @@ struct PTOSyncAllToEmitC : public OpConversionPattern<mlir::pto::SyncAllOp> {
     auto mode = op.getMode().getValue();
     auto coreType = op.getCoreType().getValue();
 
-    auto buildGmWorkspace = [&]() -> FailureOr<Value> {
+    auto buildGmWorkspace = [&adaptor, &op, &rewriter]() -> FailureOr<Value> {
       Value gm = adaptor.getGmWorkspace();
       if (isEmitCGlobalTensorLikeType(gm.getType()))
         return gm;
@@ -420,9 +420,9 @@ struct PTONamedIntraSyncToEmitC : public OpConversionPattern<SyncOp> {
 
     StringRef callee;
     if constexpr (std::is_same_v<SyncOp, mlir::pto::SetIntraBlockOp>) {
-      callee = "__builtin_cce_set_intra_block";
+      callee = "set_intra_block";
     } else {
-      callee = "__builtin_cce_wait_intra_block";
+      callee = "wait_intra_block";
     }
 
     auto args = rewriter.getArrayAttr({

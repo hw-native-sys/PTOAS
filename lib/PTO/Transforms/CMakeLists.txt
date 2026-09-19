@@ -119,6 +119,7 @@ add_mlir_dialect_library(PTOTransforms
   VMI/VMINormalizeSignlessIntToUnsigned.cpp
   VMI/VMILayoutRematerializeWeakProducers.cpp
   VMI/VMILayoutAssignment.cpp
+  VMI/VMILayoutSpineAnalysis.cpp
   VMI/VMILayoutFold.cpp
   VMI/VMILayoutPropagation.cpp
   VMI/VMILayoutSupport.cpp
@@ -244,7 +245,6 @@ add_mlir_dialect_library(PTOTransforms
   Lowering/PTOArithRangeOptimize.cpp
   Lowering/PTOCanonicalizeIR.cpp
   Lowering/BufferizableOpInterfaceImpl.cpp
-  Lowering/ConvertToPTOOp.cpp
   Lowering/PTOLowerGenericOps.cpp
   Passes/PTOAssignDefaultFrontendPipeIdPass.cpp
   Lowering/PTOLowerFrontendPipeOpsPass.cpp

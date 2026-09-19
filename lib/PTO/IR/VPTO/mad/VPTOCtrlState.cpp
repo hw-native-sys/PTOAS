@@ -168,7 +168,7 @@ static LogicalResult verifyGuardBits(CtrlStateGuardOp op) {
     return op.emitOpError("controlled_bits must be non-zero; an empty guard "
                           "controls no CTRL bits and has no legal use");
   }
-  if (required & ~controlled) {
+  if ((required & ~controlled) != 0) {
     return op.emitOpError()
            << "required_bits (" << required
            << ") must be a subset of controlled_bits (" << controlled << ")";

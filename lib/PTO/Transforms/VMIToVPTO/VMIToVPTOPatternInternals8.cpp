@@ -461,10 +461,12 @@ std::optional<WalkResult> verifySupportedVMIStructuredLoadOp(Operation *op) {
 }
 
 std::optional<WalkResult> verifySupportedVMIMemoryLoadOp(
-    Operation *op, bool enableStableGatherMaskedLoad) {
+    Operation *op, bool enableStableGatherMaskedLoad,
+    VMILoadSafetyPolicy loadSafety) {
   if (auto load = dyn_cast<VMILoadOp>(op)) {
     std::string reason;
-    if (failed(checkSupportedContiguousLoadAddress(load, &reason))) {
+    if (failed(
+            checkSupportedContiguousLoadAddress(load, loadSafety, &reason))) {
       load.emitError() << kVMIDiagUnsupportedPrefix << reason;
       return WalkResult::interrupt();
     }
@@ -485,9 +487,10 @@ std::optional<WalkResult> verifySupportedVMIMemoryLoadOp(
 }
 
 std::optional<WalkResult> verifySupportedVMIMemoryOp(
-    Operation *op, bool enableStableGatherMaskedLoad) {
+    Operation *op, bool enableStableGatherMaskedLoad,
+    VMILoadSafetyPolicy loadSafety) {
   if (auto loadResult = verifySupportedVMIMemoryLoadOp(
-          op, enableStableGatherMaskedLoad);
+          op, enableStableGatherMaskedLoad, loadSafety);
       loadResult.has_value()) {
     return *loadResult;
   }
@@ -671,37 +674,37 @@ WalkResult emitMaskableUnsupported(Operation *op, StringRef opName,
 template <typename MaskableCheck>
 static std::optional<WalkResult> verifySupportedVMIUnaryBinaryArithmeticOp(
     Operation *op, MaskableCheck check) {
-#define PTO_VERIFY_MASKABLE(Op, Name)                                      \
-  if (auto value = dyn_cast<Op>(op)) {                                    \
-    return verifySupportedUnifiedMaskableOp(value, Name, check);            \
+#define PTO_VERIFY_MASKABLE(Op, Name, TargetOp, MaskCheck)                 \
+  if (auto value = dyn_cast<Op>(TargetOp)) {                               \
+    return verifySupportedUnifiedMaskableOp(value, Name, MaskCheck);       \
   }
-  PTO_VERIFY_MASKABLE(VMIVaddOp, "pto.vmi.vadd");
-  PTO_VERIFY_MASKABLE(VMIVsubOp, "pto.vmi.vsub");
-  PTO_VERIFY_MASKABLE(VMIVmulOp, "pto.vmi.vmul");
-  PTO_VERIFY_MASKABLE(VMIVdivOp, "pto.vmi.vdiv");
-  PTO_VERIFY_MASKABLE(VMIVminOp, "pto.vmi.vmin");
-  PTO_VERIFY_MASKABLE(VMIVmaxOp, "pto.vmi.vmax");
-  PTO_VERIFY_MASKABLE(VMIVandOp, "pto.vmi.vand");
-  PTO_VERIFY_MASKABLE(VMIVorOp, "pto.vmi.vor");
-  PTO_VERIFY_MASKABLE(VMIVxorOp, "pto.vmi.vxor");
-  PTO_VERIFY_MASKABLE(VMIAndIOp, "pto.vmi.andi");
-  PTO_VERIFY_MASKABLE(VMIOrIOp, "pto.vmi.ori");
-  PTO_VERIFY_MASKABLE(VMIXOrIOp, "pto.vmi.xori");
-  PTO_VERIFY_MASKABLE(VMINotOp, "pto.vmi.not");
-  PTO_VERIFY_MASKABLE(VMIVshlOp, "pto.vmi.vshl");
-  PTO_VERIFY_MASKABLE(VMIVshrOp, "pto.vmi.vshr");
-  PTO_VERIFY_MASKABLE(VMIVnegOp, "pto.vmi.vneg");
-  PTO_VERIFY_MASKABLE(VMIVabsOp, "pto.vmi.vabs");
-  PTO_VERIFY_MASKABLE(VMIVsqrtOp, "pto.vmi.vsqrt");
-  PTO_VERIFY_MASKABLE(VMIVexpOp, "pto.vmi.vexp");
-  PTO_VERIFY_MASKABLE(VMIVlnOp, "pto.vmi.vln");
-  PTO_VERIFY_MASKABLE(VMIVreluOp, "pto.vmi.vrelu");
-  PTO_VERIFY_MASKABLE(VMIVnotOp, "pto.vmi.vnot");
-  PTO_VERIFY_MASKABLE(VMIVmulaOp, "pto.vmi.vmula");
-  PTO_VERIFY_MASKABLE(VMIVaxpyOp, "pto.vmi.vaxpy");
-  PTO_VERIFY_MASKABLE(VMIVlreluOp, "pto.vmi.vlrelu");
-  PTO_VERIFY_MASKABLE(VMIVpreluOp, "pto.vmi.vprelu");
-  PTO_VERIFY_MASKABLE(VMISelectOp, "pto.vmi.select");
+  PTO_VERIFY_MASKABLE(VMIVaddOp, "pto.vmi.vadd", op, check);
+  PTO_VERIFY_MASKABLE(VMIVsubOp, "pto.vmi.vsub", op, check);
+  PTO_VERIFY_MASKABLE(VMIVmulOp, "pto.vmi.vmul", op, check);
+  PTO_VERIFY_MASKABLE(VMIVdivOp, "pto.vmi.vdiv", op, check);
+  PTO_VERIFY_MASKABLE(VMIVminOp, "pto.vmi.vmin", op, check);
+  PTO_VERIFY_MASKABLE(VMIVmaxOp, "pto.vmi.vmax", op, check);
+  PTO_VERIFY_MASKABLE(VMIVandOp, "pto.vmi.vand", op, check);
+  PTO_VERIFY_MASKABLE(VMIVorOp, "pto.vmi.vor", op, check);
+  PTO_VERIFY_MASKABLE(VMIVxorOp, "pto.vmi.vxor", op, check);
+  PTO_VERIFY_MASKABLE(VMIAndIOp, "pto.vmi.andi", op, check);
+  PTO_VERIFY_MASKABLE(VMIOrIOp, "pto.vmi.ori", op, check);
+  PTO_VERIFY_MASKABLE(VMIXOrIOp, "pto.vmi.xori", op, check);
+  PTO_VERIFY_MASKABLE(VMINotOp, "pto.vmi.not", op, check);
+  PTO_VERIFY_MASKABLE(VMIVshlOp, "pto.vmi.vshl", op, check);
+  PTO_VERIFY_MASKABLE(VMIVshrOp, "pto.vmi.vshr", op, check);
+  PTO_VERIFY_MASKABLE(VMIVnegOp, "pto.vmi.vneg", op, check);
+  PTO_VERIFY_MASKABLE(VMIVabsOp, "pto.vmi.vabs", op, check);
+  PTO_VERIFY_MASKABLE(VMIVsqrtOp, "pto.vmi.vsqrt", op, check);
+  PTO_VERIFY_MASKABLE(VMIVexpOp, "pto.vmi.vexp", op, check);
+  PTO_VERIFY_MASKABLE(VMIVlnOp, "pto.vmi.vln", op, check);
+  PTO_VERIFY_MASKABLE(VMIVreluOp, "pto.vmi.vrelu", op, check);
+  PTO_VERIFY_MASKABLE(VMIVnotOp, "pto.vmi.vnot", op, check);
+  PTO_VERIFY_MASKABLE(VMIVmulaOp, "pto.vmi.vmula", op, check);
+  PTO_VERIFY_MASKABLE(VMIVaxpyOp, "pto.vmi.vaxpy", op, check);
+  PTO_VERIFY_MASKABLE(VMIVlreluOp, "pto.vmi.vlrelu", op, check);
+  PTO_VERIFY_MASKABLE(VMIVpreluOp, "pto.vmi.vprelu", op, check);
+  PTO_VERIFY_MASKABLE(VMISelectOp, "pto.vmi.select", op, check);
 #undef PTO_VERIFY_MASKABLE
   return std::nullopt;
 }
@@ -851,7 +854,8 @@ static std::optional<WalkResult> verifySupportedVMIIntegerConversionOp(
         trunci, checkSupportedTruncIShape,
         "pto.vmi.trunci supports integer deinterleaved source layouts whose "
         "factor is the 2x/4x narrowing multiple of the contiguous or "
-        "deinterleaved result layout factor, or matching group_slots "
+        "deinterleaved result layout factor, divided by the result lane stride "
+        "when the result carries one, or matching group_slots "
         "layouts and natural slots=8 narrowing layouts (");
   }
   if (auto bitcast = dyn_cast<VMIBitcastOp>(op)) {
@@ -1098,6 +1102,20 @@ std::optional<WalkResult> verifySupportedVMIFloatOp(Operation *op) {
         "f16 group_slots(num_groups=G, slots=1)); non-f32 sources currently "
         "require dense contiguous layouts (");
   }
+  if (auto unzip = dyn_cast<VMIVUnzipOp>(op)) {
+    return verifySupportedShapeOp(
+        unzip, checkSupportedVUnzipShape,
+        "pto.vmi.vunzip splits one wide source into two half-width results "
+        "that keep the source lane count; both halves must be dense contiguous "
+        "and the wide source dense (");
+  }
+  if (auto zip = dyn_cast<VMIVZipOp>(op)) {
+    return verifySupportedShapeOp(
+        zip, checkSupportedVZipShape,
+        "pto.vmi.vzip merges two half-width operands back into the wide "
+        "type; both operands must be dense contiguous and the wide result "
+        "dense (");
+  }
   return std::nullopt;
 }
 
@@ -1237,9 +1255,10 @@ verifySupportedVMIChannelShuffleOp(Operation *op) {
 }
 
 std::optional<WalkResult> verifySupportedVMIStandardOp(
-    Operation *op, bool enableStableGatherMaskedLoad) {
+    Operation *op, bool enableStableGatherMaskedLoad,
+    VMILoadSafetyPolicy loadSafety) {
   if (auto memoryResult = verifySupportedVMIMemoryOp(
-          op, enableStableGatherMaskedLoad);
+          op, enableStableGatherMaskedLoad, loadSafety);
       memoryResult.has_value()) {
     return *memoryResult;
   }
@@ -1277,9 +1296,10 @@ std::optional<WalkResult> verifySupportedVMIStandardOp(
 }
 
 static WalkResult verifySupportedVMIToVPTOOp(
-    Operation *op, bool enableStableGatherMaskedLoad) {
+    Operation *op, bool enableStableGatherMaskedLoad,
+    VMILoadSafetyPolicy loadSafety) {
   if (auto standardResult = verifySupportedVMIStandardOp(
-          op, enableStableGatherMaskedLoad);
+          op, enableStableGatherMaskedLoad, loadSafety);
       standardResult.has_value()) {
     return *standardResult;
   }
@@ -1292,10 +1312,12 @@ static WalkResult verifySupportedVMIToVPTOOp(
 
 LogicalResult
 verifySupportedVMIToVPTOOps(ModuleOp module,
-                            bool enableStableGatherMaskedLoad) {
+                            bool enableStableGatherMaskedLoad,
+                            VMILoadSafetyPolicy loadSafety) {
   WalkResult result = module.walk(
-      [&enableStableGatherMaskedLoad](Operation *op) {
-        return verifySupportedVMIToVPTOOp(op, enableStableGatherMaskedLoad);
+      [enableStableGatherMaskedLoad, loadSafety](Operation *op) {
+        return verifySupportedVMIToVPTOOp(op, enableStableGatherMaskedLoad,
+                                          loadSafety);
       });
   return failure(result.wasInterrupted());
 }

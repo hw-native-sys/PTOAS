@@ -1,0 +1,21 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+
+// Paired by the ISA FFTS host harness, with one cube and two vector participants.
+module attributes {pto.kernel_kind = #pto.kernel_kind<cube>} {
+  func.func @ptoas_ffts_signal(%ffts: !pto.ptr<i64>, %event: index) attributes {pto.kernel} {
+    pto.set_ffts %ffts : !pto.ptr<i64>
+    pto.sync.set <PIPE_FIX>, %event {ffts_mode = 2 : i32}
+    return
+  }
+  func.func @ptoas_ffts_wait(%ffts: !pto.ptr<i64>, %event: index) attributes {pto.kernel} {
+    pto.set_ffts %ffts : !pto.ptr<i64>
+    pto.sync.wait <PIPE_MTE2>, %event
+    return
+  }
+}

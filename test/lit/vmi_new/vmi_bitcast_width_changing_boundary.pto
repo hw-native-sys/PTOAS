@@ -1,0 +1,178 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+
+// RUN: pto-test-opt %s -vmi-lower-unified-to-legacy -vmi-mask-granularity-assignment -vmi-layout-assignment | FileCheck %s --check-prefix=ASSIGN
+// RUN: pto-test-opt %s -vmi-lower-unified-to-legacy -vmi-mask-granularity-assignment -vmi-layout-assignment -pto-validate-vmi-layout-ir -vmi-to-vpto | FileCheck %s --check-prefix=LOWER --implicit-check-not=pto.vmi. --implicit-check-not='!pto.vmi.' --implicit-check-not=VMI-RESIDUAL-OP
+
+// A width-changing bitcast is a layout *boundary*, not a class edge: only the
+// contiguous row of kWidthChangingBitcastLayoutPatterns is legal, and the two
+// sides still have to match, so both sides end up contiguous.  Any other
+// layout a neighbour wants has to be materialized with an ensure_layout on
+// that side.  The same mechanism therefore covers both bitcast kinds; they
+// differ only in their legal relation sets.
+//
+// The three functions below pin the three faces of that statement:
+//   (1) a *result-side* soft preference is preserved through a boundary
+//       ensure_layout;
+//   (2) a *source-side* soft preference is preserved the same way;
+//   (3) the source side must not be seeded into a carrier form that has no
+//       contiguous materialization at all - the regression for the 32-bit
+//       lane-stride-2 short load whose c(lane_stride = 2) -> c() conversion
+//       has no 64-bit pack carrier.
+
+module {
+  // (1) The 64xi8 store prefers lane_stride = 4.  The width-changing bitcast
+  // cannot take it, so the conversion stays on the boundary: bitcast
+  // contiguous -> contiguous, ensure_layout contiguous -> lane_stride = 4.
+  func.func @wc_result_boundary(
+      %src: !pto.ptr<f16, ub>, %dst: !pto.ptr<i8, ub>) {
+    %c0 = arith.constant 0 : index
+    %v = pto.vmi.vload %src[%c0]
+        : !pto.ptr<f16, ub> -> !pto.vmi.vreg<32xf16>
+    %r = pto.vmi.vinterpret_cast %v
+        : !pto.vmi.vreg<32xf16> -> !pto.vmi.vreg<64xi8>
+    pto.vmi.vstore %r, %dst[%c0]
+        : !pto.vmi.vreg<64xi8>, !pto.ptr<i8, ub>
+    return
+  }
+
+  // (2) The widening cast prefers deinterleaved = 2 on its 128xf32 result,
+  // which is the bitcast's source.  The bitcast stays contiguous and the
+  // preference is materialized on the source boundary.
+  func.func @wc_source_boundary(
+      %src: !pto.ptr<bf16, ub>, %dst: !pto.ptr<bf16, ub>) {
+    %c0 = arith.constant 0 : index
+    %v = pto.vmi.vload %src[%c0]
+        : !pto.ptr<bf16, ub> -> !pto.vmi.vreg<128xbf16>
+    %w = pto.vmi.extf %v
+        : !pto.vmi.vreg<128xbf16> -> !pto.vmi.vreg<128xf32>
+    %r = pto.vmi.vinterpret_cast %w
+        : !pto.vmi.vreg<128xf32> -> !pto.vmi.vreg<256xbf16>
+    pto.vmi.vstore %r, %dst[%c0]
+        : !pto.vmi.vreg<256xbf16>, !pto.ptr<bf16, ub>
+    return
+  }
+
+  // (3) Regression: the small-load heuristic wants lane_stride = 2 on the
+  // 32xi32 load, but a width-changing bitcast needs contiguous there and
+  // c(lane_stride = 2) -> c() for 32-bit elements is not materializable (the
+  // carrier chain has no 64-bit pack form).  The bitcast's requirement must
+  // therefore win before that natural seed is applied, leaving contiguous on
+  // the load and moving the only boundary conversion to the 8-bit store side,
+  // where it is materializable.
+  func.func @wc_short_load_stays_convertible(
+      %src: !pto.ptr<i32, ub>, %dst: !pto.ptr<i8, ub>) {
+    %c0 = arith.constant 0 : index
+    %v = pto.vmi.vload %src[%c0]
+        : !pto.ptr<i32, ub> -> !pto.vmi.vreg<32xi32>
+    %r = pto.vmi.vinterpret_cast %v
+        : !pto.vmi.vreg<32xi32> -> !pto.vmi.vreg<128xi8>
+    pto.vmi.vstore %r, %dst[%c0]
+        : !pto.vmi.vreg<128xi8>, !pto.ptr<i8, ub>
+    return
+  }
+
+  // (4) The complementary half of the class-edge statement, and the reason (3)
+  // had to be fixed rather than papered over: a width-changing bitcast is a
+  // boundary, so the class walk must stop there.  This is the same closed
+  // <up,down,up,down> round trip as
+  // vmi_bitcast_class_edge_spine_crossing.pto, only with the equal-width
+  // bitcast replaced by a width-changing one.  Crossing it would close the
+  // window (both ends are ui16 and the narrow handoff is pure), so the layouts
+  // here are the observable proof that the walk stopped: the narrow and wide
+  // sides keep the generic lane-stride family, and the bitcast itself is
+  // contiguous on both sides.
+  func.func @wc_bitcast_is_not_a_class_edge(
+      %src: !pto.ptr<ui16, ub>, %dst: !pto.ptr<ui16, ub>) {
+    %c0 = arith.constant 0 : index
+    %x = pto.vmi.vload %src[%c0]
+        : !pto.ptr<ui16, ub> -> !pto.vmi.vreg<128xui16>
+    %0 = pto.vmi.extui %x
+        : !pto.vmi.vreg<128xui16> -> !pto.vmi.vreg<128xui32>
+    %1 = pto.vmi.vinterpret_cast %0
+        : !pto.vmi.vreg<128xui32> -> !pto.vmi.vreg<256xui16>
+    %2 = pto.vmi.trunci %1 {saturate = "NOSAT"}
+        : !pto.vmi.vreg<256xui16> -> !pto.vmi.vreg<256xui8>
+    %3 = pto.vmi.extui %2
+        : !pto.vmi.vreg<256xui8> -> !pto.vmi.vreg<256xui32>
+    %4 = pto.vmi.trunci %3 {saturate = "NOSAT"}
+        : !pto.vmi.vreg<256xui32> -> !pto.vmi.vreg<256xui16>
+    pto.vmi.vstore %4, %dst[%c0]
+        : !pto.vmi.vreg<256xui16>, !pto.ptr<ui16, ub>
+    return
+  }
+}
+
+// ASSIGN-LABEL: func.func @wc_result_boundary
+// ASSIGN: %[[V:.*]] = pto.vmi.load
+// ASSIGN-SAME: !pto.vmi.vreg<32xf16, #pto.vmi.layout<contiguous>>
+// ASSIGN: %[[C:.*]] = pto.vmi.bitcast %[[V]]
+// ASSIGN-SAME: -> !pto.vmi.vreg<64xi8, #pto.vmi.layout<contiguous>>
+// ASSIGN: %[[E:.*]] = pto.vmi.ensure_layout %[[C]]
+// ASSIGN-SAME: -> !pto.vmi.vreg<64xi8, #pto.vmi.layout<contiguous, lane_stride = 4>>
+// ASSIGN: pto.vmi.store %[[E]]
+// ASSIGN-SAME: !pto.vmi.vreg<64xi8, #pto.vmi.layout<contiguous, lane_stride = 4>>
+
+// ASSIGN-LABEL: func.func @wc_source_boundary
+// ASSIGN: pto.vmi.extf
+// ASSIGN-SAME: -> !pto.vmi.vreg<128xf32, #pto.vmi.layout<deinterleaved = 2>>
+// ASSIGN: %[[E:.*]] = pto.vmi.ensure_layout
+// ASSIGN-SAME: -> !pto.vmi.vreg<128xf32, #pto.vmi.layout<contiguous>>
+// ASSIGN: %[[C:.*]] = pto.vmi.bitcast %[[E]]
+// ASSIGN-SAME: -> !pto.vmi.vreg<256xbf16, #pto.vmi.layout<contiguous>>
+
+// ASSIGN-LABEL: func.func @wc_short_load_stays_convertible
+// ASSIGN: %[[V:.*]] = pto.vmi.load
+// ASSIGN-SAME: !pto.vmi.vreg<32xi32, #pto.vmi.layout<contiguous>>
+// ASSIGN: %[[C:.*]] = pto.vmi.bitcast %[[V]]
+// ASSIGN-SAME: -> !pto.vmi.vreg<128xi8, #pto.vmi.layout<contiguous>>
+// ASSIGN: %[[E:.*]] = pto.vmi.ensure_layout %[[C]]
+// ASSIGN-SAME: -> !pto.vmi.vreg<128xi8, #pto.vmi.layout<contiguous, lane_stride = 2>>
+
+// ASSIGN-LABEL: func.func @wc_bitcast_is_not_a_class_edge
+// ASSIGN: %[[V4:.*]] = pto.vmi.load
+// ASSIGN-SAME: !pto.vmi.vreg<128xui16, #pto.vmi.layout<contiguous, lane_stride = 2>>
+// ASSIGN: %[[W4:.*]] = pto.vmi.extui %[[V4]]
+// ASSIGN-SAME: -> !pto.vmi.vreg<128xui32, #pto.vmi.layout<contiguous>>
+// ASSIGN: %[[C4:.*]] = pto.vmi.bitcast %[[W4]]
+// ASSIGN-SAME: -> !pto.vmi.vreg<256xui16, #pto.vmi.layout<contiguous>>
+// ASSIGN: %[[N4:.*]] = pto.vmi.trunci %[[C4]]
+// ASSIGN-SAME: -> !pto.vmi.vreg<256xui8, #pto.vmi.layout<contiguous, lane_stride = 2>>
+// ASSIGN-NOT: #pto.vmi.layout<deinterleaved
+// ASSIGN: %[[E4:.*]] = pto.vmi.ensure_layout %[[N4]]
+// ASSIGN-SAME: -> !pto.vmi.vreg<256xui8, #pto.vmi.layout<contiguous, lane_stride = 4>>
+// ASSIGN: %[[U4:.*]] = pto.vmi.extui %[[E4]]
+// ASSIGN-SAME: -> !pto.vmi.vreg<256xui32, #pto.vmi.layout<contiguous>>
+// ASSIGN: %[[T4:.*]] = pto.vmi.trunci %[[U4]]
+// ASSIGN-SAME: -> !pto.vmi.vreg<256xui16, #pto.vmi.layout<contiguous, lane_stride = 2>>
+// ASSIGN: pto.vmi.store %[[T4]]
+
+// LOWER-LABEL: func.func @wc_result_boundary
+// LOWER: pto.vsldb
+// LOWER: pto.vbitcast
+// LOWER: pto.vzunpack
+// LOWER: pto.vsts
+
+// LOWER-LABEL: func.func @wc_source_boundary
+// LOWER: pto.vlds
+// LOWER: pto.vcvt
+// LOWER: pto.vintlv
+// LOWER: pto.vbitcast
+// LOWER: pto.vsts
+
+// LOWER-LABEL: func.func @wc_short_load_stays_convertible
+// LOWER: pto.vsldb
+// LOWER: pto.vbitcast
+// LOWER: pto.vzunpack
+// LOWER: pto.vsts
+
+// LOWER-LABEL: func.func @wc_bitcast_is_not_a_class_edge
+// LOWER: pto.vlds
+// LOWER: pto.vbitcast
+// LOWER: pto.vzunpack
+// LOWER: pto.vsts

@@ -403,7 +403,7 @@ For each element (i, j):
 **示例：**
 
 ```mlir
-pto.trowexpand ins(%src : !pto.tile_buf<loc=vec, dtype=f32, rows=16, cols=1,
+pto.trowexpand ins(%src : !pto.tile_buf<loc=vec, dtype=f32, rows=16, cols=8,
                    v_row=16, v_col=1, blayout=row_major, slayout=none_box,
                    fractal=512, pad=0>)
                outs(%dst : !pto.tile_buf<loc=vec, dtype=f32, rows=16, cols=16,
@@ -452,7 +452,7 @@ For each row i:
 pto.trowmax ins(%src : !pto.tile_buf<loc=vec, dtype=f16, rows=16, cols=16,
                 v_row=16, v_col=16, blayout=row_major, slayout=none_box,
                 fractal=512, pad=0>)
-            outs(%dst : !pto.tile_buf<loc=vec, dtype=f16, rows=16, cols=1,
+            outs(%dst : !pto.tile_buf<loc=vec, dtype=f16, rows=16, cols=16,
                 v_row=16, v_col=1, blayout=row_major, slayout=none_box,
                 fractal=512, pad=0>)
 ```
@@ -556,7 +556,7 @@ pto.trowmin ins(%src, %tmp : !pto.tile_buf<loc=vec, dtype=f16, rows=16, cols=16,
                 !pto.tile_buf<loc=vec, dtype=f16, rows=16, cols=16,
                 v_row=16, v_col=16, blayout=row_major, slayout=none_box,
                 fractal=512, pad=0>)
-            outs(%dst : !pto.tile_buf<loc=vec, dtype=f16, rows=16, cols=1,
+            outs(%dst : !pto.tile_buf<loc=vec, dtype=f16, rows=16, cols=16,
                 v_row=16, v_col=1, blayout=row_major, slayout=none_box,
                 fractal=512, pad=0>)
 ```
@@ -656,7 +656,7 @@ pto.trowsum ins(%src : !pto.tile_buf<loc=vec, dtype=f16, rows=16, cols=16,
                 v_row=16, v_col=16, blayout=row_major, slayout=none_box,
                 fractal=512, pad=0>)
             outs(%dst : !pto.tile_buf<loc=vec, dtype=f16, rows=16, cols=1,
-                v_row=16, v_col=1, blayout=row_major, slayout=none_box,
+                v_row=16, v_col=1, blayout=col_major, slayout=none_box,
                 fractal=512, pad=0>)
 ```
 
@@ -759,7 +759,7 @@ pto.trowprod ins(%src, %tmp : !pto.tile_buf<loc=vec, dtype=i16, rows=16, cols=16
                  v_row=16, v_col=16, blayout=row_major, slayout=none_box,
                  fractal=512, pad=0>)
              outs(%dst : !pto.tile_buf<loc=vec, dtype=i16, rows=16, cols=1,
-                 v_row=16, v_col=1, blayout=row_major, slayout=none_box,
+                 v_row=16, v_col=1, blayout=col_major, slayout=none_box,
                  fractal=512, pad=0>)
 ```
 
@@ -812,7 +812,7 @@ pto.trowexpandsub ins(%src0, %src1, %tmp : !pto.tile_buf<loc=vec, dtype=f32, row
                       v_row=16, v_col=16, blayout=row_major, slayout=none_box,
                       fractal=512, pad=0>,
                       !pto.tile_buf<loc=vec, dtype=f32, rows=16, cols=1,
-                      v_row=16, v_col=1, blayout=row_major, slayout=none_box,
+                      v_row=16, v_col=1, blayout=col_major, slayout=none_box,
                       fractal=512, pad=0>,
                       !pto.tile_buf<loc=vec, dtype=f32, rows=16, cols=16,
                       v_row=16, v_col=16, blayout=row_major, slayout=none_box,
@@ -863,7 +863,7 @@ pto.trowexpandmul ins(%src0, %src1, %tmp : !pto.tile_buf<loc=vec, dtype=f32, row
                       v_row=16, v_col=16, blayout=row_major, slayout=none_box,
                       fractal=512, pad=0>,
                       !pto.tile_buf<loc=vec, dtype=f32, rows=16, cols=1,
-                      v_row=16, v_col=1, blayout=row_major, slayout=none_box,
+                      v_row=16, v_col=1, blayout=col_major, slayout=none_box,
                       fractal=512, pad=0>,
                       !pto.tile_buf<loc=vec, dtype=f32, rows=16, cols=16,
                       v_row=16, v_col=16, blayout=row_major, slayout=none_box,

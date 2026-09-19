@@ -455,6 +455,111 @@ LogicalResult VMIChannelMergeOp::verify() {
   return success();
 }
 
+namespace {
+
+// Shared structural checks for the lane-preserving half-width split/merge pair.
+// Layouts are assigned by the VMI layout pass, so the verifier only enforces the
+// element-width / lane-count relation and never pins a layout family.
+LogicalResult verifyHalfWidthPair(Operation *op, VMIVRegType wideType,
+                                  VMIVRegType lowType,
+                                  VMIVRegType highType) {
+  bool laneCountMismatch =
+      lowType.getElementCount() != wideType.getElementCount() ||
+      highType.getElementCount() != wideType.getElementCount();
+  if (laneCountMismatch) {
+    return op->emitOpError()
+           << "requires the lane count to be preserved; got "
+           << wideType.getElementCount() << " wide lanes and "
+           << lowType.getElementCount() << "/" << highType.getElementCount()
+           << " half lanes";
+  }
+  bool elementTypeMismatch =
+      lowType.getElementType() != highType.getElementType();
+  if (elementTypeMismatch) {
+    return op->emitOpError()
+           << "requires the low and high halves to share one element type";
+  }
+  unsigned wideBits = pto::getPTOStorageElemBitWidth(wideType.getElementType());
+  unsigned halfBits = pto::getPTOStorageElemBitWidth(lowType.getElementType());
+  if (wideBits == 0 || halfBits == 0 || wideBits != 2 * halfBits) {
+    return op->emitOpError()
+           << "requires the wide element width to be exactly twice the half "
+              "element width; got "
+           << wideBits << " and " << halfBits << " bits";
+  }
+  return success();
+}
+
+// Layout annotations come from the layout pass: when present they must be
+// all-or-nothing and identical, so the assignment can be rebuilt from any
+// operand.
+LogicalResult verifyHalfWidthLayout(Operation *op, VMIVRegType first,
+                                    VMIVRegType second, VMIVRegType third,
+                                    ArrayRef<StringRef> names) {
+  bool firstAssigned = isLayoutAssigned(first);
+  bool secondAssigned = isLayoutAssigned(second);
+  bool thirdAssigned = isLayoutAssigned(third);
+  if (!firstAssigned && !secondAssigned && !thirdAssigned) {
+    return success();
+  }
+  if (!firstAssigned || !secondAssigned || !thirdAssigned) {
+    return op->emitOpError()
+           << "requires every operand to carry layout together, or none";
+  }
+  VMILayoutAttr firstLayout = first.getLayoutAttr();
+  VMILayoutAttr secondLayout = second.getLayoutAttr();
+  VMILayoutAttr thirdLayout = third.getLayoutAttr();
+  if (firstLayout != secondLayout || firstLayout != thirdLayout) {
+    return op->emitOpError()
+           << "requires equal layouts on all operands; got " << names[0]
+           << " = " << firstLayout << ", " << names[1] << " = " << secondLayout
+           << ", " << names[2] << " = " << thirdLayout;
+  }
+  // block_deinterleaved derives block_elems from the element-width-dependent
+  // physical lanes per part (block_elems = lanes_per_part / 8), so one shared
+  // attr denotes different logical-lane to physical-part mappings on the wide
+  // and half sides. The pair-wise vbitcast + vdintlv/vintlv lowering does not
+  // perform the cross-part reordering that would need, so reject it here.
+  if (firstLayout.isBlockDeinterleaved()) {
+    return op->emitOpError()
+           << "does not support block_deinterleaved layouts: block_elems is "
+              "derived from the element width, so the wide and half operands "
+              "use different logical-lane to physical-part mappings; "
+              "materialize a width-independent layout first";
+  }
+  return success();
+}
+
+} // namespace
+
+// NOLINTNEXTLINE(readability-make-member-function-const): ODS-generated
+// verifier callbacks have a non-const signature.
+LogicalResult VMIVUnzipOp::verify() {
+  auto sourceType = cast<VMIVRegType>(getSource().getType());
+  auto lowType = cast<VMIVRegType>(getLow().getType());
+  auto highType = cast<VMIVRegType>(getHigh().getType());
+  if (failed(
+          verifyHalfWidthPair(getOperation(), sourceType, lowType, highType))) {
+    return failure();
+  }
+  return verifyHalfWidthLayout(getOperation(), sourceType, lowType, highType,
+                               {"source", "low", "high"});
+}
+
+// NOLINTNEXTLINE(readability-make-member-function-const): ODS-generated
+// verifier callbacks have a non-const signature.
+LogicalResult VMIVZipOp::verify() {
+  auto lowType = cast<VMIVRegType>(getLow().getType());
+  auto highType = cast<VMIVRegType>(getHigh().getType());
+  auto resultType = cast<VMIVRegType>(getResult().getType());
+  if (failed(
+          verifyHalfWidthPair(getOperation(), resultType, lowType, highType))) {
+    return failure();
+  }
+  return verifyHalfWidthLayout(getOperation(), resultType, lowType, highType,
+                               {"result", "low", "high"});
+}
+
 LogicalResult verifyVCReductionElementAndMask(Operation *op,
                                                      VMIVRegType sourceType,
                                                      VMIMaskType maskType,

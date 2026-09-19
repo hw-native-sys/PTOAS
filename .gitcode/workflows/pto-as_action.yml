@@ -109,8 +109,8 @@ stages:
         with:
           precommit_image_version: ${{ jobs.JOB_image.outputs.precommit }}
           codecheck_image_version: ${{ jobs.JOB_image.outputs.codecheck }}
-      JOB_vpto_sim:
-        name: VPTO_SIM
+      JOB_sim_validation:
+        name: SIM_VALIDATION
         steps:
           - name: Checkout
             identifier: process_checkout
@@ -119,22 +119,79 @@ stages:
               ref: ${{ atomgit.event.pull_request.merge_commit_sha }}
               token: ${{ secrets.GIT_TOKEN }}
               allow-unsafe-pr-checkout: true
+          - name: Prepare simulator environment
+            timeout-minutes: 300
+            run: |
+              set -euo pipefail
+              # The runner declares its own environment (the systemd unit of the
+              # runner service, or its .env): this workflow spells out no host path
+              # and invents no default. Read values with printenv - the platform
+              # rewrites brace syntax inside run blocks, and a bare test would trip
+              # over set -u. See .gitcode/scripts/setup_sim_runner.sh.
+              #
+              # The gate is in its observation phase (see the observation block in
+              # .gitcode/scripts/sim_validation.sh), so a gap in the runner environment
+              # warns and skips this step instead of failing: while the setup is
+              # still being proven on real pull requests, it must not fail somebody
+              # else's merge request. Restore the hard failure together with the
+              # observation block once the gate starts enforcing.
+              require_env() {
+                if [ -z "$2" ]; then
+                  echo "ERROR: this runner must provide $1 (runner service environment)" >&2
+                  echo "::warning::SIM_VALIDATION observation phase: skipping this step without $1" >&2
+                  exit 0
+                fi
+              }
+              require_env SIM_PYTHON_BIN "$(printenv SIM_PYTHON_BIN || true)"
+              require_env ASCEND_3RD_LIB_PATH "$(printenv ASCEND_3RD_LIB_PATH || true)"
+              echo "python: $(printenv SIM_PYTHON_BIN)"
+              echo "llvm cache: $(printenv ASCEND_3RD_LIB_PATH)"
+              echo "pto-isa source: $(printenv PTO_ISA_SOURCE_DIR || echo clone-from-url)"
+              echo "pypto source: $(printenv PYPTO_SOURCE_DIR || echo clone-from-url)"
+              # Bisheng parses host side with this contract; derive it from the
+              # active gcc only when the environment did not provide one.
+              bisheng_flags="$(printenv BISHENG_FLAGS || true)"
+              if [ -z "$bisheng_flags" ] && command -v gcc >/dev/null 2>&1; then
+                gcc_install_dir="$(gcc -print-search-dirs | sed -n "s/^install: //p")"
+                gcc_toolchain="$(printf "%s" "$gcc_install_dir" | sed "s|/lib/gcc/.*||")"
+                if [ -n "$gcc_toolchain" ] && [ -d "$gcc_toolchain" ]; then
+                  export BISHENG_FLAGS="--gcc-toolchain=$gcc_toolchain"
+                fi
+              fi
+              bash "${{ steps.process_checkout.outputs.path }}/.gitcode/scripts/sim_validation.sh" build \
+                "${{ steps.process_checkout.outputs.path }}"
           - name: Run VPTO simulator validation
             timeout-minutes: 300
             run: |
               set -euo pipefail
-              export CANN_HOME="${CANN_HOME}"
               export SIM_SUITE=vpto
-              set +e
-              bash "${{ steps.process_checkout.outputs.path }}/.gitcode/scripts/vpto_sim.sh" \
+              bash "${{ steps.process_checkout.outputs.path }}/.gitcode/scripts/sim_validation.sh" test \
                 "${{ steps.process_checkout.outputs.path }}"
-              validation_status=$?
-              set -e
-              if [[ "${validation_status}" -ne 0 ]]; then
-                echo "VPTO_SIM validation failed (status ${validation_status}); keeping this experimental job non-blocking."
-              fi
-              exit 0
-          - name: Upload VPTO simulator logs
+          - name: Run TileLang ST validation
+            if: always()
+            timeout-minutes: 300
+            run: |
+              set -euo pipefail
+              export SIM_SUITE=tilelib
+              bash "${{ steps.process_checkout.outputs.path }}/.gitcode/scripts/sim_validation.sh" test \
+                "${{ steps.process_checkout.outputs.path }}"
+          - name: Run PTODSL ST validation
+            if: always()
+            timeout-minutes: 300
+            run: |
+              set -euo pipefail
+              export SIM_SUITE=ptodsl
+              bash "${{ steps.process_checkout.outputs.path }}/.gitcode/scripts/sim_validation.sh" test \
+                "${{ steps.process_checkout.outputs.path }}"
+          - name: Run PyPTO simulator validation
+            if: always()
+            timeout-minutes: 300
+            run: |
+              set -euo pipefail
+              export SIM_SUITE=pypto
+              bash "${{ steps.process_checkout.outputs.path }}/.gitcode/scripts/sim_validation.sh" test \
+                "${{ steps.process_checkout.outputs.path }}"
+          - name: Upload simulator logs
             if: always()
             uses: obs-upload
             with:
@@ -144,130 +201,13 @@ stages:
               secret-key: ${{ secrets.SK }}
               artifact-path: |
                 ${{ steps.process_checkout.outputs.path }}/.work/gitcode-vpto-sim/vpto-sim.log
-                ${{ steps.process_checkout.outputs.path }}/.work/gitcode-vpto-sim/cases/**
-              object-prefix: ${{ env.obs_path }}/vpto-sim/
-        runs-on:
-          - self-hosted
-          - arch=x64
-          - spec=xlarge
-        container:
-          image: swr.cn-north-4.myhuaweicloud.com/ci_cann/${{ jobs.JOB_image.outputs.Compile_Ascend_X86 }}
-          env:
-            CANN_HOME: ${{ env.CANN_HOME }}
-      JOB_tilelib_st:
-        name: TileLib_ST
-        steps:
-          - name: Checkout
-            identifier: process_checkout
-            uses: checkout
-            with:
-              ref: ${{ atomgit.event.pull_request.merge_commit_sha }}
-              token: ${{ secrets.GIT_TOKEN }}
-              allow-unsafe-pr-checkout: true
-          - name: Run TileLib ST validation
-            timeout-minutes: 300
-            run: |
-              set +e
-              export CANN_HOME="${CANN_HOME}" SIM_SUITE=tilelib
-              bash "${{ steps.process_checkout.outputs.path }}/.gitcode/scripts/vpto_sim.sh" "${{ steps.process_checkout.outputs.path }}"
-              validation_status=$?
-              echo "TileLib_ST validation exit status: ${validation_status}"
-              if [[ "${validation_status}" -ne 0 ]]; then
-                echo "::warning::TileLib_ST validation failed; this experimental job remains non-blocking."
-              fi
-              exit 0
-          - name: Upload TileLib ST logs
-            if: always()
-            uses: obs-upload
-            with:
-              endpoint: "https://obs.cn-north-4.myhuaweicloud.com"
-              bucket: "ascend-ci"
-              access-key: ${{ secrets.AK }}
-              secret-key: ${{ secrets.SK }}
-              artifact-path: |
-                ${{ steps.process_checkout.outputs.path }}/.work/gitcode-vpto-sim/*.log
-                ${{ steps.process_checkout.outputs.path }}/.work/gitcode-vpto-sim/tilelib-st-a5/logs/**
-                ${{ steps.process_checkout.outputs.path }}/.work/gitcode-vpto-sim/tilelib-st-a5/cases/**
-              object-prefix: ${{ env.obs_path }}/tilelib-st/
-        runs-on: [self-hosted, arch=x64, spec=xlarge]
-        container:
-          image: swr.cn-north-4.myhuaweicloud.com/ci_cann/${{ jobs.JOB_image.outputs.Compile_Ascend_X86 }}
-          env:
-            CANN_HOME: ${{ env.CANN_HOME }}
-      JOB_ptodsl_st:
-        name: PTODSL_ST
-        steps:
-          - name: Checkout
-            identifier: process_checkout
-            uses: checkout
-            with:
-              ref: ${{ atomgit.event.pull_request.merge_commit_sha }}
-              token: ${{ secrets.GIT_TOKEN }}
-              allow-unsafe-pr-checkout: true
-          - name: Run PTODSL ST validation
-            timeout-minutes: 300
-            run: |
-              set +e
-              export CANN_HOME="${CANN_HOME}" SIM_SUITE=ptodsl
-              bash "${{ steps.process_checkout.outputs.path }}/.gitcode/scripts/vpto_sim.sh" "${{ steps.process_checkout.outputs.path }}"
-              validation_status=$?
-              echo "PTODSL_ST validation exit status: ${validation_status}"
-              if [[ "${validation_status}" -ne 0 ]]; then
-                echo "::warning::PTODSL_ST validation failed; this experimental job remains non-blocking."
-              fi
-              exit 0
-          - name: Upload PTODSL ST logs
-            if: always()
-            uses: obs-upload
-            with:
-              endpoint: "https://obs.cn-north-4.myhuaweicloud.com"
-              bucket: "ascend-ci"
-              access-key: ${{ secrets.AK }}
-              secret-key: ${{ secrets.SK }}
-              artifact-path: ${{ steps.process_checkout.outputs.path }}/.work/gitcode-vpto-sim/*.log
-              object-prefix: ${{ env.obs_path }}/ptodsl-st/
-        runs-on: [self-hosted, arch=x64, spec=xlarge]
-        container:
-          image: swr.cn-north-4.myhuaweicloud.com/ci_cann/${{ jobs.JOB_image.outputs.Compile_Ascend_X86 }}
-          env:
-            CANN_HOME: ${{ env.CANN_HOME }}
-      JOB_pypto_sim:
-        name: PyPTO_SIM
-        steps:
-          - name: Checkout
-            identifier: process_checkout
-            uses: checkout
-            with:
-              ref: ${{ atomgit.event.pull_request.merge_commit_sha }}
-              token: ${{ secrets.GIT_TOKEN }}
-              allow-unsafe-pr-checkout: true
-          - name: Run PyPTO simulator validation
-            timeout-minutes: 300
-            run: |
-              set +e
-              export CANN_HOME="${CANN_HOME}" SIM_SUITE=pypto
-              bash "${{ steps.process_checkout.outputs.path }}/.gitcode/scripts/vpto_sim.sh" "${{ steps.process_checkout.outputs.path }}"
-              validation_status=$?
-              echo "PyPTO_SIM validation exit status: ${validation_status}"
-              if [[ "${validation_status}" -ne 0 ]]; then
-                echo "::warning::PyPTO_SIM validation failed; this experimental job remains non-blocking."
-              fi
-              exit 0
-          - name: Upload PyPTO simulator logs
-            if: always()
-            uses: obs-upload
-            with:
-              endpoint: "https://obs.cn-north-4.myhuaweicloud.com"
-              bucket: "ascend-ci"
-              access-key: ${{ secrets.AK }}
-              secret-key: ${{ secrets.SK }}
-              artifact-path: ${{ steps.process_checkout.outputs.path }}/.work/gitcode-vpto-sim/pypto-*.log
-              object-prefix: ${{ env.obs_path }}/pypto-sim/
-        runs-on: [self-hosted, arch=x64, spec=xlarge]
-        container:
-          image: swr.cn-north-4.myhuaweicloud.com/ci_cann/${{ jobs.JOB_image.outputs.Compile_Ascend_X86 }}
-          env:
-            CANN_HOME: ${{ env.CANN_HOME }}
+                ${{ steps.process_checkout.outputs.path }}/.work/gitcode-vpto-sim/tilelib-st.log
+                ${{ steps.process_checkout.outputs.path }}/.work/gitcode-vpto-sim/ptodsl-dsl-st.log
+                ${{ steps.process_checkout.outputs.path }}/.work/gitcode-vpto-sim/pypto-*.log
+                ${{ steps.process_checkout.outputs.path }}/.work/gitcode-vpto-sim/cases/parallel-runner.log
+                ${{ steps.process_checkout.outputs.path }}/.work/gitcode-vpto-sim/cases/parallel-summary.tsv
+              object-prefix: ${{ env.obs_path }}/sim/
+        runs-on: ["self-hosted", "runner=label_1"]
     pre:
     - type: auto
     fail-fast: false

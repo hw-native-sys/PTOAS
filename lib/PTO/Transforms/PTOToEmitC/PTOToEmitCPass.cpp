@@ -713,6 +713,14 @@ struct EmitPTOManualPass
       }
       if (isa<mlir::pto::PartitionViewOp>(op))
         flags.globalTensorData = true;
+      if (auto load = dyn_cast<mlir::pto::TLoadOp>(op)) {
+        auto policy = load.getCachePolicyAttr();
+        const bool hasBypassOffset = load.getOffset() && policy &&
+                                    policy.getValue() == pto::LoadCachePolicy::L2Bypass;
+        if (hasBypassOffset) {
+          flags.globalTensorData = true;
+        }
+      }
       if (isa<arith::BitcastOp, arith::MaximumFOp, arith::MinimumFOp>(op))
         flags.bitcast = true;
     });
@@ -894,7 +902,7 @@ static inline To ptoas_bitcast(From from) {
     return failure(hasUnsupportedSCF);
   }
 
-  LogicalResult preLowerSCF(ModuleOp mop, MLIRContext *ctx) {
+  LogicalResult preLowerSCF(ModuleOp mop, MLIRContext *ctx) const {
     SmallVector<func::FuncOp> functions;
     mop.walk([&](func::FuncOp func) { functions.push_back(func); });
     if (failed(lowerWholeFunctionSCF(ctx, functions))) {
@@ -996,7 +1004,7 @@ static inline To ptoas_bitcast(From from) {
 
   // Step A/A2/A3: lower or drop leftover UnrealizedConversionCast ops and
   // re-materialize variable reads at their use sites.
-  LogicalResult cleanupConversionCasts(ModuleOp mop, TypeConverter& typeConverter)
+  LogicalResult cleanupConversionCasts(ModuleOp mop, TypeConverter& typeConverter) const
   {
       if (failed(lowerUnrealizedCasts(mop, typeConverter))) {
           return failure();

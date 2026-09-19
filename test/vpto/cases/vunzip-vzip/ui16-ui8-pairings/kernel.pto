@@ -1,0 +1,88 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+
+// Bit-exact numeric coverage for pto.vmi.vunzip / pto.vmi.vzip on 16 -> 8.
+//
+// Both register pairings are covered on the contiguous layout, which is what
+// the vunzip lowering chooses here:
+//
+//   256 lanes: the wide value occupies two physical parts, so one result part
+//              is fed by two wide parts (the 2:1 pairing).
+//   128 lanes: the wide value is one half-full physical part, so it reuses its
+//              single source register as both interleave operands (the 1:1
+//              half-full pairing).
+//
+// The round trip must reproduce the 16-bit input words bit for bit.
+//
+// RUN: ptoas --pto-arch a5 --pto-backend=vpto --emit-vpto %s -o /dev/null
+
+module attributes {pto.target_arch = "a5", pto.kernel_kind = #pto.kernel_kind<vector>} {
+  func.func @vmi_vunzip_vzip_ui16_ui8_256_kernel(%src_gm: !pto.ptr<ui16, gm>, %dst_gm: !pto.ptr<ui16, gm>) attributes {pto.kernel} {
+    %c0 = arith.constant 0 : index
+    %c0_i64 = arith.constant 0 : i64
+    %c1_i64 = arith.constant 1 : i64
+    %c512_i64 = arith.constant 512 : i64
+    %c4096_i64 = arith.constant 4096 : i64
+    %ub_src = pto.castptr %c0_i64 : i64 -> !pto.ptr<ui16, ub>
+    %ub_dst = pto.castptr %c4096_i64 : i64 -> !pto.ptr<ui16, ub>
+    pto.mte_gm_ub %src_gm, %ub_src, %c0_i64, %c512_i64
+      nburst(%c1_i64, %c512_i64, %c512_i64)
+      : !pto.ptr<ui16, gm>, !pto.ptr<ui16, ub>, i64, i64, i64, i64, i64
+    pto.set_flag["PIPE_MTE2", "PIPE_V", "EVENT_ID0"]
+    pto.wait_flag["PIPE_MTE2", "PIPE_V", "EVENT_ID0"]
+    pto.vecscope {
+      %x = pto.vmi.vload %ub_src[%c0]
+          : !pto.ptr<ui16, ub> -> !pto.vmi.vreg<256xui16>
+      %low, %high = pto.vmi.vunzip %x
+          : !pto.vmi.vreg<256xui16> -> !pto.vmi.vreg<256xui8>, !pto.vmi.vreg<256xui8>
+      %y = pto.vmi.vzip %low, %high
+          : !pto.vmi.vreg<256xui8>, !pto.vmi.vreg<256xui8> -> !pto.vmi.vreg<256xui16>
+      pto.vmi.vstore %y, %ub_dst[%c0]
+          : !pto.vmi.vreg<256xui16>, !pto.ptr<ui16, ub>
+    }
+    pto.set_flag["PIPE_V", "PIPE_MTE3", "EVENT_ID0"]
+    pto.wait_flag["PIPE_V", "PIPE_MTE3", "EVENT_ID0"]
+    pto.mte_ub_gm %ub_dst, %dst_gm, %c512_i64
+      nburst(%c1_i64, %c512_i64, %c512_i64)
+      : !pto.ptr<ui16, ub>, !pto.ptr<ui16, gm>, i64, i64, i64, i64
+    pto.barrier #pto.pipe<PIPE_ALL>
+    return
+  }
+
+  func.func @vmi_vunzip_vzip_ui16_ui8_128_kernel(%src_gm: !pto.ptr<ui16, gm>, %dst_gm: !pto.ptr<ui16, gm>) attributes {pto.kernel} {
+    %c0 = arith.constant 0 : index
+    %c0_i64 = arith.constant 0 : i64
+    %c1_i64 = arith.constant 1 : i64
+    %c256_i64 = arith.constant 256 : i64
+    %c4096_i64 = arith.constant 4096 : i64
+    %ub_src = pto.castptr %c0_i64 : i64 -> !pto.ptr<ui16, ub>
+    %ub_dst = pto.castptr %c4096_i64 : i64 -> !pto.ptr<ui16, ub>
+    pto.mte_gm_ub %src_gm, %ub_src, %c0_i64, %c256_i64
+      nburst(%c1_i64, %c256_i64, %c256_i64)
+      : !pto.ptr<ui16, gm>, !pto.ptr<ui16, ub>, i64, i64, i64, i64, i64
+    pto.set_flag["PIPE_MTE2", "PIPE_V", "EVENT_ID0"]
+    pto.wait_flag["PIPE_MTE2", "PIPE_V", "EVENT_ID0"]
+    pto.vecscope {
+      %x = pto.vmi.vload %ub_src[%c0]
+          : !pto.ptr<ui16, ub> -> !pto.vmi.vreg<128xui16>
+      %low, %high = pto.vmi.vunzip %x
+          : !pto.vmi.vreg<128xui16> -> !pto.vmi.vreg<128xui8>, !pto.vmi.vreg<128xui8>
+      %y = pto.vmi.vzip %low, %high
+          : !pto.vmi.vreg<128xui8>, !pto.vmi.vreg<128xui8> -> !pto.vmi.vreg<128xui16>
+      pto.vmi.vstore %y, %ub_dst[%c0]
+          : !pto.vmi.vreg<128xui16>, !pto.ptr<ui16, ub>
+    }
+    pto.set_flag["PIPE_V", "PIPE_MTE3", "EVENT_ID0"]
+    pto.wait_flag["PIPE_V", "PIPE_MTE3", "EVENT_ID0"]
+    pto.mte_ub_gm %ub_dst, %dst_gm, %c256_i64
+      nburst(%c1_i64, %c256_i64, %c256_i64)
+      : !pto.ptr<ui16, ub>, !pto.ptr<ui16, gm>, i64, i64, i64, i64
+    pto.barrier #pto.pipe<PIPE_ALL>
+    return
+  }
+}

@@ -808,7 +808,7 @@ struct FoldTileBufIntrinsicsPass
 
   LogicalResult foldTileBufAddrOps(
       SmallVector<pto::TileBufAddrOp, mlir::pto::kValue8> &addrOps,
-      OpBuilder &builder) {
+      OpBuilder &builder) const {
     for (auto addrOp : addrOps) {
       if (isa<MemRefType>(addrOp.getSrc().getType())) {
         if (failed(foldTileBufAddrMemref(addrOp, builder))) {
@@ -1170,7 +1170,7 @@ struct FoldTileBufIntrinsicsPass
     return foldTileBufAddrOps(ops.addrOps, builder);
   }
 
-  LogicalResult foldShapeFamily(FoldOps &ops, OpBuilder &builder) {
+  LogicalResult foldShapeFamily(FoldOps &ops, OpBuilder &builder) const {
     if (failed(foldTileValidRowsOps(ops.rowsOps, builder))) {
       return failure();
     }

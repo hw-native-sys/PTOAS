@@ -427,7 +427,7 @@ static FailureOr<SmallVector<Value>> materializeMaskGranularityCastThroughLayout
       resultTypes, rewriter);
 }
 static FailureOr<SmallVector<Value>> materializeMaskGranularityCastParts(
-    Operation *op, VMIMaskType sourceType, VMIMaskType resultType,
+    Operation *op, VMIMaskType sourceType, [[maybe_unused]] VMIMaskType resultType,
     ValueRange sourceParts, TypeRange resultTypes,
     const MaskGranularityCastPlan &plan, PatternRewriter &rewriter) {
   bool samePhysicalLayout =
@@ -1297,7 +1297,7 @@ private:
   }
   LogicalResult lowerDynamicCreateMask(
       VMICreateMaskOp op, OpAdaptor adaptor, VMIMaskType resultVMIType,
-      VMILayoutAttr layout, int64_t lanesPerPart,
+      VMILayoutAttr layout,
       OneToNPatternRewriter &rewriter) const {
     FailureOr<Value> active = getSingleValue(
         op, adaptor.getActiveLanes(),
@@ -1513,7 +1513,7 @@ public:
     }
     if (!activeConstant) {
       return lowerDynamicCreateMask(op, adaptor, resultVMIType, layout,
-                                    *lanesPerPart, rewriter);
+                                    rewriter);
     }
     auto activeAttr = dyn_cast<IntegerAttr>(activeConstant.getValue());
     if (!activeAttr) {

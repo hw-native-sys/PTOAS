@@ -40,14 +40,7 @@ ptoas --pto-arch=a5 input.pto -o output.cpp
 `reserve_buffer` 会在普通本地 Tile 完成规划后，再从同一地址空间的未占用区间中
 选择满足大小和对齐要求的位置。
 
-自动分配时：
-
-- `auto = true`
-- `base` 必须缺省
-- 编译器会补出解析后的 `base`
-
-默认编译流程不接受 `auto = false` 的显式 `base`；普通 TileOp 程序应使用上述自动
-分配形式。
+`reserve_buffer` 使用自动分配形式（`auto = true`），基址由编译器在内存规划阶段补出。
 
 ## 排查建议
 

@@ -221,7 +221,31 @@ static bool isSameLayoutOp(Operation *op) {
              VMIShrSOp, VMIVmullOp, VMIFPToSIOp, VMISIToFPOp, VMICmpFOp,
              VMICmpIOp, VMISelectOp, VMIMaskAndOp, VMIMaskOrOp, VMIMaskXOrOp,
              VMIMaskNotOp, VMIActivePrefixIndexOp, VMICompressOp,
-             VMIExpandLoadOp>(op);
+             VMIExpandLoadOp, VMIVUnzipOp, VMIVZipOp>(op);
+}
+
+// Whether \p op is a bitcast that preserves the storage element width, i.e. one
+// whose whole relation set is the identical layout for every layout.  The
+// width-changing kind is the complement and must stay a boundary: it has the
+// single contiguous relation of kWidthChangingBitcastLayoutPatterns and it
+// changes the element width, so no element-width-preserving walk may cross it.
+// Only the legacy pto.vmi.bitcast is recognised; a unified reinterpretation
+// that was not lowered first is conservatively treated as a boundary.
+static bool isEqualWidthBitcastOp(Operation *op) {
+  auto bitcast = dyn_cast<VMIBitcastOp>(op);
+  if (!bitcast) {
+    return false;
+  }
+  auto sourceType = dyn_cast<VMIVRegType>(bitcast.getSource().getType());
+  auto resultType = dyn_cast<VMIVRegType>(bitcast.getResult().getType());
+  if (!sourceType || !resultType) {
+    return false;
+  }
+  unsigned sourceBits =
+      pto::getPTOStorageElemBitWidth(sourceType.getElementType());
+  unsigned resultBits =
+      pto::getPTOStorageElemBitWidth(resultType.getElementType());
+  return sourceBits != 0 && sourceBits == resultBits;
 }
 
 static bool isCastOp(Operation *op) {
@@ -1126,6 +1150,10 @@ const VMILayoutTransfer *getTransfer(Operation *op) {
 } // namespace
 
 bool mlir::pto::isVMISameLayoutOp(Operation *op) { return isSameLayoutOp(op); }
+
+bool mlir::pto::isVMIClassTransparentOp(Operation *op) {
+  return isSameLayoutOp(op) || isEqualWidthBitcastOp(op);
+}
 
 VMILayoutPropagator::VMILayoutPropagator(Operation *scope)
     : scope(scope), ctx(scope ? scope->getContext() : nullptr) {}

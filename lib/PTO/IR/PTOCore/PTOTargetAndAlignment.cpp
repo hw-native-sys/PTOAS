@@ -250,7 +250,7 @@ template <typename Rule, typename Dist, size_t N>
 static std::optional<int64_t> findAlignmentSize(const Rule (&rules)[N],
                                                 Dist dist) {
   auto rule = llvm::find_if(
-      rules, [&](const Rule &entry) { return entry.dist == dist; });
+      rules, [dist](const Rule &entry) { return entry.dist == dist; });
   if (rule == std::end(rules)) {
     return std::nullopt;
   }

@@ -1881,7 +1881,8 @@ struct PlanMemoryModernPass
 
   PlanMemoryModernPass() = default;
   explicit PlanMemoryModernPass(const PlanMemoryOptions &options)
-      : memMode(options.memMode), orderBySize(options.orderBySize) {}
+      : memMode(options.memMode), orderBySize(options.orderBySize),
+        enabled(options.enabled) {}
 
   StringRef getArgument() const final { return "pto-plan-memory"; }
   StringRef getDescription() const final {
@@ -1908,6 +1909,19 @@ struct PlanMemoryModernPass
       }
     });
 
+    if (!enabled) {
+      // Automatic planning was explicitly disabled: assign no address, but
+      // still verify that every live alloc_tile already carries an addr, so we
+      // never emit code in which all buffers alias address 0.
+      for (func::FuncOp funcOp : funcs) {
+        if (failed(verifyNoUnplannedAllocTile(funcOp))) {
+          signalPassFailure();
+          return;
+        }
+      }
+      return;
+    }
+
     for (func::FuncOp funcOp : funcs) {
       if (failed(
               runModernPlanMemory(funcOp, memMode, orderBySize))) {
@@ -1920,6 +1934,7 @@ struct PlanMemoryModernPass
 private:
   std::string memMode = "local";
   bool orderBySize = false;
+  bool enabled = true;
 };
 } // namespace
 

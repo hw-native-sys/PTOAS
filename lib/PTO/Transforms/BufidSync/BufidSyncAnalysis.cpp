@@ -229,7 +229,7 @@ void BufidSyncAnalysis::collectDependencies() {
 
 std::optional<DepPair>
 BufidSyncAnalysis::tryBuildDepPair(CompoundInstanceElement *src,
-                                   CompoundInstanceElement *dst) {
+                                   CompoundInstanceElement *dst) const {
   if (isSamePipe(src, dst)) {
     return std::nullopt;
   }

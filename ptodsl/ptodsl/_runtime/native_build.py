@@ -26,6 +26,7 @@ from .codegen import generate_launch_cpp, launch_symbol_name
 from .toolchain import (
     aicore_arch_for_kernel_kind,
     common_include_flags,
+    bisheng_extra_flags,
     runtime_library_flags,
     resolve_bisheng,
     resolve_ptoas_binary,
@@ -162,6 +163,7 @@ def _compile_launch_cpp(
     _run(
         [
             bisheng,
+            *bisheng_extra_flags(),
             *_kernel_compile_flags(kernel_kind, target_arch),
             f"-D{export_macro}",
             "-c",
@@ -185,6 +187,7 @@ def _link_shared_library(
     _run(
         [
             bisheng,
+            *bisheng_extra_flags(),
             "-fPIC",
             "-shared",
             "--cce-fatobj-link",

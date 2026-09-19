@@ -795,7 +795,7 @@ bool InsertSyncAnalysis::isAlreadySync(
 
 void InsertSyncAnalysis::UpdateAlreadySync(const SyncOps &syncVector,
                                            SyncRecordList &syncRecordList,
-                                           const PipelineType nowPipeValue) {
+                                           const PipelineType nowPipeValue) const {
   for (auto *sync : syncVector) {
     // A slot-keyed event orders only the selected physical slot. It must not
     // make later accesses through another slot look globally synchronized.

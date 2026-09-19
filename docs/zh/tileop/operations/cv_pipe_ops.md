@@ -432,14 +432,13 @@ pto.tfree_from_aiv(%entry : !pto.tensor_view<16x16xf32>)
 
 ```mlir
 pto.reserve_buffer {name = <name>, size = <size>,
-                    location = <location>, auto = <autoAlloc>
-                    (, base = <base>)?} -> i32
+                    location = <location>, auto = <autoAlloc>} -> i32
 ```
 
 **语义：**
 
 ```text
-addr = reserve_local_buffer(name, size, location, autoAlloc, base?)
+addr = reserve_local_buffer(name, size, location, autoAlloc)
 // 在当前函数中预留一块本地消费者槽位缓冲区，
 // 返回其地址供 CV Pipe 初始化或对端导入使用
 ```
@@ -453,8 +452,7 @@ addr = reserve_local_buffer(name, size, location, autoAlloc, base?)
 - `name` — 缓冲区名称（字符串），在函数内必须唯一。
 - `size` — 缓冲区大小（`i32`），必须大于 0。
 - `location` — 地址空间，必须为 `#pto.address_space<vec>` 或 `#pto.address_space<mat>`。
-- `autoAlloc` — 是否自动分配（`bool`）。当为 `false` 时必须提供 `base`。
-- `base` — 可选的固定基地址（`i32`），当 `autoAlloc = false` 时必须提供，且为非负整数。
+- `autoAlloc` — 是否自动分配（`bool`）。必须为 `true`，基址由编译器在内存规划阶段分配。
 
 **约束：**
 
@@ -462,7 +460,6 @@ addr = reserve_local_buffer(name, size, location, autoAlloc, base?)
   - 必须嵌套在 `func.func` 内部。
   - `size` 必须大于 0。
   - `location` 必须为 `vec` 或 `mat`。
-  - 当 `autoAlloc = false` 时必须提供 `base`。
   - `name` 在所属函数内必须唯一。
 
 **示例：**
@@ -471,7 +468,7 @@ addr = reserve_local_buffer(name, size, location, autoAlloc, base?)
 %buf = pto.reserve_buffer
     {name = "c2v_slot_buffer", size = 131072,
      location = #pto.address_space<vec>,
-     auto = false, base = 0} -> i32
+     auto = true} -> i32
 ```
 
 ---
@@ -519,7 +516,9 @@ addr = import_peer_buffer(name, peer_func)
 
 ## 完整端到端示例
 
-以下示例展示了一个完整的 C2V Pipe 通信流程，其中 Cube 核生产数据并通过 Pipe 推送给 Vector 核消费：
+### C2V：Cube 核生产、Vector 核消费
+
+以下示例展示了一个完整的 C2V Pipe 通信流程：
 
 ```mlir
 // Cube 核端（C2V 生产者）
@@ -605,6 +604,132 @@ func.func @vector_kernel(%gm_slot_buffer : !pto.ptr<f32>,
 
 ---
 
+### V2C：Vector 核生产、Cube 核消费
+
+以下示例展示了一个完整的 V2C Pipe 通信流程：
+
+```mlir
+  // Vector 核端（V2C 生产者）
+  func.func @vector_kernel(%gm_slot_buffer : !pto.ptr<f32>,
+                           %src : !pto.tile_buf<loc=vec, dtype=f32, rows=16, cols=16,
+                                                v_row=16, v_col=16, blayout=row_major,
+                                                slayout=none_box, fractal=1024, pad=0>)
+      attributes {pto.kernel_kind = #pto.kernel_kind<vector>} {
+    %c0 = pto.constant 0 : index
+    %c1 = pto.constant 1 : index
+    %c16 = pto.constant 16 : index
+
+    %gm_slots = pto.make_tensor_view %gm_slot_buffer,
+      shape = [%c16, %c16], strides = [%c16, %c1]
+      : !pto.tensor_view<16x16xf32>
+
+    pto.aiv_initialize_pipe {id = 0, dir_mask = 2, slot_size = 1024}
+      (gm_slot_tensor = %gm_slots : !pto.tensor_view<16x16xf32>)
+
+    %entry = pto.talloc_to_aic {id = 0, split = 0}
+      -> !pto.tensor_view<16x16xf32>
+
+    %entry_partition = pto.partition_view %entry,
+      offsets = [%c0, %c0], sizes = [%c16, %c16]
+      : !pto.tensor_view<16x16xf32> -> !pto.partition_tensor_view<16x16xf32>
+
+    pto.tstore ins(%src : !pto.tile_buf<loc=vec, dtype=f32, rows=16, cols=16,
+                                        v_row=16, v_col=16, blayout=row_major,
+                                        slayout=none_box, fractal=1024, pad=0>)
+               outs(%entry_partition : !pto.partition_tensor_view<16x16xf32>)
+
+    pto.tpush_to_aic(%entry : !pto.tensor_view<16x16xf32>)
+      {id = 0, split = 0}
+
+    func.return
+  }
+
+  // Cube 核端（V2C 消费者）
+  func.func @cube_kernel(%gm_slot_buffer : !pto.ptr<f32>,
+                         %dst : !pto.tile_buf<loc=vec, dtype=f32, rows=16, cols=16,
+                                              v_row=16, v_col=16, blayout=row_major,
+                                              slayout=none_box, fractal=1024, pad=0>)
+      attributes {pto.kernel_kind = #pto.kernel_kind<cube>} {
+    %c0 = pto.constant 0 : index
+    %c1 = pto.constant 1 : index
+    %c16 = pto.constant 16 : index
+
+    %gm_slots = pto.make_tensor_view %gm_slot_buffer,
+      shape = [%c16, %c16], strides = [%c16, %c1]
+      : !pto.tensor_view<16x16xf32>
+
+    pto.aic_initialize_pipe {id = 0, dir_mask = 2, slot_size = 1024}
+      (gm_slot_tensor = %gm_slots : !pto.tensor_view<16x16xf32>)
+
+    %entry = pto.tpop_from_aiv {id = 0, split = 0}
+      -> !pto.tensor_view<16x16xf32>
+
+    %entry_partition = pto.partition_view %entry,
+      offsets = [%c0, %c0], sizes = [%c16, %c16]
+      : !pto.tensor_view<16x16xf32> -> !pto.partition_tensor_view<16x16xf32>
+
+    pto.tload ins(%entry_partition : !pto.partition_tensor_view<16x16xf32>)
+              outs(%dst : !pto.tile_buf<loc=vec, dtype=f32, rows=16, cols=16,
+                                        v_row=16, v_col=16, blayout=row_major,
+                                        slayout=none_box, fractal=1024, pad=0>)
+
+    pto.tfree_from_aiv(%entry : !pto.tensor_view<16x16xf32>)
+      {id = 0, split = 0}
+
+    func.return
+  }
+```
+
+---
+
+### 本格 FIFO 形：`reserve_buffer` / `import_reserved_buffer`（仅 A5）
+
+以下示例展示生产侧用 `import_reserved_buffer` 绑定消费侧 `reserve_buffer` 预留的同名 FIFO：
+
+```mlir
+  // 生产侧（Cube）：用 import_reserved_buffer 绑定对端预留的 FIFO
+  func.func @cube_kernel() attributes {pto.kernel_kind = #pto.kernel_kind<cube>} {
+    %c0_i32 = arith.constant 0 : i32
+    %c2v_import = pto.import_reserved_buffer {
+      name = "c2v_fifo",
+      peer_func = @vector_kernel
+    } -> i32
+
+    pto.aic_initialize_pipe {id = 0, dir_mask = 1, slot_size = 1024}
+      (c2v_consumer_buf = %c2v_import : i32,
+       v2c_consumer_buf = %c0_i32 : i32)
+
+    %tile = pto.alloc_tile : !pto.tile_buf<loc=acc, dtype=i32, rows=16, cols=16,
+        v_row=16, v_col=16, blayout=col_major, slayout=row_major, fractal=1024, pad=0>
+    pto.tpush_to_aiv(%tile : !pto.tile_buf<loc=acc, dtype=i32, rows=16, cols=16,
+        v_row=16, v_col=16, blayout=col_major, slayout=row_major, fractal=1024, pad=0>) {id = 0, split = 0}
+    return
+  }
+
+  // 消费侧（Vector）：用 reserve_buffer 预留本格 FIFO
+  func.func @vector_kernel() attributes {pto.kernel_kind = #pto.kernel_kind<vector>} {
+    %c0_i32 = arith.constant 0 : i32
+    %c2v_local = pto.reserve_buffer {
+      name = "c2v_fifo",
+      size = 4096,
+      location = #pto.address_space<vec>,
+      auto = true
+    } -> i32
+
+    pto.aiv_initialize_pipe {id = 0, dir_mask = 1, slot_size = 1024}
+      (c2v_consumer_buf = %c2v_local : i32,
+       v2c_consumer_buf = %c0_i32 : i32)
+
+    %recv = pto.tpop_from_aic {id = 0, split = 0}
+      -> !pto.tile_buf<loc=vec, dtype=i32, rows=16, cols=16,
+           v_row=16, v_col=16, blayout=row_major, slayout=none_box, fractal=512, pad=0>
+    pto.tfree_from_aic {id = 0, split = 0}
+    return
+  }
+```
+
+---
+
 ### `pto.section.cube` — Cube 核代码区域
 
 ```mlir
@@ -636,7 +761,7 @@ pto.section.cube {
 
 ```mlir
 pto.section.cube {
-  %tile = pto.alloc_tile addr = %c0_i64
+  %tile = pto.alloc_tile
       : !pto.tile_buf<loc=acc, dtype=f32, rows=16, cols=256,
                       v_row=16, v_col=256, blayout=col_major,
                       slayout=row_major, fractal=1024, pad=0>
@@ -782,8 +907,8 @@ pipe = init_l2l_pipe(dir_mask, slot_size, slot_num, local_addr, ...)
 
 ```mlir
 %pipe = pto.initialize_l2l_pipe
-    {dir_mask = 1, slot_size = 8192, slot_num = 2}
-    (%local_buf : i64) -> !pto.pipe
+    {dir_mask = 1, slot_size = 8192, slot_num = 2, flag_base = 0}
+    (%local_buf : i32) -> !pto.pipe
 ```
 
 ---

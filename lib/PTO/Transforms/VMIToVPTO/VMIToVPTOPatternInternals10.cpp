@@ -903,3 +903,267 @@ public:
                                   resultLayout, rewriter);
   }
 };
+
+//===----------------------------------------------------------------------===//
+// VMIVUnzipOp
+//===----------------------------------------------------------------------===//
+
+struct OneToNVMIVUnzipOpPattern : OneToNOpConversionPattern<VMIVUnzipOp> {
+  using OneToNOpConversionPattern<VMIVUnzipOp>::OneToNOpConversionPattern;
+
+private:
+  // Emit the pto.vdintlv of one result part and append its low and high halves.
+  // The half-full pairing reuses its only source register as both operands,
+  // its unused lanes being padding.
+  LogicalResult
+  emitSplitPart(VMIVUnzipOp op, Value firstSource, Value secondSource,
+                size_t sourcePartsPerResult, VRegType lowType, VRegType highType,
+                Type carrierElem, SmallVectorImpl<Value> &lows,
+                SmallVectorImpl<Value> &highs,
+                OneToNPatternRewriter &rewriter) const {
+    // The carrier keeps the half-width result lane count, so bitcasting a wide
+    // source part to it has the same register footprint.
+    auto carrierType =
+        VRegType::get(rewriter.getContext(), lowType.getElementCount(),
+                      carrierElem);
+    FailureOr<Value> lhs =
+        bitcastVReg(op.getLoc(), firstSource, carrierType, rewriter);
+    if (failed(lhs)) {
+      return rewriter.notifyMatchFailure(
+          op, "failed to bitcast the vunzip source");
+    }
+    FailureOr<Value> rhs =
+        sourcePartsPerResult == 2
+            ? bitcastVReg(op.getLoc(), secondSource, carrierType, rewriter)
+            : lhs;
+    if (failed(rhs)) {
+      return rewriter.notifyMatchFailure(
+          op, "failed to bitcast the vunzip source");
+    }
+    auto deinterleaved = rewriter.create<VdintlvOp>(
+        op.getLoc(), TypeRange{carrierType, carrierType}, *lhs, *rhs);
+    FailureOr<Value> lowValue =
+        bitcastVReg(op.getLoc(), deinterleaved.getLow(), lowType, rewriter);
+    FailureOr<Value> highValue =
+        bitcastVReg(op.getLoc(), deinterleaved.getHigh(), highType, rewriter);
+    bool resultBitcastFailed = failed(lowValue) || failed(highValue);
+    if (resultBitcastFailed) {
+      return rewriter.notifyMatchFailure(
+          op, "failed to bitcast the vunzip result");
+    }
+    lows.push_back(*lowValue);
+    highs.push_back(*highValue);
+    return success();
+  }
+
+  // Emit one pto.vdintlv per result part.  Bitcasting a wide source register to
+  // the half-width carrier turns the two halves of every element into adjacent
+  // lanes, so the deinterleave reads both at once; the low parts come first in
+  // the result list, then the high parts.
+  FailureOr<SmallVector<Value>>
+  buildSplit(VMIVUnzipOp op, ValueRange sourceParts, ArrayRef<Type> lowTypes,
+             ArrayRef<Type> highTypes, unsigned halfBits,
+             size_t sourcePartsPerResult,
+             OneToNPatternRewriter &rewriter) const {
+    Type carrierElem = IntegerType::get(
+        rewriter.getContext(), halfBits,
+        IntegerType::SignednessSemantics::Unsigned);
+    SmallVector<Value> lows;
+    SmallVector<Value> highs;
+    for (size_t chunkIndex = 0; chunkIndex < lowTypes.size(); ++chunkIndex) {
+      auto lowType = dyn_cast<VRegType>(lowTypes[chunkIndex]);
+      auto highType = dyn_cast<VRegType>(highTypes[chunkIndex]);
+      if (!lowType || !highType ||
+          lowType.getElementCount() != highType.getElementCount()) {
+        return rewriter.notifyMatchFailure(op,
+                                           "unsupported vunzip result type");
+      }
+      Value firstSource = sourceParts[chunkIndex * sourcePartsPerResult];
+      Value secondSource =
+          sourcePartsPerResult == 2
+              ? sourceParts[chunkIndex * sourcePartsPerResult + 1]
+              : firstSource;
+      LogicalResult split =
+          emitSplitPart(op, firstSource, secondSource, sourcePartsPerResult,
+                        lowType, highType, carrierElem, lows, highs, rewriter);
+      if (failed(split)) {
+        return failure();
+      }
+    }
+    lows.append(highs.begin(), highs.end());
+    return lows;
+  }
+
+public:
+  LogicalResult
+  matchAndRewrite(VMIVUnzipOp op, OpAdaptor adaptor,
+                  OneToNPatternRewriter &rewriter) const override {
+    FailureOr<SmallVector<Type>> lowTypes =
+        getConvertedResultTypes(op, 0, *this->getTypeConverter());
+    FailureOr<SmallVector<Type>> highTypes =
+        getConvertedResultTypes(op, 1, *this->getTypeConverter());
+    bool resultTypesMissing = failed(lowTypes) || failed(highTypes);
+    if (resultTypesMissing) {
+      return failure();
+    }
+    ValueRange sourceParts = adaptor.getSource();
+    bool invalidShape = lowTypes->empty() ||
+                        lowTypes->size() != highTypes->size() ||
+                        sourceParts.size() < lowTypes->size() ||
+                        sourceParts.size() % lowTypes->size() != 0;
+    if (invalidShape) {
+      return rewriter.notifyMatchFailure(
+          op, "vunzip needs at least one source part per result part");
+    }
+    // One wide register feeds one half register, or two when the lane count
+    // leaves a result part half full; wider ratios are not a register pairing.
+    size_t sourcePartsPerResult = sourceParts.size() / lowTypes->size();
+    if (sourcePartsPerResult != 1 && sourcePartsPerResult != 2) {
+      return rewriter.notifyMatchFailure(
+          op, "vunzip expects one or two source parts per result part");
+    }
+    auto firstLowType = dyn_cast<VRegType>(lowTypes->front());
+    if (!firstLowType) {
+      return rewriter.notifyMatchFailure(op,
+                                         "unsupported vunzip result type");
+    }
+    unsigned halfBits =
+        pto::getPTOStorageElemBitWidth(firstLowType.getElementType());
+    FailureOr<SmallVector<Value>> results =
+        buildSplit(op, sourceParts, *lowTypes, *highTypes, halfBits,
+                   sourcePartsPerResult, rewriter);
+    if (failed(results)) {
+      return failure();
+    }
+    return replacePhysicalResults(rewriter, op, *results,
+                                  *this->getTypeConverter());
+  }
+};
+//===----------------------------------------------------------------------===//
+// VMIVZipOp
+//===----------------------------------------------------------------------===//
+
+struct OneToNVMIVZipOpPattern : OneToNOpConversionPattern<VMIVZipOp> {
+  using OneToNOpConversionPattern<VMIVZipOp>::OneToNOpConversionPattern;
+
+private:
+  // Validate the vzip shape and return how many wide result parts each
+  // half-width operand part feeds (1 or 2).
+  FailureOr<unsigned>
+  getMergeRatio(VMIVZipOp op, ValueRange lowParts, ValueRange highParts,
+                ArrayRef<Type> resultTypes,
+                OneToNPatternRewriter &rewriter) const {
+    bool invalidShape =
+        resultTypes.empty() || lowParts.empty() ||
+        lowParts.size() != highParts.size() ||
+        resultTypes.size() < lowParts.size() ||
+        resultTypes.size() % lowParts.size() != 0;
+    if (invalidShape) {
+      return rewriter.notifyMatchFailure(
+          op, "vzip expects one or two wide parts per half-width part");
+    }
+    unsigned widePartsPerHalf =
+        static_cast<unsigned>(resultTypes.size() / lowParts.size());
+    if (widePartsPerHalf != 1 && widePartsPerHalf != 2) {
+      return rewriter.notifyMatchFailure(
+          op, "vzip expects one or two wide parts per half-width part");
+    }
+    return widePartsPerHalf;
+  }
+
+  // pto.vintlv is the exact inverse of the pto.vdintlv the split uses: the
+  // half-width carrier bitcast interleaved the two halves of every element, so
+  // interleaving them back rebuilds the wide register pair.  One low/high part
+  // pair therefore yields one or two wide parts in order.
+  FailureOr<SmallVector<Value>>
+  mergeParts(VMIVZipOp op, ValueRange lowParts, ValueRange highParts,
+             ArrayRef<Type> resultTypes, unsigned widePartsPerHalf,
+             unsigned halfBits, OneToNPatternRewriter &rewriter) const {
+    MLIRContext *ctx = rewriter.getContext();
+    Type halfCarrierElem = IntegerType::get(
+        ctx, halfBits, IntegerType::SignednessSemantics::Unsigned);
+    SmallVector<Value> results;
+    for (size_t partIndex = 0; partIndex < lowParts.size(); ++partIndex) {
+      auto halfPartType = dyn_cast<VRegType>(lowParts[partIndex].getType());
+      if (!halfPartType) {
+        return rewriter.notifyMatchFailure(op, "unsupported vzip operand type");
+      }
+      auto halfCarrierType =
+          VRegType::get(ctx, halfPartType.getElementCount(), halfCarrierElem);
+      FailureOr<Value> lowCarrier = bitcastVReg(
+          op.getLoc(), lowParts[partIndex], halfCarrierType, rewriter);
+      FailureOr<Value> highCarrier = bitcastVReg(
+          op.getLoc(), highParts[partIndex], halfCarrierType, rewriter);
+      bool operandBitcastFailed = failed(lowCarrier) || failed(highCarrier);
+      if (operandBitcastFailed) {
+        return rewriter.notifyMatchFailure(
+            op, "failed to bitcast the vzip operand");
+      }
+      auto interleaved = rewriter.create<VintlvOp>(
+          op.getLoc(), TypeRange{halfCarrierType, halfCarrierType},
+          *lowCarrier, *highCarrier);
+      for (unsigned chunk = 0; chunk < widePartsPerHalf; ++chunk) {
+        auto resultType = dyn_cast<VRegType>(
+            resultTypes[partIndex * widePartsPerHalf + chunk]);
+        if (!resultType) {
+          return rewriter.notifyMatchFailure(op,
+                                             "unsupported vzip result type");
+        }
+        Value half = chunk == 0 ? interleaved.getLow() : interleaved.getHigh();
+        FailureOr<Value> result =
+            bitcastVReg(op.getLoc(), half, resultType, rewriter);
+        if (failed(result)) {
+          return rewriter.notifyMatchFailure(
+              op, "failed to bitcast the vzip result");
+        }
+        results.push_back(*result);
+      }
+    }
+    return results;
+  }
+
+  // vpack only narrows down to 8 or 16 bits, so the inverse widens 8/16 to
+  // 16/32; a wider half has no packed carrier form.
+  FailureOr<SmallVector<Value>>
+  buildMerge(VMIVZipOp op, ValueRange lowParts, ValueRange highParts,
+             ArrayRef<Type> resultTypes,
+             OneToNPatternRewriter &rewriter) const {
+    FailureOr<unsigned> widePartsPerHalf =
+        getMergeRatio(op, lowParts, highParts, resultTypes, rewriter);
+    if (failed(widePartsPerHalf)) {
+      return failure();
+    }
+    auto halfType = dyn_cast<VRegType>(lowParts.front().getType());
+    if (!halfType) {
+      return rewriter.notifyMatchFailure(op, "unsupported vzip operand type");
+    }
+    unsigned halfBits =
+        pto::getPTOStorageElemBitWidth(halfType.getElementType());
+    if (halfBits != kElementBits8 && halfBits != kElementBits16) {
+      return rewriter.notifyMatchFailure(
+          op, "unsupported vzip half element width");
+    }
+    return mergeParts(op, lowParts, highParts, resultTypes,
+                      *widePartsPerHalf, halfBits, rewriter);
+  }
+
+public:
+  LogicalResult
+  matchAndRewrite(VMIVZipOp op, OpAdaptor adaptor,
+                  OneToNPatternRewriter &rewriter) const override {
+    FailureOr<SmallVector<Type>> resultTypes =
+        getConvertedResultTypes(op, 0, *this->getTypeConverter());
+    if (failed(resultTypes)) {
+      return failure();
+    }
+    FailureOr<SmallVector<Value>> merged =
+        buildMerge(op, adaptor.getLow(), adaptor.getHigh(), *resultTypes,
+                   rewriter);
+    if (failed(merged)) {
+      return failure();
+    }
+    return replacePhysicalResults(rewriter, op, *merged,
+                                  *this->getTypeConverter());
+  }
+};
+

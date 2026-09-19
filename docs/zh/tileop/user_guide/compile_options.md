@@ -17,15 +17,14 @@
 
 如果你是第一次使用 `ptoas`，建议优先关注：
 
-1. 目标架构选择
-2. PTO 层级选择
-3. 自动同步相关选项
+1. 目标架构选择：`--pto-arch`
+2. 自动同步相关选项：`--enable-insert-sync`、`--enable-inject-barrier-all-sync`
 
 如果你正在排查编译或结果问题，再看：
 
-- 布局相关选项
-- 自动内存规划
-- 中间结果观察方式
+- 自动内存规划：`--enable-plan-memory`（默认开启，当前不支持关闭）；`--plan-memory-order-by-size` 只调整同一地址空间内的规划顺序（默认按 Tile 的声明顺序规划）
+
+以上选项的取值和默认值见[选项总表](#选项总表)。
 
 ## 选项总表
 
@@ -39,11 +38,15 @@
 
 | 选项 | 参数 | 默认值 | 作用 |
 |---|---|---:|---|
-| `<input file>` | 路径 | 无 | 输入的 `.pto` 文件 |
-| `-o` | 路径 | `-` | 输出文件名；未指定时通常输出到标准输出 |
+| `<input file>` | 路径 | `-` | 输入的 `.pto` 文件；未指定时从标准输入读取 |
+| `-o` | 路径 | `-` | 输出文件名；未指定时输出到标准输出（mixed fatobj 模式要求显式指定 `-o`） |
 | `--pto-arch` | `a3` \| `a5` | `a3` | 指定目标架构 |
+| `--enable-plan-memory` | 无 | 开启 | 自动内存规划总开关；当前只支持开启，为未显式给出地址的 `pto.alloc_tile` 规划地址 |
+| `--plan-memory-order-by-size` | 无 | 关闭 | 同一地址空间内优先规划较大的本地 buffer，再套用基础复用策略 |
 | `--enable-insert-sync` | 无 | 关闭 | 启用常规自动同步插入 |
 | `--enable-inject-barrier-all-sync` | 无 | 关闭 | 启用更保守的同步插入策略 |
+
+上表中的两个自动同步选项互斥：`--enable-insert-sync` 和 `--enable-inject-barrier-all-sync` 一次只能启用一个，同时指定会直接报错。
 
 ## 选项使用顺序
 

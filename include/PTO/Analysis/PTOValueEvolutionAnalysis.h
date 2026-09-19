@@ -188,7 +188,7 @@ public:
   /// proven source range fits the result type. Unproven source operations
   /// remain opaque SSA atoms.
   const PTOAnalysisResult<PTOTypedExprRef>
-  getPointExpression(const PTOTypedExprRef &expression);
+  getPointExpression(const PTOTypedExprRef &expression) const;
 
   PTOAnalysisResult<PTOFiniteRange> getRange(Value value, scf::ForOp loop);
   PTOAnalysisResult<bool> preservesValue(Operation *castOp,
@@ -226,12 +226,12 @@ private:
   getSyntheticAddSubEvolution(const PTOTypedExprRef &expression,
                               bool sourceProvesNoWrap, bool isUnsigned,
                               const PTOAnalysisResult<PTOLoopEvolution> &lhs,
-                              const PTOAnalysisResult<PTOLoopEvolution> &rhs);
+                              const PTOAnalysisResult<PTOLoopEvolution> &rhs) const;
   PTOAnalysisResult<PTOLoopEvolution>
   getSyntheticMulEvolution(const PTOTypedExprRef &expression,
                            bool sourceProvesNoWrap, bool isUnsigned,
                            const PTOAnalysisResult<PTOLoopEvolution> &lhs,
-                           const PTOAnalysisResult<PTOLoopEvolution> &rhs);
+                           const PTOAnalysisResult<PTOLoopEvolution> &rhs) const;
   PTOAnalysisResult<PTOTypedExprRef>
   getPointExpressionImpl(const PTOTypedExprRef &expression) const;
 

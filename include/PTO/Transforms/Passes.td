@@ -84,14 +84,6 @@ def PTOBufidSync : Pass<"pto-bufid-sync", "func::FuncOp"> {
   ];
 }
 
-def ConvertToPTOOp : Pass<"convert-to-pto-op"> {
-  let summary = "Convert Ops from other dialects to PTO Ops";
-  let constructor = "mlir::pto::createConvertToPTOOpPass()";
-  let dependentDialects = ["arith::ArithDialect", "pto::PTODialect",
-                           "tensor::TensorDialect",
-  ];
-}
-
 def PTOLowerGenericOps
     : Pass<"pto-lower-generic-ops", "func::FuncOp"> {
   let summary = "Lower frontend PTO generic operations to core MLIR dialects";
@@ -207,7 +199,11 @@ def PlanMemory : Pass<"pto-plan-memory", "ModuleOp"> {
            "Planning mode. Supported value today: local">,
     Option<"orderBySize", "order-by-size", "bool", "false",
            "Plan larger buffers first inside one AddressSpace before applying "
-           "SPEC_LEVEL_0 first-fit reuse">
+           "SPEC_LEVEL_0 first-fit reuse">,
+    Option<"enabled", "enabled", "bool", "true",
+           "Run automatic planning. When false the pass does not assign any "
+           "address; it only verifies that every live pto.alloc_tile already "
+           "carries an explicit addr">
   ];
 
   let dependentDialects = [

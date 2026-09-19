@@ -325,7 +325,7 @@ buildFixpipeConfigTypeToken(AccPushEpilogueAttr accPushEpilogue) {
          ">";
 }
 
-static GlobalTensorTypeNames getGlobalTensorTypeNames(Operation *anchor,
+static GlobalTensorTypeNames getGlobalTensorTypeNames(const Operation *anchor,
                                                        StringRef tag) {
   // The type-alias names are keyed on the anchor op pointer. When a single op
   // wraps more than one GM memref as a GlobalTensor (e.g. GM->L1 mgather wraps

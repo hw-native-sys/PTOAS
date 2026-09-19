@@ -63,8 +63,7 @@
   name = "c2v_fifo",
   size = 8192,
   location = #pto.address_space<vec>,
-  auto = false,
-  base = 0
+  auto = true
 } -> i32
 ```
 
@@ -80,10 +79,7 @@
   这块缓冲区放在哪类本地地址空间里。
 
 - `auto`
-  这块缓冲区的基址是否自动分配。
-
-- `base`
-  当不使用自动分配时，显式指定这块缓冲区的基址。
+  固定为 `true`，基址由编译器在内存规划阶段分配。
 
 结果值 `-> i32` 可以理解成：
 
@@ -137,8 +133,7 @@ func.func @producer() {
     name = "c2v_fifo",
     size = 8192,
     location = #pto.address_space<vec>,
-    auto = false,
-    base = 0
+    auto = true
   } -> i32
 
   // 后续某些本地对象初始化使用 %buf
@@ -151,7 +146,7 @@ func.func @producer() {
 - 在 `producer` 侧预留一块 `vec` 本地缓冲区
 - 名字叫 `"c2v_fifo"`
 - 大小是 `8192` 字节
-- 基址显式指定为 `0`
+- 基址由编译器自动分配
 
 ### consumer 侧通过名字导入
 
@@ -180,33 +175,12 @@ func.func @consumer() {
 - 不是 producer 一块、consumer 再单独来一块
 - 名字和 peer 关系，是两边对齐到同一块缓冲区的关键
 
-## 显式基址写法
-
-如果你需要把 reserved buffer 绑定到一个确定的本地地址，可以显式给出基址：
-
-```mlir
-%buf = pto.reserve_buffer {
-  name = "c2v_fifo",
-  size = 8192,
-  location = #pto.address_space<vec>,
-  auto = false,
-  base = 0
-} -> i32
-```
-
-它的含义是：
-
-- 这块缓冲区放在哪里，由用户自己指定
-- `base` 表示这块预留缓冲区的起始地址
-- `auto = false` 表示这里不使用自动分配
-
 ## 用户最该记住的约束
 
 最重要的几条可以直接记成：
 
 - `name` 在同一函数里应唯一。
 - `location` 必须写对地址空间。
-- `auto = false` 时，必须同时提供 `base`。
 - `import_reserved_buffer` 必须能在 `peer_func` 里找到同名 `reserve_buffer`。
 
 ## 什么时候用，什么时候不用
@@ -226,5 +200,4 @@ func.func @consumer() {
 ## 实际写法建议
 
 - 先把 `name`、`size`、`location` 写清楚。
-- 需要固定本地地址时，再显式写出 `base`。
 - 如果另一侧只是“引用同一块缓冲区”，就用 `pto.import_reserved_buffer`，不要再重复声明一块新的 `reserve_buffer`。

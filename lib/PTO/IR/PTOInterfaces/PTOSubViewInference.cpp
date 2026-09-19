@@ -9,8 +9,8 @@
 // Included by PTO.cpp as part of the PTO IR implementation translation unit.
 
 LogicalResult SubViewOp::inferReturnTypes(
-    MLIRContext *context, std::optional<Location> location, ValueRange operands,
-    DictionaryAttr attributes, OpaqueProperties properties, RegionRange regions,
+    MLIRContext *context, [[maybe_unused]] std::optional<Location> location, ValueRange operands,
+    DictionaryAttr attributes, OpaqueProperties properties, [[maybe_unused]] RegionRange regions,
     SmallVectorImpl<Type> &inferredReturnTypes) {
   if (operands.empty())
     return failure();
@@ -225,7 +225,7 @@ static LogicalResult verifySubViewValidShape(SubViewOp op, TileBufType dstTy,
   // subview sizes directly. We intentionally do not constrain it by source
   // valid_shape to allow user-controlled subview semantics.
 
-  auto expectedValidDim = [&](Value explicitValid, int64_t defaultSize) {
+  auto expectedValidDim = [](Value explicitValid, int64_t defaultSize) {
     if (!explicitValid) {
       return defaultSize;
     }

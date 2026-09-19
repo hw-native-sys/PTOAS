@@ -264,12 +264,6 @@ inline ParseResult parseMadSemanticClauses(OpAsmParser &parser,
   return success();
 }
 
-
-
-
-
-
-
 // Parse the four optional runtime flag clauses in operand order.
 inline mlir::ParseResult
 parseMadRuntimeFlagClauses(mlir::OpAsmParser &parser,
@@ -301,7 +295,7 @@ inline void prefillMadOperandSegmentSizes(mlir::OpAsmParser &parser,
     return;
   }
   int fixedCount = (hasBias ? 4 : 3) + 3;
-  llvm::SmallVector<int32_t, 10> sizes(fixedCount, 1);
+  llvm::SmallVector<int32_t, mlir::pto::kValue10> sizes(fixedCount, 1);
   sizes.push_back(flags.hasUnitFlagValue ? 1 : 0);
   sizes.push_back(flags.hasAccInitValue ? 1 : 0);
   sizes.push_back(flags.hasDisableGemvValue ? 1 : 0);

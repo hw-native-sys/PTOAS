@@ -14,18 +14,18 @@ using namespace mlir;
 using namespace mlir::pto;
 using namespace mlir::pto::mte_detail;
 
-void MteUbGmOp::build(OpBuilder &odsBuilder, OperationState &state, Value source,
+void MteUbGmOp::build(OpBuilder &odsBuilder, OperationState &odsState, Value source,
                        Value destination, Value lenBurst,
                        pto::DmaLoopConfig nburst, Value l2CacheCtl,
                        llvm::ArrayRef<pto::DmaLoopConfig> loops) {
-  state.addOperands({source, destination, lenBurst, nburst.count,
+  odsState.addOperands({source, destination, lenBurst, nburst.count,
                      nburst.srcStride, nburst.dstStride});
   if (l2CacheCtl) {
-    state.addOperands(l2CacheCtl);
+    odsState.addOperands(l2CacheCtl);
   }
-  addDmaLoopConfigOperands(state, loops);
+  addDmaLoopConfigOperands(odsState, loops);
 
-  state.addAttribute(
+  odsState.addAttribute(
       getOperandSegmentSizeAttr(),
       odsBuilder.getDenseI32ArrayAttr(
           {1, 1, 1, 1, 1, 1, l2CacheCtl ? 1 : 0,
@@ -34,7 +34,7 @@ void MteUbGmOp::build(OpBuilder &odsBuilder, OperationState &state, Value source
            static_cast<int32_t>(loops.size())}));
 }
 
-void MteUbGmOp::build(OpBuilder &odsBuilder, OperationState &state, Value source,
+void MteUbGmOp::build(OpBuilder &odsBuilder, OperationState &odsState, Value source,
                        Value destination, Value lenBurst,
                        pto::DmaLoopConfig nburst, Value l2CacheCtl,
                        std::optional<pto::DmaLoopConfig> loop1,
@@ -46,7 +46,7 @@ void MteUbGmOp::build(OpBuilder &odsBuilder, OperationState &state, Value source
   if (loop2) {
     loops.push_back(*loop2);
   }
-  build(odsBuilder, state, source, destination, lenBurst, nburst, l2CacheCtl,
+  build(odsBuilder, odsState, source, destination, lenBurst, nburst, l2CacheCtl,
         loops);
 }
 

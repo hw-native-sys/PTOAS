@@ -1,0 +1,30 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+
+// RUN: pto-test-opt --help | FileCheck %s --check-prefix=HELP --implicit-check-not=convert-to-pto-op
+// RUN: not pto-test-opt %s -convert-to-pto-op 2>&1 | FileCheck %s --check-prefix=REMOVED
+// RUN: not pto-test-opt %s --pass-pipeline='builtin.module(convert-to-pto-op)' 2>&1 | FileCheck %s --check-prefix=PIPELINE
+// RUN: pto-test-opt %s | FileCheck %s --check-prefix=PARSE
+
+// The retired pass must not be advertised or accepted through either CLI entry.
+// Keep the rank-0 subview reproducer from issue 1533 to verify that valid input
+// still parses and that the old invocation diagnoses an unknown pass, not a crash.
+// HELP: --canonicalize
+// REMOVED: Unknown command line argument '-convert-to-pto-op'
+// PIPELINE: 'convert-to-pto-op' does not refer to a registered pass or pass pipeline
+// PARSE-LABEL: func.func @bug_trigger
+// PARSE: memref.alloc() : memref<f32>
+// PARSE: memref.subview
+// PARSE: memref.copy %{{.+}}, %{{.+}} : memref<f32> to memref<f32>
+// PARSE: return
+func.func @bug_trigger(%src: memref<f32>) {
+  %alloc = memref.alloc() : memref<f32>
+  %sub = memref.subview %alloc [] [] [] : memref<f32> to memref<f32>
+  memref.copy %src, %sub : memref<f32> to memref<f32>
+  return
+}

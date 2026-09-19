@@ -8,6 +8,15 @@
 // Internal helper declarations shared within the Memref lowering domain.
 #pragma once
 
+#include <string>
+
+#include "mlir/IR/Location.h"
+#include "mlir/IR/MLIRContext.h"
+#include "mlir/IR/Types.h"
+#include "mlir/IR/Value.h"
+#include "mlir/IR/PatternMatch.h"
+#include "mlir/Transforms/DialectConversion.h"
+
 #include "../PTOToEmitCEmitters.h"
 
 namespace mlir {

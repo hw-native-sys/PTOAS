@@ -6,7 +6,7 @@
 // INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
 // See LICENSE in the root of the software repository for the full text of the License.
 
-// RUN: ptoas --pto-arch=a3 %s 2>&1 | FileCheck %s
+// RUN: ptoas --pto-arch=a3 %s 2>&1 | FileCheck %s --implicit-check-not=__builtin_cce_
 
 module attributes {
   pto.kernel_kind = #pto.kernel_kind<vector>,
@@ -22,7 +22,7 @@ module attributes {
 
 // CHECK-LABEL: extern "C" __global__ AICORE void named_intra_a3_emitc({{.*}}) {
 // CHECK: getFFTSMsg(FFTS_MODE_VAL, {{.*}})
-// CHECK-NEXT: __builtin_cce_ffts_cross_core_sync(PIPE_MTE1, {{.*}});
-// CHECK-NEXT: __builtin_cce_wait_flag_dev(15);
-// CHECK-NOT: __builtin_cce_set_intra_block
-// CHECK-NOT: __builtin_cce_wait_intra_block
+// CHECK-NEXT: ffts_cross_core_sync(PIPE_MTE1, {{.*}});
+// CHECK-NEXT: wait_flag_dev(15);
+// CHECK-NOT: set_intra_block
+// CHECK-NOT: wait_intra_block

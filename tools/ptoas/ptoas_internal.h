@@ -132,6 +132,7 @@ extern llvm::cl::opt<bool> enableShapeInference;
 extern llvm::cl::opt<bool> enableVfSimCostmodelOptimization;
 extern llvm::cl::opt<bool> dumpVfSimUnrollTest;
 extern llvm::cl::opt<bool> planMemoryOrderBySize;
+extern llvm::cl::opt<bool> enablePlanMemory;
 extern llvm::cl::opt<std::string> ptoBuildLevel;
 extern llvm::cl::opt<bool> disableInferLayout;
 extern llvm::cl::opt<bool> enableSoftPostUpdate;

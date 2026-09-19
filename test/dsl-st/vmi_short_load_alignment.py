@@ -44,7 +44,12 @@ for dtype, npdtype, bits in ((pto.ui8, np.uint8, 8), (pto.f16, np.float16, 16), 
         expected[:n] = source[offset:offset + n]
         def make_case(source=source, expected=expected, output=output):
             return [source.copy(), output.copy()], expected.copy(), []
-        CASES.append(dict(name=name, kernel=build(dtype, n, offset, name), make_case=make_case))
+
+        def check(device_inputs, golden):
+            np.testing.assert_array_equal(device_inputs[-1].cpu().numpy(), golden)
+
+        CASES.append(dict(name=name, kernel=build(dtype, n, offset, name),
+                          make_case=make_case, check=check))
 
 
 auto_main(globals())

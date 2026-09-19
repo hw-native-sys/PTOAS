@@ -68,7 +68,8 @@ public:
 
 private:
     friend VPTORematerializationTransaction prepareVPTORematerialization(
-        func::FuncOp, const VPTOSchedModel&, llvm::raw_ostream&, bool);
+        func::FuncOp func, const VPTOSchedModel& model, llvm::raw_ostream& os,
+        bool trace);
 
     struct Builder;
 

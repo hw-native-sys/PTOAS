@@ -885,8 +885,8 @@ private:
 
   LogicalResult lowerBlockDeinterleaved(
       VMIGroupLoadOp op, OneToNPatternRewriter &rewriter, Value source,
-      Value offset, Value rowStride, VMIVRegType resultVMIType,
-      ArrayRef<Type> resultTypes, VMILayoutAttr resultLayout,
+      Value offset, Value rowStride, [[maybe_unused]] VMIVRegType resultVMIType,
+      ArrayRef<Type> resultTypes, [[maybe_unused]] VMILayoutAttr resultLayout,
       int64_t factor, int64_t blockElems, int64_t chunksPerPart,
       int64_t constantRowStride) const {
     bool invalidResultArity =

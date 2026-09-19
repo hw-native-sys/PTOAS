@@ -330,7 +330,7 @@ static LogicalResult recordAccess(Operation *access, Type accessType,
     return failure();
   }
 
-  if (discovery.accessIndices.count(access)) {
+  if (discovery.accessIndices.count(access) != 0) {
     return access->emitOpError(
         "persistent SIMT fragment access was visited more than once");
   }

@@ -1,0 +1,40 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+
+// RUN: pto-test-opt %s -vmi-lower-unified-to-legacy -vmi-mask-granularity-assignment -vmi-layout-assignment | FileCheck %s
+
+// A width-changing cast whose sub-32-bit side carries elementwise compute keeps
+// that side contiguous.  The lane-stride carrier is elementBits * laneStride
+// wide, so it splits the 128-lane bf16 class over two physical parts and makes
+// every sub-word op in the class - here the pto.vmi.vmax - two physical ops.
+// The cast still gets a relation the lowering implements: the default
+// {c(), d(f)} row puts the wide side into the deinterleaved family instead.
+
+module {
+  func.func @narrow_side_compute_contiguous(
+      %a: !pto.vmi.vreg<128xbf16>,
+      %b: !pto.vmi.vreg<128xbf16>,
+      %dst: !pto.ptr<f32, ub>,
+      %off: index) {
+    %c128 = arith.constant 128 : index
+    %m = pto.vmi.create_mask %c128 : index -> !pto.vmi.mask<128xpred>
+    %acc = pto.vmi.vmax %a, %b, %m
+        : !pto.vmi.vreg<128xbf16>, !pto.vmi.vreg<128xbf16>, !pto.vmi.mask<128xpred>
+       -> !pto.vmi.vreg<128xbf16>
+    %wide = pto.vmi.vcvt %acc
+        : !pto.vmi.vreg<128xbf16> -> !pto.vmi.vreg<128xf32>
+    pto.vmi.vstore %wide, %dst[%off]
+        : !pto.vmi.vreg<128xf32>, !pto.ptr<f32, ub>
+    return
+  }
+}
+
+// CHECK-LABEL: func.func @narrow_side_compute_contiguous(
+// CHECK: pto.vmi.vmax {{.*}} : !pto.vmi.vreg<128xbf16, #pto.vmi.layout<contiguous>>, !pto.vmi.vreg<128xbf16, #pto.vmi.layout<contiguous>>, {{.*}} -> !pto.vmi.vreg<128xbf16, #pto.vmi.layout<contiguous>>
+// CHECK: pto.vmi.extf {{.*}} : !pto.vmi.vreg<128xbf16, #pto.vmi.layout<contiguous>> -> !pto.vmi.vreg<128xf32, #pto.vmi.layout<deinterleaved = 2>>
+// CHECK-NOT: lane_stride = 2

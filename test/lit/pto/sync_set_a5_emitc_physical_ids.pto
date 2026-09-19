@@ -6,7 +6,7 @@
 // INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
 // See LICENSE in the root of the software repository for the full text of the License.
 
-// RUN: ptoas --pto-arch=a5 %s 2>&1 | FileCheck %s
+// RUN: ptoas --pto-arch=a5 %s 2>&1 | FileCheck %s --implicit-check-not=__builtin_cce_
 
 module attributes {
   pto.kernel_kind = #pto.kernel_kind<vector>,
@@ -23,10 +23,10 @@ module attributes {
 
 // CHECK-LABEL: extern "C" __global__ AICORE void sync_set_a5_emitc_ffts_modes() {
 // CHECK: getFFTSMsg(0, {{.*}})
-// CHECK: __builtin_cce_ffts_cross_core_sync(PIPE_FIX, {{.*}});
+// CHECK: ffts_cross_core_sync(PIPE_FIX, {{.*}});
 // CHECK: getFFTSMsg(1, {{.*}})
-// CHECK: __builtin_cce_ffts_cross_core_sync(PIPE_MTE1, {{.*}});
-// CHECK: getFFTSMsg(FFTS_MODE_VAL, {{.*}})
-// CHECK: __builtin_cce_ffts_cross_core_sync(PIPE_MTE2, {{.*}});
-// CHECK: __builtin_cce_wait_flag_dev(2);
-// CHECK-NOT: __builtin_cce_set_intra_block
+// CHECK: ffts_cross_core_sync(PIPE_MTE1, {{.*}});
+// CHECK: getFFTSMsg(2, {{.*}})
+// CHECK: ffts_cross_core_sync(PIPE_MTE2, {{.*}});
+// CHECK: wait_flag_dev(PIPE_V, 2);
+// CHECK-NOT: set_intra_block

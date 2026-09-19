@@ -33,7 +33,7 @@ public:
   bool MemAlias(const BaseMemInfo *a, const BaseMemInfo *b);
  
 private:
-  bool isGMBufferOverlap(const BaseMemInfo *a, const BaseMemInfo *b);
+  bool isGMBufferOverlap(const BaseMemInfo *a, const BaseMemInfo *b) const;
   
   bool isBufferAddressRangeOverlap(const BaseMemInfo *a, const BaseMemInfo *b) const;
   

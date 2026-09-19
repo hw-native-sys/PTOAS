@@ -156,7 +156,7 @@ static FailureOr<Value> packMadUnitFlagXt(const MadXtBitPacker &packer,
     if (!flagI64) {
       return failure();
     }
-    flagI64 = truncateMadFlagField<2>(packer, flagI64);
+    flagI64 = truncateMadFlagField<mlir::pto::kValue2>(packer, flagI64);
     return packer.bitOr(xt, packer.shl(flagI64, mlir::pto::kValue55));
   }
   if (!config.unitFlagMode) {

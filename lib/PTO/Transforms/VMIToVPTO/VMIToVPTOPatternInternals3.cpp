@@ -601,10 +601,12 @@ private:
       Value groupOffset = createGroupChunkOffset(
           op.getLoc(), offset, rowStride, slotBlock * kGroupStoreSlotBlockSize, 0, rewriter);
       groupOffsets.push_back(groupOffset);
-      useDirectAccess &= isDirectMemoryDistAddressLegal(
-          op.getDestination(), groupOffset,
-          getMemoryElementType(destination.getType()), vregType,
-          VPTOMemoryOpFamily::Store, dist);
+      if (!isDirectMemoryDistAddressLegal(op.getDestination(), groupOffset,
+                                          getMemoryElementType(destination.getType()),
+                                          vregType, VPTOMemoryOpFamily::Store,
+                                          dist)) {
+        useDirectAccess = false;
+      }
     }
     return std::make_pair(std::move(groupOffsets), useDirectAccess);
   }
@@ -799,7 +801,7 @@ private:
       VMIGroupStoreOp op, OneToNPatternRewriter &rewriter,
       ValueRange valueParts,
       VRegType firstVRegType, MaskType maskType, Value slotIndex,
-      Value destination, Value offset, Value rowStride, int64_t numGroups,
+      [[maybe_unused]] Value destination, Value offset, Value rowStride, int64_t numGroups,
       int64_t blockStart) const {
     FailureOr<Value> zero =
         createZeroVector(op.getLoc(), firstVRegType, rewriter);

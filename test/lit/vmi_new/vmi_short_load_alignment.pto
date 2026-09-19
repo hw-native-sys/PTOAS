@@ -34,6 +34,86 @@ module {
     %v = pto.vmi.vload %src[%off] : memref<72xf32, #pto.address_space<vec>> -> !pto.vmi.vreg<8xf32>
     return %v : !pto.vmi.vreg<8xf32>
   }
+  // PtrType sources with non-32B-aligned effective addresses use the vldas+vldus
+  // stateful stream (no static extent needed). The following cases cover the three
+  // address patterns (constant offset, dynamic offset, dynamic base) for each
+  // element type that would otherwise require vsldb alignment.
+  func.func @ui8_8_constant_offset() -> !pto.vmi.vreg<8xui8> {
+    %addr = arith.constant 1024 : i64
+    %src = pto.castptr %addr : i64 -> !pto.ptr<ui8, ub>
+    %off = arith.constant 1 : index
+    %v = pto.vmi.vload %src[%off] : !pto.ptr<ui8, ub> -> !pto.vmi.vreg<8xui8>
+    return %v : !pto.vmi.vreg<8xui8>
+  }
+  func.func @ui8_8_dynamic_offset(%arg: index) -> !pto.vmi.vreg<8xui8> {
+    %addr = arith.constant 1024 : i64
+    %src = pto.castptr %addr : i64 -> !pto.ptr<ui8, ub>
+    %v = pto.vmi.vload %src[%arg] : !pto.ptr<ui8, ub> -> !pto.vmi.vreg<8xui8>
+    return %v : !pto.vmi.vreg<8xui8>
+  }
+  func.func @ui8_8_dynamic_base(%arg: i64) -> !pto.vmi.vreg<8xui8> {
+    %src = pto.castptr %arg : i64 -> !pto.ptr<ui8, ub>
+    %off = arith.constant 0 : index
+    %v = pto.vmi.vload %src[%off] : !pto.ptr<ui8, ub> -> !pto.vmi.vreg<8xui8>
+    return %v : !pto.vmi.vreg<8xui8>
+  }
+  func.func @f16_8_constant_offset() -> !pto.vmi.vreg<8xf16> {
+    %addr = arith.constant 1024 : i64
+    %src = pto.castptr %addr : i64 -> !pto.ptr<f16, ub>
+    %off = arith.constant 1 : index
+    %v = pto.vmi.vload %src[%off] : !pto.ptr<f16, ub> -> !pto.vmi.vreg<8xf16>
+    return %v : !pto.vmi.vreg<8xf16>
+  }
+  func.func @f16_8_dynamic_offset(%arg: index) -> !pto.vmi.vreg<8xf16> {
+    %addr = arith.constant 1024 : i64
+    %src = pto.castptr %addr : i64 -> !pto.ptr<f16, ub>
+    %v = pto.vmi.vload %src[%arg] : !pto.ptr<f16, ub> -> !pto.vmi.vreg<8xf16>
+    return %v : !pto.vmi.vreg<8xf16>
+  }
+  func.func @f16_8_dynamic_base(%arg: i64) -> !pto.vmi.vreg<8xf16> {
+    %src = pto.castptr %arg : i64 -> !pto.ptr<f16, ub>
+    %off = arith.constant 0 : index
+    %v = pto.vmi.vload %src[%off] : !pto.ptr<f16, ub> -> !pto.vmi.vreg<8xf16>
+    return %v : !pto.vmi.vreg<8xf16>
+  }
+  func.func @f32_8_constant_offset() -> !pto.vmi.vreg<8xf32> {
+    %addr = arith.constant 1024 : i64
+    %src = pto.castptr %addr : i64 -> !pto.ptr<f32, ub>
+    %off = arith.constant 1 : index
+    %v = pto.vmi.vload %src[%off] : !pto.ptr<f32, ub> -> !pto.vmi.vreg<8xf32>
+    return %v : !pto.vmi.vreg<8xf32>
+  }
+  func.func @f32_8_dynamic_offset(%arg: index) -> !pto.vmi.vreg<8xf32> {
+    %addr = arith.constant 1024 : i64
+    %src = pto.castptr %addr : i64 -> !pto.ptr<f32, ub>
+    %v = pto.vmi.vload %src[%arg] : !pto.ptr<f32, ub> -> !pto.vmi.vreg<8xf32>
+    return %v : !pto.vmi.vreg<8xf32>
+  }
+  func.func @f32_8_dynamic_base(%arg: i64) -> !pto.vmi.vreg<8xf32> {
+    %src = pto.castptr %arg : i64 -> !pto.ptr<f32, ub>
+    %off = arith.constant 0 : index
+    %v = pto.vmi.vload %src[%off] : !pto.ptr<f32, ub> -> !pto.vmi.vreg<8xf32>
+    return %v : !pto.vmi.vreg<8xf32>
+  }
+  func.func @f32_16_constant_offset() -> !pto.vmi.vreg<16xf32> {
+    %addr = arith.constant 1024 : i64
+    %src = pto.castptr %addr : i64 -> !pto.ptr<f32, ub>
+    %off = arith.constant 1 : index
+    %v = pto.vmi.vload %src[%off] : !pto.ptr<f32, ub> -> !pto.vmi.vreg<16xf32>
+    return %v : !pto.vmi.vreg<16xf32>
+  }
+  func.func @f32_16_dynamic_offset(%arg: index) -> !pto.vmi.vreg<16xf32> {
+    %addr = arith.constant 1024 : i64
+    %src = pto.castptr %addr : i64 -> !pto.ptr<f32, ub>
+    %v = pto.vmi.vload %src[%arg] : !pto.ptr<f32, ub> -> !pto.vmi.vreg<16xf32>
+    return %v : !pto.vmi.vreg<16xf32>
+  }
+  func.func @f32_16_dynamic_base(%arg: i64) -> !pto.vmi.vreg<16xf32> {
+    %src = pto.castptr %arg : i64 -> !pto.ptr<f32, ub>
+    %off = arith.constant 0 : index
+    %v = pto.vmi.vload %src[%off] : !pto.ptr<f32, ub> -> !pto.vmi.vreg<16xf32>
+    return %v : !pto.vmi.vreg<16xf32>
+  }
 }
 
 // CHECK-LABEL: func.func @dynamic_aligned_offset
@@ -41,6 +121,54 @@ module {
 // CHECK-LABEL: func.func @combined_effective_alignment
 // CHECK: pto.vsldb
 // CHECK-LABEL: func.func @safe_unaligned_read_envelope
+// CHECK-NOT: pto.vsldb
+// CHECK: pto.vldas
+// CHECK: pto.vldus
+// CHECK-LABEL: func.func @ui8_8_constant_offset
+// CHECK-NOT: pto.vsldb
+// CHECK: pto.vldas
+// CHECK: pto.vldus
+// CHECK-LABEL: func.func @ui8_8_dynamic_offset
+// CHECK-NOT: pto.vsldb
+// CHECK: pto.vldas
+// CHECK: pto.vldus
+// CHECK-LABEL: func.func @ui8_8_dynamic_base
+// CHECK-NOT: pto.vsldb
+// CHECK: pto.vldas
+// CHECK: pto.vldus
+// CHECK-LABEL: func.func @f16_8_constant_offset
+// CHECK-NOT: pto.vsldb
+// CHECK: pto.vldas
+// CHECK: pto.vldus
+// CHECK-LABEL: func.func @f16_8_dynamic_offset
+// CHECK-NOT: pto.vsldb
+// CHECK: pto.vldas
+// CHECK: pto.vldus
+// CHECK-LABEL: func.func @f16_8_dynamic_base
+// CHECK-NOT: pto.vsldb
+// CHECK: pto.vldas
+// CHECK: pto.vldus
+// CHECK-LABEL: func.func @f32_8_constant_offset
+// CHECK-NOT: pto.vsldb
+// CHECK: pto.vldas
+// CHECK: pto.vldus
+// CHECK-LABEL: func.func @f32_8_dynamic_offset
+// CHECK-NOT: pto.vsldb
+// CHECK: pto.vldas
+// CHECK: pto.vldus
+// CHECK-LABEL: func.func @f32_8_dynamic_base
+// CHECK-NOT: pto.vsldb
+// CHECK: pto.vldas
+// CHECK: pto.vldus
+// CHECK-LABEL: func.func @f32_16_constant_offset
+// CHECK-NOT: pto.vsldb
+// CHECK: pto.vldas
+// CHECK: pto.vldus
+// CHECK-LABEL: func.func @f32_16_dynamic_offset
+// CHECK-NOT: pto.vsldb
+// CHECK: pto.vldas
+// CHECK: pto.vldus
+// CHECK-LABEL: func.func @f32_16_dynamic_base
 // CHECK-NOT: pto.vsldb
 // CHECK: pto.vldas
 // CHECK: pto.vldus

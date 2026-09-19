@@ -303,16 +303,25 @@ checkSupportedLoadShape(VMIVRegType type, Value source, Type sourceType,
   return success();
 }
 
-// Keep preflight diagnostics consistent with the bounded block selection.
-// A non-aligned source may still use the existing stateful sequence when its
-// complete physical read envelope is proven; a raw pointer carries no extent.
-LogicalResult checkSupportedContiguousLoadAddress(VMILoadOp op,
-                                                  std::string *reason) {
+// Keep preflight diagnostics consistent with the bounded block selection and
+// the load safety policy. A non-aligned source may use the stateful sequence
+// when its complete physical read envelope is proven. Policy and Warn also
+// permit a PtrType source without a static extent proof; Error does not.
+LogicalResult checkSupportedContiguousLoadAddress(
+    VMILoadOp op, VMILoadSafetyPolicy loadSafety, std::string *reason) {
   auto type = cast<VMIVRegType>(op.getResult().getType());
   if (pto::getVMIContiguousLoadBlockCount(type) == 0 ||
       type.getElementCount() == 1 ||
       isKnownAddressAligned(op.getSource(), op.getOffset(),
                             type.getElementType(), pto::kVMIVCGBlockBytes)) {
+    return success();
+  }
+  // The unaligned stateful stream can lower a PtrType source without a static
+  // alignment proof. Its missing extent is accepted except in strict mode.
+  const bool permissivePointerSource =
+      isa<PtrType>(op.getSource().getType()) &&
+      loadSafety != VMILoadSafetyPolicy::Error;
+  if (permissivePointerSource) {
     return success();
   }
   VMIMemorySafeReadProof proof =
@@ -324,7 +333,8 @@ LogicalResult checkSupportedContiguousLoadAddress(VMILoadOp op,
     *reason =
         (Twine("bounded contiguous load requires a provably 32-byte-aligned ") +
          "effective address for pto.vsldb, including single-block reads; " +
-         "no safe unaligned full-read fallback: " + proof.reason)
+         "load-safety=error requires a safe unaligned full-read proof: " +
+         proof.reason)
             .str();
   }
   return failure();
@@ -500,7 +510,7 @@ std::optional<std::string> describeStridedGroupLoadGranularityViolation(
     VMIGroupLoadOp op, VMIVRegType type, int64_t groupSize,
     std::optional<int64_t> rowStride) {
   unsigned elementBits = pto::getPTOStorageElemBitWidth(type.getElementType());
-  if (elementBits == 0 || elementBits % 8 != 0) {
+  if (elementBits == 0 || elementBits % mlir::pto::kValue8 != 0) {
     return std::string("requires a byte-sized element type");
   }
   int64_t elementBytes = elementBits / 8;
@@ -547,7 +557,7 @@ std::optional<std::string> describeStridedGroupLoadGranularityViolation(
 bool isSupportedBlockStrideF32GroupLoad(VMIVRegType type, int64_t groupSize,
                                         std::optional<int64_t> rowStride,
                                         int64_t numGroups) {
-  if (!type.getElementType().isF32() || numGroups % 8 != 0) {
+  if (!type.getElementType().isF32() || numGroups % mlir::pto::kValue8 != 0) {
     return false;
   }
   FailureOr<int64_t> lanesPerPart = getDataLanesPerPart(type.getElementType());

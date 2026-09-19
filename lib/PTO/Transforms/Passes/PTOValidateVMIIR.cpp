@@ -768,26 +768,15 @@ static LogicalResult verifyVMIGroupSemanticSupport(
   return success();
 }
 
+static LogicalResult verifyVMIHistogramSemanticSupport(
+    Operation *op, llvm::raw_ostream *diagOS, VMILayoutSupport &supports);
+static LogicalResult verifyVMIVUnzipSemanticSupport(
+    Operation *op, llvm::raw_ostream *diagOS, VMILayoutSupport &supports);
+
 static LogicalResult verifyVMIScalarSemanticSupport(
     Operation *op, llvm::raw_ostream *diagOS, VMILayoutSupport &supports) {
-  if (auto hist = dyn_cast<VMIVdhistOp>(op)) {
-    std::string reason;
-    if (failed(supports.getVdhistSupport(hist, &reason))) {
-      return emitLayoutSupportContract(
-          op, diagOS, "pto.vmi.vdhist has no registered histogram support",
-          reason);
-    }
-    return success();
-  }
-
-  if (auto hist = dyn_cast<VMIVchistOp>(op)) {
-    std::string reason;
-    if (failed(supports.getVchistSupport(hist, &reason))) {
-      return emitLayoutSupportContract(
-          op, diagOS, "pto.vmi.vchist has no registered histogram support",
-          reason);
-    }
-    return success();
+  if (isa<VMIVdhistOp, VMIVchistOp>(op)) {
+    return verifyVMIHistogramSemanticSupport(op, diagOS, supports);
   }
 
   if (auto truncf = dyn_cast<VMITruncFOp>(op)) {
@@ -819,6 +808,49 @@ static LogicalResult verifyVMIScalarSemanticSupport(
     return success();
   }
 
+  if (isa<VMIVUnzipOp, VMIVZipOp>(op)) {
+    return verifyVMIVUnzipSemanticSupport(op, diagOS, supports);
+  }
+
+  return success();
+}
+
+static LogicalResult verifyVMIHistogramSemanticSupport(
+    Operation *op, llvm::raw_ostream *diagOS, VMILayoutSupport &supports) {
+  std::string reason;
+  if (auto hist = dyn_cast<VMIVdhistOp>(op)) {
+    if (failed(supports.getVdhistSupport(hist, &reason))) {
+      return emitLayoutSupportContract(
+          op, diagOS, "pto.vmi.vdhist has no registered histogram support",
+          reason);
+    }
+    return success();
+  }
+  auto hist = cast<VMIVchistOp>(op);
+  if (failed(supports.getVchistSupport(hist, &reason))) {
+    return emitLayoutSupportContract(
+        op, diagOS, "pto.vmi.vchist has no registered histogram support",
+        reason);
+  }
+  return success();
+}
+
+static LogicalResult verifyVMIVUnzipSemanticSupport(
+    Operation *op, llvm::raw_ostream *diagOS, VMILayoutSupport &supports) {
+  std::string reason;
+  if (auto unzip = dyn_cast<VMIVUnzipOp>(op)) {
+    if (failed(supports.getVUnzipSupport(unzip, &reason))) {
+      return emitLayoutSupportContract(
+          op, diagOS, "pto.vmi.vunzip has no registered layout support",
+          reason);
+    }
+    return success();
+  }
+  auto zip = cast<VMIVZipOp>(op);
+  if (failed(supports.getVZipSupport(zip, &reason))) {
+    return emitLayoutSupportContract(
+        op, diagOS, "pto.vmi.vzip has no registered layout support", reason);
+  }
   return success();
 }
 
@@ -832,8 +864,8 @@ LogicalResult verifyLayoutSemanticSupport(Operation *op,
           op)) {
     return verifyVMIGroupSemanticSupport(op, diagOS, supports);
   }
-  if (isa<VMIVdhistOp, VMIVchistOp, VMITruncFOp, VMIExtFOp, VMIBitcastOp>(
-          op)) {
+  if (isa<VMIVdhistOp, VMIVchistOp, VMITruncFOp, VMIExtFOp, VMIBitcastOp,
+          VMIVUnzipOp, VMIVZipOp>(op)) {
     return verifyVMIScalarSemanticSupport(op, diagOS, supports);
   }
   return success();
@@ -867,7 +899,7 @@ struct PTOValidateVMILayoutIRPass
 LogicalResult
 mlir::pto::validateVMIProducerBoundaryIR(ModuleOp module,
                                          llvm::raw_ostream *diagOS) {
-  WalkResult result = module.walk([&](Operation *op) {
+  WalkResult result = module.walk([diagOS](Operation *op) {
     if (failed(verifyOperationBoundary(op, diagOS))) {
       return WalkResult::interrupt();
     }
@@ -878,7 +910,7 @@ mlir::pto::validateVMIProducerBoundaryIR(ModuleOp module,
 
 LogicalResult mlir::pto::validateVMILayoutAssignedIR(
     ModuleOp module, llvm::raw_ostream *diagOS, bool verifyHelperSupports) {
-  WalkResult result = module.walk([&](Operation *op) {
+  WalkResult result = module.walk([diagOS, verifyHelperSupports](Operation *op) {
     if (failed(verifyLayoutAssignedOperation(op, diagOS, verifyHelperSupports))) {
       return WalkResult::interrupt();
     }

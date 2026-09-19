@@ -137,9 +137,9 @@ constexpr unsigned kBlockQueryRangeBitWidth = 64;
 // to bounded offsets, while a multiple of the index still fails u32 bounds
 // and stays wide.
 void pto::GetBlockIdxOp::inferResultRanges(
-    ::llvm::ArrayRef<::mlir::ConstantIntRanges> operandRanges,
-    ::mlir::SetIntRangeFn setResultRange) {
-  setResultRange(
+    [[maybe_unused]] ::llvm::ArrayRef<::mlir::ConstantIntRanges> argRanges,
+    ::mlir::SetIntRangeFn setResultRanges) {
+  setResultRanges(
       getResult(),
       ConstantIntRanges::fromUnsigned(APInt::getMinValue(kBlockQueryRangeBitWidth),
                                       APInt(kBlockQueryRangeBitWidth, INT32_MAX)));
@@ -147,9 +147,9 @@ void pto::GetBlockIdxOp::inferResultRanges(
 
 // get_subblock_idx returns the vector-core ID, documented as [0, 1].
 void pto::GetSubBlockIdxOp::inferResultRanges(
-    ::llvm::ArrayRef<::mlir::ConstantIntRanges> operandRanges,
-    ::mlir::SetIntRangeFn setResultRange) {
-  setResultRange(getResult(),
+    [[maybe_unused]] ::llvm::ArrayRef<::mlir::ConstantIntRanges> argRanges,
+    ::mlir::SetIntRangeFn setResultRanges) {
+  setResultRanges(getResult(),
                  ConstantIntRanges::fromUnsigned(APInt(kBlockQueryRangeBitWidth, 0),
                                                  APInt(kBlockQueryRangeBitWidth, 1)));
 }
@@ -158,18 +158,18 @@ void pto::GetSubBlockIdxOp::inferResultRanges(
 // kernels guard with `cmpi sge block_num, 1` and rely on that comparison
 // staying dynamic (a >= 1 range would fold the guard away).
 void pto::GetBlockNumOp::inferResultRanges(
-    ::llvm::ArrayRef<::mlir::ConstantIntRanges> operandRanges,
-    ::mlir::SetIntRangeFn setResultRange) {
-  setResultRange(
+    [[maybe_unused]] ::llvm::ArrayRef<::mlir::ConstantIntRanges> argRanges,
+    ::mlir::SetIntRangeFn setResultRanges) {
+  setResultRanges(
       getResult(),
       ConstantIntRanges::fromUnsigned(APInt::getMinValue(kBlockQueryRangeBitWidth),
                                       APInt::getSignedMaxValue(kBlockQueryRangeBitWidth)));
 }
 
 void pto::GetSubBlockNumOp::inferResultRanges(
-    ::llvm::ArrayRef<::mlir::ConstantIntRanges> operandRanges,
-    ::mlir::SetIntRangeFn setResultRange) {
-  setResultRange(
+    [[maybe_unused]] ::llvm::ArrayRef<::mlir::ConstantIntRanges> argRanges,
+    ::mlir::SetIntRangeFn setResultRanges) {
+  setResultRanges(
       getResult(),
       ConstantIntRanges::fromUnsigned(APInt::getMinValue(kBlockQueryRangeBitWidth),
                                       APInt::getSignedMaxValue(kBlockQueryRangeBitWidth)));

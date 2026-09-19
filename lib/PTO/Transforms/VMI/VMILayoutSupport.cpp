@@ -777,7 +777,6 @@ static LogicalResult matchEnsureLayoutPattern(VMIVRegType sourceType,
 
 /// Whether the deinterleaved narrowing relation the preference falls back to is
 /// representable for this shape.
-///
 /// Dropping the one-chunk lane-stride preference makes the cast take the
 /// deinterleaved relation the normal preferred table holds for its width pair
 /// (`d(2) -> c` or `d(4) -> c`).  That relation is materialized through the
@@ -834,23 +833,35 @@ getPreferredLaneStrideNarrowCastLayoutFactImpl(VMIVRegType sourceType,
 }
 
 FailureOr<VMICastLayoutFact> VMILayoutSupport::getPreferredCastLayoutFact(
-    VMIVRegType sourceType, VMIVRegType resultType, std::string *reason) const {
+    VMIVRegType sourceType, VMIVRegType resultType, std::string *reason,
+    bool allowLaneStridePreference) const {
   // The preference only switches the cast to a deinterleaved relation when
   // this shape can materialize one; otherwise it keeps the one-chunk
   // lane-stride relation the default path uses, so the switch cannot turn a
-  // lowerable narrowing into a residual op.  Both gates below consult the same
-  // shape-aware decision.
+  // lowerable narrowing into a residual op.
+  //
+  // A caller that already knows the narrow side is not a short-lived handoff
+  // (it carries elementwise compute, which the lane stride would repeat once per
+  // physical part) passes allowLaneStridePreference = false.  Both cost tables
+  // are then skipped, in either bit-width direction, and only the default
+  // preferred row answers: the narrow side keeps the contiguous form and the
+  // wide side takes the deinterleaved one - the shape the per-part vcvt already
+  // produces.  The veto has to cover widening as well, because the one-chunk
+  // high-priority rows also exist for widening ({ls(2), c()} for 16->32); the
+  // narrower flag below only ever redirects narrowing, so it cannot express
+  // this.
   bool preferLaneStrideNarrowingForShape =
-      preferLaneStrideNarrowing ||
-      !isDeinterleavedNarrowingFallbackSupported(sourceType, resultType);
-  FailureOr<VMICastLayoutFact> highPriorityFact =
-      getHighPriorityCastLayoutFactImpl(sourceType, resultType,
-                                        preferLaneStrideNarrowingForShape,
-                                        reason);
-  if (succeeded(highPriorityFact)) {
-    return highPriorityFact;
-  }
+      allowLaneStridePreference &&
+      (preferLaneStrideNarrowing ||
+       !isDeinterleavedNarrowingFallbackSupported(sourceType, resultType));
   if (preferLaneStrideNarrowingForShape) {
+    FailureOr<VMICastLayoutFact> highPriorityFact =
+        getHighPriorityCastLayoutFactImpl(sourceType, resultType,
+                                          /*allowLaneStrideNarrowing=*/true,
+                                          reason);
+    if (succeeded(highPriorityFact)) {
+      return highPriorityFact;
+    }
     FailureOr<VMICastLayoutFact> laneStrideFact =
         getPreferredLaneStrideNarrowCastLayoutFactImpl(sourceType, resultType,
                                                        reason);

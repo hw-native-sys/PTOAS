@@ -12,6 +12,7 @@
 from __future__ import annotations
 
 import os
+import shlex
 import shutil
 from pathlib import Path
 
@@ -49,6 +50,11 @@ def resolve_bisheng() -> str:
         return found
 
     raise FileNotFoundError("bisheng compiler not found; source ASCEND setenv.bash first")
+
+
+def bisheng_extra_flags() -> list[str]:
+    """Return extra Bisheng arguments supplied by the active environment."""
+    return shlex.split(os.environ.get("BISHENG_FLAGS", ""))
 
 
 def ascend_home_path() -> Path:
@@ -171,6 +177,7 @@ __all__ = [
     "aicore_arch_for_kernel_kind",
     "ascend_driver_path",
     "ascend_home_path",
+    "bisheng_extra_flags",
     "common_include_flags",
     "runtime_library_flags",
     "simulator_library_dirs",

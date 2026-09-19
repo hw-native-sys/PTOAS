@@ -1562,7 +1562,7 @@ PTOValueEvolutionAnalysis::getEvolution(const PTOTypedExprRef &expression,
 
 PTOAnalysisResult<PTOTypedExprRef>
 const PTOValueEvolutionAnalysis::getPointExpression(
-    const PTOTypedExprRef &expression) {
+    const PTOTypedExprRef &expression) const {
   return getPointExpressionImpl(expression);
 }
 
@@ -1625,7 +1625,7 @@ PTOAnalysisResult<PTOLoopEvolution>
 PTOValueEvolutionAnalysis::getSyntheticAddSubEvolution(
     const PTOTypedExprRef &expression, bool sourceProvesNoWrap, bool isUnsigned,
     const PTOAnalysisResult<PTOLoopEvolution> &lhs,
-    const PTOAnalysisResult<PTOLoopEvolution> &rhs) {
+    const PTOAnalysisResult<PTOLoopEvolution> &rhs) const {
   bool isAdd = expression->kind == PTOTypedExpr::Kind::Add;
   std::optional<PTOFiniteRange> provenRange;
   bool canComputeRange = !sourceProvesNoWrap && expression->type.isIndex() &&
@@ -1665,7 +1665,7 @@ PTOAnalysisResult<PTOLoopEvolution>
 PTOValueEvolutionAnalysis::getSyntheticMulEvolution(
     const PTOTypedExprRef &expression, bool sourceProvesNoWrap, bool isUnsigned,
     const PTOAnalysisResult<PTOLoopEvolution> &lhs,
-    const PTOAnalysisResult<PTOLoopEvolution> &rhs) {
+    const PTOAnalysisResult<PTOLoopEvolution> &rhs) const {
   auto lhsConstant = getMathematicalConstant(expression->lhs, isUnsigned);
   auto rhsConstant = getMathematicalConstant(expression->rhs, isUnsigned);
   const PTOTypedExprRef *invariantExpression = nullptr;

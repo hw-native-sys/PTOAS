@@ -1,0 +1,42 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+
+// RUN: not pto-test-opt -split-input-file %s 2>&1 | FileCheck %s
+
+// block_deinterleaved derives block_elems from the element-width-dependent
+// physical lanes per part (block_elems = lanes_per_part / 8): f32 gives 8 and
+// ui16 gives 16.  One shared block_deinterleaved attr therefore maps logical
+// lanes to different physical parts on the wide and half sides, so the
+// pair-wise vbitcast + vdintlv/vintlv lowering would silently misplace lanes.
+// The op verifier rejects it instead.
+
+module {
+  func.func @vunzip_block_deinterleaved(
+      %src: !pto.vmi.vreg<128xf32, #pto.vmi.layout<block_deinterleaved = 2>>) {
+    %low, %high = pto.vmi.vunzip %src
+        : !pto.vmi.vreg<128xf32, #pto.vmi.layout<block_deinterleaved = 2>>
+        -> !pto.vmi.vreg<128xui16, #pto.vmi.layout<block_deinterleaved = 2>>, !pto.vmi.vreg<128xui16, #pto.vmi.layout<block_deinterleaved = 2>>
+    return
+  }
+}
+
+// -----
+
+module {
+  func.func @vzip_block_deinterleaved(
+      %low: !pto.vmi.vreg<128xui16, #pto.vmi.layout<block_deinterleaved = 2>>,
+      %high: !pto.vmi.vreg<128xui16, #pto.vmi.layout<block_deinterleaved = 2>>) {
+    %r = pto.vmi.vzip %low, %high
+        : !pto.vmi.vreg<128xui16, #pto.vmi.layout<block_deinterleaved = 2>>, !pto.vmi.vreg<128xui16, #pto.vmi.layout<block_deinterleaved = 2>>
+        -> !pto.vmi.vreg<128xui32, #pto.vmi.layout<block_deinterleaved = 2>>
+    return
+  }
+}
+
+// CHECK: does not support block_deinterleaved layouts
+// CHECK: does not support block_deinterleaved layouts

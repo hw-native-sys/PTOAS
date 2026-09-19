@@ -275,7 +275,7 @@ bool MemoryDependentAnalyzer::MemAlias(const BaseMemInfo *a,
 }
  
 bool MemoryDependentAnalyzer::isGMBufferOverlap(const BaseMemInfo *a,
-                                                const BaseMemInfo *b) {
+                                                const BaseMemInfo *b) const {
   if (a->baseAddresses.empty() || b->baseAddresses.empty()) {
     return true;
   }

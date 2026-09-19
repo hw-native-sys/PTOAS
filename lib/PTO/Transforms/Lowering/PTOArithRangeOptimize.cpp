@@ -222,7 +222,7 @@ private:
   // directly; wider boundary values (index/i64) get a narrowing cast
   // inserted before `pos` (trunc/index_cast are exact for the proven
   // non-negative u32 range).
-  Value asI32(Value v, const ChainInfo &ci, OpBuilder &b, Operation *pos) {
+  Value asI32(Value v, const ChainInfo &ci, OpBuilder &b, Operation *pos) const {
     // Runtime guard instead of an assertion: callers only pass proven chains,
     // and if a future caller forgets, no narrowing cast may be emitted.
     if (!ci.provable()) {
@@ -243,7 +243,7 @@ private:
 
   // Zero-extends an i32 chain value back to `ty` (index or i64). Exact for
   // proven non-negative u32 ranges.
-  Value widen(Value i32Value, Type ty, OpBuilder &b, Operation *pos) {
+  Value widen(Value i32Value, Type ty, OpBuilder &b, Operation *pos) const {
     if (ty.isSignlessInteger(kI32RangeBitWidth)) {
       return i32Value;
     }
@@ -322,7 +322,7 @@ private:
     return visitDefinedValue(v, def);
   }
 
-  ChainInfo visitLoopIV(BlockArgument blockArg) {
+  ChainInfo visitLoopIV(BlockArgument blockArg) const {
     URange range = loopIVRange(blockArg);
     if (!fitsU32(range)) {
       return fail();
@@ -398,7 +398,7 @@ private:
 
   // Nullary hardware ID queries and other operand-independent range
   // providers.
-  ChainInfo visitInterfaceQuery(Value v, Operation *def) {
+  ChainInfo visitInterfaceQuery(Value v, Operation *def) const {
     if (!isa<InferIntRangeInterface>(def) || def->getNumOperands() != 0) {
       return fail();
     }
@@ -592,8 +592,8 @@ struct PTOArithRangeOptimizePass
 
     bool changed = false;
     for (auto [op, idx] : anchors) {
-      if (op) {
-        changed |= narrowOffsetOperand(op, idx);
+      if (op && narrowOffsetOperand(op, idx)) {
+        changed = true;
       }
     }
     if (changed) {

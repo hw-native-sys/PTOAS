@@ -8,7 +8,7 @@
 
 // Keep scalar loop state outside physical sections. The same structured loop
 // shape is valid for scalar and tile-domain bodies.
-// RUN: ptoas --pto-arch=a5 %s | FileCheck %s
+// RUN: ptoas --pto-arch=a5 %s | FileCheck %s --implicit-check-not=__builtin_cce_
 
 module attributes {pto.target_arch = "a5"} {
   func.func @scalar_while(%limit: i32) -> i32 {
@@ -61,7 +61,7 @@ module attributes {pto.target_arch = "a5"} {
 // CHECK: goto [[CUBE_HEADER:label[0-9]+]];
 // CHECK: [[CUBE_HEADER]]:
 // CHECK: [[CUBE_BODY:label[0-9]+]]:
-// CHECK: getFFTSMsg(FFTS_MODE_VAL, {{.*}})
-// CHECK-NEXT: __builtin_cce_ffts_cross_core_sync(PIPE_MTE1, {{.*}});
-// CHECK-NOT: __builtin_cce_set_intra_block
+// CHECK: getFFTSMsg(2, {{.*}})
+// CHECK-NEXT: ffts_cross_core_sync(PIPE_MTE1, {{.*}});
+// CHECK-NOT: set_intra_block
 // CHECK: goto [[CUBE_HEADER]];

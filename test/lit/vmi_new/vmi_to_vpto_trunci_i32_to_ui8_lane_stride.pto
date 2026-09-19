@@ -1,0 +1,52 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+
+// RUN: pto-test-opt %s -vmi-lower-unified-to-legacy -vmi-mask-granularity-assignment -vmi-layout-assignment | FileCheck %s --check-prefix=ASSIGN
+// RUN: pto-test-opt %s -vmi-lower-unified-to-legacy -vmi-mask-granularity-assignment -vmi-layout-assignment -vmi-to-vpto | FileCheck %s --check-prefix=LOWER
+
+// 32 -> 8 integer narrowing whose deinterleaved = 2 source asks the result for
+// a lane stride (a consumer that wants the packed 8-bit carrier selects the
+// {bits<32>, bits<8>, d(2), ls(2)} cast row).  Two converted sub-lanes then fit
+// one 32-bit carrier, so two source chunks fill one result chunk and the
+// converted sub-lanes are read by parts P0 and P2 before the pto.vor merge.
+//
+// This previously failed with VMI-RESIDUAL-OP even though the relation is a
+// declared cast layout row: the dense factor route required one source chunk
+// per narrowing factor instead of one per factor / result lane stride.
+
+module {
+  func.func @trunci_ui32_d2_to_ui8_lane_stride(
+      %input: !pto.vmi.vreg<128xui32, #pto.vmi.layout<deinterleaved = 2>>,
+      %dst: !pto.ptr<ui8, ub>,
+      %off: index) {
+    %c32 = arith.constant 32 : index
+    %aligned_off = arith.muli %off, %c32 : index
+    %packed = pto.vmi.vcvt %input {saturate = "SAT"}
+        : !pto.vmi.vreg<128xui32, #pto.vmi.layout<deinterleaved = 2>>
+        -> !pto.vmi.vreg<128xui8>
+    pto.vmi.vstore %packed, %dst[%aligned_off]
+        : !pto.vmi.vreg<128xui8>, !pto.ptr<ui8, ub>
+    return
+  }
+}
+
+// ASSIGN-LABEL: func.func @trunci_ui32_d2_to_ui8_lane_stride(
+// ASSIGN: %[[PACKED:.*]] = pto.vmi.trunci
+// ASSIGN-SAME: !pto.vmi.vreg<128xui32, #pto.vmi.layout<deinterleaved = 2>> -> !pto.vmi.vreg<128xui8, #pto.vmi.layout<contiguous, lane_stride = 2>>
+// ASSIGN: pto.vmi.store %[[PACKED]]
+
+// LOWER-LABEL: func.func @trunci_ui32_d2_to_ui8_lane_stride(
+// LOWER: pto.vcvt {{.*}} {part = "P0", sat = "SAT"} : !pto.vreg<64xui32>, !pto.mask<b32> -> !pto.vreg<256xui8>
+// LOWER: pto.vcvt {{.*}} {part = "P2", sat = "SAT"} : !pto.vreg<64xui32>, !pto.mask<b32> -> !pto.vreg<256xui8>
+// LOWER: pto.vor
+// LOWER: pto.vsts {{.*}} {dist = "PK_B16"}
+// LOWER-NOT: part = "P1"
+// LOWER-NOT: part = "P3"
+// LOWER-NOT: pto.vmi.
+// LOWER-NOT: !pto.vmi.
+// LOWER-NOT: unrealized_conversion_cast

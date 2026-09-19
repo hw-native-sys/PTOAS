@@ -57,8 +57,8 @@ static std::optional<int64_t> getConstantInt64(Value value) {
 /// Return the stateful store that continues \p store, or a null op when the
 /// single user of its alignment result is not a contiguous store in \p block.
 static VstusOp getContinuationStore(VstusOp store, Value baseOut,
-                                    Operation *alignUser, Operation *baseUser,
-                                    Block *block) {
+                                    const Operation *alignUser, const Operation *baseUser,
+                                    const Block *block) {
   auto nextStore = dyn_cast<VstusOp>(alignUser);
   if (!nextStore) {
     return {};
@@ -76,7 +76,7 @@ static VstusOp getContinuationStore(VstusOp store, Value baseOut,
 /// Return whether \p flush terminates \p store's stream: it must consume both
 /// results of the last store with a zero offset in \p block.
 static bool isValidStatefulFlush(VstasOp flush, VstusOp store, Value baseOut,
-                                 Operation *baseUser, Block *block) {
+                                 const Operation *baseUser, const Block *block) {
   bool consumesStream = flush && baseUser == flush &&
                         flush.getValue() == store.getAlignOut() &&
                         flush.getDestination() == baseOut &&
@@ -483,7 +483,7 @@ getLoopAddressCoefficient(Value value, scf::ForOp loop,
     return std::nullopt;
   }
 
-  auto coefficient = [&](Value operand) {
+  auto coefficient = [&loop, &cache, &failed](Value operand) {
     return getLoopAddressCoefficient(operand, loop, cache, failed);
   };
   std::optional<int64_t> result =

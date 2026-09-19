@@ -1,0 +1,15 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+
+// RUN: python3 %S/Inputs/check_vunzip_vzip_validation.py
+
+// The public Python surface must reject unsupported vunzip/vzip shapes before
+// they reach the C++ verifier: source width outside 16/32, a half-width target
+// that is not exactly half, a non-vreg or shape-mismatched vzip high operand,
+// a half width outside 8/16, and a wide target that is not exactly 2x.
+// The helper also checks the accepted default and explicit-to_dtype shapes.

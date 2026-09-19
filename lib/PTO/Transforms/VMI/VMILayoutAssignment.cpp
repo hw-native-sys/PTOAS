@@ -17,6 +17,7 @@
 #include "PTO/Transforms/VMIControlFlowSupport.h"
 #include "PTO/Transforms/VMILayoutPropagation.h"
 #include "PTO/Transforms/VMILayoutSupport.h"
+#include "PTO/Transforms/VMILayoutSpineAnalysis.h"
 
 #include "mlir/Dialect/ControlFlow/IR/ControlFlowOps.h"
 #include "mlir/Dialect/Func/IR/FuncOps.h"
@@ -30,6 +31,7 @@
 #include "llvm/ADT/SmallVector.h"
 #include "llvm/ADT/TypeSwitch.h"
 #include "llvm/Support/CommandLine.h"
+#include "llvm/Support/raw_ostream.h"
 
 #include <type_traits>
 
@@ -69,6 +71,21 @@ enum class DataLayoutSeedPhase {
   GroupBroadcast,
   CompactCast,
   GroupStore,
+  // A sub-32-bit layout class that carries elementwise compute wants to be
+  // contiguous: the lane-stride carrier makes every sub-word op in the class
+  // `laneStride` physical ops.  Placed after every semantic requirement and
+  // before the lane-stride cost preferences (LaneStrideNarrowCast / Cast /
+  // WeakReduce / Store), so it only overrides a lane stride that a cost
+  // heuristic alone justified.
+  //
+  // This is a seed phase rather than a table row on purpose.  The unit the
+  // solver decides a layout for is the union-find class (DataNode.parent), and
+  // one class must end up on one layout, so the decision has to be taken on the
+  // class - which is what setPreferredLayout does.  A per-cast relation row
+  // cannot express it: two width-changing casts that merely share a wide-side
+  // class (here the amax leg and the bulk leg meet at their common f32 vmul)
+  // have to agree, so a row chosen for one would be forced back by the other.
+  NarrowSideComputeContiguous,
   LaneStrideNarrowCast,
   // Cast layout preferences must get a chance to constrain downstream
   // cast/cast-back chains before the group-broadcast natural seed.
@@ -79,6 +96,16 @@ enum class DataLayoutSeedPhase {
   Cast,
   WeakReduce,
   Store,
+  // A width-changing bitcast has exactly one legal relation (the contiguous
+  // row of kWidthChangingBitcastLayoutPatterns), so its layout requirement can
+  // neither be satisfied nor overridden by a soft layout preference.  Two
+  // neighbours force its position: applying it *after* every soft preference
+  // has been recorded turns those preferences into boundary conflicts the
+  // reconciler materializes (an earlier request would let a preference be
+  // skipped as "already usable" instead), and applying it *before* the Other
+  // bucket keeps a producer's natural lane-stride seed from choosing a carrier
+  // form the bitcast can neither consume nor convert back into contiguous.
+  WidthChangingBitcast,
   Other,
   GroupStoreFallback,
   SeedEnd,
@@ -178,11 +205,6 @@ bool containsVMIType(Type type) {
 //   * <up, down, up, down> whose leg1.result has any use other than leg2.
 //===----------------------------------------------------------------------===//
 
-constexpr unsigned kDirectionSpineLegCount = 4;
-constexpr unsigned kDirectionSpineMaxHops = 8;
-constexpr unsigned kDirectionSpineSetInlineCapacity = 8;
-constexpr unsigned kDirectionSpineSearchBudget = 512;
-
 // Whether the direction-spine recognition is allowed to seed layouts.
 //
 // ON by default: the deinterleaved family it selects is the intended shape for
@@ -216,198 +238,63 @@ static llvm::cl::opt<bool> preferCastSpineRoundTrip(
                    "feed nothing but the matching extension of the same chain"),
     llvm::cl::init(true));
 
-struct DirectionSpineLeg {
-  Operation *op = nullptr;
-  Value source;
-  Value result;
-  Type sourceElementType;
-  Type resultElementType;
-  bool widening = false;
-};
+//===----------------------------------------------------------------------===//
+// Narrow-side compute gate.
+//
+// A width-changing cast decides the layout of its sub-32-bit ("narrow") side.
+// The lane-stride cost rows make that side lane-strided, which is right when the
+// narrow value is short-lived - a store target, or an intermediate handed
+// straight to the closing cast - because `physicalBits = elementBits *
+// laneStride` then only widens the cast/store itself.  It is wrong when the
+// narrow side carries elementwise compute, because every such op is then
+// emitted `laneStride` times.
+//
+// The gate classifies the narrow side by what its layout equivalence class
+// contains:
+//   * elementwise compute      -> the gate fires (narrow side wants contiguous)
+//   * memory access only       -> gate stays off (lane-stride is right)
+//   * casts / pure handoff     -> gate stays off
+//
+// Memory access must NOT turn the gate on.  Note this falls out of the walk
+// for free: the same-layout set contains no load/store op, so memory access
+// terminates the traversal instead of being counted.
+//
+// Do not express this as `!isPureNarrowHandoff(...)`: that predicate treats a
+// store the same way it treats compute, so inverting it would also flip the
+// narrow sides that are correct today (e.g. the f8/ui8 cast results that feed
+// nothing but a masked_store).
+//
+// The gate acts on exactly one decision: for a flagged cast,
+// getCastLayoutFactForSeed asks only for the default preferred relation of the
+// width pair, i.e. it skips the lane-stride cost rows.  That relation is
+// `{c(), d(f)}` for every widening pair - the narrow side stays contiguous and
+// the wide side takes the deinterleaved form.  No new relation row is
+// introduced: the default row already exists, and it is the one the per-part
+// vcvt actually implements (one source chunk widened to `f` parts, converted
+// part-by-part from the same source).  Declaring an equal-layout `{c(), c()}`
+// row here instead - the obvious-looking "both sides contiguous" fix - is a
+// lie, because `getDataLayoutFactor` reports a non-unit factor only for the
+// deinterleaved family, so a `c()` result claims a contiguous part split while
+// the emitted vcvt produces the interleaved one.
+//===----------------------------------------------------------------------===//
 
-static bool getDirectionSpineLeg(Operation *op, DirectionSpineLeg &leg) {
-  Value source;
-  Value result;
-  if (auto extf = dyn_cast<VMIExtFOp>(op)) {
-    source = extf.getSource();
-    result = extf.getResult();
-  } else if (auto extsi = dyn_cast<VMIExtSIOp>(op)) {
-    source = extsi.getSource();
-    result = extsi.getResult();
-  } else if (auto extui = dyn_cast<VMIExtUIOp>(op)) {
-    source = extui.getSource();
-    result = extui.getResult();
-  } else if (auto truncf = dyn_cast<VMITruncFOp>(op)) {
-    source = truncf.getSource();
-    result = truncf.getResult();
-  } else if (auto trunci = dyn_cast<VMITruncIOp>(op)) {
-    source = trunci.getSource();
-    result = trunci.getResult();
-  } else {
-    return false;
-  }
+static llvm::cl::opt<bool> narrowSideComputeGate(
+    "vmi-narrow-side-compute-gate",
+    llvm::cl::desc("Keep the sub-32-bit side of a width-changing cast "
+                   "contiguous when that side carries elementwise compute, by "
+                   "letting only the default preferred relation for the width "
+                   "pair answer (the lane-stride cost rows would repeat every "
+                   "such op once per physical part).  Scoped to the flagged "
+                   "casts, so no other cast's relation set changes.  OFF by "
+                   "default: see "
+                   "design/peephole-dense-subword-layout.md section 10."),
+    llvm::cl::init(true));
 
-  auto sourceType = dyn_cast<VMIVRegType>(source.getType());
-  auto resultType = dyn_cast<VMIVRegType>(result.getType());
-  if (!sourceType || !resultType) {
-    return false;
-  }
-  unsigned sourceBits =
-      pto::getPTOStorageElemBitWidth(sourceType.getElementType());
-  unsigned resultBits =
-      pto::getPTOStorageElemBitWidth(resultType.getElementType());
-  if (sourceBits == 0 || resultBits == 0 || sourceBits == resultBits) {
-    return false;
-  }
-
-  leg.op = op;
-  leg.source = source;
-  leg.result = result;
-  leg.sourceElementType = sourceType.getElementType();
-  leg.resultElementType = resultType.getElementType();
-  leg.widening = resultBits > sourceBits;
-  return true;
-}
-
-// Whether the narrow intermediate produced by \p downLeg is handed straight to
-// the closing widening leg \p upLeg of the same window and to nothing else.
-// This is the sufficiency condition for the deinterleaved family (see the
-// recognition comment above): the caller only needs the use-def list of one
-// value, and it is decided before any seed exists.
-static bool isPureNarrowHandoff(const DirectionSpineLeg &downLeg,
-                                const DirectionSpineLeg &upLeg) {
-  if (downLeg.result.use_empty()) {
-    return false;
-  }
-  for (OpOperand &use : downLeg.result.getUses()) {
-    if (use.getOwner() != upLeg.op) {
-      return false;
-    }
-  }
-  return true;
-}
-
-// Extend a partially built leg window forward from \p current.  Legs alternate
-// up/down starting with up, and between two legs only layout-transparent ops
-// are crossed (bounded by kDirectionSpineMaxHops per leg and by \p budget per
-// search).  A complete window is recorded only when it closes - the fourth leg
-// ends on the element type the first leg started from - and when its narrow
-// handoff is pure.
-static void extendDirectionSpineWindow(
-    Value current, SmallVectorImpl<DirectionSpineLeg> &window,
-    llvm::SmallPtrSetImpl<Operation *> &spineLegs, unsigned hops,
-    unsigned &budget) {
-  if (budget == 0) {
-    return;
-  }
-  if (window.size() == kDirectionSpineLegCount) {
-    if (window.front().sourceElementType == window.back().resultElementType &&
-        isPureNarrowHandoff(window[1], window[2])) {
-      for (const DirectionSpineLeg &leg : window) {
-        spineLegs.insert(leg.op);
-      }
-    }
-    return;
-  }
-
-  auto currentType = dyn_cast<VMIVRegType>(current.getType());
-  if (!currentType) {
-    return;
-  }
-  const bool expectWidening = window.size() % 2 == 0;
-  for (OpOperand &use : current.getUses()) {
-    if (budget == 0) {
-      return;
-    }
-    --budget;
-    Operation *user = use.getOwner();
-
-    DirectionSpineLeg next;
-    if (getDirectionSpineLeg(user, next) && next.source == current &&
-        next.widening == expectWidening) {
-      window.push_back(next);
-      extendDirectionSpineWindow(next.result, window, spineLegs, /*hops=*/0,
-                                 budget);
-      window.pop_back();
-      continue;
-    }
-
-    if (hops < kDirectionSpineMaxHops && isVMISameLayoutOp(user)) {
-      for (Value result : user->getResults()) {
-        auto resultType = dyn_cast<VMIVRegType>(result.getType());
-        if (!resultType ||
-            resultType.getElementType() != currentType.getElementType()) {
-          continue;
-        }
-        extendDirectionSpineWindow(result, window, spineLegs, hops + 1, budget);
-      }
-    }
-  }
-}
-
-// Record every cast op that is a leg of a closed nested round trip.
-static void collectDirectionSpineLegs(
-    ModuleOp module, llvm::SmallPtrSetImpl<Operation *> &spineLegs) {
-  SmallVector<DirectionSpineLeg, kDirectionSpineLegCount> window;
-  module.walk([&](Operation *op) {
-    DirectionSpineLeg first;
-    if (!getDirectionSpineLeg(op, first) || !first.widening) {
-      return;
-    }
-    unsigned budget = kDirectionSpineSearchBudget;
-    window.clear();
-    window.push_back(first);
-    extendDirectionSpineWindow(first.result, window, spineLegs, /*hops=*/0,
-                               budget);
-  });
-}
-
-// Whether \p op is a widening cast, i.e. the kind of op that closes a
-// narrow->wide handoff.
-static bool isSpineWideningCast(Operation *op) {
-  return isa<VMIExtFOp, VMIExtSIOp, VMIExtUIOp>(op);
-}
-
-// Narrow->wide handoff inside a matched direction spine.
-// The composite 32<->16 / 32<->8 spine rows keep the narrow value split over
-// the four physical parts of its wide side so that the narrowing and the closing
-// widening are per-chunk one-to-one.  That is only safe while the narrow value
-// has no other consumer: an elementwise op, a store, a broadcast or any layout
-// request for a packed/contiguous narrow value would disagree with the
-// composite form and force an ensure_layout (or a residual op), which is
-// strictly worse than the assembly it was meant to remove.  Requiring every use
-// of the narrowing leg's result to be a widening cast that is itself a leg of
-// the same spine is therefore a cheap, local sufficiency condition.
-// The set is computed from the IR alone, before any seed exists, and is empty
-// whenever the direction-spine recognition is off or did not match.
-static void collectSpineScopedCasts(
-    const llvm::SmallPtrSetImpl<Operation *> &spineLegs,
-    llvm::SmallPtrSetImpl<Operation *> &scopedCasts) {
-  for (Operation *op : spineLegs) {
-    if (!isa<VMITruncFOp, VMITruncIOp>(op) || op->getNumResults() != 1) {
-      continue;
-    }
-    Value narrow = op->getResult(0);
-    if (narrow.use_empty()) {
-      continue;
-    }
-    bool handoff = true;
-    for (OpOperand &use : narrow.getUses()) {
-      Operation *user = use.getOwner();
-      if (!isSpineWideningCast(user) || !spineLegs.contains(user)) {
-        handoff = false;
-        break;
-      }
-    }
-    if (!handoff) {
-      continue;
-    }
-    scopedCasts.insert(op);
-    for (OpOperand &use : narrow.getUses()) {
-      scopedCasts.insert(use.getOwner());
-    }
-  }
-}
+static llvm::cl::opt<bool> debugNarrowSideCompute(
+    "vmi-debug-narrow-side-compute",
+    llvm::cl::desc("Print the width-changing casts whose sub-32-bit side "
+                   "carries elementwise compute"),
+    llvm::cl::init(false));
 
 struct LayoutSolver {
   explicit LayoutSolver(ModuleOp module)
@@ -601,22 +488,46 @@ struct LayoutSolver {
   // legs that consume it) are served from the spine-scoped table, which adds the
   // composite 32<->16 / 32<->8 rows on top of the layouts the generic tables
   // already offer.  Every other cast keeps the pre-existing table lookup and
-  // phase unchanged.
+  // phase unchanged - except a cast the narrow-side-compute gate flagged, whose
+  // lane-stride *cost* rows are skipped so the default preferred row for the
+  // width pair answers instead (see allowLaneStridePreference).  The two scoped
+  // sets are disjoint (a spine narrow side is a pure cast handoff and never
+  // carries compute), so each cast is served by at most one scoped lookup.
   FailureOr<VMICastLayoutFact> getCastLayoutFactForSeed(Operation *op,
                                                         Value seedValue,
                                                         VMIVRegType sourceType,
                                                         VMIVRegType resultType) {
     VMILayoutSupport supports;
-    if (!spineScopedCasts.contains(op)) {
+    if (spineScopedCasts.contains(op)) {
+      std::string reason;
+      FailureOr<VMICastLayoutFact> spineFact =
+          supports.getSpineScopedCastLayoutFact(sourceType, resultType,
+                                                &reason);
+      bool canUseSpine =
+          succeeded(spineFact) &&
+          canSeedPreferredLayout(seedValue, spineFact->resultLayout);
+      if (canUseSpine) {
+        return spineFact;
+      }
       return supports.getPreferredCastLayoutFact(sourceType, resultType);
     }
-
-    std::string reason;
-    FailureOr<VMICastLayoutFact> spineFact =
-        supports.getSpineScopedCastLayoutFact(sourceType, resultType, &reason);
-    if (succeeded(spineFact) &&
-        canSeedPreferredLayout(seedValue, spineFact->resultLayout)) {
-      return spineFact;
+    if (isGatedNarrowSideComputeCast(op)) {
+      FailureOr<VMICastLayoutFact> gatedFact = supports.getPreferredCastLayoutFact(
+          sourceType, resultType, /*reason=*/nullptr,
+          /*allowLaneStridePreference=*/false);
+      if (debugNarrowSideCompute) {
+        llvm::errs() << "[narrow-side-compute] fact for " << op->getName()
+                     << " src=" << sourceType << " dst=" << resultType << " -> ";
+        if (succeeded(gatedFact)) {
+          llvm::errs() << "srcLayout=" << gatedFact->sourceLayout
+                       << " resultLayout=" << gatedFact->resultLayout << "\n";
+        } else {
+          llvm::errs() << "FAILED\n";
+        }
+      }
+      if (succeeded(gatedFact)) {
+        return gatedFact;
+      }
     }
     return supports.getPreferredCastLayoutFact(sourceType, resultType);
   }
@@ -867,7 +778,7 @@ struct LayoutSolver {
     // shape.
     unsigned elementBits =
         pto::getPTOStorageElemBitWidth(type.getElementType());
-    if (elementBits == 0 || elementBits % 8 != 0) {
+    if (elementBits == 0 || elementBits % mlir::pto::kValue8 != 0) {
       return success();
     }
     int64_t elementBytes = elementBits / 8;
@@ -990,9 +901,48 @@ struct LayoutSolver {
           return constraintResult(
               unite(scalarOp.getSrc(), scalarOp.getResult(), op));
         })
-        .Case<VMIBitcastOp>([this, op](auto unaryOp) {
-          return constraintResult(
-              unite(unaryOp.getSource(), unaryOp.getResult(), op));
+        .Case<VMIBitcastOp>([this, op](VMIBitcastOp bitcast) {
+          // The two bitcast kinds are one mechanism with two legal relation
+          // sets, so the constraint is split exactly the way the relation
+          // tables and the reconciler already split them:
+          //
+          //  * equal storage-element width: getBitcastLayoutFactsForLayout
+          //    answers {L, L} for *every* layout, i.e. the source and the
+          //    result carry one and the same layout and nothing ever has to be
+          //    materialized.  `unite` records that class membership, and the
+          //    bitcast transfer does the rest.
+          //  * width-changing: only the rows of
+          //    kWidthChangingBitcastLayoutPatterns (contiguous) are legal, and
+          //    the two sides still have to match.  That is a relation, not a
+          //    class: a neighbour that wants another layout is served by an
+          //    ensure_layout on the boundary, so the bitcast must neither
+          //    absorb the neighbour's layout nor let a producer's natural
+          //    lane-stride seed win the race first.  The requirement is
+          //    therefore stated as a *use request* on the source, at a phase
+          //    that runs after every soft preference (so Store can still
+          //    record its lane-stride wish as a boundary conflict) and before
+          //    the Other bucket that carries the plain-load lane-stride
+          //    seed.  The transfer relation {contiguous, contiguous} then
+          //    carries contiguous to the result.  A value seed
+          //    (setPreferredLayout) is deliberately NOT used here: it makes
+          //    hasDataLayoutSeed() true for the result, which suppresses the
+          //    consumer's lane-stride preference at collection time and
+          //    silently drops it instead of materializing it at the boundary.
+          auto sourceType = cast<VMIVRegType>(bitcast.getSource().getType());
+          auto resultType = cast<VMIVRegType>(bitcast.getResult().getType());
+          unsigned sourceBits =
+              pto::getPTOStorageElemBitWidth(sourceType.getElementType());
+          unsigned resultBits =
+              pto::getPTOStorageElemBitWidth(resultType.getElementType());
+          if (sourceBits == 0 || resultBits == 0 ||
+              sourceBits == resultBits) {
+            return constraintResult(
+                unite(bitcast.getSource(), bitcast.getResult(), op));
+          }
+          requestDataUse(bitcast.getSourceMutable(), getContiguousLayout(),
+                         /*late=*/false,
+                         DataLayoutSeedPhase::WidthChangingBitcast);
+          return std::optional<WalkResult>(WalkResult::advance());
         })
         .Default([](Operation *) { return std::nullopt; });
   }
@@ -1032,6 +982,55 @@ struct LayoutSolver {
         castOp.getResult(), resultLayout, op, DataLayoutSeedPhase::Cast));
   }
 
+  // Whether the narrow-side-compute gate is enabled *and* flagged this cast.
+  // Reading both here is what keeps the whole mechanism inert when the gate is
+  // off: the analysis still runs, but no seed consults its result.
+  bool isGatedNarrowSideComputeCast(Operation *castOp) const {
+    return narrowSideComputeGate &&
+           narrowSideComputeCasts.contains(castOp);
+  }
+
+  // Anchor the layout class of \p narrowValue - the sub-32-bit side of a
+  // width-changing cast - to the contiguous form when the gate flagged that
+  // cast, i.e. when the class carries elementwise compute that the lane-stride
+  // carrier would repeat once per physical part.
+  //
+  // Seeds the class, not the cast: setPreferredLayout stores the layout on the
+  // union-find root, so this reaches every value that shares the class, which is
+  // exactly the set the lane stride would have inflated.  Placed at
+  // NarrowSideComputeContiguous so it loses to every semantic requirement and
+  // wins only against the lane-stride cost heuristics.
+  //
+  // No relation row is introduced here.  Once the narrow side is contiguous, the
+  // cast takes the default preferred row for its width pair - {c(), d(f)} for
+  // every widening pair, which is the pair the per-part vcvt already implements.
+  // Declaring an equal-layout {c(), c()} row instead would be a lie:
+  // getDataLayoutFactor reports a non-unit factor only for the deinterleaved
+  // family, so a c() result claims a contiguous part split while the emitted
+  // vcvt produces the interleaved one.
+  //
+  // A class that is already pinned elsewhere is left alone; a genuine conflict
+  // is still reported by setPreferredLayout's own call site.
+  FailureOr<bool> seedNarrowSideComputeContiguous(Operation *castOp,
+                                                  Value narrowValue) {
+    if (!isGatedNarrowSideComputeCast(castOp)) {
+      return false;
+    }
+    if (!isa<VMIVRegType>(narrowValue.getType())) {
+      return false;
+    }
+    VMILayoutAttr contiguous = getContiguousLayout();
+    if (!canSeedPreferredLayout(narrowValue, contiguous)) {
+      return false;
+    }
+    if (failed(setPreferredLayout(narrowValue, contiguous, castOp,
+                                  DataLayoutSeedPhase::
+                                      NarrowSideComputeContiguous))) {
+      return failure();
+    }
+    return true;
+  }
+
   template <typename CastOp>
   WalkResult addExtensionConstraint(CastOp castOp, Operation *op) {
     auto sourceType = cast<VMIVRegType>(castOp.getSource().getType());
@@ -1069,6 +1068,14 @@ struct LayoutSolver {
     if (failed(fact)) {
       return WalkResult::advance();
     }
+    // Widening: the narrow side is the source, which this constraint never
+    // seeds itself (its layout arrives by propagation), so the class has to be
+    // anchored here for the compute it carries to stay at one physical part.
+    FailureOr<bool> gated =
+        seedNarrowSideComputeContiguous(op, castOp.getSource());
+    if (failed(gated)) {
+      return WalkResult::interrupt();
+    }
     return *constraintResult(setPreferredLayout(
         castOp.getResult(), fact->resultLayout, op, getCastSeedPhase(*fact)));
   }
@@ -1083,6 +1090,17 @@ struct LayoutSolver {
         succeeded(fact) ? fact->resultLayout : getContiguousLayout();
     DataLayoutSeedPhase phase = succeeded(fact) ? getCastSeedPhase(*fact)
                                                 : DataLayoutSeedPhase::Cast;
+    // Narrowing: the narrow side is the result, which this constraint seeds
+    // itself.  When the gate already anchored it contiguous, stand down so the
+    // class keeps that anchor instead of being re-pinned to a lane stride.
+    FailureOr<bool> gated =
+        seedNarrowSideComputeContiguous(op, castOp.getResult());
+    if (failed(gated)) {
+      return WalkResult::interrupt();
+    }
+    if (*gated) {
+      return WalkResult::advance();
+    }
     return *constraintResult(
         setPreferredLayout(castOp.getResult(), resultLayout, op, phase));
   }
@@ -2069,7 +2087,7 @@ struct LayoutSolver {
   /// when the value already carries a layout that the operand accepts.
   template <typename RequestTy>
   LogicalResult applySeedRequest(VMILayoutPropagator &propagator,
-                                 const RequestTy &request) {
+                                 const RequestTy &request) const {
     if (hasLayoutAssignment(propagator, request.operand->get())) {
       VMILayoutAttr assigned =
           propagator.getRequestedOrCurrentLayout(request.operand->get());
@@ -2250,6 +2268,30 @@ struct LayoutSolver {
       collectDirectionSpineLegs(module, directionSpineLegs);
       collectSpineScopedCasts(directionSpineLegs, spineScopedCasts);
     }
+    // Pure IR analysis: it only needs the op structure, so it runs before the
+    // constraint walk decides any seed.  The set is consumed by
+    // isGatedNarrowSideComputeCast, which makes getCastLayoutFactForSeed skip
+    // the lane-stride cost rows for exactly these casts; with the gate off the
+    // analysis result is never read.
+    collectNarrowSideCompute(module, narrowSideComputeCasts);
+    if (debugNarrowSideCompute) {
+      for (Operation *castOp : narrowSideComputeCasts) {
+        Type narrowType;
+        if (auto extf = dyn_cast<VMIExtFOp>(castOp)) {
+          narrowType = extf.getSource().getType();
+        } else if (auto extsi = dyn_cast<VMIExtSIOp>(castOp)) {
+          narrowType = extsi.getSource().getType();
+        } else if (auto extui = dyn_cast<VMIExtUIOp>(castOp)) {
+          narrowType = extui.getSource().getType();
+        } else if (auto truncf = dyn_cast<VMITruncFOp>(castOp)) {
+          narrowType = truncf.getResult().getType();
+        } else if (auto trunci = dyn_cast<VMITruncIOp>(castOp)) {
+          narrowType = trunci.getResult().getType();
+        }
+        llvm::errs() << "[narrow-side-compute] " << castOp->getName()
+                     << " narrow=" << narrowType << "\n";
+      }
+    }
     if (failed(addConstraints())) {
       return failure();
     }
@@ -2281,6 +2323,10 @@ struct LayoutSolver {
   // Subset of directionSpineLegs plus the widening legs that consume them: the
   // cast ops whose reconciliation must use the spine-scoped cast layout table.
   llvm::SmallPtrSet<Operation *, kDirectionSpineSetInlineCapacity> spineScopedCasts;
+  // Width-changing casts whose sub-32-bit side carries elementwise compute in
+  // its layout equivalence class (see collectNarrowSideCompute).  Populated
+  // once per module, before the constraint walk creates any seed.
+  llvm::SmallPtrSet<Operation *, 8> narrowSideComputeCasts;
 };
 
 struct VMILayoutAssignmentPass

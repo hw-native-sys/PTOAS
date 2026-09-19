@@ -6,10 +6,12 @@
 // INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
 // See LICENSE in the root of the software repository for the full text of the License.
 
-// RUN: not pto-test-opt %s -vmi-lower-unified-to-legacy -vmi-mask-granularity-assignment -vmi-layout-assignment -vmi-to-vpto 2>&1 | FileCheck %s
+// RUN: pto-test-opt %s -vmi-lower-unified-to-legacy -vmi-mask-granularity-assignment -vmi-layout-assignment -vmi-to-vpto 2>&1 | FileCheck %s
 
-// 16 f32 is 64 bytes: two VCG blocks. A dynamic offset without a 32-byte
-// alignment proof cannot use the bounded multi-block vsldb path.
+// 16 f32 is 64 bytes: two VCG blocks.  A PtrType source with a dynamic offset
+// cannot prove 32-byte alignment statically, so the bounded multi-block vsldb
+// path is unavailable.  The stateful vldas+vldus fallback is used instead and
+// emits a load-safety=warn remark.
 module {
   func.func @over_block_f32_16(%src: !pto.ptr<f32, ub>, %off: index)
       -> !pto.vmi.vreg<16xf32> {
@@ -18,4 +20,7 @@ module {
   }
 }
 
-// CHECK: VMI-UNSUPPORTED{{:}} bounded contiguous load requires a provably 32-byte-aligned effective address for pto.vsldb, including single-block reads; no safe unaligned full-read fallback: requires statically shaped memref source
+// CHECK: remark: VMI load physical read is not proven safe
+// CHECK: pto.vldas
+// CHECK: pto.vldus
+// CHECK-NOT: pto.vsldb

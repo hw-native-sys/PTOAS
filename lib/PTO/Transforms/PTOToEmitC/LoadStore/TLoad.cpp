@@ -7,6 +7,8 @@
 // See LICENSE in the root of the software repository for the full text of the License.
 //===- TLoad.cpp - LoadStore TLoad op lowering --------------------------------===//
 //===----------------------------------------------------------------------===//
+// L2 bypass byte offsets are applied to a copy of the source descriptor before
+// calling ordinary TLOAD, preserving metadata and other users of the source.
 
 #include "../PTOToEmitCEmitters.h"
 #include "LoadStoreInternal.h"
@@ -18,6 +20,33 @@ using namespace mlir::pto;
 
 namespace mlir {
 namespace pto {
+
+static FailureOr<Value> offsetTLoadSource(
+    pto::TLoadOp op, Value src, Value offset,
+    ConversionPatternRewriter &rewriter) {
+  Location loc = op.getLoc();
+  Value data = materializeGlobalTensorDataPointer(
+      rewriter, loc, src, op.getSrc().getType());
+  const bool hasExpectedSource = isEmitCGlobalTensorLikeType(src.getType()) &&
+                                 isa<emitc::PointerType>(data.getType());
+  if (!hasExpectedSource) {
+    return rewriter.notifyMatchFailure(
+        op, "expected a GlobalTensor source for tload byte offset");
+  }
+  Value bytes = castToGMBytePointer(rewriter, loc, data);
+  Value adjustedBytes =
+      rewriter.create<emitc::AddOp>(loc, bytes.getType(), bytes, offset);
+  Value adjustedData =
+      rewriter.create<emitc::CastOp>(loc, data.getType(), adjustedBytes);
+  Value adjustedSrc = rewriter.create<emitc::VariableOp>(
+      loc, getEmitCVariableResultType(src.getType()),
+      emitc::OpaqueAttr::get(rewriter.getContext(), ""));
+  rewriter.create<emitc::AssignOp>(loc, adjustedSrc, src);
+  rewriter.create<emitc::CallOpaqueOp>(loc, TypeRange{}, "TASSIGN", ArrayAttr{},
+                                     ArrayAttr{},
+                                     ValueRange{adjustedSrc, adjustedData});
+  return adjustedSrc;
+}
 
 struct PTOAddPtrToEmitC : public OpConversionPattern<pto::AddPtrOp> {
   using OpConversionPattern<pto::AddPtrOp>::OpConversionPattern;
@@ -45,16 +74,20 @@ struct PTOTLoadToTLOAD : public OpConversionPattern<pto::TLoadOp> {
     Value src = peelGlobalTensorConversionBridge(adaptor.getSrc());
     Value dst = adaptor.getDst();
 
-    ArrayAttr templateArgs = ArrayAttr{};
     if (auto policy = op.getCachePolicyAttr();
-        policy && policy.getValue() == pto::LoadCachePolicy::L2Bypass) {
-      templateArgs = rewriter.getArrayAttr({emitc::OpaqueAttr::get(
-          rewriter.getContext(), "pto::TLoadL2Hint::NotAllocKeep")});
+        policy && policy.getValue() == pto::LoadCachePolicy::L2Bypass &&
+        op.getOffset()) {
+      auto adjustedSrc =
+          offsetTLoadSource(op, src, adaptor.getOffset(), rewriter);
+      if (failed(adjustedSrc)) {
+        return failure();
+      }
+      src = *adjustedSrc;
     }
 
     rewriter.create<emitc::CallOpaqueOp>(op.getLoc(), TypeRange{}, "TLOAD",
-                                         ArrayAttr{}, templateArgs,
-                                         ValueRange{dst, src});
+                                       ArrayAttr{}, ArrayAttr{},
+                                       ValueRange{dst, src});
 
     if (op->getNumResults() == 1) {
       rewriter.replaceOp(op, dst);

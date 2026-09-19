@@ -291,9 +291,9 @@ static FailureOr<pto::TileBufType> makeTGatherCompareTmpType(
   // must cover i32 indices and the conversion area rounded to full repeats.
   // Keep bitmap row starts and both following regions 32-byte aligned.
   int64_t payload = indexBytes + conversionBytes;
-  int64_t rowPayload = payload / shape[0] + (payload % shape[0] != 0);
+  int64_t rowPayload = payload / shape[0] + ((payload % shape[0] != 0) ? 1 : 0);
   int64_t cols = rowPayload / kPayloadBytesPerTmpElement +
-                 (rowPayload % kPayloadBytesPerTmpElement != 0);
+                 ((rowPayload % kPayloadBytesPerTmpElement != 0) ? 1 : 0);
   cols = llvm::alignTo(cols, kMaskRowAlignment);
   int64_t elements = 0;
   bool sizeOverflow = llvm::MulOverflow(shape[0], cols, elements);
@@ -1244,7 +1244,9 @@ struct PTOMaterializeImplicitTmpPass
           &PTOMaterializeImplicitTmpPass::materializeOptionalTmpOps,
           &PTOMaterializeImplicitTmpPass::materializeRowReductionOps,
           &PTOMaterializeImplicitTmpPass::materializeMandatoryTmpOps}) {
-      failed |= mlir::failed((this->*materialize)());
+      if (mlir::failed((this->*materialize)())) {
+        failed = true;
+      }
     }
 
     if (failed) {

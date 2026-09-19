@@ -343,22 +343,30 @@ struct VMILayoutRematerializePass
         }
 
         if (auto ensure = dyn_cast<VMIEnsureLayoutOp>(op)) {
-          changed |= tryReplaceDataEnsure(ensure);
+          if (tryReplaceDataEnsure(ensure)) {
+            changed = true;
+          }
           continue;
         }
 
         if (auto ensure = dyn_cast<VMIEnsureMaskLayoutOp>(op)) {
-          changed |= tryReplaceMaskEnsure(ensure);
+          if (tryReplaceMaskEnsure(ensure)) {
+            changed = true;
+          }
           continue;
         }
 
         if (auto ensure = dyn_cast<VMIEnsureMaskGranularityOp>(op)) {
-          changed |= tryReplaceMaskEnsure(ensure);
+          if (tryReplaceMaskEnsure(ensure)) {
+            changed = true;
+          }
           continue;
         }
 
         if (auto trunc = dyn_cast<VMITruncIOp>(op)) {
-          changed |= tryRematerializeTruncIThroughSourceEnsure(trunc);
+          if (tryRematerializeTruncIThroughSourceEnsure(trunc)) {
+            changed = true;
+          }
         }
       }
     }

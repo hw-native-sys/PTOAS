@@ -38,6 +38,13 @@ class RuntimeToolchainTest(unittest.TestCase):
 
             self.assertEqual(flags, [f"-I{include_dir}"])
 
+    def test_bisheng_extra_flags_come_from_environment(self):
+        with mock.patch.dict(os.environ, {"BISHENG_FLAGS": "--gcc-toolchain=/usr -Winvalid-pch"}, clear=True):
+            self.assertEqual(
+                toolchain.bisheng_extra_flags(),
+                ["--gcc-toolchain=/usr", "-Winvalid-pch"],
+            )
+
     def test_a2_a3_use_c220_aicore_arch(self):
         self.assertEqual(
             toolchain.aicore_arch_for_kernel_kind("vector", "a3"), "dav-c220-vec"

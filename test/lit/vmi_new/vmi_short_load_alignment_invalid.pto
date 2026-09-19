@@ -6,156 +6,9 @@
 // INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
 // See LICENSE in the root of the software repository for the full text of the License.
 
-// RUN: pto-test-opt %s -split-input-file -vmi-lower-unified-to-legacy -vmi-mask-granularity-assignment -vmi-layout-assignment -vmi-to-vpto -verify-diagnostics
-
-// Known misalignment and unknown alignment both exclude VSLDB.
-module {
-  func.func @ui8_8_constant_offset() -> !pto.vmi.vreg<8xui8> {
-    %addr = arith.constant 1024 : i64
-    %src = pto.castptr %addr : i64 -> !pto.ptr<ui8, ub>
-    %off = arith.constant 1 : index
-    // expected-error@+1 {{bounded contiguous load requires a provably 32-byte-aligned effective address for pto.vsldb, including single-block reads; no safe unaligned full-read fallback: requires statically shaped memref source}}
-    %v = pto.vmi.vload %src[%off] : !pto.ptr<ui8, ub> -> !pto.vmi.vreg<8xui8>
-    return %v : !pto.vmi.vreg<8xui8>
-  }
-}
-
-// -----
-
-module {
-  func.func @ui8_8_dynamic_offset(%arg: index) -> !pto.vmi.vreg<8xui8> {
-    %addr = arith.constant 1024 : i64
-    %src = pto.castptr %addr : i64 -> !pto.ptr<ui8, ub>
-    // expected-error@+1 {{bounded contiguous load requires a provably 32-byte-aligned effective address for pto.vsldb, including single-block reads; no safe unaligned full-read fallback: requires statically shaped memref source}}
-    %v = pto.vmi.vload %src[%arg] : !pto.ptr<ui8, ub> -> !pto.vmi.vreg<8xui8>
-    return %v : !pto.vmi.vreg<8xui8>
-  }
-}
-
-// -----
-
-module {
-  func.func @ui8_8_dynamic_base(%arg: i64) -> !pto.vmi.vreg<8xui8> {
-    %src = pto.castptr %arg : i64 -> !pto.ptr<ui8, ub>
-    %off = arith.constant 0 : index
-    // expected-error@+1 {{bounded contiguous load requires a provably 32-byte-aligned effective address for pto.vsldb, including single-block reads; no safe unaligned full-read fallback: requires statically shaped memref source}}
-    %v = pto.vmi.vload %src[%off] : !pto.ptr<ui8, ub> -> !pto.vmi.vreg<8xui8>
-    return %v : !pto.vmi.vreg<8xui8>
-  }
-}
-
-// -----
-
-module {
-  func.func @f16_8_constant_offset() -> !pto.vmi.vreg<8xf16> {
-    %addr = arith.constant 1024 : i64
-    %src = pto.castptr %addr : i64 -> !pto.ptr<f16, ub>
-    %off = arith.constant 1 : index
-    // expected-error@+1 {{bounded contiguous load requires a provably 32-byte-aligned effective address for pto.vsldb, including single-block reads; no safe unaligned full-read fallback: requires statically shaped memref source}}
-    %v = pto.vmi.vload %src[%off] : !pto.ptr<f16, ub> -> !pto.vmi.vreg<8xf16>
-    return %v : !pto.vmi.vreg<8xf16>
-  }
-}
-
-// -----
-
-module {
-  func.func @f16_8_dynamic_offset(%arg: index) -> !pto.vmi.vreg<8xf16> {
-    %addr = arith.constant 1024 : i64
-    %src = pto.castptr %addr : i64 -> !pto.ptr<f16, ub>
-    // expected-error@+1 {{bounded contiguous load requires a provably 32-byte-aligned effective address for pto.vsldb, including single-block reads; no safe unaligned full-read fallback: requires statically shaped memref source}}
-    %v = pto.vmi.vload %src[%arg] : !pto.ptr<f16, ub> -> !pto.vmi.vreg<8xf16>
-    return %v : !pto.vmi.vreg<8xf16>
-  }
-}
-
-// -----
-
-module {
-  func.func @f16_8_dynamic_base(%arg: i64) -> !pto.vmi.vreg<8xf16> {
-    %src = pto.castptr %arg : i64 -> !pto.ptr<f16, ub>
-    %off = arith.constant 0 : index
-    // expected-error@+1 {{bounded contiguous load requires a provably 32-byte-aligned effective address for pto.vsldb, including single-block reads; no safe unaligned full-read fallback: requires statically shaped memref source}}
-    %v = pto.vmi.vload %src[%off] : !pto.ptr<f16, ub> -> !pto.vmi.vreg<8xf16>
-    return %v : !pto.vmi.vreg<8xf16>
-  }
-}
-
-// -----
-
-module {
-  func.func @f32_8_constant_offset() -> !pto.vmi.vreg<8xf32> {
-    %addr = arith.constant 1024 : i64
-    %src = pto.castptr %addr : i64 -> !pto.ptr<f32, ub>
-    %off = arith.constant 1 : index
-    // expected-error@+1 {{bounded contiguous load requires a provably 32-byte-aligned effective address for pto.vsldb, including single-block reads; no safe unaligned full-read fallback: requires statically shaped memref source}}
-    %v = pto.vmi.vload %src[%off] : !pto.ptr<f32, ub> -> !pto.vmi.vreg<8xf32>
-    return %v : !pto.vmi.vreg<8xf32>
-  }
-}
-
-// -----
-
-module {
-  func.func @f32_8_dynamic_offset(%arg: index) -> !pto.vmi.vreg<8xf32> {
-    %addr = arith.constant 1024 : i64
-    %src = pto.castptr %addr : i64 -> !pto.ptr<f32, ub>
-    // expected-error@+1 {{bounded contiguous load requires a provably 32-byte-aligned effective address for pto.vsldb, including single-block reads; no safe unaligned full-read fallback: requires statically shaped memref source}}
-    %v = pto.vmi.vload %src[%arg] : !pto.ptr<f32, ub> -> !pto.vmi.vreg<8xf32>
-    return %v : !pto.vmi.vreg<8xf32>
-  }
-}
-
-// -----
-
-module {
-  func.func @f32_8_dynamic_base(%arg: i64) -> !pto.vmi.vreg<8xf32> {
-    %src = pto.castptr %arg : i64 -> !pto.ptr<f32, ub>
-    %off = arith.constant 0 : index
-    // expected-error@+1 {{bounded contiguous load requires a provably 32-byte-aligned effective address for pto.vsldb, including single-block reads; no safe unaligned full-read fallback: requires statically shaped memref source}}
-    %v = pto.vmi.vload %src[%off] : !pto.ptr<f32, ub> -> !pto.vmi.vreg<8xf32>
-    return %v : !pto.vmi.vreg<8xf32>
-  }
-}
-
-// -----
-
-module {
-  func.func @f32_16_constant_offset() -> !pto.vmi.vreg<16xf32> {
-    %addr = arith.constant 1024 : i64
-    %src = pto.castptr %addr : i64 -> !pto.ptr<f32, ub>
-    %off = arith.constant 1 : index
-    // expected-error@+1 {{bounded contiguous load requires a provably 32-byte-aligned effective address for pto.vsldb, including single-block reads; no safe unaligned full-read fallback: requires statically shaped memref source}}
-    %v = pto.vmi.vload %src[%off] : !pto.ptr<f32, ub> -> !pto.vmi.vreg<16xf32>
-    return %v : !pto.vmi.vreg<16xf32>
-  }
-}
-
-// -----
-
-module {
-  func.func @f32_16_dynamic_offset(%arg: index) -> !pto.vmi.vreg<16xf32> {
-    %addr = arith.constant 1024 : i64
-    %src = pto.castptr %addr : i64 -> !pto.ptr<f32, ub>
-    // expected-error@+1 {{bounded contiguous load requires a provably 32-byte-aligned effective address for pto.vsldb, including single-block reads; no safe unaligned full-read fallback: requires statically shaped memref source}}
-    %v = pto.vmi.vload %src[%arg] : !pto.ptr<f32, ub> -> !pto.vmi.vreg<16xf32>
-    return %v : !pto.vmi.vreg<16xf32>
-  }
-}
-
-// -----
-
-module {
-  func.func @f32_16_dynamic_base(%arg: i64) -> !pto.vmi.vreg<16xf32> {
-    %src = pto.castptr %arg : i64 -> !pto.ptr<f32, ub>
-    %off = arith.constant 0 : index
-    // expected-error@+1 {{bounded contiguous load requires a provably 32-byte-aligned effective address for pto.vsldb, including single-block reads; no safe unaligned full-read fallback: requires statically shaped memref source}}
-    %v = pto.vmi.vload %src[%off] : !pto.ptr<f32, ub> -> !pto.vmi.vreg<16xf32>
-    return %v : !pto.vmi.vreg<16xf32>
-  }
-}
-
-// -----
+// RUN: pto-test-opt %s -split-input-file -vmi-lower-unified-to-legacy \
+// RUN:   -vmi-mask-granularity-assignment -vmi-layout-assignment \
+// RUN:   -vmi-to-vpto=load-safety=error -verify-diagnostics
 
 // The logical 32B payload fits, but the unaligned stateful sequence accesses
 // a 288B envelope. An allocation of 284B is insufficient by one f32.
@@ -163,8 +16,23 @@ module {
   func.func @unaligned_read_envelope_too_small(%src: memref<71xf32, #pto.address_space<vec>>)
       -> !pto.vmi.vreg<8xf32> {
     %off = arith.constant 1 : index
-    // expected-error@+1 {{no safe unaligned full-read fallback: stateful physical read envelope [0, 288) exceeds proven allocation envelope [0, 284)}}
+    // expected-error@+1 {{load-safety=error requires a safe unaligned full-read proof}}
     %v = pto.vmi.vload %src[%off] : memref<71xf32, #pto.address_space<vec>> -> !pto.vmi.vreg<8xf32>
     return %v : !pto.vmi.vreg<8xf32>
+  }
+}
+
+// -----
+
+// A raw pointer has no allocation extent, so strict mode cannot prove that
+// the complete stateful physical read is safe.
+module {
+  func.func @unaligned_ptr_requires_strict_read_proof() -> !pto.vmi.vreg<8xbf16> {
+    %addr = arith.constant 1024 : i64
+    %src = pto.castptr %addr : i64 -> !pto.ptr<bf16, ub>
+    %off = arith.constant 1 : index
+    // expected-error@+1 {{requires statically shaped memref source}}
+    %v = pto.vmi.vload %src[%off] : !pto.ptr<bf16, ub> -> !pto.vmi.vreg<8xbf16>
+    return %v : !pto.vmi.vreg<8xbf16>
   }
 }

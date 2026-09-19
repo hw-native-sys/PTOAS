@@ -288,7 +288,9 @@ FailureOr<Value> buildCollectiveParallelGroup(
 }
 
 FailureOr<Value> buildCommGlobalTensorValue(
-    const ConversionPatternRewriter& rewriter, Location loc, Value originalValue, Value emittedValue, Operation* anchor)
+    [[maybe_unused]] const ConversionPatternRewriter& rewriter,
+    [[maybe_unused]] Location loc, [[maybe_unused]] Value originalValue,
+    Value emittedValue, [[maybe_unused]] Operation* anchor)
 {
     Value value = peelUnrealized(emittedValue);
     if (isEmitCGlobalTensorLikeType(value.getType())) {

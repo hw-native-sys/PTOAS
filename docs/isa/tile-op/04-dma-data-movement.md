@@ -14,6 +14,7 @@ This chapter documents the public tile DMA instructions `pto.tload` and `pto.tst
 pto.tload ins(%src : !pto.partition_tensor_view<...>)
           outs(%dst : !pto.tile_buf<...>)
           {cache_policy = #pto.load_cache_policy<l2_bypass>}
+          offset = %byte_offset : i64
 ```
 - **semantics:** Physical DMA transfer from a global partition view into a local tile buffer. For each element `(i, j)` in the destination valid region: `dst[i, j] = src[i, j]`.
 
@@ -24,6 +25,7 @@ pto.tload ins(%src : !pto.partition_tensor_view<...>)
 | `src` | `PartitionTensorViewType` | Source partition view. |
 | `dst` | `pto.tile_buf` | Destination tile buffer. |
 | `cache_policy` | `LoadCachePolicyAttr` (optional) | `default` when absent; `l2_bypass` requests a non-allocating L2 path for this load. |
+| `offset` | `i64` or `index` (optional operand) | Byte displacement for the L2 bypass source address. Defaults to 0. Ignored when `cache_policy` is absent or `default`. |
 
 **Constraints:**
 
@@ -32,7 +34,9 @@ pto.tload ins(%src : !pto.partition_tensor_view<...>)
 - Destination tile element type and source partition element type must have the same bitwidth.
 - Runtime: source partition extents and destination valid region must be positive.
 - `l2_bypass` is supported on A2/A3 and A5.
-- The target implementation owns the architecture-specific bypass mechanism.
+- The optional `offset` operand is supported by the EmitC backend.
+- When using `l2_bypass`, the caller supplies the byte displacement to the L2 bypass address alias for the target environment.
+- The adjusted address must be valid and satisfy the source element's alignment requirements.
 
 **Pipeline:** `PIPE_MTE2`.
 
@@ -43,9 +47,21 @@ pto.tload ins(%pv : !pto.partition_tensor_view<16x16xf16>)
           outs(%tb : !pto.tile_buf<vec, 16x16xf16>)
 ```
 
-When `cache_policy` is absent or `default`, the target uses its ordinary cache
-allocation behavior. `l2_bypass` requests no L2 allocation for this transfer
-without changing the logical source address.
+When `cache_policy` is absent or `default`, the transfer uses the source address
+unchanged. With `l2_bypass`, the transfer uses `src.address + offset`, where the
+offset is measured in bytes regardless of the element type. The source view's
+shape, strides, layout, and address for other operations remain unchanged. An
+omitted or zero offset leaves the transfer address unchanged.
+
+The optional `offset` clause follows any padding and initialization clauses and
+precedes the optional tensor result type.
+
+```mlir
+pto.tload ins(%pv : !pto.partition_tensor_view<16x16xf16>)
+          outs(%tb : !pto.tile_buf<vec, 16x16xf16>)
+          {cache_policy = #pto.load_cache_policy<l2_bypass>}
+          offset = %bypass_byte_offset : index
+```
 
 ---
 

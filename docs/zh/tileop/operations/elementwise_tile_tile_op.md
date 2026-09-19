@@ -526,7 +526,7 @@ pto.tcmp ins(%a, %b {cmpMode = #pto<cmp lt>} :
              !pto.tile_buf<loc=vec, dtype=f16, rows=16, cols=16,
              v_row=16, v_col=16, blayout=row_major, slayout=none_box,
              fractal=512, pad=0>)
-         outs(%mask : !pto.tile_buf<loc=vec, dtype=i8, rows=16, cols=16,
+         outs(%mask : !pto.tile_buf<loc=vec, dtype=i8, rows=16, cols=32,
              v_row=16, v_col=16, blayout=row_major, slayout=none_box,
              fractal=512, pad=0>)
 ```
@@ -1169,8 +1169,9 @@ For each element (i, j):
 **示例：**
 
 ```mlir
+// 仅 A5 支持：tmp 使用 2 字节元素类型（f16）
 pto.tsel ins(%mask, %a, %b, %tmp :
-             !pto.tile_buf<loc=vec, dtype=i8, rows=16, cols=16,
+             !pto.tile_buf<loc=vec, dtype=i8, rows=16, cols=32,
              v_row=16, v_col=16, blayout=row_major, slayout=none_box,
              fractal=512, pad=0>,
              !pto.tile_buf<loc=vec, dtype=f16, rows=16, cols=16,
@@ -1180,6 +1181,24 @@ pto.tsel ins(%mask, %a, %b, %tmp :
              v_row=16, v_col=16, blayout=row_major, slayout=none_box,
              fractal=512, pad=0>,
              !pto.tile_buf<loc=vec, dtype=f16, rows=16, cols=16,
+             v_row=16, v_col=16, blayout=row_major, slayout=none_box,
+             fractal=512, pad=0>)
+         outs(%dst : !pto.tile_buf<loc=vec, dtype=f16, rows=16, cols=16,
+             v_row=16, v_col=16, blayout=row_major, slayout=none_box,
+             fractal=512, pad=0>)
+
+// A3 和 A5 均支持：tmp 使用 4 字节元素类型（f32）
+pto.tsel ins(%mask, %a, %b, %tmp :
+             !pto.tile_buf<loc=vec, dtype=i8, rows=16, cols=32,
+             v_row=16, v_col=16, blayout=row_major, slayout=none_box,
+             fractal=512, pad=0>,
+             !pto.tile_buf<loc=vec, dtype=f16, rows=16, cols=16,
+             v_row=16, v_col=16, blayout=row_major, slayout=none_box,
+             fractal=512, pad=0>,
+             !pto.tile_buf<loc=vec, dtype=f16, rows=16, cols=16,
+             v_row=16, v_col=16, blayout=row_major, slayout=none_box,
+             fractal=512, pad=0>,
+             !pto.tile_buf<loc=vec, dtype=f32, rows=16, cols=16,
              v_row=16, v_col=16, blayout=row_major, slayout=none_box,
              fractal=512, pad=0>)
          outs(%dst : !pto.tile_buf<loc=vec, dtype=f16, rows=16, cols=16,
@@ -1408,10 +1427,19 @@ For each element (i, j):
 **示例：**
 
 ```mlir
+// 仅 A5 支持：i32 元素类型
 pto.tnot ins(%a : !pto.tile_buf<loc=vec, dtype=i32, rows=16, cols=16,
              v_row=16, v_col=16, blayout=row_major, slayout=none_box,
              fractal=512, pad=0>)
          outs(%c : !pto.tile_buf<loc=vec, dtype=i32, rows=16, cols=16,
+             v_row=16, v_col=16, blayout=row_major, slayout=none_box,
+             fractal=512, pad=0>)
+
+// A3 和 A5 均支持：i16 元素类型
+pto.tnot ins(%a : !pto.tile_buf<loc=vec, dtype=i16, rows=16, cols=16,
+             v_row=16, v_col=16, blayout=row_major, slayout=none_box,
+             fractal=512, pad=0>)
+         outs(%c : !pto.tile_buf<loc=vec, dtype=i16, rows=16, cols=16,
              v_row=16, v_col=16, blayout=row_major, slayout=none_box,
              fractal=512, pad=0>)
 ```

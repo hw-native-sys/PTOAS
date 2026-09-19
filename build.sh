@@ -18,6 +18,8 @@
 # builds from source.
 # Native, wheel, and CPack configurations use separate persistent build trees.
 # Use --clean to discard PTOAS intermediates without touching the LLVM cache.
+# LLVM, native, and wheel builds use ccache when available unless a compiler
+# launcher is supplied. An explicitly empty launcher disables caching.
 
 set -e
 
@@ -193,6 +195,16 @@ resolve_ptoas_toolchain() {
 
   export PTOAS_CC PTOAS_CXX
   echo "Using PTOAS toolchain: CC=${PTOAS_CC}, CXX=${PTOAS_CXX}"
+}
+
+# Initialize both launchers for every build stage while preserving CI's xcache
+# or a user-supplied launcher. ccache remains optional for local build hosts.
+resolve_compiler_launchers() {
+  local ccache_bin
+  ccache_bin="$(command -v ccache || true)"
+  export CMAKE_C_COMPILER_LAUNCHER="${CMAKE_C_COMPILER_LAUNCHER-${ccache_bin}}"
+  export CMAKE_CXX_COMPILER_LAUNCHER="${CMAKE_CXX_COMPILER_LAUNCHER-${ccache_bin}}"
+  echo "Compiler launchers: C=${CMAKE_C_COMPILER_LAUNCHER:-none}, CXX=${CMAKE_CXX_COMPILER_LAUNCHER:-none}"
 }
 
 print_success() {
@@ -628,6 +640,8 @@ ensure_llvm_build() {
     -DLLVM_INCLUDE_EXAMPLES=OFF
     -DCMAKE_C_COMPILER="${PTOAS_CC}"
     -DCMAKE_CXX_COMPILER="${PTOAS_CXX}"
+    -DCMAKE_C_COMPILER_LAUNCHER="${CMAKE_C_COMPILER_LAUNCHER:-}"
+    -DCMAKE_CXX_COMPILER_LAUNCHER="${CMAKE_CXX_COMPILER_LAUNCHER:-}"
     -DPython3_EXECUTABLE="${python_bin}"
     -DPython_EXECUTABLE="${python_bin}"
   )
@@ -1368,6 +1382,7 @@ main() {
     trap 'report_build_failure "$?"' EXIT
     resolve_devtoolset_toolchain
     resolve_ptoas_toolchain
+    resolve_compiler_launchers
     if [ "${CLEAN_PTOAS}" == "TRUE" ]; then
       echo "Cleaning PTOAS build trees: ${BUILD_PATH}"
       rm -rf "${BUILD_PATH}"

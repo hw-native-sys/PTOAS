@@ -234,7 +234,7 @@ result = src[offset]  // 从线性偏移处读取单个标量值
 ### `pto.print` — 格式化标量打印
 
 ```mlir
-pto.print ins(<format_str>, <scalar> : StrAttr, <scalar_type>)
+pto.print ins(<format_str>, <scalar> : <scalar_type>)
 ```
 
 **语义：**
@@ -263,7 +263,7 @@ printf(format_str, scalar)
 
 ```mlir
 %val = ... : f32
-pto.print ins("Value: %+08.3f", %val : StrAttr, f32)
+pto.print ins("Value: %+08.3f", %val : f32)
 ```
 
 ---

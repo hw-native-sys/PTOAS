@@ -73,7 +73,7 @@ declaring the memory access pattern. Default is `"continuous"`.
 
   | `dist_mode` | Physical lowering |
   |---|---|
-  | `"continuous"` | Known 32B-aligned addresses use aligned access; other effective UB addresses require a proven safe physical read range for unaligned access |
+  | `"continuous"` | Known 32B-aligned addresses use aligned access; other effective UB addresses use an unaligned stateful access subject to `load-safety` |
   | `"dintlv"` | `K × pto.vldsx2 {dist="DINTLV_B*"}` (deinterleaved dual load; suffix from `Ptr<T>`) |
   | `"brc"` | `1 × pto.vlds {dist="BRC_B*"}` or `BRC_BLK`; broadcast-axis (1-reg backing, replicate-read) |
 
@@ -83,18 +83,17 @@ declaring the memory access pattern. Default is `"continuous"`.
 
   - `L = 1` reads one element and requires only element alignment and that
     element to be readable.
-  - For `L > 1` and `P <= 32`, bounded block access requires a provably
-    32B-aligned `A`. The caller must provide the entire readable interval
-    `[A, A + 32)`, even when the logical payload is smaller than 32 bytes.
-  - For `32 < P < 256` with `P` a multiple of 32, bounded block access also
-    requires a provably 32B-aligned `A`, and the caller must provide the
-    entire readable interval `[A, A + P)`.
+  - For `L > 1` and `P <= 32`, a provably 32B-aligned `A` uses bounded block
+    access. Otherwise an unaligned stateful access is used, subject to the
+    `load-safety` policy below.
+  - For `32 < P < 256` with `P` a multiple of 32, a provably 32B-aligned `A`
+    uses bounded block access. Otherwise the unaligned stateful access applies.
   - A dynamic offset is accepted by the bounded block path when its effective
     address can be proven aligned. Unknown alignment is not an alignment
-    guarantee. Partial extra blocks or unproven alignment require an independent
-    safe physical-read proof for another supported access sequence; otherwise
-    compilation rejects the load. A raw pointer alone provides no allocation
-    extent for that proof.
+    guarantee. With `load-safety=policy` (the default) or `warn`, an unaligned
+    raw pointer is accepted without allocation-extent proof; `warn` reports the
+    unproven read. With `load-safety=error`, the complete physical read range
+    must be proven safe, and a raw pointer alone cannot provide that extent.
 
   Address proofs use the existing address-space ABI alignment contract for
   pointer block arguments; callers must satisfy that contract. An arbitrary
@@ -153,10 +152,14 @@ declaring the memory access pattern. Default is `"continuous"`.
   - **A5 loads are unpredicated.** A tail mask associated with a `vload` is
     never lowered as a masked load. It migrates to the consuming compute op or
     to a `vstore`.
-  - Continuous loads support effective UB addresses that are not 32B-aligned
-    only when the complete physical read range of a supported unaligned access
-    can be proven safe. This range may exceed the logical payload. Alignment
-    state is managed internally and is not part of the VMI programming model.
+  - Continuous loads support effective UB addresses that are not 32B-aligned.
+    For sources without an extent, `load-safety=policy` (the default) and
+    `load-safety=warn` allow the stateful physical read without a safety proof;
+    `warn` also emits a diagnostic. Only `load-safety=error` requires the
+    complete physical read range to be proven safe. The physical read may be
+    much larger than the logical payload: for example, a 32-byte logical load
+    can read a full 64-lane/256-byte carrier. Alignment state is managed
+    internally and is not part of the VMI programming model.
   - `dist_mode` and layout inference are orthogonal: `pto.as` may still
     rewrite the physical layout of a `continuous` load to serve a downstream
     consumer (e.g. a grouped reduce).

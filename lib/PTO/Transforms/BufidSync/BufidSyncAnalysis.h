@@ -347,7 +347,7 @@ private:
   // collectDependencies() helper: probe one ordered compound pair and build the
   // resulting DepPair, or std::nullopt when there is no local dependency.
   std::optional<DepPair> tryBuildDepPair(CompoundInstanceElement *src,
-                                         CompoundInstanceElement *dst);
+                                         CompoundInstanceElement *dst) const;
   // collectTilesFromDepPairs() helpers: gather raw tiles from depPairs_, then
   // drop duplicates that share (scope, baseAddr, size) and alias/root buffer.
   void collectRawTiles();

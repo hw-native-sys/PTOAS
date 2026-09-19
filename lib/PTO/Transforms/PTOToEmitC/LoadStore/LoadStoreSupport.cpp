@@ -30,7 +30,7 @@ namespace pto {
 // pto.matmul_dps lowering (Simplified: No internal copy/sync)
 //===----------------------------------------------------------------------===//
 // Render `pto.tmatmul` as one of three forms depending on the optional
-// `acc_phase` attribute:
+// `acc_phase` attribute, as follows.
 //   * absent / Unspecified  -> `TMATMUL(dst, lhs, rhs)`
 //   * Partial               -> `TMATMUL<pto::AccPhase::Partial>(dst, lhs, rhs)`
 //   * Final                 -> `TMATMUL<pto::AccPhase::Final>(dst, lhs, rhs)`

@@ -1332,13 +1332,22 @@ static LogicalResult appendFusionFrontendPasses(
 }
 
 static LogicalResult appendPlanMemoryPasses(PassManager &pm,
-                                            PTOBuildLevel effectiveLevel) {
-  if (effectiveLevel != PTOBuildLevel::Level3) {
-    pto::PlanMemoryOptions planMemoryOptions;
-    planMemoryOptions.memMode = "local";
-    planMemoryOptions.orderBySize = planMemoryOrderBySize;
-    pm.addPass(pto::createPlanMemoryModernPass(planMemoryOptions));
+                                            PTOBuildLevel effectiveLevel,
+                                            bool enablePlanMemory) {
+  // At level3 every address is supplied by the user, so this mode neither runs
+  // planning nor checks for unplanned alloc_tile: implicit tmp buffers may stay
+  // address-less placeholders and are handled by the backend.
+  if (effectiveLevel == PTOBuildLevel::Level3) {
+    return success();
   }
+  pto::PlanMemoryOptions planMemoryOptions;
+  planMemoryOptions.memMode = "local";
+  planMemoryOptions.orderBySize = planMemoryOrderBySize;
+  // Whether addresses are assigned is controlled by --enable-plan-memory
+  // (on by default). When planning is off the pass is still added so that it
+  // verifies no live pto.alloc_tile is left without an address.
+  planMemoryOptions.enabled = enablePlanMemory;
+  pm.addPass(pto::createPlanMemoryModernPass(planMemoryOptions));
   return success();
 }
 
@@ -1424,7 +1433,7 @@ static LogicalResult populateMainLoweringPasses(PassManager &pm,
   pm.addNestedPass<mlir::func::FuncOp>(
       pto::createPTORematerializeFixpipeVectorQuantPass());
 
-  if (failed(appendPlanMemoryPasses(pm, effectiveLevel))) {
+  if (failed(appendPlanMemoryPasses(pm, effectiveLevel, enablePlanMemory))) {
     return failure();
   }
   pm.addPass(pto::createPTOResolveReservedBuffersPass());

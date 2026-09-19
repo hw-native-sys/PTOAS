@@ -77,25 +77,32 @@ resolve_sim_lib_dir() {
 
   local -a candidates=()
   readarray -t candidates < <(
-    find "${ASCEND_HOME_PATH}" -type d -path '*/simulator/dav_3510/lib' | sort
+    find "${ASCEND_HOME_PATH}" -type d -path '*/simulator/dav_3510/camodel' | sort
   )
+  if [[ "${#candidates[@]}" -eq 0 ]]; then
+    readarray -t candidates < <(
+      find "${ASCEND_HOME_PATH}" -type d -path '*/simulator/dav_3510/lib' | sort
+    )
+  fi
 
   if [[ "${#candidates[@]}" -eq 1 ]]; then
     SIM_LIB_DIR="${candidates[0]}"
-    log "SIM_LIB_DIR is unset; auto-selected: ${SIM_LIB_DIR}"
+    log "SIM_LIB_DIR is unset; auto-selected camodel runtime: ${SIM_LIB_DIR}"
     return 0
   fi
 
   if [[ "${#candidates[@]}" -gt 1 ]]; then
     SIM_LIB_DIR="${candidates[0]}"
-    log "SIM_LIB_DIR is unset; multiple dav_3510 simulator dirs found, using: ${SIM_LIB_DIR}"
+    log "SIM_LIB_DIR is unset; multiple dav_3510 camodel runtimes found, using: ${SIM_LIB_DIR}"
     return 0
   fi
 
-  die "SIM_LIB_DIR is required for DEVICE=SIM and no dav_3510 simulator lib dir was found under: ${ASCEND_HOME_PATH}"
+  die "SIM_LIB_DIR is required for DEVICE=SIM and no dav_3510 simulator runtime was found under: ${ASCEND_HOME_PATH}"
 }
 
 BISHENG_BIN="${BISHENG_BIN:-${ASCEND_HOME_PATH}/bin/bisheng}"
+BISHENG_FLAGS="${BISHENG_FLAGS:-}"
+read -r -a BISHENG_FLAG_ARGS <<< "${BISHENG_FLAGS}"
 
 command -v "${BISHENG_BIN}" >/dev/null 2>&1 || die "bisheng not found: ${BISHENG_BIN}"
 command -v python3 >/dev/null 2>&1 || die "python3 not found"
@@ -227,6 +234,7 @@ build_launch_object() {
   local out_obj="$2"
 
   "${BISHENG_BIN}" \
+    "${BISHENG_FLAG_ARGS[@]}" \
     -c -fPIC -xcce -fenable-matrix --cce-aicore-enable-tl \
     -fPIC -Xhost-start -Xhost-end \
     -mllvm -cce-aicore-stack-size=0x8000 \
@@ -264,6 +272,7 @@ link_kernel_so() {
   fi
 
   "${BISHENG_BIN}" \
+    "${BISHENG_FLAG_ARGS[@]}" \
     -fPIC -s -Wl,-z,relro -Wl,-z,now --cce-fatobj-link \
     -shared -Wl,-soname,"lib${case_name}_kernel.so" \
     -L "${ASCEND_HOME_PATH}/lib64" \
@@ -291,6 +300,7 @@ build_host_executable() {
   fi
 
   "${BISHENG_BIN}" \
+    "${BISHENG_FLAG_ARGS[@]}" \
     -xc++ -include stdint.h -include stddef.h -std=c++17 \
     "${case_dir}/main.cpp" \
     -I "${case_dir}" \

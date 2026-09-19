@@ -1040,13 +1040,17 @@ Value createPartitionActiveLanes(Location loc, Value activeLanesI32,
 }
 
 std::optional<int64_t> getPowerOfTwoLog2(int64_t value) {
-  bool isNotPowerOfTwo = value <= 0 || (value & (value - 1)) != 0;
-  if (isNotPowerOfTwo) {
+  if (value <= 0) {
+    return std::nullopt;
+  }
+  // Bitwise/shift operands must be unsigned; `value` is already proven > 0.
+  uint64_t uvalue = static_cast<uint64_t>(value);
+  if ((uvalue & (uvalue - 1)) != 0) {
     return std::nullopt;
   }
   int64_t log2 = 0;
-  while (value > 1) {
-    value >>= 1;
+  while (uvalue > 1) {
+    uvalue >>= 1;
     ++log2;
   }
   return log2;
@@ -1168,8 +1172,8 @@ FailureOr<int64_t> checkFullDataPhysicalChunks(VMIVRegType type,
 
   LogicalResult valid = validateNoPaddingPhysicalChunks(
       *factor, *lanesPerPart,
-      [&](int64_t part) { return getDataChunksInPart(type, part); },
-      [&](int64_t part, int64_t chunk, int64_t lane) {
+      [type](int64_t part) { return getDataChunksInPart(type, part); },
+      [type](int64_t part, int64_t chunk, int64_t lane) {
         return isPaddingLane(type, part, chunk, lane);
       },
       reason);
@@ -1305,7 +1309,7 @@ LogicalResult checkFullVMIPhysicalChunks(Type type, std::string *reason) {
   return validateNoPaddingPhysicalChunks(
       *factor, *lanesPerPart,
       [&](int64_t part) { return getVMITypeChunksInPart(type, part); },
-      [&](int64_t part, int64_t chunk, int64_t lane) {
+      [type](int64_t part, int64_t chunk, int64_t lane) {
         return isPaddingLane(type, part, chunk, lane);
       },
       reason);
@@ -1866,7 +1870,7 @@ static FailureOr<int64_t> getPhysicalReadFootprintElements(
 }
 
 static FailureOr<VMIStatefulOffsetRange>
-getStatefulOffsetRange(Value source, Value offset, std::string *reason) {
+getStatefulOffsetRange([[maybe_unused]] Value source, Value offset, std::string *reason) {
   auto fail = [&reason](const Twine &message)
       -> FailureOr<VMIStatefulOffsetRange> {
     if (reason) {

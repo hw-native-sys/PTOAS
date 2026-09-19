@@ -109,7 +109,8 @@ static bool isSupportedPTOPointerScalarElementType(Type t) {
     return false;
   }
   unsigned width = integer.getWidth();
-  return width == 8 || width == 16 || width == 32 || width == 64;
+  return width == mlir::pto::kValue8 || width == mlir::pto::kValue16 ||
+         width == mlir::pto::kValue32 || width == mlir::pto::kValue64;
 }
 
 bool mlir::pto::isSupportedPTOPointerElementType(Type t) {

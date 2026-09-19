@@ -45,6 +45,19 @@ struct VMIValueLayoutAssignment {
 // VMILayoutAssignment).
 bool isVMISameLayoutOp(Operation *op);
 
+// True when \p op is an edge of a VMI layout equivalence class: a walk that
+// asks "does the value still carry its layout here" may cross it.  This is the
+// elementwise/lane-local family (isVMISameLayoutOp) plus an *equal-width*
+// bitcast, whose only relation is the identical layout for every layout
+// (getBitcastLayoutFactsForLayout).  A width-changing bitcast is deliberately
+// NOT a class edge: its only legal relation is the contiguous row of
+// kWidthChangingBitcastLayoutPatterns and its element width changes, so a walk
+// must stop there and let the reconciler materialize an ensure_layout on the
+// boundary.  This is the shared definition of "class edge" for every consumer
+// that walks a chain; the solver splits the two kinds the same way in
+// VMILayoutAssignment::addBasicConstraint.
+bool isVMIClassTransparentOp(Operation *op);
+
 class VMILayoutPropagator {
 public:
   explicit VMILayoutPropagator(Operation *scope);

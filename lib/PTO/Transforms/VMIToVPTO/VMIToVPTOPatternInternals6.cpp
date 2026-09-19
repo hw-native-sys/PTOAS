@@ -540,6 +540,13 @@ public:
 //     Example: 32 -> 16 or 32 -> 8.
 //     Lowering shape: emit vcvt parts EVEN/ODD or P0/P1/P2/P3, then merge
 //     physical results when multiple source chunks contribute to one result.
+//     A result lane stride scales the required source arity: a result whose
+//     logical elements sit `laneStride` apart inside a wider carrier already
+//     consumes `laneStride` of the converted sub-lanes of one source lane, so
+//     each result chunk is filled by `factor / laneStride` source chunks and
+//     the k-th converted sub-lane is selected by part `parts[k * laneStride]`.
+//     Example: 32 -> 8 with result lane_stride = 2 takes two source chunks and
+//     selects parts P0 + P2 before the merge.
 //   - deinterleaved factor 4 -> deinterleaved factor 2
 //     Example: 32 -> 16.
 //     Lowering shape: emit vcvt EVEN/ODD per source chunk pair.
@@ -843,14 +850,36 @@ private:
     return success();
   }
 
+  // Physical plan for the dense factor route of an integer narrowing.
+  //
+  // `factor` is the element-width ratio; `resultLaneStride` is the lane stride
+  // of the declared result layout, taken from its carrier view.  A result whose
+  // elements sit `resultLaneStride` apart in a wider carrier consumes
+  // `resultLaneStride` converted sub-lanes of one source lane per result lane,
+  // so one result chunk is filled by `factor / resultLaneStride` source chunks
+  // rather than by `factor` of them, and the part that carries the k-th
+  // converted sub-lane is `parts[k * resultLaneStride]`.
+  //
+  // This is the same shape the fp-to-int narrowing already uses; before this
+  // existed the required source arity was `factor` chunks per result chunk,
+  // which only ever matched layouts whose result carried no lane stride.
+  struct TruncINarrowingPlan {
+    ArrayRef<StringRef> parts;
+    int64_t factor = 0;
+    int64_t sourceFactor = 0;
+    int64_t resultLaneStride = 0;
+  };
+
   FailureOr<Value> buildFactorTruncResult(
       VMITruncIOp op, ValueRange sourceParts, Type resultType,
-      int64_t resultIndex, int64_t factor, ArrayRef<StringRef> parts,
-      StringAttr sat, Value sourceMask, Value resultMask,
+      int64_t resultIndex, const TruncINarrowingPlan &plan, StringAttr sat,
+      Value sourceMask, Value resultMask,
       OneToNPatternRewriter &rewriter) const {
-    bool invalidFactor =
-        factor <= 0 || static_cast<size_t>(factor) > parts.size();
-    if (invalidFactor) {
+    bool invalidPlan =
+        plan.factor <= 0 || plan.sourceFactor <= 0 ||
+        plan.resultLaneStride <= 0 ||
+        static_cast<size_t>(plan.factor) > plan.parts.size();
+    if (invalidPlan) {
       return rewriter.notifyMatchFailure(
           op, "unsupported physical trunci conversion factor");
     }
@@ -860,20 +889,34 @@ private:
           op, "unsupported physical trunci result type");
     }
 
+    // One result chunk consumes its `sourceFactor` source chunks as a
+    // contiguous run, which is this route's long-standing grouping: with
+    // `sourceFactor == factor` it is exactly the previous behaviour, and every
+    // lane-stride cell it newly admits has a single result chunk, where this
+    // run is also the only possible grouping.  A geometry with several result
+    // chunks and a lane stride would need the chunks interleaved across result
+    // chunks instead; the bounds check below rejects it rather than mapping it
+    // wrongly.
     SmallVector<Value> partials;
-    partials.reserve(static_cast<size_t>(factor));
-    for (int64_t partIndex = 0; partIndex < factor; ++partIndex) {
-      int64_t sourceIndex = resultIndex * factor + partIndex;
+    partials.reserve(static_cast<size_t>(plan.sourceFactor));
+    for (int64_t partIndex = 0; partIndex < plan.sourceFactor; ++partIndex) {
+      int64_t sourceIndex = resultIndex * plan.factor + partIndex;
       if (sourceIndex < 0 ||
           sourceIndex >= static_cast<int64_t>(sourceParts.size())) {
         return rewriter.notifyMatchFailure(
             op, "trunci source part index exceeds physical arity");
       }
+      int64_t partNameIndex = partIndex * plan.resultLaneStride;
+      if (partNameIndex < 0 ||
+          partNameIndex >= static_cast<int64_t>(plan.parts.size())) {
+        return rewriter.notifyMatchFailure(
+            op, "trunci part index exceeds the conversion factor");
+      }
       partials.push_back(
           rewriter
               .create<VcvtOp>(op.getLoc(), resultVRegType,
                               sourceParts[sourceIndex], sourceMask, nullptr, sat,
-                              rewriter.getStringAttr(parts[partIndex]))
+                              rewriter.getStringAttr(plan.parts[partNameIndex]))
               .getResult());
     }
 
@@ -889,8 +932,8 @@ private:
 
   LogicalResult lowerFactorTrunc(
       VMITruncIOp op, ValueRange sourceParts, ArrayRef<Type> resultTypes,
-      ArrayRef<StringRef> parts, int64_t factor, StringAttr sat,
-      bool s32ToS8Alias, ArrayRef<Type> originalResultTypes,
+      const TruncINarrowingPlan &plan, StringAttr sat, bool s32ToS8Alias,
+      ArrayRef<Type> originalResultTypes,
       OneToNPatternRewriter &rewriter) const {
     auto sourceType = dyn_cast<VRegType>(sourceParts.front().getType());
     auto resultType = dyn_cast<VRegType>(resultTypes.front());
@@ -911,8 +954,8 @@ private:
     for (int64_t resultIndex = 0;
          resultIndex < static_cast<int64_t>(resultTypes.size()); ++resultIndex) {
       FailureOr<Value> result = buildFactorTruncResult(
-          op, sourceParts, resultTypes[resultIndex], resultIndex, factor, parts,
-          sat, *sourceMask, *resultMask, rewriter);
+          op, sourceParts, resultTypes[resultIndex], resultIndex, plan, sat,
+          *sourceMask, *resultMask, rewriter);
       if (failed(result)) {
         return failure();
       }
@@ -1009,22 +1052,40 @@ private:
     return aliasPlan;
   }
 
-  FailureOr<ArrayRef<StringRef>> getFactorTruncParts(
-      VMITruncIOp op, int64_t factor, size_t sourcePartCount,
+  FailureOr<TruncINarrowingPlan> buildTruncINarrowingPlan(
+      VMITruncIOp op, const TruncIPhysicalPlan &physicalPlan,
+      VMIVRegType resultVMIType, size_t sourcePartCount,
       size_t resultPartCount, OneToNPatternRewriter &rewriter) const {
-    bool invalidFactorArity =
-        (factor != 2 && factor != 4) ||
-        sourcePartCount != resultPartCount * static_cast<size_t>(factor);
-    if (invalidFactorArity) {
+    int64_t factor = physicalPlan.factor;
+    bool unsupportedFactor =
+        factor != mlir::pto::kValue2 && factor != mlir::pto::kValue4;
+    if (unsupportedFactor) {
+      return rewriter.notifyMatchFailure(
+          op, "unsupported physical trunci conversion factor");
+    }
+    VMILayoutAttr resultView = getVMICastDenseCarrierView(
+        resultVMIType.getLayoutAttr(), resultVMIType.getElementType());
+    int64_t resultLaneStride =
+        resultView && resultView.isContiguous() ? resultView.getLaneStride() : 1;
+    bool unsupportedLaneStride =
+        resultLaneStride <= 0 || factor % resultLaneStride != 0;
+    if (unsupportedLaneStride) {
+      return rewriter.notifyMatchFailure(
+          op, "unsupported physical trunci result lane stride");
+    }
+    int64_t sourceFactor = factor / resultLaneStride;
+    bool sourceArityMismatch =
+        sourcePartCount != static_cast<size_t>(sourceFactor) * resultPartCount;
+    if (sourceArityMismatch) {
       return rewriter.notifyMatchFailure(
           op, "unsupported physical trunci source/result arity relation");
     }
-    if (factor == mlir::pto::kValue2) {
-      static constexpr StringRef kEvenOddParts[] = {"EVEN", "ODD"};
-      return ArrayRef<StringRef>(kEvenOddParts);
-    }
+    static constexpr StringRef kEvenOddParts[] = {"EVEN", "ODD"};
     static constexpr StringRef kPacked4Parts[] = {"P0", "P1", "P2", "P3"};
-    return ArrayRef<StringRef>(kPacked4Parts);
+    ArrayRef<StringRef> parts = factor == mlir::pto::kValue2
+                                    ? ArrayRef<StringRef>(kEvenOddParts)
+                                    : ArrayRef<StringRef>(kPacked4Parts);
+    return TruncINarrowingPlan{parts, factor, sourceFactor, resultLaneStride};
   }
 
   LogicalResult lowerNonGroupSlotTrunc(
@@ -1051,17 +1112,16 @@ private:
           aliasPlan.requiresResultBitcast, aliasPlan.originalResultTypes,
           rewriter);
     }
-    FailureOr<ArrayRef<StringRef>> parts = getFactorTruncParts(
-        op, physicalPlan->factor, aliasPlan.sourceParts.size(),
-        aliasPlan.resultTypes.size(), rewriter);
-    if (failed(parts)) {
+    FailureOr<TruncINarrowingPlan> narrowingPlan = buildTruncINarrowingPlan(
+        op, *physicalPlan, cast<VMIVRegType>(op.getResult().getType()),
+        aliasPlan.sourceParts.size(), aliasPlan.resultTypes.size(), rewriter);
+    if (failed(narrowingPlan)) {
       return failure();
     }
     return lowerFactorTrunc(
-        op, aliasPlan.sourceParts, aliasPlan.resultTypes, *parts,
-        physicalPlan->factor, physicalPlan->saturate,
-        aliasPlan.requiresResultBitcast, aliasPlan.originalResultTypes,
-        rewriter);
+        op, aliasPlan.sourceParts, aliasPlan.resultTypes, *narrowingPlan,
+        physicalPlan->saturate, aliasPlan.requiresResultBitcast,
+        aliasPlan.originalResultTypes, rewriter);
   }
 
 public:

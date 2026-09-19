@@ -1,0 +1,36 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+
+// RUN: ptoas --pto-arch=a3 %s | FileCheck %s --implicit-check-not=__builtin_cce_
+// RUN: ptoas --pto-arch=a5 %s | FileCheck %s --implicit-check-not=__builtin_cce_
+
+// General GCC/Clang builtins are distinct from CCE-private backend entry points.
+// Keep remainder precision and bit-preserving conversion in the generated audit.
+module {
+  func.func @scalar_helpers(%lhs: f32, %rhs: f32) -> i32 {
+    %rem = arith.remf %lhs, %rhs : f32
+    %bits = arith.bitcast %rem : f32 to i32
+    return %bits : i32
+  }
+  func.func @remainder_double(%lhs: f64, %rhs: f64) -> f64 {
+    %rem = arith.remf %lhs, %rhs : f64
+    return %rem : f64
+  }
+  func.func @remainder_half(%lhs: f16, %rhs: f16) -> f16 {
+    %rem = arith.remf %lhs, %rhs : f16
+    return %rem : f16
+  }
+}
+// CHECK: __builtin_memcpy(&to, &from, sizeof(To));
+// CHECK-LABEL: scalar_helpers(
+// CHECK: __builtin_fmodf(
+// CHECK: ptoas_bitcast<int32_t>(
+// CHECK-LABEL: remainder_double(
+// CHECK: __builtin_fmod(
+// CHECK-LABEL: remainder_half(
+// CHECK: __builtin_fmodf(

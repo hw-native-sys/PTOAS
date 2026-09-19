@@ -93,7 +93,7 @@ void PTOToEmitCTypeConverter::registerIntegerConversions(MLIRContext *Ctx) {addC
   }
 });
 
-addConversion([Ctx](IndexType type) -> Type {
+addConversion([Ctx](IndexType) -> Type {
   return emitc::OpaqueType::get(Ctx, "int64_t");
 });
 

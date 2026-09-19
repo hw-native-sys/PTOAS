@@ -1,0 +1,86 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+
+// RUN: ptoas --pto-arch=a2 --pto-backend=emitc %s | FileCheck %s --check-prefixes=CHECK,A23 --implicit-check-not=__builtin_cce_
+// RUN: ptoas --pto-arch=a3 --pto-backend=emitc %s | FileCheck %s --check-prefixes=CHECK,A23 --implicit-check-not=__builtin_cce_
+// RUN: ptoas --pto-arch=a5 --pto-backend=emitc %s | FileCheck %s --check-prefixes=CHECK,A5 --implicit-check-not=__builtin_cce_
+
+// Compile/codegen probes only: the signals and waits do not form a runnable
+// protocol. Runtime tests must pair one AIC with both AIV lanes.
+module attributes {pto.kernel_kind = #pto.kernel_kind<cube>} {
+  func.func @sync_static(%ffts: !pto.ptr<i64>) attributes {pto.kernel} {
+    pto.set_ffts %ffts : !pto.ptr<i64>
+    pto.sync.set <PIPE_FIX>, 1 {ffts_mode = 2 : i32}
+    pto.sync.wait <PIPE_MTE2>, 1
+    return
+  }
+  func.func @sync_dynamic(%ffts: !pto.ptr<i64>, %event: index) attributes {pto.kernel} {
+    pto.set_ffts %ffts : !pto.ptr<i64>
+    pto.sync.set <PIPE_FIX>, %event {ffts_mode = 2 : i32}
+    pto.sync.wait <PIPE_MTE2>, %event
+    return
+  }
+  func.func @named_static(%ffts: !pto.ptr<i64>) attributes {pto.kernel} {
+    pto.set_ffts %ffts : !pto.ptr<i64>
+    pto.set_cross_block <PIPE_FIX>, 0
+    pto.wait_cross_block <PIPE_MTE2>, 0
+    pto.set_intra_block <PIPE_MTE1>, 15
+    pto.wait_intra_block <PIPE_MTE2>, 15
+    return
+  }
+  func.func @named_dynamic(%ffts: !pto.ptr<i64>, %event: i64) attributes {pto.kernel} {
+    pto.set_ffts %ffts : !pto.ptr<i64>
+    pto.set_cross_block <PIPE_FIX>, %event : i64
+    pto.wait_cross_block <PIPE_MTE2>, %event : i64
+    pto.set_intra_block <PIPE_MTE1>, %event : i64
+    pto.wait_intra_block <PIPE_MTE2>, %event : i64
+    return
+  }
+}
+
+// CHECK-LABEL: void sync_static(
+// CHECK: set_ffts_base_addr(
+// CHECK: const int64_t [[EVENT:.*]] = 1;
+// A23-NEXT: uint16_t [[MSG:.*]] = getFFTSMsg(FFTS_MODE_VAL, [[EVENT]]);
+// A5-NEXT: uint16_t [[MSG:.*]] = getFFTSMsg(2, [[EVENT]]);
+// CHECK-NEXT: ffts_cross_core_sync(PIPE_FIX, [[MSG]]);
+// A23-NEXT: wait_flag_dev(1);
+// A5-NEXT: wait_flag_dev(PIPE_MTE2, 1);
+// CHECK-LABEL: void sync_dynamic(
+// CHECK-SAME: {{.*}}int64_t [[DYNAMIC:.*]]) {
+// CHECK: set_ffts_base_addr(
+// A23: uint16_t [[DMSG:.*]] = getFFTSMsg(FFTS_MODE_VAL, [[DYNAMIC]]);
+// A5: uint16_t [[DMSG:.*]] = getFFTSMsg(2, [[DYNAMIC]]);
+// CHECK-NEXT: ffts_cross_core_sync(PIPE_FIX, [[DMSG]]);
+// CHECK-NEXT: int32_t [[WAIT:.*]] = (int32_t) [[DYNAMIC]];
+// A23-NEXT: wait_flag_dev([[WAIT]]);
+// A5-NEXT: wait_flag_dev(PIPE_MTE2, [[WAIT]]);
+// CHECK-LABEL: void named_static(
+// CHECK: getFFTSMsg(0,
+// CHECK-NEXT: ffts_cross_core_sync(PIPE_FIX,
+// A23-NEXT: wait_flag_dev(0);
+// A5-NEXT: wait_flag_dev(PIPE_MTE2, 0);
+// A23: getFFTSMsg(FFTS_MODE_VAL,
+// A23-NEXT: ffts_cross_core_sync(PIPE_MTE1,
+// A23-NEXT: wait_flag_dev(15);
+// A5-NEXT: set_intra_block(PIPE_MTE1, 15);
+// A5-NEXT: wait_intra_block(PIPE_MTE2, 15);
+// CHECK-LABEL: void named_dynamic(
+// CHECK-SAME: {{.*}}int64_t [[NAMED:.*]]) {
+// CHECK: getFFTSMsg(0, [[NAMED]]);
+// CHECK-NEXT: ffts_cross_core_sync(PIPE_FIX,
+// CHECK-NEXT: int32_t [[CROSS:.*]] = (int32_t) [[NAMED]];
+// A23-NEXT: wait_flag_dev([[CROSS]]);
+// A5-NEXT: wait_flag_dev(PIPE_MTE2, [[CROSS]]);
+// A23-NEXT: uint16_t [[INTRA:.*]] = getFFTSMsg(FFTS_MODE_VAL, [[NAMED]]);
+// A23-NEXT: ffts_cross_core_sync(PIPE_MTE1, [[INTRA]]);
+// A23: wait_flag_dev(
+// A5-NEXT: int32_t [[INTRA_SET:.*]] = (int32_t) [[NAMED]];
+// A5-NEXT: set_intra_block(PIPE_MTE1, [[INTRA_SET]]);
+// A5-NEXT: int32_t [[INTRA_WAIT:.*]] = (int32_t) [[NAMED]];
+// A5-NEXT: wait_intra_block(PIPE_MTE2, [[INTRA_WAIT]]);

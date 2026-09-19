@@ -188,7 +188,7 @@ struct PTOA5NormalizeTMovPass
 
 private:
   void hoistScaleAddrOpsBeforeTMov(func::FuncOp func) const;
-  LogicalResult normalizeRiskyVecVecTMov(func::FuncOp func);
+  LogicalResult normalizeRiskyVecVecTMov(func::FuncOp func) const;
   LogicalResult rewriteRiskyVecVecTMov(IRRewriter &rewriter, pto::TMovOp op) const;
   void verifyNoResidualRiskyTMov(func::FuncOp func);
 };
@@ -251,7 +251,7 @@ LogicalResult PTOA5NormalizeTMovPass::rewriteRiskyVecVecTMov(
 }
 
 LogicalResult PTOA5NormalizeTMovPass::normalizeRiskyVecVecTMov(
-    func::FuncOp func) {
+    func::FuncOp func) const {
   SmallVector<pto::TMovOp, kRiskyOpReserveSize> riskyOps;
   func.walk([&](pto::TMovOp op) {
     if (isA5RiskyVecVecColMajorTMov(op)) {

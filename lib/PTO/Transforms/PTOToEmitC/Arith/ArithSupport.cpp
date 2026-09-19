@@ -345,6 +345,24 @@ void applyFuncSpecifiers(func::FuncOp op,
 //===----------------------------------------------------------------------===
 
 
+static Value createFFTSMsgForTarget(ConversionPatternRewriter &rewriter,
+                                    Location loc, Value eventId,
+                                    int64_t fftsMode, PTOArch targetArch) {
+  auto *ctx = rewriter.getContext();
+  auto msgTy = emitc::OpaqueType::get(ctx, "uint16_t");
+  // A5 exposes getFFTSMsg but does not define the A2/A3 FFTS_MODE_VAL macro.
+  Attribute mode = targetArch == PTOArch::A5
+                       ? emitc::OpaqueAttr::get(ctx, std::to_string(fftsMode))
+                       : getFFTSModeCodegenArg(rewriter, fftsMode);
+  auto msgArgs = rewriter.getArrayAttr(
+      {mode, IntegerAttr::get(IndexType::get(ctx), 0)});
+  return rewriter
+      .create<emitc::CallOpaqueOp>(loc, msgTy, "getFFTSMsg", msgArgs,
+                                  /*templateArgs=*/ArrayAttr{},
+                                  /*operands=*/ValueRange{eventId})
+      .getResult(0);
+}
+
 InterCoreSyncCallDesc buildInterCoreSyncSetCallImpl(
     ConversionPatternRewriter &rewriter, Value msgVal, PTOArch targetArch,
     pto::PipeAttr pipeAttr) {
@@ -353,7 +371,7 @@ InterCoreSyncCallDesc buildInterCoreSyncSetCallImpl(
 
   (void)targetArch;
   InterCoreSyncCallDesc desc;
-  desc.callee = "__builtin_cce_ffts_cross_core_sync";
+  desc.callee = "ffts_cross_core_sync";
   desc.args = rewriter.getArrayAttr({
       emitc::OpaqueAttr::get(ctx, pipeTok),
       IntegerAttr::get(IndexType::get(ctx), 0),
@@ -369,27 +387,38 @@ InterCoreSyncCallDesc buildInterCoreSyncSetCall(
   Value eventVal =
       makeEmitCIntConstant(rewriter, loc, indexTy,
                            getIntegerAttrSignedValue(eventIdAttr));
-  Value msgVal = createFFTSMsg(rewriter, loc, eventVal, fftsMode);
+  Value msgVal =
+      createFFTSMsgForTarget(rewriter, loc, eventVal, fftsMode, targetArch);
   return buildInterCoreSyncSetCallImpl(rewriter, msgVal, targetArch, pipeAttr);
 }
 
 InterCoreSyncCallDesc buildInterCoreSyncSetCallDyn(
     ConversionPatternRewriter &rewriter, Location loc, PTOArch targetArch,
     pto::PipeAttr pipeAttr, Value eventIdVal, int64_t fftsMode) {
-  Value msgVal = createFFTSMsg(rewriter, loc, eventIdVal, fftsMode);
+  Value msgVal =
+      createFFTSMsgForTarget(rewriter, loc, eventIdVal, fftsMode, targetArch);
   return buildInterCoreSyncSetCallImpl(rewriter, msgVal, targetArch, pipeAttr);
+}
+
+// Public FFTS wait contracts differ by target: A5 selects the waiting pipe,
+// while A2/A3 accept only the event ID. Keep event conversion at the call site.
+static ArrayAttr buildInterCoreSyncWaitArgs(
+    ConversionPatternRewriter &rewriter, PTOArch targetArch,
+    pto::PipeAttr pipeAttr, Attribute eventId) {
+  if (targetArch == PTOArch::A5) {
+    return rewriter.getArrayAttr({
+        emitc::OpaqueAttr::get(rewriter.getContext(), pipeTokFromPipeAttr(pipeAttr)),
+        eventId});
+  }
+  return rewriter.getArrayAttr({eventId});
 }
 
 InterCoreSyncCallDesc buildInterCoreSyncWaitCall(
     ConversionPatternRewriter &rewriter, PTOArch targetArch,
     pto::PipeAttr pipeAttr, IntegerAttr eventIdAttr) {
-  std::string pipeTok = pipeTokFromPipeAttr(pipeAttr);
-
   InterCoreSyncCallDesc desc;
-  (void)targetArch;
-  (void)pipeTok;
-  desc.callee = "__builtin_cce_wait_flag_dev";
-  desc.args = rewriter.getArrayAttr({eventIdAttr});
+  desc.callee = "wait_flag_dev";
+  desc.args = buildInterCoreSyncWaitArgs(rewriter, targetArch, pipeAttr, eventIdAttr);
   return desc;
 }
 
@@ -397,12 +426,10 @@ InterCoreSyncCallDesc buildInterCoreSyncWaitCallDyn(
     ConversionPatternRewriter &rewriter, Location loc, PTOArch targetArch,
     pto::PipeAttr pipeAttr, Value eventIdVal) {
   auto *ctx = rewriter.getContext();
-  std::string pipeTok = pipeTokFromPipeAttr(pipeAttr);
   InterCoreSyncCallDesc desc;
-  (void)targetArch;
-  (void)pipeTok;
-  desc.callee = "__builtin_cce_wait_flag_dev";
-  desc.args = rewriter.getArrayAttr({IntegerAttr::get(IndexType::get(ctx), 0)});
+  desc.callee = "wait_flag_dev";
+  desc.args = buildInterCoreSyncWaitArgs(
+      rewriter, targetArch, pipeAttr, IntegerAttr::get(IndexType::get(ctx), 0));
   desc.operands.push_back(castInterCoreEventIdToI32(rewriter, loc, eventIdVal));
   return desc;
 }
@@ -417,18 +444,7 @@ Value castInterCoreEventIdToI32(ConversionPatternRewriter &rewriter,
 
 Value createFFTSMsg(ConversionPatternRewriter &rewriter, Location loc,
                            Value eventId, int64_t fftsMode) {
-  auto *ctx = rewriter.getContext();
-  auto msgTy = emitc::OpaqueType::get(ctx, "uint16_t");
-  auto msgArgs = rewriter.getArrayAttr({
-      getFFTSModeCodegenArg(rewriter, fftsMode),
-      IntegerAttr::get(IndexType::get(ctx), 0),
-  });
-  return rewriter
-      .create<emitc::CallOpaqueOp>(loc, msgTy, "getFFTSMsg",
-                                   /*args=*/msgArgs,
-                                   /*templateArgs=*/ArrayAttr{},
-                                   /*operands=*/ValueRange{eventId})
-      .getResult(0);
+  return createFFTSMsgForTarget(rewriter, loc, eventId, fftsMode, PTOArch::A3);
 }
 
 Attribute getFFTSModeCodegenArg(ConversionPatternRewriter &rewriter,

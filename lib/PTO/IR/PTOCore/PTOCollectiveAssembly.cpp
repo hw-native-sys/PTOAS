@@ -224,7 +224,7 @@ inferPartitionViewResultTypeFromSizes(Type sourceType, ValueRange sizes) {
     return failure();
   }
 
-  if ((int64_t)sizes.size() != sourceRank) {
+  if (static_cast<int64_t>(sizes.size()) != sourceRank) {
     return failure();
   }
 
