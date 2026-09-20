@@ -51,6 +51,7 @@ install.components = ["PTOAS_Python"]
 [tool.scikit-build.wheel.packages]
 ptodsl = "ptodsl/ptodsl"
 ptoas = "ptodsl/ptoas"
+pto_costmodel = "ptodsl/pto_costmodel"
 TileOps = "lib/TileOps"
 SoftOps = "lib/SoftOps"
 

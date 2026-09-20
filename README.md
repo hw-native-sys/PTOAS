@@ -345,6 +345,18 @@ ptoas --version
 
 `--vpto-scheduler-remat` 是 A5 VPTO Vector 优化，必须使用 `--pto-backend=vpto`，且只能与 `--vpto-scheduler=on` 配合。A5 driver 在用户没有显式指定时会随默认的 scheduler `on` 一起启用；可通过 `--vpto-scheduler-remat=false` 单独关闭。它会在首次调度后分析静态压力，但仅在某个调度区间的 vector 峰值严格超过模型上限 32 时，从循环携带值递归构造由目标模型认可的 cheap producer DAG，在前驱深度和代码膨胀预算内于消费点附近重建计算，再重新分析并调度一次；predicate 峰值超过模型上限 7 不会单独触发 vector remat。Planner 会把预算内的候选交给二次调度，即使估算尚未完全达到降压目标；第二次调度失败、没有降低静态 vector 峰值或任一有上限的寄存器压力集最终仍超限时，会回滚全部克隆、use 替换和首次调度顺序。
 
+C/V cost model 的第一阶段文件接口支持 A5 静态四阶段串行输入：
+
+```bash
+ptoas costmodel export test/samples/CVCostModel/four_stage_serial.pto \
+  --profile test/samples/CVCostModel/a5_profile.json --output cv-package
+ptoas costmodel import cv-package --plan plan.json --output cv-result
+```
+
+导入只回填待执行的 preload／逐 Buffer 槽数 annotation，报告为 `annotation_only`。
+接口、支持范围和 plan 格式见 [C/V cost model 契约](docs/designs/ptoas-cv-costmodel-exchange-v1.md)，
+可复现示例见 [CVCostModel](test/samples/CVCostModel/README.md)。
+
 ### 5.2 Python 接口 (Python API)
 
 在支持的 `ptoas` 安装环境中，PTO Dialect 与 PTODSL 都可以直接导入。
@@ -412,3 +424,8 @@ test/samples/MatMul/npu_validation/tmatmulk/run.sh
 - `compare.py` 负责对比 `golden*.bin` 与 `output*.bin`，不一致时会报错
 
 ---
+<!-- Cost model v2 is opt-in and does not enable performance transformations by default. -->
+
+Cost model 联调新增可选的 `ptoas costmodel v2` 接口：提供结构化程序输入、独立模型进程、候选调度绑定及静态候选编译。
+现有 v1 接口保持兼容。使用方法和当前验证边界见 [2.0 交互设计](docs/designs/ptoas-costmodel-exchange-v2.md)
+与 [C/V 联调用例](test/samples/CVCostModel/README.md)；候选编译通过不代表已完成板上正确性或性能认证。

@@ -1,0 +1,38 @@
+{
+  "trip_counts": [
+    2,
+    2
+  ],
+  "logical_pipes": 3,
+  "core_expanded_edges": 6,
+  "tasks": [
+    "C_QK",
+    "C_PV",
+    "V_P",
+    "V_O"
+  ],
+  "local_buffers": {
+    "cube": 5,
+    "vector": 3
+  },
+  "borrowed_entries": 3,
+  "pipe_backing_buffers": 3,
+  "local_allocation_bytes": {
+    "cube": [
+      1024,
+      1024,
+      1024,
+      1024,
+      1024
+    ],
+    "vector": [
+      512,
+      512,
+      512
+    ]
+  },
+  "reserved_bytes": {
+    "cube": 4096,
+    "vector": 8192
+  }
+}

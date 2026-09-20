@@ -1,0 +1,94 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+
+
+// Four-stage serial micro: QK=Q*K, P=-QK, PV=P*V, O=PV+PV.
+// This is a compiler contract fixture, not a FlashAttention numerical golden.
+module {
+  func.func @cube(%q: !pto.ptr<f32>, %k: !pto.ptr<f32>, %v: !pto.ptr<f32>)
+      attributes {pto.kernel_kind = #pto.kernel_kind<cube>} {
+    %c0 = arith.constant 0 : index
+    %c1 = arith.constant 1 : index
+    %c2 = arith.constant 2 : index
+    %c16 = arith.constant 16 : index
+    %zero = arith.constant 0 : i32
+    %qk_fifo = pto.import_reserved_buffer {name="qk", peer_func=@vector} -> i32
+    %pv_fifo = pto.import_reserved_buffer {name="pv", peer_func=@vector} -> i32
+    %p_fifo = pto.reserve_buffer {name="p", size=4096, location=#pto.address_space<mat>, auto=true} -> i32
+    pto.aic_initialize_pipe {id=0, dir_mask=1, slot_size=1024, slot_num=4}
+      (c2v_consumer_buf=%qk_fifo : i32, v2c_consumer_buf=%zero : i32)
+    pto.aic_initialize_pipe {id=1, dir_mask=2, slot_size=1024, slot_num=4}
+      (c2v_consumer_buf=%zero : i32, v2c_consumer_buf=%p_fifo : i32)
+    pto.aic_initialize_pipe {id=2, dir_mask=1, slot_size=1024, slot_num=4}
+      (c2v_consumer_buf=%pv_fifo : i32, v2c_consumer_buf=%zero : i32)
+    %qv = pto.make_tensor_view %q, shape=[%c16,%c16], strides=[%c16,%c1] : !pto.tensor_view<?x?xf32>
+    %kv = pto.make_tensor_view %k, shape=[%c16,%c16], strides=[%c16,%c1] : !pto.tensor_view<?x?xf32>
+    %vv = pto.make_tensor_view %v, shape=[%c16,%c16], strides=[%c16,%c1] : !pto.tensor_view<?x?xf32>
+    %qt = pto.partition_view %qv, offsets=[%c0,%c0], sizes=[%c16,%c16] : !pto.tensor_view<?x?xf32> -> !pto.partition_tensor_view<16x16xf32>
+    %kt = pto.partition_view %kv, offsets=[%c0,%c0], sizes=[%c16,%c16] : !pto.tensor_view<?x?xf32> -> !pto.partition_tensor_view<16x16xf32>
+    %vt = pto.partition_view %vv, offsets=[%c0,%c0], sizes=[%c16,%c16] : !pto.tensor_view<?x?xf32> -> !pto.partition_tensor_view<16x16xf32>
+    %a = pto.alloc_tile : !pto.tile_buf<loc=mat, dtype=f32, rows=16, cols=16, v_row=16, v_col=16, blayout=col_major, slayout=row_major, fractal=512, pad=0>
+    %b = pto.alloc_tile : !pto.tile_buf<loc=mat, dtype=f32, rows=16, cols=16, v_row=16, v_col=16, blayout=col_major, slayout=row_major, fractal=512, pad=0>
+    %left = pto.alloc_tile : !pto.tile_buf<loc=left, dtype=f32, rows=16, cols=16, v_row=16, v_col=16, blayout=col_major, slayout=row_major, fractal=512, pad=0>
+    %right = pto.alloc_tile : !pto.tile_buf<loc=right, dtype=f32, rows=16, cols=16, v_row=16, v_col=16, blayout=row_major, slayout=col_major, fractal=512, pad=0>
+    %acc = pto.alloc_tile : !pto.tile_buf<loc=acc, dtype=f32, rows=16, cols=16, v_row=16, v_col=16, blayout=col_major, slayout=row_major, fractal=1024, pad=0>
+    scf.for %i = %c0 to %c2 step %c1 {
+      pto.tload ins(%qt : !pto.partition_tensor_view<16x16xf32>) outs(%a : !pto.tile_buf<loc=mat, dtype=f32, rows=16, cols=16, v_row=16, v_col=16, blayout=col_major, slayout=row_major, fractal=512, pad=0>)
+      pto.tload ins(%kt : !pto.partition_tensor_view<16x16xf32>) outs(%b : !pto.tile_buf<loc=mat, dtype=f32, rows=16, cols=16, v_row=16, v_col=16, blayout=col_major, slayout=row_major, fractal=512, pad=0>)
+      pto.tmov ins(%a : !pto.tile_buf<loc=mat, dtype=f32, rows=16, cols=16, v_row=16, v_col=16, blayout=col_major, slayout=row_major, fractal=512, pad=0>) outs(%left : !pto.tile_buf<loc=left, dtype=f32, rows=16, cols=16, v_row=16, v_col=16, blayout=col_major, slayout=row_major, fractal=512, pad=0>)
+      pto.tmov ins(%b : !pto.tile_buf<loc=mat, dtype=f32, rows=16, cols=16, v_row=16, v_col=16, blayout=col_major, slayout=row_major, fractal=512, pad=0>) outs(%right : !pto.tile_buf<loc=right, dtype=f32, rows=16, cols=16, v_row=16, v_col=16, blayout=row_major, slayout=col_major, fractal=512, pad=0>)
+      pto.tmatmul ins(%left,%right : !pto.tile_buf<loc=left, dtype=f32, rows=16, cols=16, v_row=16, v_col=16, blayout=col_major, slayout=row_major, fractal=512, pad=0>,!pto.tile_buf<loc=right, dtype=f32, rows=16, cols=16, v_row=16, v_col=16, blayout=row_major, slayout=col_major, fractal=512, pad=0>) outs(%acc : !pto.tile_buf<loc=acc, dtype=f32, rows=16, cols=16, v_row=16, v_col=16, blayout=col_major, slayout=row_major, fractal=1024, pad=0>)
+      pto.tpush_to_aiv(%acc : !pto.tile_buf<loc=acc, dtype=f32, rows=16, cols=16, v_row=16, v_col=16, blayout=col_major, slayout=row_major, fractal=1024, pad=0>) {id=0,split=1}
+      %p = pto.tpop_from_aiv {id=1,split=1} -> !pto.tile_buf<loc=mat, dtype=f32, rows=16, cols=16, v_row=16, v_col=16, blayout=col_major, slayout=row_major, fractal=512, pad=0>
+      pto.tmov ins(%p : !pto.tile_buf<loc=mat, dtype=f32, rows=16, cols=16, v_row=16, v_col=16, blayout=col_major, slayout=row_major, fractal=512, pad=0>) outs(%left : !pto.tile_buf<loc=left, dtype=f32, rows=16, cols=16, v_row=16, v_col=16, blayout=col_major, slayout=row_major, fractal=512, pad=0>)
+      pto.tload ins(%vt : !pto.partition_tensor_view<16x16xf32>) outs(%b : !pto.tile_buf<loc=mat, dtype=f32, rows=16, cols=16, v_row=16, v_col=16, blayout=col_major, slayout=row_major, fractal=512, pad=0>)
+      pto.tmov ins(%b : !pto.tile_buf<loc=mat, dtype=f32, rows=16, cols=16, v_row=16, v_col=16, blayout=col_major, slayout=row_major, fractal=512, pad=0>) outs(%right : !pto.tile_buf<loc=right, dtype=f32, rows=16, cols=16, v_row=16, v_col=16, blayout=row_major, slayout=col_major, fractal=512, pad=0>)
+      pto.tmatmul ins(%left,%right : !pto.tile_buf<loc=left, dtype=f32, rows=16, cols=16, v_row=16, v_col=16, blayout=col_major, slayout=row_major, fractal=512, pad=0>,!pto.tile_buf<loc=right, dtype=f32, rows=16, cols=16, v_row=16, v_col=16, blayout=row_major, slayout=col_major, fractal=512, pad=0>) outs(%acc : !pto.tile_buf<loc=acc, dtype=f32, rows=16, cols=16, v_row=16, v_col=16, blayout=col_major, slayout=row_major, fractal=1024, pad=0>)
+      pto.tfree_from_aiv {id=1,split=1}
+      pto.tpush_to_aiv(%acc : !pto.tile_buf<loc=acc, dtype=f32, rows=16, cols=16, v_row=16, v_col=16, blayout=col_major, slayout=row_major, fractal=1024, pad=0>) {id=2,split=1}
+    }
+    return
+  }
+  func.func @vector(%out: !pto.ptr<f32>) attributes {pto.kernel_kind=#pto.kernel_kind<vector>} {
+    %c0 = arith.constant 0 : index
+    %c1 = arith.constant 1 : index
+    %c2 = arith.constant 2 : index
+    %c8 = arith.constant 8 : index
+    %c16 = arith.constant 16 : index
+    %zero = arith.constant 0 : i32
+    %sid64 = pto.get_subblock_idx
+    %sid = arith.index_cast %sid64 : i64 to index
+    %row = arith.muli %sid, %c8 : index
+    %qk_fifo = pto.reserve_buffer {name="qk",size=4096,location=#pto.address_space<vec>,auto=true} -> i32
+    %pv_fifo = pto.reserve_buffer {name="pv",size=4096,location=#pto.address_space<vec>,auto=true} -> i32
+    %p_fifo = pto.import_reserved_buffer {name="p",peer_func=@cube} -> i32
+    pto.aiv_initialize_pipe {id=0, dir_mask=1, slot_size=1024, slot_num=4}
+      (c2v_consumer_buf=%qk_fifo : i32, v2c_consumer_buf=%zero : i32)
+    pto.aiv_initialize_pipe {id=1, dir_mask=2, slot_size=1024, slot_num=4}
+      (c2v_consumer_buf=%zero : i32, v2c_consumer_buf=%p_fifo : i32)
+    pto.aiv_initialize_pipe {id=2, dir_mask=1, slot_size=1024, slot_num=4}
+      (c2v_consumer_buf=%pv_fifo : i32, v2c_consumer_buf=%zero : i32)
+    %ov = pto.make_tensor_view %out, shape=[%c16,%c16], strides=[%c16,%c1] : !pto.tensor_view<?x?xf32>
+    %ot = pto.partition_view %ov, offsets=[%row,%c0], sizes=[%c8,%c16] : !pto.tensor_view<?x?xf32> -> !pto.partition_tensor_view<8x16xf32>
+    %a = pto.alloc_tile : !pto.tile_buf<loc=vec, dtype=f32, rows=8, cols=16, v_row=8, v_col=16, blayout=row_major, slayout=none_box, fractal=512, pad=0>
+    %b = pto.alloc_tile : !pto.tile_buf<loc=vec, dtype=f32, rows=8, cols=16, v_row=8, v_col=16, blayout=col_major, slayout=row_major, fractal=512, pad=0>
+    %c = pto.alloc_tile : !pto.tile_buf<loc=vec, dtype=f32, rows=8, cols=16, v_row=8, v_col=16, blayout=row_major, slayout=none_box, fractal=512, pad=0>
+    scf.for %i = %c0 to %c2 step %c1 {
+      %qk = pto.tpop_from_aic {id=0,split=1} -> !pto.tile_buf<loc=vec, dtype=f32, rows=8, cols=16, v_row=8, v_col=16, blayout=row_major, slayout=none_box, fractal=512, pad=0>
+      pto.tneg ins(%qk : !pto.tile_buf<loc=vec, dtype=f32, rows=8, cols=16, v_row=8, v_col=16, blayout=row_major, slayout=none_box, fractal=512, pad=0>) outs(%a : !pto.tile_buf<loc=vec, dtype=f32, rows=8, cols=16, v_row=8, v_col=16, blayout=row_major, slayout=none_box, fractal=512, pad=0>)
+      pto.tfree_from_aic {id=0,split=1}
+      pto.tmov ins(%a : !pto.tile_buf<loc=vec, dtype=f32, rows=8, cols=16, v_row=8, v_col=16, blayout=row_major, slayout=none_box, fractal=512, pad=0>) outs(%b : !pto.tile_buf<loc=vec, dtype=f32, rows=8, cols=16, v_row=8, v_col=16, blayout=col_major, slayout=row_major, fractal=512, pad=0>)
+      pto.tpush_to_aic(%b : !pto.tile_buf<loc=vec, dtype=f32, rows=8, cols=16, v_row=8, v_col=16, blayout=col_major, slayout=row_major, fractal=512, pad=0>) {id=1,split=1}
+      %pv = pto.tpop_from_aic {id=2,split=1} -> !pto.tile_buf<loc=vec, dtype=f32, rows=8, cols=16, v_row=8, v_col=16, blayout=row_major, slayout=none_box, fractal=512, pad=0>
+      pto.tadd ins(%pv,%pv : !pto.tile_buf<loc=vec, dtype=f32, rows=8, cols=16, v_row=8, v_col=16, blayout=row_major, slayout=none_box, fractal=512, pad=0>,!pto.tile_buf<loc=vec, dtype=f32, rows=8, cols=16, v_row=8, v_col=16, blayout=row_major, slayout=none_box, fractal=512, pad=0>) outs(%c : !pto.tile_buf<loc=vec, dtype=f32, rows=8, cols=16, v_row=8, v_col=16, blayout=row_major, slayout=none_box, fractal=512, pad=0>)
+      pto.tfree_from_aic {id=2,split=1}
+      pto.tstore ins(%c : !pto.tile_buf<loc=vec, dtype=f32, rows=8, cols=16, v_row=8, v_col=16, blayout=row_major, slayout=none_box, fractal=512, pad=0>) outs(%ot : !pto.partition_tensor_view<8x16xf32>)
+    }
+    return
+  }
+}

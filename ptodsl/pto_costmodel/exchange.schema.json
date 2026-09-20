@@ -1,0 +1,549 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "PTO Cost Model Exchange 2.0",
+  "description": "Wire shapes; compiler reconstruction and semantic checks remain mandatory.",
+  "$defs": {
+    "identity": {
+      "type": "object",
+      "properties": {
+        "program_fingerprint": {
+          "type": "string",
+          "minLength": 1
+        },
+        "bindings_fingerprint": {
+          "type": "string",
+          "minLength": 1
+        },
+        "target_fingerprint": {
+          "type": "string",
+          "minLength": 1
+        },
+        "semantics_version": {
+          "type": "string",
+          "minLength": 1
+        },
+        "checkpoint_version": {
+          "const": 1
+        }
+      },
+      "required": [
+        "program_fingerprint",
+        "bindings_fingerprint",
+        "target_fingerprint",
+        "semantics_version",
+        "checkpoint_version"
+      ],
+      "additionalProperties": false
+    },
+    "configuration": {
+      "type": "object",
+      "properties": {
+        "pipeline_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "schedule_kind": {
+          "const": "prefix_suffix_v1"
+        },
+        "preload_semantics": {
+          "const": "iteration_distance"
+        },
+        "preload_count": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 2147483647
+        },
+        "local_schedule": {
+          "const": "off"
+        },
+        "buffers": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "buffer_id": {
+                "type": "string",
+                "minLength": 1
+              },
+              "count": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 256
+              }
+            },
+            "required": [
+              "buffer_id",
+              "count"
+            ],
+            "additionalProperties": false
+          },
+          "maxItems": 4096
+        }
+      },
+      "required": [
+        "pipeline_id",
+        "schedule_kind",
+        "preload_semantics",
+        "preload_count",
+        "local_schedule",
+        "buffers"
+      ],
+      "additionalProperties": false
+    },
+    "model": {
+      "type": "object",
+      "properties": {
+        "name": {
+          "type": "string",
+          "minLength": 1
+        },
+        "revision": {
+          "type": "string",
+          "minLength": 1
+        },
+        "adapter_version": {
+          "type": "string",
+          "minLength": 1
+        },
+        "config_fingerprint": {
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      "required": [
+        "name",
+        "revision",
+        "adapter_version",
+        "config_fingerprint"
+      ],
+      "additionalProperties": false
+    },
+    "candidate": {
+      "type": "object",
+      "properties": {
+        "candidate_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "identity": {
+          "$ref": "#/$defs/identity"
+        },
+        "configuration": {
+          "$ref": "#/$defs/configuration"
+        },
+        "schedule": {
+          "type": "object"
+        },
+        "resources": {
+          "type": "object"
+        }
+      },
+      "required": [
+        "candidate_id",
+        "identity",
+        "configuration",
+        "schedule",
+        "resources"
+      ],
+      "additionalProperties": false
+    },
+    "coverage": {
+      "type": "object",
+      "properties": {
+        "status": {
+          "enum": [
+            "complete",
+            "partial",
+            "unsupported",
+            "reference"
+          ]
+        },
+        "operations": {
+          "type": "string",
+          "minLength": 1
+        },
+        "communication": {
+          "type": "string",
+          "minLength": 1
+        },
+        "approximations": {
+          "type": "array",
+          "items": {
+            "type": "object"
+          }
+        },
+        "unsupported": {
+          "type": "array",
+          "items": {
+            "type": "object"
+          }
+        }
+      },
+      "required": [
+        "status",
+        "operations",
+        "communication",
+        "approximations",
+        "unsupported"
+      ],
+      "additionalProperties": false
+    },
+    "result_row": {
+      "type": "object",
+      "properties": {
+        "candidate_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "schedule_fingerprint": {
+          "type": "string",
+          "minLength": 1
+        },
+        "configuration": {
+          "$ref": "#/$defs/configuration"
+        },
+        "latency": {
+          "type": "object",
+          "properties": {
+            "value": {
+              "type": [
+                "number",
+                "null"
+              ],
+              "minimum": 0
+            },
+            "unit": {
+              "const": "us"
+            }
+          },
+          "required": [
+            "value",
+            "unit"
+          ],
+          "additionalProperties": false
+        },
+        "coverage": {
+          "$ref": "#/$defs/coverage"
+        },
+        "resources": {
+          "type": "object"
+        },
+        "evidence": {
+          "type": "object"
+        }
+      },
+      "required": [
+        "candidate_id",
+        "schedule_fingerprint",
+        "configuration",
+        "latency",
+        "coverage",
+        "resources",
+        "evidence"
+      ],
+      "additionalProperties": false
+    },
+    "package": {
+      "type": "object",
+      "properties": {
+        "protocol_version": {
+          "type": "string",
+          "pattern": "^2\\.[0-9]+$"
+        },
+        "kind": {
+          "const": "package"
+        },
+        "required_features": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          },
+          "uniqueItems": true
+        },
+        "extensions": {
+          "type": "object",
+          "propertyNames": {
+            "pattern": "\\."
+          }
+        },
+        "program_fingerprint": {
+          "type": "string",
+          "minLength": 1
+        },
+        "bindings_fingerprint": {
+          "type": "string",
+          "minLength": 1
+        },
+        "target_fingerprint": {
+          "type": "string",
+          "minLength": 1
+        },
+        "checkpoint_version": {
+          "const": 1
+        },
+        "semantics_version": {
+          "const": "pto.static_cv.1"
+        },
+        "producer": {
+          "type": "object",
+          "properties": {
+            "name": {
+              "type": "string",
+              "minLength": 1
+            },
+            "version": {
+              "type": "string",
+              "minLength": 1
+            }
+          },
+          "required": [
+            "name",
+            "version"
+          ],
+          "additionalProperties": false
+        },
+        "files": {
+          "type": "object",
+          "properties": {
+            "canonical.pto": {
+              "type": "string",
+              "minLength": 1
+            },
+            "program.json": {
+              "type": "string",
+              "minLength": 1
+            },
+            "runtime_bindings.json": {
+              "type": "string",
+              "minLength": 1
+            },
+            "target_profile.json": {
+              "type": "string",
+              "minLength": 1
+            }
+          },
+          "required": [
+            "canonical.pto",
+            "program.json",
+            "runtime_bindings.json",
+            "target_profile.json"
+          ],
+          "additionalProperties": false
+        }
+      },
+      "required": [
+        "protocol_version",
+        "kind",
+        "required_features",
+        "program_fingerprint",
+        "bindings_fingerprint",
+        "target_fingerprint",
+        "checkpoint_version",
+        "semantics_version",
+        "producer",
+        "files"
+      ],
+      "additionalProperties": false
+    },
+    "request": {
+      "type": "object",
+      "properties": {
+        "protocol_version": {
+          "type": "string",
+          "pattern": "^2\\.[0-9]+$"
+        },
+        "kind": {
+          "const": "request"
+        },
+        "required_features": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          },
+          "uniqueItems": true
+        },
+        "extensions": {
+          "type": "object",
+          "propertyNames": {
+            "pattern": "\\."
+          }
+        },
+        "identity": {
+          "$ref": "#/$defs/identity"
+        },
+        "candidates": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/candidate"
+          },
+          "minItems": 1,
+          "maxItems": 32
+        },
+        "objective": {
+          "const": "latency"
+        },
+        "memory_constraint": {
+          "const": "hard"
+        },
+        "execution_mode": {
+          "const": "recommendation"
+        },
+        "search_budget": {
+          "type": "object",
+          "properties": {
+            "max_candidates": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 32
+            }
+          },
+          "required": [
+            "max_candidates"
+          ],
+          "additionalProperties": false
+        },
+        "baseline_candidate_id": {
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      "required": [
+        "protocol_version",
+        "kind",
+        "required_features",
+        "identity",
+        "candidates",
+        "objective",
+        "memory_constraint",
+        "execution_mode",
+        "search_budget",
+        "baseline_candidate_id"
+      ],
+      "additionalProperties": false
+    },
+    "result": {
+      "type": "object",
+      "properties": {
+        "protocol_version": {
+          "type": "string",
+          "pattern": "^2\\.[0-9]+$"
+        },
+        "kind": {
+          "const": "result"
+        },
+        "required_features": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          },
+          "uniqueItems": true
+        },
+        "extensions": {
+          "type": "object",
+          "propertyNames": {
+            "pattern": "\\."
+          }
+        },
+        "identity": {
+          "$ref": "#/$defs/identity"
+        },
+        "model": {
+          "$ref": "#/$defs/model"
+        },
+        "candidates": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/result_row"
+          },
+          "minItems": 1,
+          "maxItems": 32
+        }
+      },
+      "required": [
+        "protocol_version",
+        "kind",
+        "required_features",
+        "identity",
+        "model",
+        "candidates"
+      ],
+      "additionalProperties": false
+    },
+    "plan": {
+      "type": "object",
+      "properties": {
+        "protocol_version": {
+          "type": "string",
+          "pattern": "^2\\.[0-9]+$"
+        },
+        "kind": {
+          "const": "plan"
+        },
+        "required_features": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          },
+          "uniqueItems": true
+        },
+        "extensions": {
+          "type": "object",
+          "propertyNames": {
+            "pattern": "\\."
+          }
+        },
+        "identity": {
+          "$ref": "#/$defs/identity"
+        },
+        "candidate_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "configuration": {
+          "$ref": "#/$defs/configuration"
+        },
+        "schedule_fingerprint": {
+          "type": "string",
+          "minLength": 1
+        },
+        "model": {
+          "$ref": "#/$defs/model"
+        },
+        "result_fingerprint": {
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      "required": [
+        "protocol_version",
+        "kind",
+        "required_features",
+        "identity",
+        "candidate_id",
+        "configuration",
+        "schedule_fingerprint",
+        "model",
+        "result_fingerprint"
+      ],
+      "additionalProperties": false
+    }
+  },
+  "oneOf": [
+    {
+      "$ref": "#/$defs/package"
+    },
+    {
+      "$ref": "#/$defs/request"
+    },
+    {
+      "$ref": "#/$defs/result"
+    },
+    {
+      "$ref": "#/$defs/plan"
+    }
+  ]
+}
