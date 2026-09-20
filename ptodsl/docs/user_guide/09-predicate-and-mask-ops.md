@@ -416,5 +416,5 @@ When working at the tile level (L1, `@pto.jit`), masks are carried in `i8` tile 
 | `PredicateDist` (store) | `NORM`, `PK` | `psts` |
 | `PredicatePart` | `LOWER`, `HIGHER` | `ppack`, `punpack` |
 | `PostUpdate` | `OFF`, `ON` | `vstur`, `vlds`, `vsstb` |
-| `VPackPart` | `LOWER`, `HIGHER` | `vpack` |
+| `VPackPart` | `LOWER`, `HIGHER` | `vpack`, `vunpack`, `vsunpack`, `vzunpack` |
 | `PartMode` | `EVEN`, `ODD` | `vmulscvt`, `vexpdif` |

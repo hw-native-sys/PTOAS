@@ -2258,6 +2258,28 @@ packed_high = pto.vpack(vec_i32, pto.VPackPart.HIGHER)  # upper 64 lanes -> 128Ã
 
 ---
 
+#### `pto.vunpack(src: VRegType, part: VPackPart) -> VRegType`
+#### `pto.vsunpack(src: VRegType, part: VPackPart) -> VRegType`
+#### `pto.vzunpack(src: VRegType, part: VPackPart) -> VRegType`
+
+**Description**: Widen the selected `LOWER` or `HIGHER` half of an integer
+vector. The result has half as many lanes and twice the element width.
+`vunpack` follows the CCE overload: unsigned inputs emit one `pto.vzunpack`
+(zero extension), while signed or signless inputs emit one `pto.vsunpack`
+(sign extension). The explicit `vsunpack` and `vzunpack` entry points expose
+the corresponding VPTO micro-ops directly.
+
+Supported pairs are `u8 -> u16`, `u16 -> u32`, `s8/i8 -> s16/i16`, and
+`s16/i16 -> s32/i32`. `part` must be `pto.VPackPart.LOWER` or
+`pto.VPackPart.HIGHER`.
+
+```python
+wide_unsigned = pto.vunpack(vec_u8, pto.VPackPart.LOWER)
+wide_signed = pto.vsunpack(vec_s16, pto.VPackPart.HIGHER)
+```
+
+---
+
 ### 8.2.8.1 Index generation
 
 #### `pto.vci(base: ScalarType | int, order: OrderMode | None = None) -> VRegType`
@@ -2335,6 +2357,28 @@ align0 = pto.init_align()
 align1 = pto.vstur(align0, compacted, store_base, pto.PostUpdate.ON)
 pto.vstar(align1, store_base)
 ```
+
+---
+
+#### `pto.vusqz(dst: VRegType, mask: MaskType) -> VRegType`
+
+**Description**: Emit the CCE `VUSQZ` merge-form instruction. `dst` is the
+old destination value and the returned SSA value is the updated destination.
+For the usual prefix-count use case, initialize `dst` to all zero before the
+call. The current VPTO verifier accepts `i8/s8`, `i16/s16`, and `i32/s32`
+vectors with the matching predicate granularity.
+
+Unlike `vsqz`, this operation does not compact elements from a separate data
+source. It derives predicate prefix counts from `mask` and merges them into the
+destination operand.
+
+---
+
+#### `pto.dhistv2(acc: VRegType, source: VRegType, mask: MaskType, bin: i32) -> VRegType`
+
+**Description**: Emit the distribution-histogram micro-op. `acc` and the
+result are `128xui16`, `source` is `256xui8`, `mask` is `b8`, and `bin` is an
+`i32` selector corresponding to the hardware bin operand.
 
 ---
 
@@ -2427,9 +2471,10 @@ even_lanes, odd_lanes = pto.vdintlv(packed_low, packed_high)
 | Scan | `vcpadd` |
 | Fused | `vexpdif`, `vaxpy`, `vmula`, `vmadd`, `vaddrelu`, `vsubrelu`, `vmulscvt` |
 | Compare/select | `vcmp`, `vcmps`, `vsel` |
-| Conversion | `vcvt`, `vpack`, `vbitcast`, `pbitcast` |
+| Conversion | `vcvt`, `vpack`, `vunpack`, `vsunpack`, `vzunpack`, `vbitcast`, `pbitcast` |
 | Index generation | `vci` |
-| Rearrangement | `vsqz`, `vintlv`, `vdintlv` |
+| Rearrangement | `vsqz`, `vusqz`, `vintlv`, `vdintlv` |
+| Histogram | `chistv2`, `dhistv2` |
 
 ---
 

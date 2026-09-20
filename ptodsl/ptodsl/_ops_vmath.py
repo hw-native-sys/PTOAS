@@ -1,4 +1,3 @@
-# coding=utf-8
 # Copyright (c) 2026 Huawei Technologies Co., Ltd.
 # This program is free software, you can redistribute it and/or modify it under the terms and conditions of
 # CANN Open Software License Agreement Version 2.0 (the "License").
@@ -304,6 +303,11 @@ def vsqz(inp, mask):
     return _emit_unary_vec_op(_pto.VsqzOp, inp, mask)
 
 
+def vusqz(dst, mask):
+    """``pto.vusqz`` – accumulate predicate prefix counts into a merge destination."""
+    return _emit_unary_vec_op(_pto.VusqzOp, dst, mask)
+
+
 _EVEN_ODD_PART_TOKENS = ("EVEN", "ODD")
 
 
@@ -445,6 +449,19 @@ def chistv2(acc, source, mask, bin_val):
     """``pto.chistv2`` – accumulate 128-bin histogram from b8 source into b16 accumulator."""
     return wrap_surface_value(
         _pto.Chistv2Op(
+            unwrap_surface_value(acc).type,
+            unwrap_surface_value(acc),
+            unwrap_surface_value(source),
+            unwrap_surface_value(mask),
+            unwrap_surface_value(bin_val),
+        ).result
+    )
+
+
+def dhistv2(acc, source, mask, bin_val):
+    """``pto.dhistv2`` – accumulate a distribution histogram into a b16 vector."""
+    return wrap_surface_value(
+        _pto.Dhistv2Op(
             unwrap_surface_value(acc).type,
             unwrap_surface_value(acc),
             unwrap_surface_value(source),
