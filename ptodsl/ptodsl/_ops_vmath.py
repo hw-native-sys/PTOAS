@@ -304,6 +304,11 @@ def vsqz(inp, mask):
     return _emit_unary_vec_op(_pto.VsqzOp, inp, mask)
 
 
+def vusqz(inp, mask):
+    """``pto.vusqz`` - build exclusive active-lane prefix counts from *mask*."""
+    return _emit_unary_vec_op(_pto.VusqzOp, inp, mask)
+
+
 _EVEN_ODD_PART_TOKENS = ("EVEN", "ODD")
 
 
@@ -445,6 +450,19 @@ def chistv2(acc, source, mask, bin_val):
     """``pto.chistv2`` – accumulate 128-bin histogram from b8 source into b16 accumulator."""
     return wrap_surface_value(
         _pto.Chistv2Op(
+            unwrap_surface_value(acc).type,
+            unwrap_surface_value(acc),
+            unwrap_surface_value(source),
+            unwrap_surface_value(mask),
+            unwrap_surface_value(bin_val),
+        ).result
+    )
+
+
+def dhistv2(acc, source, mask, bin_val):
+    """``pto.dhistv2`` – update a distribution histogram from b8 source lanes."""
+    return wrap_surface_value(
+        _pto.Dhistv2Op(
             unwrap_surface_value(acc).type,
             unwrap_surface_value(acc),
             unwrap_surface_value(source),

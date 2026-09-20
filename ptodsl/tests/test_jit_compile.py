@@ -4658,6 +4658,56 @@ def public_vector_conversion_surface_probe():
 
 
 @pto.jit(target="a5", mode="explicit")
+def simd_extension_surface_probe():
+    zero_u64 = pto.const(0, dtype=pto.ui64)
+    acc_ptr = pto.castptr(zero_u64, pto.ptr(pto.ui16, "ub"))
+    source_ptr = pto.castptr(zero_u64, pto.ptr(pto.ui8, "ub"))
+    signed_ptr = pto.castptr(zero_u64, pto.ptr(pto.si8, "ub"))
+    signless_ptr = pto.castptr(zero_u64, pto.ptr(pto.i8, "ub"))
+    carrier_ptr = pto.castptr(zero_u64, pto.ptr(pto.i32, "ub"))
+
+    acc = pto.vlds(acc_ptr, pto.const(0))
+    source = pto.vlds(source_ptr, pto.const(0))
+    signed_source = pto.vlds(signed_ptr, pto.const(0))
+    signless_source = pto.vlds(signless_ptr, pto.const(0))
+    carrier = pto.vlds(carrier_ptr, pto.const(0))
+    mask8 = pto.pset_b8(pto.MaskPattern.ALL)
+    mask32 = pto.pset_b32(pto.MaskPattern.ALL)
+    part0 = pto.const(0)
+
+    histogram = pto.dhistv2(acc, source, mask8, pto.const(0, dtype=pto.i32))
+    expanded = pto.vusqz(carrier, mask32)
+    signed_wide = pto.vunpack(signed_source, part0)
+    unsigned_wide = pto.vunpack(source, part0)
+    signless_wide = pto.vunpack(signless_source, part0)
+
+    _ = histogram
+    _ = expanded
+    _ = signed_wide
+    _ = unsigned_wide
+    _ = signless_wide
+
+
+@pto.jit(target="a5", mode="explicit")
+def vunpack_surface_invalid_part_probe():
+    zero_u64 = pto.const(0, dtype=pto.ui64)
+    source_ptr = pto.castptr(zero_u64, pto.ptr(pto.ui8, "ub"))
+    source = pto.vlds(source_ptr, pto.const(0))
+    _ = pto.vunpack(source, pto.const(2))
+
+
+@pto.jit(target="a5", mode="explicit")
+def dhistv2_surface_invalid_source_probe():
+    zero_u64 = pto.const(0, dtype=pto.ui64)
+    acc_ptr = pto.castptr(zero_u64, pto.ptr(pto.ui16, "ub"))
+    invalid_source_ptr = pto.castptr(zero_u64, pto.ptr(pto.ui16, "ub"))
+    acc = pto.vlds(acc_ptr, pto.const(0))
+    invalid_source = pto.vlds(invalid_source_ptr, pto.const(0))
+    mask8 = pto.pset_b8(pto.MaskPattern.ALL)
+    _ = pto.dhistv2(acc, invalid_source, mask8, pto.const(0, dtype=pto.i32))
+
+
+@pto.jit(target="a5", mode="explicit")
 def low_precision_vector_memory_surface_probe():
     zero_u64 = pto.const(0, dtype=pto.ui64)
     f8_src = pto.castptr(zero_u64, pto.ptr(pto.f8e4m3, "ub"))
@@ -5104,6 +5154,9 @@ def main() -> None:
         "pbitcast",
         "vcvt",
         "vpack",
+        "vunpack",
+        "vusqz",
+        "dhistv2",
         "vmulscvt",
         "ppack",
         "punpack",
@@ -8328,6 +8381,8 @@ def main() -> None:
     expect_parse_roundtrip_and_verify(data_movement_surface_text, "public data movement surface specialization")
     vector_conversion_surface_text = public_vector_conversion_surface_probe.compile().mlir_text()
     expect_parse_roundtrip_and_verify(vector_conversion_surface_text, "public vector conversion surface specialization")
+    simd_extension_surface_text = simd_extension_surface_probe.compile().mlir_text()
+    expect_parse_roundtrip_and_verify(simd_extension_surface_text, "SIMD extension surface specialization")
     low_precision_memory_surface_text = low_precision_vector_memory_surface_probe.compile().mlir_text()
     expect_parse_roundtrip_and_verify(low_precision_memory_surface_text, "low-precision vector memory surface specialization")
     low_precision_vcvt_surface_text = low_precision_vcvt_surface_probe.compile().mlir_text()
@@ -8969,6 +9024,22 @@ def main() -> None:
     expect('dist = "PK_B32"' in vector_conversion_surface_text, "vsts(..., dist=VStoreDist.PK_B32) should preserve the authored store distribution")
     expect("pto.vpack" in vector_conversion_surface_text, "vpack(...) should lower to pto.vpack")
     expect("!pto.vreg<128xui16>" in vector_conversion_surface_text, "vpack(i32/u32 -> u16) should infer the unsigned packed result type")
+    expect("pto.dhistv2" in simd_extension_surface_text, "dhistv2(...) should lower to pto.dhistv2")
+    expect("pto.vusqz" in simd_extension_surface_text, "vusqz(...) should lower to pto.vusqz")
+    expect("pto.vsunpack" in simd_extension_surface_text, "vunpack(si8, ...) should lower to pto.vsunpack")
+    expect("pto.vzunpack" in simd_extension_surface_text, "vunpack(ui8, ...) should lower to pto.vzunpack")
+    expect(
+        "!pto.vreg<128xsi16>" in simd_extension_surface_text,
+        "vunpack(si8, ...) should infer a signed 16-bit result",
+    )
+    expect(
+        "!pto.vreg<128xui16>" in simd_extension_surface_text,
+        "vunpack(ui8, ...) should infer an unsigned 16-bit result",
+    )
+    expect(
+        "!pto.vreg<256xi8> -> !pto.vreg<128xui16>" in simd_extension_surface_text,
+        "vunpack(i8, ...) should zero-extend to an unsigned 16-bit result",
+    )
     expect("!pto.vreg<256xf8E4M3FN>" in low_precision_memory_surface_text, "vlds/vsts should support f8e4m3 vreg storage")
     expect("!pto.vreg<256x!pto.hif8>" in low_precision_memory_surface_text, "vlds/vsts should support hif8 vreg storage")
     expect("!pto.ptr<f8E4M3FN, ub>" in low_precision_memory_surface_text, "low-precision f8 pointers should lower as UB pointers")
@@ -9180,6 +9251,20 @@ def main() -> None:
         ValueError,
         lambda: vpack_surface_invalid_part_probe.compile(),
         "vpack(src, part) does not support part",
+    )
+    expect_raises(
+        ValueError,
+        lambda: vunpack_surface_invalid_part_probe.compile(),
+        "vunpack(src, part) expects part 0 (lower) or 1 (higher)",
+    )
+    dhistv2_error = expect_raises(
+        Exception,
+        lambda: dhistv2_surface_invalid_source_probe.verify(),
+        "requires source type to be !pto.vreg<256xi8>",
+    )
+    expect(
+        dhistv2_error.__class__.__name__ == "MLIRError",
+        "dhistv2 invalid source should be rejected by the MLIR verifier",
     )
     expect("pto.pset_b8" in mask_surface_text, "pset_b8(...) should lower to pto.pset_b8")
     expect("pto.pset_b16" in mask_surface_text, "pset_b16(...) should lower to pto.pset_b16")

@@ -195,9 +195,8 @@ bool containsVMIType(Type type) {
 // elementwise op, or handed to a cast outside the window, would have to be
 // packed back into a contiguous narrow value - which on this target costs more
 // than the dist-encoded UB loads and stores the flip removes.  Those chains
-// therefore keep the pre-existing (lane-stride) family.
-//
-// Deliberately NOT recognised, so that these keep the pre-existing behaviour:
+// therefore keep the pre-existing (lane-stride) family.  Deliberately NOT
+// recognised, so that these keep the pre-existing behaviour:
 //   * <down, up>  - a single round trip (f32 -> f8 -> f32) is already optimal;
 //   * <up>        - a chain that only widens has no round trip at all;
 //   * <up, down>  - a chain that widens and narrows again without a closing
@@ -2326,7 +2325,8 @@ struct LayoutSolver {
   // Width-changing casts whose sub-32-bit side carries elementwise compute in
   // its layout equivalence class (see collectNarrowSideCompute).  Populated
   // once per module, before the constraint walk creates any seed.
-  llvm::SmallPtrSet<Operation *, 8> narrowSideComputeCasts;
+  llvm::SmallPtrSet<Operation *, kComputeCastSetInlineCapacity>
+      narrowSideComputeCasts;
 };
 
 struct VMILayoutAssignmentPass

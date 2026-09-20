@@ -18,8 +18,9 @@ module {
   func.func @vmi_layout_assignment_group_slot_broadcast_load_e2b_b16(
       %src: !pto.ptr<f16, ub>, %off: index) -> !pto.vmi.vreg<256xf16> {
     %c1 = arith.constant 1 : index
-    %c8 = arith.constant 8 : index
-    %aligned_off = arith.muli %off, %c8 : index
+    // 16 f16 elements is one 32B block, the alignment pto.vsldb requires.
+    %c16 = arith.constant 16 : index
+    %aligned_off = arith.muli %off, %c16 : index
     %slots = pto.vmi.vload %src[%aligned_off], %c1 {group = 16}
         : !pto.ptr<f16, ub> -> !pto.vmi.vreg<16xf16>
     %out = pto.vmi.vbrc %slots {group = 16}
@@ -30,8 +31,9 @@ module {
   func.func @vmi_layout_assignment_group_slot_broadcast_load_e2b_b16_deint2(
       %src: !pto.ptr<bf16, ub>, %off: index) -> !pto.vmi.vreg<256xbf16> {
     %c1 = arith.constant 1 : index
-    %c8 = arith.constant 8 : index
-    %aligned_off = arith.muli %off, %c8 : index
+    // 16 bf16 elements is one 32B block, the alignment pto.vsldb requires.
+    %c16 = arith.constant 16 : index
+    %aligned_off = arith.muli %off, %c16 : index
     %slots = pto.vmi.vload %src[%aligned_off], %c1 {group = 8}
         : !pto.ptr<bf16, ub> -> !pto.vmi.vreg<8xbf16>
     %out = pto.vmi.vbrc %slots {group = 8}

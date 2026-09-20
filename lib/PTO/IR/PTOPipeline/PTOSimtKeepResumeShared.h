@@ -140,10 +140,9 @@ bool overlapsEarlierSimtKeepResumeSlotUse(OpT op,
 }
 
 inline LogicalResult verifyUniqueResumeGroupSlots(ResumeOp current,
-                                                  const Operation *first) {
+                                                  Operation *first) {
   SmallVector<int64_t, mlir::pto::kValue4> slots;
-  // The walk itself is read-only; the op wrappers need non-const pointers.
-  for (Operation *cur = const_cast<Operation *>(first); cur;
+  for (Operation *cur = first; cur;
        cur = cur->getNextNode()) {
     auto resume = dyn_cast<ResumeOp>(cur);
     if (!resume) {
@@ -160,11 +159,10 @@ inline LogicalResult verifyUniqueResumeGroupSlots(ResumeOp current,
 }
 
 inline LogicalResult verifyUniqueKeepGroupSlots(KeepOp current,
-                                                const Operation *first,
-                                                const Operation *last) {
+                                                Operation *first,
+                                                Operation *last) {
   SmallVector<int64_t, mlir::pto::kValue4> slots;
-  // The walk itself is read-only; the op wrappers need non-const pointers.
-  for (Operation *cur = const_cast<Operation *>(first); cur;
+  for (Operation *cur = first; cur;
        cur = cur->getNextNode()) {
     auto keep = dyn_cast<KeepOp>(cur);
     if (!keep) {

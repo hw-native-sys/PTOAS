@@ -6,15 +6,17 @@
 // INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
 // See LICENSE in the root of the software repository for the full text of the License.
 
-// RUN: not pto-test-opt %s -vmi-lower-unified-to-legacy -pto-validate-vmi-layout-ir 2>&1 | FileCheck %s
+// RUN: pto-test-opt %s -vmi-lower-unified-to-legacy -pto-validate-vmi-layout-ir | FileCheck %s
 
 module {
-  func.func @vmi_layout_gate_group_reduce_slots1_support_invalid(
+  func.func @vmi_layout_gate_group_reduce_slots1_support_valid(
       %source: !pto.vmi.vreg<256xf32, #pto.vmi.layout<contiguous>>,
       %mask: !pto.vmi.mask<256xb32, #pto.vmi.layout<contiguous>>) {
-    // CHECK: VMI-LAYOUT-CONTRACT: pto.vmi.group_reduce_addf has no registered group_slots layout support
-    // CHECK-SAME: group_reduce source/mask/result layouts do not match a legal layout table row for the group size
-    // CHECK: note: see current operation: %{{.*}} = "pto.vmi.group_reduce_addf"
+    // A contiguous source whose group size matches no native row executes as
+    // dense masked rows.  Its result carries one group value per physical part,
+    // so a slots=1 result layout is a registered shape.
+    // CHECK: pto.vmi.group_reduce_addf
+    // CHECK-SAME: -> !pto.vmi.vreg<8xf32, #pto.vmi.layout<num_groups = 8, slots = 1>>
     %out = pto.vmi.vcadd %source, %mask
         {group = 8, reassoc}
         : !pto.vmi.vreg<256xf32, #pto.vmi.layout<contiguous>>,

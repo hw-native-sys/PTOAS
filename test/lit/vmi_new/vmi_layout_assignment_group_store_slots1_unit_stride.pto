@@ -29,10 +29,9 @@ module {
 
 // CHECK-LABEL: func.func @vmi_layout_assignment_group_store_slots1_unit_stride(
 // CHECK-COUNT-8: pto.vcadd
-// CHECK-COUNT-8: pto.vdup
-// CHECK: pto.vsts
+// CHECK-COUNT-8: pto.vsts {{.*}} {dist = "1PT_B32"}
+// CHECK-NOT: pto.vdup
 // CHECK-NOT: pto.vstus
-// CHECK-NOT: dist = "1PT_B32"
 // CHECK-NOT: pto.vmi.
 // CHECK-NOT: !pto.vmi.
 // CHECK-NOT: unrealized_conversion_cast

@@ -177,7 +177,7 @@ namespace {
     return intType.getWidth() == mlir::pto::kValue8 || intType.getWidth() == mlir::pto::kValue16 ||
            intType.getWidth() == mlir::pto::kValue32;
   }
-  return type.isF16() || type.isF32();
+  return type.isF16() || type.isBF16() || type.isF32();
 }
 
 

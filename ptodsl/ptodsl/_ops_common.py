@@ -452,6 +452,19 @@ def _coerce_index(value, *, context: str):
         raise
 
 
+def _coerce_vunpack_part(part, *, context: str):
+    if isinstance(part, int) and not isinstance(part, bool):
+        static_part = part
+    else:
+        try:
+            static_part = _try_get_constant_index(part)
+        except TypeError:
+            static_part = None
+    if static_part is not None and static_part not in {0, 1}:
+        raise ValueError(f"{context} expects part 0 (lower) or 1 (higher), got {static_part}")
+    return _coerce_index(part, context=context)
+
+
 def init_align():
     """``pto.init_align`` – materialize the initial alignment state."""
     return wrap_surface_value(_pto.InitAlignOp(_pto.AlignType.get()).result)

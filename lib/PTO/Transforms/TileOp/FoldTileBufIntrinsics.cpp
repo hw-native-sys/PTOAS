@@ -1163,7 +1163,7 @@ struct FoldTileBufIntrinsicsPass
     return success();
   }
 
-  LogicalResult foldAddrFamily(FoldOps &ops, OpBuilder &builder) {
+  LogicalResult foldAddrFamily(FoldOps &ops, OpBuilder &builder) const {
     if (failed(foldGetValidShapeOps(ops.getValidShapeOps, builder))) {
       return failure();
     }

@@ -175,8 +175,15 @@ static constexpr GroupReduceLayoutPattern kGroupReduceLayoutPatterns[] = {
     {gbFull(), c(), gs(1)},
     {gbFull(2), d(2), gs(1)},
     {gbFull(4), d(4), gs(1)},
-    // Dense fallback for one-carrier groups, including eight-bit widening.
-    {gbCompact(), c(), gs(8)},
+    // A one-carrier group packet row used to sit here:
+    //   {gbCompact(), c(), gs(8)}
+    // It is removed (upstream MR) because the dense masked-row fallback below
+    // covers every shape it matched: the reachable rows above already claim the
+    // native one-block / ratio shapes, and anything left -- small or eight-bit
+    // groups with no native row -- lowers through the slots=1 dense fallback.
+    // Do not add a dense one-carrier row back (for example {gb(4), c(), gs(8)}
+    // for 128xf32 group=4); the slots=1 form is the contract, pinned by
+    // vmi_to_vpto_group_reduce_gb4_contiguous_slots1.pto.
 };
 
 struct PreferredCastLayoutPattern {
@@ -652,15 +659,6 @@ struct HistogramLayoutPattern {
 
 static constexpr HistogramLayoutPattern kVdhistLayoutPatterns[] = {
     {c(), c(), c(), c()},
-};
-
-struct WidthChangingBitcastLayoutPattern {
-  LayoutPattern layout;
-};
-
-static constexpr WidthChangingBitcastLayoutPattern
-    kWidthChangingBitcastLayoutPatterns[] = {
-    {c()},
 };
 
 //===----------------------------------------------------------------------===//

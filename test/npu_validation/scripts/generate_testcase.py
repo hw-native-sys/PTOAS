@@ -216,6 +216,10 @@ SAMPLE_CASE_INT_SCALAR_DEFAULTS = {
     "deepseekv4prodecodea5": {
         "idx_qr_proj_matmul": {"v4": 0, "v5": 1},
         "kv_score_proj": {"v8": 0, "v9": 1},
+        # The token loop uses v10 / 8; the generic value 1 runs no work.
+        "qproj_dequant_rms_nope_rope": {
+            "v8": 0, "v9": 0, "v10": 8, "v11": 0, "v12": 1,
+        },
     },
     "deepseekv4flashdsparka5": {
         "kv_proj_matmul": {"v8": 0, "v9": 1},

@@ -64,13 +64,13 @@ using namespace mlir::pto;
     return success();
   }
 
-  [[maybe_unused]] static bool isMaskGranularityAdjacentWidening(StringRef inputGranularity,
+  [[maybe_unused]] inline bool isMaskGranularityAdjacentWidening(StringRef inputGranularity,
                                                 StringRef resultGranularity) {
     return (inputGranularity == "b8" && resultGranularity == "b16") ||
            (inputGranularity == "b16" && resultGranularity == "b32");
   }
 
-  [[maybe_unused]] static bool isMaskGranularityAdjacentNarrowing(StringRef inputGranularity,
+  [[maybe_unused]] inline bool isMaskGranularityAdjacentNarrowing(StringRef inputGranularity,
                                                  StringRef resultGranularity) {
     return (inputGranularity == "b16" && resultGranularity == "b8") ||
            (inputGranularity == "b32" && resultGranularity == "b16");
@@ -118,7 +118,7 @@ using namespace mlir::pto;
     return success();
   }
 
-  [[maybe_unused]] static bool isSupportedCmpMode(StringRef mode) {
+  [[maybe_unused]] inline bool isSupportedCmpMode(StringRef mode) {
     return mode == "eq" || mode == "ne" || mode == "lt" || mode == "le" ||
            mode == "gt" || mode == "ge";
   }

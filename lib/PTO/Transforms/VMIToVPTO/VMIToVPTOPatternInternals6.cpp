@@ -1946,7 +1946,8 @@ private:
       return rewriter.notifyMatchFailure(op, "physical bitcast arity mismatch");
     }
     return lowerPointwisePhysicalParts(
-        op, resultTypes, "physical bitcast arity mismatch", rewriter,
+        op, resultTypes,
+        rewriter,
         [&](int64_t index, Type resultType) -> FailureOr<Value> {
           return buildBitcastPart(op, sourceParts[index], resultType, rewriter);
         },

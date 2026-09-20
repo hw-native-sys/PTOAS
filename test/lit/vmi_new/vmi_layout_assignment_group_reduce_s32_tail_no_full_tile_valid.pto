@@ -6,21 +6,23 @@
 // INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
 // See LICENSE in the root of the software repository for the full text of the License.
 
-// RUN: not pto-test-opt %s -vmi-lower-unified-to-legacy -vmi-mask-granularity-assignment -vmi-layout-assignment -vmi-to-vpto 2>&1 | FileCheck %s
+// RUN: pto-test-opt %s -vmi-lower-unified-to-legacy -vmi-mask-granularity-assignment -vmi-layout-assignment | FileCheck %s
 
 module {
-  func.func @vmi_layout_assignment_group_reduce_s32_tail_no_full_tile_invalid(
+  func.func @vmi_layout_assignment_group_reduce_s32_tail_no_full_tile_valid(
       %source: !pto.vmi.vreg<192xf32>,
       %mask: !pto.vmi.mask<192xpred>,
       %dst: !pto.ptr<f32, ub>,
       %off: index) {
     %c1 = arith.constant 1 : index
-    // CHECK: VMI{{-}}UNSUPPORTED{{:}} pto.vmi.group_reduce_addf operand #0 has type
-    // CHECK-SAME: #pto.vmi.layout<contiguous>
-    // CHECK-SAME: requires
-    // CHECK-SAME: #pto.vmi.layout<deinterleaved = 4>
-    // CHECK-SAME: pto.vmi.ensure_layout cannot materialize this conversion
-    // CHECK: source/result layouts do not match a supported ensure_layout table row
+    // 192 f32 lanes span three physical parts, not the four a deinterleaved=4
+    // rearrangement needs, so no native row applies.  The reduction executes as
+    // dense masked rows over the contiguous source and the result carries one
+    // group per part.
+    // CHECK: pto.vmi.group_reduce_addf %arg0, %arg1
+    // CHECK-SAME: -> !pto.vmi.vreg<6xf32, #pto.vmi.layout<num_groups = 6, slots = 1>>
+    // CHECK: pto.vmi.group_store
+    // CHECK-SAME: {num_groups = 6 : i64}
     %sum = pto.vmi.vcadd %source, %mask
         {group = 6, reassoc}
         : !pto.vmi.vreg<192xf32>, !pto.vmi.mask<192xpred>

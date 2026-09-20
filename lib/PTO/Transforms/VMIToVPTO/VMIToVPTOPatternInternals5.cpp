@@ -202,15 +202,82 @@ private:
     return packet;
   }
 
+  // True when the compact result hands back one value per group rather than a
+  // single eight-slot packet.
+  bool isRowLocalSlots1Result(OpTy op, int64_t numGroups) const {
+    auto resultType = cast<VMIVRegType>(op.getResult().getType());
+    VMILayoutAttr layout = resultType.getLayoutAttr();
+    return layout && layout.isGroupSlots() &&
+           layout.getNumGroups() == numGroups && layout.getSlots() == 1;
+  }
+
+  // Collects the (source, mask) carriers each group value is reduced from.
+  FailureOr<SmallVector<std::pair<Value, Value>, kPairWidth>>
+  collectCompactInputs(OpTy op, ValueRange sourceParts, ValueRange maskParts,
+                       bool twoWideParts,
+                       OneToNPatternRewriter &rewriter) const {
+    SmallVector<std::pair<Value, Value>, kPairWidth> inputs;
+    if (!twoWideParts) {
+      // A grouped reduction over a contiguous multi-carrier source maps each
+      // group window across the physical parts (buildCompactGroupResult).
+      for (size_t index = 0; index < sourceParts.size(); ++index) {
+        inputs.push_back(std::make_pair(sourceParts[index], maskParts[index]));
+      }
+      return inputs;
+    }
+    // Eight-bit two-wide sources unpack each carrier into a pair of 16-bit
+    // reductions, so they consume exactly one physical source part.
+    const bool singleCarrier = sourceParts.size() == 1;
+    if (!singleCarrier) {
+      return rewriter.notifyMatchFailure(
+          op, "compact eight-bit group_reduce requires one source carrier");
+    }
+    for (int64_t part = 0; part < kPairWidth; ++part) {
+      auto input = prepareCompactReduction(op, sourceParts.front(),
+                                           maskParts.front(), part, rewriter);
+      if (failed(input)) {
+        return failure();
+      }
+      inputs.push_back(*input);
+    }
+    return inputs;
+  }
+
+  // Row-local slots=1 results hand back one physical part per group.
+  LogicalResult lowerRowLocalSlots1Result(
+      OpTy op, ArrayRef<std::pair<Value, Value>> inputs, VRegType resultType,
+      int64_t groupSize, int64_t numGroups,
+      OneToNPatternRewriter &rewriter) const {
+    SmallVector<Value> results;
+    results.reserve(numGroups);
+    for (int64_t group = 0; group < numGroups; ++group) {
+      FailureOr<Value> reduced = buildCompactGroupResult(
+          op, inputs, resultType, group, groupSize, rewriter);
+      if (failed(reduced)) {
+        return failure();
+      }
+      results.push_back(*reduced);
+    }
+    replaceOpWithFlatConvertedValues(rewriter, op, results,
+                                     *this->getTypeConverter());
+    return success();
+  }
+
   LogicalResult lowerCompactRows(
       OpTy op, ValueRange sourceParts, ValueRange maskParts,
       TypeRange resultTypes, int64_t groupSize,
       OneToNPatternRewriter &rewriter) const {
-    bool invalidArity = sourceParts.size() != 1 || maskParts.size() != 1 ||
-                        resultTypes.size() != 1;
+    int64_t numGroups = op.getNumGroupsAttr().getInt();
+    const bool rowLocalSlots1 = isRowLocalSlots1Result(op, numGroups);
+    size_t expectedResultCount =
+        rowLocalSlots1 ? static_cast<size_t>(numGroups) : 1;
+    bool invalidArity = sourceParts.empty() ||
+                        sourceParts.size() != maskParts.size() ||
+                        resultTypes.size() != expectedResultCount;
     if (invalidArity) {
       return rewriter.notifyMatchFailure(
-          op, "compact group_reduce requires one physical source and result");
+          op, "compact group_reduce requires matching source/mask parts and "
+              "one result part per group");
     }
     auto resultType = cast<VRegType>(resultTypes.front());
     if (groupSize == 1 && isa<IntegerType>(resultType.getElementType())) {
@@ -221,14 +288,14 @@ private:
     auto integerType = dyn_cast<IntegerType>(logicalType.getElementType());
     bool twoWideParts = integerType && integerType.getWidth() == kElementBits8 &&
                         logicalType.getElementCount() > kWidePartElemThreshold;
-    SmallVector<std::pair<Value, Value>, kPairWidth> inputs;
-    for (int64_t part = 0; part < (twoWideParts ? kPairWidth : 1); ++part) {
-      auto input = prepareCompactReduction(op, sourceParts.front(),
-                                           maskParts.front(), part, rewriter);
-      if (failed(input)) {
-        return failure();
-      }
-      inputs.push_back(*input);
+    FailureOr<SmallVector<std::pair<Value, Value>, kPairWidth>> inputs =
+        collectCompactInputs(op, sourceParts, maskParts, twoWideParts, rewriter);
+    if (failed(inputs)) {
+      return failure();
+    }
+    if (rowLocalSlots1) {
+      return lowerRowLocalSlots1Result(op, *inputs, resultType, groupSize,
+                                       numGroups, rewriter);
     }
     FailureOr<MaskType> resultMaskType =
         getMaskTypeForVReg(resultType, rewriter.getContext());
@@ -236,7 +303,7 @@ private:
       return failure();
     }
     FailureOr<Value> packet = buildCompactPacket(
-        op, inputs, resultType, *resultMaskType, groupSize, rewriter);
+        op, *inputs, resultType, *resultMaskType, groupSize, rewriter);
     if (failed(packet)) {
       return failure();
     }

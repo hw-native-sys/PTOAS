@@ -778,8 +778,7 @@ struct OneToNVMIGroupLoadOpPattern : OneToNOpConversionPattern<VMIGroupLoadOp> {
   using OneToNOpConversionPattern<VMIGroupLoadOp>::OneToNOpConversionPattern;
 
 private:
-  FailureOr<SmallVector<Type>> getResultTypes(
-      VMIGroupLoadOp op, OneToNPatternRewriter &rewriter) const {
+  FailureOr<SmallVector<Type>> getResultTypes(VMIGroupLoadOp op) const {
     FailureOr<SmallVector<Type>> resultTypes =
         getConvertedResultTypes(op, 0, *this->getTypeConverter());
     if (failed(resultTypes)) {
@@ -800,7 +799,7 @@ private:
     }
     std::optional<int64_t> constantRowStride =
         getConstantIndexValue(op.getRowStride());
-    FailureOr<SmallVector<Type>> resultTypes = getResultTypes(op, rewriter);
+    FailureOr<SmallVector<Type>> resultTypes = getResultTypes(op);
     if (failed(resultTypes)) {
       return failure();
     }
@@ -1027,7 +1026,7 @@ private:
     }
     int64_t constantRowStride = shape->first;
     int64_t factor = shape->second;
-    FailureOr<SmallVector<Type>> maybeResultTypes = getResultTypes(op, rewriter);
+    FailureOr<SmallVector<Type>> maybeResultTypes = getResultTypes(op);
     if (failed(maybeResultTypes)) {
       return failure();
     }
@@ -1228,11 +1227,6 @@ static LogicalResult emitGroupSlotLoadSlots1Chunk(
   if (failed(resultPart)) {
     return failure();
   }
-  FailureOr<Value> oneBlockMask = createPrefixMask(
-      op->getLoc(), resultPart->maskType, "PAT_VL1", rewriter);
-  if (failed(oneBlockMask)) {
-    return rewriter.notifyMatchFailure(op, "failed to create group_slot_load mask");
-  }
   Value groupOffset = offset;
   if (group != 0) {
     Value groupIndex =
@@ -1246,17 +1240,17 @@ static LogicalResult emitGroupSlotLoadSlots1Chunk(
                                              rowOffset)
                       .getResult();
   }
-  Value slotBase = rewriter
-                       .create<AddPtrOp>(op->getLoc(), source.getType(), source,
-                                         groupOffset)
-                       .getResult();
-  auto zeroI16 = rewriter.create<arith::ConstantIntOp>(op->getLoc(), 0, 16);
-  results.push_back(
-      rewriter
-          .create<VsldbOp>(op->getLoc(), resultPart->valueType,
-                          /*updated_base=*/Type{}, slotBase, zeroI16, zeroI16,
-                          *oneBlockMask)
-          .getResult());
+  // Only lane zero of the part is semantically live, so a lane-zero BRC load
+  // reads the group element at its own effective address and broadcasts it.
+  // Unlike a block-strided vsldb this needs no 32B block alignment and accepts
+  // any stride, including unit stride.
+  FailureOr<Value> loaded = emitScalarBroadcastLoad(
+      op, resultPart->valueType.getElementType(), resultPart->valueType,
+      source, groupOffset, rewriter);
+  if (failed(loaded)) {
+    return failure();
+  }
+  results.push_back(*loaded);
   return success();
 }
 
@@ -1264,22 +1258,17 @@ static LogicalResult lowerGroupSlotLoadSlots1(
     Operation *op, Value source, Value offset, Value sourceGroupStride,
     VMIVRegType resultVMIType, TypeRange resultTypes,
     OneToNPatternRewriter &rewriter, SmallVectorImpl<Value> &results) {
-  unsigned elementBits =
-      pto::getPTOStorageElemBitWidth(resultVMIType.getElementType());
-  if (elementBits == 0 || kGroupSlotVectorBits % elementBits != 0) {
+  if (!getScalarBroadcastLoadDistToken(resultVMIType.getElementType())) {
     return rewriter.notifyMatchFailure(
-        op, "slots=1 group_slot_load requires supported element width");
+        op, "slots=1 group_slot_load requires a supported BRC load element "
+            "width");
   }
-  int64_t alignedStrideElems = 256 / elementBits;
-  std::optional<int64_t> constantStride =
-      getConstantIndexValue(sourceGroupStride);
-  if (!constantStride || *constantStride <= 0 ||
-      *constantStride % alignedStrideElems != 0) {
+  if (std::optional<int64_t> constantStride =
+          getConstantIndexValue(sourceGroupStride);
+      constantStride && *constantStride <= 0) {
     return rewriter.notifyMatchFailure(
-        op, Twine("slots=1 group_slot_load requires constant positive "
-                  "source_group_stride divisible by ") +
-                Twine(alignedStrideElems) +
-                " elements for 32B lane-0 vsldb alignment");
+        op, "slots=1 group_slot_load requires a positive "
+            "source_group_stride when it is constant");
   }
   for (auto [group, resultType] : llvm::enumerate(resultTypes)) {
     if (failed(emitGroupSlotLoadSlots1Chunk(

@@ -10,6 +10,11 @@
 //===- VMIToVPTOPatternInternals10.inc - VMIToVPTO internals -*- C++ -*-===//
 //===----------------------------------------------------------------------===//
 
+// vunzip/vzip split or rejoin a half-width part into one or a pair of wide
+// parts, so the per-part chunk counts they accept are the unit count and this
+// pair size.
+constexpr size_t kSplitWidePartsPerHalf = 2;
+
 struct OneToNVMIExtFOpPattern : OneToNOpConversionPattern<VMIExtFOp> {
   using OneToNOpConversionPattern<VMIExtFOp>::OneToNOpConversionPattern;
 
@@ -933,7 +938,7 @@ private:
           op, "failed to bitcast the vunzip source");
     }
     FailureOr<Value> rhs =
-        sourcePartsPerResult == 2
+        sourcePartsPerResult == kSplitWidePartsPerHalf
             ? bitcastVReg(op.getLoc(), secondSource, carrierType, rewriter)
             : lhs;
     if (failed(rhs)) {
@@ -980,7 +985,7 @@ private:
       }
       Value firstSource = sourceParts[chunkIndex * sourcePartsPerResult];
       Value secondSource =
-          sourcePartsPerResult == 2
+          sourcePartsPerResult == kSplitWidePartsPerHalf
               ? sourceParts[chunkIndex * sourcePartsPerResult + 1]
               : firstSource;
       LogicalResult split =
@@ -1018,7 +1023,8 @@ public:
     // One wide register feeds one half register, or two when the lane count
     // leaves a result part half full; wider ratios are not a register pairing.
     size_t sourcePartsPerResult = sourceParts.size() / lowTypes->size();
-    if (sourcePartsPerResult != 1 && sourcePartsPerResult != 2) {
+    if (sourcePartsPerResult != 1 &&
+        sourcePartsPerResult != kSplitWidePartsPerHalf) {
       return rewriter.notifyMatchFailure(
           op, "vunzip expects one or two source parts per result part");
     }
@@ -1064,7 +1070,7 @@ private:
     }
     unsigned widePartsPerHalf =
         static_cast<unsigned>(resultTypes.size() / lowParts.size());
-    if (widePartsPerHalf != 1 && widePartsPerHalf != 2) {
+    if (widePartsPerHalf != 1 && widePartsPerHalf != kSplitWidePartsPerHalf) {
       return rewriter.notifyMatchFailure(
           op, "vzip expects one or two wide parts per half-width part");
     }

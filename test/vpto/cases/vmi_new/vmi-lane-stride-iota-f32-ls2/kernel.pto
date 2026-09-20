@@ -1,0 +1,64 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+
+// Regression for #1411 – float lane-strided iota lowering path.
+//
+// VL=32 f32: vload seeds lane_stride=2 because laneStrideSeedAllowed=true for 32-bit
+// (bitwidth != 8) and VL=32 < lanesPerPart=64 (2048/32).
+// There is no preferred store pattern for 32-bit ls=2, so the vload is required.
+//
+// Lowering path exercised (createIotaLaneStrideFloatRamp):
+//   vlds(UNPK_B32) → zeros (lane_stride=2 layout seeded)
+//   vci(0.0, ls=2) → physical [0.0..63.0] as f32
+//   vmuls(×0.5) → physical [0.0..31.5], even lanes = logical [0.0..31.0]
+//   vadd(zeros, iota×0.5) → [0.0..31.0]
+//   vsts(PK_B64) selects even physical lanes → 32 f32 values [0.0..31.0].
+//
+// Expected output: 32 f32 elements [0.0..31.0].
+
+module attributes {pto.target_arch = "a5", pto.kernel_kind = #pto.kernel_kind<vector>} {
+  func.func @vmi_lane_stride_iota_f32_ls2_kernel(
+      %src_gm: !pto.ptr<f32, gm>,
+      %dst_gm: !pto.ptr<f32, gm>) attributes {pto.kernel} {
+    %c0       = arith.constant 0              : index
+    %c0_f32   = arith.constant 0.000000e+00   : f32
+    %c0_i64   = arith.constant 0              : i64
+    %c1_i64   = arith.constant 1              : i64
+    %c128_i64 = arith.constant 128            : i64
+
+    %ub_src = pto.castptr %c0_i64   : i64 -> !pto.ptr<f32, ub>
+    %ub_dst = pto.castptr %c128_i64 : i64 -> !pto.ptr<f32, ub>
+
+    pto.mte_gm_ub %src_gm, %ub_src, %c0_i64, %c128_i64
+      nburst(%c1_i64, %c128_i64, %c128_i64)
+      : !pto.ptr<f32, gm>, !pto.ptr<f32, ub>, i64, i64, i64, i64, i64
+    pto.set_flag["PIPE_MTE2", "PIPE_V", "EVENT_ID0"]
+    pto.wait_flag["PIPE_MTE2", "PIPE_V", "EVENT_ID0"]
+
+    pto.vecscope {
+      // VL=32 f32: vload seeds lane_stride=2; layout propagates through vadd to vci.
+      %zeros = pto.vmi.vload %ub_src[%c0]
+          : !pto.ptr<f32, ub> -> !pto.vmi.vreg<32xf32>
+      %iota  = pto.vmi.vci %c0_f32
+          : f32 -> !pto.vmi.vreg<32xf32>
+      %result = pto.vmi.vadd %zeros, %iota
+          : !pto.vmi.vreg<32xf32>, !pto.vmi.vreg<32xf32>
+          -> !pto.vmi.vreg<32xf32>
+      pto.vmi.vstore %result, %ub_dst[%c0]
+          : !pto.vmi.vreg<32xf32>, !pto.ptr<f32, ub>
+    }
+
+    pto.set_flag["PIPE_V", "PIPE_MTE3", "EVENT_ID0"]
+    pto.wait_flag["PIPE_V", "PIPE_MTE3", "EVENT_ID0"]
+    pto.mte_ub_gm %ub_dst, %dst_gm, %c128_i64
+      nburst(%c1_i64, %c128_i64, %c128_i64)
+      : !pto.ptr<f32, ub>, !pto.ptr<f32, gm>, i64, i64, i64, i64
+    pto.barrier #pto.pipe<PIPE_ALL>
+    return
+  }
+}

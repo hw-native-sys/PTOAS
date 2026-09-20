@@ -22,6 +22,8 @@
     #pto.vmi.layout<contiguous, lane_stride = 2>>
 !b32 = !pto.vmi.vreg<64xf32, #pto.vmi.layout<contiguous>>
 !m32 = !pto.vmi.mask<64xb32, #pto.vmi.layout<contiguous>>
+!b32_ls2 = !pto.vmi.vreg<32xf32,
+    #pto.vmi.layout<contiguous, lane_stride = 2>>
 !f32_d4 = !pto.vmi.vreg<64xf32,
     #pto.vmi.layout<deinterleaved = 4>>
 !f32_bd2 = !pto.vmi.vreg<64xf32,
@@ -68,6 +70,13 @@ module {
     %result = pto.vmi.vmul %lhs, %rhs, %mask
         : !b32, !b32, !m32 -> !b32
     return %result : !b32
+  }
+
+  func.func @b32_lane_stride2_without_mask(%lhs: !b32_ls2,
+                                            %rhs: !b32_ls2) -> !b32_ls2 {
+    %result = pto.vmi.vadd %lhs, %rhs
+        : !b32_ls2, !b32_ls2 -> !b32_ls2
+    return %result : !b32_ls2
   }
 
   func.func @bf16_abs_lane_stride2(%source: !b16_ls2) -> !b16_ls2 {
@@ -134,6 +143,13 @@ module {
 // CHECK-LABEL: func.func @b32_native(
 // CHECK-NOT: pto.pbitcast
 // CHECK: pto.vmul {{.*}} : !pto.vreg<64xf32>, !pto.vreg<64xf32>, !pto.mask<b32> -> !pto.vreg<64xf32>
+// CHECK-NOT: pto.vmi.
+
+// CHECK-LABEL: func.func @b32_lane_stride2_without_mask(
+// CHECK-NOT: pto.pbitcast
+// CHECK: %[[ACTIVE:.*]], %{{.*}} = pto.plt_b32 %c63_i32 : i32 -> !pto.mask<b32>, i32
+// CHECK: pto.vadd {{.*}}, %[[ACTIVE]]
+// CHECK-SAME: !pto.vreg<64xf32>, !pto.vreg<64xf32>, !pto.mask<b32> -> !pto.vreg<64xf32>
 // CHECK-NOT: pto.vmi.
 
 // CHECK-LABEL: func.func @bf16_abs_lane_stride2(

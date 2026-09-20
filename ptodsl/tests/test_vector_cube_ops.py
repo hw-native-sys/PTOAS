@@ -7,18 +7,20 @@
 # INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
 # See LICENSE in the root of the software repository for the full text of the License.
 
-import unittest
 import inspect
+import unittest
+from contextlib import ExitStack, contextmanager
 from types import SimpleNamespace
 from unittest.mock import ANY, MagicMock, call, patch
 
+from ptoas.mlir.dialects import pto as pto_dialect
+from ptoas.mlir.ir import F32Type, IntegerType, Type
+
+from ptodsl import pto
 import ptodsl._ops as _ops
 import ptodsl._pipe_namespace as _pipe_namespace
 from ptodsl._context import make_context
 from ptodsl._diagnostics import PTODSLDeprecationWarning
-from ptodsl import pto
-from ptoas.mlir.ir import F32Type, IntegerType, Type
-
 import ptodsl._ops_common as _ops_common
 import ptodsl._ops_core as _ops_core
 import ptodsl._ops_vmem as _ops_vmem
@@ -27,7 +29,6 @@ import ptodsl._ops_vmath as _ops_vmath
 import ptodsl._ops_tile as _ops_tile
 import ptodsl._ops_mte as _ops_mte
 import ptodsl._ops_simt as _ops_simt
-from contextlib import ExitStack, contextmanager
 
 _OPS_FAMILY = (
     _ops, _ops_common, _ops_core, _ops_vmem, _ops_mask,
@@ -268,7 +269,7 @@ class VectorCubeSurfaceTest(unittest.TestCase):
         names = [
             "vsub", "vmin", "vand", "vor", "vxor", "vshl", "vshr",
             "vln", "vsqrt", "vabs", "vneg", "vrec", "vrsqrt", "vrelu", "vnot",
-            "vsqz",
+            "vsqz", "vusqz", "vunpack", "dhistv2",
             "vcmin", "vcgmin", "vcpadd",
             "vadds", "vmuls", "vmaxs", "vmins", "vlrelu", "vshls", "vshrs", "vands", "vors", "vxors",
             "vaxpy", "vmula", "vci", "vaddrelu", "vsubrelu", "vsel",
@@ -569,6 +570,92 @@ class VectorCubeSurfaceTest(unittest.TestCase):
 
         self.assertIs(output, result)
         op_ctor.assert_called_once_with("vec_ty", inp, mask)
+
+    def test_vusqz_dispatches_to_generated_op_with_source_type(self):
+        inp = SimpleNamespace(type="vec_ty")
+        mask = SimpleNamespace(type="mask_ty")
+        result = object()
+
+        with patch_ops(
+            "unwrap_surface_value", side_effect=_identity
+        ), patch_ops(
+            "wrap_surface_value", side_effect=_identity
+        ), patch.object(
+            pto_dialect,
+            "VusqzOp",
+            return_value=SimpleNamespace(result=result),
+        ) as op_ctor:
+            output = pto.vusqz(inp, mask)
+
+        self.assertIs(output, result)
+        op_ctor.assert_called_once_with("vec_ty", inp, mask)
+
+    def test_dhistv2_dispatches_like_chistv2(self):
+        acc = SimpleNamespace(type="acc_ty")
+        source = SimpleNamespace(type="source_ty")
+        mask = SimpleNamespace(type="mask_ty")
+        bin_val = SimpleNamespace(type="i32")
+        result = object()
+
+        with patch_ops(
+            "unwrap_surface_value", side_effect=_identity
+        ), patch_ops(
+            "wrap_surface_value", side_effect=_identity
+        ), patch.object(
+            pto_dialect,
+            "Dhistv2Op",
+            return_value=SimpleNamespace(result=result),
+        ) as op_ctor:
+            output = pto.dhistv2(acc, source, mask, bin_val)
+
+        self.assertIs(output, result)
+        op_ctor.assert_called_once_with("acc_ty", acc, source, mask, bin_val)
+
+    def assert_vunpack_dispatch(self, dtype, lanes, expected_type, op_name):
+        with make_context():
+            src = SimpleNamespace(type=pto.vreg_type(lanes, dtype).resolve())
+            part = object()
+            coerced_part = object()
+            result = object()
+            with patch_ops(
+                "unwrap_surface_value", side_effect=_identity
+            ), patch_ops(
+                "wrap_surface_value", side_effect=_identity
+            ), patch_ops(
+                "_coerce_vunpack_part", return_value=coerced_part
+            ), patch.object(
+                pto_dialect,
+                op_name,
+                return_value=SimpleNamespace(result=result),
+            ) as op_ctor:
+                output = pto.vunpack(src, part)
+
+            self.assertIs(output, result)
+            self.assertEqual(str(op_ctor.call_args.args[0]), expected_type)
+            self.assertIs(op_ctor.call_args.args[1], src)
+            self.assertIs(op_ctor.call_args.args[2], coerced_part)
+
+    def test_vunpack_infers_width_and_selects_extension_from_signedness(self):
+        cases = [
+            (pto.si8, 256, "!pto.vreg<128xsi16>", "VsunpackOp"),
+            (pto.ui8, 256, "!pto.vreg<128xui16>", "VzunpackOp"),
+            (pto.i16, 128, "!pto.vreg<64xui32>", "VzunpackOp"),
+        ]
+        for dtype, lanes, expected_type, op_name in cases:
+            with self.subTest(dtype=dtype):
+                self.assert_vunpack_dispatch(dtype, lanes, expected_type, op_name)
+
+    def test_vunpack_rejects_unsupported_source_width(self):
+        with make_context():
+            src = SimpleNamespace(type=pto.vreg_type(64, pto.ui32).resolve())
+            with self.assertRaisesRegex(TypeError, "currently supports only"):
+                pto.vunpack(src, 0)
+
+    def test_vunpack_rejects_invalid_static_part(self):
+        with make_context():
+            src = SimpleNamespace(type=pto.vreg_type(256, pto.ui8).resolve())
+            with self.assertRaisesRegex(ValueError, "part 0 .* or 1"):
+                pto.vunpack(src, 2)
 
     def test_vcgmin_and_vsel_dispatch_correctly(self):
         vec = SimpleNamespace(type="vec_ty")

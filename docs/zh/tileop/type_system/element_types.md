@@ -24,11 +24,16 @@
 - `f32`
 - `bf16`
 
-### 低精度扩展类型
+### MLIR 内建低精度浮点
 
 - `f8E4M3FN`
 - `f8E5M2`
+
+### PTO 自定义低精度类型
+
 - `!pto.hif8`
+- `!pto.f8E8M0`
+- `!pto.hif8x2`
 - `!pto.f4E1M2x2`
 - `!pto.f4E2M1x2`
 
@@ -37,6 +42,16 @@
 ### `!pto.hif8`
 
 - 每个元素 1 Byte
+- 作为元素类型嵌入更高层 PTO 类型（如 `!pto.tile_buf`）中使用
+
+### `!pto.f8E8M0`
+
+- E8M0（8 位指数、无尾数）类型，每个元素 1 Byte
+- 用作 MX 量化的 exponent / scale 元素类型
+
+### `!pto.hif8x2`
+
+- 两个 `!pto.hif8` 打包为一对，每个打包对 2 Byte
 - 作为元素类型嵌入更高层 PTO 类型中使用
 
 ### `!pto.f4E1M2x2`

@@ -1061,7 +1061,8 @@ pto.tsubc ins(%a, %b, %c :
 ### `pto.tcvt` — 逐元素类型转换
 
 ```mlir
-pto.tcvt ins(<src> {rmode = <round_mode>, satmode = <saturation_mode>} : <src_type>)
+pto.tcvt ins(<src>[, <tmp>] {rmode = <round_mode>, satmode = <saturation_mode>}
+            : <src_type>[, <tmp_type>])
          outs(<dst> : <dst_type>)
 ```
 
@@ -1069,7 +1070,7 @@ pto.tcvt ins(<src> {rmode = <round_mode>, satmode = <saturation_mode>} : <src_ty
 
 ```text
 For each element (i, j):
-    dst[i, j] = saturate(cast(src[i, j], rmode), sat_mode)
+    dst[i, j] = saturate(cast(src[i, j], rmode), satmode)
 ```
 
 **参数：**
@@ -1077,6 +1078,7 @@ For each element (i, j):
 | Name | Type | Description |
 | ---- | ---- | ----------- |
 | `src` | `pto.tile_buf` | 源 tile buffer |
+| `tmp` | `pto.tile_buf`（可选） | 临时 scratch tile；仅 A2/A3 上 `satmode=OFF` 且为 `f32 -> i16`、`f16 -> i16`、`f16 -> i8` 转换时必须提供 |
 | `dst` | `pto.tile_buf` | 目标 tile buffer，元素类型可不同于 `src` |
 
 **返回值：** 无。以 DPS 的形式写入 `dst`。
@@ -1092,7 +1094,7 @@ For each element (i, j):
   - `#pto<round_mode TRUNC>` — 截断
   - `#pto<round_mode ODD>` — 向最近奇数舍入
   - `#pto<round_mode CAST_RINT>` — 类型转换默认舍入
-- `satmode` — 饱和模式，控制舍入后是否按目标类型范围 clamp。默认值为 `OFF`。
+- `satmode` — 饱和模式，控制舍入后是否按目标类型范围 clamp。默认值为 `ON`。
   - `#pto<saturation_mode ON>` — 启用饱和
   - `#pto<saturation_mode OFF>` — 关闭饱和
 
@@ -1106,6 +1108,11 @@ For each element (i, j):
   - A2/A3 不支持低精度 `tcvt` 操作数。
   - A5 仅接受实现中列出的低精度转换对，例如 `f32 -> f8E4M3*`、`f32 -> f8E5M2*`、`f32 -> !pto.hif8`、`f16 -> !pto.hif8`、`bf16 <-> !pto.f4E1M2x2`、`bf16 <-> !pto.f4E2M1x2`、`f8E4M3* -> f32`、`f8E5M2* -> f32`、`!pto.hif8 -> f32`。
   - 非低精度类型对沿用目标定义的转换行为。
+
+- **可选 tmp 操作数**
+  - `tmp` 为可选操作数；仅在 A2/A3 上、`satmode=OFF` 且转换对为 `f32 -> i16`、`f16 -> i16` 或 `f16 -> i8` 时才需要。
+  - 默认的 `satmode=ON` 不需要 `tmp`；A5 上的窄化转换也不需要 `tmp`。
+  - 省略 `tmp` 时， `ptoas` 自动补写临时空间。
 
 **硬件：**
 

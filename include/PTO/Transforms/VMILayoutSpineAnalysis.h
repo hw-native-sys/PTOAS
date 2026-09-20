@@ -34,6 +34,11 @@ namespace mlir::pto {
 /// consumer declares its members with the same bound.
 constexpr unsigned kDirectionSpineSetInlineCapacity = 8;
 
+/// Inline capacity of the narrow-side compute cast set.  One cast per
+/// width-changing op on the narrow side of a class, so the small bound covers
+/// the sets a kernel class produces before the set spills to the heap.
+constexpr unsigned kComputeCastSetInlineCapacity = 8;
+
 /// Collect the cast ops that are legs of a closed nested round trip (see the
 /// direction-spine recognition in VMILayoutAssignment).  The result is a set of
 /// ops, not of values: a leg is identified by the cast that implements it.

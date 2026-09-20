@@ -12,8 +12,9 @@ module {
   func.func @vmi_layout_assignment_group_broadcast_load_e2b_b16(
       %src: !pto.ptr<bf16, ub>, %off: index) -> !pto.vmi.vreg<256xbf16, #pto.vmi.layout<contiguous>> {
     %c1 = arith.constant 1 : index
-    %c8 = arith.constant 8 : index
-    %aligned_off = arith.muli %off, %c8 : index
+    // 16 bf16 elements is one 32B block, the alignment pto.vsldb requires.
+    %c16 = arith.constant 16 : index
+    %aligned_off = arith.muli %off, %c16 : index
     %out = pto.vmi.vload %src[%aligned_off], %c1 {dist_mode = "brc", group = 8}
         : !pto.ptr<bf16, ub> -> !pto.vmi.vreg<256xbf16, #pto.vmi.layout<contiguous>>
     return %out : !pto.vmi.vreg<256xbf16, #pto.vmi.layout<contiguous>>

@@ -26,6 +26,7 @@ std::optional<std::string> getX2MemoryDistToken(Type elementType,
 std::optional<std::string> getDenseLaneStrideLoadDistToken(VMIVRegType type);
 std::optional<std::string> getDenseLaneStrideStoreDistToken(VMIVRegType type);
 std::optional<std::string> getPointStoreDistToken(Type elementType);
+std::optional<std::string> getScalarBroadcastLoadDistToken(Type elementType);
 static int64_t getElementDeinterleaveFactor(VMILayoutAttr layout);
 static Type getMemoryElementType(Type type);
 static Attribute getMemorySpace(Type type);
@@ -57,9 +58,8 @@ static LogicalResult lowerPhysicalBinaryWithCarryResults(
 
 template <typename OpTy, typename LowerFn>
 static LogicalResult lowerPointwisePhysicalParts(
-    OpTy op, ArrayRef<Type> resultTypes, StringRef arityMessage,
-    OneToNPatternRewriter &rewriter, LowerFn &&lowerFn,
-    TypeConverter &typeConverter);
+    OpTy op, ArrayRef<Type> resultTypes, OneToNPatternRewriter &rewriter,
+    LowerFn &&lowerFn, TypeConverter &typeConverter);
 
 static bool isContiguousVMIVRegPart(Value part);
 

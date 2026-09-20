@@ -90,6 +90,168 @@ static llvm::cl::opt<bool> preferLaneStrideNarrowing(
 #include "VMILayoutSupportMaterialization.inc"
 } // namespace
 
+//===----------------------------------------------------------------------===//
+// Single-carrier group packet predicates
+//===----------------------------------------------------------------------===//
+// Defined here rather than in VMILayoutSupportQueryHelpers.inc: these have
+// external linkage (declared in PTO/Transforms/VMILayoutSupport.h) so their
+// definitions must not live in a header-included fragment.
+
+/// Carrier widths the narrowing pack chain can express: the packs are 32 -> 16
+/// and 16 -> 8, so only 8/16/32-bit carriers have a form to pack or unpack with.
+namespace {
+constexpr unsigned kCarrierBits8 = 8;
+constexpr unsigned kCarrierBits16 = 16;
+constexpr unsigned kCarrierBits32 = 32;
+
+/// Lane strides of a dense lane-strided value: two or four element lanes share
+/// the carrier a single unit-stride lane occupies.
+constexpr int64_t kLaneStridePair = 2;
+constexpr int64_t kLaneStrideQuad = 4;
+
+/// True for a carrier width the narrowing pack chain can express.
+bool isPackableCarrierBits(unsigned bits) {
+  return bits == kCarrierBits8 || bits == kCarrierBits16 ||
+         bits == kCarrierBits32;
+}
+
+/// True when a dense lane-strided value of `elementBits`-wide elements has a
+/// packable carrier at `laneStride`: both the element carrier and the
+/// lane-strided carrier (element bits times the stride) have to be expressible.
+bool isPackableLaneStride(unsigned elementBits, int64_t laneStride) {
+  if (laneStride == 1) {
+    return isPackableCarrierBits(elementBits);
+  }
+  if (laneStride != kLaneStridePair && laneStride != kLaneStrideQuad) {
+    return false;
+  }
+  return isPackableCarrierBits(elementBits *
+                               static_cast<unsigned>(laneStride));
+}
+} // namespace
+
+bool isVMISingleCarrierGroupSlotsWithStride(VMILayoutAttr layout,
+                                            int64_t lanesPerPart,
+                                            int64_t laneStride) {
+  bool usablePacket = layout && layout.isGroupSlots() && lanesPerPart > 0 &&
+                      laneStride > 0;
+  if (!usablePacket) {
+    return false;
+  }
+  int64_t numGroups = layout.getNumGroups();
+  int64_t slots = layout.getSlots();
+  // The group-slot forms the lowering builds carry eight group slots per part
+  // (or one), and a packet with more slots is hand-written IR whose groups are
+  // spread over several carriers, so it is not a single-carrier packet.
+  bool usablePacketForm =
+      slots > 0 && slots <= kValue8 && layout.getLaneStride() == laneStride &&
+      numGroups <= slots && numGroups <= lanesPerPart;
+  if (!usablePacketForm) {
+    return false;
+  }
+  // Group g sits at lane (g % slots) * laneStride, so the lane stride widens the
+  // packet's footprint: the last group still has to land inside one carrier.
+  // The divisional form keeps an out-of-range attribute from overflowing the
+  // product (numGroups - 1 <= (lanesPerPart - 1) / laneStride is equivalent for
+  // the non-negative values admitted above).
+  return numGroups - 1 <= (lanesPerPart - 1) / laneStride;
+}
+
+bool isVMISingleCarrierGroupSlots(VMILayoutAttr layout, int64_t lanesPerPart) {
+  return isVMISingleCarrierGroupSlotsWithStride(layout, lanesPerPart, 1);
+}
+
+bool needsVMIDenseLaneStrideGroupSlotBridge(VMILayoutAttr sourceLayout,
+                                            VMILayoutAttr resultLayout,
+                                            Type elementType,
+                                            int64_t lanesPerPart) {
+  if (!sourceLayout || !resultLayout) {
+    return false;
+  }
+  bool sourceIsPacket = isVMISingleCarrierGroupSlotsWithStride(
+      sourceLayout, lanesPerPart, sourceLayout.getLaneStride());
+  bool resultIsPacket = isVMISingleCarrierGroupSlotsWithStride(
+      resultLayout, lanesPerPart, resultLayout.getLaneStride());
+  bool denseToPacket = sourceLayout.isContiguous() && resultIsPacket;
+  bool packetToDense = sourceIsPacket && resultLayout.isContiguous();
+  if (!denseToPacket && !packetToDense) {
+    return false;
+  }
+  int64_t sourceStride = sourceLayout.getLaneStride();
+  int64_t resultStride = resultLayout.getLaneStride();
+  if (sourceStride == resultStride) {
+    // Same lane stride: the carrier identity already covers the pair.
+    return false;
+  }
+
+  // Two strides that are both non-unit would need two dense steps, which no
+  // materialization covers: only unit <-> stride moves exist, so such a pair is
+  // rejected here rather than admitted and left residual by the lowering.
+  if (sourceStride != 1 && resultStride != 1) {
+    return false;
+  }
+
+  // The dense side moves between the two lane strides through the dense
+  // lane-stride materialization, whose carrier chain has to stay expressible:
+  // both the element carrier and the lane-strided carrier have to be packable
+  // widths, i.e. 8/16/32 bits (there is no 64-bit pack form).
+  unsigned elementBits = pto::getPTOStorageElemBitWidth(elementType);
+  return isPackableLaneStride(elementBits, sourceStride) &&
+         isPackableLaneStride(elementBits, resultStride);
+}
+
+bool isVMISingleCarrierGroupSlotAlias(VMILayoutAttr lhs, VMILayoutAttr rhs,
+                                      int64_t lanesPerPart) {
+  // A single-carrier packet places group g at lane (g % slots) * lane_stride
+  // and a dense contiguous value places logical lane i at lane i * lane_stride,
+  // so both describe the same carrier lanes whenever the lane strides agree.
+  // The stride is part of the shared mapping, not a condition for the identity.
+  auto isCarrierPair = [lanesPerPart](VMILayoutAttr packet,
+                                      VMILayoutAttr dense) {
+    return dense && dense.isContiguous() &&
+           isVMISingleCarrierGroupSlotsWithStride(packet, lanesPerPart,
+                                                  dense.getLaneStride());
+  };
+  return isCarrierPair(lhs, rhs) || isCarrierPair(rhs, lhs);
+}
+
+//===----------------------------------------------------------------------===//
+// File-local helpers shared with VMILayoutSupportQueryHelpers.inc below.
+//===----------------------------------------------------------------------===//
+
+namespace {
+
+// Pick the unique cast layout fact whose result layout equals \p resultLayout
+// from a successful source-side cast query.  The generic and the spine-scoped
+// cast reconciliation share this step; the caller supplies the diagnostics.
+FailureOr<VMICastLayoutFact> selectCastLayoutFactForResultLayout(
+    ArrayRef<VMICastLayoutFact> facts, VMILayoutAttr resultLayout,
+    StringRef ambiguousMessage, StringRef noMatchMessage,
+    std::string *reason) {
+  std::optional<VMICastLayoutFact> selected;
+  for (const VMICastLayoutFact &fact : facts) {
+    if (fact.resultLayout != resultLayout) {
+      continue;
+    }
+    if (selected) {
+      if (reason) {
+        *reason = ambiguousMessage.str();
+      }
+      return failure();
+    }
+    selected = fact;
+  }
+  if (!selected) {
+    if (reason) {
+      *reason = noMatchMessage.str();
+    }
+    return failure();
+  }
+  return *selected;
+}
+
+} // namespace
+
 #include "VMILayoutSupportQueryHelpers.inc"
 #include "VMILayoutSupportGroupCapabilities.inc"
 
@@ -178,14 +340,6 @@ FailureOr<VMIGroupReduceLayoutFact>
 VMILayoutSupport::getPreferredGroupReduceLayoutFact(VMIVRegType sourceType,
                                                     int64_t numGroups,
                                                     std::string *reason) const {
-  auto fail =
-      [reason](const Twine &message) -> FailureOr<VMIGroupReduceLayoutFact> {
-    if (reason) {
-      *reason = message.str();
-    }
-    return failure();
-  };
-
   FailureOr<GroupLayoutKey> key = buildGroupLayoutKey(
       sourceType, numGroups,
       "group_reduce layout supports group sizes of 1/4, 1/2, 1, 2, or 4 "
@@ -204,8 +358,8 @@ VMILayoutSupport::getPreferredGroupReduceLayoutFact(VMIVRegType sourceType,
                                             *key, numGroups);
   }
 
-  return fail("group_reduce layout supports group sizes of 1/4, 1/2, 1, 2, "
-              "or 4 32B VCG blocks, or full physical chunk multiples");
+  return makeDenseRowsGroupReduceFact(sourceType.getContext(), *key,
+                                      numGroups);
 }
 
 FailureOr<VMIGroupReduceLayoutFact>
@@ -248,6 +402,13 @@ VMILayoutSupport::getGroupReduceLayoutFactForLayouts(
     }
   }
 
+  VMIGroupReduceLayoutFact dense =
+      makeDenseRowsGroupReduceFact(sourceType.getContext(), *key, numGroups);
+  if (dense.sourceLayout == sourceLayout && dense.maskLayout == maskLayout &&
+      dense.resultLayout == resultLayout) {
+    return dense;
+  }
+
   return fail("group_reduce source/mask/result layouts do not match a legal "
               "layout table row for the group size");
 }
@@ -284,21 +445,22 @@ VMILayoutSupport::getGroupReduceLayoutFactsForLayout(
     VMIGroupReduceLayoutFact candidate = materializeGroupReduceLayoutFact(
         sourceType.getContext(), pattern, *key, numGroups);
 
-    VMILayoutAttr candidateLayout;
-    switch (port) {
-    case VMIGroupReduceLayoutPort::Source:
-      candidateLayout = candidate.sourceLayout;
-      break;
-    case VMIGroupReduceLayoutPort::Mask:
-      candidateLayout = candidate.maskLayout;
-      break;
-    case VMIGroupReduceLayoutPort::Result:
-      candidateLayout = candidate.resultLayout;
-      break;
-    }
+    VMILayoutAttr candidateLayout = groupReduceLayoutForPort(candidate, port);
     if (candidateLayout == layout) {
       facts.push_back(candidate);
     }
+  }
+
+  VMIGroupReduceLayoutFact dense =
+      makeDenseRowsGroupReduceFact(sourceType.getContext(), *key, numGroups);
+  VMILayoutAttr denseLayout = groupReduceLayoutForPort(dense, port);
+  // The dense fallback exists only for shapes the table cannot describe.  If a
+  // table row already provides this port layout, adding the fallback as a second
+  // fact would make the layout assignment treat the result as weakly seeded and
+  // let a contiguous source drift into a deinterleaved form (and back again).
+  const bool denseFallbackApplies = denseLayout == layout && facts.empty();
+  if (denseFallbackApplies) {
+    facts.push_back(dense);
   }
 
   if (facts.empty()) {
@@ -2096,124 +2258,6 @@ VMILayoutSupport::getHighPriorityGroupStoreLayoutFact(
               "high-priority group_store table row");
 }
 
-FailureOr<VMIBitcastLayoutFact>
-VMILayoutSupport::getBitcastLayoutFact(VMIBitcastOp op,
-                                       std::string *reason) const {
-  auto fail =
-      [reason](const Twine &message) -> FailureOr<VMIBitcastLayoutFact> {
-    if (reason) {
-      *reason = message.str();
-    }
-    return failure();
-  };
-
-  auto sourceType = cast<VMIVRegType>(op.getSource().getType());
-  auto resultType = cast<VMIVRegType>(op.getResult().getType());
-  VMILayoutAttr sourceLayout = sourceType.getLayoutAttr();
-  VMILayoutAttr resultLayout = resultType.getLayoutAttr();
-  if (!sourceLayout || !resultLayout) {
-    return fail("requires assigned source and result layouts");
-  }
-  if (sourceLayout != resultLayout) {
-    return fail("requires matching source and result layouts");
-  }
-
-  int64_t numGroups =
-      sourceLayout.isGroupSlots() ? sourceLayout.getNumGroups() : 0;
-  unsigned sourceElementBits =
-      pto::getPTOStorageElemBitWidth(sourceType.getElementType());
-  unsigned resultElementBits =
-      pto::getPTOStorageElemBitWidth(resultType.getElementType());
-  if (sourceElementBits == 0 || resultElementBits == 0) {
-    return fail("requires source and result with known storage element width");
-  }
-  // Equal-width bitcast is layout-transparent for any identical layout.  Only
-  // width-changing bitcast needs a table row because not every layout has a
-  // representation-preserving carrier reinterpretation across element widths.
-  if (sourceElementBits != resultElementBits) {
-    bool matchedLayout = false;
-    MLIRContext *ctx = op.getContext();
-    for (const WidthChangingBitcastLayoutPattern &pattern :
-         kWidthChangingBitcastLayoutPatterns) {
-      if (matchesLayoutPattern(ctx, pattern.layout, sourceLayout, numGroups) &&
-          matchesLayoutPattern(ctx, pattern.layout, resultLayout, numGroups)) {
-        matchedLayout = true;
-        break;
-      }
-    }
-    if (!matchedLayout) {
-      return fail("width-changing bitcast layout does not match a bitcast "
-                  "layout table row");
-    }
-  }
-
-  return VMIBitcastLayoutFact{sourceLayout, resultLayout};
-}
-
-FailureOr<SmallVector<VMIBitcastLayoutFact, mlir::pto::kValue4>>
-VMILayoutSupport::getBitcastLayoutFactsForLayout(
-    VMIVRegType sourceType, VMIVRegType resultType, VMICastLayoutPort port,
-    VMILayoutAttr layout, std::string *reason) const {
-  auto fail = [reason](const Twine &message)
-      -> FailureOr<SmallVector<VMIBitcastLayoutFact, 4>> {
-    if (reason) {
-      *reason = message.str();
-    }
-    return failure();
-  };
-
-  if (!layout) {
-    return fail("requires an assigned bitcast query layout");
-  }
-
-  unsigned sourceElementBits =
-      pto::getPTOStorageElemBitWidth(sourceType.getElementType());
-  unsigned resultElementBits =
-      pto::getPTOStorageElemBitWidth(resultType.getElementType());
-  if (sourceElementBits == 0 || resultElementBits == 0) {
-    return fail("requires source and result with known storage element width");
-  }
-
-  if (sourceElementBits == resultElementBits) {
-    return SmallVector<VMIBitcastLayoutFact, mlir::pto::kValue4>{
-        VMIBitcastLayoutFact{layout, layout}};
-  }
-
-  int64_t numGroups = layout.isGroupSlots() ? layout.getNumGroups() : 0;
-  MLIRContext *ctx = sourceType.getContext();
-  SmallVector<VMIBitcastLayoutFact, mlir::pto::kValue4> facts;
-  for (const WidthChangingBitcastLayoutPattern &pattern :
-       kWidthChangingBitcastLayoutPatterns) {
-    VMILayoutAttr candidate =
-        materializeLayoutPattern(ctx, pattern.layout, numGroups);
-    if (!candidate) {
-      continue;
-    }
-    if (port == VMICastLayoutPort::Source && candidate != layout) {
-      continue;
-    }
-    if (port == VMICastLayoutPort::Result && candidate != layout) {
-      continue;
-    }
-    facts.push_back(VMIBitcastLayoutFact{candidate, candidate});
-  }
-
-  if (facts.empty()) {
-    if (port == VMICastLayoutPort::Source) {
-      return fail(
-          "requires a legal width-changing bitcast source layout relation");
-    }
-    return fail(
-        "requires a legal width-changing bitcast result layout relation");
-  }
-  return facts;
-}
-
-LogicalResult VMILayoutSupport::getBitcastSupport(VMIBitcastOp op,
-                                                  std::string *reason) const {
-  return getBitcastLayoutFact(op, reason);
-}
-
 template <typename OpTy>
 static FailureOr<VMIHistogramLayoutFact>
 getHistogramLayoutFactImpl(OpTy op, ArrayRef<HistogramLayoutPattern> patterns,
@@ -2289,8 +2333,10 @@ VMILayoutSupport::getVchistSupport(VMIVchistOp op, std::string *reason) const {
   return getVchistLayoutFact(op, reason);
 }
 
-// Textual include unit: the direction-spine-scoped cast layout queries, kept in
-// their own .inc so VMILayoutSupport.cpp stays under the source-size gate.
+// Textual include units that keep this file under the source-size gate: the
+// width-changing bitcast queries and the direction-spine-scoped cast layout
+// queries.
+#include "VMILayoutSupportBitcast.inc"
 #include "VMILayoutSupportSpineScoped.inc"
 
 } // namespace pto

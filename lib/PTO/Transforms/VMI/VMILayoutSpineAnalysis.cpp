@@ -30,6 +30,12 @@ constexpr unsigned kDirectionSpineLegCount = 4;
 constexpr unsigned kDirectionSpineMaxHops = 8;
 constexpr unsigned kDirectionSpineSearchBudget = 512;
 
+/// Inline capacity and chunk threshold of the narrow-side class scan: a class a
+/// consumer sees is a handful of values, and the "narrow" side of a
+/// width-changing cast is the one below a full 32-bit carrier word.
+constexpr unsigned kClassScanInlineCapacity = 32;
+constexpr unsigned kNarrowSideMaxBits = 32;
+
 struct DirectionSpineLeg {
   Operation *op = nullptr;
   Value source;
@@ -130,13 +136,12 @@ static void closeDirectionSpineWindow(
 // Cross a layout class edge only: the elementwise family and an *equal-width*
 // bitcast.  A width-changing bitcast is a boundary (see isVMIClassTransparentOp)
 // and is never crossed, so the class walk and the solver agree on what "the same
-// layout on this value" means.
-//
-// While crossing, the value has to stay in that one class, and a layout is a
-// property of the physical carrier: two VMI values are in the same class exactly
-// when their *storage element width* matches.  Element-type identity - the
-// stricter form this guard used to test - states the same thing for the
-// elementwise family (which never changes the element type) but it also stopped
+// layout on this value" means.  While crossing, the value has to stay in that
+// one class, and a layout is a property of the physical carrier: two VMI values
+// are in the same class exactly when their *storage element width* matches.
+// Element-type identity - the stricter form this guard used to test - states
+// the same thing for the elementwise family (which never changes the element
+// type) but it also stopped
 // at an equal-width bitcast, whose entire purpose is to keep the physical
 // carrier while reinterpreting the element type.  That made the guard contradict
 // isVMIClassTransparentOp, so the class edge was declared but could never be
@@ -335,8 +340,8 @@ private:
   }
 
   unsigned budget = kDirectionSpineSearchBudget;
-  llvm::SmallPtrSet<Value, 32> visited;
-  SmallVector<Value, 32> worklist;
+  llvm::SmallPtrSet<Value, kClassScanInlineCapacity> visited;
+  SmallVector<Value, kClassScanInlineCapacity> worklist;
 };
 
 // The narrow side of a width-changing cast, when it is a sub-word vector that
@@ -354,7 +359,7 @@ static bool getNarrowSideOfCast(Operation *op, Value &narrow) {
   }
   unsigned narrowBits =
       pto::getPTOStorageElemBitWidth(narrowType.getElementType());
-  return narrowBits != 0 && narrowBits < 32;
+  return narrowBits != 0 && narrowBits < kNarrowSideMaxBits;
 }
 
 static bool narrowSideCarriesCompute(Value narrow) {

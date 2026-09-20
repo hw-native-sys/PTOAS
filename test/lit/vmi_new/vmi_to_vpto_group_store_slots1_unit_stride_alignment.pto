@@ -34,17 +34,19 @@ module {
   }
 }
 
+// A slots=1 value carries each group in lane zero of its own physical part, so
+// both unit-stride forms store every group with its own point store and never
+// build the packed vdup/vsel register.
 // CHECK-LABEL: func.func @aligned_unit_stride_group_store(
-// CHECK-COUNT-8: pto.vdup
-// CHECK: pto.vsts {{.*}} : !pto.vreg<64xf32>, !pto.ptr<f32, ub>, !pto.mask<b32>
-// CHECK-NOT: dist = "1PT_B32"
+// CHECK-COUNT-8: pto.vsts {{.*}} {dist = "1PT_B32"}
+// CHECK-NOT: pto.vdup
+// CHECK-NOT: pto.vmi.
+// CHECK-NOT: !pto.vmi.
+// CHECK-NOT: unrealized_conversion_cast
 
 // CHECK-LABEL: func.func @unaligned_unit_stride_group_store(
-// CHECK-COUNT-8: pto.vdup
-// CHECK: %[[ALIGN:.*]] = pto.init_align
-// CHECK: %[[NEXT_ALIGN:.*]], %[[NEXT_BASE:.*]] = pto.vstus %[[ALIGN]], %{{.*}}, %{{.*}}, %{{.*}}
-// CHECK: pto.vstas %[[NEXT_ALIGN]], %[[NEXT_BASE]], %{{.*}}
-// CHECK-NOT: dist = "1PT_B32"
+// CHECK-COUNT-8: pto.vsts {{.*}} {dist = "1PT_B32"}
+// CHECK-NOT: pto.vdup
 // CHECK-NOT: pto.vmi.
 // CHECK-NOT: !pto.vmi.
 // CHECK-NOT: unrealized_conversion_cast

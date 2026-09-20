@@ -68,7 +68,7 @@ module {
 // LOWER: pto.init_align
 // LOWER: pto.vstus
 // LOWER: pto.vstas
-// LOWER-COUNT-8: pto.vsldb
+// LOWER-COUNT-8: pto.vlds {{.*}} {dist = "BRC_B32"}
 // LOWER-COUNT-8: pto.vsts
 // LOWER-NOT: pto.vmi.
 // LOWER-NOT: !pto.vmi.

@@ -283,7 +283,8 @@ private:
       return rewriter.notifyMatchFailure(op, "shuffle vselr arity mismatch");
     }
     return lowerPointwisePhysicalParts(
-        op, resultTypes, "shuffle vselr arity mismatch", rewriter,
+        op, resultTypes,
+        rewriter,
         [&](int64_t index, Type resultType) -> FailureOr<Value> {
           return buildShuffleVselrResult(op, sourceParts, resultType,
                                          plans[index], rewriter);
@@ -1044,9 +1045,8 @@ static LogicalResult lowerBinaryPhysicalResults(
 
 template <typename OpTy, typename LowerFn>
 static LogicalResult lowerPointwisePhysicalParts(
-    OpTy op, ArrayRef<Type> resultTypes, StringRef arityMessage,
-    OneToNPatternRewriter &rewriter, LowerFn &&lowerFn,
-    TypeConverter &typeConverter) {
+    OpTy op, ArrayRef<Type> resultTypes, OneToNPatternRewriter &rewriter,
+    LowerFn &&lowerFn, TypeConverter &typeConverter) {
   SmallVector<Value> results;
   results.reserve(resultTypes.size());
   for (auto [index, resultType] : llvm::enumerate(resultTypes)) {

@@ -263,7 +263,7 @@ summarizeLoop(scf::ForOp forOp,
 // hoist root `root` is statically proven to execute at least once. Guards
 // may only run under the hoisted configuration when no possibly-zero-trip
 // loop sits between the configuration point and the guard.
-static bool guardChainProvenOnce(Operation *guard, Operation *root,
+static bool guardChainProvenOnce(Operation *guard, const Operation *root,
                                  DenseMap<Operation *, LoopCtrlSummary> &s) {
   for (Operation *parent = guard->getParentOp(); parent && parent != root;
        parent = parent->getParentOp()) {
@@ -402,7 +402,7 @@ private:
 
   void handleStateAccess(BlockScanState &state, Block &block,
                          StateAccessOpInterface access, Operation *op,
-                         OpBuilder &builder) {
+                         OpBuilder &builder) const {
     if (access.getStateResource() != StateResource::Ctrl) {
       // Other state resources are boundaries for now.
       restoreBefore(state, block, op, builder);
@@ -497,8 +497,8 @@ loopHoistEligible(scf::ForOp root, const LoopCtrlSummary &s,
     return false;
   }
   return llvm::all_of(s.guards, [&](pto::CtrlStateGuardOp guard) {
-    return guardChainProvenOnce(guard.getOperation(), root.getOperation(),
-                                 summaries);
+    return guardChainProvenOnce(guard.getOperation(),
+                                root.getOperation(), summaries);
   });
 }
 

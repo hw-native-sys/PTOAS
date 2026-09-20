@@ -92,11 +92,11 @@ pto.tload ins(%pv : !pto.partition_tensor_view<16x16xf16>)
 
 这种形式用于显式承载：
 
-- 位置
-- 元素类型
-- 物理尺寸
-- 有效尺寸
-- 布局和填充信息
+- 位置（`loc`）
+- 元素类型（`dtype`）
+- 物理尺寸（`rows`/`cols`）
+- 有效尺寸（`v_row`/`v_col`）
+- 布局和填充信息（`blayout`/`slayout`/`fractal`/`pad`）
 
 ## Constraints
 

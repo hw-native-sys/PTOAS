@@ -168,12 +168,12 @@ module {
 // CHECK: pto.vstas
 // CHECK: return
 // CHECK-LABEL: func.func @fuse_contiguous_and_group_store(
-// CHECK: %[[GROUP_ALIGN0:.*]] = pto.init_align
-// CHECK: %[[GROUP_ALIGN1:.*]], %[[GROUP_BASE1:.*]] = pto.vstus %[[GROUP_ALIGN0]],
-// CHECK-NOT: pto.init_align
-// CHECK-NOT: pto.vstas
-// CHECK: %[[GROUP_ALIGN2:.*]], %[[GROUP_BASE2:.*]] = pto.vstus %[[GROUP_ALIGN1]], {{.*}}, {{.*}}, %[[GROUP_BASE1]]
-// CHECK: pto.vstas %[[GROUP_ALIGN2]], %[[GROUP_BASE2]],
+// The contiguous store still streams; the slots=1 group store writes each group
+// with its own point store and so no longer joins the stream.
+// CHECK: pto.init_align
+// CHECK: pto.vstus
+// CHECK: pto.vstas
+// CHECK-COUNT-8: pto.vsts {{.*}} {dist = "1PT_B32"}
 // CHECK: return
 // CHECK-LABEL: func.func @fuse_load_streams(
 // CHECK: %[[LOAD_ALIGN0:.*]] = pto.vldas

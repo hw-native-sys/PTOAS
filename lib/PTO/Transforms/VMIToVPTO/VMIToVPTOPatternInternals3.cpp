@@ -252,6 +252,19 @@ private:
     }
     std::optional<int64_t> constantRowStride =
         getConstantIndexValue(op.getRowStride());
+    if (constantRowStride && *constantRowStride <= 0) {
+      return rewriter.notifyMatchFailure(
+          op, "slots=1 group_store requires positive row_stride when row_stride is constant");
+    }
+    // Each slots=1 group lives in lane zero of its own physical part.  Storing
+    // every group with its own point store needs no vdup/vsel gather and matches
+    // the per-group memory form the reference kernels emit, so prefer it over
+    // the packed unit-stride store.  The packed form remains only as a fallback
+    // for element widths that have no 1PT support.
+    if (getPointStoreDistToken(valueVMIType.getElementType())) {
+      return lowerSlots1PointStores(op, rewriter, valueParts, valueVMIType,
+                                    destination, offset, rowStride);
+    }
     FailureOr<int64_t> lanesPerPart =
         getDataLanesPerPart(valueVMIType.getElementType());
     if (constantRowStride && *constantRowStride == 1 &&
@@ -259,12 +272,8 @@ private:
       return lowerSlots1PackedUnitStride(
           op, rewriter, valueParts, valueVMIType, layout, destination, offset);
     }
-    if (constantRowStride && *constantRowStride <= 0) {
-      return rewriter.notifyMatchFailure(
-          op, "slots=1 group_store requires positive row_stride when row_stride is constant");
-    }
-    return lowerSlots1PointStores(op, rewriter, valueParts, valueVMIType,
-                                  destination, offset, rowStride);
+    return rewriter.notifyMatchFailure(
+        op, "slots=1 group_store requires 1PT_B8/B16/B32 store support");
   }
 
   LogicalResult lowerScalarGroupStore(
@@ -1637,7 +1646,17 @@ private:
       int64_t numGroups, OneToNPatternRewriter &rewriter) const {
     std::optional<int64_t> stride =
         getConstantIndexValue(op.getSourceGroupStride());
-    int64_t slots = (stride && *stride == 1) ? 8 : 1;
+    // The slots=8 plan reads every group through pto.vsldb, whose effective
+    // source address must be 32-byte aligned.  A unit group stride does not
+    // imply that: the offset is an arbitrary element offset.  Only take that
+    // plan when the address is provably aligned; otherwise use the slots=1
+    // plan, whose lane-zero BRC loads have no block alignment requirement.
+    bool alignedUnitStride =
+        stride && *stride == 1 &&
+        isKnownAddressAligned(op.getSource(), op.getOffset(),
+                              resultVMIType.getElementType(),
+                              kMemoryAccessAlignmentBytes);
+    int64_t slots = alignedUnitStride ? 8 : 1;
     auto sourceVMIType = VMIVRegType::get(
         rewriter.getContext(), numGroups, resultVMIType.getElementType(),
         VMILayoutAttr::getGroupSlots(rewriter.getContext(), numGroups, slots));

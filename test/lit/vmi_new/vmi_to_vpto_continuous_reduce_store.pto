@@ -112,21 +112,16 @@ module {
 // LOWER: pto.vsts {{.*}} {dist = "1PT_B32"}
 
 // LOWER-LABEL: func.func @continuous_reduce_store_2(
-// LOWER: pto.init_align
-// LOWER: pto.vstus
-// LOWER: pto.vstas
-// LOWER-NOT: dist = "1PT_B32"
+// LOWER-COUNT-2: pto.vsts {{.*}} {dist = "1PT_B32"}
+// LOWER-NOT: pto.vstus
 
 // LOWER-LABEL: func.func @continuous_reduce_store_4(
-// LOWER: pto.init_align
-// LOWER: pto.vstus
-// LOWER: pto.vstas
-// LOWER-NOT: dist = "1PT_B32"
+// LOWER-COUNT-4: pto.vsts {{.*}} {dist = "1PT_B32"}
+// LOWER-NOT: pto.vstus
 
 // LOWER-LABEL: func.func @continuous_reduce_store_8(
-// LOWER: pto.vsts
+// LOWER-COUNT-8: pto.vsts {{.*}} {dist = "1PT_B32"}
 // LOWER-NOT: pto.vstus
-// LOWER-NOT: dist = "1PT_B32"
 
 // LOWER-LABEL: func.func @dynamic_mask_keeps_masked_store(
 // LOWER: pto.vsts

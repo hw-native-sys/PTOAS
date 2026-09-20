@@ -171,7 +171,7 @@ bool MemoryDependentAnalyzer::DepBetween(
 }
  
 bool MemoryDependentAnalyzer::MemAlias(const BaseMemInfo *a,
-                                       const BaseMemInfo *b) {
+                                       const BaseMemInfo *b) const {
   pto::AddressSpace as = a->scope;
   pto::AddressSpace bs = b->scope;
  

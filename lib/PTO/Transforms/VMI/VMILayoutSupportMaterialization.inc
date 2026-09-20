@@ -294,17 +294,18 @@ inline bool isExecutableGroupReducePattern(const GroupReduceLayoutPattern &patte
   if (pattern.block.kind == GroupBlockPatternKind::Compact) {
     return true;
   }
-  // A5 has neither row nor VCG eight-bit reductions. Dense execution must
-  // widen the input; a layout fact alone does not make the old instruction legal.
-  if (key.vcgBlockElems == mlir::pto::kValue32) {
-    return false;
-  }
-  // Partial carriers cannot materialize the full deinterleave demanded by
-  // multi-block VCG plans. Use the dense row plan for these bounded shapes.
+  // Eight-bit grouped reductions never reach a plan: the group_reduce verifier
+  // rejects eight-bit integer sources, so no table row has to exclude them.
+  // A deinterleaved source needs at least one whole physical chunk per
+  // deinterleaved group; otherwise the producing load has no lowering and the
+  // dense masked-row plan has to be used instead.
   bool deinterleaved =
       pattern.sourceLayout.kind == LayoutPatternKind::Deinterleaved ||
       pattern.sourceLayout.kind == LayoutPatternKind::BlockDeinterleaved;
-  if (deinterleaved && key.elementCount <= key.lanesPerPart) {
+  int64_t deinterleavedFactor =
+      deinterleaved ? pattern.sourceLayout.value : 1;
+  if (deinterleaved &&
+      key.elementCount < key.lanesPerPart * deinterleavedFactor) {
     return false;
   }
   // Strided 16/32-bit operands must not demand nonexistent b64/b128 masks.
@@ -324,6 +325,43 @@ materializeGroupReduceLayoutFact(MLIRContext *ctx,
   fact.maskLayout = fact.sourceLayout;
   fact.resultLayout =
       materializeLayoutPattern(ctx, pattern.resultLayout, numGroups);
+  fact.groupSize = key.groupSize;
+  fact.lanesPerPart = key.lanesPerPart;
+  fact.vcgBlockElems = key.vcgBlockElems;
+  return fact;
+}
+
+// Returns the layout a group_reduce fact assigns to one query port.
+inline VMILayoutAttr
+groupReduceLayoutForPort(const VMIGroupReduceLayoutFact &fact,
+                         VMIGroupReduceLayoutPort port) {
+  switch (port) {
+  case VMIGroupReduceLayoutPort::Source:
+    return fact.sourceLayout;
+  case VMIGroupReduceLayoutPort::Mask:
+    return fact.maskLayout;
+  case VMIGroupReduceLayoutPort::Result:
+    return fact.resultLayout;
+  }
+  return VMILayoutAttr();
+}
+
+// Materializes the dense masked-rows fallback for shapes without a native row.
+inline VMIGroupReduceLayoutFact
+makeDenseRowsGroupReduceFact(MLIRContext *ctx, GroupLayoutKey key,
+                             int64_t numGroups) {
+  VMIGroupReduceLayoutFact fact;
+  fact.blockClass = VMIGroupBlockClass::Compact;
+  fact.sourceLayout = VMILayoutAttr::getContiguous(ctx);
+  fact.maskLayout = fact.sourceLayout;
+  // One group slot per physical part.  The row-local lowering then emits one
+  // result part per group instead of packing a single slot packet, so the dense
+  // fallback needs no vdup/vsel stitching and the consumer sees each group value
+  // as its own physical vector.  Single-element integer groups keep the packet
+  // form because that is the only path that materializes the widen/narrow
+  // identity.
+  int64_t slots = key.groupSize == 1 ? mlir::pto::kValue8 : 1;
+  fact.resultLayout = VMILayoutAttr::getGroupSlots(ctx, numGroups, slots);
   fact.groupSize = key.groupSize;
   fact.lanesPerPart = key.lanesPerPart;
   fact.vcgBlockElems = key.vcgBlockElems;

@@ -13,7 +13,7 @@ pto.op ins(<src>, ... : <src_type>, ...) outs(<dst> : <dst_type>)
 ## 目录
 
 - [`pto.tci` — 连续整数序列生成](#ptotci--连续整数序列生成)
-- [`pto.tgatherb` — 按字节偏移聚集](#ptotgatherb--按字节偏移聚集)
+- [`pto.tgatherb` — 按字节偏移聚集 32 字节块](#ptotgatherb--按字节偏移聚集-32-字节块)
 - [`pto.tgather` — 聚集/选择元素](#ptotgather--聚集选择元素)
 - [`pto.tmrgsort` — 归并排序](#ptotmrgsort--归并排序)
 - [`pto.tpartadd` — 部分逐元素加法](#ptotpartadd--部分逐元素加法)
@@ -95,7 +95,7 @@ pto.tci ins(%start : i16)
 
 ---
 
-### `pto.tgatherb` — 按字节偏移聚集
+### `pto.tgatherb` — 按字节偏移聚集 32 字节块
 
 ```mlir
 pto.tgatherb ins(<src>, <offsets> : <src_type>, <offsets_type>)
@@ -105,8 +105,9 @@ pto.tgatherb ins(<src>, <offsets> : <src_type>, <offsets_type>)
 **语义：**
 
 ```text
-For each element (i, j):
-    dst[i, j] = src[byte_offset = offsets[i, j]]
+offsets 的每个元素给出源侧一个 32 字节块的首字节地址：
+    dst 第 i 行的第 b 个 32 字节块 = src 中起始于 offsets[i, b] 的 32 字节
+其中每行 dst 的块个数 = ceil(dst 有效列数 / (32 / sizeof(dst 元素类型)))
 ```
 
 **参数：**
@@ -114,7 +115,7 @@ For each element (i, j):
 | Name | Type | Description |
 | ---- | ---- | ----------- |
 | `src` | `pto.tile_buf` | 源 tile 缓冲区 |
-| `offsets` | `pto.tile_buf` | 字节偏移 tile，每个元素表示从 `src` 起始地址的字节偏移量 |
+| `offsets` | `pto.tile_buf` | 32 字节块的字节地址 tile；有效行数须与 `dst` 一致，有效列数为 `align_up(ceil(dst 有效列数 / (32 / sizeof(dst 元素类型))), 8)` |
 | `dst` | `pto.tile_buf` | 目标 tile 缓冲区 |
 
 **返回值：** 无。以 DPS 的形式写入 `dst`。
@@ -122,8 +123,11 @@ For each element (i, j):
 **约束：**
 
 - **实现检查（A2A3）**
-  - `dst` 必须使用行主序布局（`blayout=row_major`）。
+  - `dst` 和 `offsets` 必须使用行主序布局（`blayout=row_major`）。
   - `dst` 元素大小必须为 1、2 或 4 字节。
+  - `offsets` 元素类型必须为 32 位整数（`i32`/`ui32`）。
+  - `offsets` 的有效行数必须等于 `dst` 的有效行数。
+  - `offsets` 的有效列数必须为紧凑的 32 字节块地址个数并按 8 对齐：`align_up(ceil(dst 有效列数 / (32 / sizeof(dst 元素类型))), 8)`。
 
 - **实现检查（A5）**
   - `dst` 元素大小必须为 1、2 或 4 字节。
@@ -132,6 +136,7 @@ For each element (i, j):
 **示例：**
 
 ```mlir
+// dst 为 8x32 的 f32 tile：每行 32*4=128 字节即 4 个 32 字节块，按 8 对齐后 offsets 每行 8 列
 pto.tgatherb ins(%src, %offsets :
                  !pto.tile_buf<loc=vec, dtype=f32, rows=8, cols=32,
                      v_row=8, v_col=32, blayout=row_major, slayout=none_box,

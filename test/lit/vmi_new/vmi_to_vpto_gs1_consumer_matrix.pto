@@ -1,0 +1,116 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+
+// A contiguous source with a non-native group count lowers as dense masked rows
+// and yields a slots=1 group result (one group value per physical part).  These
+// cases pin what the surrounding ops do with that result:
+//   * group_broadcast expands it back to a contiguous vector;
+//   * a cast keeps it in slots=1 and stores each group with its own point store;
+//   * elementwise compute joins it with another slots=1 group load and stores
+//     per group, with no vdup/vsel gather.
+// RUN: pto-test-opt %s -vmi-lower-unified-to-legacy -vmi-mask-granularity-assignment -vmi-layout-assignment | FileCheck %s --check-prefix=ASSIGN
+// RUN: pto-test-opt %s -vmi-lower-unified-to-legacy -vmi-mask-granularity-assignment -vmi-layout-assignment -vmi-to-vpto | FileCheck %s --check-prefix=LOWER
+
+module {
+  func.func @gs1_broadcast(
+      %src: !pto.ptr<f32, ub>, %dst: !pto.ptr<f32, ub>, %off: index) {
+    %c256 = arith.constant 256 : index
+    %mask = pto.vmi.create_mask %c256 : index -> !pto.vmi.mask<256xpred>
+    %x = pto.vmi.vload %src[%off] : !pto.ptr<f32, ub> -> !pto.vmi.vreg<256xf32>
+    %a = pto.vmi.vcmax %x, %mask {group = 4}
+        : !pto.vmi.vreg<256xf32>, !pto.vmi.mask<256xpred> -> !pto.vmi.vreg<4xf32>
+    %b = pto.vmi.vbrc %a {group = 4}
+        : !pto.vmi.vreg<4xf32> -> !pto.vmi.vreg<128xf32>
+    pto.vmi.vstore %b, %dst[%off] : !pto.vmi.vreg<128xf32>, !pto.ptr<f32, ub>
+    return
+  }
+
+  func.func @gs1_cast(
+      %src: !pto.ptr<f32, ub>, %dst: !pto.ptr<bf16, ub>, %off: index) {
+    %c256 = arith.constant 256 : index
+    %c1 = arith.constant 1 : index
+    %mask = pto.vmi.create_mask %c256 : index -> !pto.vmi.mask<256xpred>
+    %x = pto.vmi.vload %src[%off] : !pto.ptr<f32, ub> -> !pto.vmi.vreg<256xf32>
+    %a = pto.vmi.vcmax %x, %mask {group = 4}
+        : !pto.vmi.vreg<256xf32>, !pto.vmi.mask<256xpred> -> !pto.vmi.vreg<4xf32>
+    %c = pto.vmi.vcvt %a {saturate = "SAT"}
+        : !pto.vmi.vreg<4xf32> -> !pto.vmi.vreg<4xbf16>
+    pto.vmi.vstore %c, %dst[%off], %c1 {group = 4}
+        : !pto.vmi.vreg<4xbf16>, !pto.ptr<bf16, ub>
+    return
+  }
+
+  func.func @gs1_compute_group_loaded_4xT(
+      %src: !pto.ptr<f32, ub>, %k: !pto.ptr<f32, ub>, %dst: !pto.ptr<f32, ub>,
+      %off: index) {
+    %c256 = arith.constant 256 : index
+    %c32 = arith.constant 32 : index
+    %c1 = arith.constant 1 : index
+    %mask = pto.vmi.create_mask %c256 : index -> !pto.vmi.mask<256xpred>
+    %x = pto.vmi.vload %src[%off] : !pto.ptr<f32, ub> -> !pto.vmi.vreg<256xf32>
+    %a = pto.vmi.vcmax %x, %mask {group = 4}
+        : !pto.vmi.vreg<256xf32>, !pto.vmi.mask<256xpred> -> !pto.vmi.vreg<4xf32>
+    %kk = pto.vmi.vload %k[%off], %c32 {group = 4}
+        : !pto.ptr<f32, ub> -> !pto.vmi.vreg<4xf32>
+    %m = pto.vmi.vmul %a, %kk
+        : !pto.vmi.vreg<4xf32>, !pto.vmi.vreg<4xf32> -> !pto.vmi.vreg<4xf32>
+    pto.vmi.vstore %m, %dst[%off], %c1 {group = 4}
+        : !pto.vmi.vreg<4xf32>, !pto.ptr<f32, ub>
+    return
+  }
+}
+
+// ASSIGN-LABEL: func.func @gs1_broadcast(
+// ASSIGN: pto.vmi.group_reduce_maxf
+// ASSIGN-SAME: -> !pto.vmi.vreg<4xf32, #pto.vmi.layout<num_groups = 4, slots = 1>>
+// ASSIGN: pto.vmi.group_broadcast
+// ASSIGN-SAME: -> !pto.vmi.vreg<128xf32, #pto.vmi.layout<contiguous>>
+
+// ASSIGN-LABEL: func.func @gs1_cast(
+// ASSIGN: pto.vmi.group_reduce_maxf
+// ASSIGN-SAME: -> !pto.vmi.vreg<4xf32, #pto.vmi.layout<num_groups = 4, slots = 1>>
+// ASSIGN: pto.vmi.truncf
+// ASSIGN-SAME: -> !pto.vmi.vreg<4xbf16, #pto.vmi.layout<num_groups = 4, slots = 1>>
+// ASSIGN: pto.vmi.group_store
+// ASSIGN-SAME: {num_groups = 4 : i64}
+
+// ASSIGN-LABEL: func.func @gs1_compute_group_loaded_4xT(
+// ASSIGN: pto.vmi.group_reduce_maxf
+// ASSIGN-SAME: -> !pto.vmi.vreg<4xf32, #pto.vmi.layout<num_groups = 4, slots = 1>>
+// ASSIGN: pto.vmi.group_slot_load
+// ASSIGN-SAME: -> !pto.vmi.vreg<4xf32, #pto.vmi.layout<num_groups = 4, slots = 1>>
+// ASSIGN: pto.vmi.vmul
+// ASSIGN-SAME: -> !pto.vmi.vreg<4xf32, #pto.vmi.layout<num_groups = 4, slots = 1>>
+// ASSIGN: pto.vmi.group_store
+// ASSIGN-SAME: {num_groups = 4 : i64}
+
+// The broadcast rebuilds the per-group strips from the lane-zero scalars.
+// LOWER-LABEL: func.func @gs1_broadcast(
+// LOWER-COUNT-4: pto.vcmax
+// LOWER: pto.vdup
+// LOWER: pto.vsel
+// LOWER: pto.vstus
+// LOWER-NOT: pto.vmi.
+
+// The cast stays row-local: each group is converted and stored on its own.
+// LOWER-LABEL: func.func @gs1_cast(
+// LOWER-COUNT-4: pto.vcmax
+// LOWER-COUNT-4: pto.vcvt {{.*}} {part = "EVEN", rnd = "R", sat = "SAT"}
+// LOWER-COUNT-4: pto.vsts {{.*}} {dist = "1PT_B16"}
+// LOWER-NOT: pto.vdup
+// LOWER-NOT: pto.vmi.
+
+// Compute with another slots=1 group load: one load, multiply and store per
+// group, and no vdup/vsel gather.
+// LOWER-LABEL: func.func @gs1_compute_group_loaded_4xT(
+// LOWER-COUNT-4: pto.vcmax
+// LOWER-COUNT-4: pto.vlds {{.*}} {dist = "BRC_B32"}
+// LOWER-COUNT-4: pto.vmul
+// LOWER-COUNT-4: pto.vsts {{.*}} {dist = "1PT_B32"}
+// LOWER-NOT: pto.vdup
+// LOWER-NOT: pto.vmi.

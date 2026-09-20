@@ -21,6 +21,7 @@
 #include "mlir/IR/Matchers.h"
 #include "llvm/ADT/DenseSet.h"
 #include "llvm/ADT/STLExtras.h"
+#include "llvm/ADT/TypeSwitch.h"
 #include "llvm/Support/Casting.h"
 #include "llvm/Support/ErrorHandling.h"
 #include "PTO/IR/PTO.h"
@@ -209,6 +210,39 @@ static bool containsExactAccess(const SmallVector<const BaseMemInfo *> &infos,
   return llvm::any_of(infos, [&access](const BaseMemInfo *info) {
     return isSameExactAccess(info, access);
   });
+}
+
+static bool overwritesColumnBroadcastInput(
+    const CompoundInstanceElement *writer,
+    const CompoundInstanceElement *reader,
+    MemoryDependentAnalyzer &memAnalyzer) {
+  if (!reader->elementOp) {
+    return false;
+  }
+  Value broadcast = llvm::TypeSwitch<Operation *, Value>(reader->elementOp)
+      .Case<TColExpandOp>([](auto op) { return op.getSrc(); })
+      .Case<TColExpandAddOp, TColExpandMulOp, TColExpandDivOp,
+            TColExpandSubOp, TColExpandExpdifOp, TColExpandMaxOp,
+            TColExpandMinOp>([](auto op) { return op.getSrc1(); })
+      .Default([](Operation *) { return Value{}; });
+  if (!broadcast) {
+    return false;
+  }
+  SmallVector<const BaseMemInfo *> broadcastReads;
+  for (const BaseMemInfo *info : reader->useVec) {
+    if (info->baseBuffer == broadcast) {
+      broadcastReads.push_back(info);
+    }
+  }
+  DepBaseMemInfoPairVec dependencies;
+  return memAnalyzer.DepBetween(writer->defVec, broadcastReads, dependencies);
+}
+
+static bool isErasedA5VectorBarrier(func::FuncOp func,
+                                    const SyncOperation *sync) {
+  return isTargetArchA5(func) &&
+         sync->GetType() == SyncOperation::TYPE::PIPE_BARRIER &&
+         sync->GetSrcPipe() == PipelineType::PIPE_V;
 }
 
 } // namespace
@@ -659,9 +693,19 @@ void InsertSyncAnalysis::InsertPipeBarrierSync(
     const CompoundInstanceElement *frontCompound,
     const std::optional<unsigned> &forEndIndex) {
   unsigned insertBarrierId = nowCompound->GetIndex();
+  PipelineType barrierPipe = frontCompound->kPipeValue;
+  if (barrierPipe == PipelineType::PIPE_V &&
+      isTargetArchA5(func_) &&
+      overwritesColumnBroadcastInput(nowCompound, frontCompound, memAnalyzer_)) {
+    // A5 broadcasts reread the column vector for every output row. Reusing
+    // that storage through a differently shaped tile can overwrite later
+    // reads even when the elementwise output dependency is ordered. PIPE_V
+    // barriers are erased on A5, so drain the vector work before this reuse.
+    barrierPipe = PipelineType::PIPE_ALL;
+  }
   auto barrierOp = std::make_unique<SyncOperation>(
-      SyncOperation::TYPE::PIPE_BARRIER, frontCompound->kPipeValue,
-      nowCompound->kPipeValue, syncIndex_, insertBarrierId, forEndIndex);
+      SyncOperation::TYPE::PIPE_BARRIER, barrierPipe,
+      barrierPipe, syncIndex_, insertBarrierId, forEndIndex);
   barrierOp->SetDepSyncIRIndex(frontCompound->GetIndex());
   syncIR_[insertBarrierId]->pipeBefore.push_back(barrierOp.get());
   barrierOp->SetSyncIRIndex(insertBarrierId);
@@ -813,6 +857,11 @@ void InsertSyncAnalysis::UpdateSyncRecord(const SyncOperation *sync,
                                           PipelineType nowPipeValue) const {
   PipelineType setPipeValue = sync->GetSrcPipe();
   PipelineType waitPipeValue = sync->GetDstPipe();
+  // SyncCodegen erases A5 vector barriers. They cannot cover an earlier
+  // broadcast read whose storage is reused after an intervening vector op.
+  if (isErasedA5VectorBarrier(func_, sync)) {
+    return;
+  }
 
   // Block-sync mode behaves like a global blocking pipe-s wait.
   if (syncAnalysisMode_ == SyncAnalysisMode::BLOCKSYNC) {
@@ -864,6 +913,9 @@ void InsertSyncAnalysis::UpdateSyncRecordInfo(
   assert(!syncPair.empty());
 
   auto *newSync = syncPair[0].get();
+  if (isErasedA5VectorBarrier(func_, newSync)) {
+    return;
+  }
   // Dynamic event IDs cover one runtime-selected slot, not the complete pipe
   // dependency represented by this record.
   if (isSlotKeyedSync(newSync)) {

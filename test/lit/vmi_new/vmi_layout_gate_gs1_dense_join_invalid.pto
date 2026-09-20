@@ -1,0 +1,40 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+
+// A slots=1 group value keeps each group in lane zero of its own physical part,
+// while a dense 4xT load keeps all four values in one part, so the two are not a
+// carrier identity and no ensure_layout row joins them.  Layout assignment still
+// inserts the bridge, and the VPTO conversion is where it finds no
+// materialization.  Joining the two needs an explicit group load instead; see
+// vmi_to_vpto_gs1_consumer_matrix.pto.
+// RUN: not pto-test-opt %s -vmi-lower-unified-to-legacy -vmi-mask-granularity-assignment -vmi-layout-assignment -vmi-to-vpto 2>&1 | FileCheck %s
+
+module {
+  func.func @gs1_dense_join_invalid(
+      %src: !pto.ptr<f32, ub>, %k: !pto.ptr<f32, ub>, %dst: !pto.ptr<f32, ub>,
+      %off: index) {
+    %c256 = arith.constant 256 : index
+    %c0 = arith.constant 0 : index
+    %c1 = arith.constant 1 : index
+    %mask = pto.vmi.create_mask %c256 : index -> !pto.vmi.mask<256xpred>
+    %x = pto.vmi.vload %src[%off] : !pto.ptr<f32, ub> -> !pto.vmi.vreg<256xf32>
+    %a = pto.vmi.vcmax %x, %mask {group = 4}
+        : !pto.vmi.vreg<256xf32>, !pto.vmi.mask<256xpred> -> !pto.vmi.vreg<4xf32>
+    %kk = pto.vmi.vload %k[%c0] : !pto.ptr<f32, ub> -> !pto.vmi.vreg<4xf32>
+    // CHECK: VMI{{-}}UNSUPPORTED{{:}} pto.vmi.vmul operand #1 has type
+    // CHECK-SAME: #pto.vmi.layout<contiguous>
+    // CHECK-SAME: requires
+    // CHECK-SAME: #pto.vmi.layout<num_groups = 4, slots = 1>
+    // CHECK-SAME: pto.vmi.ensure_layout cannot materialize this conversion
+    %m = pto.vmi.vmul %a, %kk
+        : !pto.vmi.vreg<4xf32>, !pto.vmi.vreg<4xf32> -> !pto.vmi.vreg<4xf32>
+    pto.vmi.vstore %m, %dst[%off], %c1 {group = 4}
+        : !pto.vmi.vreg<4xf32>, !pto.ptr<f32, ub>
+    return
+  }
+}

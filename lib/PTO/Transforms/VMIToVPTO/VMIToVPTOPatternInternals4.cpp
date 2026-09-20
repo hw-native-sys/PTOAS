@@ -338,8 +338,6 @@ private:
     }
     return lowerPointwisePhysicalParts(
         op, resultTypes,
-        IsMaskResult ? "physical mask binary arity mismatch"
-                     : "physical binary arity mismatch",
         rewriter,
         [this, op, lhsParts, rhsParts,
          &rewriter](int64_t index, Type resultType) -> FailureOr<Value> {
@@ -466,7 +464,8 @@ private:
 
     const Location opLoc = op.getLoc();
     return lowerPointwisePhysicalParts(
-        op, resultTypes, "physical vector-scalar arity mismatch", rewriter,
+        op, resultTypes,
+        rewriter,
         [op, opLoc, sourceParts, scalar, maskParts,
          &rewriter](int64_t index, Type resultType) -> FailureOr<Value> {
           auto vregType = dyn_cast<VRegType>(resultType);
@@ -1299,8 +1298,6 @@ private:
     }
     return lowerPointwisePhysicalParts(
         op, resultTypes,
-        IsMaskResult ? "physical mask unary arity mismatch"
-                     : "physical unary arity mismatch",
         rewriter,
         [this, op, sourceParts,
          &rewriter](int64_t index, Type resultType) -> FailureOr<Value> {
@@ -1476,7 +1473,8 @@ public:
     }
 
     return lowerPointwisePhysicalParts(
-        op, resultTypes, "physical select arity mismatch", rewriter,
+        op, resultTypes,
+        rewriter,
         [this, op, maskParts, trueParts, falseParts,
          &rewriter](int64_t index, Type resultType) -> FailureOr<Value> {
           return lowerPart(op, maskParts[index], trueParts[index],

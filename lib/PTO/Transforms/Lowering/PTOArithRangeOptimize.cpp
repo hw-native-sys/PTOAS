@@ -521,7 +521,7 @@ private:
   // narrowed via asI32, the constant rhs rematerialized in i32.
   std::optional<std::pair<Value, Value>>
   i32BinaryMirrorOperands(Operation *def, Value lhs, const ChainInfo &lhsCI,
-                          const APInt &rhsCst) {
+                          const APInt &rhsCst) const {
     OpBuilder b(def);
     Value lhs32 = asI32(lhs, lhsCI, b, def);
     if (!lhs32) {

@@ -14,6 +14,11 @@
 using namespace mlir;
 using namespace mlir::pto;
 
+namespace {
+// A wide half-pair split is a two-to-one bit-width relation.
+constexpr unsigned kWideToHalfBitRatio = 2;
+} // namespace
+
 // NOLINTNEXTLINE(readability-make-member-function-const): ODS-generated
 // verifier callbacks have a non-const signature.
 LogicalResult VMIGroupIotaOp::verify() {
@@ -21,7 +26,7 @@ LogicalResult VMIGroupIotaOp::verify() {
   Type elementType = resultType.getElementType();
   if (!isVMIIotaElementType(elementType)) {
     return emitOpError("requires result element type to be integer 8/16/32 "
-                       "or f16/f32");
+                       "or f16/bf16/f32");
   }
   if (!isCompatibleVMIScalarForSemanticType(elementType, getBase().getType())) {
     return emitOpError("requires base type to match result element type");
@@ -243,9 +248,15 @@ static LogicalResult verifyGroupReduceIntegerOp(OpTy op) {
     return op.emitOpError("requires integer-like VMI source element type");
   }
   auto intType = dyn_cast<IntegerType>(sourceType.getElementType());
-  if (!intType || !isVMIAnyI8I16I32Type(sourceType.getElementType())) {
+  // A5 has neither a row nor a VCG eight-bit reduction, so a grouped reduction
+  // over eight-bit elements has no execution strategy at all.  State that in the
+  // op contract instead of letting the layout tables admit a shape that can
+  // never lower: grouped integer reduction exists for 16- and 32-bit elements.
+  unsigned elementBits = intType ? intType.getWidth() : 0;
+  if (elementBits != kValue16 && elementBits != kValue32) {
     return op.emitOpError(
-        "requires 8-bit, 16-bit, or 32-bit integer source element type");
+        "requires 16-bit or 32-bit integer source element type; A5 has no "
+        "eight-bit grouped reduction");
   }
   return verifyGroupReduceCommon(op, sourceType, resultType, maskType);
 }
@@ -481,7 +492,8 @@ LogicalResult verifyHalfWidthPair(Operation *op, VMIVRegType wideType,
   }
   unsigned wideBits = pto::getPTOStorageElemBitWidth(wideType.getElementType());
   unsigned halfBits = pto::getPTOStorageElemBitWidth(lowType.getElementType());
-  if (wideBits == 0 || halfBits == 0 || wideBits != 2 * halfBits) {
+  if (wideBits == 0 || halfBits == 0 ||
+      wideBits != kWideToHalfBitRatio * halfBits) {
     return op->emitOpError()
            << "requires the wide element width to be exactly twice the half "
               "element width; got "

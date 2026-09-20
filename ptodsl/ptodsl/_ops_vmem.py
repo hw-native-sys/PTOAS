@@ -18,6 +18,7 @@ from ._ops_imports import *  # noqa: F401,F403
 from ._ops_common import (
     _coerce_index,
     _coerce_scalar_like_vector_element,
+    _coerce_vunpack_part,
     _element_bytewidth,
     _infer_vreg_metadata,
     _infer_vreg_type_from_address_source,
@@ -519,6 +520,36 @@ def _infer_vpack_result_type(src):
     return result_type
 
 
+def _infer_vunpack_result_type(src):
+    lanes, elem_type = _infer_vreg_metadata(src)
+    if not IntegerType.isinstance(elem_type):
+        raise TypeError(f"vunpack(src, part) expects an integer source vreg, got {elem_type}")
+    src_int_type = IntegerType(elem_type)
+    src_width = src_int_type.width
+    if src_width not in {8, 16}:
+        raise TypeError(
+            "vunpack(src, part) currently supports only the source/result shape pairs "
+            "s8/u8 -> s16/u16 and s16/u16 -> s32/u32"
+        )
+    if lanes % 2 != 0:
+        raise TypeError("vunpack(src, part) requires an even source lane count")
+
+    result_width = src_width * 2
+    if src_int_type.is_signed:
+        result_elem_type = IntegerType.get_signed(result_width)
+        op_ctor = _pto.VsunpackOp
+    elif src_int_type.is_unsigned:
+        result_elem_type = IntegerType.get_unsigned(result_width)
+        op_ctor = _pto.VzunpackOp
+    else:
+        # Match vpack's convention for signless integer carriers: the result
+        # is explicitly unsigned because this path performs zero extension.
+        result_elem_type = IntegerType.get_unsigned(result_width)
+        op_ctor = _pto.VzunpackOp
+
+    return _resolve(vreg_type(lanes // 2, result_elem_type)), op_ctor
+
+
 def vcvt(src, to_dtype, mask, *, rnd=None, sat=None, part=None):
     """``pto.vcvt`` – explicit vector type conversion."""
     kwargs = {}
@@ -552,6 +583,22 @@ def vpack(src, part):
             _infer_vpack_result_type(src),
             unwrap_surface_value(src),
             _normalize_vpack_part(part, context="vpack(src, part)"),
+        ).result
+    )
+
+
+def vunpack(src, part):
+    """``pto.vunpack`` – widen one vector half using signedness-aware extension.
+
+    Signless integer inputs follow ``vpack``'s convention: they are zero-
+    extended and produce an unsigned result element type.
+    """
+    result_type, op_ctor = _infer_vunpack_result_type(src)
+    return wrap_surface_value(
+        op_ctor(
+            result_type,
+            unwrap_surface_value(src),
+            _coerce_vunpack_part(part, context="vunpack(src, part)"),
         ).result
     )
 

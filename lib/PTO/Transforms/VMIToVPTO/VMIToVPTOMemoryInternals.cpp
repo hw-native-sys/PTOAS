@@ -914,23 +914,18 @@ LogicalResult checkSupportedSlots1GroupSlotLoadShape(
     return failure();
   };
 
-  unsigned elementBits =
-      pto::getPTOStorageElemBitWidth(resultType.getElementType());
-  bool unsupportedElementWidth = elementBits == 0 || mlir::pto::kValue256 % elementBits != 0;
-  if (unsupportedElementWidth) {
-    return fail("slots=1 group_slot_load requires supported element width");
+  // Each group is read with a lane-zero BRC load from its own effective
+  // address, so no 32B block alignment is required and any positive stride is
+  // legal.
+  if (!getScalarBroadcastLoadDistToken(resultType.getElementType())) {
+    return fail(
+        "slots=1 group_slot_load requires a supported BRC load element width");
   }
-  int64_t alignedStrideElems = mlir::pto::kValue256 / elementBits;
-  std::optional<int64_t> sourceGroupStride =
-      getConstantIndexValue(op.getSourceGroupStride());
-  if (!sourceGroupStride || *sourceGroupStride <= 0 ||
-      *sourceGroupStride % alignedStrideElems != 0) {
-    return fail(Twine("slots=1 group_slot_load currently lowers as one "
-                      "lane-0 vsldb per group and requires constant "
-                      "positive source_group_stride divisible by ") +
-                Twine(alignedStrideElems) +
-                " elements for 32B load alignment; packed or unaligned "
-                "scalar load lowering is not implemented");
+  if (std::optional<int64_t> sourceGroupStride =
+          getConstantIndexValue(op.getSourceGroupStride());
+      sourceGroupStride && *sourceGroupStride <= 0) {
+    return fail("slots=1 group_slot_load requires a positive "
+                "source_group_stride when it is constant");
   }
   return success();
 }

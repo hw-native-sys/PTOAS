@@ -2030,6 +2030,28 @@ group_sum = pto.vcgadd(p_row, col_mask)
 
 ---
 
+#### `pto.dhistv2(acc: VRegType, source: VRegType, mask: MaskType, bin_val: ScalarType) -> VRegType`
+
+**Description**: Update a distribution histogram from active 8-bit source
+lanes. `acc` supplies the incoming 128 16-bit bin accumulators, and the result
+contains the updated accumulators.
+
+**Parameters**:
+
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `acc` | `VRegType` | 128-lane, 16-bit integer accumulator vector |
+| `source` | `VRegType` | 256-lane, 8-bit integer sample vector |
+| `mask` | `MaskType` | `b8` predicate selecting active source lanes |
+| `bin_val` | `ScalarType` | `i32` histogram bin/control operand |
+
+**Returns**: A vector with exactly the same type as `acc`.
+
+The frontend forwards these operands to the VPTO operation; PTOAS verification
+rejects an incompatible accumulator, source, mask granularity, or bin type.
+
+---
+
 ### 8.2.6 Fused and compound ops
 
 These combine an arithmetic operation with a math function or activation in a single instruction.
@@ -2258,6 +2280,36 @@ packed_high = pto.vpack(vec_i32, pto.VPackPart.HIGHER)  # upper 64 lanes -> 128Ã
 
 ---
 
+#### `pto.vunpack(src: VRegType, part: IndexLike) -> VRegType`
+
+**Description**: Widen the selected half of an integer vector. `part=0`
+selects the lower half and `part=1` selects the higher half. The result has
+half as many lanes, twice the element width, and the same total payload size.
+
+**Signedness rule**:
+
+- Signed input uses `pto.vsunpack`, sign-extends, and produces a signed result.
+- Unsigned input uses `pto.vzunpack`, zero-extends, and produces an unsigned result.
+- Signless input follows `pto.vpack`'s convention: it uses `pto.vzunpack` and
+  produces an explicitly unsigned result.
+
+For example, `si8` produces `si16`, while both `ui8` and signless `i8`
+produce `ui16`. Likewise, `si16` produces `si32`, while `ui16` and signless
+`i16` produce `ui32`.
+
+**Constraints**:
+
+- Only 8-bit to 16-bit and 16-bit to 32-bit widening are supported.
+- The source lane count must be even.
+- A statically known `part` must be `0` or `1`; a dynamic index must evaluate
+  to one of those values at runtime.
+
+For example, unpacking the lower half of `!pto.vreg<256xsi8>` with `part=0`
+produces `!pto.vreg<128xsi16>`. Unpacking the higher half of signless
+`!pto.vreg<256xi8>` with `part=1` produces `!pto.vreg<128xui16>`.
+
+---
+
 ### 8.2.8.1 Index generation
 
 #### `pto.vci(base: ScalarType | int, order: OrderMode | None = None) -> VRegType`
@@ -2335,6 +2387,26 @@ align0 = pto.init_align()
 align1 = pto.vstur(align0, compacted, store_base, pto.PostUpdate.ON)
 pto.vstar(align1, store_base)
 ```
+
+---
+
+#### `pto.vusqz(vec: VRegType, mask: MaskType) -> VRegType`
+
+**Description**: Generate exclusive prefix counts from `mask`. Result lane
+`i` contains the number of active predicate lanes before lane `i`; therefore
+lane 0 is always zero. `vec` is retained by the VPTO interface for operand
+compatibility, while the observable count values are determined by `mask`.
+
+**Parameters**:
+
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `vec` | `VRegType` | Signed or signless 8-, 16-, or 32-bit integer carrier |
+| `mask` | `MaskType` | Predicate from which prefix counts are generated |
+
+**Returns**: A prefix-count vector with exactly the same type as `vec`.
+Unsigned carrier element types and widths other than 8, 16, or 32 bits are
+rejected by PTOAS verification.
 
 ---
 
@@ -2422,14 +2494,14 @@ even_lanes, odd_lanes = pto.vdintlv(packed_low, packed_high)
 | Carry | `vaddc`, `vsubc`, `vaddcs`, `vsubcs` |
 | Vector-scalar | `vadds`, `vsubs`, `vmuls`, `vmaxs`, `vmins`, `vlrelu`, `vands`, `vors`, `vxors`, `vshls`, `vshrs` |
 | Broadcast | `vbr`, `vdup` |
-| Full reduction | `vcadd`, `vcmax`, `vcmin` |
+| Full reduction | `vcadd`, `vcmax`, `vcmin`, `dhistv2` |
 | Group reduction | `vcgadd`, `vcgmax`, `vcgmin` |
 | Scan | `vcpadd` |
 | Fused | `vexpdif`, `vaxpy`, `vmula`, `vmadd`, `vaddrelu`, `vsubrelu`, `vmulscvt` |
 | Compare/select | `vcmp`, `vcmps`, `vsel` |
-| Conversion | `vcvt`, `vpack`, `vbitcast`, `pbitcast` |
+| Conversion | `vcvt`, `vpack`, `vunpack`, `vbitcast`, `pbitcast` |
 | Index generation | `vci` |
-| Rearrangement | `vsqz`, `vintlv`, `vdintlv` |
+| Rearrangement | `vsqz`, `vusqz`, `vintlv`, `vdintlv` |
 
 ---
 

@@ -30,7 +30,7 @@ public:
                   DepBaseMemInfoPairVec &depBaseMemInfosVec);
  
   // 检查两个具体的 MemInfo 是否别名
-  bool MemAlias(const BaseMemInfo *a, const BaseMemInfo *b);
+  bool MemAlias(const BaseMemInfo *a, const BaseMemInfo *b) const;
  
 private:
   bool isGMBufferOverlap(const BaseMemInfo *a, const BaseMemInfo *b) const;

@@ -11,6 +11,7 @@ from ptoas.mlir.ir import (
     Context,
     F32Type,
     IndexType,
+    IntegerType,
     InsertionPoint,
     Location,
     Module,
@@ -28,6 +29,7 @@ def build():
             module.operation.attributes["pto.target_arch"] = StringAttr.get("a5")
             f32 = F32Type.get(ctx)
             idx = IndexType.get(ctx)
+            i32 = IntegerType.get_signless(32, ctx)
             ptr_f32 = pto.PtrType.get(f32, ctx)
             fn_ty = func.FunctionType.get([ptr_f32], [])
 
@@ -38,8 +40,8 @@ def build():
 
             with InsertionPoint(entry):
                 c0 = arith.ConstantOp(idx, 0).result
-                c0_evt = arith.ConstantOp(idx, 0).result
-                c16_evt = arith.ConstantOp(idx, 16).result
+                c0_evt = arith.ConstantOp(i32, 0).result
+                c16_evt = arith.ConstantOp(i32, 16).result
                 c16_evt_pair = arith.AddIOp(c0_evt, c16_evt).result
                 two = arith.ConstantOp(f32, 2.0).result
                 out = entry.arguments[0]
@@ -53,8 +55,8 @@ def build():
 
                 sec_vec = pto.SectionVectorOp()
                 with InsertionPoint(sec_vec.body.blocks.append()):
-                    pto.sync_wait(pipe_mte3, c0_evt)
-                    pto.store(two, out, c0)
+                    pto.wait_intra_block(pipe_mte3, c0_evt)
+                    pto.store(out, c0, two)
                 func.ReturnOp([])
 
             module.operation.verify()

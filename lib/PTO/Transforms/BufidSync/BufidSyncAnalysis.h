@@ -264,10 +264,11 @@ inline void printOp2BufSync(llvm::raw_ostream &os,
 
   DenseMap<const Operation *, unsigned> opOrder;
   unsigned orderIdx = 0;
-  func.walk([&opOrder, &orderIdx](
-                Operation *op) { // NOLINT(readability-non-const-parameter)
-    opOrder[op] = orderIdx++;
-  });
+  for (auto &block : func.getBody().getBlocks()) {
+    for (auto &op : block.getOperations()) {
+      opOrder[&op] = orderIdx++;
+    }
+  }
 
   std::sort(sortedOps.begin(), sortedOps.end(),
             [&](const Operation *a, const Operation *b) {

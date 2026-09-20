@@ -1,0 +1,76 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+
+// RUN: ptoas --pto-arch=a5 --pto-level=level3 --enable-insert-sync %s | FileCheck %s --check-prefix=A5
+// RUN: ptoas --pto-arch=a3 --pto-level=level3 --enable-insert-sync %s | FileCheck %s --check-prefix=A3
+
+module {
+  // The square output reuses the column vector while the broadcast still
+  // needs to read that vector for the remaining rows.
+  func.func @column_broadcast_reuse() {
+    %data_addr = arith.constant 0 : i64
+    %scale_addr = arith.constant 16384 : i64
+    %data = pto.alloc_tile addr = %data_addr : !pto.tile_buf<vec, 8x512xf32>
+    %scale = pto.alloc_tile addr = %scale_addr : !pto.tile_buf<vec, 1x512xf32>
+    %squared = pto.alloc_tile addr = %scale_addr : !pto.tile_buf<vec, 8x512xf32>
+    pto.tcolexpandmul ins(%data, %scale : !pto.tile_buf<vec, 8x512xf32>, !pto.tile_buf<vec, 1x512xf32>)
+      outs(%data : !pto.tile_buf<vec, 8x512xf32>)
+    pto.tmul ins(%data, %data : !pto.tile_buf<vec, 8x512xf32>, !pto.tile_buf<vec, 8x512xf32>)
+      outs(%squared : !pto.tile_buf<vec, 8x512xf32>)
+    return
+  }
+
+  func.func @column_broadcast_delayed_reuse() {
+    %one = arith.constant 1.0 : f32
+    %rows = arith.constant 8 : index
+    %cols = arith.constant 512 : index
+    %data_addr = arith.constant 0 : i64
+    %scale_addr = arith.constant 16384 : i64
+    %data = pto.alloc_tile addr = %data_addr valid_row = %rows valid_col = %cols : !pto.tile_buf<loc=vec, dtype=f32, rows=8, cols=512, v_row=?, v_col=?, blayout=row_major, slayout=none_box, fractal=512, pad=0>
+    %scale = pto.alloc_tile addr = %scale_addr : !pto.tile_buf<vec, 1x512xf32>
+    %squared = pto.alloc_tile addr = %scale_addr valid_row = %rows valid_col = %cols : !pto.tile_buf<loc=vec, dtype=f32, rows=8, cols=512, v_row=?, v_col=?, blayout=row_major, slayout=none_box, fractal=512, pad=0>
+    pto.tcolexpandmul ins(%data, %scale : !pto.tile_buf<loc=vec, dtype=f32, rows=8, cols=512, v_row=?, v_col=?, blayout=row_major, slayout=none_box, fractal=512, pad=0>, !pto.tile_buf<vec, 1x512xf32>)
+      outs(%data : !pto.tile_buf<loc=vec, dtype=f32, rows=8, cols=512, v_row=?, v_col=?, blayout=row_major, slayout=none_box, fractal=512, pad=0>)
+    pto.tmuls ins(%data, %one : !pto.tile_buf<loc=vec, dtype=f32, rows=8, cols=512, v_row=?, v_col=?, blayout=row_major, slayout=none_box, fractal=512, pad=0>, f32)
+      outs(%data : !pto.tile_buf<loc=vec, dtype=f32, rows=8, cols=512, v_row=?, v_col=?, blayout=row_major, slayout=none_box, fractal=512, pad=0>)
+    pto.tmul ins(%data, %data : !pto.tile_buf<loc=vec, dtype=f32, rows=8, cols=512, v_row=?, v_col=?, blayout=row_major, slayout=none_box, fractal=512, pad=0>, !pto.tile_buf<loc=vec, dtype=f32, rows=8, cols=512, v_row=?, v_col=?, blayout=row_major, slayout=none_box, fractal=512, pad=0>)
+      outs(%squared : !pto.tile_buf<loc=vec, dtype=f32, rows=8, cols=512, v_row=?, v_col=?, blayout=row_major, slayout=none_box, fractal=512, pad=0>)
+    return
+  }
+
+  func.func @column_broadcast_no_reuse() {
+    %data_addr = arith.constant 0 : i64
+    %scale_addr = arith.constant 16384 : i64
+    %square_addr = arith.constant 18432 : i64
+    %data = pto.alloc_tile addr = %data_addr : !pto.tile_buf<vec, 8x512xf32>
+    %scale = pto.alloc_tile addr = %scale_addr : !pto.tile_buf<vec, 1x512xf32>
+    %squared = pto.alloc_tile addr = %square_addr : !pto.tile_buf<vec, 8x512xf32>
+    pto.tcolexpandmul ins(%data, %scale : !pto.tile_buf<vec, 8x512xf32>, !pto.tile_buf<vec, 1x512xf32>)
+      outs(%data : !pto.tile_buf<vec, 8x512xf32>)
+    pto.tmul ins(%data, %data : !pto.tile_buf<vec, 8x512xf32>, !pto.tile_buf<vec, 8x512xf32>)
+      outs(%squared : !pto.tile_buf<vec, 8x512xf32>)
+    return
+  }
+}
+
+// A5-LABEL: AICORE void column_broadcast_reuse(
+// A5: TCOLEXPANDMUL(
+// A5-NEXT: pipe_barrier(PIPE_ALL);
+// A5-NEXT: TMUL(
+// A5-LABEL: AICORE void column_broadcast_delayed_reuse(
+// A5: TCOLEXPANDMUL(
+// A5-NEXT: TMULS(
+// A5-NEXT: pipe_barrier(PIPE_ALL);
+// A5-NEXT: TMUL(
+// A5-LABEL: AICORE void column_broadcast_no_reuse(
+// A5: TCOLEXPANDMUL(
+// A5-NEXT: TMUL(
+// A3-LABEL: AICORE void column_broadcast_reuse(
+// A3: TCOLEXPANDMUL(
+// A3-NEXT: pipe_barrier(PIPE_V);
+// A3-NEXT: TMUL(
