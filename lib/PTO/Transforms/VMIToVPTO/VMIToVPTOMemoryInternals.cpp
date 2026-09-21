@@ -483,14 +483,14 @@ FailureOr<int64_t> getGroupSizeFromNumGroups(VMIVRegType type,
                                              std::string *reason = nullptr) {
   if (numGroups <= 0) {
     if (reason) {
-      *reason = "requires num_groups to be positive";
+      reason->assign("requires num_groups to be positive");
     }
     return failure();
   }
   bool unevenGroups = type.getElementCount() % numGroups != 0;
   if (unevenGroups) {
     if (reason) {
-      *reason = "requires num_groups to evenly divide logical lane count";
+      reason->assign("requires num_groups to evenly divide logical lane count");
     }
     return failure();
   }

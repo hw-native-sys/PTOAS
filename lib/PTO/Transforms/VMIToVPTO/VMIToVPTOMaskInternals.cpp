@@ -188,7 +188,7 @@ getShuffleForwardingInputPlan(VMIShuffleOp op, std::string *reason) {
   auto resultType = cast<VMIVRegType>(op.getResult().getType());
   if (op.getIndices().empty()) {
     if (reason) {
-      *reason = "requires non-empty indices";
+      reason->assign("requires non-empty indices");
     }
     return failure();
   }
@@ -196,14 +196,14 @@ getShuffleForwardingInputPlan(VMIShuffleOp op, std::string *reason) {
       getDataLanesPerPart(sourceType.getElementType());
   if (failed(lanesPerPart)) {
     if (reason) {
-      *reason = "requires known lanes per physical part";
+      reason->assign("requires known lanes per physical part");
     }
     return failure();
   }
   FailureOr<int64_t> resultFactor = getDataLayoutFactor(resultType);
   if (failed(resultFactor)) {
     if (reason) {
-      *reason = "requires assigned result layout";
+      reason->assign("requires assigned result layout");
     }
     return failure();
   }

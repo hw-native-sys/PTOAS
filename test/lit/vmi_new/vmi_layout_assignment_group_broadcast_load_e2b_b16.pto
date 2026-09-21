@@ -12,7 +12,7 @@ module {
   func.func @vmi_layout_assignment_group_broadcast_load_e2b_b16(
       %src: !pto.ptr<bf16, ub>, %off: index) -> !pto.vmi.vreg<256xbf16, #pto.vmi.layout<contiguous>> {
     %c1 = arith.constant 1 : index
-    // 16 bf16 elements is one 32B block, the alignment pto.vsldb requires.
+    // The per-group BRC plan only needs element alignment.
     %c16 = arith.constant 16 : index
     %aligned_off = arith.muli %off, %c16 : index
     %out = pto.vmi.vload %src[%aligned_off], %c1 {dist_mode = "brc", group = 8}
@@ -51,9 +51,11 @@ module {
 
 // CHECK-LABEL: func.func @vmi_layout_assignment_group_broadcast_load_e2b_b16
 // CHECK-SAME: (%[[SRC:.*]]: !pto.ptr<bf16, ub>, %[[OFF:.*]]: index)
-// CHECK: pto.vsldb %{{.*}}, %{{.*}}, %{{.*}}, %{{.*}} : !pto.ptr<bf16, ub>, i16, i16, !pto.mask<b16> -> !pto.vreg<128xbf16>
-// CHECK: pto.vselr
-// CHECK: pto.vselr
+// A multi-part half-part group bank materializes per group: one lane-zero BRC
+// load per group plus prefix-mask selects, with no vsldb and no index ramp.
+// CHECK-NOT: pto.vsldb
+// CHECK-COUNT-8: pto.vlds {{.*}} {dist = "BRC_B16"}
+// CHECK: pto.vsel
 // CHECK: return %{{.*}}, %{{.*}} : !pto.vreg<128xbf16>, !pto.vreg<128xbf16>
 
 // CHECK-LABEL: func.func @vmi_layout_assignment_group_broadcast_load_e2b_b32

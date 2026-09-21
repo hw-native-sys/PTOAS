@@ -249,44 +249,6 @@ LogicalResult VMILayoutSupport::getGroupBroadcastSupport(
       sourceType, resultType, numGroups, reason)));
 }
 
-// Checker-side acceptance for the two composite 32<->8 spine rows.
-// This predicate is deliberately *not* part of the cast candidate path: it is
-// consulted only by the "is this assigned pair supportable" validators below
-// (getTruncFSupport / getExtFSupport and the matching residual-op guards in
-// VMIToVPTO), never by the layout solver or by the propagation transfer, which
-// reach the same rows exclusively through the spine-scoped queries.  Accepting
-// the pair here is what makes an already-seeded composite pair lowerable; it
-// cannot make any chain reach the pair on its own.
-static bool isSpineScopedCastLayoutPair(VMIVRegType sourceType,
-                                        VMIVRegType resultType,
-                                        VMILayoutAttr sourceLayout,
-                                        VMILayoutAttr resultLayout) {
-  if (!sourceLayout || !resultLayout) {
-    return false;
-  }
-  int64_t sourceBits =
-      pto::getPTOStorageElemBitWidth(sourceType.getElementType());
-  int64_t resultBits =
-      pto::getPTOStorageElemBitWidth(resultType.getElementType());
-  MLIRContext *ctx = sourceType.getContext();
-  int64_t numGroups =
-      sourceLayout.isGroupSlots() ? sourceLayout.getNumGroups() : 0;
-  for (const LegalCastLayoutPattern &pattern :
-       kSpineScopedLegalCastLayoutPatterns) {
-    if (!matchesElementBitsPattern(pattern.sourceBits, sourceBits) ||
-        !matchesElementBitsPattern(pattern.resultBits, resultBits)) {
-      continue;
-    }
-    if (matchesLayoutPattern(ctx, pattern.sourceLayout, sourceLayout,
-                             numGroups) &&
-        matchesLayoutPattern(ctx, pattern.resultLayout, resultLayout,
-                             numGroups)) {
-      return true;
-    }
-  }
-  return false;
-}
-
 inline LogicalResult getNarrowCastSupport(VMIVRegType sourceType,
                                           VMIVRegType resultType,
                                           std::string *reason) {
@@ -319,47 +281,6 @@ LogicalResult VMILayoutSupport::getExtFSupport(VMIExtFOp op,
   return success(isSpineScopedCastLayoutPair(
       sourceType, resultType, sourceType.getLayoutAttr(),
       resultType.getLayoutAttr()));
-}
-
-// vunzip / vzip only change the element width and keep the logical lane
-// order, so they are layout-preserving: every operand must carry one layout
-// family.  They are deliberately *not* cast facts -- a cast relation such as
-// truncf's would drag in contiguous/deinterleaved requirements that the kernel
-// cannot materialize.
-static LogicalResult checkHalfWidthLayouts(VMIVRegType wideType,
-                                           VMIVRegType lowType,
-                                           VMIVRegType highType,
-                                           std::string *reason) {
-  VMILayoutAttr wideLayout = wideType.getLayoutAttr();
-  VMILayoutAttr lowLayout = lowType.getLayoutAttr();
-  VMILayoutAttr highLayout = highType.getLayoutAttr();
-  if (!wideLayout || !lowLayout || !highLayout) {
-    if (reason) {
-      *reason = "requires layout-assigned operands";
-    }
-    return failure();
-  }
-  // The op is a pure layout pass-through: whichever side fixes a layout the
-  // others follow, so all three always share one layout.  A shared layout is
-  // only usable when its logical-lane to physical-part mapping does not depend
-  // on the element width.  block_deinterleaved derives block_elems from the
-  // element-width-dependent physical lanes per part (block_elems =
-  // lanes_per_part / 8), so the wide and half operands disagree and the
-  // pair-wise vbitcast + vdintlv/vintlv lowering would misplace lanes.
-  if (lowLayout != highLayout || wideLayout != lowLayout) {
-    if (reason) {
-      *reason = "requires the halves and the wide operand to share one layout";
-    }
-    return failure();
-  }
-  if (lowLayout.isBlockDeinterleaved()) {
-    if (reason) {
-      *reason = "does not support block_deinterleaved layouts because their "
-                "block size changes with the element width";
-    }
-    return failure();
-  }
-  return success();
 }
 
 LogicalResult VMILayoutSupport::getVUnzipSupport(VMIVUnzipOp op,

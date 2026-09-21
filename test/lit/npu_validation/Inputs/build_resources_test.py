@@ -59,6 +59,15 @@ python3() {
     [[ "$2" != *sysconfig* ]] || echo "$BASE_PATH"
     return 0
   fi
+  if [[ "$1" == "$BASE_PATH/scripts/package/harden_cann_wheel.py" ]]; then
+    [[ $# -eq 4 && "$3" == --output-dir ]] || return 1
+    echo "harden:$CMAKE_BUILD_PARALLEL_LEVEL" >> "$TEST_LOG"
+    # The resource test uses placeholder wheels; model the delivery copy
+    # produced by the postprocessor without invoking real ELF tools.
+    mkdir -p "$4"
+    cp "$2" "$4/"
+    return 0
+  fi
   [[ "$1" == -m ]] || return 0
   if [[ "$2" == pip && "$*" == *--help* ]]; then
     return 1
@@ -105,7 +114,8 @@ def check_pipeline(entry, requested, expected_llvm, expected_ptoas, toolchain_fl
         if entry == "package":
             if toolchain_flags:
                 expected.append(f"compiler-rt:{expected_llvm}:{expected_llvm}")
-            expected.extend([f"wheel:{expected_ptoas}", f"native:{expected_ptoas}"])
+            expected.extend([f"wheel:{expected_ptoas}", f"harden:{expected_llvm}",
+                             f"native:{expected_ptoas}"])
         expected.append(f"after:{expected_llvm}:{expected_llvm}")
         actual = log.read_text(encoding="utf-8").splitlines()
         assert actual == expected, f"{entry}: expected {expected}, got {actual}"

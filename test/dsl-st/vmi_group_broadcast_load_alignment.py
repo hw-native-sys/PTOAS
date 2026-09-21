@@ -30,7 +30,7 @@ UB_SRC = 1024
 UB_OUT = 2048
 
 
-def build(name, group=None, offset=0, plain=False):
+def build(name, group=None, offset=0, plain=False, stride=1):
     @pto.jit(name=name, target="a5", backend="vpto", mode="explicit",
              kernel_kind="vector", insert_sync=False)
     def kernel(src: pto.ptr(pto.f32, "gm"), out: pto.ptr(pto.f32, "gm")):
@@ -44,7 +44,7 @@ def build(name, group=None, offset=0, plain=False):
             value = pto.vmi.vload(ub_src, offset, size=LANES)
         else:
             value = pto.vmi.vload(ub_src, offset, size=LANES, dist_mode="brc",
-                                  group=group, stride=1)
+                                  group=group, stride=stride)
         pto.vmi.vstore(value, ub_out, 0)
         pto.set_flag("V", "MTE3", event_id=0)
         pto.wait_flag("V", "MTE3", event_id=0)
@@ -90,6 +90,20 @@ for group in (8, 4, 2):
             expected[lane] = source[offset + lane // per_group]
         CASES.append(dict(name=name,
                           kernel=build(name, group=group, offset=offset),
+                          make_case=make_case(source, canary, expected),
+                          check=check_case))
+
+# A constant non-unit group stride is admitted by the per-group BRC plan: the
+# group values sit at offset + g * stride.
+for group in (4, 2):
+    for stride in (2, 8):
+        name = f"gbl_g{group}_stride{stride}"
+        expected = canary.copy()
+        per_group = LANES // group
+        for lane in range(LANES):
+            expected[lane] = source[(lane // per_group) * stride]
+        CASES.append(dict(name=name,
+                          kernel=build(name, group=group, stride=stride),
                           make_case=make_case(source, canary, expected),
                           check=check_case))
 

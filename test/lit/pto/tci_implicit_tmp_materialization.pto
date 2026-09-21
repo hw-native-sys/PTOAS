@@ -13,6 +13,8 @@
 // RUN: ptoas --pto-arch=a3 --pto-level=level2 --emit-pto-ir %s 2>&1 | FileCheck %s --check-prefix=IR
 // RUN: ptoas --pto-arch=a3 --pto-level=level2 %s 2>&1 | FileCheck %s --check-prefix=CPP
 // RUN: ptoas --pto-arch=a5 --pto-level=level2 --emit-pto-ir %s 2>&1 | FileCheck %s --check-prefix=A5IR
+// RUN: ptoas --pto-arch=a3 --pto-level=level2 --enable-insert-sync %s | FileCheck %s --check-prefix=SYNC-V
+// RUN: ptoas --pto-arch=a5 --pto-level=level2 --enable-insert-sync %s | FileCheck %s --check-prefix=SYNC-S
 
 module {
   func.func @tci_implicit_tmp(%dst: !pto.partition_tensor_view<1x32xi32>) {
@@ -36,3 +38,13 @@ module {
 
 // A5IR: pto.tci ins(%{{.*}} : i32) outs(
 // A5IR-NOT: !pto.tile_buf<vec, 1x192xf32>
+
+// SYNC-V: TCI<
+// SYNC-V-NEXT: set_flag(PIPE_V, PIPE_MTE3, [[EVENT:EVENT_ID[0-9]+]]);
+// SYNC-V: wait_flag(PIPE_V, PIPE_MTE3, [[EVENT]]);
+// SYNC-V-NEXT: TSTORE(
+
+// SYNC-S: TCI<
+// SYNC-S-NEXT: set_flag(PIPE_S, PIPE_MTE3, [[EVENT:EVENT_ID[0-9]+]]);
+// SYNC-S: wait_flag(PIPE_S, PIPE_MTE3, [[EVENT]]);
+// SYNC-S-NEXT: TSTORE(

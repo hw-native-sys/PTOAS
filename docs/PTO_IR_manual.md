@@ -8493,7 +8493,12 @@ dst[i, j] = S + linear_index(i, j)   // or descending if requested
 
 **Hardware Mapping:**
 
-- Executes on the **Vector pipeline** (`PIPE_V`)
+- With a `tmp` operand, executes on the **Vector pipeline** (`PIPE_V`).
+- Without a `tmp` operand, executes on the **Scalar pipeline** (`PIPE_S`).
+- When A2/A3 level-2 compilation supplies an implicit `tmp`, automatic
+  synchronization uses `PIPE_V`. A following `pto.tstore` waits for the
+  sequence generation to complete on that pipeline. This applies to both
+  ascending and descending sequences.
 
 **Basic Example:**
 

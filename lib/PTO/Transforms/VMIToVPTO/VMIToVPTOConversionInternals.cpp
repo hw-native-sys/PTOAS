@@ -1662,7 +1662,7 @@ static FailureOr<int64_t> getByteAddressableElementSize(
   unsigned elementBits = pto::getPTOStorageElemBitWidth(elementType);
   if (elementBits == 0 || elementBits % kBitsPerByte != 0) {
     if (reason) {
-      *reason = "requires byte-addressable element type";
+      reason->assign("requires byte-addressable element type");
     }
     return failure();
   }

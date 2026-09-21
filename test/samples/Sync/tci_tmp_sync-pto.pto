@@ -1,0 +1,45 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+
+// Issue #1532: explicit-tmp TCI must finish on PIPE_V before TSTORE.
+// Alternate nonzero ascending/descending starts while reusing the UB tile.
+// Every row is checked against an independent CPU golden; all synchronization
+// must be inserted by the compiler, including the loop's buffer-reuse edges.
+!scratch = !pto.tile_buf<vec, 1x192xf32>
+!tile = !pto.tile_buf<vec, 1x32xi32>
+
+module {
+  func.func @tci_tmp_sync(%descending: !pto.ptr<i32>, %ascending: !pto.ptr<i32>)
+      attributes {pto.kernel_kind = #pto.kernel_kind<vector>} {
+    %c0 = arith.constant 0 : index
+    %c1 = arith.constant 1 : index
+    %c32 = arith.constant 32 : index
+    %c64 = arith.constant 64 : index
+    %descending_start = arith.constant 31 : i32
+    %ascending_start = arith.constant 10 : i32
+    %tmp = pto.alloc_tile : !scratch
+    %dst = pto.alloc_tile : !tile
+    %descending_view = pto.make_tensor_view %descending, shape = [%c64, %c32],
+        strides = [%c32, %c1] : !pto.tensor_view<?x?xi32>
+    %ascending_view = pto.make_tensor_view %ascending, shape = [%c64, %c32],
+        strides = [%c32, %c1] : !pto.tensor_view<?x?xi32>
+    scf.for %row = %c0 to %c64 step %c1 {
+      pto.tci ins(%descending_start, %tmp : i32, !scratch) outs(%dst : !tile) {descending = true}
+      %descending_part = pto.partition_view %descending_view,
+          offsets = [%row, %c0], sizes = [%c1, %c32]
+          : !pto.tensor_view<?x?xi32> -> !pto.partition_tensor_view<1x32xi32>
+      pto.tstore ins(%dst : !tile) outs(%descending_part : !pto.partition_tensor_view<1x32xi32>)
+      pto.tci ins(%ascending_start, %tmp : i32, !scratch) outs(%dst : !tile) {descending = false}
+      %ascending_part = pto.partition_view %ascending_view,
+          offsets = [%row, %c0], sizes = [%c1, %c32]
+          : !pto.tensor_view<?x?xi32> -> !pto.partition_tensor_view<1x32xi32>
+      pto.tstore ins(%dst : !tile) outs(%ascending_part : !pto.partition_tensor_view<1x32xi32>)
+    }
+    return
+  }
+}

@@ -558,6 +558,12 @@ static constexpr GroupBroadcastLoadLayoutPattern
         {gb(2), bits<8, 16, 32>(), memContiguous(), d(2)},
         {gb(4), bits<8, 16, 32>(), memContiguous(), c()},
         {gb(4), bits<8, 16, 32>(), memContiguous(), d(4)},
+        // A constant non-unit group stride only relocates each group's base and
+        // the per-group BRC plan addresses groups individually, so every dense
+        // sub-full-part broadcast admits an arbitrary constant stride.
+        {gb(1), bits<8, 16, 32>(), memAny(), c()},
+        {gb(2), bits<8, 16, 32>(), memAny(), c()},
+        {gb(4), bits<8, 16, 32>(), memAny(), c()},
         {gbFull(), bits<8, 16, 32>(), memAny(), c()},
         // A single-group BRC is a scalar broadcast. Its equal-valued result
         // may use a deinterleaved physical layout without data rearrangement.
@@ -582,6 +588,12 @@ static constexpr GroupBroadcastLoadDirectPattern
          memContiguous(), d(2)},
         {VMIGroupBroadcastLoadDirectKind::E2B, G<8>(), gb(4), bits<16, 32>(),
          memContiguous(), d(4)},
+        // A dense sub-full-part group is materialized by one lane-zero BRC
+        // load per logical group plus a prefix-mask select tree, so it needs
+        // only element alignment and never a 32B-aligned pto.vsldb base.
+        {VMIGroupBroadcastLoadDirectKind::BRC, anyG(), gb(1), bits<8, 16, 32>(), memAny(), c()},
+        {VMIGroupBroadcastLoadDirectKind::BRC, anyG(), gb(2), bits<8, 16, 32>(), memAny(), c()},
+        {VMIGroupBroadcastLoadDirectKind::BRC, anyG(), gb(4), bits<8, 16, 32>(), memAny(), c()},
         {VMIGroupBroadcastLoadDirectKind::BRC, anyG(), gbFull(),
          bits<8, 16, 32>(), memAny(), c()},
         // Scalar BRC can be emitted once per physical result chunk, so its

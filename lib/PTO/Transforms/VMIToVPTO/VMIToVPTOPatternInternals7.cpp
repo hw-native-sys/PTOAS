@@ -1396,12 +1396,13 @@ static LogicalResult checkSupportedCompressResultShape(
 }
 
 static LogicalResult checkCompressStoreDestination(VMICompressStoreOp op,
-                                                   std::string *reason) { // NOLINT(readability-non-const-parameter)
+                                                  std::string *reason) {
   if (isa<PtrType>(op.getDestination().getType())) {
     return success();
   }
   if (reason) {
-    *reason = "requires !pto.ptr destination because pto.vstur is pointer-only";
+    reason->assign(
+        "requires !pto.ptr destination because pto.vstur is pointer-only");
   }
   return failure();
 }

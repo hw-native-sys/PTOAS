@@ -983,6 +983,7 @@ stage_ptoas_wheel() {
   pip_install_runtime_deps "${python_bin}" \
     numpy \
     'pybind11<3' \
+    wheel \
     'scikit-build-core>=0.12.2,<2'
   # pip 21.2 copies local projects out of tree unless this transitional
   # feature is enabled, which conflicts with the existing CMake cache. Newer
@@ -1091,8 +1092,17 @@ stage_ptoas_wheel() {
   "${python_bin}" "${BASE_PATH}/docker/validate_wheel_payload.py" \
     "${wheelhouse}"
 
-  mkdir -p "${stable_wheelhouse}"
-  cp "${wheelhouse}"/ptoas*.whl "${stable_wheelhouse}/"
+  PATH="${python_tool_path}" \
+    "${python_bin}" "${BASE_PATH}/test/python/test_harden_cann_wheel.py"
+
+  # CANN delivery requires every ELF (including auditwheel's copied libraries)
+  # to be stripped and have no RPATH/RUNPATH. Keep the ordinary repaired wheel
+  # intact and validate the dedicated delivery copy before CPack consumes it.
+  PATH="${python_tool_path}" \
+    "${python_bin}" "${BASE_PATH}/scripts/package/harden_cann_wheel.py" \
+      "${wheelhouse}"/ptoas*.whl --output-dir "${stable_wheelhouse}"
+  "${python_bin}" "${BASE_PATH}/docker/validate_wheel_payload.py" \
+    "${stable_wheelhouse}"
   PTOAS_WHEEL_FILE="$(realpath "${stable_wheelhouse}"/ptoas*.whl)"
   export PTOAS_WHEEL_FILE
   echo "staged ptoas wheel: ${PTOAS_WHEEL_FILE}"
@@ -1109,6 +1119,7 @@ package_ptoas_wheel() {
     -DPTOAS_PACKAGE_ONLY=ON \
     -DPTOAS_NATIVE_BUILD_DIR="${WHEEL_BUILD_PATH}" \
     -DPTOAS_WHEEL_FILE="${PTOAS_WHEEL_FILE}" \
+    -DPython3_EXECUTABLE="$(command -v python3 || command -v python)" \
     -DCMAKE_INSTALL_PREFIX="${INSTALL_PATH}" \
     -DCMAKE_BUILD_TYPE=Release \
     -DCMAKE_C_COMPILER="${PTOAS_CC}" \

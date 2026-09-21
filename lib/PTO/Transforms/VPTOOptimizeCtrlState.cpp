@@ -304,7 +304,7 @@ struct BlockScanState {
 
 class BlockCtrlOptimizer {
 public:
-  void process(Block *block, OpBuilder &builder) {
+  void process(Block *block, OpBuilder &builder) const {
     BlockScanState state;
     for (Operation &op : llvm::make_early_inc_range(*block)) {
       if (isa<pto::CtrlStateGuardOp>(op)) {

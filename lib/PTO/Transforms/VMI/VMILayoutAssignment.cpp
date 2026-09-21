@@ -993,13 +993,11 @@ struct LayoutSolver {
   // width-changing cast - to the contiguous form when the gate flagged that
   // cast, i.e. when the class carries elementwise compute that the lane-stride
   // carrier would repeat once per physical part.
-  //
   // Seeds the class, not the cast: setPreferredLayout stores the layout on the
   // union-find root, so this reaches every value that shares the class, which is
   // exactly the set the lane stride would have inflated.  Placed at
   // NarrowSideComputeContiguous so it loses to every semantic requirement and
   // wins only against the lane-stride cost heuristics.
-  //
   // No relation row is introduced here.  Once the narrow side is contiguous, the
   // cast takes the default preferred row for its width pair - {c(), d(f)} for
   // every widening pair, which is the pair the per-part vcvt already implements.
@@ -1007,7 +1005,6 @@ struct LayoutSolver {
   // getDataLayoutFactor reports a non-unit factor only for the deinterleaved
   // family, so a c() result claims a contiguous part split while the emitted
   // vcvt produces the interleaved one.
-  //
   // A class that is already pinned elsewhere is left alone; a genuine conflict
   // is still reported by setPreferredLayout's own call site.
   FailureOr<bool> seedNarrowSideComputeContiguous(Operation *castOp,

@@ -75,11 +75,11 @@ VMILayoutSupport::getSpineScopedCastLayoutFactsForLayout(
                                resultBits, numGroups, facts);
   if (facts.empty()) {
     if (reason) {
-      *reason = port == VMICastLayoutPort::Source
-                    ? "requires a spine-scoped legal cast relation for the "
-                      "source layout"
-                    : "requires a spine-scoped legal cast relation for the "
-                      "result layout";
+      reason->assign(port == VMICastLayoutPort::Source
+                         ? "requires a spine-scoped legal cast relation for the "
+                           "source layout"
+                         : "requires a spine-scoped legal cast relation for the "
+                           "result layout");
     }
     return failure();
   }

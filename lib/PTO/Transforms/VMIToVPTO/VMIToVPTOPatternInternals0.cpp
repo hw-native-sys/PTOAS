@@ -11,6 +11,8 @@
 constexpr unsigned kVmiPatternInlineCapacity = 4;
 constexpr int64_t kDeintFactor2 = 2;
 constexpr int64_t kDeintFactor4 = 4;
+constexpr int64_t kIotaLaneStridePair = 2;
+constexpr int64_t kIotaLaneStrideQuad = 4;
 static FailureOr<SmallVector<Value, kVmiPatternInlineCapacity>> materializeDeintToContiguousMaskGroup(
     Operation *op, ValueRange sourceParts, TypeRange resultTypes, int64_t factor,
     int64_t groups, int64_t groupIndex, size_t resultOffset,
@@ -770,7 +772,8 @@ FailureOr<Value> createIotaLaneStrideBF16Ramp(Location loc, Type resultType,
                                               StringRef order, Value mask,
                                               PatternRewriter &rewriter) {
   auto vregType = dyn_cast<VRegType>(resultType);
-  if (!vregType || (laneStride != 2 && laneStride != 4)) {
+  if (!vregType || (laneStride != kIotaLaneStridePair &&
+                    laneStride != kIotaLaneStrideQuad)) {
     return failure();
   }
   MLIRContext *context = rewriter.getContext();
@@ -858,7 +861,6 @@ Value createIotaLaneStrideIntRamp(Location loc, Type resultType, Value indices,
 /// Materialize a logical contiguous iota in a lane-strided physical chunk.
 /// Physical lane i*laneStride observes value base+i (ASC) or base-i (DESC).
 /// Supports laneStride ∈ {2,4} for f16/bf16/f32 and i8/i16/i32.
-///
 /// CONTRACT – odd/non-sampled lanes contain undefined fill:
 ///   Float vmuls rounds (base + i + 0.5) in odd lanes for laneStride=2; these
 ///   physical lanes must not be consumed.  The only valid consumers are ops
@@ -874,7 +876,7 @@ FailureOr<Value> createIotaLaneStrideChunk(
   auto floatType = dyn_cast<FloatType>(elemType);
   auto intType = dyn_cast<IntegerType>(elemType);
   if (!vregType || (!floatType && !intType) ||
-      (laneStride != 2 && laneStride != 4)) {
+      (laneStride != kIotaLaneStridePair && laneStride != kIotaLaneStrideQuad)) {
     return failure();
   }
   FailureOr<Value> mask =
@@ -1284,24 +1286,23 @@ private:
     return success();
   }
   LogicalResult lowerContiguousIota(
-      IotaOp op, Value base, VMILayoutAttr layout, TypeRange resultTypes,
-      int64_t lanesPerPart, OneToNPatternRewriter &rewriter,
+      IotaOp op, const IotaMaterializationContext &context, VMILayoutAttr layout,
+      TypeRange resultTypes, int64_t lanesPerPart,
       SmallVectorImpl<Value> &results) const {
-    IotaMaterializationContext context{op.getLoc(), base, op.getOrderAttr(),
-                                       rewriter};
     int64_t laneStride = layout.getLaneStride();
-    if (laneStride != 1 && laneStride != 2 && laneStride != 4) {
-      return rewriter.notifyMatchFailure(
+    if (laneStride != 1 && laneStride != kIotaLaneStridePair &&
+        laneStride != kIotaLaneStrideQuad) {
+      return context.rewriter.notifyMatchFailure(
           op, "unsupported contiguous iota lane_stride");
     }
     if (lanesPerPart % laneStride != 0) {
-      return rewriter.notifyMatchFailure(
+      return context.rewriter.notifyMatchFailure(
           op, "contiguous iota lane_stride does not divide physical lanes");
     }
     int64_t logicalLanesPerChunk = lanesPerPart / laneStride;
     for (auto [index, resultType] : llvm::enumerate(resultTypes)) {
       if (!isa<VRegType>(resultType)) {
-        return rewriter.notifyMatchFailure(op, "iota result must be vreg");
+        return context.rewriter.notifyMatchFailure(op, "iota result must be vreg");
       }
       int64_t laneOffset = static_cast<int64_t>(index) *
                            logicalLanesPerChunk;
@@ -1362,8 +1363,10 @@ private:
         return failure();
       }
     } else if (layout.isContiguous()) {
-      if (failed(lowerContiguousIota(op, base, layout, resultTypes,
-                                     lanesPerPart, rewriter, results))) {
+      IotaMaterializationContext context{op.getLoc(), base, op.getOrderAttr(),
+                                         rewriter};
+      if (failed(lowerContiguousIota(op, context, layout, resultTypes,
+                                    lanesPerPart, results))) {
         return failure();
       }
     } else if (failed(lowerDeinterleavedIota(

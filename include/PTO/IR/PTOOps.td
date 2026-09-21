@@ -3705,7 +3705,11 @@ def TCIOp : PTO_TOp<"tci", [
   let hasVerifier = 1;
 
   let extraClassDeclaration = [{
-    ::mlir::pto::PIPE getPipe() { return ::mlir::pto::PIPE::PIPE_S; }
+    ::mlir::pto::PIPE getPipe() {
+      // The tmp overload generates the sequence on the vector pipe;
+      // the no-tmp overload uses scalar stores.
+      return getTmp() ? ::mlir::pto::PIPE::PIPE_V : ::mlir::pto::PIPE::PIPE_S;
+    }
     ::mlir::MutableOperandRange getDpsInitsMutable() { return getDstMutable(); }
   }];
 }

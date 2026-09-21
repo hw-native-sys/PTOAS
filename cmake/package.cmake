@@ -27,7 +27,7 @@ function(pack_built_in)
   set(PTOAS_ROOT_DIR "${CMAKE_SOURCE_DIR}")
 
   if(NOT DEFINED PTOAS_WHEEL_FILE OR NOT EXISTS "${PTOAS_WHEEL_FILE}")
-      message(FATAL_ERROR "PTOAS_WHEEL_FILE must point to the repaired PTOAS wheel")
+      message(FATAL_ERROR "PTOAS_WHEEL_FILE must point to a hardened CANN wheel")
   endif()
   if(IS_DIRECTORY "${PTOAS_WHEEL_FILE}")
       message(FATAL_ERROR "PTOAS_WHEEL_FILE must be a file: ${PTOAS_WHEEL_FILE}")
@@ -117,6 +117,17 @@ function(pack_built_in)
       COMPONENT pto_as
   )
 
+  # CPack may also be invoked with an externally supplied wheel. Validate at
+  # staging time so a replaced artifact cannot bypass the delivery policy.
+  find_package(Python3 REQUIRED COMPONENTS Interpreter)
+  configure_file(
+      "${PTOAS_ROOT_DIR}/cmake/ValidateCannWheel.cmake.in"
+      "${CMAKE_CURRENT_BINARY_DIR}/ValidateCannWheel.cmake"
+      @ONLY
+  )
+  install(SCRIPT "${CMAKE_CURRENT_BINARY_DIR}/ValidateCannWheel.cmake"
+      COMPONENT pto_as
+  )
   install(FILES "${PTOAS_WHEEL_FILE}"
       DESTINATION tools/ptoas/wheels
       ${INSTALL_OPTIONAL}

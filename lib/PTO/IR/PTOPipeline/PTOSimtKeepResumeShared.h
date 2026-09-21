@@ -160,7 +160,7 @@ inline LogicalResult verifyUniqueResumeGroupSlots(ResumeOp current,
 
 inline LogicalResult verifyUniqueKeepGroupSlots(KeepOp current,
                                                 Operation *first,
-                                                Operation *last) {
+                                                const Operation *last) {
   SmallVector<int64_t, mlir::pto::kValue4> slots;
   for (Operation *cur = first; cur;
        cur = cur->getNextNode()) {

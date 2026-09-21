@@ -15,6 +15,7 @@
 #include "mlir/IR/PatternMatch.h"
 #include "mlir/Pass/Pass.h"
 #include "mlir/Pass/PassManager.h"
+#include "llvm/ADT/StringRef.h"
 #include "llvm/Support/raw_ostream.h"
 
 namespace mlir {
@@ -275,9 +276,11 @@ static void reportUnsupportedVPTOBoundaryMemRefArgument(
     func::FuncOp func, Type inputType, llvm::raw_ostream *diagOS,
     bool &sawFailure) {
   if (diagOS) {
-    *diagOS << "VPTO emission-boundary ptr rewrite failed: unsupported "
-               "memref argument type in "
-            << func.getName() << ": " << inputType << "\n";
+    constexpr llvm::StringLiteral message =
+        "VPTO emission-boundary ptr rewrite failed: unsupported "
+        "memref argument type in ";
+    diagOS->write(message.data(), message.size())
+        << func.getName() << ": " << inputType << "\n";
   }
   sawFailure = true;
 }
@@ -339,9 +342,11 @@ static void rejectVPTOFunctionMemrefResults(func::FuncOp func,
       continue;
     }
     if (diagOS) {
-      *diagOS << "VPTO emission-boundary ptr rewrite failed: memref result "
-                 "is unsupported for "
-              << func.getName() << ": " << resultType << "\n";
+      constexpr llvm::StringLiteral message =
+          "VPTO emission-boundary ptr rewrite failed: memref result "
+          "is unsupported for ";
+      diagOS->write(message.data(), message.size())
+          << func.getName() << ": " << resultType << "\n";
     }
     sawFailure = true;
   }

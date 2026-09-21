@@ -1640,6 +1640,137 @@ private:
     return chunksPerGroup;
   }
 
+  // Builds a dense contiguous broadcast from one lane-zero BRC load per logical
+  // group.  Each BRC load lands in every lane of a physical part, so a part is
+  // assembled by merging its adjacent groups through a balanced prefix-mask
+  // select tree.  No pto.vsldb base and no index ramp are involved, which keeps
+  // the source at its natural element alignment.
+  // One BRC load per logical group: each load holds that group's value in every
+  // lane, so the later selects only have to pick lanes.
+  FailureOr<SmallVector<Value>> emitPerGroupBRCValues(
+      VMIGroupBroadcastLoadOp op, OneToNPatternRewriter &rewriter, Value source,
+      Value offset, Value sourceGroupStride, Type laneType, int64_t numGroups,
+      StringRef brcDist) const {
+    SmallVector<Value> groupValues;
+    groupValues.reserve(numGroups);
+    for (int64_t group = 0; group < numGroups; ++group) {
+      FailureOr<Value> value = buildDirectBRCResult(
+          op, rewriter, source, offset, sourceGroupStride, laneType, group,
+          brcDist);
+      if (failed(value)) {
+        return failure();
+      }
+      groupValues.push_back(*value);
+    }
+    return groupValues;
+  }
+
+  // One mask per non-leading group: the lanes that group owns inside a part.
+  FailureOr<SmallVector<Value>> buildPerGroupBRCMasks(
+      VMIGroupBroadcastLoadOp op, OneToNPatternRewriter &rewriter, Type laneType,
+      int64_t groupSize, int64_t groupsPerPart) const {
+    SmallVector<Value> groupMasks;
+    groupMasks.reserve(groupsPerPart > 1 ? groupsPerPart - 1 : 0);
+    if (groupsPerPart <= 1) {
+      return groupMasks;
+    }
+    FailureOr<MaskType> maskType =
+        getMaskTypeForVReg(dyn_cast<VRegType>(laneType), rewriter.getContext());
+    if (failed(maskType)) {
+      return rewriter.notifyMatchFailure(
+          op, "per-group BRC lowering cannot form a physical lane mask");
+    }
+    for (int64_t index = 1; index < groupsPerPart; ++index) {
+      FailureOr<Value> mask =
+          createLaneRangeMask(op.getLoc(), *maskType, index * groupSize,
+                              (index + 1) * groupSize, rewriter);
+      if (failed(mask)) {
+        return rewriter.notifyMatchFailure(
+            op, "per-group BRC lowering cannot materialize the group mask");
+      }
+      groupMasks.push_back(*mask);
+    }
+    return groupMasks;
+  }
+
+  // Overwrites one group's lane range per step; every operand is a uniform BRC
+  // load, so only the lane range decides the merged value.
+  Value mergePerGroupBRCPart(VMIGroupBroadcastLoadOp op,
+                             OneToNPatternRewriter &rewriter, Type resultType,
+                             ArrayRef<Value> groupValues, int64_t firstGroup,
+                             int64_t groupsPerPart,
+                             ArrayRef<Value> groupMasks) const {
+    Value merged = groupValues[firstGroup];
+    for (int64_t index = 1; index < groupsPerPart; ++index) {
+      merged = rewriter
+                   .create<VselOp>(op.getLoc(), resultType,
+                                   groupValues[firstGroup + index], merged,
+                                   groupMasks[index - 1])
+                   .getResult();
+    }
+    return merged;
+  }
+
+  // Builds a dense contiguous broadcast from one lane-zero BRC load per logical
+  // group.  Each BRC load lands in every lane of a physical part, so a part is
+  // assembled by overwriting each group's own lane range.  No pto.vsldb base
+  // and no index ramp are involved, which keeps the source at its natural
+  // element alignment.
+  FailureOr<SmallVector<Value>> lowerPerGroupBRCResult(
+      VMIGroupBroadcastLoadOp op, OneToNPatternRewriter &rewriter, Value source,
+      Value offset, Value sourceGroupStride, VMIVRegType resultVMIType,
+      const VMIGroupBroadcastLoadLayoutFact &fact, ArrayRef<Type> resultTypes,
+      int64_t numGroups, StringRef brcDist) const {
+    VMILayoutAttr resultLayout = resultVMIType.getLayoutAttr();
+    int64_t groupSize = fact.groupSize;
+    int64_t lanesPerPart = fact.lanesPerPart;
+    bool denseContiguous = resultLayout && resultLayout.isContiguous() &&
+                           resultLayout.getLaneStride() == 1;
+    bool splitPart = groupSize > 0 && lanesPerPart > 0 &&
+                     groupSize < lanesPerPart && lanesPerPart % groupSize == 0;
+    if (!denseContiguous || !splitPart || resultTypes.empty()) {
+      return rewriter.notifyMatchFailure(
+          op, "per-group BRC lowering requires a dense contiguous result split "
+              "into whole groups");
+    }
+    int64_t groupsPerPart = lanesPerPart / groupSize;
+    bool fullResultParts =
+        static_cast<int64_t>(resultTypes.size()) * groupsPerPart == numGroups;
+    if (!fullResultParts) {
+      return rewriter.notifyMatchFailure(
+          op, "per-group BRC lowering requires full physical result parts");
+    }
+
+    FailureOr<SmallVector<Value>> groupValues =
+        emitPerGroupBRCValues(op, rewriter, source, offset, sourceGroupStride,
+                              resultTypes.front(), numGroups, brcDist);
+    if (failed(groupValues)) {
+      return failure();
+    }
+    FailureOr<SmallVector<Value>> groupMasks = buildPerGroupBRCMasks(
+        op, rewriter, resultTypes.front(), groupSize, groupsPerPart);
+    if (failed(groupMasks)) {
+      return failure();
+    }
+
+    SmallVector<Value> results;
+    results.reserve(resultTypes.size());
+    for (auto [part, resultType] : llvm::enumerate(resultTypes)) {
+      auto vregType = dyn_cast<VRegType>(resultType);
+      const bool uniformPart = vregType != nullptr &&
+                               vregType.getElementCount() == lanesPerPart;
+      if (!uniformPart) {
+        return rewriter.notifyMatchFailure(
+            op, "per-group BRC lowering requires uniform physical result parts");
+      }
+      int64_t firstGroup = static_cast<int64_t>(part) * groupsPerPart;
+      results.push_back(mergePerGroupBRCPart(op, rewriter, resultType,
+                                             *groupValues, firstGroup,
+                                             groupsPerPart, *groupMasks));
+    }
+    return results;
+  }
+
   FailureOr<std::pair<VMIVRegType, SmallVector<Type>>>
   buildGroupBroadcastFallbackSourcePlan(
       VMIGroupBroadcastLoadOp op, VMIVRegType resultVMIType,
@@ -1739,7 +1870,8 @@ private:
       VMIGroupBroadcastLoadOp op, OneToNPatternRewriter &rewriter,
       Value source, Value offset, Value sourceGroupStride,
       VMIVRegType resultVMIType, ArrayRef<Type> resultTypes, int64_t numGroups,
-      const FailureOr<VMIGroupBroadcastLoadDirectFact> &directFact) const {
+      const FailureOr<VMIGroupBroadcastLoadDirectFact> &directFact,
+      const VMIGroupBroadcastLoadLayoutFact &loadFact) const {
     bool candidate = succeeded(directFact) &&
                      directFact->kind == VMIGroupBroadcastLoadDirectKind::BRC &&
                      !resultTypes.empty();
@@ -1763,6 +1895,21 @@ private:
                                   VPTOMemoryOpFamily::Load, *dist);
     if (!legal) {
       return false;
+    }
+    // Groups smaller than a physical part are assembled per group; that form
+    // addresses each group base directly and needs no block alignment.  Shapes
+    // this form cannot express (short results, non power-of-two groups) stay
+    // unlowered here and fall through to the group-slot fallback.
+    if (loadFact.groupSize > 0 && loadFact.groupSize < loadFact.lanesPerPart) {
+      FailureOr<SmallVector<Value>> perGroup = lowerPerGroupBRCResult(
+          op, rewriter, source, offset, sourceGroupStride, resultVMIType,
+          loadFact, resultTypes, numGroups, *dist);
+      if (failed(perGroup)) {
+        return false;
+      }
+      replaceOpWithFlatConvertedValues(rewriter, op, *perGroup,
+                                       *this->getTypeConverter());
+      return true;
     }
     if (failed(lowerDirectBRC(op, rewriter, source, offset, sourceGroupStride,
                               resultTypes, numGroups, *dist))) {
@@ -1816,10 +1963,11 @@ private:
       VMIGroupBroadcastLoadOp op, OneToNPatternRewriter &rewriter,
       Value source, Value offset, Value sourceGroupStride,
       VMIVRegType resultVMIType, ArrayRef<Type> resultTypes, int64_t numGroups,
-      const FailureOr<VMIGroupBroadcastLoadDirectFact> &directFact) const {
+      const FailureOr<VMIGroupBroadcastLoadDirectFact> &directFact,
+      const VMIGroupBroadcastLoadLayoutFact &loadFact) const {
     FailureOr<bool> loweredBRC = tryLowerDirectBRC(
         op, rewriter, source, offset, sourceGroupStride, resultVMIType,
-        resultTypes, numGroups, directFact);
+        resultTypes, numGroups, directFact, loadFact);
     if (failed(loweredBRC)) {
       return failure();
     }
@@ -1884,6 +2032,6 @@ public:
         supports.getGroupBroadcastLoadDirectFact(op);
     return lowerDirectOrFallback(op, rewriter, *source, *offset,
                                  *sourceGroupStride, resultVMIType, resultTypes,
-                                 numGroups, directFact);
+                                 numGroups, directFact, *loadFact);
   }
 };

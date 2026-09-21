@@ -43,7 +43,9 @@ def _dependencies(binary: Path) -> set[str]:
         capture_output=True,
         text=True,
     ).stdout
-    return set(re.findall(r"Shared library: \[([^]]+)\]", output))
+    # CANN wheels use explicit $ORIGIN-relative DT_NEEDED filenames. Ownership
+    # is determined by the library name, independently of that loading policy.
+    return {Path(name).name for name in re.findall(r"Shared library: \[([^]]+)\]", output)}
 
 
 def _native_extensions(package_root: Path) -> list[Path]:

@@ -27,7 +27,7 @@ public:
   // 检查两组内存信息之间是否存在依赖
   bool DepBetween(const SmallVector<const BaseMemInfo *> &a,
                   const SmallVector<const BaseMemInfo *> &b,
-                  DepBaseMemInfoPairVec &depBaseMemInfosVec);
+                  DepBaseMemInfoPairVec &depBaseMemInfosVec) const;
  
   // 检查两个具体的 MemInfo 是否别名
   bool MemAlias(const BaseMemInfo *a, const BaseMemInfo *b) const;

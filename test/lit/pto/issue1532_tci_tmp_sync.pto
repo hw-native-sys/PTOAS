@@ -1,0 +1,98 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+
+// RUN: ptoas --pto-arch=a3 --pto-level=level3 --enable-insert-sync %s | FileCheck %s --check-prefix=CPP
+// RUN: ptoas --pto-arch=a5 --pto-level=level3 --enable-insert-sync %s | FileCheck %s --check-prefix=CPP
+// RUN: ptoas --pto-arch=a3 --pto-level=level3 --enable-insert-sync --emit-pto-ir %s | FileCheck %s --check-prefix=IR
+// RUN: ptoas --pto-arch=a3 --enable-insert-sync %S/../../samples/Sync/tci_tmp_sync-pto.pto | FileCheck %s --check-prefix=LOOP
+// RUN: ptoas --pto-arch=a5 --enable-insert-sync %S/../../samples/Sync/tci_tmp_sync-pto.pto | FileCheck %s --check-prefix=LOOP
+//
+// A tmp operand selects vector TCI. Both sequence directions must finish on
+// PIPE_V before TSTORE reads the destination through its original tile alias.
+// Also compile the accuracy sample so both TCI/store pairs keep vector events.
+// LOOP-LABEL: void tci_tmp_sync(
+// LOOP: TCI<{{.*}}, int32_t, 1>(
+// LOOP-NEXT: set_flag(PIPE_V, PIPE_MTE3, [[DESC_EVENT:EVENT_ID[0-9]+]]);
+// LOOP: wait_flag(PIPE_V, PIPE_MTE3, [[DESC_EVENT]]);
+// LOOP-NEXT: TSTORE(
+// LOOP: TCI<{{.*}}, int32_t, 0>(
+// LOOP-NEXT: set_flag(PIPE_V, PIPE_MTE3, [[ASC_EVENT:EVENT_ID[0-9]+]]);
+// LOOP: wait_flag(PIPE_V, PIPE_MTE3, [[ASC_EVENT]]);
+// LOOP-NEXT: TSTORE(
+
+!tmp_dyn = !pto.tile_buf<loc=vec, dtype=f32, rows=1, cols=192, v_row=?, v_col=?, blayout=row_major, slayout=none_box, fractal=512, pad=0>
+!tmp = !pto.tile_buf<loc=vec, dtype=f32, rows=1, cols=192, v_row=1, v_col=192, blayout=row_major, slayout=none_box, fractal=512, pad=0>
+!dst_dyn = !pto.tile_buf<loc=vec, dtype=i32, rows=1, cols=32, v_row=?, v_col=?, blayout=row_major, slayout=none_box, fractal=512, pad=0>
+!dst = !pto.tile_buf<loc=vec, dtype=i32, rows=1, cols=32, v_row=1, v_col=32, blayout=row_major, slayout=none_box, fractal=512, pad=0>
+
+module {
+
+  // CPP-LABEL: void tci_tmp_descending(
+  // CPP: TCI<{{.*}}, int32_t, 1>(
+  // CPP-NEXT: set_flag(PIPE_V, PIPE_MTE3, [[DESC_EVENT:EVENT_ID[0-9]+]]);
+  // CPP: wait_flag(PIPE_V, PIPE_MTE3, [[DESC_EVENT]]);
+  // CPP-NEXT: TSTORE(
+  // IR-LABEL: func.func @tci_tmp_descending(
+  // IR: pto.tci
+  // IR-NEXT: pto.set_flag[<PIPE_V>, <PIPE_MTE3>, [[DESC_EVENT:<EVENT_ID[0-9]+>]]]
+  // IR: pto.wait_flag[<PIPE_V>, <PIPE_MTE3>, [[DESC_EVENT]]]
+  // IR-NEXT: pto.tstore
+  func.func @tci_tmp_descending(%output: !pto.ptr<i32>)
+      attributes {pto.kernel_kind = #pto.kernel_kind<vector>} {
+    %addr0 = arith.constant 0 : i64
+    %addr768 = arith.constant 768 : i64
+    %c0 = arith.constant 0 : index
+    %c1 = arith.constant 1 : index
+    %c32 = arith.constant 32 : index
+    %c192 = arith.constant 192 : index
+    %start = arith.constant 31 : i32
+    %view = pto.make_tensor_view %output, shape = [%c1, %c32], strides = [%c32, %c1]
+      {layout = #pto.layout<nd>} : !pto.tensor_view<?x?xi32>
+    %scratch = pto.alloc_tile addr = %addr0 valid_row = %c1 valid_col = %c192 : !tmp_dyn
+    %tile = pto.alloc_tile addr = %addr768 valid_row = %c1 valid_col = %c32 : !dst_dyn
+    %scratch_view = pto.treshape %scratch : !tmp_dyn -> !tmp
+    %tile_view = pto.treshape %tile : !dst_dyn -> !dst
+    pto.tci ins(%start, %scratch_view : i32, !tmp) outs(%tile_view : !dst) {descending = true}
+    %part = pto.partition_view %view, offsets = [%c0, %c0], sizes = [%c1, %c32]
+      : !pto.tensor_view<?x?xi32> -> !pto.partition_tensor_view<1x32xi32>
+    pto.tstore ins(%tile : !dst_dyn) outs(%part : !pto.partition_tensor_view<1x32xi32>)
+    return
+  }
+
+  // CPP-LABEL: void tci_tmp_ascending(
+  // CPP: TCI<{{.*}}, int32_t, 0>(
+  // CPP-NEXT: set_flag(PIPE_V, PIPE_MTE3, [[ASC_EVENT:EVENT_ID[0-9]+]]);
+  // CPP: wait_flag(PIPE_V, PIPE_MTE3, [[ASC_EVENT]]);
+  // CPP-NEXT: TSTORE(
+  // IR-LABEL: func.func @tci_tmp_ascending(
+  // IR: pto.tci
+  // IR-NEXT: pto.set_flag[<PIPE_V>, <PIPE_MTE3>, [[ASC_EVENT:<EVENT_ID[0-9]+>]]]
+  // IR: pto.wait_flag[<PIPE_V>, <PIPE_MTE3>, [[ASC_EVENT]]]
+  // IR-NEXT: pto.tstore
+  func.func @tci_tmp_ascending(%output: !pto.ptr<i32>)
+      attributes {pto.kernel_kind = #pto.kernel_kind<vector>} {
+    %addr0 = arith.constant 0 : i64
+    %addr768 = arith.constant 768 : i64
+    %c0 = arith.constant 0 : index
+    %c1 = arith.constant 1 : index
+    %c32 = arith.constant 32 : index
+    %c192 = arith.constant 192 : index
+    %start = arith.constant 10 : i32
+    %view = pto.make_tensor_view %output, shape = [%c1, %c32], strides = [%c32, %c1]
+      {layout = #pto.layout<nd>} : !pto.tensor_view<?x?xi32>
+    %scratch = pto.alloc_tile addr = %addr0 valid_row = %c1 valid_col = %c192 : !tmp_dyn
+    %tile = pto.alloc_tile addr = %addr768 valid_row = %c1 valid_col = %c32 : !dst_dyn
+    %scratch_view = pto.treshape %scratch : !tmp_dyn -> !tmp
+    %tile_view = pto.treshape %tile : !dst_dyn -> !dst
+    pto.tci ins(%start, %scratch_view : i32, !tmp) outs(%tile_view : !dst) {descending = false}
+    %part = pto.partition_view %view, offsets = [%c0, %c0], sizes = [%c1, %c32]
+      : !pto.tensor_view<?x?xi32> -> !pto.partition_tensor_view<1x32xi32>
+    pto.tstore ins(%tile : !dst_dyn) outs(%part : !pto.partition_tensor_view<1x32xi32>)
+    return
+  }
+}
