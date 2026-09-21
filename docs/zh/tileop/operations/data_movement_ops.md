@@ -303,7 +303,6 @@ pto.tstore
 
 ---
 
-
 ### `pto.mgather` — 聚集加载
 
 ```mlir

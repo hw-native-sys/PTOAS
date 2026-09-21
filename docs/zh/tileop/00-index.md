@@ -51,7 +51,7 @@
     - [Tile-标量/Tile-立即数操作](operations/tile_scalar_immediate_ops.md)
     - [轴归约与广播操作](operations/reduction_and_broadcast_ops.md)
     - [重排与转换操作](operations/relayout_and_convert_ops.md)
-    - [核内 CV Pipe 前端接口](operations/cv_pipe_ops.md)
+    - [核内 CV Pipe 通信操作](operations/cv_pipe_ops.md)
     - [运行时与调试操作](operations/runtime_and_debug_ops.md)
     - [复杂操作](operations/complex_ops.md)
 

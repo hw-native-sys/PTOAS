@@ -155,7 +155,9 @@ targs = ArrayAttr{};
 
     SmallVector<Value, kTStoreMaxOperandCount> operands{dstArg, src};
     if (hasPreQuantScalar)
-      operands.push_back(preQuantScalar);
+      operands.push_back(
+          castScalarToCppType(rewriter, op.getLoc(), preQuantScalar,
+                              "uint64_t"));
 
     emitTileCallAndReplace(op.getOperation(), rewriter, "TSTORE", targs,
                            operands, dst);

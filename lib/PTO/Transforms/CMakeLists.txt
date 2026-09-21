@@ -206,6 +206,7 @@ add_mlir_dialect_library(PTOTransforms
   PTOToEmitC/ScalarMisc/Comm.cpp
   PTOToEmitC/ScalarMisc/GlobalEventArray.cpp
   PTOToEmitC/ScalarMisc/LocalArray.cpp
+  PTOToEmitC/ScalarMisc/RuntimeQuery.cpp
   PTOToEmitC/ScalarMisc/ScalarMiscMisc.cpp
   PTOToEmitC/ScalarMisc/ScalarMiscOps.cpp
   PTOToEmitC/ScalarMisc/ScalarPtr.cpp

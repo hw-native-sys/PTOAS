@@ -117,6 +117,29 @@ inline Value coerceToU64Address(ConversionPatternRewriter &rewriter,
   return value;
 }
 
+// pto-isa's tile instrinsics take their scalar operands as `uint64_t`
+// (preQuantScalar) and `uint16_t` (indexRow/indexCol) while every scalar the
+// EmitC pass materialises is `int64_t`. Emitting the raw int64_t operands
+// makes C++ overload resolution prefer the no-quant overloads: the trailing
+// index then binds to the unconstrained `WaitEvents&...` pack by identity,
+// where the scalar-quant candidate needs an integral conversion, so the scale
+// silently narrows into indexRow. Wrap each scalar in a static_cast to the
+// wrapper's exact parameter type so the intended overload is selected.
+inline Value castScalarToCppType(ConversionPatternRewriter &rewriter,
+                                 Location loc, Value value,
+                                 const char *cppType) {
+  auto *ctx = rewriter.getContext();
+  auto targetTy = emitc::OpaqueType::get(ctx, cppType);
+  if (value.getType() == targetTy)
+    return value;
+  return rewriter
+      .create<emitc::CallOpaqueOp>(loc, targetTy, "static_cast", ArrayAttr{},
+                                   rewriter.getArrayAttr(
+                                       {emitc::OpaqueAttr::get(ctx, cppType)}),
+                                   ValueRange{value})
+      .getResult(0);
+}
+
 inline constexpr llvm::StringLiteral kGlobalTensorStridesAttrName =
     "__pto.globaltensor_strides";
 inline constexpr llvm::StringLiteral kPipePeerOwnerFuncAttrName =

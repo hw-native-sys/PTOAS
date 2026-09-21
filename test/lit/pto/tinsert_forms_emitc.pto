@@ -27,6 +27,13 @@ module attributes {"pto.device-spec" = "Ascend950"} {
 }
 
 // CHECK-LABEL: AICORE void tinsert_forms(
-// CHECK: TINSERT<{{.*}}ReluPreMode::NormalRelu>([[DST_CAST:[^,]+]], [[SRC_CAST:[^,]+]], [[ROW:[^,]+]], [[COL:[^)]+]]);
-// CHECK: TINSERT<{{.*}}ReluPreMode::NormalRelu>([[DST_QUANT:[^,]+]], [[SRC_QUANT:[^,]+]], [[PRE:[^,]+]], [[ROW]], [[COL]]);
-// CHECK: TINSERT_FP<{{.*}}ReluPreMode::NormalRelu>([[DST_QUANT]], [[SRC_QUANT]], [[FP:[^,]+]], [[ROW]], [[COL]]);
+// CHECK: uint16_t [[ROW:[a-z0-9]+]] = static_cast<uint16_t>({{.*}});
+// CHECK: uint16_t [[COL:[a-z0-9]+]] = static_cast<uint16_t>({{.*}});
+// CHECK: TINSERT<{{.*}}ReluPreMode::NormalRelu>([[DST_CAST:[^,]+]], [[SRC_CAST:[^,]+]], [[ROW]], [[COL]]);
+// CHECK: uint64_t [[PRE:[a-z0-9]+]] = static_cast<uint64_t>({{.*}});
+// CHECK: uint16_t [[ROWQ:[a-z0-9]+]] = static_cast<uint16_t>({{.*}});
+// CHECK: uint16_t [[COLQ:[a-z0-9]+]] = static_cast<uint16_t>({{.*}});
+// CHECK: TINSERT<{{.*}}ReluPreMode::NormalRelu>([[DST_QUANT:[^,]+]], [[SRC_QUANT:[^,]+]], [[PRE]], [[ROWQ]], [[COLQ]]);
+// CHECK: uint16_t [[ROWF:[a-z0-9]+]] = static_cast<uint16_t>({{.*}});
+// CHECK: uint16_t [[COLF:[a-z0-9]+]] = static_cast<uint16_t>({{.*}});
+// CHECK: TINSERT_FP<{{.*}}ReluPreMode::NormalRelu>([[DST_QUANT]], [[SRC_QUANT]], [[FP:[^,]+]], [[ROWF]], [[COLF]]);

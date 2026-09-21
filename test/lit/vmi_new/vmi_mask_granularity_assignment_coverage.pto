@@ -1,0 +1,101 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+
+// RUN: pto-test-opt %s -vmi-mask-granularity-assignment | FileCheck %s --enable-var-scope
+// RUN: pto-test-opt %s -vmi-mask-granularity-assignment -vmi-mask-granularity-assignment | FileCheck %s --enable-var-scope
+
+// RUN: pto-test-opt %s -vmi-lower-unified-to-legacy -vmi-mask-granularity-assignment | FileCheck %s --enable-var-scope
+
+// Representative guard for the mask-value, result-use, source-use, and special
+// constraint families. vsel width/sharing cases live in the companion vsel test.
+// Keep known normalization boundaries in the separate boundary test so they
+// cannot hide a regression in these supported consumers. This is not an
+// exhaustive, automatically generated inventory of all VMI mask operations.
+
+func.func @vadd(%n: index, %a: !pto.vmi.vreg<128xf16>, %b: !pto.vmi.vreg<128xf16>) -> !pto.vmi.vreg<128xf16> {
+  %m = pto.vmi.create_mask %n : index -> !pto.vmi.mask<128xpred>
+  %r = pto.vmi.vadd %a, %b, %m
+      : !pto.vmi.vreg<128xf16>, !pto.vmi.vreg<128xf16>, !pto.vmi.mask<128xpred> -> !pto.vmi.vreg<128xf16>
+  return %r : !pto.vmi.vreg<128xf16>
+}
+// CHECK-LABEL: func.func @vadd(
+// CHECK: %[[M:.*]] = pto.vmi.create_mask %arg0 : index -> !pto.vmi.mask<128xb16>
+// CHECK-NEXT: %[[R:.*]] = pto.vmi.vadd %arg1, %arg2, %[[M]]
+// CHECK-SAME: !pto.vmi.mask<128xb16>
+// CHECK-NEXT: return %[[R]]
+
+func.func @vmul(%n: index, %a: !pto.vmi.vreg<128xf16>, %b: !pto.vmi.vreg<128xf16>) -> !pto.vmi.vreg<128xf16> {
+  %m = pto.vmi.create_mask %n : index -> !pto.vmi.mask<128xpred>
+  %r = pto.vmi.vmul %a, %b, %m
+      : !pto.vmi.vreg<128xf16>, !pto.vmi.vreg<128xf16>, !pto.vmi.mask<128xpred> -> !pto.vmi.vreg<128xf16>
+  return %r : !pto.vmi.vreg<128xf16>
+}
+// CHECK-LABEL: func.func @vmul(
+// CHECK: %[[M:.*]] = pto.vmi.create_mask %arg0 : index -> !pto.vmi.mask<128xb16>
+// CHECK-NEXT: %[[R:.*]] = pto.vmi.vmul %arg1, %arg2, %[[M]]
+// CHECK-SAME: !pto.vmi.mask<128xb16>
+// CHECK-NEXT: return %[[R]]
+
+func.func @mask_value(%a: !pto.vmi.vreg<128xf16>, %b: !pto.vmi.vreg<128xf16>) -> !pto.vmi.mask<128xpred> {
+  %m = pto.vmi.cmpf "olt", %a, %b : !pto.vmi.vreg<128xf16>, !pto.vmi.vreg<128xf16> -> !pto.vmi.mask<128xpred>
+  %r = pto.vmi.mask_not %m : !pto.vmi.mask<128xpred> -> !pto.vmi.mask<128xpred>
+  return %r : !pto.vmi.mask<128xpred>
+}
+// CHECK-LABEL: func.func @mask_value(
+// CHECK: %[[M:.*]] = pto.vmi.cmpf
+// CHECK-SAME: -> !pto.vmi.mask<128xb16>
+// CHECK-NEXT: %[[R:.*]] = pto.vmi.mask_not %[[M]] : !pto.vmi.mask<128xb16> -> !pto.vmi.mask<128xb16>
+// CHECK-NEXT: return %[[R]] : !pto.vmi.mask<128xb16>
+
+func.func @legacy_scalar(%n: index, %a: !pto.vmi.vreg<128xf16>, %s: f16) -> !pto.vmi.vreg<128xf16> {
+  %m = pto.vmi.create_mask %n : index -> !pto.vmi.mask<128xpred>
+  %r = pto.vmi.vadds %a, %s, %m : !pto.vmi.vreg<128xf16>, f16, !pto.vmi.mask<128xpred> -> !pto.vmi.vreg<128xf16>
+  return %r : !pto.vmi.vreg<128xf16>
+}
+// CHECK-LABEL: func.func @legacy_scalar(
+// CHECK: %[[M:.*]] = pto.vmi.create_mask %arg0 : index -> !pto.vmi.mask<128xb16>
+// CHECK-NEXT: %[[R:.*]] = pto.vmi.vadds %arg1, %arg2, %[[M]]
+// CHECK-SAME: !pto.vmi.mask<128xb16>
+// CHECK-NEXT: return %[[R]]
+
+func.func @legacy_reduce(%n: index, %a: !pto.vmi.vreg<128xf16>) -> !pto.vmi.vreg<1xf16> {
+  %m = pto.vmi.create_mask %n : index -> !pto.vmi.mask<128xpred>
+  %r = pto.vmi.reduce_addf %a, %m {reassoc}
+      : !pto.vmi.vreg<128xf16>, !pto.vmi.mask<128xpred> -> !pto.vmi.vreg<1xf16>
+  return %r : !pto.vmi.vreg<1xf16>
+}
+// CHECK-LABEL: func.func @legacy_reduce(
+// CHECK: %[[M:.*]] = pto.vmi.create_mask %arg0 : index -> !pto.vmi.mask<128xb16>
+// CHECK-NEXT: %[[R:.*]] = pto.vmi.reduce_addf %arg1, %[[M]]
+// CHECK-SAME: !pto.vmi.mask<128xb16>
+// CHECK-NEXT: return %[[R]]
+
+func.func @store(%n: index, %a: !pto.vmi.vreg<128xf16>, %p: !pto.ptr<f16, ub>, %i: index) {
+  %m = pto.vmi.create_mask %n : index -> !pto.vmi.mask<128xpred>
+  pto.vmi.masked_store %a, %p[%i], %m : !pto.vmi.vreg<128xf16>, !pto.ptr<f16, ub>, !pto.vmi.mask<128xpred>
+  return
+}
+// CHECK-LABEL: func.func @store(
+// CHECK: %[[M:.*]] = pto.vmi.create_mask %arg0 : index -> !pto.vmi.mask<128xb16>
+// CHECK-NEXT: pto.vmi.masked_store %arg1, %arg2[%arg3], %[[M]]
+// CHECK-SAME: !pto.vmi.mask<128xb16>
+
+func.func @histogram(%n: index,
+    %acc: !pto.vmi.vreg<256xui16>,
+    %a: !pto.vmi.vreg<256xui8>)
+    -> !pto.vmi.vreg<256xui16> {
+  %m = pto.vmi.create_mask %n : index -> !pto.vmi.mask<256xpred>
+  %r = pto.vmi.vdhist %acc, %a, %m
+      : !pto.vmi.vreg<256xui16>, !pto.vmi.vreg<256xui8>, !pto.vmi.mask<256xpred> -> !pto.vmi.vreg<256xui16>
+  return %r : !pto.vmi.vreg<256xui16>
+}
+// CHECK-LABEL: func.func @histogram(
+// CHECK: %[[M:.*]] = pto.vmi.create_mask %arg0 : index -> !pto.vmi.mask<256xb8>
+// CHECK-NEXT: %[[R:.*]] = pto.vmi.vdhist %arg1, %arg2, %[[M]]
+// CHECK-SAME: !pto.vmi.mask<256xb8>
+// CHECK-NEXT: return %[[R]]

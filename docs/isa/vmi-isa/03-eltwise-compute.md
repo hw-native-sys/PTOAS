@@ -579,6 +579,17 @@ scalar type must match the vector element type.
   | `pmode` | `"zero"` | `"zero"` | Inactive-lane behavior: inactive lanes write 0 |
 
 - **datatypes:** `i8`–`i32`, `f16`, `bf16`, `f32`
+- **mask granularity:** A surface `pred` mask is accepted. The
+  `vmi-mask-granularity-assignment` pass requests `b8`, `b16`, or `b32` at
+  each `vsel` use according to the result element width, just as for legacy
+  `select`; prior normalization to `select` is not required. If the shared
+  mask has a different primary granularity, the pass rematerializes a cheap
+  mask producer or inserts `pto.vmi.ensure_mask_granularity` at that use.
+  A mask root without a concrete granularity constraint or preference defaults
+  to `b32`. The per-use request is therefore required for 8/16-bit `vsel`:
+  without it, the rewritten mask can fail the data-width verifier. This direct
+  support does not imply coverage of every VMI mask consumer; see the
+  [assignment boundaries](00-architecture-overview.md#mask-granularity-assignment-boundaries).
 - **lowering to `pto.mi`:**
   ```
   K × pto.vsel

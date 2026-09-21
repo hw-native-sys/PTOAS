@@ -1,0 +1,148 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+
+// RUN: pto-test-opt %s -vmi-mask-granularity-assignment | FileCheck %s --enable-var-scope
+// RUN: pto-test-opt %s -vmi-mask-granularity-assignment -vmi-mask-granularity-assignment | FileCheck %s --enable-var-scope
+
+// Exercise the assignment pass directly: normalizing vsel to legacy select first
+// hides the missing unified-op use constraint. Repeating the pass is idempotent.
+module {
+  func.func @vsel_f16(%active: index,
+      %a: !pto.vmi.vreg<128xf16>, %b: !pto.vmi.vreg<128xf16>)
+      -> !pto.vmi.vreg<128xf16> {
+    %mask = pto.vmi.create_mask %active : index -> !pto.vmi.mask<128xpred>
+    %r = pto.vmi.vsel %mask, %a, %b
+        : !pto.vmi.mask<128xpred>, !pto.vmi.vreg<128xf16>, !pto.vmi.vreg<128xf16>
+        -> !pto.vmi.vreg<128xf16>
+    return %r : !pto.vmi.vreg<128xf16>
+  }
+
+// CHECK-LABEL: func.func @vsel_f16(
+// CHECK-SAME: %[[ACTIVE:[^:]+]]: index
+// CHECK: pto.vmi.create_mask %[[ACTIVE]] : index -> !pto.vmi.mask<128xb32>
+// CHECK: %[[MASK:.*]] = pto.vmi.create_mask %[[ACTIVE]] : index -> !pto.vmi.mask<128xb16>
+// CHECK-NEXT: %[[RESULT:.*]] = pto.vmi.vsel %[[MASK]],
+// CHECK-SAME: : !pto.vmi.mask<128xb16>, !pto.vmi.vreg<128xf16>, !pto.vmi.vreg<128xf16>
+// CHECK-NEXT: return %[[RESULT]] : !pto.vmi.vreg<128xf16>
+
+  func.func @vsel_i8(%active: index,
+      %a: !pto.vmi.vreg<128xi8>, %b: !pto.vmi.vreg<128xi8>)
+      -> !pto.vmi.vreg<128xi8> {
+    %mask = pto.vmi.create_mask %active : index -> !pto.vmi.mask<128xpred>
+    %r = pto.vmi.vsel %mask, %a, %b
+        : !pto.vmi.mask<128xpred>, !pto.vmi.vreg<128xi8>, !pto.vmi.vreg<128xi8>
+        -> !pto.vmi.vreg<128xi8>
+    return %r : !pto.vmi.vreg<128xi8>
+  }
+
+// CHECK-LABEL: func.func @vsel_i8(
+// CHECK-SAME: %[[ACTIVE:[^:]+]]: index
+// CHECK: pto.vmi.create_mask %[[ACTIVE]] : index -> !pto.vmi.mask<128xb32>
+// CHECK: %[[MASK:.*]] = pto.vmi.create_mask %[[ACTIVE]] : index -> !pto.vmi.mask<128xb8>
+// CHECK-NEXT: %[[RESULT:.*]] = pto.vmi.vsel %[[MASK]],
+// CHECK-SAME: : !pto.vmi.mask<128xb8>, !pto.vmi.vreg<128xi8>, !pto.vmi.vreg<128xi8>
+// CHECK-NEXT: return %[[RESULT]] : !pto.vmi.vreg<128xi8>
+
+  func.func @select_f16(%active: index,
+      %a: !pto.vmi.vreg<128xf16>, %b: !pto.vmi.vreg<128xf16>)
+      -> !pto.vmi.vreg<128xf16> {
+    %mask = pto.vmi.create_mask %active : index -> !pto.vmi.mask<128xpred>
+    %r = pto.vmi.select %mask, %a, %b
+        : !pto.vmi.mask<128xpred>, !pto.vmi.vreg<128xf16>, !pto.vmi.vreg<128xf16>
+        -> !pto.vmi.vreg<128xf16>
+    return %r : !pto.vmi.vreg<128xf16>
+  }
+
+// CHECK-LABEL: func.func @select_f16(
+// CHECK-SAME: %[[ACTIVE:[^:]+]]: index
+// CHECK: pto.vmi.create_mask %[[ACTIVE]] : index -> !pto.vmi.mask<128xb32>
+// CHECK: %[[MASK:.*]] = pto.vmi.create_mask %[[ACTIVE]] : index -> !pto.vmi.mask<128xb16>
+// CHECK-NEXT: %[[RESULT:.*]] = pto.vmi.select %[[MASK]],
+// CHECK-SAME: : !pto.vmi.mask<128xb16>, !pto.vmi.vreg<128xf16>, !pto.vmi.vreg<128xf16>
+// CHECK-NEXT: return %[[RESULT]] : !pto.vmi.vreg<128xf16>
+
+  func.func @vsel_f32(%active: index,
+      %a: !pto.vmi.vreg<128xf32>, %b: !pto.vmi.vreg<128xf32>)
+      -> !pto.vmi.vreg<128xf32> {
+    %mask = pto.vmi.create_mask %active : index -> !pto.vmi.mask<128xpred>
+    %r = pto.vmi.vsel %mask, %a, %b
+        : !pto.vmi.mask<128xpred>, !pto.vmi.vreg<128xf32>, !pto.vmi.vreg<128xf32>
+        -> !pto.vmi.vreg<128xf32>
+    return %r : !pto.vmi.vreg<128xf32>
+  }
+
+// CHECK-LABEL: func.func @vsel_f32(
+// CHECK-SAME: %[[ACTIVE:[^:]+]]: index
+// CHECK: %[[MASK:.*]] = pto.vmi.create_mask %[[ACTIVE]] : index -> !pto.vmi.mask<128xb32>
+// CHECK-NEXT: %[[RESULT:.*]] = pto.vmi.vsel %[[MASK]],
+// CHECK-SAME: : !pto.vmi.mask<128xb32>, !pto.vmi.vreg<128xf32>, !pto.vmi.vreg<128xf32>
+// CHECK-NEXT: return %[[RESULT]] : !pto.vmi.vreg<128xf32>
+
+  // A shared predicate must retain its b32 use and be rematerialized at b16.
+  func.func @vsel_mixed_widths(%active: index,
+      %a32: !pto.vmi.vreg<128xf32>, %b32: !pto.vmi.vreg<128xf32>,
+      %a16: !pto.vmi.vreg<128xf16>, %b16: !pto.vmi.vreg<128xf16>)
+      -> (!pto.vmi.vreg<128xf32>, !pto.vmi.vreg<128xf16>) {
+    %mask = pto.vmi.create_mask %active : index -> !pto.vmi.mask<128xpred>
+    %r32 = pto.vmi.vsel %mask, %a32, %b32
+        : !pto.vmi.mask<128xpred>, !pto.vmi.vreg<128xf32>, !pto.vmi.vreg<128xf32>
+        -> !pto.vmi.vreg<128xf32>
+    %r16 = pto.vmi.vsel %mask, %a16, %b16
+        : !pto.vmi.mask<128xpred>, !pto.vmi.vreg<128xf16>, !pto.vmi.vreg<128xf16>
+        -> !pto.vmi.vreg<128xf16>
+    return %r32, %r16 : !pto.vmi.vreg<128xf32>, !pto.vmi.vreg<128xf16>
+  }
+
+// CHECK-LABEL: func.func @vsel_mixed_widths(
+// CHECK-SAME: %[[ACTIVE:[^:]+]]: index
+// CHECK: %[[MASK32:.*]] = pto.vmi.create_mask %[[ACTIVE]] : index -> !pto.vmi.mask<128xb32>
+// CHECK-NEXT: %[[R32:.*]] = pto.vmi.vsel %[[MASK32]],
+// CHECK-SAME: : !pto.vmi.mask<128xb32>
+// CHECK-NEXT: %[[MASK16:.*]] = pto.vmi.create_mask %[[ACTIVE]] : index -> !pto.vmi.mask<128xb16>
+// CHECK-NEXT: %[[R16:.*]] = pto.vmi.vsel %[[MASK16]],
+// CHECK-SAME: : !pto.vmi.mask<128xb16>
+// CHECK-NEXT: return %[[R32]], %[[R16]]
+
+  // A compare pins b32 and cannot be cheaply rematerialized: convert its use.
+  func.func @vsel_compare_f16(
+      %lhs: !pto.vmi.vreg<128xf32>, %rhs: !pto.vmi.vreg<128xf32>,
+      %a: !pto.vmi.vreg<128xf16>, %b: !pto.vmi.vreg<128xf16>)
+      -> !pto.vmi.vreg<128xf16> {
+    %mask = pto.vmi.cmpf "olt", %lhs, %rhs
+        : !pto.vmi.vreg<128xf32>, !pto.vmi.vreg<128xf32> -> !pto.vmi.mask<128xpred>
+    %r = pto.vmi.vsel %mask, %a, %b
+        : !pto.vmi.mask<128xpred>, !pto.vmi.vreg<128xf16>, !pto.vmi.vreg<128xf16>
+        -> !pto.vmi.vreg<128xf16>
+    return %r : !pto.vmi.vreg<128xf16>
+  }
+
+// CHECK-LABEL: func.func @vsel_compare_f16(
+// CHECK: %[[CMP:.*]] = pto.vmi.cmpf "olt",
+// CHECK-SAME: -> !pto.vmi.mask<128xb32>
+// CHECK-NEXT: %[[MASK16:.*]] = pto.vmi.ensure_mask_granularity %[[CMP]]
+// CHECK-SAME: : !pto.vmi.mask<128xb32> -> !pto.vmi.mask<128xb16>
+// CHECK-NEXT: %[[RESULT:.*]] = pto.vmi.vsel %[[MASK16]],
+// CHECK-SAME: : !pto.vmi.mask<128xb16>
+// CHECK-NEXT: return %[[RESULT]]
+
+  // An already matching concrete predicate needs no materialization.
+  func.func @vsel_concrete_f16(%mask: !pto.vmi.mask<128xb16>,
+      %a: !pto.vmi.vreg<128xf16>, %b: !pto.vmi.vreg<128xf16>)
+      -> !pto.vmi.vreg<128xf16> {
+    %r = pto.vmi.vsel %mask, %a, %b
+        : !pto.vmi.mask<128xb16>, !pto.vmi.vreg<128xf16>, !pto.vmi.vreg<128xf16>
+        -> !pto.vmi.vreg<128xf16>
+    return %r : !pto.vmi.vreg<128xf16>
+  }
+
+// CHECK-LABEL: func.func @vsel_concrete_f16(
+// CHECK-SAME: %[[MASK:[^:]+]]: !pto.vmi.mask<128xb16>
+// CHECK-NEXT: %[[RESULT:.*]] = pto.vmi.vsel %[[MASK]],
+// CHECK-SAME: : !pto.vmi.mask<128xb16>
+// CHECK-NEXT: return %[[RESULT]]
+}

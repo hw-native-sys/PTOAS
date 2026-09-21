@@ -1414,6 +1414,22 @@ def GetSubBlockNumOp : PTO_Op<"get_subblock_num", [
   let assemblyFormat = "attr-dict";
 }
 
+def GetL2CacheOffsetOp : PTO_Op<"get_l2_cache_offset", [
+    Pure,
+    MicroOpInterface
+  ]> {
+  let summary = "Get the runtime L2 cache address offset.";
+  let description = [{
+    Returns the byte offset configured by the runtime for L2 cache address
+    mapping.
+  }];
+
+  let arguments = (ins);
+  let results = (outs I64:$result);
+
+  let assemblyFormat = "attr-dict";
+}
+
 //===----------------------------------------------------------------------===//
 // High-Level Synchronization Ops
 //===----------------------------------------------------------------------===//

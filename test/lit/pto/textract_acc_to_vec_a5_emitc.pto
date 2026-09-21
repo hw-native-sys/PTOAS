@@ -33,6 +33,12 @@ module attributes {"pto.device-spec" = "Ascend950"} {
 }
 
 // CHECK-LABEL: AICORE void textract_acc_to_vec_a5(
-// CHECK: TEXTRACT<{{.*}}pto::AccToVecMode::DualModeSplitM{{.*}}ReluPreMode::NoRelu>([[DST0:[^,]+]], [[SRC:[^,]+]], [[ROW:[^,]+]], [[COL:[^)]+]]);
-// CHECK: TEXTRACT<{{.*}}pto::AccToVecMode::DualModeSplitN{{.*}}ReluPreMode::NormalRelu>([[DST1:[^,]+]], [[SRC]], [[ROW]], [[COL]]);
-// CHECK: TEXTRACT<{{.*}}pto::AccToVecMode::SingleModeVec1{{.*}}ReluPreMode::NoRelu>([[DST2:[^,]+]], [[SRC]], [[FP:[^,]+]], [[ROW]], [[COL]]);
+// CHECK: uint16_t [[ROW:[a-z0-9]+]] = static_cast<uint16_t>({{.*}});
+// CHECK: uint16_t [[COL:[a-z0-9]+]] = static_cast<uint16_t>({{.*}});
+// CHECK: TEXTRACT<{{.*}}pto::AccToVecMode::DualModeSplitM{{.*}}ReluPreMode::NoRelu>([[DST0:[^,]+]], [[SRC:[^,]+]], [[ROW]], [[COL]]);
+// CHECK: uint16_t [[ROW1:[a-z0-9]+]] = static_cast<uint16_t>({{.*}});
+// CHECK: uint16_t [[COL1:[a-z0-9]+]] = static_cast<uint16_t>({{.*}});
+// CHECK: TEXTRACT<{{.*}}pto::AccToVecMode::DualModeSplitN{{.*}}ReluPreMode::NormalRelu>([[DST1:[^,]+]], [[SRC]], [[ROW1]], [[COL1]]);
+// CHECK: uint16_t [[ROW2:[a-z0-9]+]] = static_cast<uint16_t>({{.*}});
+// CHECK: uint16_t [[COL2:[a-z0-9]+]] = static_cast<uint16_t>({{.*}});
+// CHECK: TEXTRACT<{{.*}}pto::AccToVecMode::SingleModeVec1{{.*}}ReluPreMode::NoRelu>([[DST2:[^,]+]], [[SRC]], [[FP:[^,]+]], [[ROW2]], [[COL2]]);

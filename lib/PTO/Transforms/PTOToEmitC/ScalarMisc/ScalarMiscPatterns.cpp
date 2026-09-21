@@ -27,6 +27,7 @@ static void populateScalarMiscFamilyPatterns(RewritePatternSet &patterns,
   populateScalarMiscCommPatterns(patterns, typeConverter, ctx);
   populateScalarMiscGlobalEventArrayPatterns(patterns, typeConverter, ctx);
   populateScalarMiscLocalArrayPatterns(patterns, typeConverter, ctx);
+  populateScalarMiscRuntimeQueryPatterns(patterns, typeConverter, ctx);
   populateScalarMiscScalarMiscMiscPatterns(patterns, typeConverter, ctx);
   populateScalarMiscScalarMiscOpsPatterns(patterns, typeConverter, ctx);
   populateScalarMiscScalarPtrPatterns(patterns, typeConverter, ctx);

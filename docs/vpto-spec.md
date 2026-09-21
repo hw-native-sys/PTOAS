@@ -715,9 +715,12 @@ control-flow semantics.
 - `arith`, `math`, and LLVM operations may appear as compiler legalization
   results, but they are not a parallel public scalar authoring interface.
 
-### BlockDim Query Operations
+### Runtime Query Operations
 
-These ops expose the current kernel instance's execution coordinates to scalar code. They are the PTO-level equivalent of runtime queries such as `GetBlockIdx()` and `GetBlockNum()` in kernel programming models.
+These ops expose runtime values for the current kernel instance to scalar code.
+The block and subblock queries report execution coordinates and launch extents;
+`pto.get_l2_cache_offset` reports the runtime-configured byte offset used for
+L2 cache address mapping.
 
 Use them when the same kernel body is launched across multiple blocks or subblocks and each execution instance must figure out which slice of the global workload it owns.
 
@@ -747,8 +750,9 @@ In this pattern, all blocks execute the same kernel body, but each block sees a 
 
 The complete syntax, result types, constraints, semantics, pseudocode, and
 partitioning example for `pto.get_block_idx`, `pto.get_subblock_idx`,
-`pto.get_block_num`, and `pto.get_subblock_num` are documented in
-[Special Scalar Operations](isa/micro-isa/18-special-scalar.md#kernel-execution-query-operations).
+`pto.get_block_num`, `pto.get_subblock_num`, and
+`pto.get_l2_cache_offset` are documented in
+[Special Scalar Operations](isa/micro-isa/18-special-scalar.md#runtime-query-operations).
 
 #### `pto.store_vfsimt_info`
 
@@ -1351,7 +1355,7 @@ the linked files.
 | 15 | [SCF (Shared MLIR Dialect)](isa/micro-isa/15-shared-scf.md) | Structured loops, branches, and loop-carried state around PTO regions | 5 | `scf.for`, `scf.if`, `scf.while`, `scf.condition`, `scf.yield` |
 | 16 | [Cube Matrix Multiply](isa/micro-isa/16-cube-matmul.md) | GM↔L1 (`l1`/cbuf) staging, L1 raw fill and L1 (`l1`)↔UB/BT/FB side moves, L1→L0A/L0B loads, L0C (`l0c`) matmul, and FIXPIPE MTE writeback | 20 | `pto.mte_gm_l1`, `pto.raw_fill_l1`, `pto.mte_l1_ub`, `pto.mte_gm_l1_frac`, `pto.mte_l1_bt`, `pto.mte_l1_fb`, `pto.mte_l1_l0a`, `pto.mte_l1_l0b`, `pto.mte_l1_l0a_mx`, `pto.mte_l1_l0b_mx`, `pto.mad`, `pto.mad_acc`, `pto.mad_bias`, `pto.mad_mx`, `pto.mad_mx_acc`, `pto.mad_mx_bias`, `pto.mte_l0c_l1`, `pto.mte_l0c_gm`, `pto.mte_l0c_ub` |
 | 17 | [SIMT Ops](isa/micro-isa/17-simt.md) | SIMT launch, thread/lane queries, vote/shuffle/redux, cache-controlled GM access, atomics, target-specific scalar forms, conversion, synchronization, and state preservation | ~63 | `pto.store_vfsimt_info`, `pto.simt_launch`, `pto.get_tid_x`, `pto.get_laneid`, `pto.vote_*`, `pto.shuffle_*`, `pto.redux_*`, `pto.ldg`, `pto.stg`, `pto.atomic_*`, SIMT-controlled `pto.cast` conversions, `pto.syncthreads`, `pto.keep`, `pto.resume`, etc. |
-| 18 | [Special Scalar Operations](isa/micro-isa/18-special-scalar.md) | PTO scalar kernel queries, typed pointer/address calculation, scalar-pipeline memory, and AICore GM L1-bypass access | 10 | `pto.get_block_idx`, `pto.get_subblock_idx`, `pto.get_block_num`, `pto.get_subblock_num`, `pto.castptr`, `pto.addptr`, `pto.load`, `pto.store`, `pto.ld_dev`, `pto.st_dev` |
+| 18 | [Special Scalar Operations](isa/micro-isa/18-special-scalar.md) | PTO scalar runtime queries, typed pointer/address calculation, scalar-pipeline memory, and AICore GM L1-bypass access | 11 | `pto.get_block_idx`, `pto.get_subblock_idx`, `pto.get_block_num`, `pto.get_subblock_num`, `pto.get_l2_cache_offset`, `pto.castptr`, `pto.addptr`, `pto.load`, `pto.store`, `pto.ld_dev`, `pto.st_dev` |
 
 ---
 
@@ -1423,7 +1427,7 @@ remain in Group 15.
 | PTO Scalar Extrema / Absolute Value | 14 | `pto.maxi`, `pto.maxf`, `pto.mini`, `pto.minf`, `pto.maximum`, `pto.minimum`, `pto.absi`, `pto.absf` |
 | PTO Scalar Conversion / Select | 14 | `pto.exti`, `pto.trunci`, `pto.ftof`, `pto.ftoi`, `pto.itof`, `pto.bitcast`, `pto.index_cast`, `pto.select` |
 | PTO Scalar Floating Math | 14 | `pto.exp`, `pto.log`, `pto.sqrt`, `pto.pow`, `pto.fma` |
-| Kernel Execution Queries | 18 | `pto.get_block_idx`, `pto.get_subblock_idx`, `pto.get_block_num`, `pto.get_subblock_num` |
+| Runtime Queries | 18 | `pto.get_block_idx`, `pto.get_subblock_idx`, `pto.get_block_num`, `pto.get_subblock_num`, `pto.get_l2_cache_offset` |
 | Typed Pointer / Address Operations | 18 | `pto.castptr`, `pto.addptr` |
 | Scalar-Pipeline Memory | 18 | `pto.load`, `pto.store` |
 | AICore Scalar GM L1-Bypass | 18 | `pto.ld_dev`, `pto.st_dev` |

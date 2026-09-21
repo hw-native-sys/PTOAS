@@ -84,3 +84,35 @@ module {
 
 // CHECK: 'pto.vmi.vload' op invalid pmode "merge"; expected "zero"
 
+// -----
+
+func.func @vcadd_merge(%n: index, %a: !pto.vmi.vreg<128xf16>) -> !pto.vmi.vreg<1xf16> {
+  %m = pto.vmi.create_mask %n : index -> !pto.vmi.mask<128xpred>
+  %r = pto.vmi.vcadd %a, %m {pmode = "merge", reassoc}
+      : !pto.vmi.vreg<128xf16>, !pto.vmi.mask<128xpred> -> !pto.vmi.vreg<1xf16>
+  return %r : !pto.vmi.vreg<1xf16>
+}
+
+// CHECK: 'pto.vmi.vcadd' op invalid pmode "merge"; expected "zero"
+
+// -----
+
+func.func @vcmax_merge(%n: index, %a: !pto.vmi.vreg<128xf16>) -> !pto.vmi.vreg<1xf16> {
+  %m = pto.vmi.create_mask %n : index -> !pto.vmi.mask<128xpred>
+  %r = pto.vmi.vcmax %a, %m {pmode = "merge", reassoc}
+      : !pto.vmi.vreg<128xf16>, !pto.vmi.mask<128xpred> -> !pto.vmi.vreg<1xf16>
+  return %r : !pto.vmi.vreg<1xf16>
+}
+
+// CHECK: 'pto.vmi.vcmax' op invalid pmode "merge"; expected "zero"
+
+// -----
+
+func.func @vcmin_merge(%n: index, %a: !pto.vmi.vreg<128xf16>) -> !pto.vmi.vreg<1xf16> {
+  %m = pto.vmi.create_mask %n : index -> !pto.vmi.mask<128xpred>
+  %r = pto.vmi.vcmin %a, %m {pmode = "merge", reassoc}
+      : !pto.vmi.vreg<128xf16>, !pto.vmi.mask<128xpred> -> !pto.vmi.vreg<1xf16>
+  return %r : !pto.vmi.vreg<1xf16>
+}
+
+// CHECK: 'pto.vmi.vcmin' op invalid pmode "merge"; expected "zero"

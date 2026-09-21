@@ -21,7 +21,7 @@ vector result, such as `pto.vadds`, belongs to
 
 | Family | Operations | Purpose |
 |--------|------------|---------|
-| Kernel execution queries | `pto.get_block_idx`, `pto.get_subblock_idx`, `pto.get_block_num`, `pto.get_subblock_num` | Query the block or subblock identity and launch extent visible to the current kernel instance |
+| Runtime queries | `pto.get_block_idx`, `pto.get_subblock_idx`, `pto.get_block_num`, `pto.get_subblock_num`, `pto.get_l2_cache_offset` | Query the execution identity, launch extent, or runtime L2 cache address offset visible to the current kernel instance |
 | Typed pointer/address operations | `pto.castptr`, `pto.addptr` | Construct, reinterpret, and offset `!pto.ptr` values |
 | Unified typed memory | `pto.load`, `pto.store` | Read or write one scalar or contiguous packed value through the scalar-memory interface |
 | AICore scalar GM L1-bypass | `pto.ld_dev`, `pto.st_dev` | Read or write one integer GM element while bypassing the local L1 data cache |
@@ -52,12 +52,11 @@ For example, offset `3` on `!pto.ptr<i32, gm>` selects the element beginning
 
 ---
 
-## Kernel Execution Query Operations
+## Runtime Query Operations
 
-These nullary, side-effect-free operations expose the block-level execution
-state visible to the current PTO kernel instance. They return `i64` values and
-do not perform memory access, synchronization, tiling, or work partitioning by
-themselves.
+These nullary, side-effect-free operations expose runtime state visible to the
+current PTO kernel instance. They return `i64` values and do not perform memory
+access, synchronization, tiling, or work partitioning by themselves.
 
 They are distinct from the `pto.get_tid_*`, `pto.get_block_idx_*`, and related
 SIMT workitem queries documented in [SIMT Ops](17-simt.md).
@@ -131,6 +130,27 @@ subblock = current_subblock_index
 - **Result:** One `i64` subblock count.
 - **Semantics:** The result is the subblock count used to interpret
   `pto.get_subblock_idx`.
+
+### `pto.get_l2_cache_offset`
+
+- **Purpose:** Return the runtime-configured offset used for L2 cache address
+  mapping.
+- **Syntax:**
+
+  ```mlir
+  %l2_offset = pto.get_l2_cache_offset
+  ```
+
+- **Operands and attributes:** None.
+- **Result:** One `i64` byte offset.
+- **Semantics:** The result is the address displacement, measured in bytes,
+  supplied to the current kernel instance for L2 cache address mapping. The op
+  only reports the configured value; it does not access memory or modify an
+  address.
+
+```text
+l2_cache_offset_bytes = runtime_l2_cache_address_offset
+```
 
 ### Block Partitioning Example
 

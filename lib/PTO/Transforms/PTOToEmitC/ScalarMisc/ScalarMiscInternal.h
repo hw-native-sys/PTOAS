@@ -52,6 +52,8 @@ void populateScalarMiscGlobalEventArrayPatterns(RewritePatternSet &patterns,
                         TypeConverter &typeConverter, MLIRContext *ctx);
 void populateScalarMiscLocalArrayPatterns(RewritePatternSet &patterns,
                         TypeConverter &typeConverter, MLIRContext *ctx);
+void populateScalarMiscRuntimeQueryPatterns(RewritePatternSet &patterns,
+                        TypeConverter &typeConverter, MLIRContext *ctx);
 void populateScalarMiscScalarMiscMiscPatterns(RewritePatternSet &patterns,
                         TypeConverter &typeConverter, MLIRContext *ctx);
 void populateScalarMiscScalarMiscOpsPatterns(RewritePatternSet &patterns,

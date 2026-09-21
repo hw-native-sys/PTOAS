@@ -231,6 +231,26 @@ is a `!pto.vmi.mask<L>` with the same `L` as the data operand.
 |---|---|---|
 | `"zero"` | Inactive lanes produce 0 | ✓ (default, and the only supported value) |
 
+### Mask granularity assignment boundaries
+
+`vmi-mask-granularity-assignment` assigns concrete granularity to abstract `pred`
+values and records the granularity required at each supported use. A root without
+a concrete constraint or preference defaults to `b32`; a registered 8/16-bit use
+can still obtain a rematerialized mask or `ensure_mask_granularity`. Thus a `b32`
+root alone does not indicate a missing use constraint. Passes that change data
+width may explicitly bridge an already concrete mask with
+`ensure_mask_granularity`; this is distinct from assigning an abstract `pred`.
+
+The operation dispatch lists are maintained explicitly, not inferred from every
+mask operand in the dialect. Direct `vsel`, `vadd`, and `vmul` uses are covered.
+For `vcmps`, `vcadd`/`vcmax`/`vcmin`, and `vgather`, run
+`vmi-lower-unified-to-legacy` first: directly assigning an unconstrained `pred`
+mask for f16 data still fails the data-width verifier. The corresponding f16
+`vgatherb` case remains a known gap even with that normalization. These gaps are
+recorded in `vmi_mask_granularity_assignment_boundaries.pto`; they are not intended
+rejection contracts. `pmode="merge"` is rejected by the VMI verifier before these
+passes and is not a supported workaround.
+
 **A5 load restriction**: `vload` has **no** mask operand — A5 loads are
 unpredicated. A logical tail mask associated with a load is never lowered as a
 "masked load"; `pto.as` migrates it to the consuming compute op, the store, or

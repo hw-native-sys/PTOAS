@@ -26,16 +26,23 @@ constexpr unsigned kInsertMaxTemplateArgumentCount = mlir::pto::kValue5;
 struct PTOExtractToEmitC : public OpConversionPattern<pto::TExtractOp> {
   using OpConversionPattern<pto::TExtractOp>::OpConversionPattern;
 
-  static SmallVector<Value, kExtractInsertMaxOperandCount> collectOperands(OpAdaptor adaptor) {
-    SmallVector<Value, kExtractInsertMaxOperandCount> operands{adaptor.getDst(), adaptor.getSrc()};
+  static SmallVector<Value, kExtractInsertMaxOperandCount>
+  collectOperands(pto::TExtractOp op, OpAdaptor adaptor,
+                  ConversionPatternRewriter &rewriter) {
+    Location loc = op.getLoc();
+    SmallVector<Value, kExtractInsertMaxOperandCount> operands{adaptor.getDst(),
+                                                               adaptor.getSrc()};
     if (Value fp = adaptor.getFp()) {
       operands.push_back(fp);
     }
     if (Value preQuantScalar = adaptor.getPreQuantScalar()) {
-      operands.push_back(preQuantScalar);
+      operands.push_back(castScalarToCppType(rewriter, loc, preQuantScalar,
+                                             "uint64_t"));
     }
-    operands.push_back(adaptor.getIndexRow());
-    operands.push_back(adaptor.getIndexCol());
+    operands.push_back(
+        castScalarToCppType(rewriter, loc, adaptor.getIndexRow(), "uint16_t"));
+    operands.push_back(
+        castScalarToCppType(rewriter, loc, adaptor.getIndexCol(), "uint16_t"));
     return operands;
   }
 
@@ -88,7 +95,7 @@ struct PTOExtractToEmitC : public OpConversionPattern<pto::TExtractOp> {
     const bool hasMode = static_cast<bool>(op.getAccToVecModeAttr());
     rewriter.create<emitc::CallOpaqueOp>(
         loc, TypeRange{}, hasFp && !hasMode ? "TEXTRACT_FP" : "TEXTRACT",
-        ArrayAttr{}, *templateArgs, collectOperands(adaptor));
+        ArrayAttr{}, *templateArgs, collectOperands(op, adaptor, rewriter));
     rewriter.eraseOp(op);
     return success();
   }
@@ -166,9 +173,12 @@ struct PTOInsertToEmitC : public OpConversionPattern<pto::TInsertOp> {
     if (fp)
       operands.push_back(fp);
     if (preQuantScalar)
-      operands.push_back(preQuantScalar);
-    operands.push_back(r0);
-    operands.push_back(c0);
+      operands.push_back(
+          castScalarToCppType(rewriter, loc, preQuantScalar, "uint64_t"));
+    operands.push_back(
+        castScalarToCppType(rewriter, loc, r0, "uint16_t"));
+    operands.push_back(
+        castScalarToCppType(rewriter, loc, c0, "uint16_t"));
 
     ArrayAttr templateArgs;
     if (failed(buildTemplateArgs(op, rewriter, dst, src, fp, preQuantScalar,

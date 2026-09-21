@@ -246,7 +246,7 @@ struct MaskGranularitySolver {
 
   std::optional<WalkResult> addResultMaskUseConstraint(Operation *op) {
     return llvm::TypeSwitch<Operation *, std::optional<WalkResult>>(op)
-        .Case<VMISelectOp, VMIActivePrefixIndexOp, VMICompressOp,
+        .Case<VMISelectOp, VMIvSelOp, VMIActivePrefixIndexOp, VMICompressOp,
               VMIStrideLoadOp, VMIMaskedLoadOp, VMIGatherOp, VMIExpandLoadOp>(
             [this, op](auto maskOp) {
               auto resultType = cast<VMIVRegType>(maskOp.getResult().getType());

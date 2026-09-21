@@ -1,0 +1,108 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+
+// RUN: split-file %s %t
+// RUN: pto-test-opt %t/vcmps.pto -o /dev/null
+// RUN: not pto-test-opt %t/vcmps.pto -vmi-mask-granularity-assignment 2>&1 | FileCheck %s --check-prefix=VCMPS-GAP
+// RUN: pto-test-opt %t/vcmps.pto -vmi-lower-unified-to-legacy -vmi-mask-granularity-assignment | FileCheck %s --check-prefix=VCMPS-NORMALIZED
+// RUN: pto-test-opt %t/vcadd_zero.pto -o /dev/null
+// RUN: not pto-test-opt %t/vcadd_zero.pto -vmi-mask-granularity-assignment 2>&1 | FileCheck %s --check-prefix=VCADD-ZERO-GAP
+// RUN: pto-test-opt %t/vcadd_zero.pto -vmi-lower-unified-to-legacy -vmi-mask-granularity-assignment | FileCheck %s --check-prefix=VCADD-ZERO-NORMALIZED
+// RUN: pto-test-opt %t/vcmax_zero.pto -o /dev/null
+// RUN: not pto-test-opt %t/vcmax_zero.pto -vmi-mask-granularity-assignment 2>&1 | FileCheck %s --check-prefix=VCMAX-ZERO-GAP
+// RUN: pto-test-opt %t/vcmax_zero.pto -vmi-lower-unified-to-legacy -vmi-mask-granularity-assignment | FileCheck %s --check-prefix=VCMAX-ZERO-NORMALIZED
+// RUN: pto-test-opt %t/vcmin_zero.pto -o /dev/null
+// RUN: not pto-test-opt %t/vcmin_zero.pto -vmi-mask-granularity-assignment 2>&1 | FileCheck %s --check-prefix=VCMIN-ZERO-GAP
+// RUN: pto-test-opt %t/vcmin_zero.pto -vmi-lower-unified-to-legacy -vmi-mask-granularity-assignment | FileCheck %s --check-prefix=VCMIN-ZERO-NORMALIZED
+// RUN: pto-test-opt %t/vgather.pto -o /dev/null
+// RUN: not pto-test-opt %t/vgather.pto -vmi-mask-granularity-assignment 2>&1 | FileCheck %s --check-prefix=VGATHER-GAP
+// RUN: pto-test-opt %t/vgather.pto -vmi-lower-unified-to-legacy -vmi-mask-granularity-assignment | FileCheck %s --check-prefix=VGATHER-NORMALIZED
+// RUN: pto-test-opt %t/vgatherb.pto -o /dev/null
+// RUN: not pto-test-opt %t/vgatherb.pto -vmi-mask-granularity-assignment 2>&1 | FileCheck %s --check-prefix=VGATHERB-GAP
+// RUN: not pto-test-opt %t/vgatherb.pto -vmi-lower-unified-to-legacy -vmi-mask-granularity-assignment 2>&1 | FileCheck %s --check-prefix=VGATHERB-GAP
+
+// Known gaps, not desired rejection contracts: these valid pred inputs still
+// lack direct use/result constraints. Check the exact failure, not an arbitrary
+// nonzero exit. Replace each GAP assertion with a positive check when fixed.
+// Do not XFAIL the whole file: normalized controls must remain passing.
+// vgatherb remains a gap even after unified-to-legacy normalization.
+
+// VCMPS-GAP: error: 'pto.vmi.vcmps' op requires mask granularity to match data element width
+// VCMPS-NORMALIZED-LABEL: func.func @vcmps(
+// VCMPS-NORMALIZED: pto.vmi.cmpf
+// VCMPS-NORMALIZED-SAME: !pto.vmi.mask<128xb16>
+
+//--- vcmps.pto
+func.func @vcmps(%n: index, %a: !pto.vmi.vreg<128xf16>, %s: f16) -> !pto.vmi.mask<128xpred> {
+  %m = pto.vmi.create_mask %n : index -> !pto.vmi.mask<128xpred>
+  %r = pto.vmi.vcmps %a, %s, %m {cmp = "gt"}
+      : !pto.vmi.vreg<128xf16>, f16, !pto.vmi.mask<128xpred> -> !pto.vmi.mask<128xpred>
+  return %r : !pto.vmi.mask<128xpred>
+}
+
+// VCADD-ZERO-GAP: error: 'pto.vmi.vcadd' op requires mask granularity to match data element width
+// VCADD-ZERO-NORMALIZED-LABEL: func.func @vcadd_zero(
+// VCADD-ZERO-NORMALIZED: pto.vmi.group_reduce_addf
+// VCADD-ZERO-NORMALIZED-SAME: !pto.vmi.mask<128xb16>
+
+//--- vcadd_zero.pto
+func.func @vcadd_zero(%n: index, %a: !pto.vmi.vreg<128xf16>) -> !pto.vmi.vreg<1xf16> {
+  %m = pto.vmi.create_mask %n : index -> !pto.vmi.mask<128xpred>
+  %r = pto.vmi.vcadd %a, %m {pmode = "zero", reassoc}
+      : !pto.vmi.vreg<128xf16>, !pto.vmi.mask<128xpred> -> !pto.vmi.vreg<1xf16>
+  return %r : !pto.vmi.vreg<1xf16>
+}
+
+// VCMAX-ZERO-GAP: error: 'pto.vmi.vcmax' op requires mask granularity to match data element width
+// VCMAX-ZERO-NORMALIZED-LABEL: func.func @vcmax_zero(
+// VCMAX-ZERO-NORMALIZED: pto.vmi.group_reduce_maxf
+// VCMAX-ZERO-NORMALIZED-SAME: !pto.vmi.mask<128xb16>
+
+//--- vcmax_zero.pto
+func.func @vcmax_zero(%n: index, %a: !pto.vmi.vreg<128xf16>) -> !pto.vmi.vreg<1xf16> {
+  %m = pto.vmi.create_mask %n : index -> !pto.vmi.mask<128xpred>
+  %r = pto.vmi.vcmax %a, %m {pmode = "zero", reassoc}
+      : !pto.vmi.vreg<128xf16>, !pto.vmi.mask<128xpred> -> !pto.vmi.vreg<1xf16>
+  return %r : !pto.vmi.vreg<1xf16>
+}
+
+// VCMIN-ZERO-GAP: error: 'pto.vmi.vcmin' op requires mask granularity to match data element width
+// VCMIN-ZERO-NORMALIZED-LABEL: func.func @vcmin_zero(
+// VCMIN-ZERO-NORMALIZED: pto.vmi.group_reduce_minf
+// VCMIN-ZERO-NORMALIZED-SAME: !pto.vmi.mask<128xb16>
+
+//--- vcmin_zero.pto
+func.func @vcmin_zero(%n: index, %a: !pto.vmi.vreg<128xf16>) -> !pto.vmi.vreg<1xf16> {
+  %m = pto.vmi.create_mask %n : index -> !pto.vmi.mask<128xpred>
+  %r = pto.vmi.vcmin %a, %m {pmode = "zero", reassoc}
+      : !pto.vmi.vreg<128xf16>, !pto.vmi.mask<128xpred> -> !pto.vmi.vreg<1xf16>
+  return %r : !pto.vmi.vreg<1xf16>
+}
+
+// VGATHER-GAP: error: 'pto.vmi.vgather' op requires mask granularity to match data element width
+// VGATHER-NORMALIZED-LABEL: func.func @vgather(
+// VGATHER-NORMALIZED: pto.vmi.gather
+// VGATHER-NORMALIZED-SAME: !pto.vmi.mask<128xb16>
+
+//--- vgather.pto
+func.func @vgather(%n: index, %p: !pto.ptr<f16, ub>, %i: !pto.vmi.vreg<128xi32>) -> !pto.vmi.vreg<128xf16> {
+  %m = pto.vmi.create_mask %n : index -> !pto.vmi.mask<128xpred>
+  %r = pto.vmi.vgather %p, %i, %m
+      : !pto.ptr<f16, ub>, !pto.vmi.vreg<128xi32>, !pto.vmi.mask<128xpred> -> !pto.vmi.vreg<128xf16>
+  return %r : !pto.vmi.vreg<128xf16>
+}
+
+// VGATHERB-GAP: error: 'pto.vmi.vgatherb' op requires mask granularity to match data element width
+
+//--- vgatherb.pto
+func.func @vgatherb(%n: index, %p: !pto.ptr<f16, ub>, %i: !pto.vmi.vreg<128xi32>) -> !pto.vmi.vreg<128xf16> {
+  %m = pto.vmi.create_mask %n : index -> !pto.vmi.mask<128xpred>
+  %r = pto.vmi.vgatherb %p, %i, %m
+      : !pto.ptr<f16, ub>, !pto.vmi.vreg<128xi32>, !pto.vmi.mask<128xpred> -> !pto.vmi.vreg<128xf16>
+  return %r : !pto.vmi.vreg<128xf16>
+}

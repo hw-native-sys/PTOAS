@@ -39,7 +39,15 @@ module attributes {"pto.device-spec" = "Ascend950"} {
 }
 
 // CHECK-LABEL: AICORE void tinsert_a5_modes(
-// CHECK: TINSERT<{{.*}}pto::AccToVecMode::SingleModeVec0{{.*}}ReluPreMode::NoRelu>([[DST0:[^,]+]], [[SRC:[^,]+]], [[ROW:[^,]+]], [[COL:[^)]+]]);
-// CHECK: TINSERT<{{.*}}pto::AccToVecMode::DualModeSplitM{{.*}}ReluPreMode::NormalRelu>([[DST1:[^,]+]], [[SRC]], [[ROW]], [[COL]]);
-// CHECK: TINSERT<{{.*}}pto::AccToVecMode::SingleModeVec1{{.*}}ReluPreMode::NoRelu>([[DST2:[^,]+]], [[SRC]], [[FP:[^,]+]], [[ROW]], [[COL]]);
-// CHECK: TINSERT<pto::TInsertMode::SPLIT2>([[DSTMAT:[^,]+]], [[SRCNZ:[^,]+]], [[ROW]], [[COL]]);
+// CHECK: uint16_t [[ROW:[a-z0-9]+]] = static_cast<uint16_t>({{.*}});
+// CHECK: uint16_t [[COL:[a-z0-9]+]] = static_cast<uint16_t>({{.*}});
+// CHECK: TINSERT<{{.*}}pto::AccToVecMode::SingleModeVec0{{.*}}ReluPreMode::NoRelu>([[DST0:[^,]+]], [[SRC:[^,]+]], [[ROW]], [[COL]]);
+// CHECK: uint16_t [[ROW1:[a-z0-9]+]] = static_cast<uint16_t>({{.*}});
+// CHECK: uint16_t [[COL1:[a-z0-9]+]] = static_cast<uint16_t>({{.*}});
+// CHECK: TINSERT<{{.*}}pto::AccToVecMode::DualModeSplitM{{.*}}ReluPreMode::NormalRelu>([[DST1:[^,]+]], [[SRC]], [[ROW1]], [[COL1]]);
+// CHECK: uint16_t [[ROW2:[a-z0-9]+]] = static_cast<uint16_t>({{.*}});
+// CHECK: uint16_t [[COL2:[a-z0-9]+]] = static_cast<uint16_t>({{.*}});
+// CHECK: TINSERT<{{.*}}pto::AccToVecMode::SingleModeVec1{{.*}}ReluPreMode::NoRelu>([[DST2:[^,]+]], [[SRC]], [[FP:[^,]+]], [[ROW2]], [[COL2]]);
+// CHECK: uint16_t [[ROW3:[a-z0-9]+]] = static_cast<uint16_t>({{.*}});
+// CHECK: uint16_t [[COL3:[a-z0-9]+]] = static_cast<uint16_t>({{.*}});
+// CHECK: TINSERT<pto::TInsertMode::SPLIT2>([[DSTMAT:[^,]+]], [[SRCNZ:[^,]+]], [[ROW3]], [[COL3]]);

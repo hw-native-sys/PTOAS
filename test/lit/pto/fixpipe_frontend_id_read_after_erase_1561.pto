@@ -1,0 +1,51 @@
+// RUN: ptoas --pto-arch=a2 --emit-pto-ir %s | FileCheck %s
+// RUN: ptoas --pto-arch=a2 %s -o %t.cpp
+
+// Regression test for issue #1561: lowering a frontend c2v pipe used to read
+// the initialize op's 'id' after the op had been erased, which is
+// use-after-free. On hosts whose allocator poisons freed memory (macOS), the
+// erased op's properties read back as null and ptoas died with a silent
+// SIGSEGV while lowering any module with a c2v pipe. The lowered pipe handle
+// must be registered under the id captured before the erase.
+
+module {
+  func.func @cube_kernel(%arg0: !pto.ptr<f32>) attributes {pto.kernel_kind = #pto.kernel_kind<cube>} {
+    %c0_i32 = arith.constant 0 : i32
+    %c1 = arith.constant 1 : index
+    %c2v = pto.import_reserved_buffer {name = "c2v_fifo", peer_func = @vector_kernel} -> i32
+    %bidx = "pto.get_block_idx"() : () -> i64
+    %bidx_i = arith.index_cast %bidx : i64 to index
+    %off = arith.muli %bidx_i, %c1 : index
+    %slot_b = "pto.addptr"(%arg0, %off) : (!pto.ptr<f32>, index) -> !pto.ptr<f32>
+    pto.aic_initialize_pipe {id = 0, dir_mask = 1, slot_size = 64}
+      (gm_slot_buffer = %slot_b : !pto.ptr<f32>,
+       c2v_consumer_buf = %c2v : i32,
+       v2c_consumer_buf = %c0_i32 : i32)
+    return
+  }
+
+  func.func @vector_kernel(%arg0: !pto.ptr<f32>) attributes {pto.kernel_kind = #pto.kernel_kind<vector>} {
+    %c0_i32 = arith.constant 0 : i32
+    %c1 = arith.constant 1 : index
+    %c2v = pto.reserve_buffer {name = "c2v_fifo", size = 512, location = #pto.address_space<vec>, auto = true} -> i32
+    %bidx = "pto.get_block_idx"() : () -> i64
+    %bidx_i = arith.index_cast %bidx : i64 to index
+    %off = arith.muli %bidx_i, %c1 : index
+    %slot_b = "pto.addptr"(%arg0, %off) : (!pto.ptr<f32>, index) -> !pto.ptr<f32>
+    pto.aiv_initialize_pipe {id = 0, dir_mask = 1, slot_size = 64}
+      (gm_slot_buffer = %slot_b : !pto.ptr<f32>,
+       c2v_consumer_buf = %c2v : i32,
+       v2c_consumer_buf = %c0_i32 : i32)
+    %recv = pto.tpop_from_aic {id = 0, split = 0}
+      -> !pto.tile_buf<loc=vec, dtype=f16, rows=16, cols=256, v_row=16, v_col=256, blayout=row_major, slayout=none_box, fractal=512, pad=0>
+    pto.tfree_from_aic {id = 0, split = 0}
+    return
+  }
+}
+
+// CHECK-LABEL: func.func @cube_kernel
+// CHECK: pto.initialize_l2g2l_pipe{{.*}}__pto.frontend_id = 0 : i32
+// CHECK-NOT: pto.aic_initialize_pipe
+// CHECK-LABEL: func.func @vector_kernel
+// CHECK: pto.initialize_l2g2l_pipe{{.*}}__pto.frontend_id = 0 : i32
+// CHECK-NOT: pto.aiv_initialize_pipe

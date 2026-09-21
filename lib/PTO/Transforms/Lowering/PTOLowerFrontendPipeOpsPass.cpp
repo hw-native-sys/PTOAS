@@ -406,19 +406,25 @@ lowerCollectedInitOp(Operation *op, IRRewriter &rewriter,
                      FrontendPipeHandleMap &handlesById) {
   return TypeSwitch<Operation *, LogicalResult>(op)
       .Case([&rewriter, &handlesById](AicInitializePipeOp init) {
+        // Read the frontend id before lowering erases the op: the handle map
+        // is keyed by an attribute of an operation that no longer exists
+        // afterwards, and reading it after erase is use-after-free.
+        int32_t id = init.getId();
         auto loweredOr = lowerAndEraseFrontendInit(init, rewriter);
         if (failed(loweredOr)) {
           return failure();
         }
-        handlesById.try_emplace(init.getId(), *loweredOr);
+        handlesById.try_emplace(id, *loweredOr);
         return success();
       })
       .Case([&rewriter, &handlesById](AivInitializePipeOp init) {
+        // Same id-before-erase ordering as the aic variant above.
+        int32_t id = init.getId();
         auto loweredOr = lowerAndEraseFrontendInit(init, rewriter);
         if (failed(loweredOr)) {
           return failure();
         }
-        handlesById.try_emplace(init.getId(), *loweredOr);
+        handlesById.try_emplace(id, *loweredOr);
         return success();
       })
       .Default([](Operation *) { return success(); });

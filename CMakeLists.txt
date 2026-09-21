@@ -46,7 +46,7 @@ if((NOT DEFINED MLIR_DIR OR MLIR_DIR STREQUAL "")
       "MLIR package directory derived from LLVM_BUILD_DIR")
 endif()
 
-project(ptoas VERSION 0.64)
+project(ptoas VERSION 0.65)
 
 # cann-cmake otherwise replaces an explicit CI launcher with its local ccache.
 if(CMAKE_C_COMPILER_LAUNCHER OR CMAKE_CXX_COMPILER_LAUNCHER)

@@ -32,11 +32,51 @@ pto.tcvt ins(%src {rmode = #pto<round_mode FLOOR>, satmode = #pto<saturation_mod
 
 ## 常见文本形式
 
-### PTO 枚举属性
+### PTO 方言属性
+
+PTO 方言属性存在不同的文本形式。具体使用哪一种形式，由对应属性的方言解析逻辑或 AttrDef 定义决定，不同形式不能任意替换。
+
+#### 方言级属性形式
+
+部分属性通过 PTO 方言级属性语法表示：
 
 ```mlir
 #pto<round_mode FLOOR>
 #pto<saturation_mode ON>
+```
+
+其基本形式为：
+
+```text
+#方言名<属性类别 参数>
+```
+
+其中，`round_mode FLOOR` 和 `saturation_mode ON` 位于 PTO 方言属性的内部 payload 中，由 PTO 方言的属性解析逻辑处理。
+
+#### AttrDef 助记符形式
+
+通过具有独立助记符（mnemonic）的 AttrDef 定义的属性通常写为：
+
+```mlir
+#pto.address_space<vec>
+```
+
+其基本形式为：
+
+```text
+#方言名.属性助记符<参数>
+```
+
+在上述示例中：
+
+- `pto` 是方言名称；
+- `address_space` 是属性助记符；
+- `vec` 是地址空间属性的参数。
+
+例如，`pto.reserve_buffer` 使用 `location` 属性指定 reserved buffer 所属的地址空间：
+
+```mlir
+location = #pto.address_space<vec>
 ```
 
 ### 内建属性
@@ -47,17 +87,19 @@ PTO 操作也可能使用 MLIR 内建属性作为参数承载形式，例如整�
 
 ```mlir
 %buf = pto.reserve_buffer {
-  name = "pipe0",
-  size = 1024,
+  name = "c2v_fifo",
+  size = 4096,
+  location = #pto.address_space<vec>,
   auto = true
 } -> i32
 ```
 
 其中：
 
-- `name = "pipe0"` 是字符串属性
-- `size = 1024` 是整数属性
-- `auto = true` 是布尔属性
+- `name = "c2v_fifo"` 是字符串属性；
+- `size = 4096` 是整数属性；
+- `location = #pto.address_space<vec>` 是 PTO 方言定义的地址空间属性；
+- `auto = true` 是布尔属性。
 
 ## 语法位置
 

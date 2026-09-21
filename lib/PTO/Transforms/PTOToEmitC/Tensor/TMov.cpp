@@ -111,7 +111,8 @@ LogicalResult matchAndRewrite(pto::TMovOp op, OpAdaptor adaptor,
         callee = hasMode ? "TMOV" : "TMOV_FP";
       }
     } else if (hasPreQuantScalar) {
-      operands.push_back(preQuantScalar);
+      operands.push_back(castScalarToCppType(rewriter, op.getLoc(),
+                                             preQuantScalar, "uint64_t"));
       pushModeAndReluTemplateArgs(templateArgVec, ctx, modeAttr,
                                   reluNonDefault, op.getReluPreMode());
     } else if (hasMode) {

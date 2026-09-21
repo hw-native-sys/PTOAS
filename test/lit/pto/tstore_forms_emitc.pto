@@ -57,5 +57,7 @@ module {
 // A3: TSTORE<STPhase::Final, {{.*}}AtomicType::AtomicAdd>([[DST0]], [[VEC]]);
 // A3: TSTORE<{{.*}}AtomicType::AtomicAdd, ReluPreMode::NormalRelu>([[DST1:[_A-Za-z][_A-Za-z0-9]*]], [[ACC:[_A-Za-z][_A-Za-z0-9]*]]);
 // A3: TSTORE<STPhase::Final, {{.*}}AtomicType::AtomicAdd, ReluPreMode::NormalRelu>([[DST1]], [[ACC]]);
-// A3: TSTORE<{{.*}}AtomicType::AtomicAdd, ReluPreMode::NormalRelu>([[DST1]], [[ACC]], [[PRE:[_A-Za-z][_A-Za-z0-9]*]]);
-// A3: TSTORE<STPhase::Final, {{.*}}AtomicType::AtomicAdd, ReluPreMode::NormalRelu>([[DST1]], [[ACC]], [[PRE]]);
+// A3: uint64_t [[PRE:[_A-Za-z][_A-Za-z0-9]*]] = static_cast<uint64_t>({{.*}});
+// A3: TSTORE<{{.*}}AtomicType::AtomicAdd, ReluPreMode::NormalRelu>([[DST1]], [[ACC]], [[PRE]]);
+// A3: uint64_t [[PRE2:[_A-Za-z][_A-Za-z0-9]*]] = static_cast<uint64_t>({{.*}});
+// A3: TSTORE<STPhase::Final, {{.*}}AtomicType::AtomicAdd, ReluPreMode::NormalRelu>([[DST1]], [[ACC]], [[PRE2]]);

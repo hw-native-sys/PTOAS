@@ -46,8 +46,10 @@ module attributes {"pto.device-spec" = "Ascend950"} {
 
 // CHECK-LABEL: AICORE void tmov_forms(
 // CHECK: TMOV<{{.*}}ReluPreMode::NormalRelu>([[DST_MAT:[^,]+]], [[SRC:[^)]+]]);
-// CHECK: TMOV<{{.*}}ReluPreMode::NormalRelu>([[DST_MAT_Q:[^,]+]], [[SRC]], [[PRE:[^)]+]]);
+// CHECK: uint64_t [[PRE:[_A-Za-z0-9]+]] = static_cast<uint64_t>({{.*}});
+// CHECK: TMOV<{{.*}}ReluPreMode::NormalRelu>([[DST_MAT_Q:[^,]+]], [[SRC]], [[PRE]]);
 // CHECK: TMOV<{{.*}}pto::AccToVecMode::DualModeSplitM, ReluPreMode::NormalRelu>([[DST_VEC:[^,]+]], [[SRC]]);
-// CHECK: TMOV<{{.*}}pto::AccToVecMode::SingleModeVec1, ReluPreMode::NormalRelu>([[DST_VEC_Q:[^,]+]], [[SRC]], [[PRE]]);
+// CHECK: uint64_t [[PRE2:[_A-Za-z0-9]+]] = static_cast<uint64_t>({{.*}});
+// CHECK: TMOV<{{.*}}pto::AccToVecMode::SingleModeVec1, ReluPreMode::NormalRelu>([[DST_VEC_Q:[^,]+]], [[SRC]], [[PRE2]]);
 // CHECK: TMOV_FP<{{.*}}ReluPreMode::NormalRelu>([[DST_MAT_Q]], [[SRC]], [[FP:[^)]+]]);
 // CHECK: TMOV<{{.*}}pto::AccToVecMode::SingleModeVec0, ReluPreMode::NormalRelu>([[DST_VEC_Q]], [[SRC]], [[FP]]);
