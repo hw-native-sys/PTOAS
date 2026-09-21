@@ -38,6 +38,9 @@ private:
   SyncAnalysisMode syncAnalysisMode_;
  
 private:
+  // Slot-aware transitive coverage in bounded, straight rotation loops.
+  void RemoveSlotRedundantSync();
+
   /// 检查某对同步 (set/wait) 是否被其他同步覆盖（从而变得多余）
   bool CheckAllSync(const SyncOperation *setFlag, const SyncOperation *waitFlag);
 

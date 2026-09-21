@@ -139,6 +139,7 @@ SyncOperation::GetMatchSync(unsigned index) const {
   // producer slot) overwrite after GetMatchSync.
   res->slotSSAExpr = this->slotSSAExpr;
   res->slotCount = this->slotCount;
+  res->slotBoundaryMasks = this->slotBoundaryMasks;
   return res;
 }
 

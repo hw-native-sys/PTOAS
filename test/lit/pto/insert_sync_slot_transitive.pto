@@ -1,0 +1,159 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+
+// RUN: ptoas --pto-arch=a3 --pto-level=level3 --enable-insert-sync --pto-insert-sync-debug=3 %s -o %t.cpp 2> %t.log
+// RUN: FileCheck %s --check-prefix=SYNC --input-file=%t.log
+// RUN: FileCheck %s --check-prefix=CPP --input-file=%t.cpp
+// RUN: %python %S/Inputs/check_slot_event_boundaries.py %t.log
+// RUN: sed 's/%c62_index = arith.constant 62/%c62_index = arith.constant 2/' %s | ptoas --pto-arch=a3 --pto-level=level3 --enable-insert-sync --pto-insert-sync-debug=3 - -o /dev/null 2> %t.short.log
+// RUN: %python %S/Inputs/check_slot_event_boundaries.py %t.short.log --upper 2
+// RUN: sed 's/%c62_index = arith.constant 62/%c62_index = arith.constant 63/' %s | ptoas --pto-arch=a3 --pto-level=level3 --enable-insert-sync --pto-insert-sync-debug=3 - -o /dev/null 2> %t.full.log
+// RUN: %python %S/Inputs/check_slot_event_boundaries.py %t.full.log --upper 63
+// RUN: sed 's/= %c0_index to %c62_index/= %c1_index to %c62_index/' %s | ptoas --pto-arch=a3 --pto-level=level3 --enable-insert-sync --pto-insert-sync-debug=3 - -o /dev/null 2> %t.shifted.log
+// RUN: %python %S/Inputs/check_slot_event_boundaries.py %t.shifted.log --lower 1
+// RUN: sed 's/count=3/count=5/g; s/%c3_index = arith.constant 3/%c3_index = arith.constant 5/; s/%c12288_i64 = arith.constant 12288/%c12288_i64 = arith.constant 20480/' %s | ptoas --pto-arch=a3 --pto-level=level3 --enable-insert-sync --pto-insert-sync-debug=3 - -o /dev/null 2>&1 | FileCheck %s --check-prefix=PRESSURE
+// RUN: sed 's/to %c62_index step %c1_index/to %c62_index step %c2_index/' %s | ptoas --pto-arch=a3 --pto-level=level3 --enable-insert-sync --pto-insert-sync-debug=3 - -o /dev/null 2>&1 | FileCheck %s --check-prefix=KEEP
+// RUN: sed 's/arith.remui/arith.remsi/g' %s | ptoas --pto-arch=a3 --pto-level=level3 --enable-insert-sync --pto-insert-sync-debug=3 - -o /dev/null 2>&1 | FileCheck %s --check-prefix=KEEP
+// RUN: sed 's/%arg2: !pto.ptr<f32>)/%arg2: !pto.ptr<f32>, %bound: index)/; s/to %c62_index step/to %bound step/' %s | ptoas --pto-arch=a3 --pto-level=level3 --enable-insert-sync --pto-insert-sync-debug=3 - -o /dev/null 2>&1 | FileCheck %s --check-prefix=KEEP
+// RUN: sed 's/"a2a3"/"a5"/' %s | ptoas --pto-arch=a5 --pto-level=level3 --enable-insert-sync --pto-insert-sync-debug=3 - -o /dev/null 2>&1 | FileCheck %s --check-prefix=A5
+
+// Issue #1569: two preloads, three rotating slots, and in-place ADD/ADDS.
+// Six transitive event families can be removed. The four dynamic families
+// below must survive: a path reaching their consumer in a later rotation is
+// NOT coverage, even though it reaches the same physical slot. The static
+// ADDS->STORE event and the vector barrier complete the required path.
+// Non-unit loops and erased A5 vector barriers cannot supply this proof.
+// SYNC-LABEL: After Remove Redundant Sync
+// SYNC: LOOP LOOP_BEGIN
+// SYNC: COMPOUND pto.tload [PIPE_MTE2]
+// SYNC: PRE : wait_flag <PIPE_MTE3 -> PIPE_MTE2>
+// SYNC-NEXT: POST: set_flag <PIPE_MTE2 -> PIPE_V>
+// SYNC-NEXT: {{.*}}COMPOUND pto.tload [PIPE_MTE2]
+// SYNC: PRE : wait_flag <PIPE_V -> PIPE_MTE2>
+// SYNC-NEXT: POST: set_flag <PIPE_MTE2 -> PIPE_V>
+// SYNC-NEXT: {{.*}}COMPOUND pto.tadd [PIPE_V]
+// SYNC: PRE : wait_flag <PIPE_MTE2 -> PIPE_V>
+// SYNC-NEXT: PRE : wait_flag <PIPE_MTE2 -> PIPE_V>
+// SYNC-NEXT: PRE : pipe_barrier <PIPE_V -> PIPE_V>
+// SYNC-NEXT: POST: set_flag <PIPE_V -> PIPE_MTE2>
+// SYNC-NEXT: {{.*}}COMPOUND pto.tadds [PIPE_V]
+// SYNC: PRE : pipe_barrier <PIPE_V -> PIPE_V>
+// SYNC-NEXT: POST: set_flag <PIPE_V -> PIPE_MTE3>
+// SYNC-NEXT: {{.*}}COMPOUND pto.tstore [PIPE_MTE3]
+// SYNC: PRE : wait_flag <PIPE_V -> PIPE_MTE3>
+// SYNC-NEXT: PRE : pipe_barrier <PIPE_MTE3 -> PIPE_MTE3>
+// SYNC-NEXT: POST: set_flag <PIPE_MTE3 -> PIPE_MTE2>
+// SYNC-NEXT: {{.*}}LOOP LOOP_END
+// SYNC: POST: pipe_barrier <PIPE_ALL -> PIPE_ALL>
+// SYNC-LABEL: After EventId Allocation
+
+// CPP-LABEL: AICORE void vec_add_binary_incore_0
+// CPP: for (
+// CPP-NOT: pipe_barrier(PIPE_ALL);
+// CPP: {{^  [}]$}}
+
+// Pool exhaustion must keep the proven lane family intact and fall back to a
+// full barrier for the other family, rather than collapse a rotation to one ID.
+// PRESSURE-LABEL: After EventId Allocation
+// PRESSURE: LOOP LOOP_BEGIN
+// PRESSURE: POST: set_flag <PIPE_MTE2 -> PIPE_V> {{.*}}eventIdNum=5 eventIds={{\[[0-7](,[0-7]){4}\]}}
+// PRESSURE: COMPOUND pto.tadd [PIPE_V]
+// PRESSURE: PRE : pipe_barrier <PIPE_ALL -> PIPE_ALL>
+// PRESSURE: LOOP LOOP_END
+
+// KEEP-LABEL: After Remove Redundant Sync
+// KEEP: LOOP LOOP_BEGIN
+// KEEP: COMPOUND pto.tload [PIPE_MTE2]
+// KEEP: PRE : wait_flag <PIPE_V -> PIPE_MTE2>
+// KEEP-NEXT: PRE : wait_flag <PIPE_V -> PIPE_MTE2>
+
+// A5-LABEL: After Remove Redundant Sync
+// A5: LOOP LOOP_BEGIN
+// A5: COMPOUND pto.tadds [PIPE_V]
+// A5: PRE : wait_flag <PIPE_MTE2 -> PIPE_V>
+// A5: LOOP LOOP_END
+
+!tile = !pto.tile_buf<loc=vec, dtype=f32, rows=1, cols=1024, v_row=?, v_col=?, blayout=row_major, slayout=none_box, fractal=512, pad=0>
+!view = !pto.tensor_view<?x?xf32>
+!part = !pto.partition_tensor_view<1x1024xf32>
+!ring = !pto.multi_tile_buf<!pto.tile_buf<loc=vec, dtype=f32, rows=1, cols=1024, v_row=?, v_col=?, blayout=row_major, slayout=none_box, fractal=512, pad=0>, count=3>
+
+module attributes {pto.target_arch = "a2a3"} {
+  func.func @vec_add_binary_incore_0(%arg0: !pto.ptr<f32>, %arg1: !pto.ptr<f32>, %arg2: !pto.ptr<f32>) attributes {pto.kernel_kind = #pto.kernel_kind<vector>} {
+  %c0_i64 = arith.constant 0 : i64
+  %c12288_i64 = arith.constant 12288 : i64
+  %c4096_i64 = arith.constant 4096 : i64
+  %c16384_i64 = arith.constant 16384 : i64
+  %c8192_i64 = arith.constant 8192 : i64
+  %c20480_i64 = arith.constant 20480 : i64
+  %c1_index = arith.constant 1 : index
+  %c1024_index = arith.constant 1024 : index
+  %c64_index = arith.constant 64 : index
+  %c0_index = arith.constant 0 : index
+  %c62_index = arith.constant 62 : index
+  %c2_index = arith.constant 2 : index
+  %c3_index = arith.constant 3 : index
+  %cst_13 = arith.constant 1.00000000000000000e+00 : f32
+  %c63_index = arith.constant 63 : index
+  %y__ssa_v0_view = pto.make_tensor_view %arg0, shape = [%c64_index, %c1024_index], strides = [%c1024_index, %c1_index] {layout = #pto.layout<nd>} : !view
+  %x__ssa_v0_view = pto.make_tensor_view %arg1, shape = [%c64_index, %c1024_index], strides = [%c1024_index, %c1_index] {layout = #pto.layout<nd>} : !view
+  %z__ssa_v0_view = pto.make_tensor_view %arg2, shape = [%c64_index, %c1024_index], strides = [%c1024_index, %c1_index] {layout = #pto.layout<nd>} : !view
+  %pipe_a__tile_0_mb = pto.alloc_multi_tile addr = %c0_i64 valid_row = %c1_index valid_col = %c1024_index : !ring
+  %pipe_b__tile_1_mb = pto.alloc_multi_tile addr = %c12288_i64 valid_row = %c1_index valid_col = %c1024_index : !ring
+  %a__tile = pto.multi_tile_get %pipe_a__tile_0_mb[%c0_index] : !ring -> !tile
+  %x__ssa_v0_pview = pto.partition_view %x__ssa_v0_view, offsets = [%c0_index, %c0_index], sizes = [%c1_index, %c1024_index] : !view -> !part
+  pto.tload ins(%x__ssa_v0_pview : !part) outs(%a__tile : !tile)
+  %b__tile = pto.multi_tile_get %pipe_b__tile_1_mb[%c0_index] : !ring -> !tile
+  %z__ssa_v0_pview = pto.partition_view %z__ssa_v0_view, offsets = [%c0_index, %c0_index], sizes = [%c1_index, %c1024_index] : !view -> !part
+  pto.tload ins(%z__ssa_v0_pview : !part) outs(%b__tile : !tile)
+  %0 = pto.multi_tile_get %pipe_a__tile_0_mb[%c1_index] : !ring -> !tile
+  %14 = pto.partition_view %x__ssa_v0_view, offsets = [%c1_index, %c0_index], sizes = [%c1_index, %c1024_index] : !view -> !part
+  pto.tload ins(%14 : !part) outs(%0 : !tile)
+  %1 = pto.multi_tile_get %pipe_b__tile_1_mb[%c1_index] : !ring -> !tile
+  %15 = pto.partition_view %z__ssa_v0_view, offsets = [%c1_index, %c0_index], sizes = [%c1_index, %c1024_index] : !view -> !part
+  pto.tload ins(%15 : !part) outs(%1 : !tile)
+  scf.for %i__idx_v0_pipe = %c0_index to %c62_index step %c1_index {
+    %16 = arith.addi %i__idx_v0_pipe, %c2_index : index
+    %17 = arith.remui %16, %c3_index : index
+    %2 = pto.multi_tile_get %pipe_a__tile_0_mb[%17] : !ring -> !tile
+    %18 = arith.addi %i__idx_v0_pipe, %c2_index : index
+    %19 = arith.maxsi %18, %c0_index : index
+    %20 = pto.partition_view %x__ssa_v0_view, offsets = [%19, %c0_index], sizes = [%c1_index, %c1024_index] : !view -> !part
+    pto.tload ins(%20 : !part) outs(%2 : !tile)
+    %21 = arith.addi %i__idx_v0_pipe, %c2_index : index
+    %22 = arith.remui %21, %c3_index : index
+    %3 = pto.multi_tile_get %pipe_b__tile_1_mb[%22] : !ring -> !tile
+    %23 = arith.addi %i__idx_v0_pipe, %c2_index : index
+    %24 = arith.maxsi %23, %c0_index : index
+    %25 = pto.partition_view %z__ssa_v0_view, offsets = [%24, %c0_index], sizes = [%c1_index, %c1024_index] : !view -> !part
+    pto.tload ins(%25 : !part) outs(%3 : !tile)
+    %26 = arith.remui %i__idx_v0_pipe, %c3_index : index
+    %4 = pto.multi_tile_get %pipe_a__tile_0_mb[%26] : !ring -> !tile
+    %27 = arith.remui %i__idx_v0_pipe, %c3_index : index
+    %5 = pto.multi_tile_get %pipe_b__tile_1_mb[%27] : !ring -> !tile
+    pto.tadd ins(%4, %5 : !tile, !tile) outs(%4 : !tile)
+    pto.tadds ins(%4, %cst_13 : !tile, f32) outs(%4 : !tile)
+    %28 = arith.maxsi %i__idx_v0_pipe, %c0_index : index
+    %y__iter_v1_pview = pto.partition_view %y__ssa_v0_view, offsets = [%28, %c0_index], sizes = [%c1_index, %c1024_index] : !view -> !part
+    pto.tstore ins(%4 : !tile) outs(%y__iter_v1_pview : !part)
+  }
+  %6 = pto.multi_tile_get %pipe_a__tile_0_mb[%c2_index] : !ring -> !tile
+  %7 = pto.multi_tile_get %pipe_b__tile_1_mb[%c2_index] : !ring -> !tile
+  pto.tadd ins(%6, %7 : !tile, !tile) outs(%6 : !tile)
+  pto.tadds ins(%6, %cst_13 : !tile, f32) outs(%6 : !tile)
+  %y__rv_v2_steady_pview = pto.partition_view %y__ssa_v0_view, offsets = [%c62_index, %c0_index], sizes = [%c1_index, %c1024_index] : !view -> !part
+  pto.tstore ins(%6 : !tile) outs(%y__rv_v2_steady_pview : !part)
+  %10 = pto.multi_tile_get %pipe_a__tile_0_mb[%c0_index] : !ring -> !tile
+  %11 = pto.multi_tile_get %pipe_b__tile_1_mb[%c0_index] : !ring -> !tile
+  pto.tadd ins(%10, %11 : !tile, !tile) outs(%10 : !tile)
+  pto.tadds ins(%10, %cst_13 : !tile, f32) outs(%10 : !tile)
+  %y__tile_pview = pto.partition_view %y__ssa_v0_view, offsets = [%c63_index, %c0_index], sizes = [%c1_index, %c1024_index] : !view -> !part
+  pto.tstore ins(%10 : !tile) outs(%y__tile_pview : !part)
+  return
+  }
+}
