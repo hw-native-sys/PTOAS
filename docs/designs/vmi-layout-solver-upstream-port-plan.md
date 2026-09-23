@@ -588,3 +588,49 @@ dist-mode 实现（\`getDenseLaneStride{Load,Store}DistToken\`）与 cast-part �
 > 盘点自身声明的不确定项（保留原样，不当作结论）：F1 的「丢弃」判定基于名字与位置、**未比对函数体**；
 > 上游多数对应物只到单元级、未到行级；三个后加的单元（\`UnifiedMaskInternals\`、\`PatternInternals10\`、\`UnifiedPatternInternals\`）
 > 的原始归属是按 include 顺序推断的；F2 究竟为了正确性还是只为诊断未确认。
+
+### 10.6 更正 §10.5 的一条风险：F3 不是「删上游逻辑」，而是内联了上游后来抽出的 helper
+
+§10.5 里那条「\`checkSupportedGroupBroadcastLoadShape\` 是 -18/+0，我们在删上游逻辑、盲重放会放宽接受面」
+经逐行核对是**表述错误**。两边的实际形态：
+
+上游（\`VMIToVPTOMemoryInternals.cpp:954\`）：
+
+    checkSupportedGroupBroadcastLoadShape(op, reason):
+      supports.getGroupBroadcastLoadSupport(op, reason)      // 同一个查询
+      checkSupportedGroupBroadcastLoadMemory(op, resultType, reason)
+    checkSupportedGroupBroadcastLoadMemory(op, resultType, reason):
+      buildReadAccessPlan(source, op.getOffset(), resultType, VMIMemoryCoverageKind::Dense)
+      if (!isa<PtrType>(...)) fail(...)
+
+fork（\`VMIToVPTO.cpp:1899-1923\`）：
+
+    checkSupportedGroupBroadcastLoadShape(op, reason):
+      supports.getGroupBroadcastLoadSupport(op, reason)      // 同一个查询
+      buildReadAccessPlan(source, sourceType, resultType,
+                          getConstantIndexValue(op.getOffset()), VMIMemoryValidMaskKind::AllTrue)
+      if (!isa<PtrType>(...)) fail(...)
+
+* 上游**也已经**委托给同一个查询 \`getGroupBroadcastLoadSupport\`，所以「我们改成查询、上游还在用字面谓词」不成立；
+  真正的差异是：fork 把上游后来抽成独立函数的那段**内联**在形状检查里（fork 侧 \`checkSupportedGroupBroadcastLoadMemory\` **0 命中**，
+  上游 2 命中），即 fork 写在这段重构**之前**。
+* 于是 \`buildReadAccessPlan\` 的**实参**不同：上游 \`op.getOffset()\` + \`VMIMemoryCoverageKind::Dense\`，
+  fork \`getConstantIndexValue(op.getOffset())\` + \`VMIMemoryValidMaskKind::AllTrue\`。
+  接受面的差异只可能来自这里，而不是「少了一个检查」。
+* **对批次 C 的指令随之更正**：这个 hunk 按 **(a) 保留上游版本、不重放我们这一版** 处理；
+  若重放，风险方向恰好相反——会把上游的 **Dense 覆盖要求**换成旧的 AllTrue 形式，属于**放宽**而非收紧。
+
+### 10.7 盘点结论的置信度分级（据此安排验证）
+
+这次核对说明：盘点的**分类与风险描述是假设，必须落到代码上验**。因此按置信度排优先级：
+
+1. **已独立核对**：F3 的这一处（本节的更正）；\`absorb\` 在两个树的 \`VMIToVPTO/*\` 中 0 命中；
+   \`validateCastOperationRelation\` 上游 0 命中；上游 \`checkSupportedGroupBroadcastLoadMemory\` 存在且被形状检查调用。
+2. **待验证（会改变动作）**：F1 的「丢弃」判定——上游 \`lib/PTO/IR/VMI/VMIHelpers.cpp:639\` 的
+   \`getVMIMaskPhysicalGranularity\` 与 fork 侧同名/同责函数**是否语义等价**（盘点只比了名字与所在位置）；
+   F6 的「丢弃」是否安全（上游 \`lowerFactor4Block\` 是否覆盖被删块的**动态** active-elems 路径，已追加求证任务）。
+3. **仅为推断**：上游多数对应物只定位到单元级（未到行级）；三个后加单元的原始归属按 include 顺序推断；
+   F2 究竟服务正确性还是仅服务诊断。
+
+> 结论：步骤 7 每批落地前，先把该批涉及的「丢弃/保留」判定按第 1 级标准核一遍（读代码或跑用例），
+> 不允许按盘点结论直接照做。
