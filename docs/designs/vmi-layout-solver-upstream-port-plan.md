@@ -2229,3 +2229,51 @@ group_broadcast 的 preferred 路线 → extf 的有界实验 → 两个 \`opt/\
 把步骤 5 删掉的 **11 个 seed/request 辅助函数**（上游这套行为的原型）逐条说明到"可作为部分复活的基础"的程度、或明确说不可以；
 逐个判定那 5 个用例的拒绝是否**同类**（无可物化计划）还是**异类**（关系本身矛盾）；并给出**风险清单**（哪些现在通过的用例最可能因此换计划），让"严格子集"断言有意义而不是靠运气。
 之后由主线按纪律做该实验（两个方向都测、无收益即回退）；若判定为"新发明且爆炸半径大"，则取 (b) 并把 H-a 记为否决。
+
+## 19.16 H-a 的勘探结果：**收益被大幅下调**，判决为"暂缓"（带触发条件）
+
+分诊方按我给的五个问题做了只读勘探，结果改变了优先级判断：
+
+### 19.16.1 拒绝点与兜底的形状（回答 1–3）
+
+* **全或无的根**：\`VMILayoutPlanner.cpp:2942-2947\`（\`selectCostedVMILayoutPlans\`）——某个 component 求解失败时**整个 module** 返回 failure，
+  并丢弃已解出的 \`result.plans\`；每 component 的消息在 \`:1165\`（\`solveComponent\`）发出。
+* **挂接点**：\`VMILayoutAssignment.cpp\` 的 \`selectLayoutPlan():2080-2094\` → \`selectCostedVMILayoutPlans\` → 每个计划的 \`mergePlan\`，
+  由 \`applyLayouts():2092\` 调用；后者在失败时**尚未** \`commitVMILayoutPlan\`，所以什么都没装上、pass 直接中止。
+  该处**可见状态**：IR 全文；**新建的 propagator**（API 完整：\`request/addUseConflict/run/apply/verifyMaterializationPlan/canMaterializeLayout/materializePrimary\`）；
+  以及**仍在被填充**的 LayoutSolver walk 状态（\`dataNodes\`、\`dataLayoutSeeds\`、\`dataUseRequests\`、\`maskUseRequests\`）。
+  可见性**之外**：失败 component 的算子列表（局部于该函数）与任何部分计划。
+* **兜底要做什么**：①先去掉全或无（失败记为 deferred 并继续，返回"计划 + deferred components"，只是一个小结果结构改动，无新算法）；
+  ②对每个 deferred component：把"关系自洽的请求集"（显式 seed + 关系的端口布局）装进 propagator，\`run()\`，再 commit，
+  并且**按 pre-port 老路**用 \`propagator.apply(rewriter)\` 物化 use conflict，或交给 \`VMILayoutSinkMaterialization\`/\`VMIExpandImplicitEnsureLayouts\`/\`VMILayoutRematerialize\`。
+  这些 pass 需要的是**完整赋值过的 IR**（不变式：\`vreg\` 必须带布局），而且冲突使用的 use 布局必须记录或插入 ensure_layout，
+  所以"只赋 value 布局"的兜底会违反不变式并在后面炸掉；\`insertDataUseMaterializations(:2003)\` 虽然还在，但 §8.4 记为**无调用者的死代码**。
+* **删掉的管线可用作基础**：四个 installer 循环（\`requestExplicitLayouts\`、\`runLayoutSeedPhases\`、\`requestLateLayouts\`、\`requestFallbackLayouts\`）都是薄循环；
+  真正难的部分（propagator 本身、phase 枚举与 seed 上的 phase 标记、产出 seed 的约束 walk）**都完好**；
+  而且与 §8.5 的记录相反，**那 11 个 seed 辅助函数并没有被删除，只是离开了决策路径**。所以这是"部分复活"，不是新发明。
+
+### 19.16.2 五个 "no complete legal plan" 的分类：**收益从 5+1 降到最多 1+1**（回答 4）
+
+| 用例 | 判定 |
+|---|---|
+| \`vmi_group_execution_paths\` | **同类**（H-a）：\`group_reduce_addi\` 的唯一关系产出 \`gs(1,1)\`，消费者 \`group_broadcast\` 的关系要求源 \`gs(1,8)\`，而无 \`gs<->gs\` ensure 行 → 计划关系自洽、只缺转换。与 gs1 用例同型。 |
+| \`opt/fused_quant_dequant_vmi_opt\` | **异类**：记录是"frontier empty after \`create_mask\`，**所有 drop 计数器为 0**"——物化失败会留下 \`dropPhys\`/\`dropMat\`，所以这是**我们自己的前沿/Pareto 剪枝**问题，兜底大概够不到。 |
+| \`opt/per_block_bf16_group8_quant_vmi_opt\` | **异类**，同一签名。 |
+| \`vmi_layout_assignment_group_reduce_partial_slots8\` | **无法判定（记录已过期）**：记录是"propagate emptied domain of \`ensure_mask_granularity\`"——那正是 \`bccd44a29\` 修掉的族，所以它现在的拒绝原因与记录不同。**需要带树重测。** |
+| \`vmi_explicit_integer_cast_reduction_paths\` | **无法判定（记录不足）**：只记到"ablation[no-fixed]=unsolved"，没有 solve-fail 行。**需要带树重测。** |
+
+### 19.16.3 风险清单（回答 5）与**判决**
+
+* **结构性边界**：兜底只在"求解器拒绝"处触发，而今天被拒绝的 component 不可能是通过用例（拒绝会中止 pass）——所以**只要严格限定在 deferred component 上，就不可能有现在通过的用例走到兜底**；
+  若改成"对所有东西重跑 propagator"，这个边界就消失、"严格子集"也就变成运气。
+* **预期会动**：8 个真硬失败（拒绝 → 有计划 → 或通过、或在更后阶段失败）与 4 个负例文本用例；其中 \`vmi_layout_gate_gs1_dense_join_invalid\` 应报出它期望的转换阶段文本——**这才是该实验真正的假设检验**。
+* **二阶风险**（粗心实现会泄漏到通过用例）：①\`mergePlan\` 遇到"deferred component 与已计划 component 共享同一个 value"（同一个 value 两个布局必须仍是真冲突）；
+  ②\`planWasCommitted\`/\`verifySelectedRelations\` 假定每个 solver 算子都有被选中的关系，deferred 的没有，必须显式跳过；③\`rewriteFunctionType\` 会看到兜底赋的 ABI 类型——正是 \`453ed8e3b\` 处理过的地方；④deferred component 的 ensure_layout 数量变化（只能影响今天失败的用例，但要**验证而不是假定**）；⑤两个 \`opt/\` 用例如果也翻了，那是**反对**上述分类的证据，值得知道。
+
+**判决：暂缓（deferred），不是否决。** 理由：收益已从"5+1"缩到"最多 1+1"，而代价是一个接受策略层面的改动外加上面五条二阶风险——其中"共享 value 的 mergePlan"正是会产出**静默错误计划**的那一类。
+同时，**必做的步骤 7 里有两个真硬失败（VMI-RESIDUAL-OP"failed to apply conversion patterns"）属于 lowering 工作**，而 \`vmi_compact_group_broadcast\` 已挂起为步骤 7 的依赖——所以先做步骤 7 更划算。
+**触发条件（写死）**：步骤 7 落地并重测后，带树重判那两个"无法判定"的用例；若它们与 \`vmi_group_execution_paths\` 同类，收益回升，则按 §19.16.3 的边界与二阶风险清单**立项做 H-a**。
+
+### 19.16.4 它下一步的只读工作
+
+我接树做步骤 7 批次 B；同时它做**只读的锚点映射**（把 F2/F3/F7 的每个 hunk 映射到拆分后单元里的当前行号、待替换原文与替换文本），因为 F 文件的行号是 fork-vs-merge-base 的**单体坐标**，而当前树是**完全拆分**的——这正是批次 B 落地前缺的那一步。
