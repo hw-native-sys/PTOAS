@@ -634,3 +634,18 @@ fork（\`VMIToVPTO.cpp:1899-1923\`）：
 
 > 结论：步骤 7 每批落地前，先把该批涉及的「丢弃/保留」判定按第 1 级标准核一遍（读代码或跑用例），
 > 不允许按盘点结论直接照做。
+
+### 10.8 F1 的「丢弃」判定已核对：成立
+
+§10.7 第 2 级里「F1 只比了名字与位置、未比函数体」这条**已查清并可以结案**：
+
+* fork 的 \`VMIToVPTO.cpp\` 现在有 **8 处**调用 \`getVMIMaskPhysicalGranularity\`（376/908/2992/3066/3202/5342/5356/6410），
+  也就是说它删掉的是**本文件内的本地副本**，改用了方言层的共享实现：\`lib/PTO/IR/VMI.cpp:746\`
+（薄封装，转 \`getVMIMaskPhysicalGranularityImpl\`，定义在 \`:304\`）。
+* 上游的同一函数在 \`lib/PTO/IR/VMI/VMIHelpers.cpp:639\`，实现就是把 \`granularity bit width × laneStride\`
+  映射成物理粒度字符串，与 fork 的 \`...Impl\` 职责一致。
+* \`getVMIMaskPhysicalCarrierLayout\` 同理：fork 侧定义在 \`lib/PTO/IR/VMI.cpp:750\`（同样转 \`...Impl\`），上游在 data-layout 单元里有对应实现。
+
+**结论**：两棵树都已经改用方言层共享 helper，方向一致；重放 F1 只会往 \`VMIToVPTO.cpp\` 里**加回一个已废弃的本地副本**。
+因此 F1 按 \`(a) 丢弃\` 处理是**正确的**，不需要在批次 A 做任何事（只要不回搬）。
+§10.7 第 2 级现在只剩 **F6** 一个待验证项（上游 \`lowerFactor4Block\` 是否覆盖动态 active-elems 路径，已追加求证）。
