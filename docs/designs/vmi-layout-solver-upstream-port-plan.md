@@ -1129,3 +1129,27 @@ F4 只有 2 个 hunk，但内容上其实是三类改动：
 **结论必须能追溯到「被测对象确实是那个东西」**。因此规约再收紧一条：
 **任何自定义检查脚本都要自带一次自证**（例如「被编译的文件确实是目标文件」「被测二进制新于源码」），
 否则它的绿灯不比没有更可靠。
+
+### 15.2 planner 已预处理，缺口从 73 → **25**，且剩下一份精确清单
+
+在**树外**（\`.work/upstream-port/step2c/VMILayoutPlanner.cpp\`，2671 行）把 planner 里那两份算子分类定义**删掉**：
+
+* \`isVMISameLayoutOp\`：上游 \`VMILayoutPropagation.cpp\` 已是唯一来源；
+* \`isVMILayoutCastOp\`：由我们新加的 \`VMILayoutOpClasses.cpp\`（\`5e9493f37\`）提供；
+* 并在原处留注释说明「planner 故意两个都不定义，保证整条链接里每个符号只有一份定义」，
+  这正是 §8.4 里那条链接阻塞的正解。
+
+效果（用同一个 \`planner_gap2.sh\` 量）：**73 → 25 个错误**，而且剩下的全是 Stage 3 该补的东西——
+
+| 类型 | 具体 |
+|---|---|
+| 缺失查询（12） | \`getCastLayoutFacts\`、\`getStoreLayoutFacts\`、\`getLoadLayoutFacts\`、\`getVintlvLayoutFacts\`、\`getVdintlvLayoutFacts\`、\`getGroupBroadcastLoadLayoutFacts\`、\`getGroupIotaLayoutFacts\`、\`getReduceLayoutFactForLayouts\`、\`getSameWidthCastLayoutFact\`、\`getPreferredVdhistLayoutFact\`、\`getPreferredVchistLayoutFact\`、\`validateCastOperationRelation\` |
+| 签名不一致（2） | \`getGroupReduceLayoutFactsForLayout\`、\`getPreferredGroupReduceLayoutFact\`（上游多 \`VMIGroupReduceKind\`） |
+| 另有一处类型转换错误 | 与 \`getGroupSlotLoadLayoutFact\` 的 \`Value sourceGroupStride\` 差异相关（上游签名无该参数） |
+
+于是 §8.1 里「17 个缺失」的口径也被校正为：**12 个查询 + 2 处签名 + 1 处参数差异**，
+其中 \`getGeneratedMaskLayoutFact\`/\`getInterleaveStoreSupport\`/\`getSameLayoutRelationSupport\` 已在 2b 完成，
+vexpdif 两族已在 Stage 2 完成。
+
+**这份预处理文件就是步骤 2c 的输入**：等 25 个错误清零，把 \`.work/upstream-port/step2c/VMILayoutPlanner.cpp\`
+拷进上游树、加 CMake 行即可；一致性工具同理（它依赖 planner，属于同一批）。
