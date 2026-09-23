@@ -1614,3 +1614,20 @@ Stage 3 收尾清单第 4 条写明：**若干 fork 独有行被刻意不注入�
 
 **因此尚未结案**，仍需：提交 → 我独立复跑按族分类 → **单独确认上游配置（planner 不驱动）下失败集合仍为那两个既有用例**，
 确认「修好我们的 solver」没有悄悄改坏上游路径。
+
+### 18.14 更正：没有回归，两族根因独立且不相交
+
+上一轮我把 hf_iso_stride.log 的 2/17 当成回归并报警——错了。那是分诊任务有意做的对照实验：临时撤掉边界修复，单独测 stride 修复。
+
+| 修订 | 全量 | 相对 108 |
+|---|---|---|
+| A 两处修复 | 608 / 519 / 89 | 108 到 89（修 19，回归 0）|
+| B 仅 stride | 608 / 502 / 106 | 108 到 106（修 2，回归 0）|
+| B 的 19 用例子集 | 2/19 通过 | 正是那 2 个 stride 用例 |
+
+两族加法式且不相交：stride 修 vmi_vsstb 与 vmi_to_vpto_stride_store（2 个），边界修另外 17 个，集合不重叠。
+
+* stride 根因：上游 VMIStrideStoreOp 是 5 个操作数（value, dst, offset, block_stride, mask），fork 是 6 个（mask 前多一个 repeat_stride）。移植后的 planner 仍按 fork 编号取 operandPort(5)，越界，该算子唯一的关系被拒，报 no complete legal plan。
+* 边界根因：planner 把无注解函数结果钉在 contiguous ABI 边界；上游路径从不这么做（rewriteFunctionType 采纳返回值布局）。而且不存在从 gs(8, slots=1) 到 contiguous 的 ensure_layout 行，所以 §18.11 提的“在边界物化一次转换”对这些形状不可实现，该建议作废，正确做法是边界采纳返回值布局。
+
+批准的落地顺序：剥掉诊断，先提交 stride（108 到 106），再提交边界（106 到 89），各带数字。随后进攻统一算子（vload/vstore/vcvt 在 -vmi-lower-unified-to-legacy 之前就被布局赋值，planner 没有对应关系分支）与 group_store/group_broadcast 的候选行——后者是“fork 专属包装是否必要”这个悬案终于由数据回答的地方。
