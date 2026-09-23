@@ -2110,3 +2110,40 @@ group_broadcast 的 preferred 路线 → extf 的有界实验 → 两个 \`opt/\
 * 四个 cast 形状检查在 \`lib/PTO/Transforms/VMIToVPTO/VMIToVPTOPatternInternals7.cpp\`：\`checkSupportedFPToSIShape:950\`、\`checkSupportedFPToUIShape:960\`、\`checkSupportedSIToFPShape:970\`、\`checkSupportedCompressShape:1410\`；
   注册/校验调用点在 \`VMIToVPTOPatternInternals8.cpp:811/817/824/1188\`。
 * 上游树是**完全拆分**的（没有 fork 的 \`VMIToVPTO.cpp\` 单体文件），所以 F2 规格里的行号必须**映射**、不能按行号套用——这也是 MANIFEST 第 1 节写明"这是规格不是 patch"的原因。
+
+## 19.12 暂存补丁、四个负例的判定结论，以及一处**修正我自己判决**的新证据
+
+### 19.12.1 暂存补丁（".work/upstream-port/staged/"）
+
+\`group_broadcast_preferred_route.patch\`（planner，\`VMIGroupBroadcastOp\` 分支，+33/-0）与
+\`lane_stride_packet_normalization.patch\`（代价模型，\`PlanGraphBuilder::materialize\`，+25/-0），加 \`README.md\`：
+每块记录所改文件/函数、作用、实测位移（$16:10→81:10、81:10→378:10）、实测所用套件与三元组，以及"暂存未落地"的原因与重放步骤。
+两块都是**由 \`92d08341f\` 自己的 blob 生成的真 diff**（生成脚本只读 \`git show\`、只写 \`/tmp\`），并已用 \`patch -p1 --dry-run\` 对 pristine 副本验证通过；
+**不含**任何诊断打印、表行或测试改动。
+
+### 19.12.2 四个"诊断文本位移"的判定（两真两假，其中两条是 solver 缺陷）
+
+| 用例 | 判定 |
+|---|---|
+| \`vmi_layout_assignment_group_reduce_s12_invalid\` | **solver 缺陷（诊断管线）**：同一条错误，但我们的文本**丢掉了 support 模型给出的原因**（期望文本是"…has no registered group_slots layout support: group_reduce layout table has no row for this group size"），而 \`reportMissingRelation(op, reason)\` 本来就是为携带这个原因而存在的 —— group_reduce 分支把 query 的 reason 丢了。 |
+| \`vmi_layout_gate_gs1_dense_join_invalid\` | **solver 侧诊断回退**：同一条错误被提前一个阶段报出，且**不点名算子与配对**（我们的是"整个 component 无完整解"的全或无消息），期望文本点名了 \`pto.vmi.vmul\` 的操作数 #1 与两个布局。无需行为改动。 |
+| \`vmi_to_vpto_vselr_invalid\` | **等价内容、不同报出点**：两句都是**上游自己的原文**（pre-port → HEAD 未变），我们报的是其中一句，来自 planner 的关系查询而非下降/verifier 点 → 按规矩属**步骤 8 的文本搬运**，信息未丢。 |
+| \`vmi_layout_assignment_group_load_block8_truncf\` | **不是同一个错误**：实际失败的是 \`group_load\`（不是 \`truncf\`）→ **疑似 solver 缺陷**：我们的枚举把一个 value 布局交给了 \`group_load\`，而下游上游自带的 \`validateGroupLoadLayoutPlan\` 随后拒绝它。需带树确认。 |
+
+### 19.12.3 修正判决的新证据：i16 那一族很可能是 **solver 侧**，不是 lowering 侧
+
+* **C(1)（表本身，已逐字核对）**：能"把 lane-strided carrier 归到 group packet"的 \`kEnsureLayoutPatterns\` 行是
+  \`{bits<8, 16>(), anyN(), ls(2), gsFit()}\` / \`{... gsFit(), ls(2)}\` 与 \`{bits<8>(), anyN(), ls(4), gsFit()}\` / \`{... gsFit(), ls(4)}\`，
+  外加同 bit 模式上的 \`gsFitStride(2)/gsFitStride(4)\` 变体。
+  **结论：\`ls(2)\`/packet 族是 \`bits<8,16>\`，而 \`ls(4)\`/packet 族确实只有 \`bits<8>\`** —— 对 \`@compact_broadcast_i16_4_1\`（i16、ls4 carrier）**根本没有这一行**，这解释了为什么暂存补丁 (b) 在那里够不着。
+* **C(2)（路由，已读 transfer）**：\`VMIGroupBroadcastTransfer::query\`（\`VMILayoutPropagation.cpp\`，\`1c1bba8cc\` 与 HEAD **逐字节相同**）按**哪一侧发生变化**选择查询端口：
+  \`changedValue == broadcast.getSource()\` → \`Source\`，否则 \`broadcast.getResult()\` → \`Result\`，然后调 \`getGroupBroadcastLayoutFactsForLayout(...)\`。
+  而**我们的 provider 只问了 \`Source\`**（planner 的 \`VMIGroupBroadcastOp\` 分支）—— **与 \`bccd44a29\` 修掉的 mask-granularity 缺陷同类**。
+* **因此修正 §19.11.1 的判决**：这条链剩下的那一块**最可能是 solver 侧的"双向查询"**，而不是缺表行；缺 \`ls(4)\`/16-bit 行是**兜底解释**。
+  已按此重排指令（先关 \`vmi_compact_group_broadcast\`：暂存 (a) + Result 方向查询，必要时再叠 (b)，最小组合成一个提交；若仍不关，则退回"表行缺失"并交由步骤 7 批次 D/E）。
+
+### 19.12.4 修正后的执行顺序
+
+1. 关 \`vmi_compact_group_broadcast\`（一条最小组合提交）→ 2. 两条**诊断**提交（\`group_reduce_s12_invalid\`、\`gs1_dense_join_invalid\`，不改验收、只改报什么）
+→ 3. 查 \`block8_truncf\`（枚举给了 \`group_load\` 一个下游拒绝的布局）→ 4. 两个 \`opt/\` 的剪枝 witness 表。
+\`vmi_to_vpto_vselr_invalid\` 不动（属步骤 8）。步骤 7 批次 B–G 仍归我，等这一轮结束、树交回后继续。
