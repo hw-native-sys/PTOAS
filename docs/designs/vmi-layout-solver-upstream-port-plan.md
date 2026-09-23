@@ -1060,3 +1060,40 @@ F4 只有 2 个 hunk，但内容上其实是三类改动：
 凡新增 pass/行为的测试，都应当做一次这样的反证（去掉被测对象后必须变红），否则它只会给人虚假的信心。
 
 测试文件目前仍未被作者提交（\`git status\` 里是未跟踪状态），我不越俎代庖，等它按流程提交。
+
+## 14. 第三类假信号：缺失的 .so（附两次提交）
+
+### 14.1 事实经过与更正
+
+我在 round 22 用 \`ptoas_runtime_deps\` 试步骤 6 时链接失败（\`isVMILayoutCastOp\` 未定义）。ninja 在命令失败时会
+**删除该目标的输出文件**，于是 \`libPTOASCompiler.so\` 被删掉了。之后所有**走 python 包装器**的用例都会在 import 阶段失败：
+
+    ImportError: libPTOASCompiler.so: cannot open shared object file: No such file or directory
+    FileCheck error: '<stdin>' is empty.
+
+结果就是 \`lit/vmi_new\` 报 **608 / 541 / 67**。我先后**两次**误判了这个数字：
+
+* 第一次归因为「脏树构建」（§13.2）——不准确；
+* 第二次归因为 Stage 2 的未提交改动，**据此回退了它 155 行的工作**（已存档到 \`.work/upstream-port/step3-wip/\`）——也错。
+
+真正的教训：**门禁不仅要断言失败集合，还要看失败的「原因」**。我这两次都只看了数量与集合，没看日志内容；
+只要点开一条失败就会看到 \`ImportError\`，而不是任何与布局决策有关的报错。
+
+### 14.2 修复与恢复（两次提交）
+
+1. \`5e9493f37 vmi: define the layout cast-op classification the cost model links against\`：
+   新增 \`lib/PTO/Transforms/VMI/VMILayoutOpClasses.cpp\`，给出 \`isVMILayoutCastOp\`（fork 原文，8 个算子类上游都存在）。
+   这既补齐了链接缺口，也顺带完成 §8.4 里「planner 不应重复定义该符号」的前置：日后 planner 进树时直接用这份定义。
+   修完 \`pto-test-opt\` 与 python 模块都能链接（exit 0、0 告警），基线回到 **608 / 606 / 2**。
+2. \`1c1bba8cc vmi: port the vexpdif layout table family and its rows\`：把回退掉的 Stage 2 工作按存档补回并**重新测量**——
+   \`ninja\` exit 0、\`lit/vmi_new\` **608 / 606 / 2**，失败集合仍是那两个上游自带用例。
+   也就是说那次回退其实是**基于假信号的误伤**；现在它已被正常提交，\`.work/upstream-port/step3-wip/\` 保留为凭证。
+
+### 14.3 顺带更正 §13.11 与基线口径（来自测试任务的复核）
+
+* fork 侧 \`lit/vmi_new\` 的实际规模是 **568 发现 / 556 通过 / 12 失败**——我之前写的「33」是
+  \`--filter cost_conformance\` 的**子集**口径，不是整套；两处口径以后必须写清楚。
+* fork 全量套件是 **1872 发现 / 1858 通过 / 13 失败**，其中 1 个（\`vpto/vmi_f4x2_to_bf16x2_vcvt_llvm.pto\`）
+  是**既有失败**，与本次改动无关（测试任务把新文件移出树后它仍然失败，已证）；所以「12 个已知失败」要带 +1 说明。
+* §13.11 里对测试文件的算子计数（\`pge_b32\`(5) 等）来自**早期草稿**，与提交进去的版本不一致——
+  以最终提交 \`f35bdcf66\` 的内容为准；那两条被 pass 描述遗漏的行为（共享 mask 分支、\`PAT_ALL→PAT_ALL\`）已被测试钉住。
