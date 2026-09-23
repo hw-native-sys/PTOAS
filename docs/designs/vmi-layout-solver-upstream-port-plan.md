@@ -1167,3 +1167,39 @@ vexpdif 两族已在 Stage 2 完成。
 * \`:2017\`、\`:2091\` 等为其余缺失查询（\`getStoreLayoutFacts\`、\`getGroupBroadcastLoadLayoutFacts\` …）。
 
 因此 Stage 3 的完成判据可以写得很硬：**\`planner_gap2.sh\` 的错误数归零**（外加 2 处 group-reduce 与 1 处 group-slot-load 的签名决策落地）。
+
+## 16. 当前状态快照（给下一个接手的人/agent，随时更新）
+
+### 16.1 树与分支
+
+| 项 | 值 |
+|---|---|
+| 上游 worktree | \`.work/upstream-port/workspaces/vmi-layout-solver-upstream\`，分支 \`feature/vmi-layout-solver-upstream\`，HEAD **\`1c1bba8cc\`** |
+| 上游构建 | \`.work/upstream-port/builds/vmi-layout-solver-upstream\`（Ninja，LLVM 19.1.7）|
+| fork 树 | 主检出 \`feature/vmi-layout-decision-layers\`，测试与文档均已提交 |
+| 已经落地的上游提交 | \`81b78d21c\`（头文件+conflict solver）、\`ee461ffa4\`（代价模型支持面）、\`2f62e9ef9\`+\`8bc4c428e\`（cast 事实与成本；后者修掉前者引入的接受面回归）、\`2d9d45b9b\`（传播器接口）、\`5e9493f37\`（cast-op 分类）、\`1c1bba8cc\`（vexpdif 行族）|
+
+### 16.2 门禁（三条，全部可复跑）
+
+| 门禁 | 命令 | 期望 |
+|---|---|---|
+| 上游基线 | \`cd <build>/test && llvm-lit -j 8 lit/vmi_new\` | **608 发现 / 606 通过 / 2 失败**，且失败集合恰为 \`vmi_integer_reductions_i8_invalid.pto\`、\`vmi_ptodsl_vunzip_vzip_validation.pto\` |
+| planner 缺口 | \`.work/upstream-port/planner_gap2.sh [源码]\` | 当前 **25 个错误**（阶段 3 完成时应为 0）；脚本自带「确实在编译目标文件」的自证 |
+| 全门禁（终局） | \`.work/upstream-port/validate_port.sh\` | 脏树直接拒绝；否则跑构建+基线+33 一致性用例+dump 差分 |
+| 差分工具 | \`probes/run_conformance_dump.sh\` + \`probes/conformance_diff.sh\` | 对 \`probes/fork_conformance_dump.txt\`（33 文件 / 340 case）期望 \`IDENTICAL\` |
+
+### 16.3 还缺什么（按依赖排序）
+
+1. **Stage 3（进行中）**：12 个缺失查询 + 2 处 group-reduce 签名 + 1 处 group-slot-load 参数；完成判据 = \`planner_gap2.sh\` 归零。
+2. **步骤 2c**：把 \`.work/upstream-port/step2c/VMILayoutPlanner.cpp\`（已删掉两份算子分类定义，2671 行）拷进上游树 + CMake 行；一致性工具 \`tools/pto-test-opt/pto-test-vmi-layout-cost-conformance.cpp\`（526 行，含 cost 与 lowering 两个 pass）随同。
+3. **步骤 5**：按 §8.4/§10.13 替换 \`applyLayouts\`（片段已在 \`step5/\`），同时去掉上游 seed 写入点的硬错误、保留写入。
+4. **步骤 6**：把 \`VPTOPack4StoreMaskNormalize.cpp\` 接线（配方 §8.8；必须在 planner 之后，否则完整链接缺 \`isVMILayoutCastOp\`——现在该符号已由 \`5e9493f37\` 提供，门槛已消除）。
+5. **步骤 7**：批次 A–G，逐族 patch 在 \`.work/upstream-port/step7/\`（\`normalized.diff\` 42 hunk / +434 / −347 为证）；F1/F6 明确「不要移植」。
+6. **步骤 8/9**：16 个用例要处理、96 个期望在步骤 5 后重测；方言改名只在上游树做（§13.5）；性能环境已冻结在 \`.work/upstream-port/perf/\`。
+
+### 16.4 协同约定（血的教训）
+
+* **构建/测量前先看 \`git status\`**：脏树上得到的是混合物（§13.2）；\`validate_port.sh\` 已把这条做成硬拒绝。
+* **测完再断言失败集合**，并**先看失败原因**：\`ImportError: libPTOASCompiler.so\` 表示缺构建产物而不是回归（§14）。
+* **自定义脚本要自证**（「确实编译了目标文件」「二进制新于源码」），否则绿灯无意义（§15.1）。
+* **别把未提交的改动留在工作树里过夜**：别人无法验证、构建会被污染；每批提交（§13 起反复出现的教训）。
