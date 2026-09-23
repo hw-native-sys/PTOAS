@@ -1364,3 +1364,25 @@ Stage 3 已提交 **8 批**（缺口 25 → 13 → 后续继续下降），全�
 
 这与前几类（旧二进制、脏树、缺 .so、量具未自证、测量中被改写）同族：**结论必须能追溯到「测的到底是哪个状态」**。
 新增规约：报失败前先看负载并重测一次；受污染运行不得作为提交依据。
+
+## 17. 步骤 2c 已落地；差分门禁首跑把差异分成三类
+
+提交 **\`e46bb4110 vmi: bring the costed layout planner and its conformance tool onto the upstream base\`**：
+planner（已删两份算子分类定义、5 处 group-reduce 调用点补 \`getVMIGroupReduceKind(op)\` 并把 kind 透传给
+不带 \`op\` 的 \`rememberGroupReduceRelationLayouts\`）、一致性工具（两个 pass）、注册调用与两处 CMake。
+**验证**：\`ninja\` exit 0 / 0 警告；\`--help\` 里能看到新 pass；\`lit/vmi_new\` = **608 / 606 / 2**（上游基线未退化）。
+
+**差分门禁首跑**（上游二进制 vs fork 参考 dump）：157 条 conformance 行 vs 368 条，21 条错误。逐类归因：
+
+| 类别 | 数量/样例 | 归属 |
+|---|---|---|
+| 我们的 pass 报「marker has no exposed relation」 | **11 条** | **真实枚举缺口**——需逐例定位是哪个算子/形状在上游侧枚举不出关系 |
+| pmode 方言漂移 | 4 条：\`vmula\`/\`vexpdif\`/\`vcmp\`/\`vadds\` 报 \`invalid pmode \"merge\"\`/\`\"zeroing\"\`，上游只收 \`zero\` | **步骤 8 的输入重写**（我们的 conformance 输入用了旧 pmode 拼写） |
+| legacy 算子已删除 | \`custom op 'pto.vmi.addf' is unknown\` | **步骤 8 的输入重写**（上游删掉 legacy 方言；dump 只跑 cost pass，未走 unified→legacy 降级） |
+| 上游硬约束 | \`group_reduce_addi\` 8-bit integer reduction VMI-UNSUPPORTED | 上游护栏，属已知约束 |
+
+另有**纯噪声**一类：\`loc(\"...\")\` 里的路径不同（我把用例拷到 \`/tmp/conf_tests\` 跑），
+会让 33/33 文件都“显示不同”。**下次差分前必须先规范化路径**，否则真实差异会被噪声淹没。
+
+> 门禁的价值在这里体现出来了：它没有给「差不多」的模糊结论，而是把 134 vs 339 的巨大差异**拆成可行动的三类**——
+> 其中两类是已知的步骤 8 方言工作，一类（11 条）是真实的枚举缺口。
