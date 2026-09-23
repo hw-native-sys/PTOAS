@@ -267,3 +267,51 @@ build `.work/upstream-port/builds/vmi-layout-solver-upstream`，LLVM 19.1.7）�
 2. 7 个 `pto.castptr ... : ui64` 的用例无论如何都要改成 signless `i64`（纯方言更新，与决策无关）。
 3. 这 24 个硬报错就是上游给的**新约束清单**，步骤 3/5 的候选枚举必须保证不再选出这些被拒的布局，
    它们同时也是我们 solver 决策正确性的天然测试。
+
+## 8. 施工清单（来自两次后台盘点，步骤 3/5 的可执行版本）
+
+### 8.1 支持层缺口（步骤 3 的施工面）
+
+solver 一共调用 **46 个** \`VMILayoutSupport\` 方法（48 个签名；planner 64 处、cost model 6 处、conflict solver 2 处、一致性工具 0 处）：
+
+* **同签名存在：25 个**（直接用）。
+* **存在但签名/语义不同：4 个**——\`getGroupReduceLayoutFactsForLayout\` 与 \`getPreferredGroupReduceLayoutFact\`（上游多一个 \`VMIGroupReduceKind kind\`，且 preferred 行取决于 \`integer16AddResultLayout\`）；\`getGroupSlotLoadLayoutFact\`（上游没有 \`Value sourceGroupStride\`，改走 \`isSupportedGroupSlotMemoryLayout\`）；\`getPreferredCastLayoutFact\`（上游多 \`bool allowLaneStridePreference = true\`，默认值让调用兼容）。
+* **完全没有：17 个**——3 个已由步骤 2b 补（\`getGeneratedMaskLayoutFact\`、\`getInterleaveStoreSupport\`、\`getSameLayoutRelationSupport\`），其余 14 个：\`getLoadLayoutFacts\`、\`getStoreLayoutFacts\`、\`getCastLayoutFacts\`、\`getSameWidthCastLayoutFact\`、\`validateCastOperationRelation\`、\`getReduceLayoutFactForLayouts\`、\`getVintlvLayoutFacts\`、\`getVdintlvLayoutFacts\`、\`getGroupBroadcastLoadLayoutFacts\`、\`getPreferredVdhistLayoutFact\`、\`getPreferredVchistLayoutFact\`、\`getVexpdifLayoutFactsForLayout\`、\`getPreferredVexpdifLayoutFact\`、\`getGroupIotaLayoutFacts\`。
+* **重建基座**：\`getCastLayoutFacts\` → 上游 \`getCastLayoutFactsForLayout\` 按 Source 端口枚举；\`getVintlv/VdintlvLayoutFacts\` → 对应 \`...ForLayout\`；\`getLoadLayoutFacts\`/\`getStoreLayoutFacts\` → 上游单数版本 + 我们多出的 3 行 store。**上游没有任何对应物、必须整表搬的**：group iota、非 group reduce（vcadd/vcmax/vcmin）、vdhist/vchist 的 preferred、vexpdif 全族、\`validateCastOperationRelation\`。
+* 枚举重建的危险（已写进风险表）：值域收窄不会报错，只会变成 \`no complete legal VMI layout plan\` 的硬失败。
+
+### 8.2 事实结构
+
+* **还缺 3 个字段**：\`VMIGroupStoreLayoutFact::stagingLayout\`、\`VMICastLayoutFact::intrinsicRearrangementCost\`、\`VMIMaskGranularityCastLayoutFact::intrinsicRearrangementCost\`。前两个 cost 字段必须从表的 \`intrinsicCost\` **真正填值**（fork 在 \`VMILayoutSupport.cpp:2190/2320\`），\`stagingLayout\` 必须在两个构造点（\`VMILayoutSupport.cpp:2090\`、\`VMILayoutSupportQueryHelpers.inc:127\`，现在是 \`VMIGroupStoreLayoutFact{layout}\` 聚合初始化）**填上**，否则代价模型读到空、staging 规则变死代码。
+* **我们独有的结构 6 个**：\`VMIGroupIotaLayoutFact\`、\`VMIGeneratedMaskLayoutFact\`(已)、\`VMIReduceLayoutFact\`、\`VMIInterleaveStoreSupport\`(已)、\`VMIVexpdifLayoutFact\`、\`VMIVexpdifLayoutPort\`(enum)。
+* **上游独有、不能丢**：\`VMIGroupBlockClass::Compact\`、\`VMIGroupReduceKind\` + \`getVMIGroupReduceKind\`、\`isVMISingleCarrierGroupSlots\`/\`...WithStride\`/\`isVMISingleCarrierGroupSlotAlias\`、\`needsVMIDenseLaneStrideGroupSlotBridge\`、\`getPreferredGroupBroadcastLayoutFact\`/\`...ResultLayout\`、\`getGroup{Reduce,Broadcast,Operation}ShapeSupport\`、\`getVZipSupport\`/\`getVUnzipSupport\`、三个 \`getSpineScopedCastLayoutFact*\`。
+
+### 8.3 表与 pattern DSL
+
+* **我们独有的表族**：\`kGeneratedMaskStagingPatterns\`(4 行，2b 已搬)、\`kVexpdifLayoutPatterns\`(6 行，**必须整族搬，否则 vexpdif 层白做**)。
+* **我们独有的行（按上游 DSL 重写）**：ensure 6 + ensure-mask 2 + dense-store 3 + group-broadcast-load 1 + group-broadcast-load-direct 1 + legal-mask-granularity-cast 6 + vintlv 3 + vdintlv 3 + group-broadcast 1。
+* **上游独有的行**：spine-scoped 两表（6+4，按§2 决策**无条件**接成候选）、ensure +20、ensure-mask +6、group-load +3、broadcast-load/direct 各 +5、group-block-class +1、legal-cast +2、preferred-cast +1、mask-granularity +1、group-broadcast +15。
+* **DSL 差异（会改变行的含义）**：上游新增 \`SingleCarrierGroupSlots\`、\`dls(factor, laneStride)\`、\`gsFit()/gsFitStride(S)\`、\`gbCompact()\`、\`CastTypeClass\`、\`GroupBlockPatternKind::Compact\`；\`matchesLayoutPattern\` 多一个 \`lanesPerPart\` 参数；**上游 \`materializeLayoutPattern\` 会转发 \`laneStride\`，我们的不会**——我们现有 DSL 表达不了 \`dls\` 行，这一步必须换成上游的。
+* 行序敏感：上游 \`matches*\` 取**首个命中**，我们独有的行是插在前面还是追加，要逐条确认。
+
+### 8.4 步骤 5 的编辑清单（上游 \`VMI/VMILayoutAssignment.cpp\`，2333 行）
+
+* \`applyLayouts()\`（UP 2189-2203）是**唯一**决策点；seed 机制是完整一块（UP 2033-2187，155 行）且只有一个调用点。替换量：删 ~135 行、插 ~256 行（fork \`applyLayouts\` 2310-2503 + \`mergePlan\` + \`selectLayoutPlan\` + \`createPropagator\`）+ 1 个 \`getExplicitLayout\` helper + 2 个 include ≈ **400 行**，结论是**不需要重构**。
+* \`collect()\`、约束遍历（UP 860-2001）、各 fixup、pass/factory 一律不动；\`rewriteDataTypes\` 与 \`insertDataUseMaterializations\` 在两棵树里**都是死代码**，不要“顺手恢复”。
+* 传播器要加 4 个方法：\`installPlanned(Value)\`、\`installPlanned(OpOperand&)\`、\`getRequestedLayout(OpOperand&) const\`、\`endExactRequests()\`。\`requestExact\` 在整棵树**零调用**，不需要 exactMode；上游 \`addUseConflict\` 已是 \`const\` 且总成功，恰好等于我们非 exact 路径，无需改动。
+* 可选但影响 IR 文本：我们的 \`materializeSharedUseConflict\` + \`apply()\` 里的 shared-use 去重（不搬则决策不变、发射的 \`ensure_layout\` 数量不同 → 相关期望会红）。
+* **链接阻塞**：\`isVMISameLayoutOp\` 在我们 planner 与上游 propagator 各有一份外部链接定义 → 删 planner 的，改用上游 `isVMISameLayoutOp`/`isVMIClassTransparentOp`，并按上游划分重推 \`isVMILayoutCastOp\`。
+
+### 8.5 边界条件（来自步骤 5 配方，按严重度）
+
+| 风险 | 现象 | 处理 |
+|---|---|---|
+| R3 字段只加不填 | 编译链接都过，代价链把 cast 自身的重排代价算成 0，静默选错关系（没有测试直接断言该字段） | 3 个字段配 3 处填值逻辑，一起进 |
+| R5 上游约束遍历的硬错误面 | 我们的 planner 不调 \`run()\`，\`equivalentValues\` 变惰性；但 \`setNaturalLayout/setPreferredLayout\` 的“冲突”硬错误与 \`validateUnconstrainedOperation\` 仍在 → 会因为**已死的偏好**失败 | 在步骤 3/5 中显式决定是删这些 seed 写入点，还是让它们只做校验 |
+| R6 spine/narrow 分析**不能**在步骤 5 单独删 | 它们被 \`addConstraints\` 里的 seed 路径读取，单独删会改错误面与记录相位 | 与步骤 3/4 的 spine 表处理一起删，保证移除本身行为中性 |
+| R7 \`rewriteFunctionType\` 两边不一致 | 上游按调用点推导结果布局，我们保留声明布局（还有 mask 粒度归一化） | 步骤 5 保留上游版本，但要用 `validateVMILayoutAssignedIR` 盯住 return 与函数类型不一致 |
+| R9 planner 全有或全无 | 任一 component 无解 → 整个 module 硬失败（上游有 contiguous 兜底） | 步骤 5 后用一致性测试覆盖；这是“更多硬失败”而非“错误代码”，可接受但不许变成新常态 |
+
+> 一条更正：后台盘点里曾写“上游已经有 \`forwardsPhysicalParts\`，步骤 2b 的说明过时”。
+> 实测 \`git show 0a3e01731:include/PTO/Transforms/VMILayoutSupport.h | grep -c forwardsPhysicalParts\` = **0**，
+> 该结论是读到了 2b 正在编辑中的工作区。原始判断成立，字段确实缺。
