@@ -1153,3 +1153,17 @@ vexpdif 两族已在 Stage 2 完成。
 
 **这份预处理文件就是步骤 2c 的输入**：等 25 个错误清零，把 \`.work/upstream-port/step2c/VMILayoutPlanner.cpp\`
 拷进上游树、加 CMake 行即可；一致性工具同理（它依赖 planner，属于同一批）。
+
+#### 15.2.1 那 25 个错误已逐条定位，没有意外项
+
+用原始编译输出（带 \`文件:行:列\`）核对后，25 个错误全部落进已计划的三类，没有新东西：
+
+* \`VMILayoutPlanner.cpp:921\`、\`:1813\` —— \`cannot convert TypedValue<IndexType> to int64_t\`，
+  正是 **group-slot-load 的参数差异**：fork 在这两处传 \`op.getSourceGroupStride()\`（一个 \`Value\`），
+  而上游第二参数是 \`int64_t numGroups\`。所以它的表现是**类型不匹配**而不是「无此成员」，
+  与 §8.1 第 3 项一致，且这就是 §10.12 里建议选 (甲)（给上游查询加 stride 参数）的那个决策点。
+* \`:1237\` \`getSameWidthCastLayoutFact\` 缺失，\`:1245\` 的 \`could not convert '{<expression error>, …}'\`
+  是它的**级联错误**（同一个表达式里两个失败导致的事实构造失败），不是独立问题。
+* \`:2017\`、\`:2091\` 等为其余缺失查询（\`getStoreLayoutFacts\`、\`getGroupBroadcastLoadLayoutFacts\` …）。
+
+因此 Stage 3 的完成判据可以写得很硬：**\`planner_gap2.sh\` 的错误数归零**（外加 2 处 group-reduce 与 1 处 group-slot-load 的签名决策落地）。
