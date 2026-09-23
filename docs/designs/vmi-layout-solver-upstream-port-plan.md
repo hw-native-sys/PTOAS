@@ -2069,3 +2069,44 @@ group_broadcast 的 preferred 路线 → extf 的有界实验 → 两个 \`opt/\
 * 真硬失败 **8**（§19.9.1 的 9 个减去 \`vmi_layout_assignment_group_slot_load\`）；负例文本位移 4；FileCheck-only 56。
 * 分诊方接续：刷新记录文件为 post68 → \`group_broadcast\` 的 1→8 形状（\`@compact_broadcast_i8_8_1\`）→ 两个 \`opt/\` 的 witness 表 → 4 个负例文本判定。
 * **步骤 7 归主线**，等这一轮结束、树交回后开始（批次 A 是 F1/F6 纯删除，可先做；G 依赖 B/C/D/E）。
+
+## 19.11 group_broadcast 链路的判决、步骤 7 批次 A 的验证结论与批次 B 的勘定
+
+### 19.11.1 判决：这条链路交回步骤 7（不再在 solver 里逐族打补丁）
+
+分诊方实测出的"每修一族、阻塞点就前移到下一族"链条：
+
+| 补丁 | 实测位移 | 说明 |
+|---|---|---|
+| (a) preferred 路线（walk 自己的规则；注意 1→8 形状下它的 preferred **result 为空**，存活的关系来自 fact 表 \`in0=gs(1,8) -> out0=contiguous lane_stride=4\`）| \`16:10 -> 81:10\` | 修好 \`@compact_broadcast_i8_1_1\` |
+| (b) lane-stride→packet 的显式两步（先 ls>1 归到 plain contiguous，再用 \`daaa86b22\` 已加的 dense/packet 一步），依据是共享 ensure 表**自己的注释** | \`81:10 -> 378:10\` | 修好 \`@compact_broadcast_i8_8_1\` |
+
+两个补丁都上了之后全量仍是 **608/540/68、失败集合完全相同**，故按规矩**全部回退**；第三个阻塞点是 \`@compact_broadcast_i16_4_1\`（line 378），同样的 component 形状但是 i16。
+
+**判决 (ii)：停止在 solver 里继续挖这条链，把它交给步骤 7。** 三条理由：
+1. 该用例在 pre-port base 上是**通过**的，说明它的**每一族**上游都有路；一条链需要"每族一块新补丁"，只能说明我们找到的是某个**更一般路线**的特例，而不是那条路线本身。
+2. 缺的路很可能在 **lowering** 侧：步骤 7 的 F4（deint 4↔2 + lane-stride bridge）与 F5（mask layout/granularity conversions）正是这一族需要的转换；我们的 solver 一直在**回避**那些 lowering 还降不了的布局，(b) 恰恰是"给不存在的 lowering 打补丁"的形态。
+3. 分诊方自己的 i16 观察同向：若共享 ensure 表的 \`ls(4)\` 行真是 \`bits<8>\` 专属，那这个 workaround 本来就够不着 i16，诚实的修法在 lowering/表那一层。
+
+两个补丁**保留但不上**：已让分诊方把它们写成 \`.work/upstream-port/staged/\` 下的两个可机械重放的 patch（含 README 记录所用文件、函数、实测位移与三元组）。**不许**把"部分修好"当进度提交（规矩：失败集合是单位）。
+
+### 19.11.2 步骤 7 批次 A：验证结论 = **无需改动**
+
+批次 A 是 F1/F6 两个 DROP 族，判据是"上游树本身就应当是上游的形态"：
+
+* **F1 探针（本地 static 副本）**：\`getVMIMaskPhysicalGranularity\` 在单元里的定义在 \`VMIToVPTO/VMIToVPTOConversionInternals.cpp:638\`，
+  使用点分布在 \`VMIToVPTOMaskInternals.cpp:564/616/918\`、\`VMIToVPTOPatternInternals8.cpp:26/73\`、\`VMIToVPTODataLayoutInternals.cpp:1807/1843\` 等；
+  \`getVMIMaskPhysicalCarrierLayout\` 在 \`VMIToVPTODataLayoutInternals.cpp:1818\`。这些**是上游自己的代码**（我们的提交从未碰过 \`VMIToVPTO/\`），所以 F1 的 DROP 成立，**无需改动**。
+* **F6 探针（factor-4 三处必须与上游一致）**：\`buildFactor4ContiguousParts:1862\`、\`lowerFactor4Block:1891\`，调用点 \`:1901\`、\`:1931/:1934/:1935\` —— 与上游一致，**无需改动**。
+* 因此**批次 A 不产生提交**（这次是"验证后确认无事可做"，不是跳过）。
+
+**门禁基线已落盘**（\`step7/\`）：\`G1.patterns.before\`（0 项）、\`G2.symcount.before\`（18 个单元）。
+⚠ 顺带发现 **G1 探针已过期**：它按 \`populateVMIConversionPatterns\` + \`OneToN[A-Za-z0-9_]*\` 抽取，在当前拆分后的树上抽到 **0 项**——
+在批次 G 之前必须重新推导 G1（否则它是个永远"通过"的空门禁）。已记。
+
+### 19.11.3 批次 B（F2）勘定：前置条件齐备，锚点已定位
+
+* 两个 support API 都在我们树里：\`include/PTO/Transforms/VMILayoutSupport.h:760 getSameWidthCastLayoutFact\` 与 \`:774 validateCastOperationRelation\`（来自 fork 侧提交 \`65e8b9ab6\`/\`70034b64f\`）。
+* 四个 cast 形状检查在 \`lib/PTO/Transforms/VMIToVPTO/VMIToVPTOPatternInternals7.cpp\`：\`checkSupportedFPToSIShape:950\`、\`checkSupportedFPToUIShape:960\`、\`checkSupportedSIToFPShape:970\`、\`checkSupportedCompressShape:1410\`；
+  注册/校验调用点在 \`VMIToVPTOPatternInternals8.cpp:811/817/824/1188\`。
+* 上游树是**完全拆分**的（没有 fork 的 \`VMIToVPTO.cpp\` 单体文件），所以 F2 规格里的行号必须**映射**、不能按行号套用——这也是 MANIFEST 第 1 节写明"这是规格不是 patch"的原因。
