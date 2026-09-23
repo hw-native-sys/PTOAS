@@ -1337,3 +1337,30 @@ vexpdif 两族已在 Stage 2 完成。
 
 > 待办：批次 D 落地时，对每个 hunk 记录「上游已有 / 需合并 / 需新增」三选一，并给出 file:line 证据——
 > 与批次 C（§10.12）、批次 F（§13.9）保持同一标准。
+
+### 16.13 Stage 3 状态与两项决策（采纳实现方提议）
+
+Stage 3 已提交 **8 批**（缺口 25 → 13 → 后续继续下降），全部**纯增量**：\`1ea00d2c9\` load、\`8bcf023dd\` store、
+\`93df6702e\` cast、\`65e8b9ab6\` 等宽 cast、\`70034b64f\` cast 关系守卫（F2，正确性关键）、\`443a0ae55\` 非分组 reduce、
+\`8da4a1823\` vintlv/vdintlv 枚举。剩余顺序：group broadcast load 枚举 → group iota → vdhist/vchist preferred → 3 处签名差异。
+
+**决策 1（采纳）**：\`getGroupSlotLoadLayoutFact\` 的 stride **不改上游签名**，而是在旁边**加一个重载**
+（fork 签名 + \`Value sourceGroupStride\`）；传空 Value 时行为与上游完全一致，传 stride 时是 fork 语义。
+这比我原先建议的「给上游查询加参数」更严格地满足「不碰上游接受面」，且 2c 的调用点无需改写。
+
+**决策 2（采纳）**：group-reduce 的两处**不做无 kind 的垫片**——那会静默丢掉 \`group_reduce.addi\` 的 i16 原生求和行（假规则）。
+保留上游 kind 感知签名，由 2c 在 5 个调用点（\`VMILayoutPlanner.cpp:810/2418/2444/2497/2522\`）补 \`getVMIGroupReduceKind(op)\`；
+\`vcadd/vcmax/vcmin\` 该 helper 返回 \`Other\`，与上游自身处理一致。
+
+**已预登记的差异（不是缺陷）**：fork 的三条「全宽 dense store 偏好行」**故意不注入**共享表（否则会放宽上游的
+\`getPreferredStoreLayoutFact\`）。后果是 \`VMILayoutPlanner.cpp:2038\` 处我们拿不到偏好行，
+\`preferencePenalty\` 为 0 而非 1——**只影响靠后的 tie-break，绝不影响合法性**。
+这是步骤 5 之后 **dump 差分第一处「允许出现」的差异**，修法是在 planner 驱动的 fork 专属包装里补，而不是改共享表。
+
+### 16.14 第四类同族陷阱：**宿主机负载**
+
+本机同时在跑 PTOAS-4 的全量 lit（64 核上负载 69），实现方有两次 lit 出现 15–17 个无关失败，
+单独重跑或干净重跑即通过。它加了 \`probes/gate.sh\`：保留两份日志、宣告回归前**重测一次**，且**从未在受污染的运行上提交**。
+
+这与前几类（旧二进制、脏树、缺 .so、量具未自证、测量中被改写）同族：**结论必须能追溯到「测的到底是哪个状态」**。
+新增规约：报失败前先看负载并重测一次；受污染运行不得作为提交依据。
