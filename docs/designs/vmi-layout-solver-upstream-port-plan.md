@@ -1719,7 +1719,7 @@ group_store 族因此需要**另找根因**（初次的修法不成立），而�
 | 剩余硬失败 | 约 14：group_store 族 7（尝试未果已回退，需新根因）、vmi_compact_group_broadcast 1、extf 缺口、约 11 个 no-plan component 中含“关系集为空或结构冲突”的非 return 算子 |
 | 期望差异 | 约 52，属步骤 8 的重测范围（步骤 5 后测量，不得把上游决定抄回测试）|
 | 远端备份 | fork 的 feature/vmi-layout-solver-upstream（含上述全部提交）与 feature/vmi-layout-decision-layers（含 1700 行计划文档）|
-| 待做 | 剩余约 14 个硬失败 → 步骤 6（pass 接线，脚本已备）→ 步骤 7（A–G 批次，逐族 patch 已备）→ 步骤 8（测试搬运与重测）→ 步骤 9（全门禁 + A5 + 性能复测）|
+| 待做 | 剩余硬失败（真实数字见 §19.5：23 个「真」+4 个负例诊断文本位移，不是 16 也不是 60）→ 步骤 6（pass 接线，脚本已备）→ 步骤 7（A–G 批次，逐族 patch 已备）→ 步骤 8（测试搬运与重测）→ 步骤 9（全门禁 + A5 + 性能复测）|
 
 判据不变：硬失败归零、上游基线配置下失败集合不变、一致性 33/33、差分在修正后的量具（路径规范化 + 输入方言更新）下可比、端到端性能方向复现。
 
@@ -1759,7 +1759,7 @@ group_store 族因此需要**另找根因**（初次的修法不成立），而�
 而且**上游测试本身**就把返回类型 CHECK 成 \`gs(8,1)\`；上游的 \`rewriteFunctionType\` 采纳返回值布局——所以正确做法是「边界不钉住」。
 这是我在此问题上第二次被实现方纠正（第一次是 §18.14），两次都已记录。
 
-### 19.4 剩余 16 个硬失败（都有具体位置）
+### 19.4 剩余硬失败的旧清单（**已被 §19.5 修正**，保留以记录这次分诊误差）
 
 * **no-plan（5）**：\`opt/fused_quant_dequant_vmi_opt\` 167:17、\`vmi_compact_group_reduce\` 18:10、\`vmi_group_execution_paths\` 17:10、
   \`vmi_explicit_integer_cast_reduction_paths\` 17:7、\`vmi_to_vpto_block_mask_granularity\` 34:10——
@@ -1775,3 +1775,297 @@ group_store 族因此需要**另找根因**（初次的修法不成立），而�
 
 分诊任务还记录了修复后的失败集合到 \`probes/planned_fail_set.txt\`，并指出 \`gate.sh\` 的基线集合断言在 planner 驱动下
 自然成为当前集合的**子集**（符合预期）。
+
+## 19.5 分诊修正：真实规模是 23 个「真」硬失败（+4 个负例诊断文本位移）
+
+### 19.5.1 为什么 §19.4 的「16」是错的
+
+§19.4 数的是**粗看像硬失败的用例名**；这里数的是**工具侧真的报错**的用例，判据不同，数出来的东西当然不同。
+在 80 个失败里，只有 **27** 个带工具侧错误输出（planner 诊断）；其余 53 个是 FileCheck-only 差异（属步骤 8 范围）。
+27 = **23 个真失败** + **4 个负例测试**——它们仍然失败，但只是**诊断文本位移**，工具行为本身是对的。
+（先前的 16、24、26、48 这类数字都是我在不同判据下报出来的，别再引用；以本节为准。）
+
+### 19.5.2 清单（按错误类别）
+
+| 类别 | 数量 | 用例 |
+|---|---|---|
+| no-plan | 12 | \`opt/fused_quant_dequant_vmi_opt\`、\`opt/per_block_bf16_group8_quant_vmi_opt\`、\`vmi_compact_group_reduce\`、\`vmi_group_execution_paths\`、\`vmi_group_reduce_addi_i16\`、\`vmi_layout_assignment_group_reduce_partial_slots8\`、\`vmi_layout_assignment_reduce_minmaxf\`、\`vmi_to_vpto_reduce_extended\`、\`vmi_to_vpto_gather_granularity_conflict\`、\`vmi_to_vpto_block_mask_granularity\`（**已修，见 19.5.4**）、\`vmi_compact_group_broadcast\`（关系缺失）、\`vmi_layout_assignment_group_slot_broadcast_partial_packet\` |
+| group_store 无关系 | 7 | \`short_vector_cross_width_bitcast\`、\`compact_load_store_group_alias\`、\`to_vpto_group_store_dense_alias\`、\`ptoas_cli_integer_vneg_layout\`、\`short_vector_narrow_store_l1\`、\`short_vector_narrow_store\`、\`short_vector_extend_store\` |
+| group_broadcast 无关系 | 1 | \`compact_group_broadcast\` |
+| extf 无关系 | 1 | \`vmi_layout_assignment_group_slot_load\` |
+| VMI-RESIDUAL-OP | 2 | \`vmi_to_vpto_extf_f4x2_to_bf16x2_variants\`、\`vmi_to_vpto_gs1_consumer_matrix\` |
+| 负例、诊断文本位移（**不得改测试**）| 4 | \`vmi_layout_gate_gs1_dense_join_invalid\`、\`vmi_layout_assignment_group_reduce_s12_invalid\`、\`vmi_layout_assignment_group_load_block8_truncf\`、\`vmi_to_vpto_vselr_invalid\` |
+
+### 19.5.3 四条**互相独立**的根因（同一个量具的产物，不是猜的）
+
+量具：env 门控的 planner dump + solver 失败点 instrumentation（提交前已全部剥离，提交里没有残留）。
+
+* **(a) 关系漏掉/错索引了一个「带布局」的端口**，planner 的 \`hasValidInput\` 于是拒掉**整个 component**，不是拒掉一条关系。
+  两个实例：\`stride_load\` 的 mask 在上游是第 4 个操作数（fork 是第 5 个），索引越界；
+  \`pto.vmi.broadcast\` 取 vreg 作源时，关系只声明了 \`resultPort(0)\`——而上游「不带 group 的 vbrc」正好降级成这个形态。
+* **(b) 传播把域抽空**：\`ensure_mask_granularity\` ×4、\`group_reduce_addi\` ×1、\`gather\` ×1、\`vmul\` ×1。
+* **(c) 代价前沿被清空**：两个 \`opt/\` 用例（\`fused_quant_dequant\`、\`per_block_bf16_group8_quant\`）。
+* **(d) group_store 的 preferred 行**：候选池里从来没有那唯一可用的行，而该分支**只在池子为空时**才去问 preferred。
+  新的线索是后继失败：**生产端（一个普通 load）到不了那个布局**——所以它和前三条一样是 solver 侧缺口，不是「行不存在」。
+
+### 19.5.4 已落地的提交（每个都断言失败集合是前一状态的严格子集）
+
+| 修订 | 事实（为什么这是方言正确性，而不是放宽）| 全量 | 修好的用例 |
+|---|---|---|---|
+| \`71978e4fd\` | 上游 \`pto.vmi.stride_load\` 只有 4 个操作数（source, offset, block_stride, mask），fork 是 5 个；关系问 \`operandPort(4)\` 越界，唯一的关系被拒 → 整个 component 无解。改为按**本方言**的操作数表取 mask 下标，并加类型自检。与 \`914368bec\`（stride_store）同族。| 608 / 529 / 79 | \`vmi_to_vpto_block_mask_granularity\` |
+
+### 19.5.5 纪律（重申并写进文档，免得下一轮又忘）
+
+1. **一个提交一个事实**。提交信息必须写出：所依据的方言/solver 事实、改动前后的三元组、被修好的用例名、以及「失败集合是严格子集」。
+   只报计数不算证据。
+2. **门禁 ritual**：\`probes/gate.sh <label>\`（构建 + 产物比源码新 + lit，含污染自动复测一次）；\`.codex/CLAUDE.md\` 是已知的换行符噪声，
+   两个门禁脚本都已用 \`grep -v CLAUDE.md\` 排除，不要「修」它，也不要让它挡住门禁。
+3. **不许为了让测试过而放宽**：不往共享表里注入 fork 专属行、不放宽 verifier、不改测试。四个「诊断文本位移」的负例，
+   只有在**新文本是同一个错误的更准确表述**时才算等价；不是的话那是 solver 的 bug，不是测试的 bug。
+4. **类 (c) 最危险**。前沿为空若是因为代价模型**不会给合法行打分**，正确答案是**把这些合法行枚举出来并打分**
+   （用户原话：「这些新 layout 我们的确是要枚举出来的，不能丢掉」），**不是**降阈值、也不是把某行标成免费；
+   反过来，合法但代价不可导的行必须**按 best-effort 代价照旧提供**——这就是 \`8bc4c428e\` 定下的规矩（永不丢合法行）。
+5. **类 (a) 必须对着本方言的 ODS 操作数顺序核对**每个碰到的算子，像 stride_load 这样，并在提交信息里写下这个顺序；
+   不许沿用 fork 的顺序。
+6. **不属于修复的代码不许活着进提交**（dump/instrumentation 一律 env 门控并在提交前剥离）。
+
+分工：**步骤 6、步骤 7 不由分诊任务做**——避免两个写者同时在同一个 worktree 里；等硬失败归零后由主线依次落地。
+
+## 19.6 第二次分诊回报，以及一处**必须做决定**的缺口（已定案）
+
+### 19.6.1 已落地提交（累计 2 个，每个都断言失败集合是前一状态的严格子集）
+
+| 修订 | 事实（方言正确性 / solver 缺口，不是放宽）| 全量 | 修好的用例 |
+|---|---|---|---|
+| \`71978e4fd\` | 见 §19.5.4（stride_load 的 mask 端口）| 608 / 529 / 79 | \`vmi_to_vpto_block_mask_granularity\` |
+| \`ea1c1e6bb\` | \`pto.vmi.broadcast\` 只有「1 条 vreg」这一形态带布局，而 \`-vmi-lower-unified-to-legacy\` 会给每个不带 group 的 vbrc 产出这一形态；关系只声明了结果端口，\`hasValidInput\` 于是拒掉整个 component。三处**互相耦合、缺一不可**的改动：①关系提供者增列 source 的使用布局；②代价模型给这条双端口关系打分（原来硬要求 \`ports.size()==1\`，实测 \`dropPhys=12/12\`、前沿被抽空）；③\`group_store\` 在候选池为空时提供 preferred 行（实测 \`1xf32\`/num_groups=1 的池 = {contiguous, ls2, d2, d4} 皆不可用，preferred = \`gs(1,8)\`）。| 608 / 530 / 78 | \`vmi_compact_group_reduce\` |
+
+### 19.6.2 待定问题：\`contiguous -> group-slots\` 这个转换在代价模型里算多少钱
+
+分诊方给的**实测**（不是猜）：剩下 6 个 \`group_store\` 用例的唯一合法行是 preferred 的 group-slots 行；值来自普通 \`load\`，而 load 的候选行是 dense-load 表；把 load 直接改成 gs 会被 VPTO 下降拒绝（已实测并回退）；**手写**
+\`load@contiguous + ensure_layout(contiguous->gs(1,8)) + group_store\` 在 \`-vmi-lower-unified-to-legacy -vmi-mask-granularity-assignment -vmi-to-vpto\` 下产出与测试期望**完全一致**的三条指令
+（\`vlds dist=BRC_B32\` / \`pset_b32 PAT_VL1\` / \`vsts dist=1PT_B32\`），即这个转换**不额外消耗指令**。
+但我们的代价模型在 \`materialize()\` 里对「任一端是 contiguous」的配对直接返回失败（fork \`VMILayoutCostModel.cpp:1958-1963\` 的守卫），合法行因此被丢掉。
+
+### 19.6.3 定案：走「真实动作序列」，**不走**「带 contiguous 端就一律免费」
+
+1. 把「带 contiguous 端的配对一律按被吸收处理」当**规则**，等于对**所有**这类配对做断言，而我们只有一个位置的实测。代价模型是全局的：layer 1（布局转换代价）会因此不再度量它该度量的东西——这正是用户禁止的「为了通过率接受假规则」的隐蔽形式。
+2. 上游自己两个测试文件把这条路的形态写清楚了：
+   * \`vmi_to_vpto_group_store_dense_alias.pto:66-74\`：别名化稠密形态必须降成 \`pto.vsts {dist = "PK4_B32"}\`、跨行形态降成 \`pto.vsstb\`——布局由 store 的寻址/dist 模式承载。这才是「被吸收」的真实来源：它是**动作的属性**，不是「配对免费」的许可。
+   * \`vmi_to_vpto_short_vector_narrow_store.pto:12-16\`（上游自己的注释原文）："the dense lane stride is normalized **through the contiguous form** first … **Before that bridge existed the layout contract rejected the pair.**"——上游的答案是**经过 contiguous 的桥**，而我们的守卫正好把这桥切断。
+3. 做法：**保留**守卫注释里写明的意图（避免经 contiguous 中间态无限重入），但把被它吞掉的**端点配对**，按紧邻其上已经显式处理的 \`contiguousToLaneStride\` / \`laneStrideToContiguous\` / \`deint2->ls2\` 一样显式给出动作；复用 fork 已有的动作种类，不引入新的代价种类。
+4. **不许为这个配对特判返回 0**：若确实被邻近访存吸收，0 必须由既有的 absorbed 记账给出；合法配对永不返回 failure（\`8bc4c428e\` 的规矩）。
+
+### 19.6.4 两条被排除的路（记下来，免得再走一遍）
+
+1. **让 load 采用消费者请求的布局**——已实测被下降拒绝（「result layout does not match a supported dense load table row」）。dense-load 表是下降的权威，回退正确。
+2. **\`VMIGroupStoreLayoutFact::stagingLayout\` 不是稠密操作数的通道**。上游 pre-port 的 \`getGroupStoreLayoutFact\`
+   （\`1c1bba8cc:lib/PTO/Transforms/VMI/VMILayoutSupport.cpp:2084-2126\`）**先**要求 \`isSupportedGroupSlotMemoryLayout(layout, numGroups)\`，
+   之后才为**短 group-slots 包**（slots==8、lane stride 2 或 4、4 或 8 元素、payload<256bit 且 32bit 对齐、row stride 1）计算 staging——
+   它是在 group slots **内部**打包，并不接受 contiguous。
+
+## 19.7 第三次回报：提交 3（group_store 族大面积关闭）与 mask-granularity 族的一处**事实更正**
+
+### 19.7.1 提交 3（按 §19.6.3 的定案 (B) 落地）
+
+| 修订 | 事实 | 全量 | 修好的用例（6） |
+|---|---|---|---|
+| \`daaa86b22\` | 实现方式与既有 \`contiguousToLaneStride\` / \`laneStrideToContiguous\` / \`d2<->ls2\` 同款：每个物理 part 一条 Pack（dense→packet）/ Unpack（packet→dense）动作；**守卫原样保留**（arity 不同仍然失败），**没有特判 0**，合法配对永不 failure。改动只有 \`VMILayoutCostModel.cpp\`（+35），0 个测试文件被触碰，0 行共享表注入。| 608 / 536 / 72 | \`vmi_compact_load_store_group_alias\`、\`vmi_layout_assignment_group_slot_broadcast_partial_packet\`、\`vmi_short_vector_cross_width_bitcast\`、\`vmi_to_vpto_short_vector_extend_store\`、\`vmi_to_vpto_short_vector_narrow_store_l1\`、\`vmi_to_vpto_short_vector_narrow_store\` |
+
+§19.6.3 要求的证据 (i) 是**字面达成**的：测试自身的自动 LOWER 运行现在为 \`@compact_1\` 产出与手写实测完全一致的三条指令
+（\`pto.vlds ... {dist = "BRC_B32"}\` / \`pto.pset_b32 "PAT_VL1"\` / \`pto.vsts ... {dist = "1PT_B32"}\`），测试文件未改。
+
+### 19.7.2 事实更正：\`mb32 -> mb16\` 的合法行（我核对了表本体）
+
+分诊方一度把「合法对」报成 \`c->d2, c->bd2, d2->c, bd2->c\`，据此认为要注入 fork 行。**这个前提是错的。** 共享表
+\`lib/PTO/Transforms/VMI/VMILayoutSupportTables.inc:374-380\`（「2x narrowing」块）的原文是：
+
+    {mb16(), mb8(),  d(2), c()},
+    {mb16(), mb8(),  c(),  ls(2)},
+    {mb16(), mb8(),  d(4), d(2)},
+    {mb32(), mb16(), d(2), c()},
+    {mb32(), mb16(), c(),  ls(2)},
+    {mb32(), mb16(), d(4), d(2)},
+
+即：\`c() -> ls(2)\` **是合法行**（正是关系挑中的那条，dump 里的 \`out0=contiguous lane_stride=2\`），而**能交出 plain contiguous 结果的是** \`d(2) -> c()\`。
+误读来源大概率是紧邻其上的 **vreg** 转换表（同文件 ~318-324 行，用 \`bits<32>()\`/\`bits<16>()\` 而不是 \`mb32()\`/\`mb16()\`）——我核对时也差点踩进去，已记在案。
+分诊方那次「上游也不合法」的实验写的是 \`c -> c\`，那不是本表任何一行，不能用来给 \`d(2) -> c\` 下结论。
+
+**由此：需要的计划是** \`arg@d(2) -> ensure_mask_granularity -> contiguous(b16) -> group_reduce_addi\`，**不需要任何新表行**；
+而且下降侧接受它：两处下降点（\`VMIToVPTO/VMIToVPTOPatternInternals8.cpp:552\` 与 \`VMIToVPTO/VMIToVPTOPatternInternals0.cpp:586\`）走的都是同一个
+\`getMaskGranularityCastLayoutFactForLayouts\`，内部遍历同一张 \`kLegalMaskGranularityCastLayoutPatterns\`。
+
+### 19.7.3 方向：关系提供者只问了表的一个方向
+
+我们的 provider（\`VMILayoutPlanner.cpp:1434\`）只用 \`VMICastLayoutPort::Source\` 问表：对每个 source 候选收集 result 布局。
+而上游自己的 transfer 是**双向**问的（\`lib/PTO/Transforms/VMI/VMILayoutPropagation.cpp:475-509\`）：\`changedValue == ensure.getSource()\` 按 Source 问，
+\`changedValue == ensure.getResult()\` 按 Result 问。**被消费者钉住 result 的场景需要的正是第二种方向，而我们移植时把它丢了。**
+把它补回来是**移植上游自己的查询**，不是放宽。
+
+补回后若仍不成，下一个问题按顺序是：\`d(2)\` 这个 source 是否**可达**——mb32/N=128 有没有 \`ensure_mask_layout\` 从 contiguous 桥到 \`d(2)\`，
+以及 \`d(2)\` 是否在调用方交给 provider 的 domain 里（\`planner:1419-1430\`：source 无显式布局时，候选 = {contiguous} ∪ 调用方的 \`polymorphicLayouts\`）。
+domain 缺项是 provider/domain 缺陷（属移植），仍在代码里修，不注入表行。
+**若实测 \`d(2)\` 对一个被钉在 contiguous 的入参确实不可达，则停下来报 dump** —— 那属于步骤 7 批次 D（F5 mask layout conversions）的范畴，由主线排期，不许就地强解。
+
+### 19.7.4 一条警戒：消费者侧的 mask 行来自**上游的表**，不是我们的枚举
+
+\`group_reduce\` 关系里带的 mask 布局来自 support fact 本身：\`planner:831-834\` 用 \`fact.sourceLayout/maskLayout/resultLayout\` 去
+\`rememberGroupReduceRelationLayouts\`。所以「消费者只给了一个 mask 布局」是**上游表对该形状的答案**，不是我们枚举漏了。
+动它之前必须先证明那行**是我们的**而不是上游的（\`1c1bba8cc\` 与我们各提交的 blame 对比）；比表上写的多枚举一条，就是我们不做的那种放宽。
+
+## 19.8 分诊阶段收官（80 → 69）与两条**改变打法**的核对结论
+
+### 19.8.1 四个提交（每个都在当时的干净树上实测、失败集合严格子集、0 回归、0 测试改动、0 行共享表注入）
+
+| 修订 | 事实 | 全量 | 修好 |
+|---|---|---|---|
+| \`5cc2fe723\` | 起点（步骤 5 之后）| 608 / 528 / 80 | — |
+| \`71978e4fd\` | stride_load 的 mask 端口（上游 4 操作数，fork 5）| 608 / 529 / 79 | \`vmi_to_vpto_block_mask_granularity\` |
+| \`ea1c1e6bb\` | broadcast 的 source 布局 + 双端口关系打分 + preferred 行 | 608 / 530 / 78 | \`vmi_compact_group_reduce\` |
+| \`daaa86b22\` | dense carrier ↔ group packet（Pack/Unpack 动作，守卫不动）| 608 / 536 / 72 | 6 个（见 §19.7.1）|
+| \`bccd44a29\` | mask-granularity 表**双向问**（补回上游 transfer 的 Result 方向）| 608 / 539 / 69 | \`vmi_group_reduce_addi_i16\`、\`vmi_layout_assignment_reduce_minmaxf\`、\`vmi_to_vpto_gather_granularity_conflict\` |
+
+我独立复核：HEAD \`bccd44a29\`、工作树干净（仅 \`.codex/CLAUDE.md\` 换行符噪声）、两个门禁产物新鲜、
+planner / 代价模型 / assignment 三个文件里 \`VMI_LAYOUT_DIAG|vmiLayoutDiagEnabled|dumpDiagValue\` 均为 **0 命中**（instrumentation 已剥离）。
+
+### 19.8.2 更正一：\`kLegalCastLayoutPatterns\` **有** gs 行（分诊方报成「一行都没有」）
+
+\`VMILayoutSupportTables.inc:306-359\` 里 \`bits<16>() -> bits<32>()\` 的 gs 行共 5 条：
+
+    {bits<16>(), bits<32>(), gs(1), gs(1)},
+    {bits<16>(), bits<32>(), gs(8, 2), gs(8)},
+    {bits<16>(), bits<32>(), gs(2), gs(2), CastTypeClass::Integer},
+    {bits<16>(), bits<32>(), gs(4), gs(4), CastTypeClass::Integer},
+    {bits<16>(), bits<32>(), gs(8), gs(8), CastTypeClass::Integer},
+
+而 \`matchesCastTypeClass\`（\`VMILayoutSupportPatternDSL.inc:144-169\`）的语义是：\`Any\` 恒真；\`Integer\` 要求两端都是 \`IntegerType\`；\`Float\` 要求两端都是浮点类。
+所以 \`vmi_layout_assignment_group_slot_load_extf\` 钉住的 \`vreg<8xbf16, gs(8,8)> -> vreg<8xf32, gs(8,8)>\`（浮点对）**没有可用的 Any 行**
+（Any 的两条是 \`gs(1)->gs(1)\` 与 \`gs(8,2)->gs(8)\`），能匹配的那条 \`gs(8)->gs(8)\` 是 **Integer 专属**。准确表述是「行在、类把它排除了」，不是「一行都没有」。
+
+### 19.8.3 更正二（这一条决定后面的打法）：**表不是我们能怪的对象**
+
+* \`git show 1c1bba8cc:lib/PTO/Transforms/VMI/VMILayoutSupportTables.inc\` 与 HEAD 在那些行上**逐字节相同**；
+* \`git log --oneline 1c1bba8cc..HEAD -- lib/PTO/Transforms/VMI/VMILayoutSupportTables.inc\` **为空**——移植以来**没有任何提交碰过这张表**。
+
+再叠加已记录并反复重建断言过的基线（移植起点 608 发现 / 606 通过 / 2 失败），结论只剩一个：
+**剩下这 10 个硬失败，每一个都是"上游自己的 assignment/propagation 能过、我们接手后过不了"的用例。**
+
+由此定下后半程的判定规则（写死，免得再绕）：
+
+1. **一个都不允许靠加/改表行来关**（本来就禁止，现在也证明不需要）；
+2. 问题永远不是"这是不是表的缺口"，而是"**上游有哪条路被我们弄丢了**"；
+3. 对 \`group_broadcast\` / \`vreg<1xi8>\` / \`num_groups=1\` 与 extf-on-group-slots 这两个"查不到行"的用例，答案**不可能是**"这个形状没有合法 lowering"——上游用**同一张表**解开了它们。这两处 IR 都把布局**显式写在类型上**，所以下一步是去读 \`1c1bba8cc\` 的
+   \`VMILayoutAssignment.cpp\`（seed 入口）与 \`VMILayoutPropagation.cpp\`（\`getExplicitLayout\`/已注解类型的 seed），验证假设：**上游把"已被 IR 钉住的配对"当作既成事实，而我们的 solver 坚持要为它查到一条关系行**。若成立，修的是"移植后对显式注解端口的处理"，仍旧是搬上游行为，不是立新规。
+
+### 19.8.4 剩余 10 个硬失败的分类与顺序
+
+* **solver 侧（我们自己的机器）**：两个 \`opt/\` 用例——前沿在 \`extend()\` 里被 frontier-group/Pareto 剪枝清空，**所有 drop 计数器都是 0**，即不是关系失败。要求：先用具名 witness 表记录"哪一条把哪一条剪掉、按哪个 key"，并按顺序排除两件事——(i) key 退化（某分量未设 ⇒ 一切支配一切），(ii) 比较违反既定层次顺序（**偏好必须严格排在 ls 层之下**）。
+* **上游有路由（优先做，属同一个调查）**：\`vmi_compact_group_broadcast\`（\`group_broadcast\` 无行）、\`vmi_layout_assignment_group_slot_load\`（extf 浮点 gs 对无 Any 行）、\`vmi_group_execution_paths\`（reduce 结果 \`gs(1,1)\` 对 broadcast 源 \`gs(1,8)\`，无 ensure 行）——都要先查上游 pre-port 的**显式钉住**路径，而不是断言缺 ensure 行。
+* **其余**：\`vmi_layout_assignment_group_reduce_partial_slots8\`、\`vmi_explicit_integer_cast_reduction_paths\`（no complete plan）、两个 VMI-RESIDUAL-OP（\`vmi_to_vpto_extf_f4x2_to_bf16x2_variants\`、\`vmi_to_vpto_gs1_consumer_matrix\`）——后两个带"下降后仍有 VMI 残留"的味道，很可能落在**步骤 7** 的范围（F5/F8/F9/F10 的 lowering 模式），由主线在步骤 7 之后复测，不要求分诊阶段强解。
+* **4 个负例诊断文本位移**：按纪律先比较新旧文本、引用双方原文，再判"新文本是不是同一个错误的更准确表述"。
+
+### 19.8.5 交接状态
+
+分诊方（\`7edccc40\`）在被重新开启后按 §19.8.3/§19.8.4 继续；**步骤 6、步骤 7 仍归主线**，在硬失败归零后的安静树上依次落地。
+量具入口：\`.work/upstream-port/probes/measure.sh\`；当前失败集合：\`probes/planned_fail_set_post69.txt\`（旧的 \`planned_fail_set.txt\` 是 80 用例分诊记录，保留作历史）。
+
+## 19.9 记录文件落地、一次"零收益即回退"的实验，以及 extf 那条堵点的**归属判决**
+
+### 19.9.1 分类记录文件（分诊阶段的可复核产物）
+
+\`probes/hard_fail_classification_post69.txt\`：69 行 TSV，每行 \`<用例名>\t<类别>\t<失败算子>\t<诊断首行原文>\`，
+由 \`llvm-lit -v\` 跑完 69 个失败用例、逐个解析其自有 RUN 行得出（负例是否触发按行为区分，不靠命名猜）。
+**合计：真硬失败 9 / 负例诊断文本位移 4 / FileCheck-only 56 = 69。**
+
+采纳我更正后的数字：真硬失败是 **9** 不是 10（\`vmi_to_vpto_reduce_extended\` 现在是 FileCheck-only）。9 个用例：
+\`opt/per_block_bf16_group8_quant_vmi_opt\`、\`opt/fused_quant_dequant_vmi_opt\`、\`vmi_layout_assignment_group_reduce_partial_slots8\`、
+\`vmi_explicit_integer_cast_reduction_paths\`、\`vmi_group_execution_paths\`、\`vmi_compact_group_broadcast\`、
+\`vmi_layout_assignment_group_slot_load\`、\`vmi_to_vpto_extf_f4x2_to_bf16x2_variants\`、\`vmi_to_vpto_gs1_consumer_matrix\`。
+
+### 19.9.2 一次"零收益即回退"的实验（正面记录）
+
+分诊方把"显式钉住端口"那条路的两半都移植了：①按 Result 侧枚举 cast fact（对齐上游自己的双向 transfer）；②两端都已注解且表里查不到时，把注解的元组本身作为关系。
+结果：**关系出现了、planner 也成功了，但 applier 拒绝**（见 19.9.3）。全量实测 **608 / 539 / 69，失败集合与改动前完全相同**。
+按"无实测收益即回退"的规矩**回退**，树回到 \`bccd44a29\`。这条纪律执行得对，记下来作为正例。
+
+### 19.9.3 extf 堵点的归属：堵它的那道闸**是我们自己的**
+
+我查了 \`validateCastOperationRelation\` 的来历：
+
+* **pre-port（\`1c1bba8cc\`）：该符号在 \`lib/\` 与 \`include/\` 里根本不存在**；
+* HEAD：定义在 \`lib/PTO/Transforms/VMI/VMILayoutSupportSolverQueries.inc:212\`、声明在 \`include/PTO/Transforms/VMILayoutSupport.h:774\`、**调用点在 \`lib/PTO/Transforms/VMI/VMILayoutPlanner.cpp:1329\`**；
+* \`git log --oneline -S validateCastOperationRelation 1c1bba8cc..HEAD\` → \`65e8b9ab6\`（等宽 cast 关系）、\`70034b64f\`（"reject cast relations no lowering implements, for the solver"）、\`e46bb4110\`（planner 移植）——**三个都是我们的提交**。
+
+也就是说：拒绝这个配对的不是上游的校验器，而是**fork 为了阻止 solver 挑中"表合法但没有 lowering 的配对"而新加的一道闸**。
+而上游对**IR 已经写明**的配对，规矩是相反的：\`DataLayoutSeed{..., Explicit}\`（\`VMILayoutAssignment.cpp:320-323\`）+
+\`addShuffleConstraint\` 在任一端已带布局时直接跳过约束生成（\`:1540-1543\`）。
+
+**由此补齐那条路缺的第三块**：我们这道闸**不该跑在"两端布局都来自 IR 显式注解"的配对上**——它存在的意义是拒绝 **solver 自己挑的**配对，不是拒绝 **IR 已经写死的**配对。
+已授权为**有界实验**，三个条件都是硬条件：①四个负例/门禁用例必须仍按各自原因失败，若其中有任何一个依赖"闸拒绝一个已注解配对"，立刻停下报我（那说明两条规则真冲突，冲突由我裁决）；②全量实测，若无用例被修好则回退；③若落地，提交信息必须写明恢复的是**assignment 阶段**的接受行为（该用例 RUN 止于 \`-vmi-layout-assignment\`），**不得**声称 lowering 支持该配对，并需单独报告 \`-vmi-to-vpto\` 对产物 IR 的行为（若在下降处失败，那属于步骤 7 的 lowering 工作，由我排期）。
+
+### 19.9.4 group_broadcast：丢的是"把 preferred fact 变成请求"的那段管线（并修正我自己的一处记录）
+
+* 我们的 planner **从不调用** preferred 路线，只枚举 group-broadcast 的表 fact（\`planner:1033/2409/2513\` 三处都是 \`getGroupBroadcastLayoutFactsForLayout\`）。
+* 上游 pre-port 的路线仍在文件里，但**已不在决策路径上**：\`addGroupBroadcastConstraint\`（\`VMILayoutAssignment.cpp:1216\`，被 :1243 调用）
+  用 \`getPreferredGroupBroadcastSourceLayout\`（$:659）+ \`getPreferredGroupBroadcastResultLayout\`（$:689 → \`VMILayoutSupport::getPreferredGroupBroadcastResultLayout\`，\`VMILayoutSupportGroupCapabilities.inc:70\`）；
+  而现在的活路径是 \`selectLayoutPlan()\`（$:2094）。
+* **修正我自己的一处记录**：§8（本文档 1313-1315 行）说的"删除 11 个 seed 辅助函数"指的是**请求/播种管线**
+  （\`hasRequestedLayout\`…\`requestFallbackLayouts\`），这一点没错；但 \`addGroupBroadcastConstraint\`/\`getPreferredGroupBroadcast*\` 这些**是保留下来却离开了决策路径**，不是被删。
+  所以真正丢掉的是"**把 preferred fact 翻译成请求**"的那段管线。修法因此明确：把这条 preferred 规则**重新表达为 solver 的候选**（与已被接受的
+  group_store preferred 行 \`ea1c1e6bb\` 第三块同形），**不要去重新激活那个 walker**（未经我同意不许动）。
+
+### 19.9.5 顺序
+
+group_broadcast 的 preferred 路线 → extf 的有界实验 → 两个 \`opt/\` 用例的剪枝 witness 表 → 4 个负例文本判定。
+纪律不变：一提交一事实、失败集合严格子集、门禁 ritual、无收益即回退、不注入表行、不改测试。
+
+## 19.10 提交 5（annotated pair 的归属规则）与**步骤 6 落地**，附一次双写者事故与两次隔离实测
+
+### 19.10.1 提交 5 = \`e936a9876\`（只动 planner，+70/-0）
+
+把 §19.9.3 的判决实现为**权限划分**而不是"关闸"：
+
+1. 两端都带注解、且共享表里**有**这一对的行（\`getCastLayoutFactForLayouts\` 成功）时，该注解元组**单独**成为该算子的关系；
+2. 从**已注解的 result** 反查出来的行视为 IR 自身的推论，不走 solver 的闸（这一块才够到 extf 用例要的那一行）；
+3. 其余配对**照原样**过 \`validateCastOperationRelation\`。无代价改动、无表行、无 verifier 改动、无测试改动。
+
+证据（五条，均由分诊方实测）：(i) \`@..._extf\` 与 CHECK 逐行一致（\`ensure_layout -> gs(8,8, lane_stride=2)\` 然后 \`extf -> gs(8,8)\`）；
+(ii) \`@..._extui\` 恢复 \`%1 = pto.vmi.extui %0\`、不再插入 ensure；(iii) 四个门禁/负例仍 4/4 各自失败；(iv) 608/539/69 → **608/540/68**；
+(v) 失败集合严格子集：只删掉 \`vmi_layout_assignment_group_slot_load\`、无新增。
+
+**我方独立隔离（重要）**：分诊方主动指出它的 68 是"混入我未提交的 step-6 文件"的产物，我没有接受这个混合态下的归属，而是
+**把我那 5 个路径 stash 掉 → 重建 → 全量实测**：\`e936a9876\` 单独 = **608 / 540 / 68**，与 69 集合之差**恰好是删掉那一个用例、无新增**。
+于是这个提交的功劳由"推断"变成"实测"，并且它也同时证明我的 step-6 文件在那个窗口里既没帮忙也没添乱。**它的这条协调提醒比那个提交本身更有价值。**
+
+### 19.10.2 步骤 6 落地 = \`92d08341f\`（+189，5 个文件）
+
+内容：把 fork 的 \`VPTOPack4StoreMaskNormalize\` **原样**搬入（含 OAT.3 许可头），并完成四处接线——
+\`include/PTO/Transforms/Passes.td\` 的 pass 定义、\`include/PTO/Transforms/Passes.h\` 的声明、\`lib/PTO/Transforms/CMakeLists.txt\` 的目标源行、
+以及 \`tools/ptoas/ptoas_pipeline.cpp\` 里紧跟 \`createVMIToVPTOPass\`、在 \`createVPTOStatefulStreamFusionPass\` 之前的那一次调用。
+
+**双向隔离实测**（这一步的两个套件都要，因为 \`lit/vpto\` 在本 base 上没有基线）：
+
+| 套件 | 含本改动 | 不含本改动（stash→重建）| 结论 |
+|---|---|---|---|
+| \`lit/vmi_new\` | 608 / 540 / 68 | 608 / 540 / 68 | 失败集合**完全相同** → 中性 |
+| \`lit/vpto\` | 620 / 619 / 1 | 620 / 619 / 1 | 唯一失败 \`vpto/vmi_f4x2_to_bf16x2_vcvt_llvm.pto\` **在本 base 上是既有失败**（新记录基线）|
+
+另有：\`ninja\` exit 0、0 error、两个产物都比它们用到的源码新（门禁的 freshness 断言）；
+合规检查器（\`.agents/skills/enforce-ptoas-code-compliance/scripts/check_changed_code.py --repo . --base HEAD\`）对 6 个改动路径 **0 error / 0 warning**。
+已推 fork：\`5cc2fe723..92d08341f\`。
+
+### 19.10.3 双写者事故与教训（诚实记录，同类假信号第三例）
+
+* 我在 **20:03:55** 写入 step-6 的 5 个路径且尚未提交；分诊方在 **20:05:10** 构建，于是它那次 68 的实测**混入了我的文件**。
+* 我随后的第一次 step-6 全量实测则报 **608/608 全部失败、用时 1.04 秒**，而同一批用例单独跑（含 4 个随机抽取的用例）**全部通过** ——
+  这是它的**并发重建在我的 lit 运行期间改写产物**造成的假信号，与已记录的两类（旧二进制、脏树）同类，属第三例。
+* 处置：没有接受任何混合态结论；两次隔离（stash→重建→实测→恢复→重建）把归属钉死，结论写在 19.10.1 与 19.10.2 两张表里。
+* **规则（写死）**：谁拿树谁宣布；另一方在其交回前**不许**构建或测量。
+
+### 19.10.4 当前状态与下一步
+
+* HEAD \`92d08341f\`（已推 fork），工作树干净（仅 \`.codex/CLAUDE.md\` 换行符噪声）。
+* 累计 6 个提交，\`lit/vmi_new\`：**80 → 68**（608 / 540 / 68）；新基线 \`lit/vpto\`：620 / 619 / 1。
+* 真硬失败 **8**（§19.9.1 的 9 个减去 \`vmi_layout_assignment_group_slot_load\`）；负例文本位移 4；FileCheck-only 56。
+* 分诊方接续：刷新记录文件为 post68 → \`group_broadcast\` 的 1→8 形状（\`@compact_broadcast_i8_8_1\`）→ 两个 \`opt/\` 的 witness 表 → 4 个负例文本判定。
+* **步骤 7 归主线**，等这一轮结束、树交回后开始（批次 A 是 F1/F6 纯删除，可先做；G 依赖 B/C/D/E）。
