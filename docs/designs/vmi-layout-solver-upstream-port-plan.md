@@ -672,3 +672,60 @@ fork（\`VMIToVPTO.cpp:1899-1923\`）：
 
 **待办**：移植时确认上游新增的 \`CastTypeClass\` 约束是否已经挡住了同样的组合——若已挡住，F2 变成冗余但无害；
 若没挡住，它就是唯一防线。这条判断在批次 B 落地时用一致性 dump 差分直接验证（候选集里是否出现 group-slot 对）。
+
+## 11. 一次真实回归与门禁陷阱（本轮抓到，已回退给实现方）
+
+### 11.1 事实经过
+
+支持层任务提交了 Stage 1（\`2f62e9ef9 vmi: add the layout solver's cast facts and charge their intrinsic cost\`，
+4 文件 +287/-19），并报告「上游基线未退化」。我在它之后**先重建再跑**门禁（\`ninja -C <build> pto-test-opt\` →
+\`exit 0\`、二进制重新链接），结果：
+
+    Total Discovered Tests: 608
+      Passed: 598 (98.36%)
+      Failed:  10 (1.64%)
+
+而基线是 **608 / 606 / 2**。多出来的 8 个失败：
+
+* \`vmi_deinterleave_load_layout_propagation.pto\`
+* \`vmi_layout_assignment_group_broadcast_deint4_consumer.pto\`
+* \`vmi_layout_assignment_group_reduce_partial_slots8.pto\`
+* \`vmi_layout_assignment_group_slot_broadcast_load_e2b_b16.pto\`
+* \`vmi_layout_assignment_group_store_truncf_contiguous.pto\`
+* \`vmi_layout_assignment_mask_use_ensure.pto\`
+* \`vmi_layout_assignment_reduce_minmaxf.pto\`
+* \`vmi_to_vpto_ensure_mask_granularity.pto\`
+
+### 11.2 成因（从它自己的提交说明里就能看出）
+
+该提交把 \`makeMaskGranularityCastLayoutFact\` 改成接收 mask 类型、返回 \`FailureOr\`，让调用方
+**跳过「没有可物化 carrier 路径」的行**，并让 \`collectMatchingCastFacts\`（每个来自 legal 表的 cast 事实的**唯一漏斗**）
+**丢弃「代价算不出来」的行**。这两处改的是**上游自己查询的接受面**，于是上游的布局决策跟着变——
+正是支持层合并**最不允许**出现的那种变化（判据是「用上游自己的决策链路跑上游测试仍然通过」）。
+把 \`getMaskGranularityBits\` 移到 pattern DSL 没问题，**改接受面才是问题**。
+
+### 11.3 门禁陷阱（比这次 bug 更值得记住）
+
+**「跑过 lit」不等于「用新代码跑过 lit」。** 两个人都踩了同一个坑：前一次 \`ninja | tail -3\` 的输出被截在
+\`[15/498]\` 这样的中间行（看起来像构建中途断掉），于是「构建成功」这个前提没有被真正验证，
+lit 就是拿**旧二进制**跑的——于是 606/2「通过」。
+
+因此定成硬规矩，写进每批的仪式：
+
+1. 先跑 \`ninja … ; echo exit=$?\`，**必须看到 exit=0**，且日志里 \`grep -ci error\` 为 0；
+2. 再核对**二进制 mtime 晚于**源码 mtime（\`ls -l --time-style=+%H:%M\`）；
+3. 然后才跑 lit，并把**完整的** \`Total Discovered / Passed / Failed\` 三行原样贴出来；
+4. 断言失败集合等于基线集合，而不是只看数字（\`vmi_integer_reductions_i8_invalid.pto\` 与
+   \`vmi_ptodsl_vunzip_vzip_validation.pto\` 是上游自带的两个）。
+
+### 11.4 已下达的修复要求
+
+* 先在**独立 build 目录**里构建父提交 \`ee461ffa4\` 跑同一过滤，证明归因（父提交应为 606/2）；
+* Stage 1 必须对上游决策路径**行为中性**：两个 \`intrinsicRearrangementCost\` 仍要从表的 \`intrinsicCost\` 真正填值
+  （这条要求不变），但**不许因为代价接线而丢行或改变任何查询的接受面**；fork 的「丢弃该行」语义若 solver 侧需要，
+  必须挂在显式参数后面、只对我们自己的枚举生效；
+* 用**重建后**的二进制重跑门禁，贴出 ninja 退出码与完整 lit 三行；
+* 修复另起一个提交（历史保持诚实），并给出「父提交 lit 结果 / 修复后 lit 结果 / 删掉接受面改动的那段 diff」。
+
+> 结论：这次回归**不是白跑**——它证明「先重建、再跑、断言失败集合」这条仪式确实能抓到别人（和我自己）漏掉的问题；
+> 也说明为什么我一直不肯拿汇报当通过证据。
