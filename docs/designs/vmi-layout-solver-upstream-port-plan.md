@@ -1097,3 +1097,35 @@ F4 只有 2 个 hunk，但内容上其实是三类改动：
   是**既有失败**，与本次改动无关（测试任务把新文件移出树后它仍然失败，已证）；所以「12 个已知失败」要带 +1 说明。
 * §13.11 里对测试文件的算子计数（\`pge_b32\`(5) 等）来自**早期草稿**，与提交进去的版本不一致——
   以最终提交 \`f35bdcf66\` 的内容为准；那两条被 pass 描述遗漏的行为（共享 mask 分支、\`PAT_ALL→PAT_ALL\`）已被测试钉住。
+
+## 15. planner 缺口的**活清单**（可反复运行）
+
+\`.work/upstream-port/planner_gap.sh\`：把 fork 的 \`VMILayoutPlanner.cpp\` 用**当前上游树**做 \`-fsyntax-only\` 编译
+（不修改任何树、不链接），把「还差哪些符号」直接打出来。做法是从 ninja 的 \`compile_commands\` 里取一条同类编译命令，
+把 \`-c\` 指向 planner、去掉 \`-o/-MF/-MT\`，再加 \`-fsyntax-only\`；**脚本自己会校验改写后的命令确实在编译 planner**，
+否则拒绝运行。
+
+当前裁决（上游 HEAD \`1c1bba8cc\`）：**73 个错误**，成因分三类：
+
+1. **legacy 算子类已不存在**（\`VMIAddFOp\`/\`VMIAddIOp\`/\`VMISubFOp\`/\`VMISubIOp\` …）——
+   这是 planner 里 \`isVMISameLayoutOp\` 那份手写算子表；按 §8.4，它**应当整份删掉**，改用上游的
+   \`isSameLayoutOp\` / \`isVMIClassTransparentOp\` 划分，而不是逐个补名字。这是目前最大的一类错误。
+2. **group-reduce 的签名差异**：\`getGroupReduceLayoutFactsForLayout\` 与 \`getPreferredGroupReduceLayoutFact\`
+   在上游多一个 \`VMIGroupReduceKind\` 参数（§8.1 的 (b) 类第 1、2 项）。
+3. **其余缺失查询**（§8.1 的 (c) 类）——正是 Stage 3 正在补的部分。
+
+完整输出已归档：\`.work/upstream-port/probes/planner_gap.txt\`。
+**用法**：Stage 3 每落一批就重跑一次；错误数下降到 0 即代表「planner 可以进树」。
+这比等某个 agent 说「搬完了」可靠——它是一个可复现的判据。
+
+### 15.1 又一次同类教训：**先验证量具，再看读数**
+
+这个脚本的第一版给出 \`rc=0 / 0 errors\`，看起来像「planner 已经能编译」。实际是 \`sed\` 替换错了位置：
+命令里的 \`-c\` 仍指向 \`VMILayoutConflictSolver.cpp\`，等于什么都没检查。
+我发现它的方式不是「觉得可疑」，而是**把改写后的命令打印出来核对**（末尾 260 字符 + 是否含 planner 路径），
+于是看到 \`-c .../VMILayoutConflictSolver.cpp\` 还在。修正后 \`rc=1 / 73 errors\`。
+
+这已经是同一族的第四次：旧二进制、脏树、缺 .so、**量具本身没在量东西**。共同点只有一个——
+**结论必须能追溯到「被测对象确实是那个东西」**。因此规约再收紧一条：
+**任何自定义检查脚本都要自带一次自证**（例如「被编译的文件确实是目标文件」「被测二进制新于源码」），
+否则它的绿灯不比没有更可靠。
