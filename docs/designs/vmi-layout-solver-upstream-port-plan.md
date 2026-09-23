@@ -445,3 +445,29 @@ fork 侧 \`VPTOPack4StoreMaskNormalize\`（160 行，\`lib/PTO/Transforms/VPTOPa
 而运行时谓词、无合法字节拼写的形状（如 \`PAT_VL3\`）、非 packed 元素类型、非 PK4_B32 的 store 都保持原样。
 
 注意第 4 步与正在进行的支持层任务**共用同一个 CMakeLists.txt**，所以步骤 6 要等那一批提交落地后再动，避免行冲突。
+
+### 8.9 步骤 8 的真实规模（数据化，替换计划里估的 45 个）
+
+\`git diff --name-only ca7ccb409..HEAD -- test/lit/vmi_new\` = **132 个**被我们改过的用例，
+逐个与「上游二进制下的表现」交叉分类（明细表 \`.work/upstream-port/probes/step8_plan.tsv\`）：
+
+| 分类 | 数量 | 处理方式 |
+|---|---|---|
+| CHECKONLY（只差期望文本） | **96** | **步骤 5 之前不要动**：期望是照我们 solver 刷的，决策权回到我们的 solver 后要重新测量再定 |
+| PASS（上游原样接受） | 19 | 直接搬 |
+| TOOLERR（上游直接拒绝或硬失败） | **16** | 唯一必须逐个处理的集合，见下 |
+| UNKNOWN | 1 | 单独查 |
+
+这 16 个的成因很清楚，也基本就是上游新护栏清单：
+
+* 方言：\`opt/fused_quant_dequant_vmi_opt.pto\`（\`castptr\` 需 signless \`i64\`）。
+* 上游不再支持的形式：\`vmi_group_reduce_addi_i8\`（\`pto.vmi.vcadd\`）、\`vmi_group_reduce_maxi_i8\`（\`pto.vmi.vcmax\`）。
+* 上游布局契约/降级拒绝：\`vmi_layout_assignment_ensure_mask_layout\`（\`VMI-LAYOUT-CONTRACT\`）、
+  \`vmi_layout_assignment_group_broadcast_load_e2b_b16\`（conversion pattern 应用失败）、
+  \`vmi_prefer_lane_stride_narrowing\`、\`vmi_to_vpto_ensure_layout_deint4\`、\`vmi_to_vpto_ensure_mask_layout\`、
+  \`vmi_to_vpto_masked_store\`、\`vmi_to_vpto_masked_store_deint_tail\`（均 \`VMI-UNSUPPORTED\`，就是 masked-store 对齐证明那一类）。
+* “应当失败”的用例报错文本变了：\`vmi_layout_assignment_group_load_block8_truncf\`、\`vmi_layout_assignment_group_reduce_s12_invalid\`。
+
+**结论**：步骤 8 的真实工作量在 16 个用例 + 96 个期望的**重新测量**，而不是 132 个逐个手改；
+而且 96 个里凡是步骤 5 之后我们的 solver 重新选定同一布局的，期望应当**回到我们原来的文本**，
+不是改成上游的。这一条决定了步骤 8 必须排在步骤 5 之后，不能提前做。
