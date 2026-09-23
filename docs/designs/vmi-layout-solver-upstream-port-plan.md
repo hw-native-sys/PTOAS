@@ -1272,3 +1272,22 @@ vexpdif 两族已在 Stage 2 完成。
 \`vmi_layout_assignment_group_slot_broadcast_load_e2b_b16.pto\`、\`group_broadcast_load_e2b_layout_opt.pto\`、
 \`group_broadcast_load_contiguous_fallback.pto\`、\`vmi_extf_8bit_factor_contract.pto\` 四个用例，
 看我们的 solver 在没有该偏好的情况下是否仍选中 E2B/复合行。
+
+### 16.9 Stage 3 前两批已过基线门禁；同时**第五次**撞上测量上下文问题
+
+**好消息（在干净状态上测得的）**：Stage 3 前两批（\`1ea00d2c9\` load 枚举、\`8bcf023dd\` store 枚举）落地后，
+\`ninja pto-test-opt\` + python 模块 exit 0、0 告警，\`llvm-lit -j8 lit/vmi_new\` 的**失败集合恰为**
+\`vmi_integer_reductions_i8_invalid.pto\` 与 \`vmi_ptodsl_vunzip_vzip_validation.pto\`——
+即支持层的新增查询对上游决策路径仍是行为中性的。
+
+**坏消息（同一轮里发生的）**：我在同一条命令里跑了两次 lit，第一次（干净状态）是那 2 个失败，
+第二次却报 **563 / 45**。原因不是回归，而是**两次之间 Stage 3 又改了文件并重建**——
+即 §13.2 那条陷阱**在一次命令内部**又发生了一次。事后 \`git status\` 确认树又变脏（2 个文件）。
+
+**因此门禁脚本本轮加了一项**：\`validate_port.sh\` 在打印裁决前多打一行
+\`PROVENANCE  HEAD <sha>  dirty <n>\`，并要求它与第 0 步打印的状态**一致**。
+这样任何一次结果都自带出处；两次状态不一致就说明测的是混合物，结论作废。
+
+> 这已是同族问题的第五次（旧二进制、脏树、缺 .so、量具未自证、**测量期间被改写**）。
+> 它们的共同点始终是：**结论必须能追溯到「测的到底是哪个状态」**。
+> 规矩已经从「先看 git status」升级为「**测量前打印、测量后再打印，两者必须一致**」。
