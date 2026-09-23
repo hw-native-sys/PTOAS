@@ -142,15 +142,30 @@ static LogicalResult translateLoopHint(scf::ForOp forOp) {
   return success();
 }
 
-/// Lower one annotated scf.for to control-flow ops, attaching its
-/// LLVM-dialect attributes (llvm.loop_annotation, stored on the latch under
-/// the bare ODS name loop_annotation) to the latch cf.br.
+/// Collect the operands a branch into the loop header carries: the induction
+/// variable first (in its initial or stepped form), then the values the loop
+/// threads through its iterations.
+template <typename RangeT>
+static SmallVector<Value, mlir::pto::kValue8>
+headerOperands(Value inductionVar, const RangeT &carried) {
+  SmallVector<Value, mlir::pto::kValue8> operands;
+  operands.reserve(1 + carried.size());
+  operands.push_back(inductionVar);
+  llvm::append_range(operands, carried);
+  return operands;
+}
+
+/// Lower one annotated scf.for to control-flow ops.
 ///
-/// This mirrors convert-scf-to-cf's ForLowering; the latch-attribute copy
-/// backports the behavior that upstream MLIR only provides in newer
-/// versions.  Registered with a higher benefit than the upstream pattern so
-/// it wins for annotated loops; unannotated loops fall through to the
-/// upstream ForLowering.
+/// The CFG built here is the one the SCF dialect requires: a header block
+/// holding the iteration test, the blocks of the original body, and a latch
+/// branching back to the header.  Owning the lowering instead of leaving it to
+/// convert-scf-to-cf only pays off for the last step, where the loop's LLVM
+/// dialect attributes are copied onto the latch branch: the MLIR-to-LLVM-IR
+/// translation reads loop metadata off the backedge, and LLVM 19's pattern
+/// does not carry the annotation there.  Registered with a higher benefit than
+/// the upstream pattern so that annotated loops land here and unannotated ones
+/// fall through to the upstream lowering.
 struct LowerAnnotatedForPattern : public OpRewritePattern<scf::ForOp> {
   using OpRewritePattern<scf::ForOp>::OpRewritePattern;
 
@@ -162,79 +177,70 @@ struct LowerAnnotatedForPattern : public OpRewritePattern<scf::ForOp> {
 
     Location loc = forOp.getLoc();
 
-    // Start by splitting the block containing the 'scf.for' into two parts.
-    // The part before will get the init code, the part after will be the end
-    // point.
-    auto *initBlock = rewriter.getInsertionBlock();
-    auto initPosition = rewriter.getInsertionPoint();
-    auto *endBlock = rewriter.splitBlock(initBlock, initPosition);
+    // Cut the enclosing block at the insertion point: the loop's blocks end up
+    // in the gap, whatever followed the loop stays in the continuation.
+    Block *head = rewriter.getInsertionBlock();
+    Block *continuation =
+        rewriter.splitBlock(head, rewriter.getInsertionPoint());
 
-    // Use the first block of the loop body as the condition block since it is
-    // the block that has the induction variable and loop-carried values as
-    // arguments.  Split out all operations from the first block into a new
-    // block.  Move all body blocks from the loop body region to the region
-    // containing the loop.
-    auto *conditionBlock = &forOp.getRegion().front();
-    auto *firstBodyBlock =
-        rewriter.splitBlock(conditionBlock, conditionBlock->begin());
-    auto *lastBodyBlock = &forOp.getRegion().back();
-    rewriter.inlineRegionBefore(forOp.getRegion(), endBlock);
-    auto iv = conditionBlock->getArgument(0);
+    // The region's first block holds the induction variable and the
+    // loop-carried values as arguments, so it becomes the header.  Its
+    // operations move into a fresh entry block, and the region's remaining
+    // blocks are appended to the enclosing block list ahead of the
+    // continuation.
+    Region &loopBody = forOp.getRegion();
+    Block *header = &loopBody.front();
+    Block *bodyEntry = rewriter.splitBlock(header, header->begin());
+    Block *latch = &loopBody.back();
+    rewriter.inlineRegionBefore(loopBody, continuation);
 
-    // Append the induction variable stepping logic to the last body block and
-    // branch back to the condition block.  Loop-carried values are taken from
-    // the operands of the loop terminator.
-    Operation *terminator = lastBodyBlock->getTerminator();
-    rewriter.setInsertionPointToEnd(lastBodyBlock);
-    Value stepped = rewriter.create<arith::AddIOp>(loc, iv, forOp.getStep());
+    Value inductionVar = header->getArgument(0);
 
-    SmallVector<Value, mlir::pto::kValue8> loopCarried;
-    loopCarried.push_back(stepped);
-    loopCarried.append(terminator->operand_begin(), terminator->operand_end());
-    auto latchBranch =
-        rewriter.create<cf::BranchOp>(loc, conditionBlock, loopCarried);
+    // The entry branch hands the lower bound and the initial values of the
+    // loop-carried variables to the header.
+    rewriter.setInsertionPointToEnd(head);
+    rewriter.create<cf::BranchOp>(
+        loc, header,
+        headerOperands(forOp.getLowerBound(), forOp.getInitArgs()));
 
-    // Attach the LLVM attributes of the scf.for to the latch branch: LLVM
-    // requires loop metadata on the backedge.  The loop annotation is stored
-    // under its bare ODS name ("loop_annotation") so that the MLIR-to-LLVM-IR
-    // translation picks it up via BrOp::getLoopAnnotationAttr().
+    // The header decides between one more iteration and leaving the loop.
+    rewriter.setInsertionPointToEnd(header);
+    Value inRange = rewriter.create<arith::CmpIOp>(
+        loc, arith::CmpIPredicate::slt, inductionVar, forOp.getUpperBound());
+    rewriter.create<cf::CondBranchOp>(loc, inRange, bodyEntry, ValueRange{},
+                                      continuation, ValueRange{});
+
+    // The latch steps the induction variable, forwards the values the body
+    // yielded and branches back to the header.  The backedge op is kept: it is
+    // what the loop metadata gets attached to.
+    Operation *yield = latch->getTerminator();
+    rewriter.setInsertionPointToEnd(latch);
+    Value next =
+        rewriter.create<arith::AddIOp>(loc, inductionVar, forOp.getStep());
+    auto backedge = rewriter.create<cf::BranchOp>(
+        loc, header, headerOperands(next, yield->getOperands()));
+
+    // Carry the loop's LLVM dialect attributes over to the backedge so that
+    // the translation can emit the !llvm.loop metadata.  The annotation is
+    // stored on the branch under its bare ODS name, which is where
+    // BrOp::getLoopAnnotationAttr() looks for it.
     for (const NamedAttribute &attr : forOp->getAttrs()) {
-      if (!isa<LLVM::LLVMDialect>(attr.getValue().getDialect())) {
+      Attribute value = attr.getValue();
+      if (!isa<LLVM::LLVMDialect>(value.getDialect())) {
         continue;
       }
-      StringRef name = attr.getName().getValue();
-      if (name == kLoopAnnotationAttrName) {
-        name = kBranchLoopAnnotationAttrName;
-      }
-      latchBranch->setAttr(name, attr.getValue());
+      StringRef attrName = attr.getName().getValue();
+      StringRef branchName = attrName == kLoopAnnotationAttrName
+                                 ? StringRef(kBranchLoopAnnotationAttrName)
+                                 : attrName;
+      backedge->setAttr(branchName, value);
     }
 
-    rewriter.eraseOp(terminator);
+    rewriter.eraseOp(yield);
 
-    // Compute loop bounds before branching to the condition.
-    rewriter.setInsertionPointToEnd(initBlock);
-    Value lowerBound = forOp.getLowerBound();
-    Value upperBound = forOp.getUpperBound();
-
-    // The initial values of loop-carried values are obtained from the
-    // operands of the loop operation.
-    SmallVector<Value, mlir::pto::kValue8> destOperands;
-    destOperands.push_back(lowerBound);
-    llvm::append_range(destOperands, forOp.getInitArgs());
-    rewriter.create<cf::BranchOp>(loc, conditionBlock, destOperands);
-
-    // With the body block done, we can fill in the condition block.
-    rewriter.setInsertionPointToEnd(conditionBlock);
-    auto comparison = rewriter.create<arith::CmpIOp>(
-        loc, arith::CmpIPredicate::slt, iv, upperBound);
-
-    rewriter.create<cf::CondBranchOp>(loc, comparison, firstBodyBlock,
-                                      ArrayRef<Value>(), endBlock,
-                                      ArrayRef<Value>());
-
-    // The result of the loop operation is the values of the condition block
-    // arguments except the induction variable on the last iteration.
-    rewriter.replaceOp(forOp, conditionBlock->getArguments().drop_front());
+    // The results of the loop are the header's arguments past the induction
+    // variable, i.e. their values on the last iteration.
+    rewriter.replaceOp(forOp, header->getArguments().drop_front());
     return success();
   }
 };
