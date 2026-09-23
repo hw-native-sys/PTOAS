@@ -1386,3 +1386,41 @@ planner（已删两份算子分类定义、5 处 group-reduce 调用点补 \`get
 
 > 门禁的价值在这里体现出来了：它没有给「差不多」的模糊结论，而是把 134 vs 339 的巨大差异**拆成可行动的三类**——
 > 其中两类是已知的步骤 8 方言工作，一类（11 条）是真实的枚举缺口。
+
+## 18. 步骤 5 落地（决策权已交回我们的 solver）与其真实后果
+
+**提交 \`657590cd7 vmi: hand layout decisions to the costed planner\`**（上游 worktree，树已干净）。
+\`applyLayouts\` 不再跑上游的 seed 阶段机制：建传播器 → 向代价 planner 要整份计划 → 提交 →
+由 fork 版的结构化 seeding 与边匹配兜住 planner 未赋值的传输值。11 个 seed 辅助函数、4 处 \`propagator.run()\`
+与四个 phase 入口全部删除；约束遍历保留（现在只提供它建立的等价关系）。按 §10.13，两处 seed 写入保留、硬错误移除。
+
+### 18.1 立刻测量到的效果（这是关键路径上最重要的一次读数）
+
+| 指标 | 值 |
+|---|---|
+| \`lit/vmi_new\` | **608 发现 / 500 通过 / 108 失败**（基线 606/2）|
+| FileCheck 期望不匹配 | ~130 处（\`no match found\` 74、\`ASSIGN-SAME\` 27、\`CHECK\` 22、\`ASSIGN\` 16、\`CHECK-DAG\` 4）|
+| **\`VMI-LAYOUT-CONTRACT: no complete legal VMI layout plan\`** | **25**（硬失败）|
+| **\`VMI-UNSUPPORTED: no legal VMI layout relation\`** | **22**（硬失败）|
+| **\`type of return operand 0 (…)\`** | **11**（形似 §8.5 R7）|
+| \`group_load requires …\` | 3 |
+
+**判读**：期望差异是**决策引擎更换的必然产物**（正是 §8.9 预判要重测的那 96 个用例），
+属于步骤 8 的工作量而非缺陷；**约 50 个硬失败才是真问题**。
+
+### 18.2 硬失败最可能的成因（有明确指向，不是猜测）
+
+Stage 3 收尾清单第 4 条写明：**若干 fork 独有行被刻意不注入共享表**（6 条 ensure、2 条 ensure-mask、
+6 条 legal-mask-granularity、3 条 dense-store 偏好、1 条 group-broadcast-load 及其 direct 行），
+理由是注入会放宽**上游**的接受面。但那些行对我们的 solver **恰恰是候选集**——
+上游决策链不需要它们，我们的 solver 需要。于是「no complete legal plan / no legal relation」与此高度吻合。
+
+**下一步的正确解法**（也是 Stage 3 自己点出的方向）：把候选来源从「共享表」改为
+**「共享表 + fork 独有行，且后者只对 solver 路径可见」**——即 fork-only wrapper。
+这既不放宽上游接受面（不违反那条铁律），又让 solver 拿到完整候选集。
+
+### 18.3 教训（又一次同族）
+
+步骤 5 的编译期暴露了 3 个只有编译器能发现的问题（1 处残留 \`template <typename RequestTy>\` 导致重载解析失败、
+2 处删掉硬错误后遗留的未使用变量），**dry-run 只能保证括号平衡与锚点命中，编译才能暴露签名与未用变量**。
+所以「脚本化改造」之后的下一动作必须是编译，而不是直接提交。
