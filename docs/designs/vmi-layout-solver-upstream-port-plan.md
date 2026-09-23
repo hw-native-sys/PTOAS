@@ -2147,3 +2147,38 @@ group_broadcast 的 preferred 路线 → extf 的有界实验 → 两个 \`opt/\
 1. 关 \`vmi_compact_group_broadcast\`（一条最小组合提交）→ 2. 两条**诊断**提交（\`group_reduce_s12_invalid\`、\`gs1_dense_join_invalid\`，不改验收、只改报什么）
 → 3. 查 \`block8_truncf\`（枚举给了 \`group_load\` 一个下游拒绝的布局）→ 4. 两个 \`opt/\` 的剪枝 witness 表。
 \`vmi_to_vpto_vselr_invalid\` 不动（属步骤 8）。步骤 7 批次 B–G 仍归我，等这一轮结束、树交回后继续。
+
+## 19.13 优先级 1 的实测结论：链路**挂起为步骤 7 的依赖**（并记下它的回归前提）
+
+三块补丁（暂存 (a) + Result 方向查询 + 暂存 (b)）逐级实测：
+
+| 步骤 | 实测结果 |
+|---|---|
+| 暂存 (a)（preferred 路线）| 干净应用；阻塞点离开 \`16:10\` |
+| + Result 方向查询（对齐 \`VMIGroupBroadcastTransfer::query\`）| 文件仍失败（1→8 族）|
+| + 暂存 (b)（lane-stride 归一）| **该文件所有硬失败消失**，管线输出干净 VPTO |
+
+但仍不通过，且原因变成**另一种**：测试期望 \`vselr\` 路径，而我们的计划降成
+\`pto.vlds {dist = "BRC_B8"} ; pset_b8 PAT_ALL ; pset_b8 PAT_VL1 ; pto.vdup %result, %0 {position = "LOWEST"} ; pto.vsts {dist = "1PT_B8"}\`，
+首个不匹配在测试第 22 行（\`@compact_broadcast_i8_1_1\`），其后 33、55 —— 这是**下降形态的期望差异**，不是布局赋值失败。
+
+**决定性数据（全量）**：三块都上 = **608 / 539 / 69**，比 68 基线**多一个**，且集合差是**新增**：
+
+    > vmi_group_sparse_compare.pto
+
+即 **Result 方向查询按现状对 \`group_broadcast\` 不安全**（与安全落地的 \`bccd44a29\` 的 mask-granularity 不同）：它也会为别的形状承认结果侧关系，把 \`vmi_group_sparse_compare\` 的计划带偏。已全部回退并复核：\`vmi_group_sparse_compare\` 恢复通过，\`vmi_compact_group_broadcast\` 恢复原硬诊断，树干净在 \`92d08341f\`。
+
+**判决（修正 §19.12.3 的"先关它"）**：该链路**挂起为步骤 7 的依赖**，不在 solver 里继续追。依据：
+1. 三块齐上后**该文件的硬失败全部消失**——这是"路线判断对了"的强证据，也是该文件第一次有合法计划；
+2. 剩下的差距是**下降形态**（\`vdup\` vs \`vselr\`），属 VMIToVPTO delta（步骤 7，尤其 group-broadcast 下降族），不属布局赋值；
+3. 即便形态问题解决，Result 方向查询也必须先**收窄作用域**（现在它会动 \`vmi_group_sparse_compare\` 的计划），否则不可落地。
+
+**处置**：Result 方向片段作为**第三块暂存补丁**（含 README 行：实测效果 + 那句回归 + 前提条件"步骤 7 先改形态、且 Result 方向先收窄"）。
+正确顺序：**步骤 7 落地下降形态 → 再一起重放三块并重测**（\`vmi_group_sparse_compare\` 必须保持通过）。
+
+其余两条要保留的事实：16-bit 的 \`ls(4)\`/packet ensure 行**确实不存在**（C(1) 逐字核对，现为兜底解释）；目标文件的剩余差距在步骤 7/8 而非布局赋值。
+
+### 19.13.1 紧接着的顺序
+
+分诊方按优先级 2–4 继续：两条**诊断**提交（\`group_reduce\` 的 reason 透传、component 消息点名算子与两个布局；预期各自**删掉**一个失败项）→ \`group_load\`/\`validateGroupLoadLayoutPlan\` 调查 → 两个 \`opt/\` 的 witness 表。
+随后主线接树做步骤 7 批次 B–G。
