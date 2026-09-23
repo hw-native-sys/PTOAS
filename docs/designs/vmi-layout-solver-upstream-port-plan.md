@@ -1228,3 +1228,24 @@ vexpdif 两族已在 Stage 2 完成。
 **复核方式说明**：缺口脚本编译的是**工作树当前状态**，所以它反映的是「HEAD + 在飞改动」；
 作为趋势指标够用，但**不能当作某个提交的干净测量**。等 Stage 3 告一段落（工作树干净时）再跑
 「重建 + 上游基线 + 失败集合」的正式门禁——这正是 §13.2 那条规矩的用法。
+
+### 16.7 已备好的离线产物（都在 \`.work/\` 下，未进版本库）与待决策项
+
+| 产物 | 路径 | 用途 |
+|---|---|---|
+| planner 预处理 + 一致性工具 + 应用说明 | \`.work/upstream-port/step2c/\` | 步骤 2c 的输入（planner 已删掉两份算子分类定义）|
+| 步骤 5 插入片段 | \`.work/upstream-port/step5/\` | 5 个片段共 257 行（applyLayouts / mergePlan+selectLayoutPlan / createPropagator / addEquivalentValues / getExplicitLayout）|
+| 步骤 6 接线脚本与说明 | \`.work/upstream-port/step6/\` | \`wire_step6.py\`（幂等、脏树拒绝）+ README |
+| 步骤 7 逐族 patch | \`.work/upstream-port/step7/\` | \`normalized.diff\`（42 hunk / +434 / −347）+ F0–F10 + MANIFEST |
+| 门禁工具 | \`.work/upstream-port/planner_gap2.sh\`、\`validate_port.sh\`、\`probes/\` | 缺口清单、终局门禁、dump 差分与参考 dump、各类探针脚本 |
+| 性能复现环境 | \`.work/upstream-port/perf/\` | 9 个用例 + 19 组仿真结果 + 确切命令（§本轮 README）|
+| Stage 3 存档（误伤回退时的凭证） | \`.work/upstream-port/step3-wip/\` | 已正常提交，仅留档 |
+
+**待决策项（写明「要选一个」，不要留给下一个人猜）**：
+
+1. **\`getGroupSlotLoadLayoutFact\` 的 \`sourceGroupStride\`**：选 (甲) 给上游查询加 stride 参数（建议）还是 (乙) 保留上游签名。见 §10.12。
+2. **\`getGroupReduceLayoutFactsForLayout\` / \`getPreferredGroupReduceLayoutFact\` 的 \`VMIGroupReduceKind\`**：采用上游签名，并在 fork 侧调用处补出 kind（§8.1）。
+3. **\`00890b827 Prefer E2B layouts\` 是否删除**：它与上游 \`0d7da8454\` 冲突；§2.1 的立场是「偏好属于靠后 tie-break，不值得对齐」，因此倾向删除，但需在步骤 5 之后用用例确认。
+4. **vintlv/vdintlv 那 6 行窄掩码行**：已决定**不注入**（§8.7），保留上游更宽的行；若后续发现上游行覆盖不足再回头讨论。
+5. **步骤 5 的 seed 硬错误**：已决定「去掉 emitError、保留写入」（§10.13）。
+6. **步骤 4 遗留**：\`setSpineScopedCastOps\`/\`isSpineScopedCast\` 的删除必须与 spine 分析一起做（§8.5 R6），不要单独删。
