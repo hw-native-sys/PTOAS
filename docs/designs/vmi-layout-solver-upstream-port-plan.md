@@ -821,3 +821,25 @@ payload 位宽 ∈ (0,256) 且 %32==0、rowStride==1），且只在 \`getGroupSt
 
 > 过程教训已固化为规矩：**门禁必须「先重建、再跑、断言失败集合」**（§11.3）。
 > 这条规矩在本轮直接救回了一次 8 个用例的静默回归。
+
+## 12. 步骤 4 的传播器接口已落地（我方实现并验证）
+
+提交 **\`2d9d45b9b vmi: add the propagator surface the costed planner needs\`**（上游 worktree）。
+新增 4 个入口，全部按 fork 原文搬运（fork \`VMILayoutPropagation.cpp:1295-1334\`、\`1138-1149\`）：
+
+| 入口 | 作用 |
+|---|---|
+| \`getRequestedLayout(OpOperand&) const\` | 取该操作数上**已被记录的 use conflict** 布局，优先于值自身的 assignment；planner 用它确认已提交的 use 关系是否仍然有效 |
+| \`installPlanned(Value, layout)\` | 记录单条计划赋值，**不入队**；与既有 assignment 冲突则失败 |
+| \`installPlanned(OpOperand&, layout)\` | 同上，但冲突时按 fork 语义记成 use conflict；且保留「无类型结构传输值（如 SCF region 结果）以计划布局为主种子、已有显式类型布局的值保留自身布局」的规则 |
+| \`endExactRequests()\` | **故意是空实现**：fork 的两个 \`requestExact\` 重载全树零调用，本移植不需要 exact-mode；它存在只为让 planner 的提交序列保持不变 |
+
+**验证**：\`ninja pto-test-opt\` exit=0、0 告警；\`llvm-lit -j8 lit/vmi_new\` = **608 / 606 / 2**，
+失败集合**逐条**等于基线（\`vmi_integer_reductions_i8_invalid.pto\`、\`vmi_ptodsl_vunzip_vzip_validation.pto\`）。
+
+**步骤 4 还剩两项，都刻意推迟到相关批次**：
+
+1. \`isVMISameLayoutOp\` 的重复定义要等 planner 真正进树时再消（现在 planner 还没编译进上游，不构成链接冲突）；
+2. 删除 \`setSpineScopedCastOps\`/\`isSpineScopedCast\` 必须**与 spine 分析的移除同时进行**（§8.5 R6：
+   \`spineScopedCasts\` 被 \`addConstraints\` 里的 seed 路径读取，单独删会改变错误面与记录相位）——
+   所以它属于支持层批次（Stage 2/3 的 spine 行处理），不属于本轮。
