@@ -793,3 +793,31 @@ payload 位宽 ∈ (0,256) 且 %32==0、rowStride==1），且只在 \`getGroupSt
 * **探测方式**：步骤 5 之后跑上游 \`lit/vmi_new\` 与我们的用例，凡出现
   \`kVMIDiagLayoutContractPrefix\` + \`\"conflicting natural layouts\"\` / \`\"conflicting preferred layouts\"\`，
   按定义就是**步骤 5 之后不应存在**的错误（同一前缀仍被我们 planner 的失败诊断使用，所以不要误删前缀本身）。
+
+### 11.5 修复已完成并验证（由我直接做，不再等实现方）
+
+实现方在收到回归报告后迟迟没有产出（也没有建父提交的独立 build 目录做归因），所以我中断了它并自己动手。
+修复提交：**\`8bc4c428e vmi: keep every legal cast relation when attaching its intrinsic cost\`**（上游 worktree）。
+
+改法（只动两处，都是「恢复上游接受面」，代价字段仍按能力尽力填值）：
+
+1. \`collectMatchingCastFacts\`：把「代价算不出来就 \`continue\`（丢行）」改成
+   **尽力填值、无论如何都 push 该行**，并写明理由：这个漏斗定义的是**合法性**，
+   「代价无法推导」不等于「关系非法」；在这里丢行会收窄**所有调用方**（包括上游自己的布局决策）的候选集。
+2. \`makeMaskGranularityCastLayoutFact\`：返回类型从 \`FailureOr<...>\` 改回值类型（不再因代价失败），
+   调用方恢复无条件 push。
+   「丢弃未定价行」属于**fork 侧、由 solver 驱动的枚举**（步骤 3 落地时在那里恢复），不属于共享漏斗。
+
+**验证（按 §11.3 的四步仪式）**：
+
+* \`ninja -C <build> pto-test-opt\` → **exit=0**，日志 \`grep -ci error\` = 0（\`-Werror\` 下无告警）；
+* 二进制重新链接（relink 行可见），源码 mtime 早于二进制；
+* \`llvm-lit -j8 lit/vmi_new\` → **608 discovered / 606 passed / 2 failed**，
+  两个失败正是上游自带的 \`vmi_integer_reductions_i8_invalid.pto\` 与 \`vmi_ptodsl_vunzip_vzip_validation.pto\`；
+* 失败集合与基线**逐条相同**，不是只看数字。
+
+**结论**：Stage 1 的实质内容（事实结构、两个 cost 字段、\`VMILayoutSupportSolverCosts.inc\`）+ 修复提交
+= 既有我们需要的字段，又对上游决策路径行为中性。步骤 3 可以在这个状态上继续。
+
+> 过程教训已固化为规矩：**门禁必须「先重建、再跑、断言失败集合」**（§11.3）。
+> 这条规矩在本轮直接救回了一次 8 个用例的静默回归。
