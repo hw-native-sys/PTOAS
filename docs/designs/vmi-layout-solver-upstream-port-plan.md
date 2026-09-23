@@ -1322,3 +1322,18 @@ vexpdif 两族已在 Stage 2 完成。
 
 **应用前置**：仍要等步骤 2c（planner 进树）——\`applyLayouts\` 依赖 \`selectCostedVMILayoutPlans\`/\`commitVMILayoutPlan\`。
 应用后跑 \`validate_port.sh\`（含 PROVENANCE 行）复核。
+
+### 16.12 批次 D（F5）再分类：更像**重构**而不是新增能力
+
+把 F5 的 12 个 hunk 里真正“只有我们有”的符号抽出来看，只有两个名字：
+\`materializeStagingDeintToContiguousMaskLayout\` 与 \`materializeStagingContiguousToDeintMaskLayout\`（各 3 处调用）。
+但两棵树的命中情况是：**上游 2 个文件里有、fork 1 个文件里有**——也就是说它们上游也有。
+而 F5 另外涉及的 \`createPredicateIntlv\`（上游 \`VMIToVPTODataLayoutInternals.cpp\`）、
+\`materializeAdjacentMaskGranularityConversion\`（上游 \`VMIToVPTOPatternInternals4.cpp\`）同样上游都在。
+
+结论：**F5 的主体是对既有函数的改写/搬位，而不是新增能力**。因此批次 D 的正确做法与批次 F 一样——
+**逐 hunk 先问「上游这一版是否已经等价」**，等价的按 (a) 保留上游；预计真正需要移植的远少于 12 个 hunk。
+这与 §13.9（F8）同型：**hunk 数不代表工作量**，先分类再动手。
+
+> 待办：批次 D 落地时，对每个 hunk 记录「上游已有 / 需合并 / 需新增」三选一，并给出 file:line 证据——
+> 与批次 C（§10.12）、批次 F（§13.9）保持同一标准。
