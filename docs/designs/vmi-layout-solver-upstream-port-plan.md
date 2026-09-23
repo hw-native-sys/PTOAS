@@ -2359,3 +2359,39 @@ F2 的依赖是"step-3 的 \`validateCastOperationRelation\` 查询存在"——
   * \`:710\`（F7 h2）：该处位于 \`alreadyCompact = laneStride == 1\` 的**else 分支**之后，所以那一类**不可能出现**，谓词在该分支内一致；但查询仍可能因其他原因失败，所以**仍需 \`succeeded()\` 守卫**，并保留原有的"计算布局"作为 else 路径——**该处不是语义变更**。
   * \`:1142\`（F3 h4）：**不是纯重构**。上述那一类 store 将**不再被判为 Compact**，而是落到 \`:1147\` 的 \`checkSupportedGroupSlotsStoreShape\`，即**换了一个校验器**，可能改变通过/失败/诊断。**必须作为行为变更来实测**（分诊方判断新行为"很可能是对的"：laneStride=1 的包本来就是 packed 形态，不需要 staging），但**由实测决定**。
   → **判决**：F3 h4 允许作为**行为变更**落地，附三条硬条件（严格子集；任何现在通过的用例若改变结局必须作为新增上报，回归或未解释的计划变化即回退；提交信息须写明语义与"由实测决定"）。
+
+## 19.19 批次 B（F2）实测：**回归两个用例，已回退**；并**推翻我自己的一处判决**
+
+### 19.19.1 实测
+
+三处改动按约定落地（共享模板 \`:902-907\`、F2 h3 照字面插 \`:910\`、F2 h5 只换 \`:1422-1426\`），门禁结果：
+
+* \`ninja\` exit 0、0 error；**G2 逐单元符号数前后完全一致**；
+* \`lit/vpto\` **620/619/1 不变**（仍是既有的 \`vpto/vmi_f4x2_to_bf16x2_vcvt_llvm.pto\`）；
+* \`lit/vmi_new\` = **608 / 539 / 69** —— 比基线 \`608/541/67\` **多两个失败**，**严格子集条件不成立**。
+
+失败集合差（对 68 期集合）：
+
+    < vmi_layout_assignment_group_reduce_s12_invalid.pto      （预期，来自 b58fa790f）
+    > vmi_to_vpto_compress_tail_invalid.pto                   （新增，回归）
+    > vmi_to_vpto_group_slot_widen.pto                        （新增，回归）
+
+两条新增**干净地各自对应一个半批**：
+
+* \`vmi_to_vpto_compress_tail_invalid\` → **F2 h5 半**：用 \`getReduceLayoutFactForLayouts\` 替换 contiguity 守卫，改变了"哪些非法 compress 形状被拒"以及拒绝的消息/阶段；
+* \`vmi_to_vpto_group_slot_widen\` → **共享同宽半**：\`validateCastOperationRelation\` 严格强于旧的"布局相等 + arity 相等"，于是**把 lowering 变得比上游更严**。
+
+已按要求**整批回退**（没有"丢掉一半试图抢救"），并复核：文件已 \`git checkout\`、树干净、\`ninja\` exit 0、\`lit/vmi_new\` 回到 **608/541/67**（与基线逐字节一致）。
+
+### 19.19.2 推翻我自己的判决（第 N 次，如实记录）
+
+我在 §19.17.3 判"可以复用 \`validateCastOperationRelation\` 作为共享 support 谓词，让两个阶段由构造保持一致"。**实测把它推翻了**：
+\`vmi_to_vpto_group_slot_widen\` 在 **pre-port 是通过的**，所以那个组合在**本 base 上确实可下降** —— 一个拒绝它的谓词对 lowering 而言就是**过宽**，无论它在 planner 里有多正确。
+于是新的判决：**lowering 里只加 support 的 fact 查询（\`getSameWidthCastLayoutFact\`），保留原来的"布局相等 + 物理 arity 相等"检查，不引入 solver 的拒绝闸**。这仍然落地了 F2 的意图（形状检查去问共享 support 模型），却不会让 lowering 比上游更严。
+
+### 19.19.3 拆成两个子批次（已下达）
+
+* **B1 = F2 h5 单独**：若 \`compress_tail_invalid\` 翻转，问题是"新拒绝是否与旧拒绝同因"；该用例是**负例**，其期望文本就是契约 —— 若消息或阶段变了，则 **contiguity 守卫必须保留**，fact 查询作为**附加检查**而不是替代。
+* **B2 = 共享同宽改动 + F2 h3，但去掉 \`validateCastOperationRelation\`**：按 19.19.2 的新判决落地并实测；若 \`group_slot_widen\` 保持通过且失败集合是 \`608/541/67\` 的严格子集，则提交。
+
+每个提交信息必须写明它属于哪个半批、改动前后数字、以及失败集合差。
