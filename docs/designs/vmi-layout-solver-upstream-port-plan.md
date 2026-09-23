@@ -765,3 +765,31 @@ payload 位宽 ∈ (0,256) 且 %32==0、rowStride==1），且只在 \`getGroupSt
 
 **批次 C 的门禁**：\`vmi_to_vpto_group_store_compact_small.pto\` 两条 RUN、\`vmi_layout_assignment_group_slot_load*\`、
 \`vmi_interleaved_memory_ops.pto\`，加上「重建后」的上游 608/606/2 三条断言（见 §11.3 的四步仪式）。
+
+### 10.13 步骤 5 的子决策：上游 seed 写入点的硬错误必须去掉，但写入要留
+
+§8.5 的 R5 说「上游约束遍历的硬错误面仍由已死的偏好驱动」。本轮读代码把处置方式定下来。
+
+\`setNaturalLayout\`（upstream \`VMILayoutAssignment.cpp:418-436\`）与 \`setPreferredLayout\`（438-456）各做三件事：
+（1）写 \`dataNodes[root].naturalLayout/preferredLayout\`；（2）push 一条 \`DataLayoutSeed\`；
+（3）**当同一个 root 已经有不同值时直接 \`emitError\`**：\`\"conflicting natural layouts\"\` / \`\"conflicting preferred layouts\"\`。
+调用点约 **17 处 \`setNaturalLayout\` + 10 处 \`setPreferredLayout\`**，全部在我们要保留的约束遍历 \`addConstraints\` 里。
+
+步骤 5 之后的状态：我们的 \`applyLayouts\` 从不调用 \`propagator.run()\`，
+\`dataLayoutSeeds\` 的**唯一读者**是 \`2046/2057\`（就在被删掉的 seed 机制里），所以 seed 向量与 root 布局**变成惰性**。
+但**那条硬错误是活的**——它由 \`addConstraints\` 触发，而 \`addConstraints\` 我们要保留。
+
+后果：步骤 5 之后，同一个值有两个消费者、各自偏好不同布局时，pass 会**直接以布局契约错误中止**，
+而我们的代价求解器本可以合法地插入一次转换来解决——这是 fork 侧**根本不存在**的新失败模式。
+
+**处置（建议，写入步骤 5 的实现清单）**：
+
+* **去掉这两处 \`emitError\`**（改为不报错、后写覆盖或忽略），但**保留写入**。
+  理由是 \`getDataLayout(value)\` 仍被保留代码读取（\`670\` 在约束遍历里、\`1887\` 在 \`rewriteDataTypes\` 里虽然已是死代码），
+  一旦把写入也删掉，\`getDataLayout\` 的结果会变，进而可能改变 \`addConstraints\` 建立的等价关系——那是**另一处静默行为变化**。
+  留写入、只去错误，是 6 行左右的改动，行为上刚好满足要求。
+* 更彻底的方案（把这两个函数连同 27 个调用点、\`dataLayoutSeeds\`、\`DataLayoutSeedPhase\` 全删）不必在本轮做：
+  收益是去掉死代码，风险是在 976 行的约束遍历里动 27 处。留到步骤 5 之后、用例全绿时再作为清理单独提交。
+* **探测方式**：步骤 5 之后跑上游 \`lit/vmi_new\` 与我们的用例，凡出现
+  \`kVMIDiagLayoutContractPrefix\` + \`\"conflicting natural layouts\"\` / \`\"conflicting preferred layouts\"\`，
+  按定义就是**步骤 5 之后不应存在**的错误（同一前缀仍被我们 planner 的失败诊断使用，所以不要误删前缀本身）。
