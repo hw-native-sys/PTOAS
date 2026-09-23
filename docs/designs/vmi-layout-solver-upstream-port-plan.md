@@ -1039,3 +1039,24 @@ F4 只有 2 个 hunk，但内容上其实是三类改动：
   以及 \`dce6afea0\`/\`067da4864\` 引入的组合式 dense 物化）；若等价则按 (a) 保留上游，避免重复覆盖后多出一对
   \`vintlv\`/\`vdintlv\`——这正是盘点给的探测手段（\`vmi_to_vpto_memory_x2_widths.pto\`、\`vmi_interleaved_memory_ops.pto\`）。
 * 门禁仍按 §10.4：本批次以**符号级 pattern-class diff** 为主，lit 在步骤 5 之前只能当辅助证据。
+
+### 13.11 packed-store-mask 的测试已出现，并且我做了**反证检查**
+
+任务产出了 \`test/lit/vpto/vpto_normalize_packed_store_mask.pto\`（183 行，两条 RUN）：
+
+* 管线级：\`ptoas --pto-arch=a5 --pto-backend=vpto --emit-vpto %s -o - | FileCheck --check-prefix=VPTO\`；
+* pass 级：\`pto-test-opt %s -vpto-normalize-packed-store-mask | FileCheck --check-prefix=PASS\`。
+
+用例里出现 \`pto.vsts\`(31)、\`pto.pset_b32\`(18)、\`pto.pbitcast\`(10)、\`pto.pset_b8\`(9)、\`pto.pge_b32\`(5)，
+从分布看同时覆盖了改写侧（\`pset_b32\` → \`pset_b8\` + \`pbitcast\`）与应当保持原样的运行时谓词侧（\`pge_b32\`）。
+
+**独立验证（两步，都做了）**：
+
+1. 直接跑：\`llvm-lit lit/vpto/vpto_normalize_packed_store_mask.pto\` → **PASS**（用 fork 现有二进制，未重新构建）；
+2. **反证**：把副本里第二条 RUN 的 \`-vpto-normalize-packed-store-mask\` 去掉，再跑 → **FAIL**。
+   说明这些 CHECK **确实依赖该 pass 生效**，不是「怎么跑都能过」的空转测试。
+
+第二条尤其重要：这正是前面抓过的两类假信号（旧二进制、脏树）之外的另一类——**测试自己没在测东西**。
+凡新增 pass/行为的测试，都应当做一次这样的反证（去掉被测对象后必须变红），否则它只会给人虚假的信心。
+
+测试文件目前仍未被作者提交（\`git status\` 里是未跟踪状态），我不越俎代庖，等它按流程提交。
