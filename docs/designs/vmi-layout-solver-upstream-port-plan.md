@@ -61,7 +61,9 @@ layout 决策引擎，整体搬到 `origin/master` 上（比我们的分叉点�
 |---|---|---|---|---|
 | 0 | 提交 vexpdif layout 层；`VMIDIAG` 埋点不进提交 | `VMILayoutSupport.{h,cpp}`、`VMILayoutPlanner.cpp`、`VMIMaskGranularityAssignment.cpp` | 0.5 天 | `lit/vmi_new` 不变（12 failed） |
 | 1 | 从 `origin/master` 拉 `feature/vmi-layout-solver-upstream` 到独立 worktree；先确认上游自己能构建 | - | 0.5 天 | 上游 `pto-test-opt` + `lit/vmi_new` 全绿 |
-| 2 | 搬运“无侵入”文件：3 个头文件 + `VMILayoutPlanner/CostModel/ConflictSolver.cpp` → `lib/PTO/Transforms/VMI/`，加上一致性工具 `tools/pto-test-opt/pto-test-vmi-layout-cost-conformance.cpp`；补 CMake | `lib/PTO/Transforms/CMakeLists.txt`、工具 CMake | 0.5 天 | 编译通过且行为不变 |
+| 2 | 搬运**真正无侵入**的部分：3 个头文件 → `include/PTO/Transforms/`，`VMILayoutConflictSolver.cpp` → `lib/PTO/Transforms/VMI/`，补 CMake | `lib/PTO/Transforms/CMakeLists.txt`、header CMake | 0.5 天 | `VMILayoutConflictSolver.cpp` 零改动编译通过（**已实测验证**） |
+| 2b | `VMILayoutCostModel.cpp` 是**半侵入**的：实测只缺 6 个符号——3 个事实字段（`VMIEnsureLayoutFact::forwardsPhysicalParts`、`VMIEnsureMaskLayoutFact::forwardsPhysicalParts`、`VMIGroupStoreLayoutFact::stagingLayout`）+ 3 个查询（`getGeneratedMaskLayoutFact`、`getInterleaveStoreSupport`、`getSameLayoutRelationSupport`）。注意 `forwardsPhysicalParts` 不能只补字段：必须把上游 ensure-layout 事实构造处真正计算它的逻辑一起搬，否则代价模型永远读到 false（那就成了假规则） | `VMI/VMILayoutSupport.{h,cpp}` + `.inc` | 1-1.5 天 | 代价模型编译通过 + ensure-layout 相关一致性用例输出与主树一致 |
+| 2c | `VMILayoutPlanner.cpp`（2688 行）与一致性工具**不是**无侵入：planner 依赖 `VMILayoutPropagation.h`（我们的 exact-mode 协议）与 44 处 `VMILayoutSupport::*` | - | - | 只能随步骤 3/4 一起进 |
 | 3 | **支持层合并（关键路径）**：采用上游表/DSL；把我们的 9 个枚举查询写成对 `...ForLayout` 的循环；两张 spine-scoped 表按普通候选源**无条件**枚举（不迁 `VMILayoutSpineAnalysis`，删掉它的 .h/.cpp/CMake 行/lit）；只保留我们真正新增的表（`kVexpdifLayoutPatterns` 5 行、`kGeneratedMaskStagingPatterns` 4 行）和我们自己的事实字段（`intrinsicRearrangementCost`、`stagingLayout`、`forwardsPhysicalParts`、`VMIReduceLayoutFact`、`VMIGeneratedMaskLayoutFact`、`VMIInterleaveStoreSupport`、`VMIVexpdifLayoutFact`） | `VMI/VMILayoutSupport.cpp` + `.inc` 表 + `VMILayoutSupport.h` | 4-6 天 | **用上游自己的决策链路跑上游测试仍然通过**（这是“合并行为中性”的证明） |
 | 4 | 传播器合并：保留上游传播器的分析入口（**不含** spine scope 集合，`setSpineScopedCastOps/isSpineScopedCast` 删除），加上我们的 `requestExact/installPlanned/endExactRequests/getRequestedLayout(OpOperand&)`；消掉唯一重名符号 `isVMISameLayoutOp`（采用上游的算子集合，因为分类现在来自上游分析） | `VMI/VMILayoutPropagation.cpp` 及头文件 | 1.5-2 天 | 链接干净；class-edge 相关 lit 全绿 |
 | 5 | 替换决策：在上游 `applyLayouts()` 里插入我们的 `selectLayoutPlan()` + `commitVMILayoutPlan()`（以及我们的结构化 seeding），删掉那 4 处 seed 调用；保留 `collect/materializeCallBoundaries/insertDataUseMaterializations/rewriteFunctionType/validateVMILayoutAssignedIR` | `VMI/VMILayoutAssignment.cpp`（约 500 行改动） | 2-3 天 | 我们的 26 个一致性测试通过 |
@@ -226,3 +228,21 @@ build `.work/upstream-port/builds/vmi-layout-solver-upstream`，LLVM 19.1.7）�
    都要按上游新行为**逐条重判**，不是简单重打。
 4. 探针脚手架留在 `/tmp/probe_upstream.sh`（结果 `/tmp/probe_all.txt`），
    步骤 3/5 每完成一段都可以重跑同一批用例，看失败性质是否从 (b)/(c) 收敛。
+
+### 7.7 步骤 2 已落地（上游 worktree 内）
+
+* 已搬运并**零改动编译通过**：`VMILayoutPlanner.h`、`VMILayoutCostModel.h`、`VMILayoutConflictSolver.h`
+  → `include/PTO/Transforms/`，`VMILayoutConflictSolver.cpp` → `lib/PTO/Transforms/VMI/`，
+  并在 `lib/PTO/Transforms/CMakeLists.txt` 加行；提交 `81b78d21c`（上游 worktree 分支
+  `feature/vmi-layout-solver-upstream`）。`libPTOTransforms.a` 与 `pto-test-opt` 链接通过。
+* `VMILayoutCostModel.cpp` 暂不入库、CMake 行也先不加（保持基线可链接），它缺的 6 个符号见步骤 2b。
+* **上游基线已记录**：`llvm-lit -j8 lit/vmi_new` = 608 个用例，606 通过，2 个失败——
+  `vmi_integer_reductions_i8_invalid.pto` 与 `vmi_ptodsl_vunzip_vzip_validation.pto`，
+  都是上游自带的失败，与本步骤新增代码无关（新增符号没有任何 pass 引用，未进入流水线）。
+  这 2 个即步骤 3 的**通过率基线**，后续合并不得让它变差。
+
+### 7.8 附带清理 PR
+
+[hw-native-sys/PTOAS#1576](https://github.com/hw-native-sys/PTOAS/pull/1576)（draft）：
+删掉 `origin/master` 上误提交的 `.ptoas-workspace.json` 与 `env.sh`，并在 `.gitignore`
+根锚定地忽略它们；分支 `chore/drop-workspace-metadata` @ `4925e9ed8`，3 个文件 +2/-22。
