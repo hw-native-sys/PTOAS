@@ -412,3 +412,17 @@ solver 一共调用 **46 个** \`VMILayoutSupport\` 方法（48 个签名；plan
 * 判据写法：只要求**方向与量级**复现；同参数重复跑会有 ±3 ticks 抖动，差异小于约 1% 视为噪声。
 
 （\`/tmp/cases_root\` 与 \`~/msprof-op-simulator-runs\` 仍在，但 /tmp 会被清理，所以必须有这份冻结副本。）
+
+### 8.7 对 §8.3 的一处更正：vintlv/vdintlv 那 6 行不是我们独有的行
+
+移植任务在通读阶段发现并报回：fork 的 \`kVintlvLayoutPatterns\` / \`kVdintlvLayoutPatterns\` 里那 3+3 行，
+与上游对应的行**是同一条物理关系**，只是元素位宽掩码更窄（我们 \`bits<8,16,32>\`，上游 \`bits<8,16,32,64>\`）。
+把它们插到上游行之前会有两个后果：**静默丢掉 64-bit 支持**，以及 \`getAllInterleaveLayoutFactsImpl\`
+不做事后去重、于是返回重复事实。
+
+结论（已批准）：**这 6 行不注入**，保留上游更宽的行，并在提交信息里记录「fork 的窄行被上游的宽行取代」。
+因此真正需要整族/整行搬过来的只剩：\`kVexpdifLayoutPatterns\`（6 行整族）、
+\`kGeneratedMaskStagingPatterns\`（4 行整族，2b 已搬），以及其余按上游 DSL 表达仍成立的独有行。
+
+这条也定了一条工作方式：**证据不足就报「无法忠实表达」，而不是注入一条会静默改变语义的行**——
+与本移植一贯的判准一致（宁可留下一条显式声明，也不接受假规则）。
