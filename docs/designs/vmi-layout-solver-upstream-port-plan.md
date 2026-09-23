@@ -66,7 +66,7 @@ layout 决策引擎，整体搬到 `origin/master` 上（比我们的分叉点�
 | 2c | `VMILayoutPlanner.cpp`（2688 行）与一致性工具**不是**无侵入：planner 依赖 `VMILayoutPropagation.h`（我们的 exact-mode 协议）与 44 处 `VMILayoutSupport::*` | - | - | 只能随步骤 3/4 一起进 |
 | 3 | **支持层合并（关键路径）**：采用上游表/DSL；把我们的 9 个枚举查询写成对 `...ForLayout` 的循环；两张 spine-scoped 表按普通候选源**无条件**枚举（不迁 `VMILayoutSpineAnalysis`，删掉它的 .h/.cpp/CMake 行/lit）；只保留我们真正新增的表（`kVexpdifLayoutPatterns` 5 行、`kGeneratedMaskStagingPatterns` 4 行）和我们自己的事实字段（`intrinsicRearrangementCost`、`stagingLayout`、`forwardsPhysicalParts`、`VMIReduceLayoutFact`、`VMIGeneratedMaskLayoutFact`、`VMIInterleaveStoreSupport`、`VMIVexpdifLayoutFact`） | `VMI/VMILayoutSupport.cpp` + `.inc` 表 + `VMILayoutSupport.h` | 4-6 天 | **用上游自己的决策链路跑上游测试仍然通过**（这是“合并行为中性”的证明） |
 | 4 | 传播器合并：保留上游传播器的分析入口（**不含** spine scope 集合，`setSpineScopedCastOps/isSpineScopedCast` 删除），加上我们的 `requestExact/installPlanned/endExactRequests/getRequestedLayout(OpOperand&)`；消掉唯一重名符号 `isVMISameLayoutOp`（采用上游的算子集合，因为分类现在来自上游分析） | `VMI/VMILayoutPropagation.cpp` 及头文件 | 1.5-2 天 | 链接干净；class-edge 相关 lit 全绿 |
-| 5 | 替换决策：在上游 `applyLayouts()` 里插入我们的 `selectLayoutPlan()` + `commitVMILayoutPlan()`（以及我们的结构化 seeding），删掉那 4 处 seed 调用；保留 `collect/materializeCallBoundaries/insertDataUseMaterializations/rewriteFunctionType/validateVMILayoutAssignedIR` | `VMI/VMILayoutAssignment.cpp`（约 500 行改动） | 2-3 天 | 我们的 26 个一致性测试通过 |
+| 5 | 替换决策：在上游 `applyLayouts()` 里插入我们的 `selectLayoutPlan()` + `commitVMILayoutPlan()`（以及我们的结构化 seeding），删掉那 4 处 seed 调用；保留 `collect/materializeCallBoundaries/insertDataUseMaterializations/rewriteFunctionType/validateVMILayoutAssignedIR` | `VMI/VMILayoutAssignment.cpp`（约 500 行改动） | 2-3 天 | 我们的 32 个一致性测试通过 |
 | 6 | 注册：CMake、`Passes.td`/`Passes.h` 里加 `vpto-normalize-packed-store-mask`，在 `tools/ptoas/ptoas_pipeline.cpp` 的 `appendVMISemanticPipeline()` 之后、`prepareVPTOForEmission()` 之前挂上 | 5 个文件 | 0.5-1 天 | `ptoas --emit-vpto` 输出 b8 谓词形式 |
 | 7 | 在约 20 个上游单元里按 pattern family 逐个重放 VMIToVPTO 的 delta（单项最大，与步骤 3 并行） | `lib/PTO/Transforms/VMIToVPTO/*` | 4-6 天 | 步骤前后做 pattern class 级别的符号 diff |
 | 8 | 测试：搬入我们新增的 42 个测试；手工合并 45 个被修改的（其中 23 个上游也改过）；上游表/下沉变化导致期望变化的重打 | `test/lit/vmi_new/` | 3-4 天 | `lit/vmi_new` 每个失败都有逐条解释 |
@@ -97,7 +97,7 @@ layout 决策引擎，整体搬到 `origin/master` 上（比我们的分叉点�
 |---|---|
 | E2B / group-broadcast 策略冲突 | 第 1 天：装上我们的 planner 后跑上游的 `vmi_layout_assignment_group_slot_broadcast_load_e2b_b16.pto` 和 `vmi_extf_8bit_factor_contract.pto` |
 | `isVMISameLayoutOp` 重名且算子集不一致 | 链接报错，或消解之后的 class-edge lit |
-| 枚举查询按 `...ForLayout` 重写后值域不全 | 用 planner debug 跑 26 个一致性测试：期望看到“无完整合法 plan”的硬失败，而不是错误代码 |
+| 枚举查询按 `...ForLayout` 重写后值域不全 | 用 planner debug 跑 32 个一致性测试：期望看到“无完整合法 plan”的硬失败，而不是错误代码 |
 | 去掉 spine scope 后候选变宽，代价模型选错（反而选中会多出 `pto.vor` 的行） | 上游 spine-scoped 相关的 lit（chain 形状那几个）**一条不改**地在我们的 solver 下跑：期望仍选中复合行且 `merges + interleaves = 0`；否则是第 2 层的定价问题 |
 | 合并时漏掉上游独有的表行 | CI 门禁：逐表行数对比 66/93 基线，每一行上游独有行都要显式给出归类 |
 | VMIToVPTO 重放时丢 pattern family | 步骤 7 前后对 20 个单元做 pattern class 级符号 diff |
@@ -361,5 +361,11 @@ solver 一共调用 **46 个** \`VMILayoutSupport\` 方法（48 个签名；plan
 * 未做全仓 clang-format（仓库本身不是 format-clean，且 pre-commit 钩子全局排除了该检查），保持周围手写风格。
 
 **下一步（已启动）**：一个后台任务按阶段推进 3a→3d + 传播器接口 + 步骤 2c（搬 planner 与一致性工具），
-每阶段都跑 \`ninja pto-test-opt\` 与上游 608/606/2 门禁；最终门禁是把 fork 的 **26 个 \`vmi_layout_cost_conformance_*\` 用例**
+每阶段都跑 \`ninja pto-test-opt\` 与上游 608/606/2 门禁；最终门禁是把 fork 的 **32 个 \`vmi_layout_cost_conformance_*\` 用例**
 搬进上游树运行——这是移植后的支持层第一次拿到真正的功能证据。
+
+### 9.1 一致性套件基线（fork 树实测）
+
+\`llvm-lit -j8 --filter cost_conformance lit/vmi_new\` 在 fork 树（\`.work/build-llvm19\`）= **32 个用例全过**（567 发现 / 535 排除 / 32 通过）。
+因此移植后的门禁是 **32/32**：支持层每补一块，都可以用这 32 个用例的通过数来判断差距，而不是靠“看起来搬完了”。
+（此前文档里写的 26 是错的，实际 32 个文件：\`test/lit/vmi_new/vmi_layout_cost_conformance_*.pto\`。）
