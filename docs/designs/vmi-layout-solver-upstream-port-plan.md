@@ -2182,3 +2182,22 @@ group_broadcast 的 preferred 路线 → extf 的有界实验 → 两个 \`opt/\
 
 分诊方按优先级 2–4 继续：两条**诊断**提交（\`group_reduce\` 的 reason 透传、component 消息点名算子与两个布局；预期各自**删掉**一个失败项）→ \`group_load\`/\`validateGroupLoadLayoutPlan\` 调查 → 两个 \`opt/\` 的 witness 表。
 随后主线接树做步骤 7 批次 B–G。
+
+## 19.14 优先级 2(i)：主线自己落地（提交 7 = \`b58fa790f\`）
+
+分诊方的 2(i) 已经把事实查清（不需要再挖），所以这一条由主线直接实现：
+
+* **事实**：期望文本两半都是**上游原文**——前半由 \`PTOValidateVMIIR\` 报出，后半由 \`buildGroupReduceLayoutKey\` 提供，
+  且 \`git log -S "has no registered group_slots layout support" 1c1bba8cc..HEAD\` 为空（无移植提交碰过这句）。
+  我们的 provider 在**同一形状上更早**失败，而 group-reduce 分支**丢掉了 family query 已经产出的 reason**，只报通用句。
+* **改动**：分支保留该 reason；\`reportMissingRelation\` 对 legacy group-reduce 家族按**形态检查的措辞**报出。
+  **仅诊断**：同阶段、同失败、无验收/代价/表行/测试改动。
+* **实测**：\`608 / 540 / 68\` → **\`608 / 541 / 67\`**；失败集合**严格子集**（只删 \`vmi_layout_assignment_group_reduce_s12_invalid\`，无新增）；
+  \`ninja\` exit 0 / 0 error；合规检查器 **0 error / 0 warning**。
+* **实际报出的原文**（与测试 CHECK 逐字一致）：
+  \`loc(...):19:12: error: VMI-LAYOUT-CONTRACT: pto.vmi.group_reduce_addf has no registered group_slots layout support: group_reduce layout table has no row for this group size\`
+* **一条代码形状的说明（诚实记录）**：条件被提升为具名 bool。合规预过滤器的 \`G.FMT.11-CPP\` 正则会把 \`if (call() && ...) {\` 这种内联条件误判为"无花括号体"——这是该正则的已知假阳性；
+  提升后既可读又让检查器安静，且行为完全不变。
+
+**新基线**：HEAD \`b58fa790f\`，\`lit/vmi_new\` = **608/541/67**（真硬失败 8 + 负例文本位移 3 + FileCheck-only 56）。
+下一条（2(ii)）已按"一次只做一件事"派给分诊方：若在该失败点无法在不引入新状态的前提下恢复"算子 + 操作数序号 + 两个布局"，就直接停下来报我。
