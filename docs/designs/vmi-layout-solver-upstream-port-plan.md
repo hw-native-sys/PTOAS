@@ -246,3 +246,24 @@ build `.work/upstream-port/builds/vmi-layout-solver-upstream`，LLVM 19.1.7）�
 [hw-native-sys/PTOAS#1576](https://github.com/hw-native-sys/PTOAS/pull/1576)（draft）：
 删掉 `origin/master` 上误提交的 `.ptoas-workspace.json` 与 `env.sh`，并在 `.gitignore`
 根锚定地忽略它们；分支 `chore/drop-workspace-metadata` @ `4925e9ed8`，3 个文件 +2/-22。
+
+### 7.9 全量漂移盘点：我们 567 个用例喂给上游（/tmp/upstream_drift.sh）
+
+把 `test/lit/vmi_new` 全部 567 个用例的第一条 RUN 行喂给上游二进制，分类结果：
+
+| 结果 | 数量 | 含义 |
+|---|---|---|
+| PASS | 383 | 上游原样接受（我们 2/3 的套件不受影响） |
+| FileCheck 不匹配 | ~156 | 输入相同、**产出 IR 文本不同**（上游表事实/决策/lowering 的差异） |
+| 硬报错（stdin 为空） | 24 | 上游**拒绝**这条流水线（`VMI-UNSUPPORTED` 一类新护栏） |
+| 解析失败 | 1 | `opt/fused_quant_dequant_vmi_opt.pto`：`pto.castptr` 现在要求 signless `i64`（我们写的是 `ui64`，共 7 个用例有此写法，但只有这 1 个被新校验挡住） |
+| 其他 | 2 | — |
+
+**对步骤 8 的修正**：
+
+1. 真正必须处理的硬约束只有 **24 个硬报错 + 1 个解析**；156 个 FileCheck 差异**不要现在去对齐**——
+   它们是我们按自己的 solver 刷过的期望，而步骤 5 之后决策权回到我们的 solver，
+   这批用例的期望应当**在步骤 5 完成后重新测量**再定，提前对齐等于把上游的决策抄进我们的测试。
+2. 7 个 `pto.castptr ... : ui64` 的用例无论如何都要改成 signless `i64`（纯方言更新，与决策无关）。
+3. 这 24 个硬报错就是上游给的**新约束清单**，步骤 3/5 的候选枚举必须保证不再选出这些被拒的布局，
+   它们同时也是我们 solver 决策正确性的天然测试。
