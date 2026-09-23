@@ -1458,3 +1458,16 @@ Stage 3 收尾清单第 4 条写明：**若干 fork 独有行被刻意不注入�
 
 **结论**：差分门禁的「134 vs 339」缺口，其可解释部分就落在这 5–6 个文件的方言更新上；
 这是**有界、可核对**的工作量，而不是大范围重写。做法（按 §18.4 的顺序）：先更新输入 → 用同一批输入重生成 fork 侧参考 dump → 再差分。
+
+#### 18.5.1 搬运脚本的 legacy 检测 bug 已修并**自证**
+
+上一轮扩展 \`step8/copy_tests.sh\` 时，legacy 算子检测报 0——与「\`elementwise.pto\` 明确含 \`pto.vmi.addf\`」的事实矛盾，
+说明正则（多层引号/转义嵌套）没生效，会**静默漏掉**需要真正重写的文件，而它们正是差分缺口的主因。
+
+已改为不含反斜杠转义的写法 \`pto[.]vmi[.](addf|addi|…)[^a-z]\`，并用**已知含 legacy 算子**的文件做自证：
+
+    copy_tests.sh --dry-run --only vmi_layout_cost_conformance_elementwise.pto
+      LEGACY-OPS vmi_layout_cost_conformance_elementwise.pto : needs a real rewrite, not a rename
+      copied=1 … legacy_reports=1  (dry=1)
+
+规矩再次生效：**量具必须用它本该命中的正例去验一次**，否则 0 报告与「真的没有」无法区分。
