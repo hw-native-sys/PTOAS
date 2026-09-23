@@ -394,3 +394,21 @@ solver 一共调用 **46 个** \`VMILayoutSupport\` 方法（48 个签名；plan
 * 注意每个用例的第二条 RUN 用 \`-test-vmi-layout-lowering-conformance\`，该 pass 上游同样没有；
   它与 cost 版**在同一个文件里**（\`tools/pto-test-opt/pto-test-vmi-layout-cost-conformance.cpp\`，526 行），
   所以 2c 只要搬这一个文件就两个 pass 都有。
+
+### 9.3 端到端性能复现环境已冻结
+
+完成判据里要求「\`gbmc-amp-dep\`、\`truncf-amp2\` 的性能结论可复现」，所以把产生这些结论的整套环境
+冻进了 \`.work/upstream-port/perf/\`（241 MB，含 \`sim-runs/\` 原始 profile）：
+
+* \`cases/\`：9 个自包含用例（\`gbmc-amp-c6/c18/dep\`、\`gbmc-multilaunch\`、
+  \`group-broadcast-multi-consumer-amplified\`、\`truncf-amp\`、\`truncf-amp2\`、\`eltwise-k1/k2\`），
+  每个含 \`kernel.pto\` + \`ptoas.flags\` + \`main.cpp\`/\`launch.cpp\` + \`golden.py\`/\`compare.py\`。
+* 脚本：\`capture5.sh\`（逐 RUN 捕获 lowering 产物，先做 IR 层对比再花仿真机时）、
+  \`cmp5.sh\`/\`cmp_dep.py\`/\`truncf_cmp.py\`（两变体产物对比）、\`loop_period.py\`（从 trace 提稳态循环周期）、
+  \`nomat_list.txt\`。
+* 记录基线（fork 树、移植前）：packed-truncf 32 迭代 MERGE 3011 ticks vs SPLIT 3277（修 absorption 前）/3076；
+  \`gbmc-amp-dep\` MERGE 0.927 µs vs SPLIT 0.960 µs（+3.4%）；\`eltwise-k1/k2\` 都是 809.0 ns（store 数中性）；
+  计算幅度差 +1.00/+0.44/+1.375 ns/iter。
+* 判据写法：只要求**方向与量级**复现；同参数重复跑会有 ±3 ticks 抖动，差异小于约 1% 视为噪声。
+
+（\`/tmp/cases_root\` 与 \`~/msprof-op-simulator-runs\` 仍在，但 /tmp 会被清理，所以必须有这份冻结副本。）
