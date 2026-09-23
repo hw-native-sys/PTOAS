@@ -1722,3 +1722,56 @@ group_store 族因此需要**另找根因**（初次的修法不成立），而�
 | 待做 | 剩余约 14 个硬失败 → 步骤 6（pass 接线，脚本已备）→ 步骤 7（A–G 批次，逐族 patch 已备）→ 步骤 8（测试搬运与重测）→ 步骤 9（全门禁 + A5 + 性能复测）|
 
 判据不变：硬失败归零、上游基线配置下失败集合不变、一致性 33/33、差分在修正后的量具（路径规范化 + 输入方言更新）下可比、端到端性能方向复现。
+
+## 19. 硬失败分诊完成（16 个已修，假设被证伪）
+
+### 19.1 数字（每个提交都断言失败集合是前一个的严格子集，0 回归）
+
+| 修订 | 全量 | 相对上一状态 |
+|---|---|---|
+| 657590cd7（步骤 5）| 608 / 500 / 108 | — |
+| 914368bec（stride_store 的 mask 操作数）| 608 / 502 / 106 | +2 |
+| 453ed8e3b（无注解结果不再钉住）| 608 / 519 / 89 | +17 |
+| 5cc2fe723（pre-lowering 统一拼写）| 608 / 528 / 80 | +9 |
+
+族分布变化：硬失败 60 → **16**；FileCheck-only 46 → 62；上游自带 2 → 2。
+改动范围：只动 VMILayoutPlanner.cpp 与 VMILayoutAssignment.cpp，**0 个测试文件被触碰**，无共享表行注入，无 fork 专属包装。
+
+### 19.2 逐族归因（四条，全部修好）
+
+1. **ABI 边界缺陷（5 个）**：\`group_reduce_s64/_slots8/_s256\`、\`group4_broadcast_shape_matrix\`、\`group_reduce_addi_i16\`——
+   reduce/broadcast 的**唯一**关系产出 group-slots 结果（\`gs(8,1)\`、\`gs(8,8)\`、\`gs(4,8)ls2\`），而 \`func.return\` 被钉在 contiguous；
+   而**没有 ensure 行覆盖 \`gs(8,1)\`**（\`gsFit()\` 要求 num_groups ≤ slots），故无解。**这证实是边界缺陷，不是候选行缺口。**
+2. **方言元数缺陷（2 个）**：\`vmi_vsstb\`、\`vmi_to_vpto_stride_store\`——stride_store 的关系问了 \`operandPort(5)\`，
+   而上游该算子只有 **5 个操作数**（fork 是 6 个，mask 前多 \`repeat_stride\`），越界被当作硬错误直接中止搜索。
+3. **流水线顺序不匹配（9 个统一算子用例）**：上游管线在 \`-vmi-lower-unified-to-legacy\` **之前**就跑布局赋值，
+   而关系提供者（来自 fork）没有统一拼写的分支，fork 的管线又总是先降级——归因类别是「完全是另一回事」。
+4. **\`type of return operand\`（15 个）**：同一个 ABI 钉住问题——钉住迫使 return 处做转换，
+   而 \`rewriteFunctionType\` 读到的是赋值**之前**捕获的值类型，于是操作数类型与函数类型不一致。**同一个提交修好。**
+
+### 19.3 结论：我的假设被证伪（记在案）
+
+**Stage 3 那批「未注入的 fork 独有行」不是主因**：已修用例里**没有一个是缺候选行**，全部是移植后的 planner 自身假设有误
+（一个方言元数、一个上游从未有过的 ABI 钉住、一个流水线顺序不匹配）。因此我先前主张的「fork 专属包装」**没有必要**——
+分诊任务没有注入任何共享表行，也没有做包装。候选行缺口**确实存在，但只涉及 6 个用例**，不是 50 个。
+
+**我 §18.11 的建议被明确否证**：对 \`gs(8,slots=1)\` 这些形状，从 group-slots 到 contiguous **不存在 ensure_layout 行**，
+而且**上游测试本身**就把返回类型 CHECK 成 \`gs(8,1)\`；上游的 \`rewriteFunctionType\` 采纳返回值布局——所以正确做法是「边界不钉住」。
+这是我在此问题上第二次被实现方纠正（第一次是 §18.14），两次都已记录。
+
+### 19.4 剩余 16 个硬失败（都有具体位置）
+
+* **no-plan（5）**：\`opt/fused_quant_dequant_vmi_opt\` 167:17、\`vmi_compact_group_reduce\` 18:10、\`vmi_group_execution_paths\` 17:10、
+  \`vmi_explicit_integer_cast_reduction_paths\` 17:7、\`vmi_to_vpto_block_mask_granularity\` 34:10——
+  都是**多算子 component**，每个算子都有关系但 solver 找不到完整赋值；逐算子原因**未及查明**（诚实标注）。
+* **no-relation（9）**：\`pto.vmi.group_store\` ×6、\`pto.vmi.group_broadcast\` ×1、\`pto.vmi.extf\` ×1（新暴露）、
+  以及一个「负例测试」其诊断文本变了。**group_store 族已精确定位**：对 \`vreg<1xi8>/gs=1\`、\`vreg<4xf32>/gs=4\` 等形状，
+  **preferred 行本身是合法的**（实测 \`getPreferredGroupStoreLayoutFact\` 成功返回 \`gs(numGroups,8)\` 等），
+  只是该分支**仅在候选列表为空时才去问 preferred**；把 preferred 加进候选列表后实测 **80 → 80 且失败集合完全相同**
+  （只是把 \`no relation\` 变成 \`no plan\`），因此按「不许放宽」的规矩**回退了**——
+  并把它作为下一条线索：**行是可达的，真正的阻塞与 no-plan 族同源（solver 侧）**。
+* **其他（2）**：\`vmi_to_vpto_gs1_consumer_matrix\`（VMI-RESIDUAL-OP）、\`vmi_to_vpto_vselr_invalid\`（负例，诊断文本变了）。
+* 上游自带的 2 个失败不变。
+
+分诊任务还记录了修复后的失败集合到 \`probes/planned_fail_set.txt\`，并指出 \`gate.sh\` 的基线集合断言在 planner 驱动下
+自然成为当前集合的**子集**（符合预期）。
