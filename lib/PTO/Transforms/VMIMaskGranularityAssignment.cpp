@@ -186,6 +186,19 @@ struct MaskGranularitySolver {
     return success();
   }
 
+  /// Requests the data-element mask granularity for one masked bitwise vector
+  /// operation.  The bitwise mask operand is optional, so an unmasked op has no
+  /// operand whose granularity could be constrained.
+  LogicalResult requestBitwiseMaskUse(Operation *op, Value lhs,
+                                      MutableOperandRange masks) {
+    auto lhsType = dyn_cast<VMIVRegType>(lhs.getType());
+    if (!lhsType || masks.empty()) {
+      return success();
+    }
+    return requestMaskUse(
+        masks[0], getMaskGranularityForElement(lhsType.getElementType()), op);
+  }
+
   LogicalResult collect() {
     module.walk([&](Operation *op) {
       for (Value result : op->getResults()) {
@@ -236,31 +249,22 @@ struct MaskGranularitySolver {
       // shared across the whole family so a mask is never left at the
       // default b32 when operating on narrower integer elements.
       if (auto bitwise = dyn_cast<VMIVandOp>(op)) {
-        auto type = dyn_cast<VMIVRegType>(bitwise.getLhs().getType());
-        if (type && failed(requestMaskUse(
-                        bitwise.getMaskMutable()[0],
-                        getMaskGranularityForElement(type.getElementType()),
-                        op))) {
+        if (failed(requestBitwiseMaskUse(op, bitwise.getLhs(),
+                                         bitwise.getMaskMutable()))) {
           return WalkResult::interrupt();
         }
         return WalkResult::advance();
       }
       if (auto bitwise = dyn_cast<VMIVorOp>(op)) {
-        auto type = dyn_cast<VMIVRegType>(bitwise.getLhs().getType());
-        if (type && failed(requestMaskUse(
-                        bitwise.getMaskMutable()[0],
-                        getMaskGranularityForElement(type.getElementType()),
-                        op))) {
+        if (failed(requestBitwiseMaskUse(op, bitwise.getLhs(),
+                                         bitwise.getMaskMutable()))) {
           return WalkResult::interrupt();
         }
         return WalkResult::advance();
       }
       if (auto bitwise = dyn_cast<VMIVxorOp>(op)) {
-        auto type = dyn_cast<VMIVRegType>(bitwise.getLhs().getType());
-        if (type && failed(requestMaskUse(
-                        bitwise.getMaskMutable()[0],
-                        getMaskGranularityForElement(type.getElementType()),
-                        op))) {
+        if (failed(requestBitwiseMaskUse(op, bitwise.getLhs(),
+                                         bitwise.getMaskMutable()))) {
           return WalkResult::interrupt();
         }
         return WalkResult::advance();

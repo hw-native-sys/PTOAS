@@ -895,6 +895,39 @@ static constexpr VselrLayoutPattern kVselrLayoutPatterns[] = {
      c(), c(), c()},
 };
 
+/// Supported pto.vmi.vexpdif relations.  A row describes the layout of x and
+/// max (the mask always shares it, because the VPTO lowering requires the mask
+/// to keep the data's lane order and to keep matching its element width) and
+/// the layout of the result.  See VMIVexpdifLayoutFact for why the supported
+/// set is this small.
+struct VexpdifLayoutPattern {
+  ElementBitsPattern sourceBits;
+  ElementBitsPattern resultBits;
+  LayoutPattern sourceLayout;
+  LayoutPattern resultLayout;
+  bool preferred = false;
+};
+
+static constexpr VexpdifLayoutPattern kVexpdifLayoutPatterns[] = {
+    // An f32 source keeps its element width: x/max, the mask, and the result
+    // stay in one lane_stride = 1 layout.
+    {bits<32>(), bits<32>(), c(), c(), /*preferred=*/true},
+    {bits<32>(), bits<32>(), d(2), d(2)},
+    {bits<32>(), bits<32>(), d(4), d(4)},
+    {bits<32>(), bits<32>(), bd(2), bd(2)},
+    {bits<32>(), bits<32>(), bd(4), bd(4)},
+    // An f16 source widens: the two physical results of one source part are
+    // exactly the even and the odd lanes of that part.
+    {bits<16>(), bits<32>(), c(), d(2), /*preferred=*/true},
+};
+
+// A lane-strided source is not in the table on purpose.  The mask shares the
+// source layout, and a mask granularity of b16/b32 with lane_stride = 2/4
+// becomes a b32/b64/b128 physical predicate carrier, which the mask carrier
+// conversion and the pto.vexpdif mask granularity check both reject.  The
+// same lane_stride = 1 rule keeps every result part pair an even/odd lane
+// split of its own source part.
+
 struct HistogramLayoutPattern {
   LayoutPattern accLayout;
   LayoutPattern sourceLayout;
@@ -1272,6 +1305,73 @@ static bool matchesVselrLayoutPattern(const VselrLayoutPattern &pattern,
          matchesPhysicalChunkCountPattern(pattern.sourceChunks, *sourceArity) &&
          matchesPhysicalChunkCountPattern(pattern.indexChunks, *indexArity) &&
          matchesPhysicalChunkCountPattern(pattern.resultChunks, *resultArity);
+}
+
+static VMIVexpdifLayoutFact
+materializeVexpdifLayoutFact(MLIRContext *ctx,
+                             const VexpdifLayoutPattern &pattern) {
+  VMIVexpdifLayoutFact fact;
+  fact.sourceLayout = materializeLayoutPattern(ctx, pattern.sourceLayout);
+  fact.resultLayout = materializeLayoutPattern(ctx, pattern.resultLayout);
+  fact.preferred = pattern.preferred;
+  return fact;
+}
+
+/// Fills in the physical part counts of one vexpdif table row and reports
+/// whether the pto.vexpdif lowering can realize it.  The lowering emits one
+/// part per 256-bit source register, so a row is only legal while the mask
+/// produces as many parts as the source, the mask keeps the data element
+/// width (a physical predicate granularity of b16 for f16 / b32 for f32), and
+/// the result produces the element-width ratio times as many parts.
+static bool matchesVexpdifPhysicalShape(VMIVRegType sourceType,
+                                        VMIMaskType maskType,
+                                        VMIVRegType resultType,
+                                        VMIVexpdifLayoutFact &fact) {
+  unsigned sourceBits =
+      pto::getPTOStorageElemBitWidth(sourceType.getElementType());
+  unsigned resultBits =
+      pto::getPTOStorageElemBitWidth(resultType.getElementType());
+  if (sourceBits == 0 || resultBits == 0 || resultBits % sourceBits != 0) {
+    return false;
+  }
+
+  MLIRContext *ctx = sourceType.getContext();
+  auto assignedSource =
+      VMIVRegType::get(ctx, sourceType.getElementCount(),
+                       sourceType.getElementType(), fact.sourceLayout);
+  auto assignedMask = VMIMaskType::get(ctx, maskType.getElementCount(),
+                                       maskType.getGranularity(),
+                                       fact.sourceLayout);
+  auto assignedResult =
+      VMIVRegType::get(ctx, resultType.getElementCount(),
+                       resultType.getElementType(), fact.resultLayout);
+  FailureOr<int64_t> sourceParts = getVMIPhysicalArity(assignedSource);
+  FailureOr<int64_t> maskParts = getVMIPhysicalArity(assignedMask);
+  FailureOr<int64_t> resultParts = getVMIPhysicalArity(assignedResult);
+  FailureOr<StringRef> maskGranularity =
+      getVMIMaskPhysicalGranularity(assignedMask);
+  bool knownParts = succeeded(sourceParts) && succeeded(maskParts) &&
+                    succeeded(resultParts) && succeeded(maskGranularity);
+  if (!knownParts || *sourceParts < 1) {
+    return false;
+  }
+  bool maskMatchesDataWidth =
+      getVMIMaskGranularityBitWidth(*maskGranularity) ==
+      static_cast<int64_t>(sourceBits);
+  if (!maskMatchesDataWidth) {
+    return false;
+  }
+
+  int64_t partsPerSourcePart = static_cast<int64_t>(resultBits / sourceBits);
+  if (*maskParts != *sourceParts ||
+      *resultParts != partsPerSourcePart * *sourceParts) {
+    return false;
+  }
+
+  fact.sourceParts = *sourceParts;
+  fact.resultParts = *resultParts;
+  fact.resultPartsPerSourcePart = partsPerSourcePart;
+  return true;
 }
 
 } // namespace
@@ -4145,6 +4245,116 @@ LogicalResult VMILayoutSupport::getVdhistSupport(VMIVdhistOp op,
 LogicalResult VMILayoutSupport::getVchistSupport(VMIVchistOp op,
                                                  std::string *reason) const {
   return getVchistLayoutFact(op, reason);
+}
+
+static constexpr StringLiteral kVexpdifLayoutRequirement =
+    "vexpdif requires an f32 source whose x/max/mask/result share one dense "
+    "lane_stride=1 layout, or an f16 source whose x/max/mask are contiguous "
+    "and whose result is deinterleaved = 2";
+
+/// Shared op-level precondition: the lowering always emits pto.vexpdif with an
+/// implicit zero passthru, so a merge predicate has no lowering at all.
+static bool hasUnsupportedVexpdifPmode(VMIVexpdifOp op) {
+  std::optional<StringRef> pmode = op.getPmode();
+  return pmode && *pmode == "merge";
+}
+
+FailureOr<SmallVector<VMIVexpdifLayoutFact, mlir::pto::kValue4>>
+VMILayoutSupport::getVexpdifLayoutFactsForLayout(VMIVexpdifOp op,
+                                                 VMIVexpdifLayoutPort port,
+                                                 VMILayoutAttr layout,
+                                                 std::string *reason) const {
+  auto fail = [&](const Twine &message)
+      -> FailureOr<SmallVector<VMIVexpdifLayoutFact, 4>> {
+    if (reason) {
+      *reason = message.str();
+    }
+    return failure();
+  };
+
+  if (!layout) {
+    return fail("requires an assigned vexpdif query layout");
+  }
+  if (hasUnsupportedVexpdifPmode(op)) {
+    return fail("merge predicate mode requires explicit passthru lowering");
+  }
+
+  auto sourceType = dyn_cast<VMIVRegType>(op.getX().getType());
+  auto maskType = dyn_cast<VMIMaskType>(op.getMask().getType());
+  auto resultType = dyn_cast<VMIVRegType>(op.getResult().getType());
+  if (!sourceType || !maskType || !resultType) {
+    return fail("vexpdif requires vreg x/max and mask operands");
+  }
+
+  MLIRContext *ctx = op.getContext();
+  SmallVector<VMIVexpdifLayoutFact, mlir::pto::kValue4> facts;
+  for (const VexpdifLayoutPattern &pattern : kVexpdifLayoutPatterns) {
+    if (!matchesElementBitsPattern(pattern.sourceBits,
+                                   sourceType.getElementType()) ||
+        !matchesElementBitsPattern(pattern.resultBits,
+                                   resultType.getElementType())) {
+      continue;
+    }
+
+    VMIVexpdifLayoutFact fact = materializeVexpdifLayoutFact(ctx, pattern);
+    if ((port == VMIVexpdifLayoutPort::Source
+             ? fact.sourceLayout
+             : fact.resultLayout) != layout) {
+      continue;
+    }
+    if (!matchesVexpdifPhysicalShape(sourceType, maskType, resultType, fact)) {
+      continue;
+    }
+
+    bool duplicate =
+        llvm::any_of(facts, [&](const VMIVexpdifLayoutFact &existing) {
+          return existing.sourceLayout == fact.sourceLayout &&
+                 existing.resultLayout == fact.resultLayout;
+        });
+    if (!duplicate) {
+      facts.push_back(fact);
+    }
+  }
+
+  if (facts.empty()) {
+    return fail(kVexpdifLayoutRequirement);
+  }
+  return facts;
+}
+
+FailureOr<VMIVexpdifLayoutFact>
+VMILayoutSupport::getPreferredVexpdifLayoutFact(VMIVexpdifOp op,
+                                                std::string *reason) const {
+  auto fail = [&](const Twine &message) -> FailureOr<VMIVexpdifLayoutFact> {
+    if (reason) {
+      *reason = message.str();
+    }
+    return failure();
+  };
+
+  auto sourceType = dyn_cast<VMIVRegType>(op.getX().getType());
+  auto maskType = dyn_cast<VMIMaskType>(op.getMask().getType());
+  auto resultType = dyn_cast<VMIVRegType>(op.getResult().getType());
+  if (!sourceType || !maskType || !resultType) {
+    return fail("vexpdif requires vreg x/max and mask operands");
+  }
+
+  MLIRContext *ctx = op.getContext();
+  for (const VexpdifLayoutPattern &pattern : kVexpdifLayoutPatterns) {
+    if (!pattern.preferred ||
+        !matchesElementBitsPattern(pattern.sourceBits,
+                                   sourceType.getElementType()) ||
+        !matchesElementBitsPattern(pattern.resultBits,
+                                   resultType.getElementType())) {
+      continue;
+    }
+
+    VMIVexpdifLayoutFact fact = materializeVexpdifLayoutFact(ctx, pattern);
+    if (matchesVexpdifPhysicalShape(sourceType, maskType, resultType, fact)) {
+      return fact;
+    }
+  }
+  return fail(kVexpdifLayoutRequirement);
 }
 
 LogicalResult VMILayoutSupport::getSameLayoutRelationSupport(

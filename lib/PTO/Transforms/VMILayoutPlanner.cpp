@@ -740,6 +740,34 @@ static void rememberLayout(VMILayoutAttr layout,
   }
 }
 
+/// Layouts to query the vexpdif facts table with.  The table itself decides
+/// which of them form a legal relation, so the query set only has to cover the
+/// layouts the table can mention, plus the layouts the operation already
+/// spells out (an operation whose ports carry explicit layouts keeps feeding
+/// relation enumeration even when no other candidate is available).
+static SmallVector<VMILayoutAttr, mlir::pto::kValue8>
+getVexpdifQueryLayouts(Operation *op, ArrayRef<VMILayoutAttr> seedLayouts) {
+  SmallVector<VMILayoutAttr, mlir::pto::kValue8> layouts;
+  for (VMILayoutAttr layout : seedLayouts) {
+    rememberLayout(layout, layouts);
+  }
+  rememberLayout(VMILayoutAttr::getContiguous(op->getContext()), layouts);
+  for (int64_t factor : {int64_t(2), int64_t(4)}) {
+    rememberLayout(VMILayoutAttr::getDeinterleaved(op->getContext(), factor),
+                   layouts);
+    rememberLayout(
+        VMILayoutAttr::getBlockDeinterleaved(op->getContext(), factor),
+        layouts);
+  }
+  for (Type type : op->getOperandTypes()) {
+    rememberLayout(getExplicitLayout(type), layouts);
+  }
+  for (Type type : op->getResultTypes()) {
+    rememberLayout(getExplicitLayout(type), layouts);
+  }
+  return layouts;
+}
+
 static SmallVector<VMILayoutAttr, mlir::pto::kValue8>
 getGroupReduceQueryLayouts(MLIRContext *context,
                            ArrayRef<VMILayoutAttr> seedLayouts) {
@@ -2514,61 +2542,52 @@ VMILayoutRelationProvider::enumerateRelations(
       return failure();
     }
 
-    SmallVector<VMILayoutAttr, mlir::pto::kValue4> candidates;
-    auto addCandidate = [&](VMILayoutAttr layout) {
-      if (layout && !llvm::is_contained(candidates, layout)) {
-        candidates.push_back(layout);
-      }
-    };
-    for (Type type : op->getOperandTypes()) {
-      addCandidate(getExplicitLayout(type));
-    }
-    for (Type type : op->getResultTypes()) {
-      addCandidate(getExplicitLayout(type));
-    }
-    addCandidate(VMILayoutAttr::getContiguous(op->getContext()));
-    for (VMILayoutAttr layout : polymorphicLayouts) {
-      addCandidate(layout);
-    }
-
-    // An f32 source keeps one layout across the data, the predicate and the
-    // result.  A narrower source widens, and the physical result parts are the
-    // even and the odd lanes of the source, so the result layout has to come
-    // from the widening relation table exactly like a widening cast.
-    if (sourceType.getElementType().isF32()) {
-      appendSameLayoutRelations(op, candidates, supports, relations);
-    } else {
-      auto preferred =
-          supports.getPreferredCastLayoutFact(sourceType, resultType);
-      for (VMILayoutAttr layout : candidates) {
-        for (VMICastLayoutPort port :
-             {VMICastLayoutPort::Source, VMICastLayoutPort::Result}) {
-          auto facts = supports.getCastLayoutFactsForLayout(
-              sourceType, resultType, port, layout);
-          if (failed(facts)) {
-            continue;
-          }
-          for (const VMICastLayoutFact &fact : *facts) {
-            uint64_t preferencePenalty =
-                succeeded(preferred) &&
-                        (fact.sourceLayout != preferred->sourceLayout ||
-                         fact.resultLayout != preferred->resultLayout)
-                    ? 1
-                    : 0;
-            appendReachableUniqueRelation(
-                relations,
-                VMILayoutOpRelation{op,
-                                    {operandPort(0, fact.sourceLayout),
-                                     operandPort(1, fact.sourceLayout),
-                                     operandPort(2, fact.sourceLayout),
-                                     resultPort(0, fact.resultLayout)},
-                                    /*directProducer=*/false,
-                                    fact.intrinsicRearrangementCost,
-                                    preferencePenalty},
-                supports);
-          }
+    // pto.vmi.vexpdif reads one physical source register at a time, so the
+    // only legal plans are the rows of the vexpdif layout table.  Enumerating
+    // any other combination - notably a lane-strided source, whose shared mask
+    // layout has to change predicate granularity as well - selects a plan that
+    // the conversion to VPTO cannot realize.  The widening form is therefore
+    // expressed by the table, not by the generic cast relation table.
+    auto preferred = supports.getPreferredVexpdifLayoutFact(vexpdif);
+    for (VMILayoutAttr layout :
+         getVexpdifQueryLayouts(op, polymorphicLayouts)) {
+      for (VMIVexpdifLayoutPort port :
+           {VMIVexpdifLayoutPort::Source, VMIVexpdifLayoutPort::Result}) {
+        auto facts =
+            supports.getVexpdifLayoutFactsForLayout(vexpdif, port, layout);
+        if (failed(facts)) {
+          continue;
+        }
+        for (const VMIVexpdifLayoutFact &fact : *facts) {
+          uint64_t preferencePenalty =
+              succeeded(preferred) &&
+                      (fact.sourceLayout != preferred->sourceLayout ||
+                       fact.resultLayout != preferred->resultLayout)
+                  ? 1
+                  : 0;
+          // x, max, and the mask always share one layout: the VPTO lowering
+          // reads the predicate with the data's lane order.
+          appendReachableUniqueRelation(
+              relations,
+              VMILayoutOpRelation{op,
+                                  {operandPort(0, fact.sourceLayout),
+                                   operandPort(1, fact.sourceLayout),
+                                   operandPort(2, fact.sourceLayout),
+                                   resultPort(0, fact.resultLayout)},
+                                  /*directProducer=*/false,
+                                  /*intrinsicRearrangementCost=*/0,
+                                  preferencePenalty},
+              supports);
         }
       }
+    }
+    bool explainMissingRelation = relations.empty() && reason != nullptr;
+    if (explainMissingRelation) {
+      // Surface the table requirement instead of a generic "no legal relation"
+      // when the shape itself has no supported combination.
+      (void)supports.getVexpdifLayoutFactsForLayout(
+          vexpdif, VMIVexpdifLayoutPort::Source,
+          VMILayoutAttr::getContiguous(op->getContext()), reason);
     }
     return relations.empty()
                ? FailureOr<SmallVector<VMILayoutOpRelation,

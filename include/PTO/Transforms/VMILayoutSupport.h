@@ -233,6 +233,39 @@ struct VMIVselrLayoutFact {
   VMILayoutAttr resultLayout;
 };
 
+enum class VMIVexpdifLayoutPort {
+  Source,
+  Result,
+};
+
+/// A pto.vmi.vexpdif relation the VPTO lowering can realize.  The lowering
+/// reads one 256-bit source register at a time, so a relation is legal only
+/// when the physical parts of x/max, of the predicate, and of the result line
+/// up the way the emitted pto.vexpdif ops produce them:
+///
+///  * An f32 source keeps its element width, so one source part produces one
+///    result part and x, max, the mask, and the result share one layout.  The
+///    layout must stay dense with lane_stride = 1: the mask follows the source
+///    layout, and its physical granularity is granularity * lane_stride, which
+///    the lowering accepts only while it still matches the data element width.
+///  * An f16 source widens to f32.  One source part yields the even and the
+///    odd lanes of that part as two result parts, so the result has to be
+///    deinterleaved = 2 while x, max, and the mask keep their natural lane
+///    order (contiguous).
+///
+/// sourceParts/resultParts are the physical part counts of the source and the
+/// result under this relation.  The lowering also requires the mask to produce
+/// exactly sourceParts parts and the element-width ratio to connect the two
+/// counts, so a row only survives while those part counts agree.
+struct VMIVexpdifLayoutFact {
+  VMILayoutAttr sourceLayout;
+  VMILayoutAttr resultLayout;
+  int64_t sourceParts = 0;
+  int64_t resultParts = 0;
+  int64_t resultPartsPerSourcePart = 1;
+  bool preferred = false;
+};
+
 class VMILayoutSupport {
 public:
   FailureOr<SmallVector<VMILoadLayoutFact, mlir::pto::kValue4>>
@@ -579,6 +612,21 @@ public:
 
   LogicalResult getVchistSupport(VMIVchistOp op,
                                  std::string *reason = nullptr) const;
+
+  /// Facts for every vexpdif table row whose source (or result) layout is
+  /// p layout.  Every returned fact is a relation the VPTO lowering can
+  /// realize for this operation's shape, so a planner that enumerates only
+  /// these facts cannot select an unlowerable plan.
+  FailureOr<SmallVector<VMIVexpdifLayoutFact, mlir::pto::kValue4>>
+  getVexpdifLayoutFactsForLayout(VMIVexpdifOp op, VMIVexpdifLayoutPort port,
+                                 VMILayoutAttr layout,
+                                 std::string *reason = nullptr) const;
+
+  /// The vexpdif table row this shape prefers.  Plans may pick another row,
+  /// which the planner charges as a layout preference penalty.
+  FailureOr<VMIVexpdifLayoutFact>
+  getPreferredVexpdifLayoutFact(VMIVexpdifOp op,
+                                std::string *reason = nullptr) const;
 
   LogicalResult
   getSameLayoutRelationSupport(Operation *op, VMILayoutAttr layout,
