@@ -2310,3 +2310,39 @@ F2 的依赖是"step-3 的 \`validateCastOperationRelation\` 查询存在"——
 
 已派它做**只读的逐 hunk 精确文本**（把 19.17.1 里标记为"未核实"的条目全部落实：F2 的 1/2/3/4/5、F3 的 1/2/4、F7 的 1/2，逐条给出拆分单元里的**当前原文**与**替换文本**，F7 还需在三处 \`compactLayout\` 构造点中指明落点）。
 拿到后我按"函数名 + 语义改动"机械落地批次 B（F2）→ 与 F3/F7 同批（二者必须一起落）。
+
+## 19.18 逐 hunk 精确文本到手：**F2 的三个 hunk 其实是一处改动**，以及我的落地判决
+
+### 19.18.1 最重要的一条发现
+
+拆分树里 \`checkSupportedFPToSIShape(:950)\` 与 \`checkSupportedFPToUIShape(:960)\` 都是**薄包装**，二者都走共享模板 \`checkSupportedFPToIntShape(:881-921)\`；
+\`checkSupportedSIToFPShape\` 走同一个 \`checkSameWidthConversionArity\`。所以上下文为 \`if (srcBits == dstBits) { … }\` 的那个 hunk **只有一个落点**：
+模板里的 \`:902-907\`。**一处改动覆盖 F2 h1/h2/h4 三个 hunk**；两条路线（改模板 / 逐个改调用点）是**互斥的，绝不能都做**（否则重复校验）。
+
+### 19.18.2 可移植性总表（逐条已核实到原文）
+
+| 条目 | 判定 |
+|---|---|
+| F2 h3（\`+4\` 插入）| **可照字面落地**（\`:910-918\`，只把命名换成 \`layouts->…\`）|
+| F2 h5（compress 的 contiguous 检查）| **半精确**：\`:1422-1426\` 换成 \`getReduceLayoutFactForLayouts\`；fork 的 \`checkFullDataPhysicalChunks\` 尾巴在拆分子树里**没有对应**（拆分用 \`buildCompressPhysicalShapePlan\`）——那部分**不要动** |
+| F3 h1（interleave store）| \`:447-462\` 精确可换（布尔守卫 → \`getInterleaveStoreSupport\`，保留 \`buildWriteAccessPlan\`）；**但它会去掉 \`getX2MemoryDistToken(…, "INTLV")\`，验收问题**（见 19.18.3）|
+| F3 h2（group_slot_load）| **按原文不可移植**：stride 实参在上游查询里不存在（需 §8.1 的签名 shim）→ **记为具名缺口，暂不落地** |
+| F3 h3 | **绝不落地**（\`isCompactSmallGroupStore\` 定义 \`:964\`、使用 \`:1142\`）|
+| F3 h4 | F-spec 的锚点是**包装函数** \`:1161\`，真正落点是**助手**里的 \`:1142-1143\` |
+| F7 h1 | 落点 \`:1076\`（变量名是 \`compact\` 而非 \`compactSmallGroupStore\`，且在 const 方法里）|
+| F7 h2 | 落点是 **\`:710\`**，且与 \`:1076\` **不是同一个函数** —— \`groupStoreFact\` **不在作用域内**，必须在该处重新查询；\`:626\` 是多分片 stream 路径，不是这一处 |
+
+### 19.18.3 两条**前置校验**（决定我怎么落，已派只读核对）
+
+1. **F3 h1 的验收问题**：\`getInterleaveStoreSupport\` 是否**覆盖**被删掉的 \`getX2MemoryDistToken(…, "INTLV")\`？
+   等价 → 删除不是放宽，照写落地；**更宽 → 保留该检查、只换守卫**；更严 → 说明。
+2. **F7 h2 / F3 h4 的谓词等价性**：\`succeeded(getGroupStoreLayoutFact(op, valueVMIType)) && fact->stagingLayout\` 是否与
+   被替换的 \`isCompactSmallGroupStore(layout, valueVMIType, numGroups, getConstantIndexValue(op.getRowStride()))\` **逐例等价**？
+   这决定 \`:710\` 能否不加 \`succeeded()\` 守卫直接解引用 \`stagingLayout\`，也决定 F3 h4 会不会改变"哪些 store 被归为 compact"。
+
+### 19.18.4 我的落地判决（已记录并发出）
+
+* **F2**：只走**共享模板**路线（\`:902-907\`）+ F2 h3 照字面 + F2 h5 只换 contiguity 块（拆分树的分片检查不动）；
+* **F3 h3 永不落地**；**F3 h2 暂缓**（缺 §8.1 shim，记为具名缺口，不许就地发明）；
+* **F3 h4 + F7 h1 + F7 h2 落地**（F7 h2 视前置校验 2 决定是否加守卫）；
+* **F3 h1 条件落地**（视前置校验 1）；两项校验的结果出来之前不落 F3 h1。
