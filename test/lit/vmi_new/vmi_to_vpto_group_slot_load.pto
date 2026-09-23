@@ -149,7 +149,8 @@ module {
 // CHECK: return %[[OUT]]
 
 // CHECK-LABEL: func.func @vmi_to_vpto_group_slot_load_slots1(
-// CHECK-COUNT-8: pto.vsldb
+// Each slot is read by its own scalar broadcast load.
+// CHECK-COUNT-8: pto.vlds {{.*}} {dist = "BRC_B32"}
 
 // CHECK-LABEL: func.func @vmi_to_vpto_group_slot_load_slots8_store(
 // CHECK: %[[LOAD_MASK:.*]] = pto.pset_b32 "PAT_VL8" : !pto.mask<b32>
@@ -192,12 +193,12 @@ module {
 // CHECK: %[[LOAD:.*]] = pto.vsldb {{.*}} : !pto.ptr<ui8, ub>, i16, i16, !pto.mask<b8> -> !pto.vreg<256xui8>
 // CHECK: %[[UNPACK:.*]] = pto.vzunpack %[[LOAD]]
 // CHECK: %[[WIDE:.*]] = pto.vcvt {{.*}} {part = "EVEN"} : !pto.vreg<256xui8>, !pto.mask<b8> -> !pto.vreg<128xui16>
-// CHECK: pto.vsts {{.*}} {dist = "1PT_B32"}
+// CHECK: pto.vsts {{.*}} : !pto.vreg<128xui16>, !pto.ptr<ui16, ub>, !pto.mask<b16>
 // CHECK-NOT: pto.vmi.
 // CHECK-NOT: !pto.vmi.
 
 // CHECK-LABEL: func.func @vmi_to_vpto_group_slot_load_extui_u8_u16_slots1(
-// CHECK-COUNT-8: pto.vsldb
+// CHECK-COUNT-8: pto.vlds {{.*}} {dist = "BRC_B8"}
 // CHECK-COUNT-8: pto.vcvt {{.*}} {part = "EVEN"} : !pto.vreg<256xui8>, !pto.mask<b8> -> !pto.vreg<128xui16>
 // CHECK-COUNT-8: pto.vsts {{.*}} {dist = "1PT_B16"}
 // CHECK-NOT: pto.vmi.

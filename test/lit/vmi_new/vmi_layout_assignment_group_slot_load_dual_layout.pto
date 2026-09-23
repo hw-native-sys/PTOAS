@@ -66,7 +66,9 @@ module {
 // LOWER: pto.pset_b32 "PAT_VL8"
 // LOWER: pto.vsldb
 // LOWER: pto.vsts {{.*}}, %arg21[%arg23], {{.*}} : !pto.vreg<64xf32>, !pto.ptr<f32, ub>, !pto.mask<b32>
-// LOWER-COUNT-8: pto.vsldb
+// The stride-8 group slot takes the slots=1 form, which reads every slot with
+// its own scalar broadcast load instead of a lane-0 block load.
+// LOWER-COUNT-8: pto.vlds {{.*}} {dist = "BRC_B32"}
 // LOWER-COUNT-8: pto.vsts
 // LOWER-NOT: pto.vmi.
 // LOWER-NOT: !pto.vmi.

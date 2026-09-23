@@ -14,11 +14,12 @@
 
 module {
   func.func @vmi_to_vpto_iota_group_size1_i8_256(
-      %base: i8, %dst: !pto.ptr<i8, ub>, %mask: !pto.vmi.mask<256xpred>) {
+      %base: i8, %dst: !pto.ptr<i8, ub>) {
     %c0 = arith.constant 0 : index
     %idx = pto.vmi.vci %base {group = 256 : i64}
         : i8 -> !pto.vmi.vreg<256xi8>
     %c1 = arith.constant 1 : i8
+    %mask = pto.vmi.pset "PAT_ALL" : !pto.vmi.mask<256xpred>
     %out = pto.vmi.vadds %idx, %c1, %mask
         : !pto.vmi.vreg<256xi8>, i8, !pto.vmi.mask<256xpred>
         -> !pto.vmi.vreg<256xi8>

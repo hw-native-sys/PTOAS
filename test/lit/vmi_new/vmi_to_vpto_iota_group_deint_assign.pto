@@ -10,9 +10,8 @@
 // RUN: pto-test-opt %s -vmi-lower-unified-to-legacy -vmi-mask-granularity-assignment -vmi-layout-assignment -vmi-layout-rematerialize -vmi-to-vpto | FileCheck %s --check-prefix=LOWER
 
 // P1 regression: no-layout surface IR (production path).
-// Widening f16→f32 naturally prefers deinterleaved=2. The internal group_iota
-// remains contiguous and layout assignment materializes the consumer edge:
-//   group_iota(contiguous) → ensure_layout(deinterleaved=2) → consumers
+// group_iota is a contiguous-only producer.  The D2 result of widening is
+// materialized to contiguous for the matching addf relation.
 
 module {
   func.func @grouped_vci_elem_with_widen_deint(
@@ -38,19 +37,23 @@ module {
 // ASSIGN-LABEL: func.func @grouped_vci_elem_with_widen_deint(
 // ASSIGN: %[[WIDE:.*]] = pto.vmi.extf
 // ASSIGN-SAME: -> !pto.vmi.vreg<128xf32, #pto.vmi.layout<deinterleaved = 2>>
-// Grouped producer must remain contiguous; conversion is via ensure_layout.
+// Grouped producer must remain contiguous.
 // ASSIGN: %[[IOTA:.*]] = pto.vmi.group_iota
 // ASSIGN-SAME: -> !pto.vmi.vreg<128xf32, #pto.vmi.layout<contiguous>>
-// ASSIGN: %[[IDX:.*]] = pto.vmi.ensure_layout %[[IOTA]]
+// The contiguous iota result is materialized into the widening's
+// deinterleaved-by-2 layout so that the add runs in a single layout.
+// ASSIGN: %[[IOTA_D2:.*]] = pto.vmi.ensure_layout %[[IOTA]]
 // ASSIGN-SAME: -> !pto.vmi.vreg<128xf32, #pto.vmi.layout<deinterleaved = 2>>
-// ASSIGN: pto.vmi.addf %[[WIDE]], %[[IDX]]
+// ASSIGN: pto.vmi.addf %[[WIDE]], %[[IOTA_D2]]
 // ASSIGN-SAME: #pto.vmi.layout<deinterleaved = 2>
 // ASSIGN-NOT: pto.vmi.group_iota {{.*}} -> !pto.vmi.vreg<128xf32, #pto.vmi.layout<deinterleaved = 2>>
 
 // LOWER-LABEL: func.func @grouped_vci_elem_with_widen_deint(
-// Contiguous group=2 share: one physical vci, then layout conversion.
-// LOWER: pto.vci
-// LOWER: pto.vdintlv
+// The D2 widening deinterleaves the index producer to match the widening's
+// deinterleaved-by-2 layout.
+// LOWER: %[[IDX:.*]] = pto.vci
+// LOWER: %[[IDXPARTS:.*]] = pto.vdintlv %[[IDX]], %[[IDX]]
+// LOWER: pto.vadd
 // LOWER: pto.vadd
 // LOWER: pto.vstsx2
 // LOWER-NOT: pto.vmi.

@@ -36,13 +36,20 @@ module attributes {pto.target_arch = "a5", pto.kernel_kind = #pto.kernel_kind<ve
     return
   }
 
+  // The shifts build their predicate in-function on purpose.  A kernel boundary
+  // may only expose !pto.vmi.mask<Nxpred>, so a mask argument is widened to b32
+  // by the mask granularity pass while the i16 consumers need b16 back, and that
+  // round trip is a real mask repack which the costed layout solver trades
+  // against a lane-strided data layout instead of paying.  Keeping the mask
+  // interior keeps it at the granularity the shifts consume.
   func.func @vector_scalar_shift_i16(
       %source: !pto.vmi.vreg<256xi16>,
       %scalar: i16,
-      %mask: !pto.vmi.mask<256xpred>,
+      %active: index,
       %dst: !pto.ptr<i16, ub>) attributes {pto.kernel} {
     %c0 = arith.constant 0 : index
     pto.vecscope {
+      %mask = pto.vmi.create_mask %active : index -> !pto.vmi.mask<256xpred>
       %left = pto.vmi.vshls %source, %scalar, %mask
           : !pto.vmi.vreg<256xi16>, i16, !pto.vmi.mask<256xpred>
           -> !pto.vmi.vreg<256xi16>
@@ -63,8 +70,12 @@ module attributes {pto.target_arch = "a5", pto.kernel_kind = #pto.kernel_kind<ve
 // CHECK-COUNT-4: pto.vmins {{.*}} : !pto.vreg<64xf32>, f32, !pto.mask<b32> -> !pto.vreg<64xf32>
 
 // CHECK-LABEL: func.func @vector_scalar_shift_i16(
+// CHECK-COUNT-2: pto.plt_b16 {{.*}} : i32 -> !pto.mask<b16>, i32
 // CHECK-COUNT-2: pto.vshls {{.*}} : !pto.vreg<128xi16>, i16, !pto.mask<b16> -> !pto.vreg<128xi16>
+// CHECK-COUNT-2: pto.plt_b16 {{.*}} : i32 -> !pto.mask<b16>, i32
 // CHECK-COUNT-2: pto.vshrs {{.*}} : !pto.vreg<128xi16>, i16, !pto.mask<b16> -> !pto.vreg<128xi16>
+// CHECK: pto.vsts {{.*}} : !pto.vreg<128xi16>, !pto.ptr<i16, ub>, !pto.mask<b16>
+// CHECK: pto.vsts {{.*}} : !pto.vreg<128xi16>, !pto.ptr<i16, ub>, !pto.mask<b16>
 // CHECK-NOT: pto.vdup
 // CHECK-NOT: pto.vadd {{.*}} : !pto.vreg
 // CHECK-NOT: pto.vmul {{.*}} : !pto.vreg
@@ -72,6 +83,10 @@ module attributes {pto.target_arch = "a5", pto.kernel_kind = #pto.kernel_kind<ve
 // CHECK-NOT: pto.vmin {{.*}} : !pto.vreg
 // CHECK-NOT: pto.vshl {{.*}} : !pto.vreg
 // CHECK-NOT: pto.vshr {{.*}} : !pto.vreg
+// CHECK-NOT: pto.ppack
+// CHECK-NOT: pto.por {{.*}}
+// CHECK-NOT: pto.vzunpack
+// CHECK-NOT: pto.pdintlv
 // CHECK-NOT: pto.vmi.
 // CHECK-NOT: !pto.vmi.
 
@@ -81,7 +96,13 @@ module attributes {pto.target_arch = "a5", pto.kernel_kind = #pto.kernel_kind<ve
 // PIPELINE-COUNT-4: pto.vmaxs
 // PIPELINE-COUNT-4: pto.vmins
 // PIPELINE-LABEL: func.func @vector_scalar_shift_i16(
+// PIPELINE-COUNT-2: pto.plt_b16
 // PIPELINE-COUNT-2: pto.vshls
 // PIPELINE-COUNT-2: pto.vshrs
+// PIPELINE: pto.vsts
+// PIPELINE: pto.vsts
 // PIPELINE-NOT: pto.vdup
+// PIPELINE-NOT: pto.ppack
+// PIPELINE-NOT: pto.por {{.*}}
+// PIPELINE-NOT: pto.vzunpack
 // PIPELINE-NOT: pto.vmi.

@@ -70,11 +70,18 @@ module {
 // LOWER-LABEL: func.func @e2b_deint4_candidate
 // LOWER: %[[E2B:.*]] = pto.vlds %{{.*}}[%{{.*}}] {dist = "E2B_B32"} : !pto.ptr<f32, ub> -> !pto.vreg<64xf32>
 // LOWER-NOT: pto.vselr
-// LOWER: return %[[E2B]], %[[E2B]], %[[E2B]], %[[E2B]] : !pto.vreg<64xf32>, !pto.vreg<64xf32>, !pto.vreg<64xf32>, !pto.vreg<64xf32>
+// The unannotated contiguous result expands the single E2B register into four
+// contiguous parts instead of returning it four times.
+// LOWER-COUNT-4: pto.vintlv
+// LOWER: return %{{.*}}, %{{.*}}, %{{.*}}, %{{.*}} : !pto.vreg<64xf32>, !pto.vreg<64xf32>, !pto.vreg<64xf32>, !pto.vreg<64xf32>
 // LOWER-NOT: pto.vmi.
 
 // LOWER-LABEL: func.func @e2b_deint4_consumer
 // LOWER: %[[E2B2:.*]] = pto.vlds %{{.*}}[%{{.*}}] {dist = "E2B_B32"} : !pto.ptr<f32, ub> -> !pto.vreg<64xf32>
 // LOWER-NOT: pto.vselr
-// LOWER: pto.vmul %{{.*}}, %[[E2B2]]
+// The E2B register is split into interleaved halves for the multiplies, and
+// the contiguous result is re-interleaved at the return.
+// LOWER: pto.vintlv
+// LOWER-COUNT-4: pto.vmul {{.*}} : !pto.vreg<64xf32>, !pto.vreg<64xf32>, !pto.mask<b32> -> !pto.vreg<64xf32>
+// LOWER: return
 // LOWER-NOT: pto.vmi.

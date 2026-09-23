@@ -10,16 +10,24 @@
 
 // RUN: pto-test-opt %s -vmi-lower-unified-to-legacy -vmi-mask-granularity-assignment -vmi-layout-assignment -vmi-to-vpto | FileCheck %s
 
+// A compact group result (one scalar per group) is not carried across the
+// function boundary; it is stored to UB through the group-store path.
+
 module {
   func.func @group_reduce_maxi_i8(
       %source: !pto.vmi.vreg<256xi8>,
-      %mask: !pto.vmi.mask<256xpred>) -> !pto.vmi.vreg<8xi8> {
+      %mask: !pto.vmi.mask<256xpred>,
+      %dst: !pto.ptr<i8, ub>, %off: index) {
+    %c1 = arith.constant 1 : index
     %max = pto.vmi.vcmax %source, %mask {group = 8}
         : !pto.vmi.vreg<256xi8>, !pto.vmi.mask<256xpred>
         -> !pto.vmi.vreg<8xi8>
-    return %max : !pto.vmi.vreg<8xi8>
+    pto.vmi.vstore %max, %dst[%off], %c1 {group = 8}
+        : !pto.vmi.vreg<8xi8>, !pto.ptr<i8, ub>
+    return
   }
 }
 
 // CHECK-LABEL: func.func @group_reduce_maxi_i8(
-// CHECK: pto.vcgmax {{.*}} : !pto.vreg<256xi8>, !pto.mask<b8> -> !pto.vreg<256xi8>
+// CHECK: %[[MAX:.*]] = pto.vcgmax {{.*}} : !pto.vreg<256xi8>, !pto.mask<b8> -> !pto.vreg<256xi8>
+// CHECK: pto.vsts %[[MAX]], {{.*}} : !pto.vreg<256xi8>, !pto.ptr<i8, ub>, !pto.mask<b8>

@@ -12,9 +12,7 @@ module {
   func.func @vmi_layout_assignment_group_slot_load_slots1_dynamic_stride_invalid(
       %src: !pto.ptr<f32, ub>, %off: index, %stride: index) {
     // CHECK: VMI-LAYOUT-CONTRACT: pto.vmi.group_slot_load has no registered layout support
-    // CHECK-SAME: slots=1 group_slot_load currently lowers as one lane-0 vsldb per group
-    // CHECK-SAME: requires constant positive source_group_stride divisible by 8 elements
-    // CHECK-SAME: packed or unaligned scalar load lowering is not implemented
+    // CHECK-SAME: slots=1 group_slot_load requires constant positive source_group_stride
     // CHECK: note: see current operation: %{{.*}} = "pto.vmi.group_slot_load"
     // The component is rejected before a concrete result layout is assigned.
     %out = pto.vmi.group_slot_load %src[%off], %stride {num_groups = 8}

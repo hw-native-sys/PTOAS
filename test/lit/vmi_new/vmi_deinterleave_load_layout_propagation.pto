@@ -30,44 +30,45 @@ module {
     return %hist : !pto.vmi.vreg<256xui16>
   }
 
+  // The truncated value is stored out rather than returned.  An un-annotated
+  // function result is materialized to the contiguous boundary layout, and that
+  // boundary conversion would cost more than keeping the narrowing on its
+  // lane-strided result, which is the cheaper plan once nothing has to leave the
+  // kernel through the contiguous boundary.
   func.func @vmi_deinterleave_load_high_cast(
       %src: !pto.ptr<ui32, ub>,
-      %offset: index) -> !pto.vmi.vreg<256xui8> {
+      %dst: !pto.ptr<ui8, ub>,
+      %offset: index) {
     %low, %high = pto.vmi.vload %src[%offset] {dist_mode = "dintlv"}
         : !pto.ptr<ui32, ub>
         -> !pto.vmi.vreg<256xui32>, !pto.vmi.vreg<256xui32>
     %result = pto.vmi.vcvt %high {saturate = "SAT"}
         : !pto.vmi.vreg<256xui32> -> !pto.vmi.vreg<256xui8>
-    return %result : !pto.vmi.vreg<256xui8>
+    pto.vmi.vstore %result, %dst[%offset]
+        : !pto.vmi.vreg<256xui8>, !pto.ptr<ui8, ub>
+    return
   }
 }
 
+// The compare chain stays contiguous, so the mask argument needs no layout
+// conversion and only the truncate path materializes the deinterleaved form.
 // ASSIGN-LABEL: func.func @vmi_deinterleave_load_compare_histogram(
 // ASSIGN: %[[LOW:.*]], %[[HIGH:.*]] = pto.vmi.deinterleave_load
 // ASSIGN-SAME: -> !pto.vmi.vreg<256xui32, #pto.vmi.layout<contiguous>>, !pto.vmi.vreg<256xui32, #pto.vmi.layout<contiguous>>
+// ASSIGN: %[[LOW_D4:.*]] = pto.vmi.ensure_layout %[[LOW]]
+// ASSIGN-SAME: !pto.vmi.vreg<256xui32, #pto.vmi.layout<contiguous>> -> !pto.vmi.vreg<256xui32, #pto.vmi.layout<deinterleaved = 4>>
 // ASSIGN: %[[LIMIT:.*]] = pto.vmi.broadcast %arg4
-// ASSIGN-SAME: -> !pto.vmi.vreg<256xui32, #pto.vmi.layout<deinterleaved = 4>>
-// ASSIGN: %[[LOW_CMP:.*]] = pto.vmi.ensure_layout %[[LOW]]
-// ASSIGN-SAME: !pto.vmi.vreg<256xui32, #pto.vmi.layout<contiguous>> -> !pto.vmi.vreg<256xui32, #pto.vmi.layout<deinterleaved = 4>>
-// ASSIGN: %[[CMP:.*]] = pto.vmi.cmpi "ult", %[[LOW_CMP]], %[[LIMIT]]
-// ASSIGN-SAME: -> !pto.vmi.mask<256xb32, #pto.vmi.layout<deinterleaved = 4>>
+// ASSIGN-SAME: -> !pto.vmi.vreg<256xui32, #pto.vmi.layout<contiguous>>
+// ASSIGN: %[[CMP:.*]] = pto.vmi.cmpi "ult", %[[LOW]], %[[LIMIT]]
+// ASSIGN-SAME: -> !pto.vmi.mask<256xb32, #pto.vmi.layout<contiguous>>
 // ASSIGN: %[[VALID:.*]] = pto.vmi.mask_and %[[CMP]], %arg3
-// ASSIGN: %[[LOW_CVT:.*]] = pto.vmi.ensure_layout %[[LOW]]
-// ASSIGN-SAME: !pto.vmi.vreg<256xui32, #pto.vmi.layout<contiguous>> -> !pto.vmi.vreg<256xui32, #pto.vmi.layout<deinterleaved = 4>>
-// ASSIGN: %[[SOURCE:.*]] = pto.vmi.trunci %[[LOW_CVT]]
+// ASSIGN-SAME: -> !pto.vmi.mask<256xb32, #pto.vmi.layout<contiguous>>
+// ASSIGN: %[[SOURCE:.*]] = pto.vmi.trunci %[[LOW_D4]]
 // ASSIGN-SAME: -> !pto.vmi.vreg<256xui8, #pto.vmi.layout<contiguous>>
 // ASSIGN: %[[VALID_B8:.*]] = pto.vmi.ensure_mask_granularity %[[VALID]]
 // ASSIGN-SAME: -> !pto.vmi.mask<256xb8, #pto.vmi.layout<contiguous>>
 // ASSIGN: %[[HIST:.*]] = pto.vmi.vdhist %arg2, %[[SOURCE]], %[[VALID_B8]]
 // ASSIGN: return %[[HIST]]
-
-// ASSIGN-LABEL: func.func @vmi_deinterleave_load_high_cast(
-// ASSIGN: %[[LOW2:.*]], %[[HIGH2:.*]] = pto.vmi.deinterleave_load
-// ASSIGN-SAME: -> !pto.vmi.vreg<256xui32, #pto.vmi.layout<contiguous>>, !pto.vmi.vreg<256xui32, #pto.vmi.layout<contiguous>>
-// ASSIGN-NOT: pto.vmi.ensure_layout %[[HIGH2]]
-// ASSIGN: %[[RESULT:.*]] = pto.vmi.trunci %[[HIGH2]]
-// ASSIGN-SAME: -> !pto.vmi.vreg<256xui8, #pto.vmi.layout<contiguous, lane_stride = 4>>
-// ASSIGN: return %[[RESULT]]
 
 // LOWER-LABEL: func.func @vmi_deinterleave_load_compare_histogram(
 // LOWER: pto.vldsx2
@@ -75,8 +76,24 @@ module {
 // LOWER-NOT: pto.vmi.
 // LOWER-NOT: !pto.vmi.
 
+// ASSIGN-LABEL: func.func @vmi_deinterleave_load_high_cast(
+// ASSIGN: %[[LOW2:.*]], %[[HIGH2:.*]] = pto.vmi.deinterleave_load
+// ASSIGN-SAME: -> !pto.vmi.vreg<256xui32, #pto.vmi.layout<contiguous>>, !pto.vmi.vreg<256xui32, #pto.vmi.layout<contiguous>>
+// ASSIGN-NOT: pto.vmi.ensure_layout %[[HIGH2]]
+// ASSIGN: %[[RESULT:.*]] = pto.vmi.trunci %[[HIGH2]]
+// ASSIGN-SAME: -> !pto.vmi.vreg<256xui8, #pto.vmi.layout<contiguous, lane_stride = 4>>
+// ASSIGN: pto.vmi.store %[[RESULT]]
+// ASSIGN-SAME: !pto.vmi.vreg<256xui8, #pto.vmi.layout<contiguous, lane_stride = 4>>, !pto.ptr<ui8, ub>
+
 // LOWER-LABEL: func.func @vmi_deinterleave_load_high_cast(
 // LOWER: pto.vldsx2
-// LOWER: pto.vcvt
+// LOWER: pto.vcvt {{.*}} {part = "P0", sat = "SAT"}
+// LOWER: pto.vcvt {{.*}} {part = "P0", sat = "SAT"}
+// LOWER: pto.vcvt {{.*}} {part = "P0", sat = "SAT"}
+// LOWER: pto.vcvt {{.*}} {part = "P0", sat = "SAT"}
+// LOWER: pto.vsts {{.*}} {dist = "PK4_B32"}
+// LOWER: pto.vsts {{.*}} {dist = "PK4_B32"}
+// LOWER: pto.vsts {{.*}} {dist = "PK4_B32"}
+// LOWER: pto.vsts {{.*}} {dist = "PK4_B32"}
 // LOWER-NOT: pto.vmi.
 // LOWER-NOT: !pto.vmi.

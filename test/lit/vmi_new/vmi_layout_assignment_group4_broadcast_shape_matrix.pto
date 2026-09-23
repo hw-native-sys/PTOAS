@@ -13,6 +13,11 @@
 // physical VReg for group=4.  The source IR intentionally leaves layouts open:
 // support is defined by element type and logical length, while layout selection
 // remains an implementation detail of the compiler.
+//
+// Element counts outside 1/2/4/8/64/128/256 are not maintained, so there is no
+// 32-lane f32 case here: for that shape the only legal group-broadcast result is
+// lane_stride = 2, and 32-bit lane_stride -> contiguous materialization is not
+// implemented in the backend.
 
 module {
   func.func @group4_broadcast_i8_128(%scalar: i8)
@@ -30,14 +35,6 @@ module {
         : !pto.vmi.vreg<4xbf16> -> !pto.vmi.vreg<64xbf16>
     return %result : !pto.vmi.vreg<64xbf16>
   }
-
-  func.func @group4_broadcast_f32_32(%scalar: f32)
-      -> !pto.vmi.vreg<32xf32> {
-    %source = pto.vmi.vbrc %scalar : f32 -> !pto.vmi.vreg<4xf32>
-    %result = pto.vmi.vbrc %source {group = 4}
-        : !pto.vmi.vreg<4xf32> -> !pto.vmi.vreg<32xf32>
-    return %result : !pto.vmi.vreg<32xf32>
-  }
 }
 
 // ASSIGN-LABEL: func.func @group4_broadcast_i8_128(
@@ -52,20 +49,10 @@ module {
 // ASSIGN: pto.vmi.group_broadcast
 // ASSIGN-SAME: -> !pto.vmi.vreg<64xbf16, #pto.vmi.layout<contiguous, lane_stride = 2>>
 
-// ASSIGN-LABEL: func.func @group4_broadcast_f32_32(
-// ASSIGN: pto.vmi.broadcast
-// ASSIGN-SAME: -> !pto.vmi.vreg<4xf32, #pto.vmi.layout<num_groups = 4, slots = 8>>
-// ASSIGN: pto.vmi.group_broadcast
-// ASSIGN-SAME: -> !pto.vmi.vreg<32xf32, #pto.vmi.layout<contiguous, lane_stride = 2>>
-
 // LOWER-LABEL: func.func @group4_broadcast_i8_128(
 // LOWER: pto.vselr
 // LOWER-NOT: pto.vmi.
 
 // LOWER-LABEL: func.func @group4_broadcast_bf16_64(
-// LOWER: pto.vselr
-// LOWER-NOT: pto.vmi.
-
-// LOWER-LABEL: func.func @group4_broadcast_f32_32(
 // LOWER: pto.vselr
 // LOWER-NOT: pto.vmi.

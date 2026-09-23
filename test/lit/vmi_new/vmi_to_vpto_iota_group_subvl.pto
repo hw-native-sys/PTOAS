@@ -58,9 +58,14 @@ module {
     return
   }
 
+  // The i16 kernels build their predicate in-function on purpose.  A kernel
+  // boundary may only expose !pto.vmi.mask<Nxpred>, which is widened to b32,
+  // and the b16 consumers then trade that repack against a lane-strided layout.
+  // See vmi_to_vpto_vector_scalar_ops.pto for the same pattern.
   func.func @vmi_to_vpto_iota_subvl_i16_g2(
-      %base: i16, %dst: !pto.ptr<i16, ub>, %mask: !pto.vmi.mask<128xpred>) {
+      %base: i16, %dst: !pto.ptr<i16, ub>, %active: index) {
     %c0 = arith.constant 0 : index
+    %mask = pto.vmi.create_mask %active : index -> !pto.vmi.mask<128xpred>
     %idx = pto.vmi.vci %base {group = 2 : i64}
         : i16 -> !pto.vmi.vreg<128xi16>
     %c1000 = arith.constant 1000 : i16
@@ -73,8 +78,9 @@ module {
   }
 
   func.func @vmi_to_vpto_iota_subvl_i16_g4(
-      %base: i16, %dst: !pto.ptr<i16, ub>, %mask: !pto.vmi.mask<128xpred>) {
+      %base: i16, %dst: !pto.ptr<i16, ub>, %active: index) {
     %c0 = arith.constant 0 : index
+    %mask = pto.vmi.create_mask %active : index -> !pto.vmi.mask<128xpred>
     %idx = pto.vmi.vci %base {group = 4 : i64}
         : i16 -> !pto.vmi.vreg<128xi16>
     %c1000 = arith.constant 1000 : i16

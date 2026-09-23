@@ -42,8 +42,12 @@ module {
 // ASSIGN-SAME: !pto.vmi.vreg<128xf32, #pto.vmi.layout<deinterleaved = 2>>, {{(!pto\.ptr)?<f32, ub>}}
 
 // LOWER-LABEL: func.func @vmi_layout_assignment_broadcast_remat(
-// LOWER-COUNT-2: pto.vdup %arg0
-// LOWER-NOT: pto.vintlv
+// The unannotated function result pins the boundary to contiguous, so the
+// deinterleaved=2 widening is interleaved once before the adds instead of at
+// the return, and the rematerialized broadcast is now materialized for both
+// the contiguous adds and the interleaved store.
+// LOWER-COUNT-4: pto.vdup %arg0
+// LOWER-COUNT-1: pto.vintlv
 // LOWER: pto.vstsx2
 // LOWER-NOT: pto.vmi.
 // LOWER-NOT: !pto.vmi.

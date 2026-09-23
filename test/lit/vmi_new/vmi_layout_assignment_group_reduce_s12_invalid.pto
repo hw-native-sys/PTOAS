@@ -15,7 +15,10 @@ module {
       %dst: !pto.ptr<f32, ub>,
       %off: index) {
     %c1 = arith.constant 1 : index
-    // CHECK: VMI-LAYOUT-CONTRACT: no complete legal VMI layout plan exists for this component
+    // A 96-element source holds 12 physical chunks, which num_groups=8 cannot
+    // divide, so no physical relation is registered for the producer at all.
+    // The "{{:}}" keeps the diagnostic prefix out of lit's directive grammar.
+    // CHECK: VMI-UNSUPPORTED{{:}} no legal VMI layout relation is registered for pto.vmi.group_reduce_addf
     // CHECK: note: see current operation: %{{.*}} = "pto.vmi.group_reduce_addf"
     %sum = pto.vmi.vcadd %source, %mask
         {group = 8, reassoc}

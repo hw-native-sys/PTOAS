@@ -88,36 +88,39 @@ module {
 
 // ASSIGN-LABEL: func.func @f16_ls2
 // ASSIGN: pto.vmi.vdintlv
-// ASSIGN-SAME: #pto.vmi.layout<contiguous, lane_stride = 2>
+// ASSIGN-SAME: !pto.vmi.vreg<64xf16, #pto.vmi.layout<contiguous>>
 // ASSIGN: pto.vmi.vintlv
-// ASSIGN-SAME: #pto.vmi.layout<contiguous, lane_stride = 2>
+// ASSIGN-SAME: !pto.vmi.vreg<64xf16, #pto.vmi.layout<contiguous>>
 
 // ASSIGN-LABEL: func.func @f8_ls2
 // ASSIGN: pto.vmi.vdintlv
-// ASSIGN-SAME: #pto.vmi.layout<contiguous, lane_stride = 2>
+// ASSIGN-SAME: !pto.vmi.vreg<128xf8E4M3FN, #pto.vmi.layout<contiguous>>
 // ASSIGN: pto.vmi.vintlv
-// ASSIGN-SAME: #pto.vmi.layout<contiguous, lane_stride = 2>
+// ASSIGN-SAME: !pto.vmi.vreg<128xf8E4M3FN, #pto.vmi.layout<contiguous>>
 
 // ASSIGN-LABEL: func.func @ui8_ls4
 // ASSIGN: pto.vmi.vdintlv
-// ASSIGN-SAME: #pto.vmi.layout<contiguous, lane_stride = 4>
+// ASSIGN-SAME: !pto.vmi.vreg<64xui8, #pto.vmi.layout<contiguous>>
 // ASSIGN: pto.vmi.vintlv
-// ASSIGN-SAME: #pto.vmi.layout<contiguous, lane_stride = 4>
+// ASSIGN-SAME: !pto.vmi.vreg<64xui8, #pto.vmi.layout<contiguous>>
 
 // LOWER-LABEL: func.func @f16_ls2
 // LOWER: pto.vdintlv
-// LOWER-SAME: !pto.vreg<64xui32>
+// LOWER-SAME: !pto.vreg<128xf16>
 // LOWER: pto.vintlv
-// LOWER-SAME: !pto.vreg<64xui32>
+// LOWER-SAME: !pto.vreg<128xf16>
+// LOWER-NOT: pto.vbitcast
 
 // LOWER-LABEL: func.func @f8_ls2
 // LOWER: pto.vdintlv
-// LOWER-SAME: !pto.vreg<128xui16>
+// LOWER-SAME: !pto.vreg<256xf8E4M3FN>
 // LOWER: pto.vintlv
-// LOWER-SAME: !pto.vreg<128xui16>
+// LOWER-SAME: !pto.vreg<256xf8E4M3FN>
+// LOWER-NOT: pto.vbitcast
 
 // LOWER-LABEL: func.func @ui8_ls4
 // LOWER: pto.vdintlv
-// LOWER-SAME: !pto.vreg<64xui32>
+// LOWER-SAME: !pto.vreg<256xui8>
 // LOWER: pto.vintlv
-// LOWER-SAME: !pto.vreg<64xui32>
+// LOWER-SAME: !pto.vreg<256xui8>
+// LOWER-NOT: pto.vbitcast

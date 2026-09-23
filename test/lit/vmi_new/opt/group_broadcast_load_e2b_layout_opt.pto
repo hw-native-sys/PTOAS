@@ -43,11 +43,19 @@ module attributes {pto.target_arch = "a5", pto.kernel_kind = #pto.kernel_kind<ve
 // ASSIGN-LABEL: func.func @group_broadcast_load_e2b_layout_opt(
 // ASSIGN: pto.vmi.group_broadcast_load %{{.*}} {num_groups = 8 : i64}
 // ASSIGN-SAME: -> !pto.vmi.vreg<256xf32, #pto.vmi.layout<deinterleaved = 4>>
-// ASSIGN: pto.vmi.load
-// ASSIGN-SAME: -> !pto.vmi.vreg<256xf32, #pto.vmi.layout<contiguous>>
+// The e2b result is materialized to the deinterleaved-by-2 layout that the
+// multiply's other operand is loaded in, so the multiply runs without an
+// extra contiguous materialization.
 // ASSIGN: pto.vmi.ensure_layout
-// ASSIGN-SAME: !pto.vmi.vreg<256xf32, #pto.vmi.layout<deinterleaved = 4>> -> !pto.vmi.vreg<256xf32, #pto.vmi.layout<contiguous>>
-// ASSIGN: pto.vmi.mulf
+// ASSIGN-SAME: !pto.vmi.vreg<256xf32, #pto.vmi.layout<deinterleaved = 4>> -> !pto.vmi.vreg<256xf32, #pto.vmi.layout<deinterleaved = 2>>
+// ASSIGN: pto.vmi.load
+// ASSIGN-SAME: -> !pto.vmi.vreg<256xf32, #pto.vmi.layout<deinterleaved = 2>>
+// ASSIGN: %[[MUL:.*]] = pto.vmi.mulf
+// ASSIGN-SAME: -> !pto.vmi.vreg<256xf32, #pto.vmi.layout<deinterleaved = 2>>
+// The f8 conversion needs a contiguous operand, so the result is materialized
+// to contiguous afterwards.
+// ASSIGN: pto.vmi.ensure_layout %[[MUL]]
+// ASSIGN-SAME: !pto.vmi.vreg<256xf32, #pto.vmi.layout<deinterleaved = 2>> -> !pto.vmi.vreg<256xf32, #pto.vmi.layout<contiguous>>
 
 // VPTO-LABEL: func.func @group_broadcast_load_e2b_layout_opt(
 // VPTO: pto.vlds {{.*}} {dist = "E2B_B32"}

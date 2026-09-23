@@ -27,14 +27,20 @@ module {
 // ASSIGN-SAME: %arg2: !pto.vmi.mask<128xb32, #pto.vmi.layout<contiguous>>
 // ASSIGN: %[[MASK:.*]] = pto.vmi.ensure_mask_granularity
 // ASSIGN-SAME: -> !pto.vmi.mask<128xb16, #pto.vmi.layout<contiguous>>
+// The f16 source widens, so the two physical result parts are the even and the
+// odd lanes of the source: the vexpdif result is deinterleaved by 2 and the
+// un-annotated function result is materialized back to contiguous.
 // ASSIGN: %[[RESULT:.*]] = pto.vmi.vexpdif %arg0, %arg1, %[[MASK]]
 // ASSIGN-SAME: -> !pto.vmi.vreg<128xf32, #pto.vmi.layout<deinterleaved = 2>>
-// ASSIGN: return %[[RESULT]]
+// ASSIGN: %[[CONTIGUOUS:.*]] = pto.vmi.ensure_layout %[[RESULT]]
+// ASSIGN-SAME: !pto.vmi.vreg<128xf32, #pto.vmi.layout<deinterleaved = 2>> -> !pto.vmi.vreg<128xf32, #pto.vmi.layout<contiguous>>
+// ASSIGN: return %[[CONTIGUOUS]] : !pto.vmi.vreg<128xf32, #pto.vmi.layout<contiguous>>
 
 // LOWER-LABEL: func.func @vexpdif_f16(
 // LOWER: %[[EVEN:.*]] = pto.vexpdif %arg0, %arg1, %{{.*}}, "EVEN"
 // LOWER: %[[ODD:.*]] = pto.vexpdif %arg0, %arg1, %{{.*}}, "ODD"
-// LOWER: return %[[EVEN]], %[[ODD]]
+// LOWER: %[[LOW:.*]], %[[HIGH:.*]] = pto.vintlv %[[EVEN]], %[[ODD]]
+// LOWER: return %[[LOW]], %[[HIGH]]
 // LOWER-NOT: pto.vsub
 // LOWER-NOT: pto.vexp {{.*}} :
 // LOWER-NOT: pto.vmi.

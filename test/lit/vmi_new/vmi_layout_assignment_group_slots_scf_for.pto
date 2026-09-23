@@ -52,8 +52,10 @@ module {
 // ASSIGN: %[[RAW:.*]] = pto.vmi.group_load
 // ASSIGN-SAME: -> !pto.vmi.vreg<128xf32, #pto.vmi.layout<block_deinterleaved = 2>>
 // ASSIGN: %[[MASK0:.*]] = pto.vmi.create_group_mask
+// ASSIGN-SAME: -> !pto.vmi.mask<128xb32, #pto.vmi.layout<contiguous>>
+// ASSIGN: %[[MASK0BD:.*]] = pto.vmi.ensure_mask_layout %[[MASK0]]
 // ASSIGN-SAME: -> !pto.vmi.mask<128xb32, #pto.vmi.layout<block_deinterleaved = 2>>
-// ASSIGN: %[[SUM:.*]] = pto.vmi.group_reduce_addf %[[RAW]], %[[MASK0]]
+// ASSIGN: %[[SUM:.*]] = pto.vmi.group_reduce_addf %[[RAW]], %[[MASK0BD]]
 // ASSIGN-SAME: -> !pto.vmi.vreg<8xf32, #pto.vmi.layout<num_groups = 8, slots = 8>>
 // ASSIGN: pto.vmi.addf %[[ARG]], %[[SUM]]
 // ASSIGN-SAME: -> !pto.vmi.vreg<8xf32, #pto.vmi.layout<num_groups = 8, slots = 8>>

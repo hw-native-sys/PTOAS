@@ -46,7 +46,8 @@ module attributes {pto.target_arch = "a5"} {
 // The option may only affect equal-cost tie-breaking; it cannot override the
 // cost solver's strictly cheaper contiguous-to-lane-stride relation.
 // COMPACT-LABEL: func.func @truncf_dense_store(
-// COMPACT-COUNT-4: pto.vlds
+// COMPACT-COUNT-2: pto.vldsx2 {{.*}} "DINTLV_B32"
+// COMPACT-COUNT-2: pto.vintlv
 // COMPACT-COUNT-4: pto.vcvt {{.*}} {part = "P0"
 // COMPACT-NOT: part = "P1"
 // COMPACT-NOT: part = "P2"
@@ -54,7 +55,8 @@ module attributes {pto.target_arch = "a5"} {
 // COMPACT-COUNT-4: pto.vsts {{.*}} {dist = "PK4_B32"}
 
 // LANE-LABEL: func.func @truncf_dense_store(
-// LANE-COUNT-4: pto.vlds
+// LANE-COUNT-2: pto.vldsx2 {{.*}} "DINTLV_B32"
+// LANE-COUNT-2: pto.vintlv
 // LANE-COUNT-4: pto.vcvt {{.*}} {part = "P0"
 // LANE-NOT: part = "P1"
 // LANE-NOT: part = "P2"

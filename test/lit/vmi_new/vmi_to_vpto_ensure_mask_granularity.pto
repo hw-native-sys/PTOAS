@@ -27,14 +27,19 @@ module {
   }
 }
 
+// The b32 -> b16 mask conversion of a full-width mask packs each of the two b32
+// carriers down to one b16 carrier and merges the pair, so the contiguous mask
+// realization is the one the cost model prices lowest.
 // CHECK-LABEL: func.func @vmi_to_vpto_ensure_mask_granularity(
-// CHECK: %[[D2_LO:.*]], %[[D2_HI:.*]] = pto.pdintlv_b32 %arg0, %arg1
-// CHECK: %[[LO:.*]] = pto.ppack %[[D2_LO]], "LOWER" : !pto.mask<b32> -> !pto.mask<b16>
-// CHECK: %[[HI:.*]] = pto.ppack %[[D2_HI]], "LOWER" : !pto.mask<b32> -> !pto.mask<b16>
-// CHECK: %[[M16:.*]], %{{.*}} = pto.pintlv_b16 %[[LO]], %[[HI]]
+// CHECK: %[[LO16:.*]] = pto.ppack %arg0, "LOWER" : !pto.mask<b32> -> !pto.mask<b16>
+// CHECK: %[[HI16:.*]] = pto.ppack %arg1, "HIGHER" : !pto.mask<b32> -> !pto.mask<b16>
+// CHECK: %[[ALL:.*]] = pto.pset_b16 "PAT_ALL" : !pto.mask<b16>
+// CHECK: %[[M16:.*]] = pto.por %[[LO16]], %[[HI16]], %[[ALL]]
 // CHECK: pto.vsel %arg2, %arg3, %[[M16]]
 // CHECK: pto.vsel %arg4, %arg6, %arg0
 // CHECK: pto.vsel %arg5, %arg7, %arg1
+// CHECK-NOT: pto.pdintlv
+// CHECK-NOT: pto.pintlv
 // CHECK-NOT: pto.vmi.
 // CHECK-NOT: !pto.vmi.
 // CHECK-NOT: unrealized_conversion_cast

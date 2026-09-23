@@ -28,66 +28,37 @@
 // VPTO: pto.pset_b16 "PAT_VL8"
 // VPTO: pto.pset_b32 "PAT_VL1"
 // VPTO: scf.for
-// VPTO: %[[REDUCE_LOW:.*]], %[[REDUCE_HIGH:.*]] = pto.vldsx2 {{.*}}, "DINTLV_B16"
+// VPTO: pto.vldsx2 {{.*}}, "DINTLV_B16"
 // VPTO: pto.vcgmax
 // VPTO: pto.vcvt {{.*}} {part = "EVEN", sat = "SAT"}
 // VPTO: pto.vsts {{.*}} {dist = "1PT_B32"}
-// VPTO: %[[RECIP_LOW:.*]] = pto.vselr {{.*}} : !pto.vreg<128xbf16>, !pto.vreg<128xui16> -> !pto.vreg<128xbf16>
-// VPTO: %[[RECIP_HIGH:.*]] = pto.vselr {{.*}} : !pto.vreg<128xbf16>, !pto.vreg<128xui16> -> !pto.vreg<128xbf16>
-// VPTO: %[[QUANT_0:[^,]+]], %{{.*}} = pto.vlds {{.*}} {dist = "UNPK_B16"}
-// VPTO: %[[QUANT_1:[^,]+]], %{{.*}} = pto.vlds {{.*}} {dist = "UNPK_B16"}
-// VPTO: %[[QUANT_2:[^,]+]], %{{.*}} = pto.vlds {{.*}} {dist = "UNPK_B16"}
-// VPTO: %[[QUANT_3:[^,]+]], %{{.*}} = pto.vlds {{.*}} {dist = "UNPK_B16"}
-// VPTO: %[[RECIP_LOW_BITS:.*]] = pto.vbitcast %[[RECIP_LOW]]
-// VPTO: %[[RECIP_0_WORDS:.*]] = pto.vzunpack %[[RECIP_LOW_BITS]], {{.*}}
-// VPTO: %[[RECIP_0:.*]] = pto.vbitcast %[[RECIP_0_WORDS]]
-// VPTO: %[[RECIP_1_WORDS:.*]] = pto.vzunpack %[[RECIP_LOW_BITS]], {{.*}}
-// VPTO: %[[RECIP_1:.*]] = pto.vbitcast %[[RECIP_1_WORDS]]
-// VPTO: %[[RECIP_HIGH_BITS:.*]] = pto.vbitcast %[[RECIP_HIGH]]
-// VPTO: %[[RECIP_2_WORDS:.*]] = pto.vzunpack %[[RECIP_HIGH_BITS]], {{.*}}
-// VPTO: %[[RECIP_2:.*]] = pto.vbitcast %[[RECIP_2_WORDS]]
-// VPTO: %[[RECIP_3_WORDS:.*]] = pto.vzunpack %[[RECIP_HIGH_BITS]], {{.*}}
-// VPTO: %[[RECIP_3:.*]] = pto.vbitcast %[[RECIP_3_WORDS]]
-// VPTO: pto.vmul %[[QUANT_0]], %[[RECIP_0]]
-// VPTO: pto.vmul %[[QUANT_1]], %[[RECIP_1]]
-// VPTO: pto.vmul %[[QUANT_2]], %[[RECIP_2]]
-// VPTO: pto.vmul %[[QUANT_3]], %[[RECIP_3]]
+// VPTO: %[[RECIP:.*]] = pto.vselr {{.*}} : !pto.vreg<128xbf16>, !pto.vreg<128xui16> -> !pto.vreg<128xbf16>
+// VPTO: pto.vmul {{.*}}, %[[RECIP]]
+// VPTO: pto.vmul {{.*}}, %[[RECIP]]
 // VPTO: %[[QUANT_FP8_0:.*]] = pto.vcvt {{.*}} {part = "P0", rnd = "R", sat = "SAT"}
-// VPTO: %[[QUANT_FP8_1:.*]] = pto.vcvt {{.*}} {part = "P0", rnd = "R", sat = "SAT"}
-// VPTO: %[[QUANT_FP8_2:.*]] = pto.vcvt {{.*}} {part = "P0", rnd = "R", sat = "SAT"}
-// VPTO: %[[QUANT_FP8_3:.*]] = pto.vcvt {{.*}} {part = "P0", rnd = "R", sat = "SAT"}
-// VPTO: %[[DEQUANT_SCALE_LOW:.*]] = pto.vselr {{.*}} : !pto.vreg<128xbf16>, !pto.vreg<128xui16> -> !pto.vreg<128xbf16>
-// VPTO: %[[DEQUANT_SCALE_HIGH:.*]] = pto.vselr {{.*}} : !pto.vreg<128xbf16>, !pto.vreg<128xui16> -> !pto.vreg<128xbf16>
-// VPTO: %[[DEQUANT_0:.*]] = pto.vcvt %[[QUANT_FP8_0]], {{.*}} {part = "P0"}
-// VPTO: %[[DEQUANT_1:.*]] = pto.vcvt %[[QUANT_FP8_1]], {{.*}} {part = "P0"}
-// VPTO: %[[DEQUANT_2:.*]] = pto.vcvt %[[QUANT_FP8_2]], {{.*}} {part = "P0"}
-// VPTO: %[[DEQUANT_3:.*]] = pto.vcvt %[[QUANT_FP8_3]], {{.*}} {part = "P0"}
-// VPTO: %[[DEQUANT_SCALE_LOW_BITS:.*]] = pto.vbitcast %[[DEQUANT_SCALE_LOW]]
-// VPTO: %[[DEQUANT_SCALE_0_WORDS:.*]] = pto.vzunpack %[[DEQUANT_SCALE_LOW_BITS]], {{.*}}
-// VPTO: %[[DEQUANT_SCALE_0:.*]] = pto.vbitcast %[[DEQUANT_SCALE_0_WORDS]]
-// VPTO: %[[DEQUANT_SCALE_1_WORDS:.*]] = pto.vzunpack %[[DEQUANT_SCALE_LOW_BITS]], {{.*}}
-// VPTO: %[[DEQUANT_SCALE_1:.*]] = pto.vbitcast %[[DEQUANT_SCALE_1_WORDS]]
-// VPTO: %[[DEQUANT_SCALE_HIGH_BITS:.*]] = pto.vbitcast %[[DEQUANT_SCALE_HIGH]]
-// VPTO: %[[DEQUANT_SCALE_2_WORDS:.*]] = pto.vzunpack %[[DEQUANT_SCALE_HIGH_BITS]], {{.*}}
-// VPTO: %[[DEQUANT_SCALE_2:.*]] = pto.vbitcast %[[DEQUANT_SCALE_2_WORDS]]
-// VPTO: %[[DEQUANT_SCALE_3_WORDS:.*]] = pto.vzunpack %[[DEQUANT_SCALE_HIGH_BITS]], {{.*}}
-// VPTO: %[[DEQUANT_SCALE_3:.*]] = pto.vbitcast %[[DEQUANT_SCALE_3_WORDS]]
-// VPTO: %[[DEQUANT_SCALE_F32_0:.*]] = pto.vcvt %[[DEQUANT_SCALE_0]], {{.*}} {part = "EVEN"}
-// VPTO: %[[DEQUANT_SCALE_F32_1:.*]] = pto.vcvt %[[DEQUANT_SCALE_1]], {{.*}} {part = "EVEN"}
-// VPTO: %[[DEQUANT_SCALE_F32_2:.*]] = pto.vcvt %[[DEQUANT_SCALE_2]], {{.*}} {part = "EVEN"}
-// VPTO: %[[DEQUANT_SCALE_F32_3:.*]] = pto.vcvt %[[DEQUANT_SCALE_3]], {{.*}} {part = "EVEN"}
+// VPTO: %[[QUANT_FP8_1:.*]] = pto.vcvt {{.*}} {part = "P1", rnd = "R", sat = "SAT"}
+// VPTO: %[[QUANT_FP8_2:.*]] = pto.vcvt {{.*}} {part = "P2", rnd = "R", sat = "SAT"}
+// VPTO: %[[QUANT_FP8_3:.*]] = pto.vcvt {{.*}} {part = "P3", rnd = "R", sat = "SAT"}
+// VPTO: %[[DEQUANT_SCALE:.*]] = pto.vselr {{.*}} : !pto.vreg<128xbf16>, !pto.vreg<128xui16> -> !pto.vreg<128xbf16>
+// VPTO: %[[DEQUANT_0:.*]] = pto.vcvt {{.*}} {part = "P0"}
+// VPTO: %[[DEQUANT_1:.*]] = pto.vcvt {{.*}} {part = "P1"}
+// VPTO: %[[DEQUANT_2:.*]] = pto.vcvt {{.*}} {part = "P2"}
+// VPTO: %[[DEQUANT_3:.*]] = pto.vcvt {{.*}} {part = "P3"}
+// VPTO: %[[DEQUANT_SCALE_F32_0:.*]] = pto.vcvt %[[DEQUANT_SCALE]], {{.*}} {part = "EVEN"}
+// VPTO: %[[DEQUANT_SCALE_F32_1:.*]] = pto.vcvt %[[DEQUANT_SCALE]], {{.*}} {part = "ODD"}
 // VPTO: %[[DEQUANT_OUT_0:.*]] = pto.vmul %[[DEQUANT_0]], %[[DEQUANT_SCALE_F32_0]]
-// VPTO: %[[DEQUANT_OUT_1:.*]] = pto.vmul %[[DEQUANT_1]], %[[DEQUANT_SCALE_F32_1]]
-// VPTO: %[[DEQUANT_OUT_2:.*]] = pto.vmul %[[DEQUANT_2]], %[[DEQUANT_SCALE_F32_2]]
-// VPTO: %[[DEQUANT_OUT_3:.*]] = pto.vmul %[[DEQUANT_3]], %[[DEQUANT_SCALE_F32_3]]
+// VPTO: %[[DEQUANT_OUT_1:.*]] = pto.vmul %[[DEQUANT_1]], %[[DEQUANT_SCALE_F32_0]]
+// VPTO: %[[DEQUANT_OUT_2:.*]] = pto.vmul %[[DEQUANT_2]], %[[DEQUANT_SCALE_F32_1]]
+// VPTO: %[[DEQUANT_OUT_3:.*]] = pto.vmul %[[DEQUANT_3]], %[[DEQUANT_SCALE_F32_1]]
 // VPTO: %[[DEQUANT_BF16_0:.*]] = pto.vcvt %[[DEQUANT_OUT_0]], {{.*}} {part = "EVEN", rnd = "R", sat = "SAT"}
-// VPTO: %[[DEQUANT_BF16_1:.*]] = pto.vcvt %[[DEQUANT_OUT_1]], {{.*}} {part = "EVEN", rnd = "R", sat = "SAT"}
-// VPTO: %[[DEQUANT_BF16_2:.*]] = pto.vcvt %[[DEQUANT_OUT_2]], {{.*}} {part = "EVEN", rnd = "R", sat = "SAT"}
-// VPTO: %[[DEQUANT_BF16_3:.*]] = pto.vcvt %[[DEQUANT_OUT_3]], {{.*}} {part = "EVEN", rnd = "R", sat = "SAT"}
-// VPTO: pto.vsts %[[DEQUANT_BF16_0]], {{.*}} {dist = "PK_B32"}
-// VPTO: pto.vsts %[[DEQUANT_BF16_1]], {{.*}} {dist = "PK_B32"}
-// VPTO: pto.vsts %[[DEQUANT_BF16_2]], {{.*}} {dist = "PK_B32"}
-// VPTO: pto.vsts %[[DEQUANT_BF16_3]], {{.*}} {dist = "PK_B32"}
+// VPTO: %[[DEQUANT_BF16_1:.*]] = pto.vcvt %[[DEQUANT_OUT_2]], {{.*}} {part = "ODD", rnd = "R", sat = "SAT"}
+// VPTO: %[[DEQUANT_BF16_2:.*]] = pto.vcvt %[[DEQUANT_OUT_1]], {{.*}} {part = "EVEN", rnd = "R", sat = "SAT"}
+// VPTO: %[[DEQUANT_BF16_3:.*]] = pto.vcvt %[[DEQUANT_OUT_3]], {{.*}} {part = "ODD", rnd = "R", sat = "SAT"}
+// VPTO: pto.vor %[[DEQUANT_BF16_0]], %[[DEQUANT_BF16_1]], {{.*}}
+// VPTO: pto.vor %[[DEQUANT_BF16_2]], %[[DEQUANT_BF16_3]], {{.*}}
+// VPTO: pto.vintlv {{.*}}
+// VPTO: pto.vsts {{.*}} : !pto.vreg<128xbf16>, !pto.ptr<bf16, ub>, !pto.mask<b16> -> !pto.ptr<bf16, ub>
+// VPTO: pto.vsts {{.*}} : !pto.vreg<128xbf16>, !pto.ptr<bf16, ub>, !pto.mask<b16> -> !pto.ptr<bf16, ub>
 
 module attributes {pto.target_arch = "a5"} {
   module attributes {pto.backend = "vpto", pto.kernel_kind = #pto.kernel_kind<vector>, pto.target_arch = "a5"} {

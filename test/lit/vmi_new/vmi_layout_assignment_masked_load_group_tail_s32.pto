@@ -39,7 +39,9 @@ module {
 // ASSIGN: pto.vmi.create_group_mask
 // ASSIGN-SAME: !pto.vmi.mask<256xb32, #pto.vmi.layout<deinterleaved = 4>>
 // ASSIGN: pto.vmi.load
-// ASSIGN-SAME: #pto.vmi.layout<deinterleaved = 4>
+// ASSIGN-SAME: #pto.vmi.layout<deinterleaved = 2>
+// ASSIGN: %[[LOADED_D4:.*]] = pto.vmi.ensure_layout
+// ASSIGN-SAME: !pto.vmi.vreg<256xf32, #pto.vmi.layout<deinterleaved = 2>> -> !pto.vmi.vreg<256xf32, #pto.vmi.layout<deinterleaved = 4>>
 // ASSIGN: pto.vmi.select
 // ASSIGN-SAME: #pto.vmi.layout<deinterleaved = 4>
 // ASSIGN: pto.vmi.group_reduce_addf

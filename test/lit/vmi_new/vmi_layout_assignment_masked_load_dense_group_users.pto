@@ -44,7 +44,9 @@ module {
 // ASSIGN: %[[ZERO:.*]] = pto.vmi.broadcast
 // ASSIGN-SAME: -> !pto.vmi.vreg<256xf32, #pto.vmi.layout<deinterleaved = 4>>
 // ASSIGN: %[[LOADED:.*]] = pto.vmi.load
-// ASSIGN-SAME: -> !pto.vmi.vreg<256xf32, #pto.vmi.layout<deinterleaved = 4>>
+// ASSIGN-SAME: -> !pto.vmi.vreg<256xf32, #pto.vmi.layout<deinterleaved = 2>>
+// ASSIGN: %[[LOADED_D4:.*]] = pto.vmi.ensure_layout %[[LOADED]]
+// ASSIGN-SAME: !pto.vmi.vreg<256xf32, #pto.vmi.layout<deinterleaved = 2>> -> !pto.vmi.vreg<256xf32, #pto.vmi.layout<deinterleaved = 4>>
 // ASSIGN: %[[X:.*]] = pto.vmi.select
 // ASSIGN-SAME: !pto.vmi.mask<256xb32, #pto.vmi.layout<deinterleaved = 4>>
 // ASSIGN-SAME: -> !pto.vmi.vreg<256xf32, #pto.vmi.layout<deinterleaved = 4>>

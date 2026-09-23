@@ -42,14 +42,17 @@ module {
 // ASSIGN-LABEL: func.func @vmi_layout_assignment_group_slot_trunci_lane_stride(
 // ASSIGN: %[[NARROW:.*]] = pto.vmi.trunci
 // ASSIGN-SAME: -> !pto.vmi.vreg<8xui8, #pto.vmi.layout<num_groups = 8, slots = 8, lane_stride = 4>>
-// ASSIGN: pto.vmi.group_store %[[NARROW]]
+// ASSIGN: %[[NARROWC:.*]] = pto.vmi.ensure_layout %[[NARROW]]
+// ASSIGN-SAME: -> !pto.vmi.vreg<8xui8, #pto.vmi.layout<num_groups = 8, slots = 8>>
+// ASSIGN: pto.vmi.group_store %[[NARROWC]]
 
 // LOWER-LABEL: func.func @vmi_layout_assignment_group_slot_trunci_lane_stride(
-// LOWER: pto.vcvt {{.*}} {part = "P0", sat = "SAT"} : !pto.vreg<64xi32>, !pto.mask<b32> -> !pto.vreg<256xui8>
-// LOWER: %[[PACK16:.*]] = pto.vpack {{.*}}, "LOWER" : !pto.vreg<64xui32> -> !pto.vreg<128xui16>
+// LOWER: %[[CVT:.*]] = pto.vcvt {{.*}} {part = "P0", sat = "SAT"} : !pto.vreg<64xi32>, !pto.mask<b32> -> !pto.vreg<256xui8>
+// LOWER: %[[WORDS:.*]] = pto.vbitcast %[[CVT]] : !pto.vreg<256xui8> -> !pto.vreg<64xui32>
+// LOWER: %[[PACK16:.*]] = pto.vpack %[[WORDS]], "LOWER" : !pto.vreg<64xui32> -> !pto.vreg<128xui16>
 // LOWER: %[[PACK8:.*]] = pto.vpack %[[PACK16]], "LOWER" : !pto.vreg<128xui16> -> !pto.vreg<256xui8>
-// LOWER: %[[WORDS:.*]] = pto.vbitcast %[[PACK8]] : !pto.vreg<256xui8> -> !pto.vreg<64xui32>
-// LOWER-COUNT-2: pto.vsts {{.*}} {dist = "1PT_B32"}
+// LOWER: pto.vsts %[[PACK8]], {{.*}} : !pto.vreg<256xui8>, !pto.ptr<ui8, ub>, !pto.mask<b8>
+// LOWER-NOT: dist = "1PT_B32"
 // LOWER-NOT: dist = "PK_B16"
 // LOWER-NOT: dist = "PK4_B32"
 // LOWER-NOT: pto.vmi.
@@ -59,14 +62,16 @@ module {
 // ASSIGN-LABEL: func.func @vmi_layout_assignment_group_slot_trunci_lane_stride2(
 // ASSIGN: %[[NARROW2:.*]] = pto.vmi.trunci
 // ASSIGN-SAME: -> !pto.vmi.vreg<8xui8, #pto.vmi.layout<num_groups = 8, slots = 8, lane_stride = 2>>
-// ASSIGN: pto.vmi.group_store %[[NARROW2]]
+// ASSIGN: %[[NARROW2C:.*]] = pto.vmi.ensure_layout %[[NARROW2]]
+// ASSIGN-SAME: -> !pto.vmi.vreg<8xui8, #pto.vmi.layout<num_groups = 8, slots = 8>>
+// ASSIGN: pto.vmi.group_store %[[NARROW2C]]
 
 // LOWER-LABEL: func.func @vmi_layout_assignment_group_slot_trunci_lane_stride2(
 // LOWER: %[[CVT2:.*]] = pto.vcvt {{.*}} {part = "EVEN", sat = "SAT"} : !pto.vreg<128xui16>, !pto.mask<b16> -> !pto.vreg<256xui8>
 // LOWER: %[[CARRIER2:.*]] = pto.vbitcast %[[CVT2]] : !pto.vreg<256xui8> -> !pto.vreg<128xui16>
 // LOWER: %[[PACKEDV2:.*]] = pto.vpack %[[CARRIER2]], "LOWER" : !pto.vreg<128xui16> -> !pto.vreg<256xui8>
-// LOWER: %[[WORDS2:.*]] = pto.vbitcast %[[PACKEDV2]] : !pto.vreg<256xui8> -> !pto.vreg<64xui32>
-// LOWER-COUNT-2: pto.vsts {{.*}} {dist = "1PT_B32"}
+// LOWER: pto.vsts %[[PACKEDV2]], {{.*}} : !pto.vreg<256xui8>, !pto.ptr<ui8, ub>, !pto.mask<b8>
+// LOWER-NOT: dist = "1PT_B32"
 // LOWER-NOT: dist = "PK_B16"
 // LOWER-NOT: dist = "PK4_B32"
 // LOWER-NOT: pto.vmi.

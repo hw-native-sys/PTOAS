@@ -10,50 +10,73 @@
 
 // RUN: pto-test-opt %s -vmi-lower-unified-to-legacy -vmi-mask-granularity-assignment -vmi-layout-assignment -vmi-to-vpto | FileCheck %s
 
+// A compact group result (one scalar per group) is not carried across the
+// function boundary; it is stored to UB through the group-store path.
+
 module {
   func.func @group_add_i16_full_chunks(
       %source: !pto.vmi.vreg<512xi16>,
-      %mask: !pto.vmi.mask<512xpred>) -> !pto.vmi.vreg<2xi16> {
+      %mask: !pto.vmi.mask<512xpred>,
+      %dst: !pto.ptr<i16, ub>, %off: index) {
+    %c1 = arith.constant 1 : index
     %sum = pto.vmi.vcadd %source, %mask {group = 2}
         : !pto.vmi.vreg<512xi16>, !pto.vmi.mask<512xpred>
         -> !pto.vmi.vreg<2xi16>
-    return %sum : !pto.vmi.vreg<2xi16>
+    pto.vmi.vstore %sum, %dst[%off], %c1 {group = 2}
+        : !pto.vmi.vreg<2xi16>, !pto.ptr<i16, ub>
+    return
   }
 
   func.func @group_min_i8_one_block(
       %source: !pto.vmi.vreg<256xi8>,
-      %mask: !pto.vmi.mask<256xpred>) -> !pto.vmi.vreg<8xi8> {
+      %mask: !pto.vmi.mask<256xpred>,
+      %dst: !pto.ptr<i8, ub>, %off: index) {
+    %c1 = arith.constant 1 : index
     %min = pto.vmi.vcmin %source, %mask {group = 8}
         : !pto.vmi.vreg<256xi8>, !pto.vmi.mask<256xpred>
         -> !pto.vmi.vreg<8xi8>
-    return %min : !pto.vmi.vreg<8xi8>
+    pto.vmi.vstore %min, %dst[%off], %c1 {group = 8}
+        : !pto.vmi.vreg<8xi8>, !pto.ptr<i8, ub>
+    return
   }
 
   func.func @group_min_f32_two_blocks(
       %source: !pto.vmi.vreg<128xf32>,
-      %mask: !pto.vmi.mask<128xpred>) -> !pto.vmi.vreg<8xf32> {
+      %mask: !pto.vmi.mask<128xpred>,
+      %dst: !pto.ptr<f32, ub>, %off: index) {
+    %c1 = arith.constant 1 : index
     %min = pto.vmi.vcmin %source, %mask {group = 8}
         : !pto.vmi.vreg<128xf32>, !pto.vmi.mask<128xpred>
         -> !pto.vmi.vreg<8xf32>
-    return %min : !pto.vmi.vreg<8xf32>
+    pto.vmi.vstore %min, %dst[%off], %c1 {group = 8}
+        : !pto.vmi.vreg<8xf32>, !pto.ptr<f32, ub>
+    return
   }
 
   func.func @reduce_max_i8(
       %source: !pto.vmi.vreg<256xi8>,
-      %mask: !pto.vmi.mask<256xpred>) -> !pto.vmi.vreg<1xi8> {
+      %mask: !pto.vmi.mask<256xpred>,
+      %dst: !pto.ptr<i8, ub>, %off: index) {
+    %c1 = arith.constant 1 : index
     %max = pto.vmi.vcmax %source, %mask
         : !pto.vmi.vreg<256xi8>, !pto.vmi.mask<256xpred>
         -> !pto.vmi.vreg<1xi8>
-    return %max : !pto.vmi.vreg<1xi8>
+    pto.vmi.vstore %max, %dst[%off], %c1 {group = 1}
+        : !pto.vmi.vreg<1xi8>, !pto.ptr<i8, ub>
+    return
   }
 
   func.func @reduce_min_i16(
       %source: !pto.vmi.vreg<128xi16>,
-      %mask: !pto.vmi.mask<128xpred>) -> !pto.vmi.vreg<1xi16> {
+      %mask: !pto.vmi.mask<128xpred>,
+      %dst: !pto.ptr<i16, ub>, %off: index) {
+    %c1 = arith.constant 1 : index
     %min = pto.vmi.vcmin %source, %mask
         : !pto.vmi.vreg<128xi16>, !pto.vmi.mask<128xpred>
         -> !pto.vmi.vreg<1xi16>
-    return %min : !pto.vmi.vreg<1xi16>
+    pto.vmi.vstore %min, %dst[%off], %c1 {group = 1}
+        : !pto.vmi.vreg<1xi16>, !pto.ptr<i16, ub>
+    return
   }
 }
 
@@ -66,16 +89,22 @@ module {
 // CHECK: pto.vcadd {{.*}} : !pto.vreg<128xi16>, !pto.mask<b16> -> !pto.vreg<64xi32>
 // CHECK: pto.vadd {{.*}} : !pto.vreg<64xi32>, !pto.vreg<64xi32>, !pto.mask<b32> -> !pto.vreg<64xi32>
 // CHECK: pto.vbitcast {{.*}} : !pto.vreg<64xi32> -> !pto.vreg<128xi16>
+// CHECK: pto.vsts {{.*}}: !pto.vreg<128xi16>, !pto.ptr<i16, ub>, !pto.mask<b16>
+// CHECK: pto.vsts {{.*}}: !pto.vreg<128xi16>, !pto.ptr<i16, ub>, !pto.mask<b16>
 
 // CHECK-LABEL: func.func @group_min_i8_one_block(
 // CHECK: pto.vcgmin {{.*}} : !pto.vreg<256xi8>, !pto.mask<b8> -> !pto.vreg<256xi8>
+// CHECK: pto.vsts {{.*}}: !pto.vreg<256xi8>, !pto.ptr<i8, ub>, !pto.mask<b8>
 
 // CHECK-LABEL: func.func @group_min_f32_two_blocks(
 // CHECK-COUNT-2: pto.vcgmin {{.*}} : !pto.vreg<64xf32>, !pto.mask<b32> -> !pto.vreg<64xf32>
 // CHECK: pto.vmin {{.*}} : !pto.vreg<64xf32>, !pto.vreg<64xf32>, !pto.mask<b32> -> !pto.vreg<64xf32>
+// CHECK: pto.vsts {{.*}}: !pto.vreg<64xf32>, !pto.ptr<f32, ub>, !pto.mask<b32>
 
 // CHECK-LABEL: func.func @reduce_max_i8(
 // CHECK: pto.vcmax {{.*}} : !pto.vreg<256xi8>, !pto.mask<b8> -> !pto.vreg<256xi8>
+// CHECK: pto.vsts {{.*}}: !pto.vreg<256xi8>, !pto.ptr<i8, ub>, !pto.mask<b8>
 
 // CHECK-LABEL: func.func @reduce_min_i16(
-// CHECK: pto.vcmin {{.*}} : !pto.vreg<128xi16>, !pto.mask<b16> -> !pto.vreg<128xi16>
+// CHECK: %[[MIN:.*]] = pto.vcmin {{.*}} : !pto.vreg<128xi16>, !pto.mask<b16> -> !pto.vreg<128xi16>
+// CHECK: pto.vsts %[[MIN]], {{.*}}: !pto.vreg<128xi16>, !pto.ptr<i16, ub>, !pto.mask<b16>

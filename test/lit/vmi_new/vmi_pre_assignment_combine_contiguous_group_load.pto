@@ -9,10 +9,15 @@
 // RUN: pto-test-opt %s -vmi-lower-unified-to-legacy -vmi-pre-assignment-combine | FileCheck %s --check-prefix=COMBINE
 // RUN: pto-test-opt %s -vmi-lower-unified-to-legacy -vmi-pre-assignment-combine -vmi-mask-granularity-assignment -vmi-layout-assignment -vmi-to-vpto -vpto-combine-reductions | FileCheck %s --check-prefix=LOWER
 
+// A compact group result (one scalar per group) is not carried across the
+// function boundary; it is stored to UB through the store path.
+
 module {
   func.func @contiguous_bf16_group_load(
       %src: !pto.ptr<bf16, ub>,
-      %off: index) -> !pto.vmi.vreg<8xui16> {
+      %dst: !pto.ptr<ui16, ub>,
+      %off: index) {
+    %c1 = arith.constant 1 : index
     %c256 = arith.constant 256 : index
     %mask = pto.vmi.create_mask %c256 : index -> !pto.vmi.mask<256xpred>
     %c32640_i16 = arith.constant 32640 : i16
@@ -31,7 +36,9 @@ module {
     %max = pto.vmi.vcmax %exp, %mask {group = 8}
         : !pto.vmi.vreg<256xui16>, !pto.vmi.mask<256xpred>
           -> !pto.vmi.vreg<8xui16>
-    return %max : !pto.vmi.vreg<8xui16>
+    pto.vmi.vstore %max, %dst[%off], %c1 {group = 8}
+        : !pto.vmi.vreg<8xui16>, !pto.ptr<ui16, ub>
+    return
   }
 
   func.func @contiguous_ui8_group_load(
@@ -66,6 +73,8 @@ module {
 // COMBINE: %[[LOAD:.*]] = pto.vmi.load
 // COMBINE-NOT: pto.vmi.group_load
 // COMBINE: pto.vmi.bitcast %[[LOAD]]
+// COMBINE: pto.vmi.group_store
+// COMBINE-SAME: !pto.vmi.vreg<8xui16>, !pto.ptr<ui16, ub>
 
 // COMBINE-LABEL: func.func @contiguous_ui8_group_load
 // COMBINE: pto.vmi.load
@@ -84,4 +93,5 @@ module {
 // LOWER-NEXT: %{{.*}} = pto.vbitcast %[[LOW]]
 // LOWER-NEXT: %{{.*}} = pto.vbitcast %[[HIGH]]
 // LOWER: pto.vmax
-// LOWER-NEXT: pto.vcgmax
+// LOWER-NEXT: %[[MAX:.*]] = pto.vcgmax
+// LOWER: pto.vsts %[[MAX]], {{.*}}: !pto.vreg<128xui16>, !pto.ptr<ui16, ub>, !pto.mask<b16>

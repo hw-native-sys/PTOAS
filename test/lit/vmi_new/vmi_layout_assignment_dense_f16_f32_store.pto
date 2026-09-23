@@ -93,31 +93,46 @@ module {
   }
 }
 
+// The 16->32 widening preference only pins the compact 64-lane shapes to a
+// lane-strided source, so a wider source widens from contiguous into the
+// deinterleaved by 2 result and the store interleaves the pair back out.  That
+// needs one load, one widening pair and one interleaved store per carrier pair.
 // ASSIGN-LABEL: func.func @vmi_layout_assignment_dense_f16_to_f32_store(
 // ASSIGN: %[[X16:.*]] = pto.vmi.load
-// ASSIGN-SAME: -> !pto.vmi.vreg<128xf16, #pto.vmi.layout<contiguous, lane_stride = 2>>
+// ASSIGN-SAME: -> !pto.vmi.vreg<128xf16, #pto.vmi.layout<contiguous>>
 // ASSIGN: %[[X32:.*]] = pto.vmi.extf %[[X16]]
-// ASSIGN-SAME: -> !pto.vmi.vreg<128xf32, #pto.vmi.layout<contiguous>>
+// ASSIGN-SAME: -> !pto.vmi.vreg<128xf32, #pto.vmi.layout<deinterleaved = 2>>
 // ASSIGN-NOT: pto.vmi.ensure_layout %[[X32]]
 // ASSIGN: pto.vmi.store %[[X32]]
-// ASSIGN-SAME: !pto.vmi.vreg<128xf32, #pto.vmi.layout<contiguous>>, {{(!pto\.ptr)?<f32, ub>}}
+// ASSIGN-SAME: !pto.vmi.vreg<128xf32, #pto.vmi.layout<deinterleaved = 2>>, {{(!pto\.ptr)?<f32, ub>}}
 
 // LOWER-LABEL: func.func @vmi_layout_assignment_dense_f16_to_f32_store(
-// LOWER-COUNT-2: pto.vlds
-// LOWER-COUNT-2: pto.vcvt {{.*}} {part = "EVEN"}
-// LOWER-COUNT-2: pto.vsts
+// LOWER: %[[WIDE:.*]] = pto.vlds {{.*}} : {{(!pto\.ptr)?<f16, ub>}} -> !pto.vreg<128xf16>
+// LOWER: %[[EVEN:.*]] = pto.vcvt %[[WIDE]], {{.*}} {part = "EVEN"}
+// LOWER: %[[ODD:.*]] = pto.vcvt %[[WIDE]], {{.*}} {part = "ODD"}
+// LOWER: pto.vstsx2 %[[EVEN]], %[[ODD]]{{.*}}"INTLV_B32"
 // LOWER-NOT: pto.vmi.
 // LOWER-NOT: !pto.vmi.
 // LOWER-NOT: unrealized_conversion_cast
 
 // ASSIGN-LABEL: func.func @vmi_layout_assignment_multichunk_f16_to_f32_store(
 // ASSIGN: %[[X16:.*]] = pto.vmi.load
-// ASSIGN-SAME: -> !pto.vmi.vreg<256xf16, #pto.vmi.layout<contiguous, lane_stride = 2>>
+// ASSIGN-SAME: -> !pto.vmi.vreg<256xf16, #pto.vmi.layout<contiguous>>
 // ASSIGN: %[[X32:.*]] = pto.vmi.extf %[[X16]]
-// ASSIGN-SAME: -> !pto.vmi.vreg<256xf32, #pto.vmi.layout<contiguous>>
+// ASSIGN-SAME: -> !pto.vmi.vreg<256xf32, #pto.vmi.layout<deinterleaved = 2>>
 // ASSIGN-NOT: pto.vmi.ensure_layout %[[X32]]
 // ASSIGN: pto.vmi.store %[[X32]]
-// ASSIGN-SAME: !pto.vmi.vreg<256xf32, #pto.vmi.layout<contiguous>>, {{(!pto\.ptr)?<f32, ub>}}
+// ASSIGN-SAME: !pto.vmi.vreg<256xf32, #pto.vmi.layout<deinterleaved = 2>>, {{(!pto\.ptr)?<f32, ub>}}
+
+// LOWER-LABEL: func.func @vmi_layout_assignment_multichunk_f16_to_f32_store(
+// LOWER-COUNT-2: pto.vlds {{.*}} : {{(!pto\.ptr)?<f16, ub>}} -> !pto.vreg<128xf16>
+// LOWER-COUNT-2: pto.vcvt {{.*}} {part = "EVEN"}
+// LOWER-COUNT-2: pto.vcvt {{.*}} {part = "ODD"}
+// LOWER: pto.vstsx2 {{.*}}"INTLV_B32"
+// LOWER: pto.vstsx2 {{.*}}"INTLV_B32"
+// LOWER-NOT: pto.vmi.
+// LOWER-NOT: !pto.vmi.
+// LOWER-NOT: unrealized_conversion_cast
 
 // ASSIGN-LABEL: func.func @vmi_layout_assignment_compact_f16_to_f32_store(
 // ASSIGN: %[[X16:.*]] = pto.vmi.load
@@ -154,25 +169,27 @@ module {
 
 // ASSIGN-LABEL: func.func @vmi_layout_assignment_dense_f32_to_f16_store(
 // ASSIGN: %[[X32:.*]] = pto.vmi.load
+// ASSIGN-SAME: -> !pto.vmi.vreg<128xf32, #pto.vmi.layout<deinterleaved = 2>>
+// ASSIGN: %[[X32C:.*]] = pto.vmi.ensure_layout %[[X32]]
 // ASSIGN-SAME: -> !pto.vmi.vreg<128xf32, #pto.vmi.layout<contiguous>>
-// ASSIGN-NOT: pto.vmi.ensure_layout
-// ASSIGN: %[[X16:.*]] = pto.vmi.truncf %[[X32]]
+// ASSIGN: %[[X16:.*]] = pto.vmi.truncf %[[X32C]]
 // ASSIGN-SAME: -> !pto.vmi.vreg<128xf16, #pto.vmi.layout<contiguous, lane_stride = 2>>
 // ASSIGN: pto.vmi.store %[[X16]]
 // ASSIGN-SAME: !pto.vmi.vreg<128xf16, #pto.vmi.layout<contiguous, lane_stride = 2>>, {{(!pto\.ptr)?<f16, ub>}}
 
 // ASSIGN-LABEL: func.func @vmi_layout_assignment_multichunk_f32_to_f16_store(
 // ASSIGN: %[[X32:.*]] = pto.vmi.load
+// ASSIGN-SAME: -> !pto.vmi.vreg<256xf32, #pto.vmi.layout<deinterleaved = 2>>
+// ASSIGN: %[[X32C:.*]] = pto.vmi.ensure_layout %[[X32]]
 // ASSIGN-SAME: -> !pto.vmi.vreg<256xf32, #pto.vmi.layout<contiguous>>
-// ASSIGN-NOT: pto.vmi.ensure_layout
-// ASSIGN: %[[X16:.*]] = pto.vmi.truncf %[[X32]]
+// ASSIGN: %[[X16:.*]] = pto.vmi.truncf %[[X32C]]
 // ASSIGN-SAME: -> !pto.vmi.vreg<256xf16, #pto.vmi.layout<contiguous, lane_stride = 2>>
 // ASSIGN: pto.vmi.store %[[X16]]
 // ASSIGN-SAME: !pto.vmi.vreg<256xf16, #pto.vmi.layout<contiguous, lane_stride = 2>>, {{(!pto\.ptr)?<f16, ub>}}
 
 // LOWER-LABEL: func.func @vmi_layout_assignment_dense_f32_to_f16_store(
-// LOWER: pto.vlds
-// LOWER: pto.vlds
+// LOWER: %[[PARTS:.*]] = pto.vldsx2 {{.*}} "DINTLV_B32"
+// LOWER: %[[PARTS2:.*]] = pto.vintlv %[[PARTS]]
 // LOWER: pto.vcvt {{.*}} {part = "EVEN", rnd = "R", sat = "SAT"}
 // LOWER: pto.vcvt {{.*}} {part = "EVEN", rnd = "R", sat = "SAT"}
 // LOWER-NOT: part = "ODD"
@@ -184,7 +201,8 @@ module {
 // LOWER-NOT: unrealized_conversion_cast
 
 // LOWER-LABEL: func.func @vmi_layout_assignment_multichunk_f32_to_f16_store(
-// LOWER-COUNT-4: pto.vlds
+// LOWER-COUNT-2: pto.vldsx2 {{.*}} "DINTLV_B32"
+// LOWER-COUNT-2: pto.vintlv
 // LOWER-COUNT-4: pto.vcvt {{.*}} {part = "EVEN", rnd = "R", sat = "SAT"}
 // LOWER-NOT: part = "ODD"
 // LOWER-NOT: pto.vor
