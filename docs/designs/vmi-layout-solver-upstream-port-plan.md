@@ -1488,3 +1488,20 @@ Stage 3 收尾清单第 4 条写明：**若干 fork 独有行被刻意不注入�
 
 **这两组数字合起来说明**：换引擎引入的**真实缺陷是 42 个**，且**三个族各有明确嫌疑成因**，
 不是一堆散乱失败；而 49 个期望差异属步骤 8 重测（既定做法：步骤 5 之后重新测量）。
+
+### 18.7 「no complete legal plan」族的第一处归因：**ensure_mask_granularity**
+
+逐个跑 16 个该族用例并读诊断，第一个（\`vmi_group_reduce_addi_i16.pto\`）就给出了明确指向：
+
+    error: VMI-LAYOUT-CONTRACT: no complete legal VMI layout plan exists for this component
+    note: see current operation: %0 = \"pto.vmi.ensure_mask_granularity\"(%arg1)
+          : (!pto.vmi.mask<128xb32>) -> !pto.vmi.mask<128xb16>
+
+也就是说：**枚举不出来的是 mask 粒度转换（b32 → b16）那条关系**。
+而 Stage 3 明确没有注入的 fork 独有行里，恰好包括
+**6 条 \`kLegalMaskGranularityCastLayoutPatterns\`** 与 **2 条 \`kEnsureMaskLayoutPatterns\`**。
+两者对上——这是对「未注入的 fork 独有候选行导致 solver 无解」这一假设的**第一份直接证据**
+（此前只是“高度可疑”，现在是“诊断里点名的就是那批行覆盖的关系”）。
+
+**修法**（与既定共识一致）：fork 专属包装——共享表 + fork 独有行，**只对 solver 可见**；
+不注入共享表，因此上游接受面不变。分诊任务已收到该族 16 个用例的目标清单与这一归因。
