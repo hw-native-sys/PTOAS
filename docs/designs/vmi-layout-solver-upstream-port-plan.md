@@ -1676,3 +1676,24 @@ type of return operand 归零说明：无注解边界不再钉住布局这处修
 依据（取其注释大意）：上游自己的 collect() 对这些统一拼写同样不声明关系，布局由 lowering 从交到它手上的值决定，因此关系提供者缺少该拼写分支不应使 component 失败。
 
 待其提交后由我在干净状态独立复核：改动范围、构建退出码、失败集合断言、按族增量；并特别核对 VMILayoutAssignment.cpp 部分是否结构必需且未放宽判定。
+
+### 18.18 三处修复**由我独立复核**：108 到 80（净修 28，无回归）
+
+在干净状态（pre: HEAD 5cc2fe723 dirty 0）跑构建与全量：
+
+| 提交 | 作用域 | 效果 |
+|---|---|---|
+| 914368bec | 1 文件 +10/-1 | 108 到 106（stride_store 的 mask 操作数）|
+| 453ed8e3b | 1 文件 +19/-3 | 106 到 89（无注解函数结果不再钉住）|
+| 5cc2fe723 | 2 文件 +89 | 89 到 80（pre-lowering 统一拼写）|
+
+复核读数：ninja exit 0；lit/vmi_new = 608 发现 / 528 通过 / 80 失败 —— 与实现方汇报一致，由我自己的运行复现。
+三个提交的失败集合都是前一个的**严格子集**（0 回归）。
+
+**对我那处建议的进一步更正（已被证明而非论证）**：pass 不变式（PTOValidateVMIIR.cpp：layout-assigned VMI IR requires
+vreg with layout）意味着统一算子的结果**不可能保持无布局**；上游流程里 pto.vmi.vload/vstore/vcvt 归 lowering 所有，
+其结果取 pass 给无类型传输实参的稳定 dense 主布局——这才是那 9 个统一算子用例通过的真正原因。
+我在 §18.11 提的「在边界物化转换」因此既不必要也不成立。
+
+**剩余（实现方列的进攻顺序）**：group_store 族（7）、vmi_compact_group_broadcast（1）、vmi_layout_assignment_group_slot_load 暴露的 extf 缺口、
+以及其余约 11 个 no-plan component（都含一个关系集为空或存在真实结构冲突的非 return 算子）。
