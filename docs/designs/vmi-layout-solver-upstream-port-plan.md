@@ -1302,3 +1302,23 @@ vexpdif 两族已在 Stage 2 完成。
 
 也就是说新查询一律进**新单元**，旧漏斗与旧查询的行为一字未动——这正是 \`8bc4c428e\` 修补过的那条规则，
 现在被稳定执行。缺口计数同步从 25 → 22，方向与幅度都符合预期。
+
+### 16.11 步骤 5 也已脚本化：\`step5/wire_step5.py\`（默认 dry-run，按文本锚点而非行号）
+
+把 §8.4 的编辑做成锚点式脚本：**默认只 dry-run 并报告它做了什么 + 括号平衡**，\`--apply\` 才写文件。
+当前 dry-run 结果（对 HEAD \`8bcf023dd\` 的上游 \`VMILayoutAssignment.cpp\`，2333 行 → 2415 行，括号平衡 0）：
+
+* 加 \`VMILayoutPlanner.h\` 包含；插入 \`getExplicitLayout\` helper；
+* **按 §10.13 的决定**：\`setNaturalLayout\`/\`setPreferredLayout\` 的两处「冲突布局」硬错误被移除，**写入保留**；
+* 删除 11 个 seed 辅助函数：\`hasRequestedLayout\`、\`hasLayoutAssignment\`、\`requestDataLayoutSeeds\`、\`applySeedRequest\`、
+  \`requestDataUseSeeds\`、\`requestMaskUseSeeds\`、\`runSeedPhase\`、\`requestExplicitLayouts\`、\`runLayoutSeedPhases\`、
+  \`requestLateLayouts\`、\`requestFallbackLayouts\`；
+* 用我们的 \`addEquivalentValues\` + \`createPropagator\` 替换 \`addEquivalentLayoutValues\`；
+* 用我们的 \`applyLayouts\`（194 行）替换上游版本；插入 \`mergePlan\` + \`selectLayoutPlan\`。
+
+**顺带一个好处**：锚点式编辑第一次跑就报了 3 处不匹配——\`hasRequestedLayout\`/\`hasLayoutAssignment\` 实际返回 \`bool\`
+（不是 \`LogicalResult\`）、helper 的插入锚点是 \`bool containsVMIType(Type type) {\`（不带 \`static\`）。
+这类漂移若用行号编辑会**静默改错地方**；锚点让它当场报错。修正后 18 项全部命中。
+
+**应用前置**：仍要等步骤 2c（planner 进树）——\`applyLayouts\` 依赖 \`selectCostedVMILayoutPlans\`/\`commitVMILayoutPlan\`。
+应用后跑 \`validate_port.sh\`（含 PROVENANCE 行）复核。
