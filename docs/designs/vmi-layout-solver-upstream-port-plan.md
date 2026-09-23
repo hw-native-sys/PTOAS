@@ -328,3 +328,38 @@ solver 一共调用 **46 个** \`VMILayoutSupport\` 方法（48 个签名；plan
 | **上游真的拒绝这条流水线** | **3 个**：\`opt/compute_mrope_f16_vmi_opt.pto\`、\`vmi_to_vpto_ensure_mask_layout.pto\`、\`vmi_to_vpto_ensure_layout_deint4.pto\` | 都是 \`VMI-UNSUPPORTED\`——这才是步骤 3/5 必须尊重的**真实约束**（此前把 24 个“stdin 为空”误当成硬约束，实际那 24 个全是我们自己的 \`vmi_layout_cost_conformance_*\` 用例，缺的只是还没搬过去的 \`-test-vmi-layout-cost-conformance\` pass） |
 
 其余 \`dintlv\` 相关用例（48 个里有 15 PASS、26 只差 CHECK 文本）不需要改输入，等步骤 5 决策权回到我们的 solver 之后一起重测。
+
+## 9. 步骤 2b 完成（已独立复核）
+
+提交 \`ee461ffa4 vmi: port the layout cost model's support surface onto the upstream base\`
+（上游 worktree 分支 \`feature/vmi-layout-solver-upstream\`，6 个文件 +2595 行）：
+
+* 新增 API：\`VMIEnsureLayoutFact::forwardsPhysicalParts\`、\`VMIEnsureMaskLayoutFact::forwardsPhysicalParts\`、
+  \`VMIGroupStoreLayoutFact::stagingLayout\`、\`VMIGeneratedMaskLayoutFact\`、\`VMIInterleaveStoreSupport\`，
+  以及 \`getGeneratedMaskLayoutFact\` / \`getInterleaveStoreSupport\` / \`getSameLayoutRelationSupport\`。
+* 组织方式跟随上游：三个查询落进新的 \`VMILayoutSupportRelationQueries.inc\`（\`VMILayoutSupport.cpp\` 的文本包含单元），
+  4 行 \`kGeneratedMaskStagingPatterns\` 落在 \`VMILayoutSupportTables.inc\`，两个 ensure 事实构造与 \`getGroupStoreLayoutFact\` 落在 \`VMILayoutSupport.cpp\`。
+
+**复核（我做的，不是转述）**：
+
+1. \`forwardsPhysicalParts\` 是**真的算出来的**，不是恒 false 的字段：实测 \`VMILayoutSupport.cpp:1955-1962\`（mask 版）
+   与 \`~1917\`（vreg 版）都在唯一构造点计算——恒等布局对，或 fork 的“单元素 dense ↔ 单 group 单 slot 载体”对；
+   mask 版另加 "contiguous ↔ block-deinterleaved\" 视为谓词寄存器直通。\`grep\` 确认全树无第二处构造点。
+2. \`stagingLayout\` 同样实算：\`getGroupStoreLayoutFact\` 的 group-slots 分支用 fork 的 \`compactSmallStore\` 谓词
+   （slots==8、laneStride 2 或 4、elementCount 4 或 8、numGroups==elementCount、payloadBits 在 (0,256) 且 %32==0、rowStride 常量 1）
+   置 \`stagingLayout = getGroupSlots(ctx, numGroups, slots)\`，其余构造点与 fork 一致留空。
+3. 编译链接：\`-Werror\` 下 \`VMILayoutCostModel.cpp.o\` 通过；\`ninja pto-test-opt\` 链接通过；
+   归档里有 \`getGeneratedMaskLayoutFact\` / \`getInterleaveStoreSupport\` / \`getSameLayoutRelationSupport\` 与 \`evaluateVMILayoutPlanCost\`。
+4. **上游基线未退化**：我自己跑 \`llvm-lit -j8 lit/vmi_new\` = **608 用例 / 606 通过 / 2 失败**，
+   两个失败仍是 \`vmi_integer_reductions_i8_invalid.pto\` 与 \`vmi_ptodsl_vunzip_vzip_validation.pto\`。
+
+**已声明的偏差（都记录在案，不影响当前行为）**：
+
+* 上游 ensure 表是我们的严格超集，对那些**只有上游承认**的布局对（非恒等对），fork 没有对应的计算可搬，
+  该标志保持 false —— 与其编一条规则，不如留空并记录（代价模型尚未接线，无实际影响）。
+* \`getGeneratedMaskLayoutFact\` 里 fork 直接用 \`op->getResult(0)\` 无元数检查，这里加了一道 \`getNumResults() != 1 -> failure\` 防护。
+* 未做全仓 clang-format（仓库本身不是 format-clean，且 pre-commit 钩子全局排除了该检查），保持周围手写风格。
+
+**下一步（已启动）**：一个后台任务按阶段推进 3a→3d + 传播器接口 + 步骤 2c（搬 planner 与一致性工具），
+每阶段都跑 \`ninja pto-test-opt\` 与上游 608/606/2 门禁；最终门禁是把 fork 的 **26 个 \`vmi_layout_cost_conformance_*\` 用例**
+搬进上游树运行——这是移植后的支持层第一次拿到真正的功能证据。
