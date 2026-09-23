@@ -1,0 +1,183 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+
+// RUN: ptoas --pto-arch=a5 --pto-backend=vpto --emit-vpto %s -o - | FileCheck %s --check-prefix=VPTO
+// RUN: pto-test-opt %s -vpto-normalize-packed-store-mask | FileCheck %s --check-prefix=PASS
+
+// Contract of `vpto-normalize-packed-store-mask`, the pass ptoas runs right
+// after VMI-to-VPTO lowering:
+//
+//   * A `pto.vsts` that stores packed 4-bit values with the PK4_B32
+//     distribution and whose mask is directly produced by a static
+//     `pto.pset_b32` prefix is respelled byte-granularly: the b32 prefix of N
+//     lanes becomes the b8 prefix of 4*N lanes (PAT_VL64 -> PAT_ALL,
+//     PAT_VL32 -> PAT_VL128, PAT_ALL -> PAT_ALL) and `pto.pbitcast`
+//     reinterprets the result back to the b32 mask type that the PK4_B32 store
+//     distribution requires.
+//   * A b32 mask shared with another store keeps its 32-bit granular spelling
+//     for the other user; the packed store gets a byte granular mask of its own.
+//   * Everything else keeps its original form: runtime `pto.plt_b32`
+//     predicates, non-`pto.pset_b32` producers such as `pto.pge_b32`,
+//     prefixes without a legal byte spelling (PAT_VL3), non-packed element
+//     types, and non-PK4_B32 stores.
+
+module attributes {pto.target_arch = "a5", pto.kernel_kind = #pto.kernel_kind<vector>} {
+  // Static b32 prefixes on a packed 4-bit PK4_B32 store are respelled.
+  func.func @rewritten_masks(
+      %packed: !pto.vreg<256x!pto.f4E1M2x2>,
+      %packed_dst: !pto.ptr<!pto.f4E1M2x2, ub>) {
+    %c0 = arith.constant 0 : index
+    pto.vecscope {
+      %m_vl64 = pto.pset_b32 "PAT_VL64" : !pto.mask<b32>
+      pto.vsts %packed, %packed_dst[%c0], %m_vl64 {dist = "PK4_B32"}
+          : !pto.vreg<256x!pto.f4E1M2x2>, !pto.ptr<!pto.f4E1M2x2, ub>, !pto.mask<b32>
+      %m_vl32 = pto.pset_b32 "PAT_VL32" : !pto.mask<b32>
+      pto.vsts %packed, %packed_dst[%c0], %m_vl32 {dist = "PK4_B32"}
+          : !pto.vreg<256x!pto.f4E1M2x2>, !pto.ptr<!pto.f4E1M2x2, ub>, !pto.mask<b32>
+    }
+    return
+  }
+
+  // An already all-true b32 prefix is respelled too: PAT_ALL stays PAT_ALL,
+  // only its granularity changes.
+  func.func @rewritten_all_pattern(
+      %packed: !pto.vreg<256x!pto.f4E1M2x2>,
+      %packed_dst: !pto.ptr<!pto.f4E1M2x2, ub>) {
+    %c0 = arith.constant 0 : index
+    pto.vecscope {
+      %m_all = pto.pset_b32 "PAT_ALL" : !pto.mask<b32>
+      pto.vsts %packed, %packed_dst[%c0], %m_all {dist = "PK4_B32"}
+          : !pto.vreg<256x!pto.f4E1M2x2>, !pto.ptr<!pto.f4E1M2x2, ub>, !pto.mask<b32>
+    }
+    return
+  }
+
+  // Predicates the pass must leave alone.
+  func.func @preserved_masks(
+      %packed: !pto.vreg<256x!pto.f4E1M2x2>,
+      %u8: !pto.vreg<256xui8>,
+      %f32: !pto.vreg<64xf32>,
+      %packed_dst: !pto.ptr<!pto.f4E1M2x2, ub>,
+      %u8_dst: !pto.ptr<ui8, ub>,
+      %f32_dst: !pto.ptr<f32, ub>,
+      %active: i32) {
+    %c0 = arith.constant 0 : index
+    pto.vecscope {
+      // No byte granular spelling exists for PAT_VL3.
+      %m_vl3 = pto.pset_b32 "PAT_VL3" : !pto.mask<b32>
+      pto.vsts %packed, %packed_dst[%c0], %m_vl3 {dist = "PK4_B32"}
+          : !pto.vreg<256x!pto.f4E1M2x2>, !pto.ptr<!pto.f4E1M2x2, ub>, !pto.mask<b32>
+      // A runtime predicate has no static prefix to respell.
+      %m_runtime, %rest = pto.plt_b32 %active : i32 -> !pto.mask<b32>, i32
+      pto.vsts %packed, %packed_dst[%c0], %m_runtime {dist = "PK4_B32"}
+          : !pto.vreg<256x!pto.f4E1M2x2>, !pto.ptr<!pto.f4E1M2x2, ub>, !pto.mask<b32>
+      // PAT_VL16 has a byte granular spelling, but ui8 is not a packed 4-bit
+      // element type.
+      %m_u8 = pto.pset_b32 "PAT_VL16" : !pto.mask<b32>
+      pto.vsts %u8, %u8_dst[%c0], %m_u8 {dist = "PK4_B32"}
+          : !pto.vreg<256xui8>, !pto.ptr<ui8, ub>, !pto.mask<b32>
+      // PAT_VL8 has a byte granular spelling, but PK_B64 is not a packed
+      // 4-bit store.
+      %m_f32 = pto.pset_b32 "PAT_VL8" : !pto.mask<b32>
+      pto.vsts %f32, %f32_dst[%c0], %m_f32 {dist = "PK_B64"}
+          : !pto.vreg<64xf32>, !pto.ptr<f32, ub>, !pto.mask<b32>
+      // Only a `pto.pset_b32` producer is respelled: `pto.pge_b32` is a
+      // different producer and keeps its 32-bit granular spelling.
+      %m_pge = pto.pge_b32 "PAT_VL64" : !pto.mask<b32>
+      pto.vsts %packed, %packed_dst[%c0], %m_pge {dist = "PK4_B32"}
+          : !pto.vreg<256x!pto.f4E1M2x2>, !pto.ptr<!pto.f4E1M2x2, ub>, !pto.mask<b32>
+    }
+    return
+  }
+
+  // A b32 mask with another user keeps its spelling for that user; the packed
+  // store is respelled with a byte granular mask of its own.
+  func.func @shared_mask(
+      %packed: !pto.vreg<256x!pto.f4E1M2x2>,
+      %f32: !pto.vreg<64xf32>,
+      %packed_dst: !pto.ptr<!pto.f4E1M2x2, ub>,
+      %f32_dst: !pto.ptr<f32, ub>) {
+    %c0 = arith.constant 0 : index
+    pto.vecscope {
+      %m_shared = pto.pset_b32 "PAT_VL64" : !pto.mask<b32>
+      pto.vsts %f32, %f32_dst[%c0], %m_shared {dist = "PK_B64"}
+          : !pto.vreg<64xf32>, !pto.ptr<f32, ub>, !pto.mask<b32>
+      pto.vsts %packed, %packed_dst[%c0], %m_shared {dist = "PK4_B32"}
+          : !pto.vreg<256x!pto.f4E1M2x2>, !pto.ptr<!pto.f4E1M2x2, ub>, !pto.mask<b32>
+    }
+    return
+  }
+}
+
+// The pipeline-level contract: ptoas emits the byte granular spelling.
+// VPTO-LABEL: func.func @rewritten_masks(
+// VPTO: %[[VL64_B8:.*]] = pto.pset_b8 "PAT_ALL" : !pto.mask<b8>
+// VPTO: %[[VL64_B32:.*]] = pto.pbitcast %[[VL64_B8]] : !pto.mask<b8> -> !pto.mask<b32>
+// VPTO: pto.vsts {{.*}}, %[[VL64_B32]] {dist = "PK4_B32"} : !pto.vreg<256x!pto.f4E1M2x2>, !pto.ptr<!pto.f4E1M2x2, ub>, !pto.mask<b32>
+// VPTO: %[[VL32_B8:.*]] = pto.pset_b8 "PAT_VL128" : !pto.mask<b8>
+// VPTO: %[[VL32_B32:.*]] = pto.pbitcast %[[VL32_B8]] : !pto.mask<b8> -> !pto.mask<b32>
+// VPTO: pto.vsts {{.*}}, %[[VL32_B32]] {dist = "PK4_B32"} : !pto.vreg<256x!pto.f4E1M2x2>, !pto.ptr<!pto.f4E1M2x2, ub>, !pto.mask<b32>
+// VPTO-LABEL: func.func @rewritten_all_pattern(
+// VPTO: %[[ALL_B8:.*]] = pto.pset_b8 "PAT_ALL" : !pto.mask<b8>
+// VPTO: %[[ALL_B32:.*]] = pto.pbitcast %[[ALL_B8]] : !pto.mask<b8> -> !pto.mask<b32>
+// VPTO: pto.vsts {{.*}}, %[[ALL_B32]] {dist = "PK4_B32"} : !pto.vreg<256x!pto.f4E1M2x2>, !pto.ptr<!pto.f4E1M2x2, ub>, !pto.mask<b32>
+
+// VPTO-LABEL: func.func @preserved_masks(
+// VPTO: %[[VL3:.*]] = pto.pset_b32 "PAT_VL3" : !pto.mask<b32>
+// VPTO-NEXT: pto.vsts {{.*}}, %[[VL3]] {dist = "PK4_B32"} : !pto.vreg<256x!pto.f4E1M2x2>, !pto.ptr<!pto.f4E1M2x2, ub>, !pto.mask<b32>
+// VPTO: %[[RUNTIME:[^,]*]], %{{.*}} = pto.plt_b32 {{.*}} : i32 -> !pto.mask<b32>, i32
+// VPTO-NEXT: pto.vsts {{.*}}, %[[RUNTIME]] {dist = "PK4_B32"} : !pto.vreg<256x!pto.f4E1M2x2>, !pto.ptr<!pto.f4E1M2x2, ub>, !pto.mask<b32>
+// VPTO: %[[U8:.*]] = pto.pset_b32 "PAT_VL16" : !pto.mask<b32>
+// VPTO-NEXT: pto.vsts {{.*}}, %[[U8]] {dist = "PK4_B32"} : !pto.vreg<256xui8>, !pto.ptr<ui8, ub>, !pto.mask<b32>
+// VPTO: %[[F32:.*]] = pto.pset_b32 "PAT_VL8" : !pto.mask<b32>
+// VPTO-NEXT: pto.vsts {{.*}}, %[[F32]] {dist = "PK_B64"} : !pto.vreg<64xf32>, !pto.ptr<f32, ub>, !pto.mask<b32>
+// VPTO: %[[PGE:.*]] = pto.pge_b32 "PAT_VL64" : !pto.mask<b32>
+// VPTO-NEXT: pto.vsts {{.*}}, %[[PGE]] {dist = "PK4_B32"} : !pto.vreg<256x!pto.f4E1M2x2>, !pto.ptr<!pto.f4E1M2x2, ub>, !pto.mask<b32>
+
+// VPTO-LABEL: func.func @shared_mask(
+// VPTO: %[[VPTO_SHARED:.*]] = pto.pset_b32 "PAT_VL64" : !pto.mask<b32>
+// VPTO: pto.vsts {{.*}}, %[[VPTO_SHARED]] {dist = "PK_B64"} : !pto.vreg<64xf32>, !pto.ptr<f32, ub>, !pto.mask<b32>
+// VPTO: %[[VPTO_SHARED_B8:.*]] = pto.pset_b8 "PAT_ALL" : !pto.mask<b8>
+// VPTO: %[[VPTO_SHARED_B32:.*]] = pto.pbitcast %[[VPTO_SHARED_B8]] : !pto.mask<b8> -> !pto.mask<b32>
+// VPTO: pto.vsts {{.*}}, %[[VPTO_SHARED_B32]] {dist = "PK4_B32"} : !pto.vreg<256x!pto.f4E1M2x2>, !pto.ptr<!pto.f4E1M2x2, ub>, !pto.mask<b32>
+
+// The standalone pass contract, including the exact shape of the negatives:
+// the store keeps reading the 32-bit granular mask directly.
+// PASS-LABEL: func.func @rewritten_masks(
+// PASS: %[[P_VL64_B8:.*]] = pto.pset_b8 "PAT_ALL" : !pto.mask<b8>
+// PASS: %[[P_VL64_B32:.*]] = pto.pbitcast %[[P_VL64_B8]] : !pto.mask<b8> -> !pto.mask<b32>
+// PASS: pto.vsts {{.*}}, %[[P_VL64_B32]] {dist = "PK4_B32"} : !pto.vreg<256x!pto.f4E1M2x2>, !pto.ptr<!pto.f4E1M2x2, ub>, !pto.mask<b32>
+// PASS: %[[P_VL32_B8:.*]] = pto.pset_b8 "PAT_VL128" : !pto.mask<b8>
+// PASS: %[[P_VL32_B32:.*]] = pto.pbitcast %[[P_VL32_B8]] : !pto.mask<b8> -> !pto.mask<b32>
+// PASS: pto.vsts {{.*}}, %[[P_VL32_B32]] {dist = "PK4_B32"} : !pto.vreg<256x!pto.f4E1M2x2>, !pto.ptr<!pto.f4E1M2x2, ub>, !pto.mask<b32>
+
+// PASS-LABEL: func.func @rewritten_all_pattern(
+// PASS: %[[P_ALL_B8:.*]] = pto.pset_b8 "PAT_ALL" : !pto.mask<b8>
+// PASS: %[[P_ALL_B32:.*]] = pto.pbitcast %[[P_ALL_B8]] : !pto.mask<b8> -> !pto.mask<b32>
+// PASS: pto.vsts {{.*}}, %[[P_ALL_B32]] {dist = "PK4_B32"} : !pto.vreg<256x!pto.f4E1M2x2>, !pto.ptr<!pto.f4E1M2x2, ub>, !pto.mask<b32>
+
+// PASS-LABEL: func.func @preserved_masks(
+// PASS: %[[P_VL3:.*]] = pto.pset_b32 "PAT_VL3" : !pto.mask<b32>
+// PASS-NEXT: pto.vsts {{.*}}, %[[P_VL3]] {dist = "PK4_B32"} : !pto.vreg<256x!pto.f4E1M2x2>, !pto.ptr<!pto.f4E1M2x2, ub>, !pto.mask<b32>
+// PASS: %[[P_RUNTIME:[^,]*]], %{{.*}} = pto.plt_b32 {{.*}} : i32 -> !pto.mask<b32>, i32
+// PASS-NEXT: pto.vsts {{.*}}, %[[P_RUNTIME]] {dist = "PK4_B32"} : !pto.vreg<256x!pto.f4E1M2x2>, !pto.ptr<!pto.f4E1M2x2, ub>, !pto.mask<b32>
+// PASS: %[[P_U8:.*]] = pto.pset_b32 "PAT_VL16" : !pto.mask<b32>
+// PASS-NEXT: pto.vsts {{.*}}, %[[P_U8]] {dist = "PK4_B32"} : !pto.vreg<256xui8>, !pto.ptr<ui8, ub>, !pto.mask<b32>
+// PASS: %[[P_F32:.*]] = pto.pset_b32 "PAT_VL8" : !pto.mask<b32>
+// PASS-NEXT: pto.vsts {{.*}}, %[[P_F32]] {dist = "PK_B64"} : !pto.vreg<64xf32>, !pto.ptr<f32, ub>, !pto.mask<b32>
+// PASS: %[[P_PGE:.*]] = pto.pge_b32 "PAT_VL64" : !pto.mask<b32>
+// PASS-NEXT: pto.vsts {{.*}}, %[[P_PGE]] {dist = "PK4_B32"} : !pto.vreg<256x!pto.f4E1M2x2>, !pto.ptr<!pto.f4E1M2x2, ub>, !pto.mask<b32>
+// PASS-NOT: pto.pset_b8
+// PASS-NOT: pto.pbitcast
+
+// PASS-LABEL: func.func @shared_mask(
+// PASS: %[[P_SHARED:.*]] = pto.pset_b32 "PAT_VL64" : !pto.mask<b32>
+// PASS: pto.vsts {{.*}}, %[[P_SHARED]] {dist = "PK_B64"} : !pto.vreg<64xf32>, !pto.ptr<f32, ub>, !pto.mask<b32>
+// PASS: %[[P_SHARED_B8:.*]] = pto.pset_b8 "PAT_ALL" : !pto.mask<b8>
+// PASS: %[[P_SHARED_B32:.*]] = pto.pbitcast %[[P_SHARED_B8]] : !pto.mask<b8> -> !pto.mask<b32>
+// PASS: pto.vsts {{.*}}, %[[P_SHARED_B32]] {dist = "PK4_B32"} : !pto.vreg<256x!pto.f4E1M2x2>, !pto.ptr<!pto.f4E1M2x2, ub>, !pto.mask<b32>
