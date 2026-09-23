@@ -992,3 +992,26 @@ planner 尚未进树。之前没暴露，是因为没有任何东西引用 confl
 
 设计取舍：**不做「宽容模式」**。之前的两次假信号（旧二进制 606/2、脏树 67 failed）都是因为门禁允许自己
 在状态不明的情况下给出结论；这个脚本宁可拒绝执行，也不产出无法归因的数字。
+
+### 13.9 批次 F（F8 group reduce）的风险前提已核实，指令随之收紧
+
+盘点把 F8 标为 MERGE 并警告「机械重放会把我们的 factor 循环与上游的 \`VMIGroupReduceKind\` 分类混用、导致 part 顺序错」。
+本轮读了上游实现，**前提成立**：\`VMIToVPTOPatternInternals4.cpp:1882-1912\` 是
+
+    enum class GroupReduceLoweringPlan { CompactMaskedRows, OneBlockVcgadd,
+      TwoBlockDeinterleaved2VcgaddVadd, FourBlockDeinterleaved4VcgaddTree,
+      FullDeinterleaved2VcaddRows, ContiguousVcaddRows };
+    classifyGroupReduceLoweringPlan(VMIGroupReduceKind kind, source, mask, result, numGroups, reason)
+      -> supports.getGroupReduceLayoutFactForLayouts(kind, …) 然后 switch (fact->blockClass)
+
+即上游是 **kind 驱动 + blockClass 驱动的显式计划集合**（6 种），而我们的 F8 是把 \`deinterleaved=2\` 的
+两段拆分**泛化成按 layout factor 的循环**，并把 row-reduce 与 combine 折成一趟 \`zip_equal(groupSources, groupMasks)\`。
+两者是**两种不同做法**，不是同一段代码的两个版本——所以：
+
+* **批次 F 不许整体重放**。正确做法是逐 hunk 先回答「上游的 kind/blockClass 分类是否已经覆盖这条路径」：
+  覆盖的（很可能包括 2-block/4-block 的拆分与排序）按 (a) 保留上游；
+  只有上游确实没有的（例如把两趟合成一趟的 \`zip_equal\` 结构）才作为 (b) 合并过去。
+* **门禁**：\`vmi_to_vpto_group_reduce_partial_slots8.pto\`、\`vmi_layout_assignment_group_reduce_*\`、
+  \`vmi_integer_reductions_i8_invalid.pto\`（注意后者是上游自带失败，只能当「不变差」的参照），
+  外加「重建后」的 608/606/2 与失败集合逐条比对。
+* 规模修正：9 hunk / -76/+68 里，预计真正需要移植的**远少于**表面行数——与 F3 同一模式（先分类再动手）。
