@@ -1562,3 +1562,22 @@ Stage 3 收尾清单第 4 条写明：**若干 fork 独有行被刻意不注入�
 （\`requestFallbackLayouts\` + use-conflict 机制）。修法是**允许边界发生转换**（或从可达关系反推边界布局），
 而不是补行。**最快的路径**是拿 fork 自己的 planner 对照这些用例（fork 的这些 reduce 用例是通过的），
 看 \`getABIBoundaryLayout\` / \`collectFixedAssignments\` 在「结果被无注解函数直接 return」时的行为差在哪。
+
+### 18.11 定论：不是「fork 的做法」，而是上游的**边界转换**行为在计划式流程里丢了
+
+按 §18.10 的指引去对照 fork 的同名用例，**发现它根本不是同一个测试**：
+
+* **fork 版**：\`vcadd → pto.vmi.vstore %out, %dst[%off]\`（把归约结果写进内存，**没有 vreg 函数返回值**）；
+* **上游版**：\`vcadd → return %out : vreg<8xf32>\`（归约结果直接作为函数返回值）。
+
+因此 **fork 的 planner 从未走过「vreg 作为 ABI 边界」这条路径**——所以「照 fork 的做法」不是答案。
+真正的事实是：**上游自己的 solver 能过这个用例**，因为它把边界保持为 contiguous、
+**在 use 处物化了一次转换**（\`requestFallbackLayouts\` + use-conflict 机制）。
+而我们的计划式流程把 ABI 边界当成**固定赋值、没有转换边**，于是只要算子的唯一关系产不出边界布局就无解。
+
+**正确修法**：**边界布局保持不变**（函数结果布局不能改，调用方依赖它），
+让计划在**生产者的布局与边界之间允许一条转换边**——即上游 use-conflict 产生的那个「return 前 ensure_layout」。
+在 planner 里表述为：边界是**被钉住的值 + 允许转换**，而不是「任何关系都不得与之不同的赋值」。
+
+验证用最小的四个用例（\`group_reduce_s64\`、\`slots8\`、\`s256\`、\`group4_broadcast_shape_matrix\`），
+它们的 component 里都含 \`func.return\`，改动前后比 \`no-plan\` 计数即可。
