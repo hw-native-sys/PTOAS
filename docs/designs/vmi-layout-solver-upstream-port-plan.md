@@ -491,3 +491,21 @@ fork 侧 \`VPTOPack4StoreMaskNormalize\`（160 行，\`lib/PTO/Transforms/VPTOPa
 3. 因应措施：步骤 5 落地后、步骤 9 之前，给 \`vexpdif\`（以及 \`vdhist\`/\`vchist\`）各补 1-2 个一致性用例
    （照现有 \`vmi_layout_cost_conformance_*.pto\` 的 MARK+CHECK 格式），把这些族的候选集在多种形状下钉住，
    再跑差分门禁。这一步属于步骤 8/9 之间的小任务，不阻塞主线。
+
+### 9.5 门禁加厚：vexpdif 五个形状已钉住（基线更新为 33/33）
+
+按 §9.4 的结论动手补了薄覆盖族。新增 \`test/lit/vmi_new/vmi_layout_cost_conformance_vexpdif_shapes.pto\`
+（98 行，提交 \`c8b2ffa81\`），覆盖 \`vexpdif\` 的五个 f32 形状：contiguous、deinterleaved=2、deinterleaved=4、
+block_deinterleaved=2、block_deinterleaved=4，每个形状恰好 1 条关系、cost=0。
+
+* 一致性套件基线 **32 → 33**（\`--filter cost_conformance\` = 568 发现 / 535 排除 / **33 通过**）。
+* 参考 dump 已重新生成：**33 个文件 / 339 个 case / 4769 行**
+  （\`.work/upstream-port/probes/fork_conformance_dump.txt\`）。以后所有差分门禁都以这份为准。
+
+**同时查出一个待办（已记录、未擅自结论）**：表中第 6 行是 f16 源、f32 结果、\`c() -> d(2)\`，
+也是 f16 输入时的 **preferred** 行；但我把该形状写成用例后，**一致性工具对它一条关系都不报**：
+\`vexpdif\` 的 f16 用例在 dump 里完全缺席（其余 5 个形状各出 2 行）。两种可能——
+要么一致性框架只枚举同宽关系、这条行本就要走 preferred 路径才可见；要么该行在当前实现里实际不可达：
+fork 侧 \`getVexpdifLayoutFactsForLayout\` / \`matchesVexpdifPhysicalShape\`（\`VMILayoutSupport.cpp:1326\`）
+是判据所在。**处理方式：不猜也不钉死**，作为待查项列在文档里；等支持层移植到步骤 3b/3d 时，
+用同一份 dump 差分顺带回答它（若上游侧同样不报，则属于框架限制而非移植缺陷）。
