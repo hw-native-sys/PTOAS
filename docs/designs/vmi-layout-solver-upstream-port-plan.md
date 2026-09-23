@@ -509,3 +509,82 @@ block_deinterleaved=2、block_deinterleaved=4，每个形状恰好 1 条关系�
 fork 侧 \`getVexpdifLayoutFactsForLayout\` / \`matchesVexpdifPhysicalShape\`（\`VMILayoutSupport.cpp:1326\`）
 是判据所在。**处理方式：不猜也不钉死**，作为待查项列在文档里；等支持层移植到步骤 3b/3d 时，
 用同一份 dump 差分顺带回答它（若上游侧同样不报，则属于框架限制而非移植缺陷）。
+
+## 10. 步骤 7 的真实规模（本轮盘点：比原估小一个数量级，而且不能打 patch）
+
+### 10.1 关键数字
+
+* fork 的 \`lib/PTO/Transforms/VMIToVPTO.cpp\` 改动**只来自一个提交**：\`7e2207d65 Add costed VMI layout solver\`（3832+/2389-）。
+  \`e5bd4511b\`（absorbed physical actions）与 \`589213988\`（vexpdif）**根本没碰这个文件**。
+* 原始 diff 是 6221 行 / 1139 hunk，但其中 **831 个 hunk 只是加花括号与换行的风格改动**
+  （fork 上跑过一次 brace 风格 pass，例如 \`containsVMIType\`）。把每个 hunk 的非花括号、去空白文本合并后，
+  真实 delta = **42 hunk / +434 / -347 ≈ 780 行**。
+* 结论：步骤 7 是 **~780 行 / 42 hunk 的重放**，不是 6221 行；**不能打 patch 或 cherry-pick**——
+  既会把风格 pass 一起带进来，也必然冲突（这点 lit 抓不到，门禁只能是 diff 本身）。
+* 原始 diff 已留存：\`.work/upstream-port/probes/forkvmi.diff\`。
+
+上游 \`lib/PTO/Transforms/VMIToVPTO/\` 的 18 个文件**是同一个编译单元的文本包含片段**
+（\`#include\` 写在 \`namespace {\` 内，顺序刻意非数字：…Pattern0,1,2,3,4,5,**10**,6,UnifiedPattern,7,8,9），
+因此 delta 只能按**区域**映射到单元，单元边界本身在语义上是任意的。
+
+### 10.2 十个族与处理结论
+
+| 族 | fork 锚点 | 规模 | 结论 |
+|---|---|---|---|
+| F1 mask 物理粒度 helper | 349、5352 | -38/+0、-18/+0 | **(a) 丢弃**：上游已在方言层提供 \`getVMIMaskPhysicalGranularity\`（\`lib/PTO/IR/VMI/VMIHelpers.cpp:639\`，声明 \`VMIInternal.h:42\`）；\`getVMIMaskPhysicalCarrierLayout\` 上游也有 |
+| F2 \`validateCastOperationRelation\` | 13956/14007/14019/14047/14245/14816-14906 | ~-40/+60 | **(c) 新增**：上游 0 命中；需步骤 3 的查询 + \`PatternInternals7/8\` 里加检查 |
+| F3 形状检查改走事实查询 | 1643/1852/1924/1982 | ~-45/+33 | **(b) 合并**。**其中 \`checkSupportedGroupBroadcastLoadShape\` 是 -18/+0：我们在删上游逻辑**，盲重放会放宽接受面、产出上游会拒绝的 IR |
+| F4 deint4<->2 与 lane-stride 桥 | 4530、4576 | -2/+114 | **(b) 合并**：上游 \`067da4864\`/\`dce6afea0\` 已建同一函数，我们的 +114 **不是超集** |
+| F5 mask layout/粒度转换 + ensure-mask pattern | 4687/4747/4768-5075/5177-5289/5726 | ~-30/+124 | **(b) 合并** |
+| F6 create_group_mask factor-4 内联块 | 6587 | -66/+2 | **(a) 丢弃**：上游用 \`lowerFactor4Block\` 替代（\`PatternInternals0.cpp\`） |
+| F7 group store staging | 8295-8299、8361-8364 | -6/+5 | **(b) 合并**：**这就是 absorption 在 lowering 里的落点** |
+| F8 group reduce 泛化 | 10882/10909/11137-11246 | ~-76/+68 | **(b) 合并**：上游 \`6d744afb5\`（i16 原生求和）/\`6b1ba8d99\`（slots=1 回退）重塑过同一段，且引入了 \`VMIGroupReduceKind\` 分类 |
+| F9 pattern 注册表 | 13833 | -16/+15 | **(b) 必须与 F2 同落**，否则出现注册了但缺实现的 pattern |
+| F10 \`verifySupportedVMIToVPTOOps\` | 14816-14906 | -9/+12 | **(b) 随 F2/F3 自动跟进** |
+
+**零 delta 的族（因此不属于步骤 7）**：vexpdif（我们的工作全在 layout 层，上游 lowering 里 \`OneToNVMIVexpdifOpPattern\` 本来就有）、
+quant/dequant（是方言 \`castptr\` 与决策问题）、packed-store mask（是步骤 6 的独立 pass，\`Pack4\` 在 VMIToVPTO 里 0 命中）、
+deinterleave store / group slot / 整数 cast（纯粹是格式差异，\`getDenseLaneStrideLoad/StoreDistToken\`、\`packToPreviousCarrier\`、
+\`getVcaddResultType\`、\`OneToNVMITruncI/F\` 等函数体在归一化后没有任何行为 delta）。
+
+### 10.3 absorption 到底要改哪里（精确定位）
+
+\`absorb\` 在两个树的 \`VMIToVPTO/*\` 里 **0 命中**——上游 lowering 没有这个概念，它只在 cost model 与 conflict solver 里。
+lowering 一侧的落点是**未命名但真实存在**的两处：
+
+1. \`VMIToVPTOMemoryInternals.cpp\`：把 group store 形状检查从 \`isCompactSmallGroupStore\` 换成 \`getGroupStoreLayoutFact\` 得到的 \`stagingLayout\`（fork 锚点 1982-1984）。
+2. \`VMIToVPTOPatternInternals3.cpp\`：\`GroupStoreLayoutKind\`/compact 判定与 packed staging 类型构造同样改用该事实（fork 锚点 8295-8299、8361-8364）。
+
+dist-mode 实现（\`getDenseLaneStride{Load,Store}DistToken\`）与 cast-part 转发（\`viewVcvtResult\`）在两棵树里都只是格式差异，**步骤 7 无需改动**。
+结论：**absorption 不是一个 pass，而是「cost model 定价」与「这两处 lowering 路径」之间的约定**；只改一边就会静默走错（代价模型给 staging 路径定价、lowering 却不走）。
+
+### 10.4 批次与门禁
+
+| 批次 | 内容 | 规模 | 依赖 |
+|---|---|---|---|
+| A 丢弃 | F1 + F6（**只是不要再加回来**） | ~130 行 | 无 |
+| B cast 关系校验 | F2 | ~110 行 | 需步骤 3 的 \`validateCastOperationRelation\` |
+| C 形状检查 + group store staging | F3 + F7（**必须同落**，共用 \`getGroupStoreLayoutFact\`/\`isCompactSmallGroupStore\`/\`GroupStoreLayoutKind\`） | ~90 行 | 步骤 3 的事实 |
+| D mask layout 转换 | F5 | ~150 行 | 无 |
+| E data-layout 转换 | F4 | ~120 行 | 排在 D 之后 |
+| F group reduce | F8 | ~145 行 | 与 B/D+E 互不依赖 |
+| G 注册与校验 | F9 + F10 | ~50 行 | 必须最后 |
+
+总计 ~780 行，单人约 4-6 天；B/F/D+E 可并行（对应计划里「步骤 7 与步骤 3 并行」）。
+**批次门禁用符号级 pattern-class diff**（\`populateVMIConversionPatterns\` 成员 + 每族 \`grep -c\`），
+因为步骤 5 之前 lit 还不是主门禁（决策权仍在我们的 solver 之外）。
+
+### 10.5 风险（机械搬运会错的地方）
+
+| 风险 | 现象/探测 |
+|---|---|
+| 831 个花括号 hunk | 打 patch 会冲突或静默引入全仓风格 pass，**lit 看不见**；门禁只能是归一化 diff 本身（断言 42 hunk / +434/-347） |
+| F3 的 -18/+0 | 闸门被删 → 接受面变宽 → 产出上游会拒绝的 IR（\`vmi_interleaved_memory_ops_invalid\`、\`vmi_to_vpto_ensure_mask_layout\`、\`vmi_to_vpto_ensure_layout_deint4\` 可观察） |
+| F7 事实/谓词只改一边 | 定价与 lowering 不一致 → 静默选错布局；探测：\`vmi_to_vpto_group_store_compact_small.pto\` 两条 RUN + 一致性 dump 差分 |
+| F8 与上游分类混用 | 保留我们的 factor 循环但用上游 \`VMIGroupReduceKind\` 分类 → part 顺序错；探测：\`vmi_to_vpto_group_reduce_partial_slots8.pto\` 等 |
+| F4/F5 与上游已覆盖部分重叠 | 重复覆盖 → 多出一对 \`vintlv\`/\`vdintlv\`；探测：\`vmi_to_vpto_memory_x2_widths.pto\`、\`vmi_interleaved_memory_ops.pto\`；**不要**在步骤 5 前去对齐那 ~156 个 FileCheck 差异 |
+| F6 丢弃是否安全 | 上游 \`lowerFactor4Block\` 需覆盖被删块里的**动态** active-elems 路径，未验证；探测：\`create_group_mask\` 相关 lit |
+
+> 盘点自身声明的不确定项（保留原样，不当作结论）：F1 的「丢弃」判定基于名字与位置、**未比对函数体**；
+> 上游多数对应物只到单元级、未到行级；三个后加的单元（\`UnifiedMaskInternals\`、\`PatternInternals10\`、\`UnifiedPatternInternals\`）
+> 的原始归属是按 include 顺序推断的；F2 究竟为了正确性还是只为诊断未确认。
