@@ -1525,3 +1525,21 @@ Stage 3 收尾清单第 4 条写明：**若干 fork 独有行被刻意不注入�
 
 因此「**fork 专属包装**（共享表 + fork 独有行、仅 solver 可见）」这条修法有了逐 component 的支撑，
 而不再只是假设；但 16 个用例仍需逐个过完，因为**成因未必同一**（也可能是结构性等价边缺失，修法不同）。
+
+### 18.9 no-plan 族的**竞争假设**：ABI 边界被当成固定赋值也可能是主因
+
+把 \`VMI_LAYOUT_DIAG\` 输出按用例汇总后，看到一个与「缺候选行」并列的成因信号：
+
+    group_reduce_s64.pto    ops=2  group_reduce_addf=1, func.return=1
+    group_reduce_slots8.pto ops=2  group_reduce_addf=1, func.return=1
+    group_reduce_s256.pto   ops=2  group_reduce_addf=3, func.return=1
+    group4_broadcast_shape_matrix.pto ops=3 broadcast=3, group_broadcast=1, func.return=1
+    group_reduce_addi_i16.pto ops=3 ensure_mask_granularity=1, group_reduce_addi=1, func.return=1, **fixed contiguous**
+
+**几乎每个失败 component 都含 \`func.return\`**，其中一例明确打印 \`fixed contiguous\`。而 \`func.return\` 在我们这边是被当作
+**固定赋值**处理的（\`collectFixedAssignments\` / \`getABIBoundaryLayout\`）。若边界被钉死为 contiguous，
+而 reduce/broadcast 唯一可行的关系产出的是 group-slots 布局，那么该 component **无论加多少候选行都无解**——
+这时正确的修法就不是「补行」，而是「允许 ABI 边界发生转换」。
+
+两种成因（候选集过薄 vs 边界固定赋值）**在诊断里同时存在**，因此要求分诊任务先用小用例（s64 / slots8）
+验证「放宽边界后是否可解」，再决定修哪一边；混合的情况要逐例说明，不许一概而论。
