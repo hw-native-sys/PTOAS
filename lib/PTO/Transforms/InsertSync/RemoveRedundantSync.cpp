@@ -94,6 +94,7 @@ void RemoveRedundantSync::Run() {
       waitFlag->uselessSync = true;
     }
   }
+  RemoveSlotRedundantSync();
 }
 
 bool RemoveRedundantSync::CheckAllSync(const SyncOperation *setFlag,

@@ -267,6 +267,7 @@ add_mlir_dialect_library(PTOTransforms
   InsertSync/MemoryDependentAnalyzer.cpp
   InsertSync/MoveSyncState.cpp
   InsertSync/RemoveRedundantSync.cpp
+  InsertSync/RemoveSlotRedundantSync.cpp
   InsertSync/SyncEventIdAllocation.cpp
   InsertSync/SyncCodegen.cpp
   BufidSync/BufidSyncPass.cpp

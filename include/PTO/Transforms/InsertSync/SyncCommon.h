@@ -166,6 +166,14 @@ struct BaseMemInfo {
  
 using DepBaseMemInfoPairVec =
     SmallVector<std::pair<const BaseMemInfo *, const BaseMemInfo *>>;
+
+// Exact boundary tokens for a proven constant-bounded slot rotation. Bit i
+// refers to the physical slot, before event IDs are assigned. An absent value
+// retains the existing conservative boundary handling.
+struct SlotEventBoundaryMasks {
+  uint32_t prime{0};
+  uint32_t drain{0};
+};
  
 // 表示一个具体的同步指令 (Set, Wait, Barrier)
 class SyncOperation {
@@ -198,6 +206,7 @@ public:
   // hardware event-id index. Empty when this sync is single-buffer.
   Value slotSSAExpr;
   uint32_t slotCount{1};
+  std::optional<SlotEventBoundaryMasks> slotBoundaryMasks;
   Value lowestCommonAncestorBuffer{nullptr};
   int reuseCntForWiden{0};
   bool reallocatedLoopHeadTailSync{false};
@@ -271,8 +280,9 @@ bool hasSameSyncDepRoots(const SyncOperation *lhs, const SyncOperation *rhs);
 /// Such a sync orders ONLY the accesses that resolve to its own event lane
 /// (`slotSSAExpr % slotCount`); it does not serialize its (src, dst) pipe pair
 /// the way a static flag does. Every place that reasons about one sync
-/// "covering" another must therefore exclude it, or a second access through a
-/// different slot is left unguarded (issue #1118).
+/// "covering" another must therefore exclude it unless it proves coverage for
+/// the exact operation instances, including their slot and iteration distance.
+/// Otherwise a second access through a different slot is left unguarded (#1118).
 /// `slotSSAExpr` is the discriminator, NOT `GetForEndIndex()`. Slot keying is
 /// only ever established for a back-edge dependency (InsertSyncOperation), so
 /// it may be tempting to test for one -- but the synthetic prologue-prime and
