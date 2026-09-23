@@ -1015,3 +1015,27 @@ planner 尚未进树。之前没暴露，是因为没有任何东西引用 confl
   \`vmi_integer_reductions_i8_invalid.pto\`（注意后者是上游自带失败，只能当「不变差」的参照），
   外加「重建后」的 608/606/2 与失败集合逐条比对。
 * 规模修正：9 hunk / -76/+68 里，预计真正需要移植的**远少于**表面行数——与 F3 同一模式（先分类再动手）。
+
+### 13.10 批次 E（F4）的分类：两处是新的，一处要先验证是否已被覆盖
+
+F4 只有 2 个 hunk，但内容上其实是三类改动：
+
+1. **dense lane-stride 桥**：\`deint2 ↔ laneStride\`、\`laneStride2 ↔ laneStride4\`、\`laneStride → deint2\`，
+   实现方式是**绕 dense 中间态**（先调 \`materializeDataLayoutConversion(op, *dense, …)\` 再转回来）；
+2. **\`deinterleaved = 4 → 2\`**：用 \`vintlv\` 取 even/odd 两个 part；
+3. **\`deinterleaved = 2 → 4\`**：同样的逆操作。
+
+上游侧核对结果（\`lib/PTO/Transforms/VMIToVPTO/VMIToVPTODataLayoutInternals.cpp\`）：
+
+* 该文件里 **只有 factor 2 的处理**（\`:356\` 的 \`isDeinterleaved() && getFactor() == 2\` 判据，\`:971/:974\` 的
+  \`getFactor() == 2 && getLaneStride() == 1\`），**没有任何 \`getFactor() == 4\` 的转换代码**；
+* \`VintlvOp\`/\`VdintlvOp\` 在这个文件里出现 10 次（上游确实用它们做交织/解交织），但与 factor 4 无关；
+* \`materializeLaneStrideToContiguous\`（\`:19-38\`）是上游自己的 lane-stride → contiguous 路径。
+
+**批次 E 的指令因此分两类**：
+
+* 上面第 2/3 条（deint4↔2 的 vintlv/vdintlv 构造）**上游没有**，属于真正要移植的部分；
+* 第 1 条（lane-stride 桥）要**先确认上游的组合路径是否已经等价**（它已经有 \`materializeLaneStrideToContiguous\`，
+  以及 \`dce6afea0\`/\`067da4864\` 引入的组合式 dense 物化）；若等价则按 (a) 保留上游，避免重复覆盖后多出一对
+  \`vintlv\`/\`vdintlv\`——这正是盘点给的探测手段（\`vmi_to_vpto_memory_x2_widths.pto\`、\`vmi_interleaved_memory_ops.pto\`）。
+* 门禁仍按 §10.4：本批次以**符号级 pattern-class diff** 为主，lit 在步骤 5 之前只能当辅助证据。
