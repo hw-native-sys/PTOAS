@@ -2346,3 +2346,16 @@ F2 的依赖是"step-3 的 \`validateCastOperationRelation\` 查询存在"——
 * **F3 h3 永不落地**；**F3 h2 暂缓**（缺 §8.1 shim，记为具名缺口，不许就地发明）；
 * **F3 h4 + F7 h1 + F7 h2 落地**（F7 h2 视前置校验 2 决定是否加守卫）；
 * **F3 h1 条件落地**（视前置校验 1）；两项校验的结果出来之前不落 F3 h1。
+
+### 19.18.5 两条前置校验的答案（已核实到源码）
+
+* **校验 1：F3 h1 可以照写落地（不是放宽）。** 被删的 \`getX2MemoryDistToken(elemType, "INTLV")\` 唯一条件就是 \`elementBits in {8,16,32}\`（\`VMIToVPTOMaskInternals.cpp:1290-1299\`）；
+  而 \`getInterleaveStoreSupport\`（\`VMILayoutSupportRelationQueries.inc:80-108\`）的类型集**完全相同**、失败消息**逐字相同**、并且**额外要求 full physical chunks** —— 所以**任何被 token 拒绝的都不会因此被接受**（等价或更严）。
+  → **F3 h1 照写落地**（换守卫 + 换查询，删掉两个 \`emitLogicalFailure\` 点与 token 检查）。
+* **校验 2：F7 h1/h2 可落（带 \`succeeded()\` 守卫），但 F3 h4 是行为变更不是改名。**
+  两者在**唯一一轴**上不一致——**lane stride**：旧谓词接受 \`laneStride == 1\`，而 staging 的计算要求 \`laneStride != 1\`（即 2 或 4）。
+  于是存在一整类"旧为真、新为假"的形状：\`gs(numGroups, slots=8, laneStride=1)\` 且 \`elementCount == numGroups in {4,8}\`、unit row stride、payload 32 的倍数且 <256。
+  后果分开看：
+  * \`:710\`（F7 h2）：该处位于 \`alreadyCompact = laneStride == 1\` 的**else 分支**之后，所以那一类**不可能出现**，谓词在该分支内一致；但查询仍可能因其他原因失败，所以**仍需 \`succeeded()\` 守卫**，并保留原有的"计算布局"作为 else 路径——**该处不是语义变更**。
+  * \`:1142\`（F3 h4）：**不是纯重构**。上述那一类 store 将**不再被判为 Compact**，而是落到 \`:1147\` 的 \`checkSupportedGroupSlotsStoreShape\`，即**换了一个校验器**，可能改变通过/失败/诊断。**必须作为行为变更来实测**（分诊方判断新行为"很可能是对的"：laneStride=1 的包本来就是 packed 形态，不需要 staging），但**由实测决定**。
+  → **判决**：F3 h4 允许作为**行为变更**落地，附三条硬条件（严格子集；任何现在通过的用例若改变结局必须作为新增上报，回归或未解释的计划变化即回退；提交信息须写明语义与"由实测决定"）。
