@@ -2201,3 +2201,31 @@ group_broadcast 的 preferred 路线 → extf 的有界实验 → 两个 \`opt/\
 
 **新基线**：HEAD \`b58fa790f\`，\`lit/vmi_new\` = **608/541/67**（真硬失败 8 + 负例文本位移 3 + FileCheck-only 56）。
 下一条（2(ii)）已按"一次只做一件事"派给分诊方：若在该失败点无法在不引入新状态的前提下恢复"算子 + 操作数序号 + 两个布局"，就直接停下来报我。
+
+## 19.15 2(ii) 的否定答案：这**不是**文本位移，而是一处**行为分歧**；并把它升格为具名假设
+
+分诊方按"是停就停"的要求给出了否定答案，理由不是"信息拿不到"，而是**阶段与措辞所主张的东西**：
+
+* 测试文件**自己的注释**（RUN 行上方，逐字）说明了该失败应当发生在哪一阶段：
+  "…so the two are not a carrier identity and **no ensure_layout row joins them**. **Layout assignment still inserts the bridge, and the VPTO conversion is where it finds no materialization.**"
+* 实测我们的移植正好相反：只跑到 \`-vmi-layout-assignment\`（不带 \`-vmi-to-vpto\`）就已经失败：
+  \`vmi_layout_gate_gs1_dense_join_invalid.pto:24:13: error: VMI-LAYOUT-CONTRACT: no complete legal VMI layout plan exists for this component\`
+* 而这个拒绝**按表是正确的**：该配对的所有 ensure 行都是 \`gsFit()\`/\`gsFitStride(S)\` 形态，而 \`gsFit()\` 要求 \`num_groups <= slots\`，
+  所以 \`contiguous <-> num_groups = 4, slots = 1\` **根本没有行**（\`VMILayoutSupportTables.inc:32-33, 76-79\`）——测试注释里那句"no ensure_layout row joins them"说的就是这件事。
+
+**因此**：要让管线走到测试描述的状态，planner 必须**接受一个没有 ensure 行的转换**——那是**验收行为改变**，不是诊断改变；
+而从 planner 报出那句话则是**编造消息**（把 lowering 的失败安在一个还没走到的阶段上，还点名一个计划里根本不含的转换）。它停下来是对的。
+
+**归类修正**：该用例**不是**"负例文本位移"，而是**赋值阶段的一处真实行为分歧**——上游的 assignment 接受 \`gs(4,1) <-> contiguous\` 这一对、把失败推迟给转换；我们直接拒绝了这一对。
+于是负例文本位移从 3 减到 2，另立一类"行为分歧（未解决）1"。
+
+**我的决定**：**暂不 re-baseline**（选项 (b) 作为兜底保留），把选项 (a) 升格为**具名假设**：
+> **H-a**：我们的 planner 是"全或无"的——找不到**可物化**的计划就拒绝整个 component；上游的 assignment 接受"关系自洽但无 ensure 行"的布局，让转换阶段去报失败。
+
+**为什么值得单独立项**：剩下 8 个真硬失败里有 **5 个**是"no complete legal VMI layout plan"（\`opt/fused_quant_dequant_vmi_opt\`、\`opt/per_block_bf16_group8_quant_vmi_opt\`、\`vmi_layout_assignment_group_reduce_partial_slots8\`、\`vmi_explicit_integer_cast_reduction_paths\`、\`vmi_group_execution_paths\`）。
+如果拒绝它们的就是这条"全或无"规则，那么**一个兜底可以同时处理这 5 个加上本用例**。**若现在 re-baseline，就等于把一个也许能消掉的分歧固化成基线。**
+
+**下一步（已派、只读）**：定位拒绝点（\`applyLayouts\`/\`selectLayoutPlan\` 失败路径）与该处可见状态；说明兜底若要复现上游行为需要做什么（把关系自洽的布局交出去，物化交给 \`VMILayoutSinkMaterialization\`/\`VMIExpandImplicitEnsureLayouts\`/\`VMILayoutRematerialize\`）；
+把步骤 5 删掉的 **11 个 seed/request 辅助函数**（上游这套行为的原型）逐条说明到"可作为部分复活的基础"的程度、或明确说不可以；
+逐个判定那 5 个用例的拒绝是否**同类**（无可物化计划）还是**异类**（关系本身矛盾）；并给出**风险清单**（哪些现在通过的用例最可能因此换计划），让"严格子集"断言有意义而不是靠运气。
+之后由主线按纪律做该实验（两个方向都测、无收益即回退）；若判定为"新发明且爆炸半径大"，则取 (b) 并把 H-a 记为否决。
