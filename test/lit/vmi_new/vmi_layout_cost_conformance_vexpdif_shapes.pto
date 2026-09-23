@@ -1,0 +1,98 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software; you can redistribute it and/or modify it under
+// the terms and conditions of CANN Open Software License Agreement Version 2.0
+// (the "License"). Please refer to the License for details. You may not use
+// this file except in compliance with the License. THIS SOFTWARE IS PROVIDED ON
+// AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS
+// FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. See LICENSE in the root of
+// the software repository.
+
+// RUN: pto-test-opt %s -test-vmi-layout-cost-conformance | FileCheck %s --check-prefix=COST
+
+// Pins the vexpdif layout support rows in every shape the table admits, so a
+// port that narrows the candidate set for this family shows up as a missing
+// case rather than as a silently different plan.
+
+module {
+  func.func @vexpdif_contiguous(
+      %x: !pto.vmi.vreg<64xf32, #pto.vmi.layout<contiguous>>,
+      %max: !pto.vmi.vreg<64xf32, #pto.vmi.layout<contiguous>>,
+      %mask: !pto.vmi.mask<64xb32, #pto.vmi.layout<contiguous>>)
+      -> !pto.vmi.vreg<64xf32, #pto.vmi.layout<contiguous>> {
+    %r = pto.vmi.vexpdif %x, %max, %mask
+      {pmode = "zero", test.vmi_layout_cost_conformance}
+      : !pto.vmi.vreg<64xf32, #pto.vmi.layout<contiguous>>,
+        !pto.vmi.vreg<64xf32, #pto.vmi.layout<contiguous>>,
+        !pto.vmi.mask<64xb32, #pto.vmi.layout<contiguous>>
+        -> !pto.vmi.vreg<64xf32, #pto.vmi.layout<contiguous>>
+    return %r : !pto.vmi.vreg<64xf32, #pto.vmi.layout<contiguous>>
+  }
+
+  func.func @vexpdif_deint2(
+      %x: !pto.vmi.vreg<128xf32, #pto.vmi.layout<deinterleaved = 2>>,
+      %max: !pto.vmi.vreg<128xf32, #pto.vmi.layout<deinterleaved = 2>>,
+      %mask: !pto.vmi.mask<128xb32, #pto.vmi.layout<deinterleaved = 2>>)
+      -> !pto.vmi.vreg<128xf32, #pto.vmi.layout<deinterleaved = 2>> {
+    %r = pto.vmi.vexpdif %x, %max, %mask
+      {pmode = "zero", test.vmi_layout_cost_conformance}
+      : !pto.vmi.vreg<128xf32, #pto.vmi.layout<deinterleaved = 2>>,
+        !pto.vmi.vreg<128xf32, #pto.vmi.layout<deinterleaved = 2>>,
+        !pto.vmi.mask<128xb32, #pto.vmi.layout<deinterleaved = 2>>
+        -> !pto.vmi.vreg<128xf32, #pto.vmi.layout<deinterleaved = 2>>
+    return %r : !pto.vmi.vreg<128xf32, #pto.vmi.layout<deinterleaved = 2>>
+  }
+
+  func.func @vexpdif_deint4(
+      %x: !pto.vmi.vreg<256xf32, #pto.vmi.layout<deinterleaved = 4>>,
+      %max: !pto.vmi.vreg<256xf32, #pto.vmi.layout<deinterleaved = 4>>,
+      %mask: !pto.vmi.mask<256xb32, #pto.vmi.layout<deinterleaved = 4>>)
+      -> !pto.vmi.vreg<256xf32, #pto.vmi.layout<deinterleaved = 4>> {
+    %r = pto.vmi.vexpdif %x, %max, %mask
+      {pmode = "zero", test.vmi_layout_cost_conformance}
+      : !pto.vmi.vreg<256xf32, #pto.vmi.layout<deinterleaved = 4>>,
+        !pto.vmi.vreg<256xf32, #pto.vmi.layout<deinterleaved = 4>>,
+        !pto.vmi.mask<256xb32, #pto.vmi.layout<deinterleaved = 4>>
+        -> !pto.vmi.vreg<256xf32, #pto.vmi.layout<deinterleaved = 4>>
+    return %r : !pto.vmi.vreg<256xf32, #pto.vmi.layout<deinterleaved = 4>>
+  }
+
+  func.func @vexpdif_block_deint2(
+      %x: !pto.vmi.vreg<128xf32, #pto.vmi.layout<block_deinterleaved = 2>>,
+      %max: !pto.vmi.vreg<128xf32, #pto.vmi.layout<block_deinterleaved = 2>>,
+      %mask: !pto.vmi.mask<128xb32, #pto.vmi.layout<block_deinterleaved = 2>>)
+      -> !pto.vmi.vreg<128xf32, #pto.vmi.layout<block_deinterleaved = 2>> {
+    %r = pto.vmi.vexpdif %x, %max, %mask
+      {pmode = "zero", test.vmi_layout_cost_conformance}
+      : !pto.vmi.vreg<128xf32, #pto.vmi.layout<block_deinterleaved = 2>>,
+        !pto.vmi.vreg<128xf32, #pto.vmi.layout<block_deinterleaved = 2>>,
+        !pto.vmi.mask<128xb32, #pto.vmi.layout<block_deinterleaved = 2>>
+        -> !pto.vmi.vreg<128xf32, #pto.vmi.layout<block_deinterleaved = 2>>
+    return %r : !pto.vmi.vreg<128xf32, #pto.vmi.layout<block_deinterleaved = 2>>
+  }
+
+  func.func @vexpdif_block_deint4(
+      %x: !pto.vmi.vreg<256xf32, #pto.vmi.layout<block_deinterleaved = 4>>,
+      %max: !pto.vmi.vreg<256xf32, #pto.vmi.layout<block_deinterleaved = 4>>,
+      %mask: !pto.vmi.mask<256xb32, #pto.vmi.layout<block_deinterleaved = 4>>)
+      -> !pto.vmi.vreg<256xf32, #pto.vmi.layout<block_deinterleaved = 4>> {
+    %r = pto.vmi.vexpdif %x, %max, %mask
+      {pmode = "zero", test.vmi_layout_cost_conformance}
+      : !pto.vmi.vreg<256xf32, #pto.vmi.layout<block_deinterleaved = 4>>,
+        !pto.vmi.vreg<256xf32, #pto.vmi.layout<block_deinterleaved = 4>>,
+        !pto.vmi.mask<256xb32, #pto.vmi.layout<block_deinterleaved = 4>>
+        -> !pto.vmi.vreg<256xf32, #pto.vmi.layout<block_deinterleaved = 4>>
+    return %r : !pto.vmi.vreg<256xf32, #pto.vmi.layout<block_deinterleaved = 4>>
+  }
+}
+
+// COST: vmi-layout-cost-conformance vexpdif_contiguous pto.vmi.vexpdif relation=0 cost=0 operand0=#pto.vmi.layout<contiguous> operand1=#pto.vmi.layout<contiguous> operand2=#pto.vmi.layout<contiguous> result0=#pto.vmi.layout<contiguous>
+// COST: vmi-layout-cost-conformance-summary vexpdif_contiguous pto.vmi.vexpdif relations=1
+// COST: vmi-layout-cost-conformance vexpdif_deint2 pto.vmi.vexpdif relation=0 cost=0 operand0=#pto.vmi.layout<deinterleaved = 2> operand1=#pto.vmi.layout<deinterleaved = 2> operand2=#pto.vmi.layout<deinterleaved = 2> result0=#pto.vmi.layout<deinterleaved = 2>
+// COST: vmi-layout-cost-conformance-summary vexpdif_deint2 pto.vmi.vexpdif relations=1
+// COST: vmi-layout-cost-conformance vexpdif_deint4 pto.vmi.vexpdif relation=0 cost=0 operand0=#pto.vmi.layout<deinterleaved = 4> operand1=#pto.vmi.layout<deinterleaved = 4> operand2=#pto.vmi.layout<deinterleaved = 4> result0=#pto.vmi.layout<deinterleaved = 4>
+// COST: vmi-layout-cost-conformance-summary vexpdif_deint4 pto.vmi.vexpdif relations=1
+// COST: vmi-layout-cost-conformance vexpdif_block_deint2 pto.vmi.vexpdif relation=0 cost=0 operand0=#pto.vmi.layout<block_deinterleaved = 2> operand1=#pto.vmi.layout<block_deinterleaved = 2> operand2=#pto.vmi.layout<block_deinterleaved = 2> result0=#pto.vmi.layout<block_deinterleaved = 2>
+// COST: vmi-layout-cost-conformance-summary vexpdif_block_deint2 pto.vmi.vexpdif relations=1
+// COST: vmi-layout-cost-conformance vexpdif_block_deint4 pto.vmi.vexpdif relation=0 cost=0 operand0=#pto.vmi.layout<block_deinterleaved = 4> operand1=#pto.vmi.layout<block_deinterleaved = 4> operand2=#pto.vmi.layout<block_deinterleaved = 4> result0=#pto.vmi.layout<block_deinterleaved = 4>
+// COST: vmi-layout-cost-conformance-summary vexpdif_block_deint4 pto.vmi.vexpdif relations=1
