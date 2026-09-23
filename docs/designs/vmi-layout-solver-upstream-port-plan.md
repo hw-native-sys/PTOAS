@@ -1663,3 +1663,16 @@ type of return operand 归零说明：无注解边界不再钉住布局这处修
 
 因此 108 到 89（净修 19、无回归）由我自己的运行复现，而非转述实现方的日志。
 剩余：89 个失败中约 23 个仍是真缺陷（VMI-LAYOUT-CONTRACT 16 与 VMI-UNSUPPORTED 28 需去重与分子类），其余为期望差异（步骤 8 重测）。
+
+### 18.17 统一算子族修复的读数：89 到 80
+
+分诊任务对统一算子族（vload/vstore/vcvt，在 -vmi-lower-unified-to-legacy 之前就被布局赋值）的修复，其全量测量：
+
+    Total Discovered Tests: 608
+      Passed: 528 (86.84%)
+      Failed:  80 (13.16%)
+
+即累计 108 到 89 到 80（先 stride + 边界，后统一算子族），改动限于 VMILayoutPlanner.cpp 与 VMILayoutAssignment.cpp 两个文件，尚未提交。
+依据（取其注释大意）：上游自己的 collect() 对这些统一拼写同样不声明关系，布局由 lowering 从交到它手上的值决定，因此关系提供者缺少该拼写分支不应使 component 失败。
+
+待其提交后由我在干净状态独立复核：改动范围、构建退出码、失败集合断言、按族增量；并特别核对 VMILayoutAssignment.cpp 部分是否结构必需且未放宽判定。
