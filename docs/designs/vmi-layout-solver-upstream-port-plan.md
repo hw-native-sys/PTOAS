@@ -1543,3 +1543,22 @@ Stage 3 收尾清单第 4 条写明：**若干 fork 独有行被刻意不注入�
 
 两种成因（候选集过薄 vs 边界固定赋值）**在诊断里同时存在**，因此要求分诊任务先用小用例（s64 / slots8）
 验证「放宽边界后是否可解」，再决定修哪一边；混合的情况要逐例说明，不许一概而论。
+
+### 18.10 **竞争假设被证实**：无注解 ABI 边界 + 固定赋值 = 无解（与缺行无关）
+
+读最小用例即可确认。\`vmi_layout_assignment_group_reduce_s64.pto\`：
+
+    func.func @…(%source: vreg<512xf32>, %mask: mask<512xpred>) -> vreg<8xf32> {
+      %out = pto.vmi.vcadd %source, %mask {group = 8, reassoc} : … -> vreg<8xf32>
+      return %out : vreg<8xf32>
+    }
+
+**签名里没有任何布局注解**，因此 ABI 边界按 \`getABIBoundaryLayout\`（显式布局否则 contiguous）解析为 \`contiguous\`，
+\`func.return\` 也就被钉在 contiguous；而 \`vcadd {group = 8}\` 只有 **1 条关系**，产出的是 group-slots 布局——
+对它是**不可达**的。于是该 component **无论加多少候选行都无解**。
+
+真正的缺陷在**边界的处理方式**：我们的 \`collectFixedAssignments\` / \`commitVMILayoutPlan\` 把 ABI 边界当成
+**固定赋值且没有转换边**；而上游原来的 seed 路径允许传播器在 use 处物化一次转换
+（\`requestFallbackLayouts\` + use-conflict 机制）。修法是**允许边界发生转换**（或从可达关系反推边界布局），
+而不是补行。**最快的路径**是拿 fork 自己的 planner 对照这些用例（fork 的这些 reduce 用例是通过的），
+看 \`getABIBoundaryLayout\` / \`collectFixedAssignments\` 在「结果被无注解函数直接 return」时的行为差在哪。
