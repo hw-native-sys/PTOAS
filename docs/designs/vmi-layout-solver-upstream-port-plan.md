@@ -1471,3 +1471,20 @@ Stage 3 收尾清单第 4 条写明：**若干 fork 独有行被刻意不注入�
       copied=1 … legacy_reports=1  (dry=1)
 
 规矩再次生效：**量具必须用它本该命中的正例去验一次**，否则 0 报告与「真的没有」无法区分。
+
+### 18.6 换引擎后的 108 个失败：**逐例分类**完成（42 真缺陷 / 49 期望差异 / 17 待补分类）
+
+新增 \`probes/classify_failures.sh\`：对每个失败用例取**第一条 \`pto-test-opt\` RUN** 实跑，按「流水线是否自己报错」而不是按文本关键词分类。
+结果：**PIPE-ERROR 42 / CHECK-DIFF 49 / MISSING+NOPTOOPT 17**（后者首条 RUN 走 \`ptoas\` 或位于 \`opt/\`，需另一条路径）。
+
+42 个真缺陷的族分布：
+
+| 族 | 数量 | 初判 |
+|---|---|---|
+| \`VMI-LAYOUT-CONTRACT: no complete legal VMI layout plan\` | **16** | solver 枚举不出合法 plan——与「未注入的 fork 独有候选行」假设一致 |
+| \`type of return operand 0 (…)\` | **14** | 函数返回类型校验失败——疑似 §8.5 **R7**（上游 \`rewriteFunctionType\` 与我们 ABI 边界处理不一致）|
+| \`VMI-UNSUPPORTED: no legal VMI layout relation is registered\` | **10** | solver 选中的关系在 lowering 侧没注册——与 Stage 3 点出的「capability-locked」同类 |
+| 其他 | 2 | 一条 \`failed to apply conversion patterns\`、一条消息为空 |
+
+**这两组数字合起来说明**：换引擎引入的**真实缺陷是 42 个**，且**三个族各有明确嫌疑成因**，
+不是一堆散乱失败；而 49 个期望差异属步骤 8 重测（既定做法：步骤 5 之后重新测量）。
