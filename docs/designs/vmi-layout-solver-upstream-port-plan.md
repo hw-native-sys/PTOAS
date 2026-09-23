@@ -23,12 +23,12 @@ layout 决策引擎，整体搬到 `origin/master` 上（比我们的分叉点�
 | 上游 | `origin/master`，**领先 269 个 commit**，与我们 diff 2399 个文件 / +254269 / -158438 |
 | 我们独有的新文件 | `VMILayoutPlanner.{h,cpp}`、`VMILayoutCostModel.{h,cpp}`、`VMILayoutConflictSolver.{h,cpp}`、`VPTOPack4StoreMaskNormalize.cpp`、2 篇设计文档、约 42 个 lit 测试 |
 | 上游 layout 结构 | pass 已迁到 `lib/PTO/Transforms/VMI/`；layout 事实拆成 9 个 `.inc` 表 + pattern DSL；新增 `VMILayoutSpineAnalysis.cpp`（无 pass 注册、生产侧唯一消费者是 `VMILayoutAssignment.cpp`，可整体删除）；`VMIToVPTO.cpp` 拆成约 20 个编译单元 |
+| 分叉点之后动过 `VMIAttrs.td` 的 commit | 只有 2 个，都是方言层收敛：`7eda9ab55`（vstore dist mode `dintlv` 改名 `intlv`、去掉 unpack vload）、`8a0a5689b`（pmode 收敛为 zero-only） |
 | 动手前必须先做 | **vexpdif layout 层还没提交**（VMILayoutSupport.{h,cpp}、VMILayoutPlanner.cpp、VMIMaskGranularityAssignment.cpp）——先提交它 |
 
 ## 2. 已确认的设计决策
 
-1. **事实与偏好分离。** 候选集合（表行）属于事实，跟随上游（包括 `0967a848b` 的泛化 dense
-   lane-stride 行）；preference penalty 仍然是我们决策链里的**靠后 tie-break**（`pen` 排在
+1. **事实与偏好分离。** 候选集合（表行）属于事实，跟随上游；preference penalty 仍然是我们决策链里的**靠后 tie-break**（`pen` 排在
    lane-stride 两层之后），所以两棵树在偏好行上的差异不值得对齐。我们的提交
    `00890b827 Prefer E2B layouts` 因此是**删除候选**，而不是合并对象。
 2. **Spine 分析整体不要：不保留 `VMILayoutSpineAnalysis`，但保留它背后的那些新 layout 行。**
@@ -111,3 +111,118 @@ layout 决策引擎，整体搬到 `origin/master` 上（比我们的分叉点�
    * 产出事实表对齐的第一版（我们的 66 行 vs 上游的 93 行），确认“我们 66 行里 41 行与上游同表达，
      25 行上游用另一种表达，0 行上游根本没有”。
 2. **提交 vexpdif 层**，避免切分支时丢失。
+\n\n
+## 7. 摸底结果（步骤 1）
+
+### 7.1 「`0967a848b` 的泛化 dense lane-stride 要跟上游对齐」这条作废
+
+`git merge-base --is-ancestor 0967a848b ca7ccb409` 为真：该 commit 距我们的分叉点 **958 个 commit**，
+**早就在我们的树里**。我们的 `include/PTO/IR/VMIAttrs.td` 现在就有 `int64_t laneStride` 参数、
+`getDeinterleaved(ctx, factor, laneStride = 1)`、`hasDenseLaneStride()` /
+`hasGroupSlotLaneStride()` / `isDense()`。因此 `d(4)`、`dls(4, 2)`、`dls(4, 4)` 这些复合形状
+**今天就能表达**，spine-scoped 两张表不需要任何属性层工作，§2 里这一项删掉。
+
+分叉点之后只有 2 个 commit 动过 `VMIAttrs.td`，都是方言层收敛，不是新能力，要在步骤 3/7 里当**机械改名**处理：
+`7eda9ab55`（vstore dist mode `dintlv` 改名 `intlv`、去掉 unpack vload）、
+`8a0a5689b`（pmode 收敛为 zero-only）。
+
+### 7.2 真正的收益在下面这串 post-fork commit 里
+
+| commit | 标题 | 与我们现状的关系 |
+|---|---|---|
+| `dce6afea0` | feat(vmi): bridge lane-strided dense values to group-slot views | 打开 dense lane-stride 与 group-slot 视图之间的桥（我们的候选集里没有） |
+| `9ae084d38` | feat(vmi): keep closed cast round trips in the deinterleaved family | 闭合成对 cast 留在 deinterleaved 家族 |
+| `9721a4faa` | fix(vmi): constrain cast layouts by type class | 就是 spine 表里 `CastTypeClass::Integer`/`Float` 的来源 |
+| `48e67a2c5` | fix(vmi): split the bitcast layout mechanism and keep compute-carrying narrow sides contiguous | equal-width bitcast 拆分 + 窄侧承载计算保持 contiguous，也就是 spine scope 的来源 |
+| `6d744afb5` | fix(vmi): preserve native i16 group sum layout | group reduce i16 |
+| `65ea22142` | fix(vmi): correct lane-strided iota lowering for float and integer types | iota group deint |
+| `f2c0b9785` | fix(vmi): lower lane-strided single-group broadcasts and 8-bit widening | **和我们现存失败最对得上**：group broadcast multi-consumer、8-bit widening |
+| `067da4864` | Support composed dense layout materialization | 复合 dense layout 的 materialization |
+| `6b1ba8d99` | fix(vmi): align grouped reductions with the slots=1 dense fallback | group reduce 的 slots=1 回退 |
+
+所以升级能否修掉 trunci 硬失败，已被 7.6 节的探针反证（上游同样失败）；更准确的说法是
+post-fork 行为与我们的 solver 决策共同作用**。`0967a848b` 早已在树上却仍然失败，
+说明它是**决策问题**（我们的代价链选了 lowering 不支持的那条路），不是能力缺失。
+
+### 7.3 算子分类（probe 2）
+
+上游现在的划分（`VMI/VMILayoutPropagation.cpp:213/234/1152/1155`）：
+
+* `isSameLayoutOp(op)`：仍是 `isa<>` 列表，但集合与我们不同；
+* `isEqualWidthBitcastOp(op)`：只认 legacy `pto.vmi.bitcast` 且源/结果 storage 位宽相同；
+* `isVMISameLayoutOp = isSameLayoutOp`；`isVMIClassTransparentOp = isSameLayoutOp || isEqualWidthBitcastOp`。
+
+集合差异就是步骤 4 的实际清单：
+
+* **上游有我们没有**：`VMIVsubcOp`、`VMIVsubcsOp`、`VMIActivePrefixIndexOp`、`VMICompressOp`、
+  `VMIExpandLoadOp`、`VMIVUnzipOp`、`VMIVZipOp`，以及 `VMIFPToSIOp`/`VMISIToFPOp`——
+  后两个我们归进 cast 集合，上游归进 same-layout（等宽 cast 不换 layout）。
+* **我们有上游根本没有**：`VMIAddFOp`、`VMIMulFOp`、`VMIMinFOp` … 等 legacy 名字在上游
+  `include/PTO/IR` + `lib/PTO/IR` 中 **0 命中**，即 **legacy 算术方言已被上游删除**，这些条目随合并消失。
+* 我们 `VMILayoutPlanner.cpp:1239` 的 `sameWidthNumericCast` 已经把等宽 FP<->int cast 变成
+  单一 identity relation，**语义与上游一致**，差的只是归类：步骤 4 直接采用上游的
+  `isVMIClassTransparentOp` 划分，不需要重写关系。
+
+### 7.4 spine-scoped 两张表的实际内容（probe 3）
+
+`VMILayoutSupportSpineTables.inc`：preferred 6 行、legal 4 行。
+
+    {32,16,0,d(4),     dls(4,2), Integer}   // 整数 16<->32：与通用表的 dense 往返重复
+    {16,32,0,d(2),     d(4),     Integer}
+    {32,16,0,d(4),     dls(4,2), Float}     // 浮点 16<->32：复合一步到位
+    {16,32,0,dls(4,2), d(4),     Float}
+    {32,8, 0,d(4),     dls(4,4)}            // 8-bit
+    {8,32, 0,dls(4,4), d(4)}
+
+上游注释把价值写得很清楚：窄侧是「宽侧第 i 个 part 的转换结果落在第 i 个物理 part」，
+四个 part 一一对应，**不需要 `pto.vor` 把互斥的 part 结果拼成 dense 再拆开**。
+而「要不要 `pto.vor`」正是我们第 2 层在数的东西——这反过来验证「删分析、留表」是对的：
+代价模型能自己认出这个场景，scope 只是上游没有代价函数时的替代品。
+两条硬约束写进了表本身，枚举时不能丢：复合 16<->32 形式**只对浮点成立**
+（整数窄化 lowering 没有 one-part-per-chunk 路线，整数只能走 dense `d(4) -> d(2)` 往返），
+且两类 type class 不相交。
+
+### 7.5 顺带发现：上游 `master` 提交了工作区元数据
+
+`origin/master` 的根目录**跟踪了 `.ptoas-workspace.json` 和 `env.sh`**（workspace manager 生成的文件）。
+后果：workspace manager 会以
+"managed path already exists in the source tree" 拒绝建工作区，步骤 1 只能用等价的手工步骤
+（`git worktree add` + `python -m venv --system-site-packages` + `quick_install.sh`）。
+建议单独清理这两个文件（不在本计划范围内）。
+
+
+### 7.6 决定性的探针：把 12 个失败用例喂给上游（/tmp/probe_upstream.sh）
+
+上游底座已构建完成（worktree 分支 `feature/vmi-layout-solver-upstream` @ `0a3e01731`，
+build `.work/upstream-port/builds/vmi-layout-solver-upstream`，LLVM 19.1.7）。
+把我们的 12 个失败用例的 RUN 行原样、逐条用**上游的 `ptoas` / `pto-test-opt`** 执行：
+
+| 用例 | 上游结果 | 失败性质 |
+|---|---|---|
+| `vmi_to_vpto_compress_tail_invalid` | RUN1 **PASS** | 升级自带修好 |
+| `vmi_to_vpto_group_store_compact_small` | RUN1 PASS / RUN2 FAIL | 部分修好，剩决策差异 |
+| `opt/fused_quant_dequant_vmi_opt` | FAIL（parse） | **方言漂移**：`pto.castptr` 现在要求 signless i64 |
+| `vmi_layout_assignment_store_prefer_lane_stride` | FAIL | 新硬校验：`masked_store` 需要可证明的 store 对齐 |
+| `vmi_prefer_lane_stride_narrowing` | FAIL | 同上（`lane_stride = 4` 的 masked_store 被拒） |
+| `vmi_to_vpto_quant_dequant` | FAIL | 同上（`deinterleaved = 2` 的 masked_store 被拒） |
+| `vmi_to_vpto_group_reduce_partial_slots8` | FAIL | 新硬校验：no executable A5 grouped-reduction layout |
+| `vmi_layout_assignment_group_broadcast_multi_consumer` | FAIL | 决策差异（`X = 0`）+ load 安全 remark |
+| `vmi_layout_assignment_group_slot_load_dual_layout` | FAIL | 决策差异（`SUM16 = 3`） |
+| `vmi_layout_assignment_group_slot_load` | FAIL | 决策差异（lowering 输出不同） |
+| `vmi_to_vpto_sub_mul` | FAIL | 决策差异（`SUB0 = 7`） |
+| `opt/per_block_bf16_group8_quant_vmi_opt` | FAIL | 决策差异（`vintlv` 组合不同） |
+
+**结论（对原计划的修正）**：
+
+1. **升级不会自动修掉我们的失败**。12 个里只有 2 个 RUN 直接转绿，其余分三类：
+   (a) 我们的测试输入按上游新语法已经过时（`castptr` signless i64）；
+   (b) 上游把「我们目前会静默产出的错误代码」升级成了**硬报错**（`masked_store` 对齐证明、
+   grouped-reduction 可执行性）——这是**安全护栏**，不是通过率礼物；
+   (c) 真正的决策差异，正是我们的 solver 要重新决定的那些（也正是第 2/3/4 层要比的东西）。
+2. 因此 7.2 节里「升级能修掉 trunci 硬失败」被**反证**：上游在我们这个输入上同样失败，
+   只是失败形式更严格（VMI-UNSUPPORTED 对 我们的残余 op）。升级收益应重新表述为
+   **拿到护栏 + 新 layout 能力**，失败要由我们的决策层解决。
+3. 步骤 8（测试合并）比原先估计更重：45 个被改用例里，凡期望涉及 (a)(c) 两类，
+   都要按上游新行为**逐条重判**，不是简单重打。
+4. 探针脚手架留在 `/tmp/probe_upstream.sh`（结果 `/tmp/probe_all.txt`），
+   步骤 3/5 每完成一段都可以重跑同一批用例，看失败性质是否从 (b)/(c) 收敛。
