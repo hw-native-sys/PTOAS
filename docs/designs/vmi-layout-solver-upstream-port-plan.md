@@ -315,3 +315,16 @@ solver 一共调用 **46 个** \`VMILayoutSupport\` 方法（48 个签名；plan
 > 一条更正：后台盘点里曾写“上游已经有 \`forwardsPhysicalParts\`，步骤 2b 的说明过时”。
 > 实测 \`git show 0a3e01731:include/PTO/Transforms/VMILayoutSupport.h | grep -c forwardsPhysicalParts\` = **0**，
 > 该结论是读到了 2b 正在编辑中的工作区。原始判断成立，字段确实缺。
+
+### 8.6 步骤 8 的方言清单（本轮实测，独立于 solver 移植）
+
+把 567 个用例按“上游二进制”分类后，**需要改方言的只有这几处**：
+
+| 类型 | 数量 | 说明 |
+|---|---|---|
+| \`pto.vmi.vstore\` 的 \`dist = "dintlv"\` 被拒 | 2 个用例（\`vmi_interleaved_memory_ops.pto\`、\`vmi_to_vpto_memory_x2_widths.pto\`） | 上游新增 \`Intlv\`，vstore 不再接受 \`dintlv\` 拼写；改 \`dintlv\` → \`intlv\` |
+| \`pto.castptr ... : ui64\` 被拒 | 1 个用例（\`opt/fused_quant_dequant_vmi_opt.pto\`） | 上游要求 signless \`i64\`（全树只有这 1 个用例用 \`ui64\`） |
+| "应当失败"的用例期望变了 | 1 个（\`vmi_interleaved_memory_ops_invalid.pto\`） | 报错文本/位置变化，需按上游新文案重打 |
+| **上游真的拒绝这条流水线** | **3 个**：\`opt/compute_mrope_f16_vmi_opt.pto\`、\`vmi_to_vpto_ensure_mask_layout.pto\`、\`vmi_to_vpto_ensure_layout_deint4.pto\` | 都是 \`VMI-UNSUPPORTED\`——这才是步骤 3/5 必须尊重的**真实约束**（此前把 24 个“stdin 为空”误当成硬约束，实际那 24 个全是我们自己的 \`vmi_layout_cost_conformance_*\` 用例，缺的只是还没搬过去的 \`-test-vmi-layout-cost-conformance\` pass） |
+
+其余 \`dintlv\` 相关用例（48 个里有 15 PASS、26 只差 CHECK 文本）不需要改输入，等步骤 5 决策权回到我们的 solver 之后一起重测。
