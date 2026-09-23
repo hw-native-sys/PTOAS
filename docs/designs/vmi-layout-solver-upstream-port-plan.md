@@ -369,3 +369,28 @@ solver 一共调用 **46 个** \`VMILayoutSupport\` 方法（48 个签名；plan
 \`llvm-lit -j8 --filter cost_conformance lit/vmi_new\` 在 fork 树（\`.work/build-llvm19\`）= **32 个用例全过**（567 发现 / 535 排除 / 32 通过）。
 因此移植后的门禁是 **32/32**：支持层每补一块，都可以用这 32 个用例的通过数来判断差距，而不是靠“看起来搬完了”。
 （此前文档里写的 26 是错的，实际 32 个文件：\`test/lit/vmi_new/vmi_layout_cost_conformance_*.pto\`。）
+
+### 9.2 更强的门禁：一致性 dump 的差分对比（本轮建立）
+
+\`-test-vmi-layout-cost-conformance\` 的输出是**确定性、机器可读**的，每行一件：
+
+    vmi-layout-cost-conformance <case> <op> relation=N cost=M operand0=<layout> result0=<layout>
+    vmi-layout-cost-conformance-summary <case> <op> relations=K
+
+所以门禁不应该只看 FileCheck 是否命中——那只能覆盖作者写进 CHECK 的那几行。正确的做法是：
+**把同一批用例分别在 fork 树与上游树跑，逐字节 diff 两个 dump**。这能抓出候选集差异
+（例如某条查询少枚举了一种 layout，但恰好没被 CHECK 覆盖），而候选集收窄正是本移植最大的静默风险。
+
+* fork 侧参考 dump 已生成：\`.work/upstream-port/probes/fork_conformance_dump.txt\`
+  （32 个文件、**334 个 case**、4705 行），生成命令：
+
+      for f in test/lit/vmi_new/vmi_layout_cost_conformance_*.pto; do
+        echo "===== $(basename $f)" >> $OUT
+        .work/build-llvm19/tools/pto-test-opt/pto-test-opt $f -test-vmi-layout-cost-conformance >> $OUT 2>&1
+      done
+
+* 上游侧用同样脚本、把二进制换成 \`.work/upstream-port/builds/.../pto-test-opt\` 即可；
+  期望是 **diff 为空**。任何一行差异都要给出解释（是移植漏了候选，还是上游 DSL 语义本就不同）。
+* 注意每个用例的第二条 RUN 用 \`-test-vmi-layout-lowering-conformance\`，该 pass 上游同样没有；
+  它与 cost 版**在同一个文件里**（\`tools/pto-test-opt/pto-test-vmi-layout-cost-conformance.cpp\`，526 行），
+  所以 2c 只要搬这一个文件就两个 pass 都有。
