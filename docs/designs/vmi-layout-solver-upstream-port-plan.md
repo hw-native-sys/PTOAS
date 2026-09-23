@@ -1249,3 +1249,26 @@ vexpdif 两族已在 Stage 2 完成。
 4. **vintlv/vdintlv 那 6 行窄掩码行**：已决定**不注入**（§8.7），保留上游更宽的行；若后续发现上游行覆盖不足再回头讨论。
 5. **步骤 5 的 seed 硬错误**：已决定「去掉 emitError、保留写入」（§10.13）。
 6. **步骤 4 遗留**：\`setSpineScopedCastOps\`/\`isSpineScopedCast\` 的删除必须与 spine 分析一起做（§8.5 R6），不要单独删。
+
+### 16.8 E2B 那件事的证据更新：**行都在，我们的改动只是「谁优先」**
+
+§16.7 第 3 项原来只写了「倾向删除 \`00890b827\`」。本轮查了两棵树的事实：
+
+* **上游已经有同一组 E2B 直接行**：\`VMILayoutSupportTables.inc:621/623/625\`
+  （\`E2B, G<8>(), gb(1|2|4), bits<16,32>\`），fork 侧对应 \`VMILayoutSupport.cpp:822/824/826\`——
+  三行的 kind/组数/载体/元素位宽一致。
+* 也就是说 E2B 这个能力**不是我们独有的 delta**；\`00890b827\`（7 文件 +155/-35）
+  影响的是**在这些行之间谁先被选中**（偏好/优先级），外加它对 4 个测试期望的影响。
+* 上游那个「同测试冲突」的提交 \`0d7da8454\` 是 **FP4 布局与物理 part 收窄**，不是 E2B 偏好策略；
+  两者只是都改了 \`vmi_layout_assignment_group_slot_broadcast_load_e2b_b16.pto\` 的期望，
+  所以冲突是**局部的、只在那几条期望上**。
+
+这与 §2.1 的立场（偏好是决策链靠后的 tie-break，不值得对齐）合起来给出结论：
+**\`00890b827\` 应按「删除候选」处理**，而不是「必须合并」；删掉之后由我们的代价链自己决定选哪一行。
+
+**仍未验证的部分（写明，不假装已证）**：我没有逐列比对三行的全部字段（只比了 kind/组数/载体/元素位宽），
+也没有证明 \`00890b827\` 的改动**纯粹**是排序（它还动了 propagation 与 support 的若干处）。
+因此落地时的判据是行为性的：步骤 5 之后跑
+\`vmi_layout_assignment_group_slot_broadcast_load_e2b_b16.pto\`、\`group_broadcast_load_e2b_layout_opt.pto\`、
+\`group_broadcast_load_contiguous_fallback.pto\`、\`vmi_extf_8bit_factor_contract.pto\` 四个用例，
+看我们的 solver 在没有该偏好的情况下是否仍选中 E2B/复合行。
