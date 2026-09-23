@@ -729,3 +729,39 @@ lit 就是拿**旧二进制**跑的——于是 606/2「通过」。
 
 > 结论：这次回归**不是白跑**——它证明「先重建、再跑、断言失败集合」这条仪式确实能抓到别人（和我自己）漏掉的问题；
 > 也说明为什么我一直不肯拿汇报当通过证据。
+
+### 10.12 批次 C 的逐 hunk 指令（已按代码核对，替换原来笼统的「MERGE」）
+
+F3 的 4 个 hunk + F7 的 2 个 hunk 就是 absorption 批次。逐个核对后的指令：
+
+**hunk 1（interleave store，fork +1643，-15/+14）→ 可以重放，但只换谓词块。**
+上游原本是内联字面检查：low/high 都必须 contiguous、元素个数与类型必须一致、
+\`getX2MemoryDistToken(..., \"INTLV\")\`（限 8/16/32 位），随后单独调 \`checkFullDataPhysicalChunks\`。
+我们 2b 已经搬进来的 \`getInterleaveStoreSupport\`（worktree \`VMILayoutSupportRelationQueries.inc:80-107\`）
+实现了**同样四项**（contiguous、元素个数与类型一致、8/16/32 位、整物理块），与 fork 原文（\`VMILayoutSupport.cpp:3511-3539\`）逐行一致。
+所以：**只把内联谓词块换成查询调用**，后面的 access-plan / maskable / full-chunk 尾巴保持上游原样，接受面不变。
+
+**hunk 2（group slot load，fork +1852，-5/+10）→ 被签名差异挡住，需先决策。**
+fork 的 \`getGroupSlotLoadLayoutFact(VMIVRegType resultType, Value sourceGroupStride, int64_t numGroups, reason)\`
+比上游多一个 \`sourceGroupStride\`（上游 worktree 现状 \`VMILayoutSupport.h:497-499\` 只有 \`(resultType, numGroups, reason)\`）。
+两种做法都可行，但必须显式选一个并记录：**(甲)** 给上游查询加上 stride 参数、采用 fork 语义（与
+\`vmi_layout_assignment_group_slot_load_slots1_dynamic_stride_invalid\` 这类「动态 stride」用例一致）；
+**(乙)** 保留上游签名、放弃 stride 感知的行匹配。
+建议选 **(甲)**：上游本来就承认动态 stride（有对应 invalid 用例），而且这是我们 4 个签名差异之一，迟早要处理；
+选 (乙) 会让候选集收窄，属于最危险的静默失败方向。受影响用例：
+\`vmi_layout_assignment_group_slot_load_dual_layout\`、\`..._group_slot_load\`、\`vmi_to_vpto_group_slot_load\`。
+
+**hunk 3（group broadcast load，fork +1924，-18/+0）→ 保留上游版本，不重放**（§10.6 已核实：
+上游同样委托同一个查询，fork 只是内联了上游后来抽出的 memory 检查；重放会把 Dense 覆盖要求换成 AllTrue）。
+
+**hunk 4（group store，fork +1982，-7/+9）＋ F7（fork 8295-8299、8361-8364）→ 与 F7 必须同落。**
+上游是 \`isCompactSmallGroupStore(layout, valueType, numGroups, rowStride)\` 字面谓词，
+fork 改成读 \`getGroupStoreLayoutFact(...)->stagingLayout\`。我们 2b 搬进来的 \`stagingLayout\` 计算
+**就是同一个谓词**（slots==8、laneStride ∈ {1,2,4}、elementCount ∈ {4,8}、numGroups==elementCount、
+payload 位宽 ∈ (0,256) 且 %32==0、rowStride==1），且只在 \`getGroupStoreLayoutFact\` 的 group-slots 分支置位、
+其余构造点保持空——与 fork 一致。所以这组替换是**等价替换**，前提是
+（i）两处一起改（形状检查 + \`GroupStoreLayoutKind\`/packed staging 类型构造），
+（ii）不要把 \`stagingLayout\` 也塞进 \`getPreferredGroupStoreLayoutFact\` 等其它构造点。
+
+**批次 C 的门禁**：\`vmi_to_vpto_group_store_compact_small.pto\` 两条 RUN、\`vmi_layout_assignment_group_slot_load*\`、
+\`vmi_interleaved_memory_ops.pto\`，加上「重建后」的上游 608/606/2 三条断言（见 §11.3 的四步仪式）。
