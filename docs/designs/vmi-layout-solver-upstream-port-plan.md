@@ -649,3 +649,26 @@ fork（\`VMIToVPTO.cpp:1899-1923\`）：
 **结论**：两棵树都已经改用方言层共享 helper，方向一致；重放 F1 只会往 \`VMIToVPTO.cpp\` 里**加回一个已废弃的本地副本**。
 因此 F1 按 \`(a) 丢弃\` 处理是**正确的**，不需要在批次 A 做任何事（只要不回搬）。
 §10.7 第 2 级现在只剩 **F6** 一个待验证项（上游 \`lowerFactor4Block\` 是否覆盖动态 active-elems 路径，已追加求证）。
+
+### 10.9 F2 是正确性依赖，不是诊断（已核对，改变批次 B 的定位）
+
+盘点把 F2（\`validateCastOperationRelation\`）标为「上游 0 命中 → 新增」，但把「服务正确性还是仅服务诊断」
+留成了未决项。现在查清：**它是正确性依赖，而且我们的 solver 直接依赖它**。
+
+实现只有 20 行（\`lib/PTO/Transforms/VMILayoutSupport.cpp:2042-2063\`），规则是：
+**当 source 与 result 都是 group-slot 载体、且算子属于 \`VMIExtFOp\`/\`VMIFPToSIOp\`/\`VMIFPToUIOp\`/\`VMISIToFPOp\` 时直接失败**——
+注释写明理由是「这些族没有 group-slot 物理配方，在这里拒绝可以让 Support 与 VMIToVPTO 保持同步」。
+
+三类消费者（这就是为什么它不能当诊断看待）：
+
+1. **planner**：\`lib/PTO/Transforms/VMILayoutPlanner.cpp:1272\` —— 关系枚举时 **失败的候选直接跳过**，
+   所以它参与决定 solver 的**候选集**；不搬它，solver 就会选出 lowering 根本实现不了的 group-slot 转换，
+   失败形态正是我们最怕的那种（\`no complete legal plan\` 或残余 op），而不是一条清晰的报错。
+2. lowering 形状检查：\`VMIToVPTO.cpp:13958/14009/14020/14059\`（FPToSI/FPToUI/SIToFP/Compress 等）。
+3. 校验 pass：\`PTOValidateVMIIR.cpp:813/826/839\`。
+
+**对批次 B 的定位修正**：F2 不是「补一条诊断」，而是「把 solver 的候选约束与 lowering 的能力重新对齐」的必需项；
+它必须与步骤 3 的 cast 查询、以及 F9 的 pattern 注册一起落（否则会出现注册了 pattern 但候选集更宽的组合）。
+
+**待办**：移植时确认上游新增的 \`CastTypeClass\` 约束是否已经挡住了同样的组合——若已挡住，F2 变成冗余但无害；
+若没挡住，它就是唯一防线。这条判断在批次 B 落地时用一致性 dump 差分直接验证（候选集里是否出现 group-slot 对）。
