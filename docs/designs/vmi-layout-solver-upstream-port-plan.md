@@ -471,3 +471,23 @@ fork 侧 \`VPTOPack4StoreMaskNormalize\`（160 行，\`lib/PTO/Transforms/VPTOPa
 **结论**：步骤 8 的真实工作量在 16 个用例 + 96 个期望的**重新测量**，而不是 132 个逐个手改；
 而且 96 个里凡是步骤 5 之后我们的 solver 重新选定同一布局的，期望应当**回到我们原来的文本**，
 不是改成上游的。这一条决定了步骤 8 必须排在步骤 5 之后，不能提前做。
+
+### 9.4 门禁的覆盖面检查（本轮实测）
+
+从冻结的 fork dump 里统计 32 个一致性用例覆盖到的算子（按 case 数）：
+
+* 厚覆盖：\`ensure_mask_granularity\`(37)、\`ensure_layout\`(28)、\`extui\`(23)、\`group_broadcast\`(19)、
+  \`ensure_mask_layout\`(18)、\`store\`(15)、\`group_store\`(13)、\`masked_store\`(12)、
+  \`group_broadcast_load\`(11)、\`group_reduce_addf\`(9)、\`group_load\`(8)、\`trunci\`(7)、\`vselr\`(6)；
+* 我们新增/独有的族也有覆盖：\`vintlv\`(5)、\`vdintlv\`(5)、\`truncf\`(5)、\`create_group_mask\`(4)、
+  \`bitcast\`(4)、\`group_slot_load\`(4)、\`shuffle\`(2)、\`channel_split/merge\`(2)；
+* **薄覆盖（只有 1 个 case）**：\`vexpdif\`、\`vdhist\`、\`vchist\`、\`vcadd\`、\`vcmax\`、\`vcmin\`。
+
+结论与风险边界：
+
+1. 门禁**没有整族漏空**——每个 fork 独有的族至少有一个 case，所以「整条查询被漏搬」会在 diff 里现形。
+2. 真正的薄点是**单 case 族**：如果某个族的候选集在**别的形状**下会收窄，而那个形状没有 case，diff 抓不到。
+   \`vexpdif\` 尤其值得注意，因为它的 6 行表是我们这次新加的（vexpdif 层），而只有 1 个 case 覆盖它。
+3. 因应措施：步骤 5 落地后、步骤 9 之前，给 \`vexpdif\`（以及 \`vdhist\`/\`vchist\`）各补 1-2 个一致性用例
+   （照现有 \`vmi_layout_cost_conformance_*.pto\` 的 MARK+CHECK 格式），把这些族的候选集在多种形状下钉住，
+   再跑差分门禁。这一步属于步骤 8/9 之间的小任务，不阻塞主线。
