@@ -1596,3 +1596,21 @@ Stage 3 收尾清单第 4 条写明：**若干 fork 独有行被刻意不注入�
     git -C <repo> worktree add <dir> -b feature/vmi-layout-solver-upstream fork/feature/vmi-layout-solver-upstream
 
 注意：**未提交的诊断埋点不会被推送**（它必须留在本地并在提交前剥掉，见 §18.13 的提醒）。
+
+### 18.13 换引擎后的**第一个量化改善**：108 → 89 失败
+
+分诊任务实现「无注解 ABI 边界不再钉住布局」（§18.11 定论）后，其 \`lit/vmi_new\` 运行（\`/tmp/hf_lit_fix1.log\`）：
+
+    Total Discovered Tests: 608
+      Passed: 519 (85.36%)
+      Failed:  89 (14.64%)
+
+对照修复前 **500 / 108**，即**净减 19 个**——这同时证明该修改**不是**把 no-plan 失败换成 return-operand 失败的假持平，
+而是真实解决了一批（no-plan 族原 16 个及其连带）。
+
+**出处与限制（必须标注）**：
+1. 这是**分诊任务的测量**（我读其日志），非我独立复跑；且在工作树**未提交**状态下取得，属 WIP 读数；
+2. 该日志是**非 verbose** 运行，故按族的关键字统计在其中为 0、不具信息量；按族增量需用 \`classify_failures.sh\`。
+
+**因此尚未结案**，仍需：提交 → 我独立复跑按族分类 → **单独确认上游配置（planner 不驱动）下失败集合仍为那两个既有用例**，
+确认「修好我们的 solver」没有悄悄改坏上游路径。
