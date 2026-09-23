@@ -99,6 +99,8 @@ test/samples/**/npu_validation/*
 .planning/
 .work/
 .local/
+/.ptoas-workspace.json
+/env.sh
 
 # OAT scan output
 oat_reports/
