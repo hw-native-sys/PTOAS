@@ -955,3 +955,24 @@ planner 尚未进树。之前没暴露，是因为没有任何东西引用 confl
 
 > 复盘：这次教训与 §11.3、§13.2 是同一族——**先说结论、后核对证据**就会出错。
 > 我把它记在这里而不是悄悄删掉，因为它比那条被作废的结论更有用：门禁里的每一条「发现」都要能被**重放**。
+
+### 13.7 步骤 5 的依赖清单已核完：**只剩 planner 一个门槛**
+
+把预抽出的 \`applyLayouts\`（194 行）用到的东西逐个核了一遍，这是它的完整依赖：
+
+| 依赖 | 状态 |
+|---|---|
+| \`VMILayoutAttr\` / \`VMILayoutPlan\` / \`VMILayoutPropagator\` | ✓ 头文件已在上游树（\`81b78d21c\`） |
+| \`installPlanned\`（6 处） | ✓ 步骤 4 已加（\`2d9d45b9b\`） |
+| \`matchEdge\`（6 处）、\`getExplicitLayout\`（1 处） | ✓ 都在预抽出的片段里（\`step5/\`） |
+| \`VMIControlFlowSupport::addWhileConstraints\` | ✓ 上游本来就有（\`VMIControlFlowSupport.h:38\`，其 mask 粒度 pass 在用） |
+| \`commitVMILayoutPlan\` / \`selectCostedVMILayoutPlans\` | ✗ **来自 planner，尚未进树** |
+
+**结论**：步骤 5 的唯一硬依赖是 planner（stage 2c）；而 planner 又依赖 stage 3 的支持层查询。
+于是关键路径被压缩成一条直线，可以据此排期：
+
+    stage 3 查询（14 个） → planner 进树 → 同时解锁 步骤 5（决策替换）与 步骤 6（pass 接线）
+
+而步骤 6 之所以也卡在 planner，是 §13.1 那条：\`ptoas_runtime_deps\` 的完整链接需要
+\`isVMILayoutCastOp\` 的定义，它就在 planner 里（\`VMILayoutPlanner.cpp:1173\`）。
+换句话说 **planner 是这两个步骤共同的、也是唯一的阻塞点**——不是两件独立的事，而是一件事。
