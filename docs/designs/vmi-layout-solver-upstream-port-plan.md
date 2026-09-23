@@ -1631,3 +1631,17 @@ Stage 3 收尾清单第 4 条写明：**若干 fork 独有行被刻意不注入�
 * 边界根因：planner 把无注解函数结果钉在 contiguous ABI 边界；上游路径从不这么做（rewriteFunctionType 采纳返回值布局）。而且不存在从 gs(8, slots=1) 到 contiguous 的 ensure_layout 行，所以 §18.11 提的“在边界物化一次转换”对这些形状不可实现，该建议作废，正确做法是边界采纳返回值布局。
 
 批准的落地顺序：剥掉诊断，先提交 stride（108 到 106），再提交边界（106 到 89），各带数字。随后进攻统一算子（vload/vstore/vcvt 在 -vmi-lower-unified-to-legacy 之前就被布局赋值，planner 没有对应关系分支）与 group_store/group_broadcast 的候选行——后者是“fork 专属包装是否必要”这个悬案终于由数据回答的地方。
+
+### 18.15 修复的**按族效果**：type of return operand 族归零
+
+从分诊任务修复后的细节日志 hf_detail_after.log（5190 行）统计各族关键字：
+
+| 族 | 修复后 | 对照修复前 |
+|---|---|---|
+| type of return operand | 0 | 14，全部消除 |
+| VMI-LAYOUT-CONTRACT | 16 | 原 16（含 FileCheck 侧同类文本）|
+| VMI-UNSUPPORTED | 28 | 原 10（口径可能不同，见下）|
+
+type of return operand 归零说明：无注解边界不再钉住布局这处修改不只是减少总数，而是确实解决了那一整族（函数结果类型与返回操作数不一致），与总失败 108 到 89 的读数相互印证。
+
+仍未定论：这是分诊任务的日志，且 VMI-UNSUPPORTED 的 28 与修复前的 10 口径不同（可能含子类或不同 flag 组合），不能直接当作变多。要它提交后由我独立跑 classify_failures.sh 才能给按族定论。
