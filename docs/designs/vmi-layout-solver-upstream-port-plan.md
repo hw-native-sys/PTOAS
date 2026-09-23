@@ -1581,3 +1581,18 @@ Stage 3 收尾清单第 4 条写明：**若干 fork 独有行被刻意不注入�
 
 验证用最小的四个用例（\`group_reduce_s64\`、\`slots8\`、\`s256\`、\`group4_broadcast_shape_matrix\`），
 它们的 component 里都含 \`func.return\`，改动前后比 \`no-plan\` 计数即可。
+
+### 18.12 移植分支已推送到 fork（23 个提交，工作不再只存在于本机）
+
+\`git push fork feature/vmi-layout-solver-upstream\` 成功：
+\`github.com:mouliangyu/PTOAS.git\` 上现有分支 **\`feature/vmi-layout-solver-upstream\`，含 \`origin/master..HEAD\` 的 23 个提交**
+（Stage 1/2/2b/2c/3 的 14 批 + 步骤 4/5 + 施工与门禁相关提交）。
+
+动机很直接：这套移植的成果此前**只存在于本机 worktree**——一旦会话或磁盘出问题就全丢。推送后，
+任何人（包括下一个 agent）都能从远端检出到「决策权已交给我们的 solver」这一状态，
+并继续未完成的 42 个真缺陷与步骤 6/7/8/9。
+参考命令（恢复工作环境）：
+
+    git -C <repo> worktree add <dir> -b feature/vmi-layout-solver-upstream fork/feature/vmi-layout-solver-upstream
+
+注意：**未提交的诊断埋点不会被推送**（它必须留在本地并在提交前剥掉，见 §18.13 的提醒）。
