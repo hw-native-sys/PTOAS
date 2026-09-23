@@ -1505,3 +1505,23 @@ Stage 3 收尾清单第 4 条写明：**若干 fork 独有行被刻意不注入�
 
 **修法**（与既定共识一致）：fork 专属包装——共享表 + fork 独有行，**只对 solver 可见**；
 不注入共享表，因此上游接受面不变。分诊任务已收到该族 16 个用例的目标清单与这一归因。
+
+### 18.8 no-plan 族的逐 component 量化（分诊任务的 VMI_LAYOUT_DIAG 输出）
+
+分诊任务加了 \`VMI_LAYOUT_DIAG\` 环境变量诊断（会打印失败 component 内每个算子的**可用关系与端口布局**），
+其 \`/tmp/diag_all.txt\` 给出了此前只能用推断的量化证据。以 \`vmi_group_reduce_addi_i16.pto\` 为例：
+
+    solver failed: component ops=3
+      pto.vmi.ensure_mask_granularity relations=1
+         ports: contiguous -> contiguous, lane_stride = 2   direct=0
+      pto.vmi.group_reduce_addi relations=1
+         ports: contiguous, contiguous -> num_groups = 8, slots = 8, lane_stride = 2
+      func.return relations=1
+      fixed contiguous
+
+**每个算子只贡献 1 条关系**，链因此无解；其它用例可见 \`relations=2\`（group_reduce_addf）、\`relations=3\`（ensure_mask_granularity），
+普遍偏薄。这与「未注入的 fork 独有行（6 条 legal-mask-granularity + 2 条 ensure-mask 等）使 solver 候选集小于 fork 侧」一致：
+上游决策链靠 seed 直接定布局、不需要这些行，而我们的 solver 靠**候选集搜索**——缺行即无解。
+
+因此「**fork 专属包装**（共享表 + fork 独有行、仅 solver 可见）」这条修法有了逐 component 的支撑，
+而不再只是假设；但 16 个用例仍需逐个过完，因为**成因未必同一**（也可能是结构性等价边缺失，修法不同）。
