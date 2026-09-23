@@ -1445,3 +1445,16 @@ Stage 3 收尾清单第 4 条写明：**若干 fork 独有行被刻意不注入�
 
 > 这条也解释了此前 134 vs 339 的“巨大缺口”里有多少是假象：主因是输入漂移，而非候选集收窄。
 > 这正是“量具必须先自证”的又一例：**门禁本身要先在两边都能正确解析输入，其读数才有意义**。
+
+### 18.5 一致性输入的方言漂移**已量化**（步骤 8 的第一批具体工作）
+
+对 fork 的 33 个一致性输入做只读统计，漂移集中在很小的范围：
+
+* **pmode 拼写**：5 个文件出现 \`pmode = \"merge\"\` 或 \`\"zeroing\"\`（上游只收 \`\"zero\"\`）——
+  按文件/次数：\`cmp_merge_invalid\`(1 merge)、\`same_layout_invalid\`(1 merge)、\`unified_merge_invalid\`(1 merge)、
+  \`vexpdif_invalid\`(1 merge)、\`unified\`(3 zeroing)；其余文件已是 \`\"zero\"\`（合法）。
+* **legacy 算子拼写**：\`pto.vmi.addf/addi/absf/absi/cmpf/cmpi/exp/ln/maxf/maxi/minf/mini…\` 各约 2 次，
+  集中在 \`elementwise\`（正是差分里 A-only 243 行 / B-only 3 行那份）与 \`unified\`（含 \`legacy_generic\` 用例）。
+
+**结论**：差分门禁的「134 vs 339」缺口，其可解释部分就落在这 5–6 个文件的方言更新上；
+这是**有界、可核对**的工作量，而不是大范围重写。做法（按 §18.4 的顺序）：先更新输入 → 用同一批输入重生成 fork 侧参考 dump → 再差分。
