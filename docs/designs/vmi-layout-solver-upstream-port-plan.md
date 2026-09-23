@@ -843,3 +843,35 @@ payload 位宽 ∈ (0,256) 且 %32==0、rowStride==1），且只在 \`getGroupSt
 2. 删除 \`setSpineScopedCastOps\`/\`isSpineScopedCast\` 必须**与 spine 分析的移除同时进行**（§8.5 R6：
    \`spineScopedCasts\` 被 \`addConstraints\` 里的 seed 路径读取，单独删会改变错误面与记录相位）——
    所以它属于支持层批次（Stage 2/3 的 spine 行处理），不属于本轮。
+
+## 13. 步骤 6 的两次受挫与本轮教训（诚实记录）
+
+### 13.1 步骤 6 现在的真实阻塞点：完整运行时链接依赖 planner
+
+我按 §8.8 把 packed-store-mask pass 五处接线做完（复制 160 行源文件、CMake 行、Passes.td 定义、
+Passes.h 声明、\`ptoas_pipeline.cpp\` 里插到 \`createVMIToVPTOPass()\` 之后），然后构建：
+
+* **\`ninja pto-test-opt\` 成功**（pass 与注册都没问题）；
+* **\`ninja … ptoas_runtime_deps\` 失败**，链接错误是：
+
+      undefined reference to `mlir::pto::isVMILayoutCastOp(mlir::Operation*)'
+      VMILayoutCostModel.cpp:(…PlanGraphBuilder13buildRelation…+0x45f7)
+
+原因链：\`ptoas_runtime_deps\` 会把归档里**被引用到的**对象全链进来；\`VMILayoutConflictSolver.cpp:1189\`
+引用了代价模型，代价模型又调用 \`isVMILayoutCastOp\`，而**该函数定义在我们的 planner 里**（\`VMILayoutPlanner.cpp:1173\`），
+planner 尚未进树。之前没暴露，是因为没有任何东西引用 conflict solver，那些对象一直没被拉进可执行文件。
+
+**结论**：步骤 6 不能早于步骤 2c。正确顺序是 *stage 3 的查询 → planner 进树（顺便消掉 \`isVMILayoutCastOp\` 与
+\`isVMISameLayoutOp\` 的重定义）→ 再做步骤 6*。我已把自己那五处未提交改动**原样撤回**，把工作树还给 Stage 2。
+
+### 13.2 新的过程陷阱：**不要在别人有未提交改动时构建**
+
+撤回之后我跑了一次 \`ninja pto-test-opt\` + \`lit\`，得到 **608 / 541 / 67**——看起来像一次大回归，其实不是：
+那次的 \`git status\` 显示 Stage 2 正在改 \`VMILayoutSupport.h/.cpp\`、\`Materialization.inc\`、\`Tables.inc\`
+并新增 \`VMILayoutSupportVexpdifQueries.inc\`，我这一构建**把它半成品状态编进了二进制**，于是 67 个失败。
+
+因此 §11.3 的四步仪式要再加一条前置条件：
+
+**0. 构建/测量前先 \`git status\` 确认工作树干净**（或确认在测的就是某个已提交状态）。
+并发写者 + 共享 build 目录 = 测出来的是「混合物」，既不能当通过也不能当回归。
+这个坑和 §11.3 的「旧二进制」是同一个问题的两面：**被测对象必须是明确的那一个状态**。
