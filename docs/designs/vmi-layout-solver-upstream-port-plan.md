@@ -426,3 +426,22 @@ solver 一共调用 **46 个** \`VMILayoutSupport\` 方法（48 个签名；plan
 
 这条也定了一条工作方式：**证据不足就报「无法忠实表达」，而不是注入一条会静默改变语义的行**——
 与本移植一贯的判准一致（宁可留下一条显式声明，也不接受假规则）。
+
+### 8.8 步骤 6 的落地配方（本轮把锚点钉死，可直接机械执行）
+
+fork 侧 \`VPTOPack4StoreMaskNormalize\`（160 行，\`lib/PTO/Transforms/VPTOPack4StoreMaskNormalize.cpp\`）
+在上游的落点如下，**五处改动**：
+
+| # | 位置 | 做什么 |
+|---|---|---|
+| 1 | \`lib/PTO/Transforms/VPTO/VPTOPack4StoreMaskNormalize.cpp\` | 整文件搬入（上游 VPTO 级 pass 就住这个目录）；它只依赖 \`PTO/IR/PTO.h\`、\`PTO/IR/PTOTypeUtils.h\`、\`PTO/Transforms/Passes.h\` 与 \`GEN_PASS_DEF_...\`，自包含 |
+| 2 | \`include/PTO/Transforms/Passes.td\` | 加 fork 的 pass 定义（照抄 \`VPTOPack4StoreMaskNormalize\` 那段：\`Pass<\"vpto-normalize-packed-store-mask\", \"ModuleOp\">\`、summary/description、\`constructor\`、\`dependentDialects = [\"mlir::pto::PTODialect\"]\`）；上游同类可参照 \`VPTONormalizeContainer\`（Passes.td:438） |
+| 3 | \`include/PTO/Transforms/Passes.h\` | 加 \`std::unique_ptr<Pass> createVPTOPack4StoreMaskNormalizePass();\` |
+| 4 | \`lib/PTO/Transforms/CMakeLists.txt\` | 加一行 \`  VPTO/VPTOPack4StoreMaskNormalize.cpp\` |
+| 5 | \`tools/ptoas/ptoas_pipeline.cpp\` | **唯一需要翻译、不能照抄的一处**：fork 是在 \`tools/ptoas/ptoas.cpp:3297\` 直接 \`addPass\`，而上游管线已搬进 \`ptoas_pipeline.cpp\`。插到 \`appendVMISemanticPipeline\`（953 行起）里、\`pm.addPass(pto::createVMIToVPTOPass());\`（994 行）**之后**、\`pm.addPass(pto::createVPTOStatefulStreamFusionPass());\`（995 行）**之前**——与该 pass 自己的说明「Run this immediately after VMI-to-VPTO lowering」一致 |
+
+验证：\`ptoas --pto-arch=a5 --pto-backend=vpto --emit-vpto\` 的输出里，PK4_B32 的 store 谓词应变成字节粒度形式
+（\`PAT_VL64 -> PAT_ALL\`、\`PAT_VL32 -> PAT_VL128\` … 并带 \`pto.pbitcast\` 回到 b32），
+而运行时谓词、无合法字节拼写的形状（如 \`PAT_VL3\`）、非 packed 元素类型、非 PK4_B32 的 store 都保持原样。
+
+注意第 4 步与正在进行的支持层任务**共用同一个 CMakeLists.txt**，所以步骤 6 要等那一批提交落地后再动，避免行冲突。
