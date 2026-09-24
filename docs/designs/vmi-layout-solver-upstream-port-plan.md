@@ -3920,6 +3920,29 @@ dynamic 分支被直接喂 resultTypes，所以从来不会不一致（这解释
 
 **判定所需的下一次测量**：把 store 分支对这条关系的失败原因打出来（临时插桩，同 §19.71 手法），看它是「无对应动作可建模」还是「被某个形状检查拒了」——前者指向收窄查询，后者指向补计价分支。
 （另：该文件其余用例的 COST 期望与我们的输出在 §19.74 之前是逐条一致的，所以这**一条**是文件唯一的拦路点：修好即 +1 fidelity。）
+### 19.75 group_memory 的失败**定位到具体调用**（插桩量到，插桩已撤、树已复核干净）
+
+在 §19.74 的基础上再插一层（`VMI_GS_COST_DEBUG`，两处 print，事后 `git checkout` 撤除）：
+
+    6 次  GSCOST layout=contiguous          input=2        ← 正常
+    2 次  GSCOST layout=deinterleaved = 2   input=2        ← 正常
+    1 次  GSCOST layout=num_groups = 2, slots = 8  input=failed   ← 就是它
+
+顺着 `buildOperand` 往下读，失败点在 **`layout(contiguous) != targetLayout(gs(2,8))` 分支里的 `materialize(value, contiguous → gs(2,8), owner)`**（`VMILayoutCostModel.cpp:480-513`）：
+即**代价模型的转换图不支持「contiguous → group-slots」这一对**；而该 value 是**函数参数（structural / block argument）**，其布局由 IR 固定为 contiguous ⇒ 要么转换成功、要么这条关系不可计价。
+
+**两个层次的原因都已排除/确认**：
+* 枚举层：两棵树的 group_store 枚举**逐字相同**（§19.74）⇒ 不是枚举多写了；
+* 事实层：我们为 `gs(2,8)` 给出了 fact（所以关系被暴露），fork 的 dump 只有 1 条关系 ⇒ **fork 那一侧这条 fact 没出现**。
+
+**修法（下一轮，两条互斥）**：
+| 方向 | 具体动作 | 判据/风险 |
+|---|---|---|
+| 收窄事实查询（对齐 fork） | 让 `getGroupStoreLayoutFactsForLayout` 对这种形状不再给出 `gs(2,8)` | 直接对齐 fork 的关系集；需 0 新增门禁；可能移走别处布局选择 |
+| 补模型转换 | 在代价模型的 `materialize` 里支持 `contiguous → group-slots` | 若该转换在下降里真的存在（可用一个最小 `ensure_layout` 探针验证：`vreg<128xf32, contiguous>` → `gs(2,8)` 能否下降），则这才是根治；否则就是给模型加假能力（§19.61/19.63 的教训）|
+
+**下一轮第一步（已想清，可直接做）**：用 §19.70 的逐用例探针手法写一个最小 `ensure_layout` 探针 `vreg<128xf32, contiguous> → gs(2,8)`，跑 `-vmi-to-vpto`：
+能下降 ⇒ 选「补模型转换」；不能下降 ⇒ 选「收窄事实查询」。**先测再改**，与 h10/§19.71 同一纪律。
 ## 20. 交接快照（当前，取代 §16；§16 保留作历史）
 
 ### 20.1 目标与判据的**当前值**
