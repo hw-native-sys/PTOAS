@@ -3982,6 +3982,16 @@ dynamic 分支被直接喂 resultTypes，所以从来不会不一致（这解释
 
 ⇒ 与 §19.69 的四个 pmode 文件**同族**（fork 侧断言的行为被上游删除/拒绝）。**可达集更新为 33 − 4 − 1 = 28**；当前通过 **20/28 可达**。
 
+**同一轮的第三次同类核查（masked_load_store）也是上游政策**：
+
+    错误：VMI-UNSUPPORTED: pto.vmi.masked_store requires a destination address with a proven store alignment ...
+    实现：VMIToVPTOPatternInternals7.cpp:761 / PatternInternals8.cpp:283（上游代码）
+    上游有测试为其背书：test/lit/vmi_new/vmi_to_vpto_memory_alignment_safety_invalid.pto
+    fork 全树 grep 该消息 0 命中 ⇒ 又是 fork-only conformance 断言了上游已刻意禁止的行为
+    该 fixture 的地址是 %dst[%off]（未知对齐），与布局无关地不可证明 ⇒ 不改测试则不可达
+
+⇒ **可达集再降为 33 − 4 − 1 − 1 = 27**；当前通过 **20/27 可达**。
+
 **顺带把剩余失败按"在哪一层失败"重新分类**（本轮对 13 个失败文件逐个跑 cost pass）：
 
 | 层 | 文件 | 性质 |
@@ -4001,7 +4011,7 @@ dynamic 分支被直接喂 resultTypes，所以从来不会不一致（这解释
 | 判据 | 目标 | 当前 |
 |---|---|---|
 | 上游 lit/vmi_new 不退化 | 起点 608 发现 / 606 通过 / 2 失败 | **641 发现 / 562 通过 / 79 失败**（多出的 33 个是新增的 conformance 用例；起点 84 → 79）|
-| 我们的 vmi_new 用例通过 | 33/33 | **20/33**（方言批 +3、cast.pto +1，见 §19.62/§19.67）；其中 **4 个 pmode 文件（§19.69）+ 1 个 8-bit 归约文件（§19.77）前提被上游删除/拒绝 ⇒ 可达集 28/33，分母待裁决** |
+| 我们的 vmi_new 用例通过 | 33/33 | **20/33**（方言批 +3、cast.pto +1，见 §19.62/§19.67）；其中 **4 个 pmode 文件（§19.69）+ 8-bit 归约（§19.77）+ masked_store 对齐策略（§19.77）被上游刻意拒绝 ⇒ 可达集 27/33，分母待裁决** |
 | lit/vpto | 648 / 647 / 1（含既有失败）| **620 / 619 / 1**（仅既有 vmi_f4x2_to_bf16x2_vcvt_llvm.pto）|
 | 端到端性能结论可复现 | gbmc-amp-dep / truncf-amp2 | **未做**（前置已核实：19 个 sim-runs 基线在位、msprof/CANN 可用）|
 | 步骤 2b–9 | 全部完成 | 步骤 7：**F5 已完成**（A1/A2/h4-h5/h10 全部落地）、F3/F7 已落、**F4 判定为不需要**（§19.59）；**步骤 8 进行中**（18 例地图已建，§19.60）；**步骤 9 未开始** |
