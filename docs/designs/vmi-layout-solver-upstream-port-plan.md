@@ -3243,3 +3243,25 @@ mask 侧同理（sourceLayout == resultLayout、contiguous(laneStride 1) ↔ blo
 
 **因此 §19.45 的判决有了实现层面的支撑**：四个负例所钉的 residual 缺口，确实由"事实已声明恒等、但重写器仍走通用重排路径"造成，修复方式正当。
 **待办**：四个用例的正向重定基线（处方已在 §19.45 下达）。
+### 19.47 四例重定基线**在飞**，形态比处方更强（本轮只读复核）
+
+执行方已在改那四个文件（工作区未提交），我读了其中一个的 diff，确认它**加强而非削弱**覆盖：
+
+    -// RUN: not pto-test-opt %s ... -vmi-to-vpto 2>&1 | FileCheck %s --check-prefix=LOWERERR
+    +// RUN: pto-test-opt %s ... -vmi-to-vpto | FileCheck %s --check-prefix=LOWER
+
+    -// LOWERERR: VMI{{-}}RESIDUAL{{-}}OP: failed to convert all VMI ops/types to VPTO
+    +// LOWER-DAG: pto.pset_b32
+    +// LOWER-DAG: pto.vsldb
+    +// LOWER-DAG: pto.vadd
+    +// LOWER-DAG: pto.vcgadd
+    +// LOWER-DAG: pto.vstus
+    +// LOWER-DAG: pto.vstas
+    +// LOWER-NOT: VMI-RESIDUAL-OP
+    +// LOWER-NOT: pto.vmi.
+
+要点：①第 9 行的 ASSIGN 断言**原样保留**；②新断言**钉住成功的下降**（该形状应有的指令序列）并**同时禁止**残留算子与残留 VMI 类型 ——
+这比原来那条"只断言报错"的负例**覆盖更强**；③前缀从 LOWERERR 改名 LOWER，语义随之从"必须失败"变为"必须成功且干净"。
+
+**这就是 §19.23 第 1 类该有的样子**：不是删测试、不是改输入、不是放宽，而是把"记录既知缺口"的负例**升级为"钉住已修复行为"的正例**。
+待它提交后按门禁复核：四个文件通过、套件 **641/556/85**、0 新增、fidelity 保持 14/33。
