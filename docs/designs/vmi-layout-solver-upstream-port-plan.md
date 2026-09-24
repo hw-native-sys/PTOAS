@@ -4093,6 +4093,40 @@ dynamic 分支被直接喂 resultTypes，所以从来不会不一致（这解释
 **一个成体系的观察（值得写进结论）**：33 个 conformance 文件里已有 **7 个**断言的是"上游之前的"行为 ——
 4 个 pmode=merge、1 个 8-bit 整数归约、1 个 masked_store 对齐、1 个 group_reduce deinterleaved 门槛。
 每个都有上游 commit/测试背书（不是我们没实现），因此分母问题不再是"个别例外"，而是**这批 fork 测试本身早于上游的若干次收窄**。
+### 19.81 最后一个桶 B 停止点 mask_granularity：**修得好，但代价是 1 个上游测试** ⇒ 暂存待裁决（第 2 次同类交易）
+
+**用例**：文件第 20 行 `@c_narrow`：`mask<64xb32, contiguous>` → `mask<64xb16, deinterleaved = 4>`（`ensure_mask_granularity`）。
+两侧对照：fork 给 `relation=0 cost=5`；我们 **no exposed relation**（pass 在此中断）。
+
+**根因（与 §19.79 同法，这次是"漏了 6 行"）**：fork 的 mask-granularity 表在 `2x narrowing` 块里比我们**多 6 行**：
+
+    {mb16(), mb8(),  c(), c()},     {mb32(), mb16(), c(), c()},     {mb32(), mb8(), c(), c()},
+    {mb32(), mb16(), c(), d(4)},    ← c_narrow 需要的就是这一行
+    {mb32(), mb16(), d(4), c()},    {mb32(), mb16(), d(4), d(4)},
+
+fork 还带了自己的理由注释：「粒度转换本身不要求改变逻辑掩码布局……保持物理布局不变，让转换去 pack/unpack 掩码 lane」。
+
+**补上后的实测（都要记）**：
+
+* `c_narrow` 打印 `relation=0 cost=5` —— **与 fork 的 dump 逐字一致**；
+* `mask_granularity.pto` **两行 RUN 全过**（含它那条 `CHECK-COUNT-37`）⇒ fidelity 一度升到 **22/33**；
+* **但门禁报 1 个新失败**：上游自己的 **`vmi_layout_assignment_reduce_minmaxf.pto`** —— 它期望 `%[[MASK_D2]] = pto.vmi.ensure_mask_layout %[[MASK]]`，
+  而新行让"一次粒度转换同时落布局"，于是不再插入那条 `ensure_mask_layout`。
+
+**关键的一问：这 6 行是谁的？**
+
+    git grep kLegalMaskGranularityCastLayoutPatterns origin/master
+    → upstream 自己的 VMILayoutSupportTables.inc 里 **这 6 行一行都没有**（narrowing 块与我们现状逐行相同）
+    → 它们是 **fork-only 的增行**
+
+⇒ 与 §19.65 同型的**交易**：用 1 个上游测试的行为，换 1 个 fork conformance 文件。
+本移植的纪律（上游不退化、不为通过率改期望）不允许直接落地 ⇒ **暂存 + 交裁决**。
+
+**处置**：存 `staged/mask_granularity_fork_rows.patch`（含 README 条目），工作树**回退**并**重新门禁确认**：641/563/78、0 新增、fidelity 21/33、GATE PASS、树干净。
+
+**这是第 2 次同类交易**，形状完全一致：**fork 的表/模型更宽 vs 上游刻意收窄，两侧各有一个测试背书**。
+（第 1 次是 §19.65 的代价模型地址合法性补丁：修 2 个 conformance、翻 1 个上游 plan。）
+两次的裁决可以一次做完 —— 两者的共同问题都是「移植的验收口径要不要接受 fork 侧更宽的行为」。
 ## 20. 交接快照（当前，取代 §16；§16 保留作历史）
 
 ### 20.1 目标与判据的**当前值**
