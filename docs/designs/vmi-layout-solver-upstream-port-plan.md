@@ -3328,3 +3328,14 @@ LOWER-NOT、以及缺失 store 指令三处同时失败。
 
 **处置**：把"重指 + 生成基线"列为步骤 9 的第一个子任务；端到端部分不受影响（19 个 sim-runs 就是基线）。
 这条与 §19.49 的路径规范化同属"量具要先修好再量"的同一主题。
+### 19.51 A1（h6/h7/h8）在飞改动**逐处复核**（本轮只读）
+
+A1 的工作区改动与规格逐点对应（+23/−？，单文件）：
+
+1. materializeMaskLaneStrideUnpack：新增 firstResultType —— laneStride == 4 时**第一次** unpack 的结果类型取 b16，否则取原 mask 类型；
+   第二次 unpack 仍产出结果 mask 类型（注释写明"lane_stride=4 的源要解两次：第一次拆成两个 b16 半，只有第二次产出结果 mask 类型"）✓ 即 h6；
+2. MaskLaneStridePackContext::packPair 的形参由 maskType 改名并语义化为 pairType，两处 PpackOp 都用它 ✓ 即 h7 的"把 pair 类型穿过签名"；
+3. materializeMaskLaneStridePackChunk：注释说明"lane_stride=4 结果的 pair pack 落在 b16 半，只有本助手的外层 pack 保持结果类型" ✓ 即 h8。
+
+**与 §19.24 的 F5 映射完全一致**（三处而非两处：签名 + unpack 循环 + chunk 助手），且**不碰任何拒绝文本** —— 属当初判定的"筛查无关"半批。
+等它提交后按移植批次门禁复核（构建干净、G2 前后一致、两个套件、无回归或明确中性）。
