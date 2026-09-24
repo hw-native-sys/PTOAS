@@ -3536,22 +3536,101 @@ fork 的 hunk 2 是**中间 op 更少的优化**，不是能力缺口。
 
 三例已交执行方，按"**有据映射、无据保留并报告、绝不改期望文本**"的规则处理。
 
+### 19.61 **新发现（高价值）**：去交错 load 的材料化缺口 —— 代价模型说 2，这棵树发出 4（fork 是 2）
+
+来源：§19.60 的"下降一致性断言"那一类里 load_store 的唯一失败。原文：
+
+    vmi_layout_cost_conformance_load_store.pto:22:3: error: layout-cost/lowering mismatch at
+      loc("load_deinterleaved__vmi_layout_relation_1_target"(...:24:14)):
+      relation cost=2, emitted rearrangements=4
+
+**这是 conformance pass 的"自洽性"检查**（`-test-vmi-layout-lowering-conformance`）：它把每个 relation **单独下降**，
+数出**真实发出的重排指令**（`isLayoutRearrangement`：vintlv/vdintlv/v*zunpack/vpack/p*intlv/p*pack，且**按 location 过滤**、
+排除 `vmi.vintlv→vintlv` 这类"直接语义下降"），与关系代价比对。⇒ **它不依赖测试文本的期望，是模型对不对的自证。**
+
+**证据链（三步，全部可复现）**：
+
+1. **本树发出的 IR**（fixture `@load_deinterleaved__vmi_layout_relation_1`，`pto.vmi.load → vreg<256xf32, deinterleaved = 4>`）：
+   **4 × `pto.vldus`（普通加载，不计）+ 4 × `pto.vdintlv`（蝴蝶形，计数）** ⇒ 计数 4；
+2. **fork 的 dump**（probes/fork_conformance_dump.txt:2927，同一用例）：
+   `load_deinterleaved pto.vmi.load relation=0 cost=2 result0=#pto.vmi.layout<deinterleaved = 4>` ⇒ **fork 的代价也是 2**，
+   即"代价 2"是**我们从 fork 忠实移植过来的值**，不是我们算错；
+3. **fork 的下降实现**（lib/PTO/Transforms/VMIToVPTO.cpp:6792-6849）用的是
+   **`pto.vldsx2` + dist token `"DINTLV"`（原生去交错加载，一次出两部分）**，每组**只补 2 条 `vdintlv`** ⇒ 计数 2 = 代价 2 ✓。
+   条件：`resultLayout.isDeinterleaved() && factor == 4 && *noWiderThanContiguous && resultTypes.size() % 4 == 0`。
+
+**结论**：这不是"我们算错"，而是**这棵树对普通 `pto.vmi.load` 的去交错=4 路径没有 fork 那条原生形式**，
+于是**代价模型（2）与真实指令数（4）系统性不一致**。这条自带成功判据（同一个自洽性检查转绿即为修好），且直接关系目标：
+
+* **对决策引擎是实质偏差**：模型对"去交错 load"过于乐观（按 2 计价、实际 4 条）⇒ 会**偏向选择去交错布局**，正是目标里"我们的 solver 当决策引擎"要避免的；
+* **对性能是实打实的指令数**：4 条 → 2 条（外加把 4 次普通加载换成 2 次 `vldsx2`），与步骤 9 的端到端性能结论同向。
+
+**上游不缺零件**：`pto.vldsx2` 在 VPTOOps.td:1630 有定义，DINTLV 路径在
+VMIToVPTOPatternInternals1.cpp:470/728 与 VMIToVPTOMemoryInternals.cpp:361 已被使用（`deinterleave_load` 等形态），
+说明**只差"普通 load + 去交错结果"这一条**。
+
+**下一步（已入队）**：把 fork 那条分支按同条件搬进上游的普通 load 下降（内存族，属步骤 7 批次 E/F 同类），
+门禁用 §19.54 的两套件 + fidelity，**成功判据 = load_store 的自洽性检查转绿**且无新增失败；
+若搬入后与上游既有路径冲突，则改为**按上游真实指令数重算该 relation 的代价**——
+但那时必须清楚说明"这是与 fork 的**有意分歧**"，并给出两边的指令数证据（不允许为了通过而改期望文本）。
+
+### 19.62 方言批落地：**fidelity 15 → 18/33**（两个提交，净 +3），并纠正执行方的一次"预测"
+
+**提交**：0b2974dec（三个文件移植到上游方言）+ 88e61f553（期望文本的 op 名重定基线）。
+
+**fork → 上游 的映射（执行方逐例读两边 ODS 得出，我复核）**：
+
+| fork-only | 上游 | 依据 |
+|---|---|---|
+| addf/addi | **vadd** | 上游 summary："VMI elementwise add (**unified fp/int**)"；fork 按类型拆成两个 |
+| subf/subi、mulf/muli、divf | vsub / vmul / vdiv | 同一合并模式 |
+| maxf/maxi、minf/mini | vmax / vmin | 同上 |
+| absf/absi、negf/negi | vabs / vneg | 同上 |
+| relu、exp、ln、sqrt | vrelu / vexp / vln / vsqrt | 上游只有 v 前缀拼写 |
+| shli | vshl | 同签名 |
+| shrsi、shrui | **vshr**（两者都） | 上游 vshr = "**signedness-aware** elementwise right shift" |
+| fma | **vmula** | 无上游 vfma；fork `VMIFmaOp` = (lhs, rhs, acc)，上游 `VMIVmulaOp` = (acc, lhs, rhs)、"acc = acc + lhs * rhs" ⇒ **值等价，操作数序需换** |
+
+**两个判断题（我按证据接受，均不要求回退）**：
+
+1. `shrsi`/`shrui` 合并为一个 `vshr`：两个用例**各自的下降 RUN 都通过** ⇒ 上游校验器接受无符号性标注的 `i32` 走逻辑移位分支（类型已由 `si32`/`i32` 区分）；
+2. `fma` → `vmula` 且**把累加器移到首位**：这是本轮唯一改动操作数次序的地方（依据是两边 summary），producers.pto 重定基线后**该用例 cost=0 与 dump 完全一致** ⇒ 值等价得到实证。
+
+**门禁（我跑的，两次）**：
+
+| 阶段 | lit/vmi_new | 新增失败 | lit/vpto | fidelity |
+|---|---|---|---|---|
+| 起点 0f5b60402 | 641 / 557 / 84 | — | 620 / 619 / 1 | 15/33 |
+| + 0b2974dec | 641 / **558** / **83** | 0 | 620 / 619 / 1 | **16/33** |
+| + 88e61f553 | 641 / **560** / **81** | 0 | 620 / 619 / 1 | **18/33** |
+
+离开失败集的三个文件：memory_compaction（**操作数移植**修好：stride_load/stride_store 的 4→3 操作数，且该文件的期望本来就不含 fork-only op 名）、
+elementwise、producers（**本轮期望重定基线**修好）。**重定基线是"只改 op 名 token"**：脚本在改动任何**非注释行**时直接中止，且 `git diff` 已复核**无任何非注释行**变化；
+所有 relation/cost 数值**本来就与 dump 一致**，只是打印的 op 名不同 ⇒ 不属于"改期望以通过"。
+
+**教训（第 5 次"推理与实测分叉"）**：执行方对 0b2974dec 的判断是"fidelity 应仍为 15/33（仅加固了三个本就失败的文件）"，**推理听起来完全成立但是错的** ——
+实测 memory_compaction **整文件转绿**（它两个 RUN 都过）。⇒ 纪律再钉一次：**结论必须来自门禁**，不得因为"这个改动显然动不了套件"就跳过测量（执行方这次**主动标注了没跑门禁**，这是正确做法）。
+
+**剩余 15 个失败 conformance 文件**（口径 = §19.60 的分类，去掉已绿的三个）：
+cast、cmp_merge_invalid、ensure_layout、generated、group_broadcast_op、group_broadcast、group_memory、group_reduce、group_reduce_quarter、
+load_store（**§19.61 已立项，进行中**）、masked_load_store、mask_granularity、same_layout_invalid、unified_merge_invalid、vexpdif_invalid。
+
 ## 20. 交接快照（当前，取代 §16；§16 保留作历史）
 
 ### 20.1 目标与判据的**当前值**
 
 | 判据 | 目标 | 当前 |
 |---|---|---|
-| 上游 lit/vmi_new 不退化 | 起点 608 发现 / 606 通过 / 2 失败 | **641 发现 / 557 通过 / 84 失败**（多出的 33 个是新增的 conformance 用例）|
-| 我们的 vmi_new 用例通过 | 33/33 | **15/33** |
+| 上游 lit/vmi_new 不退化 | 起点 608 发现 / 606 通过 / 2 失败 | **641 发现 / 560 通过 / 81 失败**（多出的 33 个是新增的 conformance 用例；起点 84 → 81）|
+| 我们的 vmi_new 用例通过 | 33/33 | **18/33**（方言批 +3，见 §19.62）|
 | lit/vpto | 648 / 647 / 1（含既有失败）| **620 / 619 / 1**（仅既有 vmi_f4x2_to_bf16x2_vcvt_llvm.pto）|
 | 端到端性能结论可复现 | gbmc-amp-dep / truncf-amp2 | **未做**（前置已核实：19 个 sim-runs 基线在位、msprof/CANN 可用）|
 | 步骤 2b–9 | 全部完成 | 步骤 7：**F5 已完成**（A1/A2/h4-h5/h10 全部落地）、F3/F7 已落、**F4 判定为不需要**（§19.59）；**步骤 8 进行中**（18 例地图已建，§19.60）；**步骤 9 未开始** |
 
 ### 20.2 代码状态
 
-* 上游 worktree：.work/upstream-port/workspaces/vmi-layout-solver-upstream，HEAD **66e88eb30**，树干净（仅 .codex/CLAUDE.md 换行符噪声）；
-* 分支 **feature/vmi-layout-solver-upstream** 已推 fork；自移植起点累计 **18 个提交，全部零回归或净提升**；
+* 上游 worktree：.work/upstream-port/workspaces/vmi-layout-solver-upstream，HEAD **88e61f553**，树干净（仅 .codex/CLAUDE.md 换行符噪声）；
+* 分支 **feature/vmi-layout-solver-upstream** 已推 fork；自移植起点累计 **20 个提交，全部零回归或净提升**；
 * 主树：计划文档（本文件）在 feature/vmi-layout-decision-layers，同样已推 fork。
 
 ### 20.3 已落地（按主题）
@@ -3562,18 +3641,20 @@ fork 的 hunk 2 是**中间 op 更少的优化**，不是能力缺口。
 
 **步骤 7**：共享 cast fact 进形状检查（4fad83fdb，移植批）、F3/F7 内存与 group-store 形状检查（f759c8256，含 fallback 变体）、group_slot_load 的 stride 适配（648898a01）、**F5 全批落地**：A2（5fefeb3cc，净 +1）与四例重定基线（a92b2dc3f）、A1（f65cf4003，中性）、h4/h5（0f5b60402，净 +1、fidelity +1）、**h10（66e88eb30，套件中性、把 gs↔gs 多载波 mask 粒度转换从硬失败变为能下降，§19.58）**；F4 经实测判定**不需要**（§19.59）。
 
-**步骤 8（部分）**：conformance 套件搬入（2b783862c，此前**根本不在树里**）、属性可丢弃性转发（217e2c3f7）、两行与 unified 的期望重定基线（db1447ea1、e765b94e0）、三族表行（e789c46a5、93bee34e0、59b9307f9）。
+**步骤 8（部分）**：conformance 套件搬入（2b783862c，此前**根本不在树里**）、属性可丢弃性转发（217e2c3f7）、两行与 unified 的期望重定基线（db1447ea1、e765b94e0）、三族表行（e789c46a5、93bee34e0、59b9307f9）、**方言批（0b2974dec + 88e61f553，净 +3、fidelity 15 → 18/33，§19.62）**。
 
 ### 20.4 待办（按优先级）
 
 **已完成（本条快照更新时）**：h10（66e88eb30，§19.58）；F4 判定为**不需要**（§19.59，实测不在关键路径）；18 例逐文件地图已建（§19.60）。
 
-1. **方言/语法类 3 例**（步骤 8 的最前置项，**已交执行方**）：elementwise（`pto.vmi.addf`）、producers（`pto.vmi.fma`）、memory_compaction（4 操作数 stride_load）——
-   这两个套件里唯一"**在上游树上根本无法解析**"的文件；按 §19.60 教训 2 的"**有据映射、无据保留并报告、绝不改期望文本**"处理。
-   注意上游的 23 个 fork-only op 全是逐类型拆分的逐元素算术，映射需要**逐个读两边 ODS**；`fma` 无忠实对应物时保留并报告。
+1. ~~方言/语法类 3 例~~ **已完成**（0b2974dec + 88e61f553，净 +3、fidelity 15 → 18/33，§19.62）：三个文件全部转绿；映射表与两个判断题的实证见 §19.62。
+   **下一步 = §19.61 的去交错 load 材料化缺口（已交执行方，进行中）**：把 fork 的 `vldsx2`+DINTLV 原生形式搬进上游普通 load 下降，
+   成功判据 = load_store 的自洽性检查转绿且 0 新增失败；它同时修掉"模型对去交错 load 过于乐观"的决策偏差与 2 条指令。
 2. **COST 类 7 例**（真正的 solver 侧工作）：unified_merge_invalid（我们**多给**关系）、vexpdif_invalid、same_layout_invalid（同）、cast:471（`extui_group_slots8_stride2` 期望 relation=1 cost=2，我们 0/0）、group_memory:155（我们**拒绝了** fork 保留的关系，双向）、group_reduce:56 / group_broadcast_op:122（桶 B 停止点，含次生 CHECK-COUNT）。
 3. **硬下降 5 例**：masked_load_store（masked_store 对齐合法性）、group_broadcast:14、ensure_layout:14、generated:12（三者均为"转换不适用 + 残留 op"）、group_reduce_quarter:22（8-bit 整数归约不支持）。
-4. **下降一致性断言 2 例**：cmp_merge_invalid:31（LOWER 期望文本）、load_store:24（**cost=2 但实测发出 4 次重排** —— 成本模型与材料化的一致性缺口，值得单独立项）。
+4. **下降一致性断言 2 例**：cmp_merge_invalid:31（LOWER 期望文本）、**load_store:24 —— 见 §19.61，已升级为独立高价值项**：
+   代价模型说 2、这棵树发 4（fork 用 `vldsx2`+DINTLV 原生形式只发 2）⇒ 把 fork 这条分支搬进上游普通 load 下降，
+   **成功判据 = 该自洽性检查转绿且 0 新增失败**。优先于桶 B 停止点：它有明确判据、影响指令数与决策质量。
 5. **其他具名缺口**：gs8_widen_plain 的**关系表/合法性模型**缺口（§19.58 遗留）、step7/PORTING_GAPS.md 里的 F3 h2 stride shim 与 F2 h5 compress 措辞、item 4（两个 opt/ 用例的剪枝 witness 表）、memAny() 合法性模型。
    **桶 B 纪律**：§19.42 —— 文本清单不可信、上游**明文禁止**加回 group-reduce 的 one-carrier 行。
 6. **步骤 9**：先修量具（§19.49 差分的**路径规范化**、§19.50 capture5.sh **重指到上游树 + 自生成基线**），再全门禁（validate_port.sh）、A5 验证、性能复测（19 个 sim-runs 为基线）。
