@@ -2695,3 +2695,14 @@ F3 h2 之所以没撞上，只因它查的是**同一批**已被专用助手校�
 2. **legacy 拼写的标记**：\`ensure_layout\`、\`ensure_mask_layout\`、\`ensure_mask_granularity\`、\`group_broadcast\`、\`group_broadcast_load\`、\`group_reduce_addf\`、\`load(deint)\` ——
    这些是**真实的 relation-provider 缺口**（与本项目已修的 \`stride_load\` 端口、\`broadcast\` 源端口、\`bccd44a29\` 的 mask-granularity 双向查询同类），必须逐算子查。
    注意其中 \`ensure_layout\` / \`ensure_mask_layout\` 正落在 F5 的 h1/h12 缺口上（\`forwardsPhysicalParts\` 只被代价模型消费），**两条线索在这里汇合**。
+
+### 19.26.2 对 19.26.1 第 1 类的**措辞更正**：那条 flag 已经在了，错的是**顺序**
+
+本轮复核两个统一拼写用例的 RUN 行，原文是：
+
+    // RUN: pto-test-opt %s -test-vmi-layout-cost-conformance -vmi-lower-unified-to-legacy -vmi-to-vpto -test-vmi-layout-lowering-conformance | FileCheck %s --check-prefix=COST
+
+也就是说 \`-vmi-lower-unified-to-legacy\` **本来就在**，只是排在 conformance pass **之后** —— 于是那个 pass 看到的仍是 pre-lowering 统一拼写，
+而在上游设计里（先降级、再赋值）provider 对统一拼写按设计不产出关系 ⇒ 报「no exposed relation」。
+**所以正确的修法是调整顺序**（把 \`-vmi-lower-unified-to-legacy\` 放到 \`-test-vmi-layout-cost-conformance\` **之前**），而不是"补一个缺失的 flag"。
+我先前那句"给 RUN 加上该 flag"是**不准确**的表述，已在此更正 —— 这类"看起来是缺失、其实是顺序"的差别，正是本文件反复记录的那类坑。
