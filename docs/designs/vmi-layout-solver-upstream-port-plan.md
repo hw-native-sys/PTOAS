@@ -2504,3 +2504,15 @@ F3 h2 之所以没撞上，只因它查的是**同一批**已被专用助手校�
 * **F4（批次 E，2 hunks，-2/+114）**目标单元：\`VMIToVPTODataLayoutInternals.cpp\` 的 \`materializeDataLayoutConversion\`；
   规格明确：上游 post-fork 的两个提交（\`067da4864\` 组合式 dense 物化、\`dce6afea0\` dense lane-stride ↔ group-slot 桥）**建的是同一个函数，我们不是超集** ⇒ **必须手工合并**，且排在 F5 之后（F4 要穿过 F5 的路径）。
 * **门禁准则（写死）**：整批落地后若失败集合是**严格子集或相等**则提交；若出现负例翻转，**回退**并把翻转清单记为**步骤 8 re-baseline 候选**（不在部分 delta 上动负例文本）。
+
+### 19.21.4 那个有界实验已做：中性，已回退，并把下一步的读点定死
+
+实现：把 group_load 分支的候选从"仅调用方 domain"改为"族 zoo"——复用 group reduce 的辅助函数并把它的名字统一为 \`getGroupFamilyQueryLayouts\`（语义 = seeds + contiguous + d{2,4} + bd{2,4}，**其中就含我们缺的 bd2**）。
+实测：**608 / 541 / 67**，与基线完全相同、无新增，即 \`vmi_layout_assignment_group_load_block8_truncf\` **没有转绿**。按 solver 侧"无实测收益即回退"的规矩回退，树回到 \`648898a01\`。
+
+这一步把问题缩小到**两个候选解释之一**（下一次只需**读**，不必再建）：
+
+1. **表本身不为该访存形状承认 bd2**：那么 pre-port 能选到 bd2 就说明它**不走这个 fact 查询**，而走 seeding（support 表的 preferred/seed 路径）—— 那就要去看 group-load 表在 stride 24 / 8 groups / 128×f32 下到底有哪些行；
+2. **表承认但代价模型偏好 contiguous**：那是 cost 比序问题（与 §19.16 的 frontier/Pareto 讨论同族），修点在代价模型而不是枚举。
+
+读法：查 group-load 表在该形状下的行 + planner 里 group_load 分支候选择序的代价；两条都能在**无构建**的情况下判定。
