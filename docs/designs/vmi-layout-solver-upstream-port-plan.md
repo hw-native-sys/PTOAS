@@ -2650,3 +2650,22 @@ F3 h2 之所以没撞上，只因它查的是**同一批**已被专用助手校�
 2. 新的全局基线是 **641 / 553 / 88**（= 原 67 + conformance 21）；后续测量都要按这个基线断言，别再拿 608/541/67 当全局数（那是 conformance 未入树前的状态）。
 
 **下一步**：把这 21 个 conformance 失败**按原因分类**（方言/属性差异 vs 真正的决策差异 vs 缺 lowering 能力），再按 §19.23 的四类规则裁决。它们比上游那 56 个 FileCheck 差异**更适合先做**：量的是**我们自己 solver 的忠实度**，且有明确的 33 个基线可比。
+
+## 19.26 21 个 conformance 失败按原因分类（本轮实测，直接对着「我们的用例通过」）
+
+用 \`llvm-lit -v --filter cost_conformance\` 取每个文件的**首个错误**，分桶如下（文件数）：
+
+| 桶 | 数量 | 代表错误原文 | 处置方向 |
+|---|---|---|---|
+| **B：conformance 标记没有暴露关系** | **8** | \`test layout-cost conformance marker has no exposed relation\`（\`ensure_layout\`、\`group_broadcast\`、\`group_broadcast_op\`、\`unified\`、\`vsel_zero\`、\`ensure_mask_layout\`、\`group_reduce\`、\`mask_granularity\`）| 我们**自己 harness 的诊断** ⇒ 这些形状下 planner 没暴露关系（solver/标记注册侧），**最大一块，先查** |
+| **F：期望/下降不匹配** | 6 | \`COST: expected string not found\`（\`unified_merge_invalid\`、\`same_layout_invalid\`、\`vexpdif_invalid\`、\`cast\`）、\`layout-cost/lowering mismatch\`（\`load_store\`）、\`failed to apply conversion patterns\`（\`generated\`）、\`LOWER: expected string not found\`（\`cmp_merge_invalid\`）| 逐例裁决（§19.23 四类）|
+| **A：上游方言缺该算子** | 2 | \`custom op 'pto.vmi.addf' is unknown\`（\`elementwise\`）、\`custom op 'pto.vmi.fma' is unknown\`（\`producers\`）| 测试输入需按上游拼写改写（或映射），属步骤 8 改写类 |
+| **E：上游明确不支持** | 2 | \`8-bit integer reductions are not supported\`（\`group_reduce_quarter\`）、\`masked_store requires a destination address with a proven …\`（\`masked_load_store\`）| fork 支持而上游不支持 ⇒ 期望需按上游能力调整 |
+| **C：代价模型拒绝了暴露的关系** | 1 | \`cost model rejected exposed layout relation #1 operand0=#pto.vmi.layout<num_groups …\`（\`group_memory\`）| solver 侧，逐例查 |
+| **D：解析错误** | 1 | \`expected ':'\`（\`memory_compaction\`）| 拷贝过来的输入语法与上游不一致 ⇒ 需改写 |
+
+**要点**：
+
+1. **最大的一块是 B（8/21）**，而且它是**我们 harness 自己的诊断**（\`marker has no exposed relation\`）—— 这意味着它不是上游测试的问题，而是**移植后的 planner 在这些形状下没暴露关系**；先查 B 的性价比最高。
+2. A/D/E 三类**不是忠实度问题**，而是**上游方言/能力与 fork 的差异**（fork 独有的算子、上游删掉的能力、输入语法），应归入步骤 8 的「改写输入」类，且每改一个都要记原因。
+3. 因此「12/33」里的**可归因缺口**是：B 8 + C 1 + F 6 = **15**，A/D/E 6 属于方言/能力差异。
