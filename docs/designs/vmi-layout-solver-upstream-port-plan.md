@@ -3099,3 +3099,23 @@ r02 的形状是 mask<256xb16> contiguous -> deinterleaved = 4。于是对两张
 
 **这张表把剩下的桶 B（4 个停止点）与若干 bucket F 的入口都变成了"按族取行、按流程实测"**，不再需要逐个 trace 猜方向；
 同时它给出一个可复跑的判据：**任何"fork 行比上游多"的地方，都要先问 lowering 认不认**。
+### 19.41 清单逐族实测（第 3 族）：group-broadcast-load 一行 —— 又一条"桶 B → 下降侧"的 case 级位移
+
+按 §19.40 的流程取 kGroupBroadcastLoadLayoutPatterns 的**唯一** fork-only 行：
+
+    {gb(1), bits<16, 32>(), memContiguous(), d(4)}
+
+三层实测：
+
+| 层面 | 结果 |
+|---|---|
+| 上游套件 | **641 / 555 / 86，失败集合逐字节相同（0 新增、0 修复）** |
+| **case 级** | group_broadcast **离开桶 B**：不再报 no exposed relation，改为停在下降侧（:14 failed to apply conversion patterns）|
+|  | group_broadcast_op **无变化**（:122 仍桶 B）—— 它标记的是 pto.vmi.group_broadcast（非 load 变体），本行不是它的成因 |
+| file 级 | fidelity 仍 14/33（两文件都因剩余下降原因仍红）|
+
+**判决：按移植批次保留并提交**（三层证据齐备：套件中性 + case 级位移 + 该行在上游 DSL 里合法）。
+
+**至此"桶 B → 下降侧"这条位移模式已在三个族上重现**（ensure-layout 六行、mask ensure 两行、group-broadcast-load 一行）：
+说明**桶 B 的本质是"表/枚举缺行"**，而**补上之后剩下的普遍是同一个下降侧缺口**（VMI-RESIDUAL-OP / failed to apply conversion patterns）——
+这正好把工作重心推向 F5 的 h1/h12（ensure 恒等短路与 fact 驱动转发），即 §19.39 说的"两条线合流"。
