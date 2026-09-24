@@ -3749,7 +3749,7 @@ tie-break 插桩方式（env 守卫 + llvm::errs，只在两个比较器里打�
 
 1. ~~方言/语法类 3 例~~ **已完成**（0b2974dec + 88e61f553，净 +3、fidelity 15 → 18/33，§19.62）：三个文件全部转绿；映射表与两个判断题的实证见 §19.62。
    **代价模型的地址合法性（§19.61a → §19.63）**：共享查询**已落地**（e0bb0ebe5，门禁零移动）；代价模型侧补丁**已实测但暂存**
-   （自洽性判据已修好：load_deinterleaved "cost=2 vs 4 emitted" → "cost=4 vs 4"；暂存原因是 1 个**指令中性**的择优翻转需要偏好层裁决）。
+   （自洽性判据已修好：load_deinterleaved "cost=2 vs 4 emitted" → "cost=4 vs 4"；暂存原因是一个**指令中性**的择优翻转，其根因本轮已量到：**位置分奖励「多加一次转换」**，而两条 tie-break 修法一为「1 换 4」、一为无效 ⇒ **待偏好层裁决**（筹码：6 个用例，见 §19.65 与 staged/README.md）。
 2. **COST 类 7 例**（真正的 solver 侧工作）：unified_merge_invalid（我们**多给**关系）、vexpdif_invalid、same_layout_invalid（同）、cast:471（`extui_group_slots8_stride2` 期望 relation=1 cost=2，我们 0/0）、group_memory:155（我们**拒绝了** fork 保留的关系，双向）、group_reduce:56 / group_broadcast_op:122（桶 B 停止点，含次生 CHECK-COUNT）。
 3. **硬下降 5 例**：masked_load_store（masked_store 对齐合法性）、group_broadcast:14、ensure_layout:14、generated:12（三者均为"转换不适用 + 残留 op"）、group_reduce_quarter:22（8-bit 整数归约不支持）。
 4. **下降一致性断言 2 例**：cmp_merge_invalid:31（LOWER 期望文本）、**load_store:24 —— 见 §19.61 + §19.61a（结论已修订）**：
