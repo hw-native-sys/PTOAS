@@ -3181,3 +3181,36 @@ r02 的形状是 mask<256xb16> contiguous -> deinterleaved = 4。于是对两张
 **给裁决补一条硬的判据（我已加进协议）**：不能只看"测试失败了"，而要看**这四个形状现在到底降成了什么** ——
 具体做法：对每个用例跑第 9 行的 ASSIGN 管线（应仍通过）+ 第 10 行的完整管线，**把下降后的 VPTO 打出来人工核对**（是否少了那个残留算子、是否语义正确、是否只是个空转发）；
 若输出是"原样转发/无残留且语义一致"⇒ 判定期望陈旧；若输出出现**别的** VMI 残留或语义不对 ⇒ 判定 A2 掩盖缺陷。
+### 19.45 A2 裁决落定：**保留**（提交 5fefeb3cc），四个负例判定为**陈旧期望**
+
+执行方落地 A2（仅源码）。我独立实测与它一致：
+
+| | discovered | passed | failed | fidelity |
+|---|---|---|---|---|
+| 59b9307f9 | 641 | 555 | 86 | 14/33 |
+| **A2 = 5fefeb3cc** | 641 | **552** | **89** | 14/33 |
+
+失败集合差**恰好**是"四个翻转 + 一个修复"：
+
+    新增失败：group_load_s16_stride_store / group_load_s32_stride_store /
+              group_load_s32_stride_broadcast_reduce / stride_group_load_block_granularity
+    新增通过：vmi_to_vpto_gs1_consumer_matrix   ← 八个真硬失败之一
+
+**逐例证据（四例同一图景）**：第 9 行 ASSIGN 管线全部 exit 0；第 10 行 -vmi-to-vpto **现在 exit 0**；
+**无** VMI-RESIDUAL-OP 诊断；输出里**既不剩** ensure_layout **也不剩** ensure_mask_layout；
+尾部是**普通的 store IR**（pto.vstus + pto.vstas + return），无半转换、无语义异常 ⇒ **该转换物理上就是恒等转发**。
+
+**fact 路径（它给出）**：getEnsureLayoutFact 在 sourceLayout == resultLayout、
+以及 oneLaneContiguousToGroup / oneLaneGroupToContiguous（elementCount 1，contiguous laneStride 1 ↔ num_groups==1 && slots==1）时给 forwardsPhysicalParts；
+mask 侧同理（sourceLayout == resultLayout、contiguous(laneStride 1) ↔ block-deinterleaved 双向）。**正是这几个形状所走的对**，且代价模型早已消费同一字段。
+
+**判决（§19.23 第 1 类）**：四个用例钉的是**A2 已经修掉的缺口**，形状现在**成功下降且 IR 合理** ⇒ **期望陈旧**，属步骤 8 重定基线；**A2 保留**。
+账目：**以四条陈旧期望换一个真硬失败的修复**，方向正确。
+
+**已下达的重定基线处方（保持覆盖、不放宽）**：把每个用例第 10 行的**负例 RUN 改成正向断言** —— 
+保留输入与第 9 行 ASSIGN 断言；把 not pto-test-opt … -vmi-to-vpto | FileCheck --check-prefix=LOWERERR 换成
+正向的 -vmi-to-vpto 检查（例如断言无任何 pto.vmi. 残留、且出现该形状应有的 store 指令），
+并在提交信息里写明"该用例原钉 VMI-RESIDUAL-OP 缺口，A2 修好后改为正向断言"。这样**覆盖变强而不是变弱**。
+
+**一条诚实的余量**：执行方未逐形状插桩确认"哪个分支触发"（行为证据已无歧义）；若要逐例铁证，可再做一次 env 门控 trace，属可选。
+另：它确认 A2 **没有扰动**三个 conformance 家族（它们的 cost pass 无错、marker 行仍在）。
