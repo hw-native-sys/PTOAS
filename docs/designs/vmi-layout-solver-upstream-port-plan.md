@@ -4280,6 +4280,44 @@ fork 侧没有这段（fork **统一 slots=8**，所以它的表行 `{gb(1), gs(
 得到 `simulator/core0.veccore0/trace.json` 后，用 `loop_period.py` 的算法（RV_VLDI 相邻间隔的稳态均值）算出 loop period，
 再与 `sim-runs/dep_base` / `dep_split` 中**同方案**的那条比（README 判据：方向与量级一致，<1% 视为噪声）。
 （同时注意：`loop_period.py` 与 `cmp_dep.py` 里写的是**绝对路径** `/home/mouliangyu/msprof-op-simulator-runs/<tag>/…` ⇒ 新结果要么放进该目录、要么把脚本参数化，这正是 §19.50 记的"量具需重指"。）
+
+### 19.88 **步骤 9 的首个性能结果（重要，且不是好消息）**：移植树的 gbmc-amp-dep 比两个记录方案都重 ~4.3×
+
+**量具已重指并自证**：新写 `perf/period_all.py`（参数化路径，取代写死绝对路径的 `loop_period.py`），
+对**记录档**跑出的数字与 `perf/README.md` 的公开基线**完全一致** ⇒ 量具可信：
+
+    dep_base  (merge): iter=32  steady=5.00 ns  total=0.927 us  RV_*/iter=10.66   ← README: MERGE 0.927 us ✓
+    dep_split (split): iter=32  steady=5.84 ns  total=0.960 us  RV_*/iter=11.69   ← README: SPLIT 0.960 us ✓
+    （README 记的 +3.4% 也复现：0.960/0.927 − 1 = +3.6%）
+
+**跑通这次采集踩的两个坑（都已解决，值得记）**：
+1. `msprof` 要求**私有工作目录**（group/other-writable 会被拒）⇒ 在 `$HOME` 下用 `chmod 700` 的输出目录；
+2. 我最初把 camodel 目录**前置**进 `LD_LIBRARY_PATH`，msprof 立刻 `undefined symbol: drvDeviceStatus` ——
+   原因是 **camodel 自带同名 `libascend_hal.so`**，把驱动的那份**遮蔽**了；而 host 二进制本身已有 `RUNPATH` 指向 camodel
+   ⇒ **不该改 `LD_LIBRARY_PATH`**，用环境原样跑 msprof 即可（`msprof op simulator --soc-version=Ascend950PR_9599 --output=<dir> <app>`）。
+
+**移植树的实测（新采集，golden 比对通过 ✓）**：
+
+    ported_gbmc_dep  iter(VLDI)=64  steady=18.09 ns  total=1.949 us  RV_*/iter=25.33   RV_* 总计 1621
+    dep_base(merge)  iter(VLDI)=32  steady= 5.00 ns  total=0.927 us  RV_*/iter=10.66   RV_* 总计  341
+    dep_split        iter(VLDI)=32  steady= 5.84 ns  total=0.960 us  RV_*/iter=11.69   RV_* 总计  374
+
+指令构成（前几项）也完全不同：
+
+    ported      RV_VCADD=506, RV_VSTI=310, RV_VDUP=256, RV_VSEL=192, RV_VLDI=64, RV_VMUL=64
+    dep_base    RV_VCGADD=61, RV_VCVT_F2F=59, RV_VADD=48, RV_VMUL=43, RV_VSTI=43, RV_VLDI=32, RV_VSELR=32
+    dep_split   RV_VSTI=74, RV_VADD=63, RV_VCGADD=49, RV_VMUL=49, RV_VCVT_F2F=33, RV_VLDI=32
+
+**读法（谨慎）**：内核源码里是 `scf.for %iter = %c0 to %c32`（32 次），记录档每次迭代 1 条 `RV_VLDI`，我们的每次 2 条；
+而 store 从 1.34/迭代 涨到 4.84/迭代、VCADD/VDUP/VSEL 大量出现 ⇒ 生成代码走了**"逐组复制 + 选择"**式的重路径，而不是记录档的 **group-add / 转换**式路径。
+
+**结论（当前证据下能说的）**：**这条端到端性能结论目前【不复现】** —— 移植树上这个用例的向量指令数是两个记录方案的 **约 4.3 倍**、总时长约 **2.1 倍**（1.949 us vs 0.927/0.960 us），
+且**指令构成是另一种形态**。这与"两个记录方案彼此只差 3.4%"形成鲜明对比 ⇒ 不是同一量级的差异，不能用噪声解释。
+
+**下一步（必须先做的前置）**：分开"**是不是可比**"与"**是谁的决定**"两件事：
+1. **可比性**：记录档是 fork 期、fork 编译器；本次是上游底座 + 我们的 solver ⇒ 先确认同样的 `kernel.pto` + 同样 flags（`--pto-arch a5 --pto-backend=vpto` ✓ 已核对）与同样 `soc-version`；
+2. **归因**：把该用例在本树的 IR（`ptoas` 产物）与"逐组复制/选择"形态对齐，判断这是**我们 solver 选出的方案**，还是**上游底座的材料化**（例如 §19.84/§19.85 那些 per-group BRC 路径）造成的；
+3. 若是 solver 的方案选择问题，那正是目标的核心（决策质量），要比 conformance 更优先。
 ## 20. 交接快照（当前，取代 §16；§16 保留作历史）
 
 ### 20.1 目标与判据的**当前值**
