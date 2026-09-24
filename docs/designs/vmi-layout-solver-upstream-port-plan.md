@@ -3790,6 +3790,26 @@ tie-break 插桩方式（env 守卫 + llvm::errs，只在两个比较器里打�
 
 **差分清单当前口径（本轮结束）**：两侧同名用例差异 44（cast 30、elementwise 11、memory_compaction 2、producers 1）；
 其中 elementwise/producers 的 11+1 条是**既定的 op 改名**（addf→vadd 等），memory_compaction 的 2 条是**操作数下标平移**（stride_load/store 由 fork 的 4 操作数移植成上游的 3 操作数，repeat 已移除）⇒ **真正的代价差异只剩 cast 的那 30 条**，且全部是上述「同端口多一条」。
+### 19.69 **范围级发现**：剩下 14 个 conformance 里有 **3 个的前提已被上游删除**（pmode 只剩 zero）
+
+追 unified_merge_invalid / same_layout_invalid / vexpdif_invalid 时，先把三件事分别量清（表格里的引号用「」代替，避免与语法冲突）：
+
+| 事实 | 证据 |
+|---|---|
+| 这三个用例在 fork 里靠 pmode = 「merge」表达「非法」 | fork 树 test/lit/vmi_new/ 同名文件：pmode = 「merge」，三份都是 |
+| **上游删掉了 merge**：pmode 变成 zero-only | 上游提交 **8a0a5689b** refactor(vmi): make pmode a zero-only predication mode（合并号 !189，co-authored mouliangyu）|
+| 我们的方言批把它们规范化成 zero，于是**前提消失** | 本树同名文件：pmode = 「zero」（§19.62 那次「5 个文件 pmode 归一」）|
+
+**后果（实测）**：三个文件的 RUN1 现在 exit=0 且**各自暴露 1 条关系**（形状合法了），而文件期望 error: ... has no exposed relation；RUN2（下降）同样 exit=0。
+即：**不是我们的 solver 太宽松，而是这些用例要断言的非法性在上游底座上已不存在** —— zero 模式下这些形状本来就合法，我们的下降也确实能生成代码。
+
+**口径影响**：fork 侧一共 **4 个** conformance 文件用了 pmode = 「merge」：cmp_merge_invalid、same_layout_invalid、unified_merge_invalid、vexpdif_invalid。其中：
+* 前三个 = 上述「前提已删除」⇒ **在本底座上按构造不可达**（要变绿只能重造已删除的语义，或改测试期望 —— 两者都违反纪律）；
+* **cmp_merge_invalid 不同**：它的 RUN1 **确实以 0 条关系失败（符合期望）**，失败的是 RUN2（LOWER 期望文本，第 31 行）⇒ 属**另一类**缺口，可单独追。
+
+⇒ **本轮把「33/33」的分母问题正式提出**：可达集 **29/33**（33 减去 3 个前提已删除的文件；cmp_merge_invalid 仍算可达）。
+当前通过 **19/33**（即 19/29 可达）。**这需要裁决**：把 29 作为目标分母（三个文件标注「前提已被上游删除」），还是另立处置（例如移出移植集并记录）。
+本移植的纪律不允许为了让它们变绿而放宽 solver 或改期望。
 ## 20. 交接快照（当前，取代 §16；§16 保留作历史）
 
 ### 20.1 目标与判据的**当前值**
@@ -3797,7 +3817,7 @@ tie-break 插桩方式（env 守卫 + llvm::errs，只在两个比较器里打�
 | 判据 | 目标 | 当前 |
 |---|---|---|
 | 上游 lit/vmi_new 不退化 | 起点 608 发现 / 606 通过 / 2 失败 | **641 发现 / 561 通过 / 80 失败**（多出的 33 个是新增的 conformance 用例；起点 84 → 80）|
-| 我们的 vmi_new 用例通过 | 33/33 | **19/33**（方言批 +3、cast.pto +1，见 §19.62/§19.67）|
+| 我们的 vmi_new 用例通过 | 33/33 | **19/33**（方言批 +3、cast.pto +1，见 §19.62/§19.67）；其中 **3 个文件的前提已被上游删除（§19.69）⇒ 可达集 29/33，分母待裁决** |
 | lit/vpto | 648 / 647 / 1（含既有失败）| **620 / 619 / 1**（仅既有 vmi_f4x2_to_bf16x2_vcvt_llvm.pto）|
 | 端到端性能结论可复现 | gbmc-amp-dep / truncf-amp2 | **未做**（前置已核实：19 个 sim-runs 基线在位、msprof/CANN 可用）|
 | 步骤 2b–9 | 全部完成 | 步骤 7：**F5 已完成**（A1/A2/h4-h5/h10 全部落地）、F3/F7 已落、**F4 判定为不需要**（§19.59）；**步骤 8 进行中**（18 例地图已建，§19.60）；**步骤 9 未开始** |
