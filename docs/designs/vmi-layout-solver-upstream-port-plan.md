@@ -4261,6 +4261,25 @@ fork 侧没有这段（fork **统一 slots=8**，所以它的表行 `{gb(1), gs(
 
 **（5）模拟器实跑已发起**（`DEVICE=SIM` 不带 `COMPILE_ONLY`，`WORK_SPACE=/home/mouliangyu/ptmp/perf_sim_dep`，后台进行）：
 跑完后用 `loop_period.py` 取稳态 loop period，与记录档中**同方案**的那一条比（README：绝对 tick 有 ±3 抖动，<1% 视为噪声；判据是"方向和量级"）。
+
+### 19.87 步骤 9 首个端到端结果：**放大用例在 A5 模拟器上跑通且 golden 比对通过**（用当前移植编译器）
+
+    CASE_NAME=gbmc-amp-dep … DEVICE=SIM … run_host_vpto_validation.sh
+    → 三个 SoC sub 全部 "[Hardware] parallel simulation finish"
+    → "[INFO] compare passed" / "[gbmc-amp-dep] compare passed" / "All 1 VPTO case(s) passed"
+    输出：/home/mouliangyu/ptmp/perf_sim_dep/gbmc-amp-dep/（kernel .so、host 二进制、v1/v2/v3.bin、golden_*.bin、validation.log）
+
+⇒ **端到端功能链路（编译 → 模拟器 → golden 比对）在移植底座上成立**，这是性能结论可复现的前半。
+
+**但性能量取还差一步，原因已查明**：本次输出目录里**没有 msprof 采集物**（`OPPROF_*`），而 `loop_period.py` 需要它。
+查 runner：`msprof` 采集只存在于 **PTODSL source-backed 用例**分支（`run_host_vpto_validation.sh:327-335` 调 `scripts/sim_dsl.sh --output <out>/msprof`）；
+我们的 `.pto` 用例走的是**直接执行 host 二进制**的分支（:404），**不经过 msprof**。
+⇒ 记录档里那 21 个 `sim-runs/*/out/OPPROF_*` 当年是**在 host 二进制外面包一层 `msprof op simulator`** 得到的（不是 runner 自动产生）。
+
+**下一轮第一步**：把这一层包出来 —— 在 `perf_sim_dep/gbmc-amp-dep/` 里以 `msprof op simulator --output <dir>/msprof --application ./gbmc-amp-dep`（或 README 提到的等价形式）重跑一次，
+得到 `simulator/core0.veccore0/trace.json` 后，用 `loop_period.py` 的算法（RV_VLDI 相邻间隔的稳态均值）算出 loop period，
+再与 `sim-runs/dep_base` / `dep_split` 中**同方案**的那条比（README 判据：方向与量级一致，<1% 视为噪声）。
+（同时注意：`loop_period.py` 与 `cmp_dep.py` 里写的是**绝对路径** `/home/mouliangyu/msprof-op-simulator-runs/<tag>/…` ⇒ 新结果要么放进该目录、要么把脚本参数化，这正是 §19.50 记的"量具需重指"。）
 ## 20. 交接快照（当前，取代 §16；§16 保留作历史）
 
 ### 20.1 目标与判据的**当前值**
