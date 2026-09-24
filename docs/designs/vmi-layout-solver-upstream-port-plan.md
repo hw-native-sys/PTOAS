@@ -3339,3 +3339,25 @@ A1 的工作区改动与规格逐点对应（+23/−？，单文件）：
 
 **与 §19.24 的 F5 映射完全一致**（三处而非两处：签名 + unpack 循环 + chunk 助手），且**不碰任何拒绝文本** —— 属当初判定的"筛查无关"半批。
 等它提交后按移植批次门禁复核（构建干净、G2 前后一致、两个套件、无回归或明确中性）。
+### 19.52 A1 落地（f65cf4003，**两个套件中性**）+ 新门禁 gate2.sh 首次实战通过
+
+执行方落 A1（h6+h7+h8）并报告中性。我**用刚写的 probes/gate2.sh 独立复核**（首跑即按设计工作）：
+
+    == gate2: a1-verify ==
+    -- 0. writer check (19.49)      no competing writer: OK
+    -- 1. dirty check               uncommitted files: 0（已排除 .codex/CLAUDE.md 噪声）
+    -- 2. build                     ninja exit=0 errors=0
+    -- 3. artifact freshness        binaries newer than sources: OK
+    -- 4. lit/vmi_new               641 / 556 / 85，失败集合 85，NEW failures vs 基线: 0
+    -- 5. lit/vpto                  620 / 619 / 1（既有的 f4x2→bf16x2 vcvt 用例）
+    -- 6. conformance fidelity      14 / 33
+    -- PROVENANCE                   HEAD f65cf4003 dirty 0
+    == verdict ==                   GATE PASS
+
+**A1 的判定**：中性——0 新增、0 修复、failing set 逐字节相同；
+原因是**当前树里没有任何测试覆盖 lane_stride=4 的 mask pack/unpack 与 b16 半**，所以 fork 的载体类型修正在现有期望下**无可观测效果**；
+但它在代码上**不是 no-op**：三处现在口径一致（packPair 的第三个形参是 pair 类型、materializeMaskLaneStridePackChunk 只选一次并传给两个 pair pack、unpack 的第一步用它），
+将来任何 lane_stride=4 的形状**不可能再以错误的 mask 宽度构造**。按移植批次标准：**中性且理由记录在案 ⇒ 保留**。
+
+**F5 现状**：A2 已落（净 +1）、**A1 已落（中性）**；**h4/h5/h10 + 两个 staging 排序半仍开**。
+范围也被遵守：未碰拒绝文本、未碰任何表行、未碰 family 行；h1/h12 已作为 A2 在内。
