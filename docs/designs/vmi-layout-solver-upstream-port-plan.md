@@ -3647,6 +3647,40 @@ load_store（**§19.61 已立项，进行中**）、masked_load_store、mask_gra
 把该查询从下降单元里**共享出来**（不要复制一份判定，避免两处漂移）。验收：**不可对齐**的 fixture 自洽（要么按 4 计价、要么不再免收），**可对齐**的 variant 保持 cost=2；
 门禁用两套件 + fidelity 且**逐个解释每个决策变化**（这条会真实改变布局选择，不是中性改动）。
 
+### 19.63 代价模型的"地址合法性"缺口：共享查询已落地（e0bb0ebe5，中性），代价模型侧已实现但暂存（staged，一次翻转待裁决）
+
+**起因**：§19.61a 判定"模型只镜像形状、没镜像地址可对齐性"。执行方按"先证站点、再动手"的纪律给出精确地图，并**主动停在写码前**；
+我接手完成（其中一处修正它的说法：isDirectMemoryDistAddressLegal 不是"两个调用点"，实测是 **16 个调用点**，分布在 PatternInternals1/2/3，全部走同一 TU 的匿名命名空间）。
+
+**第一半（已落地，e0bb0ebe5，纯搬运 ⇒ 必须零移动）**：getPhysicalVectorBytes + isDirectMemoryDistAddressLegal 从 VMIToVPTOConversionInternals.cpp
+（匿名命名空间内、只有该 TU 可见）搬到布局支撑层（VMILayoutSupport.h 声明 + VMILayoutSupport.cpp 定义）⇒"这条访问用这个 family+token 在此地址是否合法"**有唯一属主**。
+
+* 门禁：**GATE PASS**，641 / 560 / 81、0 新增、lit/vpto 620/619/1、fidelity 18/33 —— 与搬运前**逐项相同**（纯重构的正确形态）；
+* 搬运**暴露了一个被单体掩盖的隐式依赖**：原代码用的 kBitsPerByte 在支撑 TU 里不可见（它是单体包含集恰好提供的 TU 局部量），改用支撑层自己的 kVMIBitsPerByte（同为 int64_t、值同为 8）；
+* 过程留痕：第一次构建**失败**（ninja exit=1, 3 errors），门禁如实报 **GATE FAILED 且判明产物陈旧** —— 那次的 suite 数字来自旧二进制、**不作数**（正是"构建失败就不许声称测量"的形态）。
+
+**第二半（已实现 + 已实测，但暂存不落地：staged/cost_model_memorydist_alignment.patch）**：让 buildLoad 的两条直接配对加载分支（去交错 factor 2 / factor 4）在原有"形状"条件上追加**同一个地址合法性查询**
+（新共享入口 isDirectDeinterleaveLoadLegal）。地址不可证明对齐时，模型落入它自己的"连续加载 + 显式去交错"分支 —— 那正是下降会发出的东西。
+
+* **自带判据（关键）**：conformance pass 的**自洽性检查**（把每个 relation 单独下降、数出真实发出的重排指令再与代价比对，**不读测试文本**）。实测：
+  @load_deinterleaved__vmi_layout_relation_1 由 "relation cost=2, emitted rearrangements=4"（不一致、pass 在此中断）变为 **"cost=4 rearrangements=4"（一致）**；
+  修好这一条后，pass 才**暴露出下一个被它掩盖的同族不一致**：load_lane_stride2 "cost=0 vs 1"；
+* 代价按预期移动：load_deinterleaved **2 → 4**、load_deinterleaved2 **0 → 1**（不可证明对齐的地址）。
+* **为什么不落地**：门禁出现**恰好一个**翻转 —— vmi_layout_assignment_group_store_truncf_contiguous.pto：原来**加载本身**带 deinterleaved = 2，现在变成"连续加载 + pto.vmi.ensure_layout 到同一布局"。
+  **实测该翻转是指令中性的**：两种方案下受影响函数都下降为同一形状 2 × vldus + 1 × vdintlv（**这里我先算错过一次**：把"单函数 OLD"与"整文件 NEW"对比得出 13 条，属口径不一致，已更正并留痕）。
+  即：这是**并列时的择优方向变了**（两者代价都为 1），而不是质量退化；但它把一条移植期望挪到了"多一个显式 op"的 IR 形状上，而"并列时应偏向材料化更少"属于**偏好层**的裁决
+  （用户合同：偏好必须排在 ls 数量之后），不属于这个补丁。**静默地挪动择优是本次移植一直拒绝的事**，故暂存、连证据交回裁决。
+* 补丁已干跑验证可在 HEAD 上干净应用（git apply --check 通过），并已写进 staged/README.md（含上述全部证据与"下一步增量"）。
+
+**下一步增量（同一族，判据相同）**：车道跨步直接形式（load_lane_stride2 就是本补丁**新暴露**的那条）与**存储侧**（下降对 Store/StoreX2 同样以 isDirectMemoryDistAddressLegal 守卫）；
+另外**偏好层**应单独立项：查清"代价并列时为何选到材料化更多的方案"。
+
+### 19.64 步骤 9 量具（本轮新增，未运行）：conformance 代价差分
+
+.work/upstream-port/step9/conformance_cost_diff.sh：把 **fork 侧记录档**（probes/fork_conformance_dump.txt，33 文件 / 368 用例）与**本树现场生成的 dump** 同时规约为
+每条用例一行（文件 / 用例 / op / relation / cost / layouts）再逐例比对 —— 这就是 §19.50 要求的"差分 + 路径规范化"：两侧的 value 行**本身不含任何路径**
+（路径只出现在 dump 的 IR 夹具部分），所以"规约"即是规范化，原始 dump 仍留在盘上备查。脚本带**构建中拒绝运行**的守卫（§19.49），已过 bash -n；
+**本轮未运行**（需要安静树 + 独占测量窗口），它将成为剩余 COST 类失败（7 例）的主量具。
 ## 20. 交接快照（当前，取代 §16；§16 保留作历史）
 
 ### 20.1 目标与判据的**当前值**
@@ -3661,8 +3695,8 @@ load_store（**§19.61 已立项，进行中**）、masked_load_store、mask_gra
 
 ### 20.2 代码状态
 
-* 上游 worktree：.work/upstream-port/workspaces/vmi-layout-solver-upstream，HEAD **88e61f553**，树干净（仅 .codex/CLAUDE.md 换行符噪声）；
-* 分支 **feature/vmi-layout-solver-upstream** 已推 fork；自移植起点累计 **20 个提交，全部零回归或净提升**；
+* 上游 worktree：.work/upstream-port/workspaces/vmi-layout-solver-upstream，HEAD **e0bb0ebe5**，树干净（仅 .codex/CLAUDE.md 换行符噪声）；
+* 分支 **feature/vmi-layout-solver-upstream** 已推 fork；自移植起点累计 **21 个提交，全部零回归或净提升**；
 * 主树：计划文档（本文件）在 feature/vmi-layout-decision-layers，同样已推 fork。
 
 ### 20.3 已落地（按主题）
@@ -3680,14 +3714,15 @@ load_store（**§19.61 已立项，进行中**）、masked_load_store、mask_gra
 **已完成（本条快照更新时）**：h10（66e88eb30，§19.58）；F4 判定为**不需要**（§19.59，实测不在关键路径）；18 例逐文件地图已建（§19.60）。
 
 1. ~~方言/语法类 3 例~~ **已完成**（0b2974dec + 88e61f553，净 +3、fidelity 15 → 18/33，§19.62）：三个文件全部转绿；映射表与两个判断题的实证见 §19.62。
-   **下一步 = §19.61 的去交错 load 材料化缺口（已交执行方，进行中）**：把 fork 的 `vldsx2`+DINTLV 原生形式搬进上游普通 load 下降，
-   成功判据 = load_store 的自洽性检查转绿且 0 新增失败；它同时修掉"模型对去交错 load 过于乐观"的决策偏差与 2 条指令。
+   **代价模型的地址合法性（§19.61a → §19.63）**：共享查询**已落地**（e0bb0ebe5，门禁零移动）；代价模型侧补丁**已实测但暂存**
+   （自洽性判据已修好：load_deinterleaved "cost=2 vs 4 emitted" → "cost=4 vs 4"；暂存原因是 1 个**指令中性**的择优翻转需要偏好层裁决）。
 2. **COST 类 7 例**（真正的 solver 侧工作）：unified_merge_invalid（我们**多给**关系）、vexpdif_invalid、same_layout_invalid（同）、cast:471（`extui_group_slots8_stride2` 期望 relation=1 cost=2，我们 0/0）、group_memory:155（我们**拒绝了** fork 保留的关系，双向）、group_reduce:56 / group_broadcast_op:122（桶 B 停止点，含次生 CHECK-COUNT）。
 3. **硬下降 5 例**：masked_load_store（masked_store 对齐合法性）、group_broadcast:14、ensure_layout:14、generated:12（三者均为"转换不适用 + 残留 op"）、group_reduce_quarter:22（8-bit 整数归约不支持）。
 4. **下降一致性断言 2 例**：cmp_merge_invalid:31（LOWER 期望文本）、**load_store:24 —— 见 §19.61 + §19.61a（结论已修订）**：
-   上游**已有** vldsx2+DINTLV 路径；真正的缺陷是 `VMILayoutCostModel.cpp` 的 `realizesDeinterleavedPartsDirectly` 只镜像形状、**没镜像"地址可证明对齐"**，
-   于是对不可对齐的 load 少收 2 条 ⇒ **模型乐观、偏向去交错布局**。验收：不可对齐 fixture 自洽 + 可对齐 variant 保持 cost=2 + 逐个解释决策变化。
-   优先于桶 B 停止点：判据明确、影响真实指令数与布局选择。
+   上游**已有** vldsx2+DINTLV 路径；真正的缺陷在 `VMILayoutCostModel.cpp` **`buildLoad`** 的两条直接配对加载分支：只按形状判定"直接实现"，
+   不看地址可证明对齐 ⇒ 对不可对齐的 load 少收重排条数。**已实现并实测**（§19.63，判据 = conformance 自洽性检查转绿），但**暂存**：
+   门禁有 1 个翻转（group_store_truncf_contiguous），实测**指令中性**（两方案都 2 × vldus + 1 × vdintlv），属并列择优方向变化，交偏好层裁决。
+   同族待办：车道跨步直接形式（pass 新暴露的 load_lane_stride2）与存储侧（Store/StoreX2 同样有地址守卫）。
 5. **其他具名缺口**：gs8_widen_plain 的**关系表/合法性模型**缺口（§19.58 遗留）、step7/PORTING_GAPS.md 里的 F3 h2 stride shim 与 F2 h5 compress 措辞、item 4（两个 opt/ 用例的剪枝 witness 表）、memAny() 合法性模型。
    **桶 B 纪律**：§19.42 —— 文本清单不可信、上游**明文禁止**加回 group-reduce 的 one-carrier 行。
 6. **步骤 9**：先修量具（§19.49 差分的**路径规范化**、§19.50 capture5.sh **重指到上游树 + 自生成基线**），再全门禁（validate_port.sh）、A5 验证、性能复测（19 个 sim-runs 为基线）。
@@ -3696,6 +3731,6 @@ load_store（**§19.61 已立项，进行中**）、masked_load_store、mask_gra
 
 * **门禁**：probes/gate2.sh <label> [--expect-subset <基线文件>] —— 把七条纪律一次性跑完（并发写者拒绝、噪声排除的脏树、构建、产物新鲜度、**精确名**失败集合、严格子集、双套件、fidelity、PROVENANCE）；
 * **测量**：probes/measure.sh <label>（全量 + 失败集合落盘）；
-* **缺口与暂存**：step7/PORTING_GAPS.md（具名缺口 + 重访判据）、staged/（三块可重放补丁 + README）；
+* **缺口与暂存**：step7/PORTING_GAPS.md（具名缺口 + 重访判据）、staged/（四块可重放补丁 + README，含 §19.63 的代价模型补丁）；
 * **纪律**（本文档各节）：19.36（**严格子集对"已失败文件"是盲的** ⇒ 改期望必须做内容核对）、19.38（**预检用权威管线**、**集合断言用精确名**、**不自动回退他人改动**）、19.42（**结构描述与"fork-only 行"都要对着树复核**，注意 schema 差异造成的假阳性）、19.49/19.55（**测量前确认无并发写者**；**收窄拒绝 ≠ 移除拒绝**，前者可安全落地）；
 * **单写者原则**：谁拿树谁宣布；另一方不写不测；读-改之间靠文件观察守卫兜底（本项目已拦住三次）。
