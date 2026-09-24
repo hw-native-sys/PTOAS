@@ -3767,6 +3767,29 @@ tie-break 插桩方式（env 守卫 + llvm::errs，只在两个比较器里打�
 
 **这条链的完整形态值得记**：上轮修好「注解对**被算作免费**」（代价字段从未赋值，68/68 关系 intrinsic=0）→ 本轮修好「注解对**独占枚举**」。
 两者同源：注解通路是为了让 IR 声明的布局不被solver 的重新发明打败而加的，但它因此**绕过了表**，既没拿到表的价，也挡住了表的行。
+### 19.68 已知无害偏差（本轮量到并留痕）：注解 cast 用例**多一条同端口关系**（30 例）
+
+§19.67 落地后复跑差分：两侧同名用例的差异 44 条，其中 **cast.pto 30 条**，形态一致 —— 我们比 fork **多列出一条关系**：
+
+    extui_group_slots8_stride2 relation=0 cost=0 operand0=gs(2,8,lane_stride = 2) result0=gs(2,8)
+    extui_group_slots8_stride2 relation=1 cost=2 operand0=gs(2,8)                    result0=gs(2,8)
+    extui_group_slots8_stride2 relation=2 cost=0 operand0=gs(2,8,lane_stride = 2) result0=gs(2,8)   ← 多出来的一条（与 relation=0 端口完全相同）
+
+成因：`appendUniqueRelation` 的去重键**包含 preferencePenalty**（`haveSamePortTuple` 比较 op/ports/directProducer/intrinsicRearrangementCost/preferencePenalty），
+而「IR 声明的对」以 penalty 0 入列、表行以 penalty 1 入列 ⇒ 两者键不同、都留下来。**两者端口完全相同 ⇒ 选中同一组布局**，只是清单多一行。
+
+**两次清理尝试都实测过，都不落地**：
+
+| 尝试 | 结果 |
+|---|---|
+| 让注解对采用与表行相同的 penalty（两者即可合并） | **回归** vmi_layout_assignment_group_slot_load —— 该用例需要「IR 声明的对」在偏好键上压过枚举行 ⇒ 否决 |
+| 在结果驱动的枚举里跳过与注解对同端口的那条 | **无效**：重复项其实来自**更早**的 polymorphic 实例化循环（1376-1386 经 appendFacts 入列），单侧跳过够不着 |
+
+**处置**：保持已门禁通过的形态（1458a7d85）；本偏差记为**已知无害**：不改变任何布局选择、不影响 33 个 conformance 的 FileCheck（cast.pto 因其两行期望已被满足而通过），
+只影响差分仪器的「逐条对齐」口径。**重访判据**：若将来某个 conformance 文件用 CHECK-COUNT 约束某 cast 用例的 relations 数，则必须在**入列处**（而不是某一条枚举分支里）做「同端口→保留 penalty 最小者」的收敛。
+
+**差分清单当前口径（本轮结束）**：两侧同名用例差异 44（cast 30、elementwise 11、memory_compaction 2、producers 1）；
+其中 elementwise/producers 的 11+1 条是**既定的 op 改名**（addf→vadd 等），memory_compaction 的 2 条是**操作数下标平移**（stride_load/store 由 fork 的 4 操作数移植成上游的 3 操作数，repeat 已移除）⇒ **真正的代价差异只剩 cast 的那 30 条**，且全部是上述「同端口多一条」。
 ## 20. 交接快照（当前，取代 §16；§16 保留作历史）
 
 ### 20.1 目标与判据的**当前值**
