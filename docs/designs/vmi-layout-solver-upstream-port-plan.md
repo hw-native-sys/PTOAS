@@ -2606,3 +2606,26 @@ F3 h2 之所以没撞上，只因它查的是**同一批**已被专用助手校�
 4. 拼写/属性名类（如 \`dintlv→intlv\`、\`merge/zeroing→zero\`）⇒ 直接改名，无裁决成本。
 
 ⇒ 步骤 8 的工作量由此**从"56 个未知差异"变成"逐例裁决 + 四类处理"**，并且第 1 类必须成批处理（同一决策原因往往命中多个用例）。
+
+## 19.24 批次 D（F5）阶段 1 映射：**12 个 hunk 里有 5 个上游早已实现**，整批落地不是正确形状
+
+执行方按只读阶段做完逐 hunk 映射，关键发现是**规格与拆分树的结构已经分叉**：F5 写的是 fork 单体的一个巨型 \`materializeMaskLayoutConversion\`，
+而上游把这整片**重构成了具名助手**（\`VMIToVPTODataLayoutInternals.cpp\` 的 \`materializeDataLayoutConversion\` / \`materializeDeinterleaved2MaskLayout\` / \`materializeMaskLaneStrideUnpack\` / \`materializeBlockLayoutForwarding\` / \`tryMaskLayoutMaterializers\` / \`buildMaskGranularityConversionPlan\` 等）。
+
+**逐 hunk 判定结果（12 个）：**
+
+| 类别 | hunk | 说明 |
+|---|---|---|
+| **上游早已实现（no-op）** | h2、h3、h9、h11 | h2 的两条 staging 声明**逐字节相同**；h3 的 contiguous↔block 恒等转发上游做得**更丰富**（\`materializeBlockLayoutForwarding\`，含 unrealized-cast 路径）；h9/h11 的 \`resultArity\` 已提在 driver 里 |
+| **真实缺口（纯新增能力）** | h1、h6、h7、h8、h12 | h1：ensure 取出 \`forwardsPhysicalParts\` 却**没有**用它做恒等短路（该字段在全树里**只被代价模型消费**，\`VMILayoutCostModel.cpp:465/:1865\`，**从不被任何物化器使用**）；h6/h7/h8：laneStride==4 时**首次** unpack/pack 应该用 \`b16\`；h12：\`OneToNVMIEnsureMaskLayoutOpPattern\` 只把 fact 当守卫 |
+| **拒绝措辞变化（须单独筛查）** | h4、h5 | 把 \`deinterleaved={2,4} … requires {2,4}*N parts\` 的不等 arity 情形**改成委托给 staging** —— 正是我的移植批次准则里要筛的那一类 |
+| **需实测才能判** | h10 | groupSlots↔groupSlots 同 arity 恒等；上游的 chunked 路径**可能已产出等价 IR**，但它会改变 staging |
+
+**适配冲突（照抄编译不过）**：h1/h12（fact 的 \`&supportReason\` 形参、且上游用 \`replacePhysicalResults\` 而非 \`replaceOpWithFlatConvertedValues\`）；h6/h7/h8（fork 的单个局部 \`pairType\` 需要穿过 \`MaskLaneStridePackContext::packPair\` 的签名**以及** unpack 循环 —— 三处而非两处）。**缺失符号：无**。
+
+**判决：整批落地不是正确形状**（5/12 是 no-op、3 个要手工适配进不同结构、h4/h5 会动拒绝文本）。改为两个提交：
+
+* **提交 A（纯新增能力，不碰任何拒绝文本）**：**h1 + h6/h7/h8 + h12** —— 这也是最可能修掉两个 VMI-RESIDUAL-OP 硬失败（"failed to apply conversion patterns"）的一组；
+* **提交 B（单独筛查）**：**h4/h5**（负例风险）与 **h10**（IR 形状），按 §19.20.4 的准则处理。
+  
+另有一个**必须先回答的开问题**：staging 的**定义体**在 \`VMIToVPTOPatternInternals0.cpp:45\` 与 \`:232\`（声明在 \`DataLayoutInternals.cpp:1303-1308\`），F5 的 staging 语义必须先与这两个既有实现体对照，确认不是同一份代码再谈移植。
