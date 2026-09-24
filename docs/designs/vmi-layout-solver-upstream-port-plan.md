@@ -3438,3 +3438,18 @@ A1 的工作区改动与规格逐点对应（+23/−？，单文件）：
 
 **F5 现状**：A2（净 +1）、A1（中性）、**h4/h5（净 +1）** 已落；**h10 未做**（需先测），**F4 未做**（手工合并）。
 整体进度：641/556/85 → **641/557/84**，fidelity 14/33 → **15/33**。
+### 19.57 h10 的前置核查（本轮只读）：上游**已有** gs↔gs 处理，但不在 h10 说的那个函数里
+
+按 §19.54 的要求"先测后动"，我先查了上游现状：
+
+* VMIToVPTODataLayoutInternals.cpp:144-163 已有 materializeGroupSlotLaneStrideLayout：
+  条件是 **两端口都是 group slots、num_groups 相同、双方 slots == 8**，调用 materializeGroupSlotLaneStride 处理**组内的 lane-stride** 转换；
+* 也就是说"上游完全没有 gs↔gs 处理"是**不准确**的；F5 映射里 h10 指的是 **mask 粒度转换计划**（buildMaskGranularityConversionPlan）里的 gs↔gs **同 arity 恒等**分支 ——
+  与上面这个 **vreg** 侧的 lane-stride 助手**是不同的函数、不同的域**（mask vs vreg）。
+
+**因此 h10 仍然待判，但判据更清楚了**：需要找一个**两端都是 gs 且 arity 相同**的 mask 粒度转换用例，
+看上游的 **chunked 路径**（materializeMaskGranularityParts）是否已产出等价 IR；
+候选用例（本轮 grep）：vmi_to_vpto_ensure_mask_granularity_multistep、vmi_layout_cost_conformance_mask_granularity、vmi_to_vpto_gather_granularity_explicit/conflict。
+
+**若 chunked 已等价 ⇒ h10 与 A1 同类（潜伏正确性、可中性落地或直接不做）；若不等价 ⇒ 按 F5 处方实现并实测**。
+这条与 §19.42 同类：**映射里的结构描述需要对着树复核**（"某个分支不存在"是可证伪的断言）。
