@@ -2932,3 +2932,19 @@ file 级 12/33 从此只作为对外指标，不再作为定位工具。
 2. 统一拼写正是 5cc2fe723 刻意不再赋值的形态，而那是有实测收益的提交（519 → 528），选项 2 等于为一个上游从不赋值的拼写回退一次已量化的改进。
 
 门禁：fidelity 必须到 14/33（两个文件转绿）；上游失败集合必须仍为 88（0 新增）；若还有其它原因失败则报告、不在同一提交里追。提交信息须写明这是步骤 8 的期望重定基线（非产品改动）与前后数字。
+
+### 19.34 对两行重定基线的**前置复核**：同文件很可能还有更多陈旧期望（本轮只读发现）
+
+执行方在飞修改已复核，正是授权的两行（unified.pto:234 的 pto.vmi.vcmp → pto.vmi.mask_and、vsel_zero.pto:29 的 pto.vmi.vsel → pto.vmi.select，标签不动）。
+
+但我在只读复核时发现：**unified.pto 的 COST 清单里还有别的统一名**，而它们同样落在被重写的算子族里 —— 最明显的是第 235 行:
+
+    // COST: vmi-layout-cost-conformance vcmps_zeroing pto.vmi.vcmps relation=0 cost=0
+
+pto.vmi.vcmps 与 pto.vmi.vcmp 同属 VMILowerUnifiedToLegacy 的 Category C1（vcmps → broadcast + cmpf/cmpi + mask_and），
+所以按同一逻辑，它在 pass 于降级之后运行时也**打不出 pto.vmi.vcmps**。
+其余可疑项还有 pto.vmi.vaxpy / vlrelu / vprelu / vmula / vexpdif（需逐个确认是否被重写）；
+而 vadd_masked / vneg_zero / vln_zero 等已经被实测**打出并通过**（说明它们不属被重写族）。
+
+**处置**：要求执行方**迭代到绿色**，但每改一个名字都必须以**工具的实际输出行**为证据（即"管线真正打出的名字"），
+不得按猜测批量替换；若某行改完仍不匹配，就停下来报告而不是继续凑。这仍是 §19.23 第 1 类（合法决策 ⇒ 更新上游期望）的延伸。
