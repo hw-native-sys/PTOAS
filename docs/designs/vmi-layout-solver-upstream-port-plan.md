@@ -3384,3 +3384,18 @@ A1 的工作区改动与规格逐点对应（+23/−？，单文件）：
 1. **三族表行 + A2 的效果在 case 级可见**：8 个桶 B 里已有 5 个（ensure_layout、ensure_mask_layout、group_broadcast、gb-load 的两个用例归入其中）**移到下降侧**；
 2. **桶 B 只剩 3 个具名停止点**，与 §19.42 的结论一致 —— 其中 **group_reduce 那一族**要特别小心（上游明文禁止把 one-carrier 行加回），**mask_granularity** 的三条 c→c 已有 lowering 拒绝的反例；
 3. **下降侧现在是最大的一簇（4 个文件 + 2 个真硬失败同族）**，而 F5 只剩 h4/h5/h10 —— 也就是说"**下一步的主战场就是 F5 的剩余半批与 F4**"。
+### 19.54 优先级**修订**：先做 F5 剩余半批（h4/h5/h10），桶 B 暂停
+
+依据是 §19.53 的 case 级地图：三族表行 + A2 之后，**桶 B 由 8 降到 3**，而**下降侧由 1 涨到 4**（ensure_layout、ensure_mask_layout、group_broadcast、generated）。
+下降侧现在是**最大的一簇**，且与两个真硬失败同族 ⇒ 先把 F5 做完比继续在 3 个桶 B 点上逐个追更划算。
+
+**已下达（h4/h5，一次提交）**：依据执行方早先的对照结论（fork 的 materializeStaging* 与上游既有定义**是同一份代码**，故无助手可移植，**增量只在调用点路由**）：
+
+* materializeDeinterleaved2MaskLayout：当 sourceParts.size() != resultTypes.size() 时**改道 staging 助手**，而不是报 "…requires 2*N parts"；
+* materializeDeinterleaved4MaskLayout 同理（4*N 那条）。
+
+**筛查规则（这两处会移除拒绝 ⇒ 正是会翻转负例的那一类）**：两个套件 + fidelity 全测；对每个变化的用例给出"期望文本 + 管线现在的真实行为"；
+**若因"原本被拒的形状现在能下降"而翻转负例，不在同一提交里重定基线** —— 只要套件不超出该翻转就落地，并把翻转连同证据交回由主线裁决（与 A2 同一流程）；超出则回退。
+
+**h10 单独一次**，且**先测**：只有当 chunked 路径**并未**产出等价 IR 才动它，动之前先报告发现。
+之后是 **F4（手工合并）** 与 **步骤 8**；桶 B 若回头再做，注意 §19.42（group_reduce 的文本清单不可信、上游明文禁止加回 one-carrier 行）。
