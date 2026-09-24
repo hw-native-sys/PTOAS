@@ -3214,3 +3214,32 @@ mask 侧同理（sourceLayout == resultLayout、contiguous(laneStride 1) ↔ blo
 
 **一条诚实的余量**：执行方未逐形状插桩确认"哪个分支触发"（行为证据已无歧义）；若要逐例铁证，可再做一次 env 门控 trace，属可选。
 另：它确认 A2 **没有扰动**三个 conformance 家族（它们的 cost pass 无错、marker 行仍在）。
+### 19.46 A2 提交内容的**逐行核对**（本轮只读完成）
+
+我读了 5fefeb3cc 的两处 hunk，确认实现与裁决所依赖的语义一致：
+
+**h1（vec ensure，materializeEnsureLayoutConversion）**：
+
+    FailureOr<VMIEnsureLayoutFact> ensureFact =
+        supports.getEnsureLayoutFact(sourceType, resultType, &supportReason);
+    if (failed(ensureFact)) { ...保留原拒绝措辞... }
+    ...
+    if (ensureFact->forwardsPhysicalParts) {
+      if (failed(verifyIdentityPartForwarding(op, sourceParts, resultTypes, rewriter)))
+        return failure();
+      return SmallVector<Value>(sourceParts.begin(), sourceParts.end());
+    }
+    return materializeDataLayoutConversion(...);
+
+**h12（mask ensure，OneToNVMIEnsureMaskLayoutOpPattern）**：同形，出口用上游原有的 replacePhysicalResults 形态。
+
+**三条值得记下的正确性属性**：
+
+1. **不是盲信 fact**：两处都在转发前调用 verifyIdentityPartForwarding —— 若 fact 与实际 parts 不符则**失败回退**，
+   这是"恒等转发"这个短路**不会**造成静默错误的关键保障；
+2. **原有 fact 调用点与拒绝措辞保留**（supportReason 路径未动），所以对 fact 拒绝的形状，诊断行为不变；
+3. **代价模型早就在消费同一字段**（forwardsPhysicalParts），因此这次改动让"计价"与"实现"**口径一致** ——
+   这正是本项目反复出现的同一主题（solver/代价模型与 lowering 的口径对齐），只不过这次对齐的是 ensure 的物化路径。
+
+**因此 §19.45 的判决有了实现层面的支撑**：四个负例所钉的 residual 缺口，确实由"事实已声明恒等、但重写器仍走通用重排路径"造成，修复方式正当。
+**待办**：四个用例的正向重定基线（处方已在 §19.45 下达）。
