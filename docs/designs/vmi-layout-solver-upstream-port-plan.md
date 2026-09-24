@@ -4318,6 +4318,39 @@ fork 侧没有这段（fork **统一 slots=8**，所以它的表行 `{gb(1), gs(
 1. **可比性**：记录档是 fork 期、fork 编译器；本次是上游底座 + 我们的 solver ⇒ 先确认同样的 `kernel.pto` + 同样 flags（`--pto-arch a5 --pto-backend=vpto` ✓ 已核对）与同样 `soc-version`；
 2. **归因**：把该用例在本树的 IR（`ptoas` 产物）与"逐组复制/选择"形态对齐，判断这是**我们 solver 选出的方案**，还是**上游底座的材料化**（例如 §19.84/§19.85 那些 per-group BRC 路径）造成的；
 3. 若是 solver 的方案选择问题，那正是目标的核心（决策质量），要比 conformance 更优先。
+
+### 19.89 性能差距的**归因第一步（IR 级）**：本树把该内核展开成"逐组复制+选择+多次存储"
+
+**拿到生成代码的方式**：`ptoas <kernel.pto> --pto-arch a5 --pto-backend=vpto --emit-vpto -o dep.vpto.mlir`（`--help` 里的 `--emit-vpto`：写最终 post-pass VPTO IR）。
+
+**`scf.for` 循环体内每迭代的操作数（实测）**：
+
+    pto.vcadd × 16    pto.vsts × 10    pto.vdup × 8    pto.vsel × 6
+    pto.vmul × 2      pto.vlds × 2     pto.vcvt × 2    + flags/barrier
+
+⇒ 与 trace **逐条对上**：每迭代 VCADD≈15.8、VSTI≈9.7、VDUP=8、VSEL=6、VLDI=2、VMUL=2（IR 里 2 条 `vlds` 每迭代 ✓）。
+⇒ **每迭代约 46～50 条向量指令**；而记录档每迭代约 **10.7** 条（RV_*/iter 10.66 / 11.69）⇒ **约 4.3～4.7 倍**。
+
+**形态差异（这是归因的关键）**：
+
+| | 记录档（dep_base/split）| 本树 |
+|---|---|---|
+| 组运算 | **RV_VCGADD ≈ 1.9/迭代**（原生 group-add）| 无 VCGADD，改用 **RV_VCADD ≈ 16/迭代** + VDUP 8 + VSEL 6 |
+| 存储 | RV_VSTI 1.34/迭代 | **RV_VSTI 9.7/迭代** |
+| 加载 | RV_VLDI 1/迭代 | RV_VLDI 2/迭代 |
+
+内核里本来只有 2 条 `pto.vmi.vstore`；本树每迭代发出 **10 条 `pto.vsts`** ⇒ 说明**按组拆成了多次存储**，这与 §19.85 那片"per-group BRC / slots 路径"的形态一致。
+
+**本轮同时排掉一个假线索（值得记，避免后人重复踩）**：直接用 `pto-test-opt -vmi-layout-assignment` 跑该内核会报
+`VMI-LAYOUT-CONTRACT: no complete legal VMI layout plan exists for this component`（指向 `pto.vmi.create_mask`）——
+但**真正的 `ptoas` 管线跑同一内核 `exit=0` 且无此报错** ⇒ 那是**我漏了 ptoas 管线的前置 pass** 造成的假象，**不是** solver 的真实失败。
+（教训：性能/正确性归因必须用**权威管线**——`ptoas` 或文件自己的 RUN 行——手搓子管线会造出不存在的问题，同 §19.38。）
+
+**下一步（归因第二步）**：拿到**布局指派结果**（该内核各 value 被指派的 layout），据此判定：
+* 若指派本身与记录档不同（例如 vbrc/vcadd 的结果被指派成需要逐组展开的形态）⇒ **是我们 solver 的决策**（目标核心，优先处理）；
+* 若指派相同而展开不同 ⇒ 是**上游底座的材料化**差异。
+可用手段：`ptoas --emit-pto-ir`（lowering 后的 PTO IR）或 `--dump-vpto-ir`（post-pass VPTO IR 到 stderr）；
+必要时再照 §19.71/§19.78 的 env 插桩手法，在 `-vmi-layout-assignment` 里打印该组件被判定的候选与最终方案（注意用**完整管线**，见上）。
 ## 20. 交接快照（当前，取代 §16；§16 保留作历史）
 
 ### 20.1 目标与判据的**当前值**
