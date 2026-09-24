@@ -4198,6 +4198,45 @@ release 构建下不打印原因（同 §19.71/§19.78）⇒ **下一轮第一�
 
 **综上，A 类的性质已被拆成两半**：一半是上游的对齐证明要求（与暂存补丁同主题，属裁决范畴），
 一半是回退路径的 pair 推导（属可达工作，下一步：在 `lowerGroupSlotFallback` 内打印它实际用的 source/result 布局，再对照通用表）。
+
+### 19.85 **决定性结论**：group_broadcast 的 5 个残留用例也全是"上游对齐主题"的代价 ⇒ 该主题覆盖 4/12 个失败文件（含其 5 个用例）
+
+本轮把 §19.84 那一半"回退路径 pair"也量到底（插桩 `lowerGroupBroadcastParts` 入口 + 最小用例）：
+
+| 用例 | 回退的 source | result | numGroups |
+|---|---|---|---|
+| half_block_lane_stride2 | vreg<16xf32, gs(16, 1)> | vreg<64xf32, contiguous ls=2> | 16 |
+| quarter_block_lane_stride4 | vreg<32xf32, gs(32, 1)> | vreg<64xf32, contiguous ls=4> | 32 |
+| e2b_bf16_deinterleaved2 | vreg<8xbf16, gs(8, 1)> | vreg<256xbf16, deinterleaved = 2> | 8 |
+
+**为什么 source 是 slots = 1**：`buildGroupBroadcastFallbackSourcePlan`（`PatternInternals3.cpp:1785-1825`）由**对齐条件**决定：
+
+    // The slots=8 plan reads every group through pto.vsldb, whose effective source
+    // address must be 32-byte aligned; a unit group stride does not imply that.
+    bool alignedUnitStride = unitStride && isKnownAddressAligned(..., kMemoryAccessAlignmentBytes);
+    int64_t slots = alignedUnitStride ? 8 : 1;
+
+⇒ fixture 用 ptr + %off（对齐未知）⇒ 一律走 **slots = 1** 计划。
+
+**而 slots = 1 的 lane-strided / deinterleaved 形式没有表行**：
+* 我们的通用表只有 `{gb(2), gs(1), c()}`、`{gb(4), gs(1), c()}`、`{gbFull(), gs(1), c()}`、`{gbFull(2), gs(1), d(2)}`、`{gbFull(4), gs(1), d(4)}`；
+* **pristine origin/master 的同表也一样**（用 `git show origin/master:…/VMILayoutSupportGroupBroadcastTables.inc` 逐行核对：gs(1) 行只有 c() 以及 gbFull(2/4) 的 d2/d4）；
+* ⇒ **在上游底座上这些形状同样下降不了**，不是我们漏行。
+
+**这段逻辑的来源**：`git log -S alignedUnitStride` ⇒ 又是 **`6b1ba8d99`**（与 §19.80 的门槛同一个 commit：上游那次"grouped reductions with the slots=1 dense fallback"重构）；
+fork 侧没有这段（fork **统一 slots=8**，所以它的表行 `{gb(1), gs(8), ls(2)}` 等**总是**能命中 ⇒ fork 当年这些用例能过）。
+
+**统一后的结论**：
+
+| 失败文件/用例 | 根因 |
+|---|---|
+| load_store、group_memory | 代价侧：直接形式要求地址可证明对齐（§19.61/§19.65 暂存补丁）|
+| group_broadcast（5 个用例）| 下降侧：E2B 要求可证明对齐（2 例）+ slots=1 回退计划无表行（3 例）|
+| masked_load_store | masked_store 的对齐策略（§19.77）|
+
+⇒ **"上游要求地址对齐证明"这一个设计主题，覆盖了 12 个失败文件里的 4 个（并含 group_broadcast 的 5 个用例）**；
+该主题由 `0a3e01731`/`6b1ba8d99` 等上游 fix 引入，fork 时代不存在。
+剩下的真实移植缺口只有：`ensure_layout`（f16↔d4 语义）、`group_broadcast` 的低精度 vsel 合并（3 例）、以及 3 个 pmode/8-bit 前提文件。
 ## 20. 交接快照（当前，取代 §16；§16 保留作历史）
 
 ### 20.1 目标与判据的**当前值**
