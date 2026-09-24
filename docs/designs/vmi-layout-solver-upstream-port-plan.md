@@ -3811,6 +3811,30 @@ tie-break 插桩方式（env 守卫 + llvm::errs，只在两个比较器里打�
 ⇒ **本轮把「33/33」的分母问题正式提出**：**四个文件在本底座上按构造不可达** ⇒ 可达集 **29/33**。
 当前通过 **19/33**（即 **19/29 可达**）。**这需要裁决**：把 29 作为目标分母（四个文件标注「断言的前提已被上游 8a0a5689b 删除」），还是另立处置（例如移出移植集并记录）。
 本移植的纪律不允许为了让它们变绿而放宽 solver 或改期望。
+### 19.70 逐用例量具 + 三个硬下降文件的**用例级清单**（本轮新增，步骤 8 的主量具）
+
+**新量具** `step9/per_case_lowering.py`：把一个 conformance 文件按函数拆成**一函数一模块**，用**文件自己的 RUN 管线**逐个跑，报告每个用例的 exit 与首条诊断。
+理由：下降 pass 在**第一条错误**处停止，所以「文件失败」完全掩盖了「到底多少个用例失败、分别是哪些」——本轮的三个文件一跑就看清了。
+（产物：`step9/case_inventory.txt`；本轮共 **12 个用例**失败，分布在 3 个文件里。）
+
+| 文件 | 用例级结果 | 失败用例与首条诊断 |
+|---|---|---|
+| ensure_layout | **26/28 通过** | r04_c_to_d4_f16、r08_d4_to_c_f16 —— 都是 **f16 的 contiguous ↔ deinterleaved = 4**，报 `failed to apply conversion patterns`；f32 的同类（r11/r13）、lane-stride、group-slot 全过 |
+| generated | **4/6 通过** | create_group_mask_dynamic_block_deinterleaved4、create_group_mask_constant_block_deinterleaved4；残留 `pto.vmi.create_group_mask` / `create_mask` / `constant_mask` |
+| group_broadcast | **3/11 通过** | **两类**：① 3 例（two_blocks_contiguous、four_blocks_contiguous、fallback_f8_contiguous）失败于**我们自己下降输出触发校验器**：`pto.vsel op src0 type must not use low-precision ...`；② 5 例残留 `pto.vmi.group_broadcast_load` |
+
+**ensure_layout 那两例的根因（已定位到上游代码，但结论是「不能盲搬」）**：
+
+* 上游 `materializeDeinterleaved4DataLayout` 要求 `resultTypes.size() % 4 == 0`，否则 `requires 4*N parts` 拒绝；f16 的 256 元素只有 **2** 个载波（f16 每载波 128 道）⇒ 非 4 的倍数 ⇒ 被拒。f32 的 256 元素是 4 个载波 ⇒ 整除 ⇒ 通过。
+* **fork 的实现是「一般化」的**：`lib/PTO/Transforms/VMIToVPTO.cpp:4341-4403` 用 `getPartCounts(totalParts, 4)`（base + remainder 分配）与 `getPartOffsets`，并对缺失的 part **回退到 `sourceParts.back()`**。
+* **但不能照抄**：fork 的 part→group 映射是**按 part 连续切片**，上游的是**按 group 跨步**（`sourceParts[group]`、`sourceParts[groups+group]`、…）—— 两种约定不同；整体替换会改变**当前已通过的 f32 用例**的 IR。⇒ 需要**语义判断**（f16 d4 的物理含义到底是什么），不是搬运。
+* 同时这是 **§19.59 的规格缺口**：`step7/F4_data_layout_conversion.diff` **没有收录**这两个函数（它只含「contiguous 桥」与 deint4↔deint2）。⇒ 清单类工作仍可能漏 hunk（与 §19.42/§19.60 的教训同源）。
+
+**下一批优先级（按「根因单一、代价小」排）**：
+1. `pto.vsel` 低精度校验失败（**3 个用例、一个根因**，出在我们自己的下降输出里，属可修 bug）；
+2. generated 的 block_deinterleaved=4 组掩码创建（2 个用例，残留 `create_group_mask`）；
+3. ensure_layout 的 f16↔d4（2 个用例，需先定性物理约定）；
+4. remaining：group_broadcast_load 残留（5 例）、group_reduce/mask_granularity/group_broadcast_op 三个桶 B 停止点、group_memory 的双向差异、group_reduce_quarter 的 8-bit 归约、两个 align 合法性用例（masked_load_store）与 load_store（§19.63 暂存补丁）。
 ## 20. 交接快照（当前，取代 §16；§16 保留作历史）
 
 ### 20.1 目标与判据的**当前值**
