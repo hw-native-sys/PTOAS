@@ -2948,3 +2948,31 @@ pto.vmi.vcmps 与 pto.vmi.vcmp 同属 VMILowerUnifiedToLegacy 的 Category C1（
 
 **处置**：要求执行方**迭代到绿色**，但每改一个名字都必须以**工具的实际输出行**为证据（即"管线真正打出的名字"），
 不得按猜测批量替换；若某行改完仍不匹配，就停下来报告而不是继续凑。这仍是 §19.23 第 1 类（合法决策 ⇒ 更新上游期望）的延伸。
+### 19.35 重定基线第一步的实测与**证据化清单**（本轮验证 + 只读取证）
+
+提交 db1447ea1（两行重定基线）经我独立实测：
+
+| 读数 | 结果 |
+|---|---|
+| 两个文件 | vsel_zero **转绿**，unified 仍红（正是 §19.34 预判）|
+| fidelity | 12/33 → **13/33** |
+| 全量 | 641/553/88 → **641/554/87**（+1 修复、**0 新增**）|
+
+⇒ 严格改进、零回归 ⇒ **保留**（"14/33" 那个门槛是我在 §19.34 预判之前设的，一步只能到 13）。
+
+**unified.pto 的剩余失败与工具实际输出对照（本轮取证，作为改动依据）**：
+失败点现在在 :242（binary_family pto.vmi.vmax），但该行**前缀其实能匹配** —— 真正的原因是 FileCheck 按顺序扫描，
+而**更早的陈旧行**（:235 vcmps_zeroing 期望 pto.vmi.vcmps）没被修正，挡住了后续匹配。
+把工具输出与文件期望逐条对照，仍**陈旧**的算子名至少有：
+
+    vcmps_zeroing        期望 pto.vmi.vcmps   → 实际 pto.vmi.mask_and
+    bitwise_shift_math   期望 pto.vmi.vand    → 实际 pto.vmi.andi
+                         期望 pto.vmi.vor     → 实际 pto.vmi.ori
+                         期望 pto.vmi.vxor    → 实际 pto.vmi.xori
+                         期望 pto.vmi.vnot    → 实际 pto.vmi.not
+    mask_logic_family    期望 pto.vmi.vand/vxor/vnot → 实际 pto.vmi.mask（三条都是）
+    vcmp_deinterleaved   （同族，需一并核对）
+
+  而 vadd/vneg/vln/vrelu/vexp/vsub/vmul/vdiv/vmin/vmax/vaxpy/vlrelu/vprelu/vmula/vexpdif 等**实测已匹配**。
+
+**规则不变**：逐条按工具输出改，改完立刻重测；每条改动都要在提交信息里附"工具实际打出的名字"。
