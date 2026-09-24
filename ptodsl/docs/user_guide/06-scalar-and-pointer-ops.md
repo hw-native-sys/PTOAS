@@ -415,7 +415,7 @@ write `pto.max(a, b)`, `pto.min(a, b)`, and `pto.abs(x)` explicitly.
 #### `pto.add(a, b, *, overflow=None, fastmath=None)`
 #### `pto.sub(a, b, *, overflow=None, fastmath=None)`
 #### `pto.mul(a, b, *, overflow=None, fastmath=None)`
-#### `pto.div(a, b, *, fastmath=None)`
+#### `pto.div(a, b, *, fastmath=None, precision=None)`
 #### `pto.floordiv(a, b)`
 #### `pto.ceildiv(a, b)`
 #### `pto.rem(a, b, *, fastmath=None)`
@@ -427,6 +427,13 @@ family. PTODSL derives integer signedness from the authored type. Integer
 overflow controls are only valid for integer operations; `fastmath` is only
 valid for floating-point operations. `floordiv` and `ceildiv` accept integer
 and index operands only.
+
+For floating-point `pto.div`, pass
+`precision=pto.DivPrecision.HighPrecision` only when the additional
+precision is required. High-precision division is supported only on A5 and is
+expanded through SoftLib. This expansion can substantially increase the
+generated instruction count and execution latency. Ordinary `/` and the
+default `precision` keep the default-precision path.
 
 #### `pto.max(a: ScalarType, b: ScalarType) -> ScalarType`
 

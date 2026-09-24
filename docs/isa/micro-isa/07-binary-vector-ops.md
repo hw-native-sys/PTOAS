@@ -96,6 +96,23 @@ for (int i = 0; i < N; i++)
 - **inputs:** `%lhs` is the numerator, `%rhs` is the denominator, and `%mask`
   selects active lanes.
 - **outputs:** `%result` is the lane-wise quotient.
+- **precision:** `precisionType = #pto<div_precision high_precision>` selects
+  A5 f32 residual correction. The default is `#pto<div_precision default>`. 
+  High precision requires a `b32` mask. Other element types and targets are
+  rejected for this mode. PTODSL accepts
+  `pto.vdiv(lhs, rhs, mask, precision=pto.DivPrecision.HighPrecision)`.
+  Correction compares fused residuals for the native quotient and its adjacent
+  f32 representations; comparisons are strict, so an equal residual keeps the
+  native quotient (the native result is therefore the tie-side choice). Native
+  zero, infinity and NaN results are preserved,
+  including signed zero and target-specific NaN payloads. Subnormal handling
+  inherits native vector arithmetic; this mode does not request gradual
+  underflow or modify the floating-point control state. Inactive lanes follow
+  the ordinary vector `vdiv` zeroing semantics and are written as positive zero
+  (`+0`); they do not preserve a previous destination value. The supplied mask
+  is applied consistently throughout the operation.
+  Unlike tile division, this operation consumes and returns register values
+  without requiring a destination tile.
 - **constraints and limitations:** i16 and i32 division is rounded toward zero
   and is exact for every nonzero denominator, including values outside f32's
   exact range. It is expanded late to a PTODSL SoftOps implementation because

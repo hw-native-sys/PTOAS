@@ -17,6 +17,7 @@
 
 include "mlir/IR/OpBase.td"
 include "mlir/IR/BuiltinAttributeInterfaces.td"
+include "PTO/IR/PTOAttrs.td"
 
 // Generic value operations keep PTODSL-authored scalar and builtin-vector
 // semantics in the PTO dialect until execution-scope validation has completed.
@@ -210,7 +211,9 @@ def PTO_DivFOp : PTO_GenericOp<"divf", [
     PTO_GenericFloatType:$lhs,
     PTO_GenericFloatType:$rhs,
     DefaultValuedAttr<PTO_FastMathAttr,
-                      "::mlir::pto::FastMathFlags::none">:$fastmath
+                      "::mlir::pto::FastMathFlags::none">:$fastmath,
+    DefaultValuedAttr<PTO_DivPrecisionAttr,
+                      "::mlir::pto::DivPrecision::Default">:$precisionType
   );
   let results = (outs PTO_GenericFloatType:$result);
   let hasVerifier = 1;

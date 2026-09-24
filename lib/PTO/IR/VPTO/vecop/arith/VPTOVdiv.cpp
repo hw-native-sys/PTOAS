@@ -14,4 +14,22 @@ using namespace mlir;
 using namespace mlir::pto;
 using namespace mlir::pto::vecop_detail;
 
-LogicalResult VdivOp::verify() { return verifyBinaryVecOp(*this); }
+LogicalResult VdivOp::verify() {
+  if (failed(verifyBinaryVecOp(*this))) {
+    return failure();
+  }
+  const bool precise = getPrecisionType() == DivPrecision::HighPrecision;
+  if (!precise) {
+    return success();
+  }
+  auto type = cast<VRegType>(getResult().getType());
+  if (!type.getElementType().isF32()) {
+    return emitOpError("high_precision currently requires f32 vector operands");
+  }
+  const bool validMask =
+      cast<MaskType>(getMask().getType()).getGranularity() == "b32";
+  if (!validMask) {
+    return emitOpError("high_precision f32 requires a b32 mask");
+  }
+  return success();
+}

@@ -63,8 +63,13 @@ static bool isSoftLibVdivIntegerVReg(Type type) {
          (integer.isSigned() || integer.isSignless());
 }
 
-// Integer-element pto.vdiv on A5 must be handled here (SoftOps or an explicit
-// compile-time rejection).  Floating-point vdiv is native and is left alone.
+// A5 high-precision floating division and integer division use SoftOps.
+// Default floating division remains a native vector instruction.
+static bool isPreciseVdiv(Operation *op) {
+  auto div = dyn_cast<VdivOp>(op);
+  return div && div.getPrecisionType() == DivPrecision::HighPrecision;
+}
+
 static bool isIntegerVdiv(Operation *op) {
   auto vdiv = dyn_cast<VdivOp>(op);
   if (!vdiv) {
@@ -271,12 +276,27 @@ struct PTOExpandSoftLibPass
                                 MLIRContext &context, StringRef target,
                                 const std::shared_ptr<SoftLibService> &service) {
     auto vreg = cast<VRegType>(op.getLhs().getType());
+    if (isPreciseVdiv(op)) {
+      std::string specs = "{\"dtype\":\"f32\",\"mask\":\"b32\",\"precision\":\"high_precision\",\"lanes\":";
+      specs += std::to_string(vreg.getElementCount()) + "}";
+      return materializeCall(op, module, context, target, "pto.vdiv", specs,
+                             "vdiv_f32_hp", op->getOperands(), op.getResult(), service);
+    }
     std::string stem = "vdiv_" + getIntegerDtype(op) + "_" +
                        std::to_string(vreg.getElementCount());
     return materializeCall(op, module, context, target, "pto.vdiv",
                            buildVdivRequestJson(op), stem,
                            ValueRange{op.getLhs(), op.getRhs(), op.getMask()},
                            op.getResult(), service);
+  }
+
+  LogicalResult materializeScalarDiv(
+      DivFOp op, ModuleOp module, StringRef target,
+      const std::shared_ptr<SoftLibService> &service) {
+    return materializeCall(op, module, getContext(), target, "pto.divf",
+                           "{\"dtype\":\"f32\",\"precision\":\"high_precision\"}",
+                           "div_f32", op->getOperands(), op.getResult(),
+                           service);
   }
 
   // Validates one integer pto.vdiv against the A5 Software Library contract
@@ -308,6 +328,72 @@ struct PTOExpandSoftLibPass
     return false;
   }
 
+  static bool isSoftLibCandidate(Operation *op) {
+    auto div = dyn_cast<DivFOp>(op);
+    bool preciseDiv =
+        div && div.getPrecisionType() == DivPrecision::HighPrecision;
+    return isa<SinOp, CosOp>(op) || isIntegerVdiv(op) ||
+           isPreciseVdiv(op) || preciseDiv;
+  }
+
+  static SmallVector<Operation *> collectCandidates(ModuleOp module) {
+    SmallVector<Operation *> candidates;
+    module.walk([&candidates](Operation *op) {
+      if (isSoftLibCandidate(op)) {
+        candidates.push_back(op);
+      }
+    });
+    return candidates;
+  }
+
+  bool ensureVdivContract(VdivOp vdiv) {
+    bool supportedVdiv =
+        isPreciseVdiv(vdiv) || checkVdivAgainstSoftLibContract(vdiv);
+    if (supportedVdiv) {
+      return true;
+    }
+    signalPassFailure();
+    return false;
+  }
+
+  LogicalResult materializeTrigCandidate(
+      Operation *op, ModuleOp module, StringRef target,
+      const std::shared_ptr<SoftLibService> &service) {
+    bool supportedType = op->getResult(0).getType().isF32() &&
+                         op->getOperand(0).getType().isF32();
+    if (!supportedType) {
+      return op->emitError(
+          "A5 SoftOps pto.sin/pto.cos require f32 scalar operands");
+    }
+    StringRef opName = isa<SinOp>(op) ? "pto.sin" : "pto.cos";
+    return materializeTrig(op, module, getContext(), target, opName, service);
+  }
+
+  void materializeCandidate(Operation *op, ModuleOp module, StringRef target,
+                            const std::shared_ptr<SoftLibService> &service) {
+    if (auto div = dyn_cast<DivFOp>(op)) {
+      if (failed(materializeScalarDiv(div, module, target, service))) {
+        signalPassFailure();
+      }
+      return;
+    }
+    if (auto vdiv = dyn_cast<VdivOp>(op)) {
+      bool supportedVdiv = ensureVdivContract(vdiv);
+      if (!supportedVdiv) {
+        return;
+      }
+      LogicalResult result =
+          materializeVdiv(vdiv, module, getContext(), target, service);
+      if (failed(result)) {
+        signalPassFailure();
+      }
+      return;
+    }
+    if (failed(materializeTrigCandidate(op, module, target, service))) {
+      signalPassFailure();
+    }
+  }
+
   void runOnOperation() override {
     ModuleOp module = getOperation();
     ModuleOp topLevel = getTopLevelModuleOp(module);
@@ -318,13 +404,7 @@ struct PTOExpandSoftLibPass
     if (auto attr = topLevel->getAttrOfType<StringAttr>("pto.target_arch")) {
       targetArch = attr.getValue();
     }
-    SmallVector<Operation *> candidates;
-    module.walk([&candidates](Operation *op) {
-      bool isSoftLibCandidate = isa<SinOp, CosOp>(op) || isIntegerVdiv(op);
-      if (isSoftLibCandidate) {
-        candidates.push_back(op);
-      }
-    });
+    SmallVector<Operation *> candidates = collectCandidates(module);
     if (candidates.empty()) {
       return;
     }
@@ -335,27 +415,7 @@ struct PTOExpandSoftLibPass
       return;
     }
     for (Operation *op : candidates) {
-      if (auto vdiv = dyn_cast<VdivOp>(op)) {
-        if (!checkVdivAgainstSoftLibContract(vdiv)) {
-          signalPassFailure();
-          continue;
-        }
-        if (failed(materializeVdiv(vdiv, module, getContext(), targetArch,
-                                   service))) {
-          signalPassFailure();
-        }
-        continue;
-      }
-      if (!op->getResult(0).getType().isF32() || !op->getOperand(0).getType().isF32()) {
-        op->emitError("A5 SoftOps pto.sin/pto.cos require f32 scalar operands");
-        signalPassFailure();
-        continue;
-      }
-      StringRef opName = isa<SinOp>(op) ? "pto.sin" : "pto.cos";
-      if (failed(materializeTrig(op, module, getContext(), targetArch, opName,
-                                 service))) {
-        signalPassFailure();
-      }
+      materializeCandidate(op, module, targetArch, service);
     }
   }
 };

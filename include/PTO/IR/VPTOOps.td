@@ -2621,7 +2621,15 @@ class PTO_BinaryVecOp<string mnemonic> : PTO_VectorMicroOp<mnemonic, [Pure]> {
 def PTO_VaddOp : PTO_BinaryVecOp<"vadd">;
 def PTO_VsubOp : PTO_BinaryVecOp<"vsub">;
 def PTO_VmulOp : PTO_BinaryVecOp<"vmul">;
-def PTO_VdivOp : PTO_BinaryVecOp<"vdiv">;
+def PTO_VdivOp : PTO_BinaryVecOp<"vdiv"> {
+  let arguments = (ins
+    PTO_VectorType:$lhs,
+    PTO_VectorType:$rhs,
+    PTO_MaskTypeConstraint:$mask,
+    DefaultValuedAttr<PTO_DivPrecisionAttr,
+                     "::mlir::pto::DivPrecision::Default">:$precisionType
+  );
+}
 def PTO_VmaxOp : PTO_BinaryVecOp<"vmax">;
 def PTO_VminOp : PTO_BinaryVecOp<"vmin">;
 def PTO_VandOp : PTO_BinaryVecOp<"vand">;

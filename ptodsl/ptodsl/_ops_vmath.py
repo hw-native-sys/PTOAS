@@ -13,6 +13,7 @@ from ._ops_imports import *  # noqa: F401,F403
 
 from ._ops_common import (
     _coerce_i64,
+    _normalize_enum_attr,
     _coerce_index,
     _coerce_scalar_like_vector_element,
     _elements_per_vreg,
@@ -109,9 +110,16 @@ def vxor(lhs, rhs, mask):
     return _emit_binary_vec_op(_pto.VxorOp, lhs, rhs, mask)
 
 
-def vdiv(lhs, rhs, mask):
-    """``pto.vdiv`` – element-wise divide."""
-    return _emit_binary_vec_op(_pto.VdivOp, lhs, rhs, mask)
+def vdiv(lhs, rhs, mask, *, precision=None):
+    """Element-wise division with optional A5 residual correction."""
+    result = _emit_binary_vec_op(_pto.VdivOp, lhs, rhs, mask)
+    if precision is not None:
+        precision = _normalize_enum_attr(
+            precision, enum_cls=_pto.DivPrecision,
+            attr_cls=_pto.DivPrecisionAttr, context="vdiv precision",
+        )
+        unwrap_surface_value(result).owner.attributes["precisionType"] = precision
+    return result
 
 
 def vtrc(inp, mask, *, rnd="Z"):

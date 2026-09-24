@@ -34,26 +34,59 @@ class _SoftLibTraceRuntime(CallbackTracingRuntime):
         self._result = unwrap_surface_value(self._callback(*args))
 
 
+_INTEGER_VDIV_DTYPES = {"i16", "si16", "i32", "si32"}
+
+
+def _integer_vdiv_dtype(dtype):
+    if dtype == "si16":
+        return pto.si16
+    if dtype == "si32":
+        return pto.si32
+    return pto.i32 if dtype == "i32" else pto.i16
+
+
+def _resolve_integer_vdiv_request(specs):
+    dtype = specs["dtype"]
+    lanes = int(specs.get("lanes", 128 if dtype in {"i16", "si16"} else 64))
+    mask_bits = specs.get("mask", "b16" if dtype in {"i16", "si16"} else "b32")
+    module_name = "div_i16_soft" if dtype in {"i16", "si16"} else "div_i32_soft"
+    helper = getattr(importlib.import_module("SoftOps"), module_name)
+    vreg = vreg_type(lanes, _integer_vdiv_dtype(dtype))
+    arg_types = [vreg, vreg, mask_type(mask_bits)]
+    return module_name, helper, arg_types, [vreg]
+
+
+def _resolve_high_precision_vdiv_request(target, specs):
+    if target != "a5" or specs.get("dtype") != "f32" or specs.get("mask") != "b32":
+        raise ValueError("high-precision vector division currently requires A5 f32 with b32 mask")
+    from SoftOps.div_vector import div_vf32_soft
+
+    vector = vreg_type(int(specs["lanes"]), pto.f32)
+    return "div_vf32_soft", div_vf32_soft, [vector, vector, mask_type("b32")], [vector]
+
+
+def _resolve_high_precision_divf_request(target):
+    if target != "a5":
+        raise ValueError("high-precision scalar division requires target A5")
+    helper = getattr(importlib.import_module("SoftOps"), "div_f32_soft")
+    return "div_f32_soft", helper, [pto.f32, pto.f32], [pto.f32]
+
+
+def _resolve_trig_request(op):
+    module_name = "sin_f32_soft" if op == "pto.sin" else "cos_f32_soft"
+    helper = getattr(importlib.import_module("SoftOps"), module_name)
+    return module_name, helper, [pto.f32], [pto.f32]
+
+
 def _resolve_softlib_request(target, op, specs):
-    if op == "pto.vdiv" and specs.get("dtype") in {"i16", "si16", "i32", "si32"}:
-        dtype = specs["dtype"]
-        lanes = int(specs.get("lanes", 128 if dtype in {"i16", "si16"} else 64))
-        mask_bits = specs.get("mask", "b16" if dtype in {"i16", "si16"} else "b32")
-        module_name = "div_i16_soft" if dtype in {"i16", "si16"} else "div_i32_soft"
-        helper = getattr(importlib.import_module("SoftOps"), module_name)
-        integer_dtype = pto.si16 if dtype == "si16" else pto.i16
-        if dtype in {"i32", "si32"}:
-            integer_dtype = pto.si32 if dtype == "si32" else pto.i32
-        arg_types = [
-            vreg_type(lanes, integer_dtype),
-            vreg_type(lanes, integer_dtype),
-            mask_type(mask_bits),
-        ]
-        return module_name, helper, arg_types, [arg_types[0]]
+    if op == "pto.vdiv" and specs.get("dtype") in _INTEGER_VDIV_DTYPES:
+        return _resolve_integer_vdiv_request(specs)
+    if op == "pto.vdiv" and specs.get("precision") == "high_precision":
+        return _resolve_high_precision_vdiv_request(target, specs)
+    if op == "pto.divf" and specs == {"dtype": "f32", "precision": "high_precision"}:
+        return _resolve_high_precision_divf_request(target)
     if op in {"pto.sin", "pto.cos"}:
-        module_name = "sin_f32_soft" if op == "pto.sin" else "cos_f32_soft"
-        helper = getattr(importlib.import_module("SoftOps"), module_name)
-        return module_name, helper, [pto.f32], [pto.f32]
+        return _resolve_trig_request(op)
     raise ValueError(f"no SoftOps implementation registered for {target}:{op}:{specs}")
 
 

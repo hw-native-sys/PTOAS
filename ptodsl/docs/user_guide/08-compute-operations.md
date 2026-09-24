@@ -43,7 +43,8 @@ pto.tile.mul(scale_tile, data_tile, scaled_tile)
 
 #### `pto.tile.div(src0: Tile, src1: Tile, dst: Tile, *, precision: Precision = Precision.Default) -> None`
 
-**Description**: Element-wise division. `precision` can be `Default` or `HighPrecision` (f16/f32 only).
+**Description**: Element-wise division. `precision` can be `Default` or
+`HighPrecision` (f16/f32 only).
 
 `div_precision` remains accepted temporarily for compatibility and emits a
 `PTODSLDeprecationWarning`; use `precision` for new code. The same migration
@@ -89,7 +90,8 @@ Element-wise operations between a tile and a scalar.
 
 #### `pto.tile.divs(src: Tile, scalar: ScalarType, dst: Tile, *, precision: Precision = Precision.Default) -> None`
 
-**Description**: Element-wise tile-scalar division: `dst[i,j] = src[i,j] / scalar`.
+**Description**: Element-wise tile-scalar division:
+`dst[i,j] = src[i,j] / scalar`.
 
 ---
 
@@ -1780,11 +1782,18 @@ exp_vec = pto.vexp(s_row, col_mask)
 #### `pto.vadd(v0: VRegType, v1: VRegType, mask: MaskType) -> VRegType`
 #### `pto.vsub(v0: VRegType, v1: VRegType, mask: MaskType) -> VRegType`
 #### `pto.vmul(v0: VRegType, v1: VRegType, mask: MaskType) -> VRegType`
-#### `pto.vdiv(v0: VRegType, v1: VRegType, mask: MaskType) -> VRegType`
+#### `pto.vdiv(v0: VRegType, v1: VRegType, mask: MaskType, *, precision=None) -> VRegType`
 #### `pto.vmax(v0: VRegType, v1: VRegType, mask: MaskType) -> VRegType`
 #### `pto.vmin(v0: VRegType, v1: VRegType, mask: MaskType) -> VRegType`
 
 **Description**: Element-wise binary operation: `result[i] = v0[i] <op> v1[i]` for lanes where `mask[i]` is true.
+
+For `pto.vdiv`, pass
+`precision=pto.DivPrecision.HighPrecision` only when the additional
+precision is required. High-precision vector division is supported only on A5
+and is expanded through SoftLib. This expansion can substantially increase the
+generated instruction count and execution latency. The default mode retains
+the ordinary vector division path.
 
 **Parameters**:
 

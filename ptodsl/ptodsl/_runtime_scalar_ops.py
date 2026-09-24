@@ -39,6 +39,8 @@ def emit_runtime_binary_op(op_name: str, lhs, rhs, *, attributes=None):
         {"truediv", "floordiv", "ceildiv", "mod", "shr"})
     attributes = dict(attributes or {})
     if kind in {"index", "integer"}:
+        if "precisionType" in attributes:
+            raise TypeError("precisionType requires floating-point operands")
         if "fastmath" in attributes:
             raise TypeError(
                 f"runtime scalar operator '{op_name}' does not accept fastmath for integer/index values"

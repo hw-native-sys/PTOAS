@@ -173,6 +173,9 @@ static bool requiresSimtHardwareConversion(Operation *op, Type srcType,
 static bool isPackedTwoLaneF16(Type type);
 
 static bool isExpectedGenericResidual(Operation *op) {
+  if (auto div = dyn_cast<pto::DivFOp>(op)) {
+    return div.getPrecisionType() == pto::DivPrecision::HighPrecision;
+  }
   if (auto absf = dyn_cast<pto::AbsFOp>(op)) {
     return isPackedTwoLaneFloat(absf.getResult().getType());
   }
@@ -351,6 +354,10 @@ struct LowerDivFPattern final : OpRewritePattern<pto::DivFOp> {
 
   LogicalResult matchAndRewrite(pto::DivFOp op,
                                 PatternRewriter &rewriter) const override {
+    const bool precise = op.getPrecisionType() == pto::DivPrecision::HighPrecision;
+    if (precise) {
+      return rewriter.notifyMatchFailure(op, "requires SoftLib expansion");
+    }
     auto lowered =
         rewriter.create<arith::DivFOp>(op.getLoc(), op.getLhs(), op.getRhs());
     copyAttrIfPresent(op, lowered, "fastmath");

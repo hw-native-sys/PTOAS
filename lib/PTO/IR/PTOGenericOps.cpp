@@ -168,7 +168,23 @@ LogicalResult ShlOp::verify() {
   return rejectSemanticAttrs(*this, {"fastmath", "roundingmode", "signedness"});
 }
 
-LogicalResult DivFOp::verify() { return verifyFloatArithmeticOp(*this); }
+LogicalResult DivFOp::verify() {
+  if (failed(verifyFloatArithmeticOp(*this))) {
+    return failure();
+  }
+  const bool precise = getPrecisionType() == DivPrecision::HighPrecision;
+  if (!precise) {
+    return success();
+  }
+  if (!getResult().getType().isF32()) {
+    return emitOpError("high_precision requires scalar f32 operands");
+  }
+  const bool hasFastmath = getFastmath() != FastMathFlags::none;
+  if (hasFastmath) {
+    return emitOpError("high_precision does not allow fastmath flags");
+  }
+  return success();
+}
 LogicalResult RemFOp::verify() { return verifyFloatArithmeticOp(*this); }
 
 LogicalResult CmpIOp::verify() {

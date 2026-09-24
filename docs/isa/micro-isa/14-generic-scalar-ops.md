@@ -65,7 +65,16 @@ hardware-facing operation surface and are not accepted as common value types.
   element. Integer overflow follows the element type's ordinary wraparound
   behavior.
 - `pto.divf` accepts floating-point scalars or builtin vectors and performs
-  floating-point division elementwise.
+  floating-point division elementwise. The optional attribute
+  `precisionType = #pto<div_precision high_precision>` requests correctly rounded
+  round-to-nearest-even division for scalar `f32` on A5. The default is
+  `#pto<div_precision default>`. High precision cannot be combined with fastmath
+  flags and does not support builtin vectors. Finite nonzero inputs retain
+  subnormal inputs and gradual underflow; overflow produces signed infinity.
+  Zero, infinity and NaN inputs retain the default division behavior, including
+  its target-specific NaN payloads. The PTODSL spelling is
+  `pto.div(lhs, rhs, precision=pto.DivPrecision.HighPrecision)`; ordinary `/`
+  retains default precision.
 
 Integer overflow and floating-point exceptional values follow the ordinary
 semantics of the corresponding element type. Optional semantic attributes are

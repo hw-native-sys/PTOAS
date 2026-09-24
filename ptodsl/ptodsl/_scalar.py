@@ -59,6 +59,7 @@ from ._runtime_scalar_ops import (
     emit_runtime_unary_op,
     normalize_runtime_binary_operands,
 )
+from ._ops_common import _normalize_enum_attr
 from ._surface_values import (
     AddressOffsetValue,
     AllocatedBufferValue,
@@ -107,11 +108,17 @@ def ceildiv(lhs, rhs):
     return wrap_surface_value(emit_runtime_binary_op("ceildiv", unwrap_surface_value(lhs), unwrap_surface_value(rhs)))
 
 
-def div(lhs, rhs, *, fastmath=None):
-    """Divide runtime values and select integer or floating PTO IR."""
+def div(lhs, rhs, *, fastmath=None, precision=None):
+    """Divide runtime values, optionally requesting correctly rounded A5 f32."""
+    attrs = _arithmetic_attrs(fastmath=fastmath)
+    if precision is not None:
+        attrs["precisionType"] = _normalize_enum_attr(
+            precision, enum_cls=_pto.DivPrecision,
+            attr_cls=_pto.DivPrecisionAttr, context="div precision",
+        )
     return wrap_surface_value(emit_runtime_binary_op(
         "truediv", unwrap_surface_value(lhs), unwrap_surface_value(rhs),
-        attributes=_arithmetic_attrs(fastmath=fastmath),
+        attributes=attrs,
     ))
 
 
