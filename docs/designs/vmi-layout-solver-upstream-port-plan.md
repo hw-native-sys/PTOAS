@@ -2545,3 +2545,26 @@ F3 h2 之所以没撞上，只因它查的是**同一批**已被专用助手校�
 **待验修复（下一步，solver 侧、非表、非测试）**：group_load 分支里，当**源 row stride 是 strided**（≠ group size）且形状为 f32 整块组时，
 不要把 \`memAny()\` 那条 \`c()\` 当作合法候选/不要让代价模型偏好它，而要求落到 \`memBlockAligned()\` 的 \`bd\` 行（镜像 lowering 的 \`isSupportedBlockStrideF32GroupLoad\` 前提）。
 预期：该用例**转绿**（因为回到了上游的 bd2 选择，truncf 诊断随之出现），且失败集合**严格子集**；任何其他用例的计划变化都必须被解释，否则回退并把本条并入步骤 8。
+
+### 19.21.6 那条修复方向**被算术证伪**，item 3 的真相另有其形（本轮定案）
+
+执行方按\`停就停\`的要求先做算术，结论是**我给的修复方向不成立**：
+
+* \`isSupportedBlockStrideF32GroupLoad\`（\`VMIToVPTOMemoryInternals.cpp:551-570\`）要求 \`groupSize == lanesPerPart/8\` —— f32 的 \`lanesPerPart = 64\` ⇒ **fragmentElems = 8**；
+  而本用例是 128×f32 / \`num_groups = 8\` ⇒ **groupSize = 16 ≠ 8** ⇒ 该谓词为 **false**。
+  我又核了 \`getGroupSizeFromNumGroups\`（\`:475\`）——它**只按 elementCount / numGroups 算、与布局无关** ⇒ 改成 \`bd2\` **也不会**让该形状变得可下降。
+  ⇒ 我原先那句"要求落到 bd 行（镜像 \`isSupportedBlockStrideF32GroupLoad\`）"是**错的**；这个形状在本 base 上**两条计划都不覆盖**（整块 f32 组 = 8 元素、一个物理 part = 64 元素，16 两者都不是）。
+* 因此该编辑即使落地也只会产出**无收益变更**，严格子集条件不满足 ⇒ 执行方**停手、不写树**，处置正确。
+
+**真相（读完测试的 RUN 后闭合）**：该用例的 RUN 是 \`not pto-test-opt ... -vmi-layout-assignment -vmi-to-vpto\`，
+而它钉的两条消息（\`pto.vmi.truncf operand #0 ... ensure_layout cannot materialize this conversion\` 与 \`source/result layouts do not match a supported ensure_layout table row\`）
+**属于赋值阶段的"物化规划"失败**——也就是说 **pre-port 的赋值选了 \`bd2\` 并插入 \`bd2 → contiguous\` 的 ensure，然后因该 ensure 无法物化而失败**；
+**我们的 planner 反过来绕开了这个不可能转换**（直接给 \`contiguous\`、不插 ensure），于是赋值**成功**，失败被推迟到 \`-vmi-to-vpto\` 的 strided group_load 检查。
+
+**所以这是一条负例的合同问题，属步骤 8**，并且有一条对**我方诊断有利**的论证要一并记下：
+我们的消息（"这个 strided 形状没有可用计划"）**比测试钉的那条更准确**地指出了真实障碍——测试那条把责任归给了一个我们**根本不需要的** ensure 转换；
+换句话说，pre-port 之所以报那条，是因为它先选了 bd2 才自找了一个无法物化的 ensure。这符合我方的既有规矩（只有在"新文本是同一错误的更准确表述"时才允许移动负例文本），因此**re-baseline 到我们的消息是可辩护的**，但要在步骤 8 与其它负例一起成组处理。
+
+**更深一层的缺陷（记入 backlog）**：表里的 \`memAny()\` 行（上游 fork 后新增，见 §19.21.5）**承认**了一个 lowering 不接受的形状，
+而我们的代价模型偏好"无需转换"的计划，于是没有任何环节在赋值期拦住它——pre-port 是靠那个"多余 ensure 无法物化"**间接**拦下的。
+这属于\`solver 合法性口径 vs lowering 真相\`的同一族（\`ea1c1e6bb\`、\`bccd44a29\`），但**修点在合法性模型**（要不要让 planner 直接拒绝该 component），需单独立项与实测，不在本轮硬拱。
