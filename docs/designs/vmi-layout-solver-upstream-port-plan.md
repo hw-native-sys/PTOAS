@@ -2995,3 +2995,31 @@ pto.vmi.vcmps 与 pto.vmi.vcmp 同属 VMILowerUnifiedToLegacy 的 Category C1（
 **这条与 §19.28 的"file 级指标太粗"是同一类教训的两次出现**：指标层与改动层不匹配时，必须补一个针对该层的量具。
 
 **当前记分板（诚实）**：fidelity **13/33**（不是 14）；vsel_zero 已绿且经我独立验证；unified.pto 仍红，其中**已被证明陈旧**的只有第 235 行（工具打 pto.vmi.mask_and，文件期望 pto.vmi.vcmps），其余族行需要上面那种**位置匹配的仔细一轮**。
+### 19.37 unified.pto 的**位置匹配重定基线**已落地：fidelity 13/33 → **14/33**（0 回归）
+
+按 §19.36 的新规则做的那一轮（我做，方法即规则本身）：
+
+1. 把工具输出按 **IR 顺序**导出（29 行，每行"标签 + 算子名"）；
+2. 把文件里 28 条 COST 行同序取出；
+3. **逐位对齐**后发现：工具第 1 行（vcmp_deinterleaved）文件未钉（无碍），其余**一一对应但有 1 位错位**；
+4. 只改**对齐后确实不一致**的 8 个名字（其余 20 个已匹配，不动）：
+
+    vcmps_zeroing      pto.vmi.vcmps -> pto.vmi.mask_and
+    bitwise_shift_math pto.vmi.vand  -> pto.vmi.andi
+    bitwise_shift_math pto.vmi.vor   -> pto.vmi.ori
+    bitwise_shift_math pto.vmi.vxor  -> pto.vmi.xori
+    bitwise_shift_math pto.vmi.vnot  -> pto.vmi.not
+    mask_logic_family  pto.vmi.vand  -> pto.vmi.mask_and
+    mask_logic_family  pto.vmi.vxor  -> pto.vmi.mask_xor
+    mask_logic_family  pto.vmi.vnot  -> pto.vmi.mask_not
+
+**实测（含 §19.36 要求的内容门禁）**：
+
+| 门禁 | 结果 |
+|---|---|
+| unified.pto（内容门禁）| **PASS**（该文件 FileCheck 干净）|
+| lit/vmi_new | **641 / 555 / 86**（+1 修复，**0 新增**）|
+| conformance fidelity | **14 / 33**（13 → 14）|
+| lit/vpto | 620 / 619 / 1 不变 |
+
+这一轮也是**规则修订见效的直接证据**：上一轮按标签替换塌缩成"每族最后一个算子"并破坏了文件，而本轮按"标签 + 顺序位置"对齐就一次通过。
