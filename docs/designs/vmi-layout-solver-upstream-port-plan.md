@@ -3835,6 +3835,20 @@ tie-break 插桩方式（env 守卫 + llvm::errs，只在两个比较器里打�
 2. generated 的 block_deinterleaved=4 组掩码创建（2 个用例，残留 `create_group_mask`）；
 3. ensure_layout 的 f16↔d4（2 个用例，需先定性物理约定）；
 4. remaining：group_broadcast_load 残留（5 例）、group_reduce/mask_granularity/group_broadcast_op 三个桶 B 停止点、group_memory 的双向差异、group_reduce_quarter 的 8-bit 归约、两个 align 合法性用例（masked_load_store）与 load_store（§19.63 暂存补丁）。
+### 19.71 `generated.pto` 两例的根因链（本轮用插桩量到，插桩已撤、树已复核干净）
+
+目标选的是「用例少、根因单一」的文件：generated 只有 2/6 失败，且都是 `create_group_mask_*_block_deinterleaved4`。逐层插桩（env 守卫 + `llvm::errs`，事后 `git checkout` 撤除）得到：
+
+1. 上游的 factor-4 派发**存在**（`VMIToVPTOPatternInternals0.cpp:1926-1944` → `lowerFactor4Block`）；
+   F6 规格（`step7/F6_create_group_mask_factor4.diff`）也确实是 **DO NOT PORT**（上游已重构为 `lowerFactor4Block` + `buildFactor4ContiguousParts`，含 dynamic 路径）—— 即**不是 F6 缺口**；
+2. **dynamic 用例**：`buildFactor4ContiguousParts` **ok**、`contiguousParts=4`、`resultCountMismatch=0` ⇒ 失败在**最后一步**：
+   `materializeMaskLayoutConversion(contiguous → block_deinterleaved = 4)`（`VMIToVPTODataLayoutInternals.cpp:1427-1452`）；
+   该函数走 `tryMaskLayoutMaterializers` 链，链上没有任何 materializer 认这个 pair ⇒ 落到 `unsupported VMI mask layout materialization`。
+3. **constant 用例**：连 `buildFactor4ContiguousParts` 就 FAILED（常量路径内部，`computeGroupMaskMaterializationForType` 未打印失败 ⇒ 失败在随后的 `materializeGroupMaskResults`）⇒ 与 dynamic **不是同一个点**，需分开处置。
+
+**结论与下一步**：这一族的缺口在 **mask 的 contiguous ↔ block_deinterleaved 材料化**（`tryMaskLayoutMaterializers` 链上没有它），而**不是** factor-4 掩码生成本身；
+与 §19.63/§19.65 的 mask 工作（h4/h5 只路由了 deinterleaved2/4 的 arity）属同一片区域：**下一个增量 = 为 block_deinterleaved 补上这条 mask materializer**，随后单独处理 constant 路径的 `materializeGroupMaskResults` 失败。
+（附注：`F5_mask_layout_conversions.diff` 里 **0 次**提到 block_deinterleaved ⇒ 又一个「规格清单没覆盖到」的 hunk，与 §19.70 的 F4 缺口同源。）
 ## 20. 交接快照（当前，取代 §16；§16 保留作历史）
 
 ### 20.1 目标与判据的**当前值**
