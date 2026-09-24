@@ -3681,6 +3681,40 @@ load_store（**§19.61 已立项，进行中**）、masked_load_store、mask_gra
 每条用例一行（文件 / 用例 / op / relation / cost / layouts）再逐例比对 —— 这就是 §19.50 要求的"差分 + 路径规范化"：两侧的 value 行**本身不含任何路径**
 （路径只出现在 dump 的 IR 夹具部分），所以"规约"即是规范化，原始 dump 仍留在盘上备查。脚本带**构建中拒绝运行**的守卫（§19.49），已过 bash -n；
 **本轮未运行**（需要安静树 + 独占测量窗口），它将成为剩余 COST 类失败（7 例）的主量具。
+### 19.65 代价模型补丁的「择优翻转」根因：**量到了** —— 位置分奖励「多加一次转换」；两条修法都不够（本轮全部实测）
+
+本轮把暂存补丁真正接上并逐项测量（应用 → 构建 → 测 → 回退 → 复验，全程留痕）：
+
+**（1）两条竞争关系的代价（用 conformance 关系 dump 直接量，不靠推理）**：
+
+    load_unaligned（128xf32，地址不可证明对齐）→ 该 op 只暴露 contiguous（cost=0）
+    同形的 deinterleaved = 2 关系（来自 load_store 夹具）              cost=1
+    ensure_layout contiguous → deinterleaved = 2                       cost=1
+
+⇒ **两种方案代价是 1 : 1 真并列**（不是 new 更便宜），于是择优落到 tie-break。
+
+**（2）tie-break 输在哪：临时插桩量出来的（env 守卫；事后删除且树已复核干净）**：
+
+    TIELE coupl=1/1 ls=0/0 lsw=0/0 mat=1/0 pref=1/1 pos=1/0
+
+只有两个键不同：**材料化条数 1/0** 与 **位置分 1/0**。而位置分是「越大越好」，**零转换的方案得 0 分** ——
+⇒ **位置分实际在奖励「多加一次转换」**。（注：countMaterializations 早已写在同文件第 341 行，条件与位置分**完全同源**，却带 [[maybe_unused]]：没有调用者。）
+**（3）两次修法实验（都实测、都不够）**：
+
+| 实验 | 对 §19.63 那个翻转 | 对其他用例 | 结论 |
+|---|---|---|---|
+| 宽口径「材料化条数」键（staged/solver_materialization_count_tiebreak.patch） | **修好**（该用例转绿） | **4 个车道跨步用例新失败**：group_load_s16_stride_store、group_load_s32_stride_broadcast_reduce、group_load_s32_stride_store、stride_group_load_block_granularity | **1 换 4，拒绝** |
+| 窄口径「显式转换 op」计数键（staged/solver_explicit_conversion_tiebreak.patch） | **无效**（仍失败） | 0 回归（4 个跨步用例全过） | 该对的差异在**使用边**上的转换，不是被选中的 ensure_layout op ⇒ 无窄键可分离 |
+
+⇒ **本轮最重要的结论**：那个翻转不是「某个键写错了」，而是「**代价并列 + 位置分偏好**」的固有结果 ——
+fork 当年能让直接形式胜出，是因为 fork 的模型把不可对齐地址的直接形式**算作免费**；在本底座上它不免费，两者便并列。
+能分离它的两条键，一条代价过大、一条无效 ⇒ 属**偏好层的设计裁决**（要在 6 个用例之间取舍），不是补丁缺陷。
+
+**（4）处置**：代价模型补丁**继续暂存**（§19.63 结论不变，但根因与证据现已完整）；两条 tie-break 实验各存为 staged/*.patch 并写进 staged/README.md（含全部数字）。
+**共享查询那半已落地**（e0bb0ebe5）不受影响。本轮结束时状态：HEAD e0bb0ebe5、树干净、641/560/81、lit/vpto 620/619/1、fidelity 18/33、**GATE PASS**。
+
+**（5）两条可复用量具**：关系代价可用 conformance dump 直接量（本轮用 /home/mouliangyu/ptmp/plan_cost_probe.pto 这种「把一个 op 的候选关系逐个标价」的小文件），比读代码推断便宜且可靠；
+tie-break 插桩方式（env 守卫 + llvm::errs，只在两个比较器里打键）已验证可用 —— release 构建下 LLVM_DEBUG 是空操作，这是可行的替代。
 ## 20. 交接快照（当前，取代 §16；§16 保留作历史）
 
 ### 20.1 目标与判据的**当前值**
