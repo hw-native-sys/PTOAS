@@ -2872,3 +2872,28 @@ file 级 12/33 从此只作为对外指标，不再作为定位工具。
   **但 A2 有价值，不许丢**：\`vmi_to_vpto_gs1_consumer_matrix\` 这个真硬失败的修复**极可能来自 h1/h12**，所以要在**完整 delta 就位后**裁决，而不是因一次净 −3 就作废。
 
 **并行进展（执行方，本轮在飞）**：RUN 顺序修复已落到两个文件的工作区（把 \`-vmi-lower-unified-to-legacy\` 移到 \`-test-vmi-layout-cost-conformance\` **之前**），我复核过 diff —— **只动了这一处**；预期恰好这 2 个文件转绿（fidelity 12/33 → 14/33）。
+
+### 19.31 RUN 顺序修复：必要但**不充分** —— 真正的阻塞是**下降重写丢掉了 marker 属性**，我选 (a)
+
+执行方按我上一轮的更正把 flag 移到前面并全量实测：**641/553/88、失败集合逐字节相同、fidelity 仍 12/33** ⇒ 按"无收益即回退"**回退**（处置正确）。
+但它**手工对比了两种顺序**，给出了真正的原因：
+
+* **旧顺序**：pass 看到 pre-lowering 拼写 → \`marker has no exposed relation\` @ \`unified.pto:19\`（正是桶 B 的诊断）；
+* **新顺序**：该错误**消失**，pass 产出真实关系行（\`vadd_masked\`、\`vneg_zero\`、\`vln_zero\`、\`binary_family\` …）；
+  但文件仍失败，**停止点前移**了：
+
+      unified.pto:234   COST: expected string not found   // COST: … vcmp_zero pto.vmi.vcmp relation=0 cost=0
+      vsel_zero.pto:29  COST: expected string not found   // COST: … vsel_zero pto.vmi.vsel relation=0 cost=0
+
+* **关键对比**：仍然存活的 marker（\`vadd_masked\`、\`vneg_zero\` …）都是**legacy 拼写**、下降不动它们；消失的 \`vcmp_zero\` / \`vsel_zero\` 恰恰是 \`VMILowerUnifiedToLegacy\` 会重写的统一拼写。
+  ⇒ **重写把 marker 属性丢了**（marker 是算子属性 \`{test.vmi.layout_cost_conformance}\`，工具在 \`pto-test-vmi-layout-cost-conformance.cpp:39\` 读它），替换出的新算子没带这个属性。
+
+**我的判决：(a) 产品侧修复 —— 下降重写必须保留可丢弃属性（discardable attributes）。** 理由：
+
+1. 按 MLIR 约定，**方言前缀的（可丢弃）属性**在被重写时**应当保留**，只有 inherent 属性才由新算子自己决定；\`test.vmi_layout_cost_conformance\` 正是方言前缀属性，被丢弃属**信息丢失缺陷**，不是"测试需要"。
+2. (b)（把测试输入改成 legacy 拼写再挂 marker）会**丢掉"统一拼写路径"的覆盖** —— 而那正是这两个用例存在的意义（文件名就叫 \`unified\` 与 \`vsel_zero\`）。
+3. 这个修复是**通用的**：它不只修这两个文件，而是"下降重写不得静默丢属性"这一整类。
+
+**实施与门禁（已下达）**：在 \`VMILowerUnifiedToLegacy\` 创建替换算子时，把源算子上**方言前缀（名字里带 \`.\`）的属性**复制过去；
+只复制这一类的理由是"可丢弃属性"的判据就是方言前缀，避免把 inherent 属性（如 \`pmode\`）也带过去造成非法算子。
+实测要求：conformance fidelity **必须**由 12/33 升到 14/33；上游套件失败集合**不得**变大；任何其它结局变化都要解释，否则回退。
