@@ -4004,6 +4004,30 @@ dynamic 分支被直接喂 resultTypes，所以从来不会不一致（这解释
 | cost pass 通过（形状已合法）| same_layout_invalid、unified_merge_invalid、vexpdif_invalid | pmode 前提已删除 ⇒ 不可达（§19.69）|
 
 ⇒ **真正可达且属于我们的只剩 6 个文件**：ensure_layout、group_broadcast、group_broadcast_op、group_reduce、mask_granularity、masked_load_store（+ 2 个卡在裁决的 load_store / group_memory）。
+### 19.78 桶 B 停止点 group_broadcast_op：**fork 给得出关系、我们给不出**，线索收敛到行键的粒度
+
+**用例（文件第 122 行的标记点）**：
+
+    @slots8_four_blocks_lane_stride2
+      %source: vreg<4xf32, gs(num_groups = 4, slots = 8)>
+      %value  = pto.vmi.group_broadcast %source {num_groups = 4}
+             ->  vreg<128xf32, contiguous, lane_stride = 2>        （124 live 用例，期望成功）
+
+**两侧对照**：fork 的 dump 给出 `relation=0 cost=0 operand0=gs(4,8)`；我们的 cost pass 直接报 `has no exposed relation` ⇒ 该用例**没有候选**。
+文件第 226 行也确实期望这条关系 ⇒ 是**我们的缺口**（不是上游政策，§19.77 的两条排除不适用）。
+
+**已排除的层**：我们的 provider **确实**把注解的那个候选加进去了 —— `VMILayoutPlanner.cpp:2615-2619` 会补 `VMILayoutAttr::getGroupSlots(ctx, groups, 8)`（正好等于 fixture 的 `gs(4,8)`），
+所以缺口在下一层 **`getGroupBroadcastLayoutFactsForLayout`** 没有给出该 (source=gs(4,8), result=contiguous ls=2, num_groups=4) 的 fact。
+
+**本轮量到的关键线索（DSL 粒度）**：
+
+* 移植后的模式 DSL 里 **`gs(slots, laneStride = 1)` 是按 slots 键的**（`VMILayoutSupportPatternDSL.inc:292`），而我们 `VMILayoutSupportGroupBroadcastTables.inc` 的行只写了 `gs(8)` / `gs(8, 2)` / `gs(1)` 这几种；
+* 同一 DSL **明确提供了「与组数无关」的行键**：`gsFit()` / `gsFitStride(S)`，注释写着「**Rows keyed on gsFit() hold for every group count of that form**, so they express a physical property instead of a group count list」；
+* 而我们的表**一处都没用** `gsFit*` ⇒ 很可能正是当年 fork 用于覆盖「四个 block + 任意组数」这类形状的机制（fork 的关系集覆盖到了 `num_groups = 4`）。
+* 交叉印证：`VMILayoutSupportQueryHelpers.inc:104` 的 `hasOneLanePerGroup = valueType.getElementCount() == numGroups` 与 §19.76 那条类型合法性规则**完全一致** ✓（同一约束在两处出现，也说明它是这套模型的固有前提）。
+
+**下一轮第一步（已想清）**：给 `getGroupBroadcastLayoutFactsForLayout` 做一次查询键插桩（env 守卫，同 §19.71/§19.75 手法），打印该形状的查询键与逐行匹配结果，
+即可判定是「行键写窄了（应按 `gsFitStride(2)` 表达）」还是「缺行」；两种修法都在**移植方的表**里，属**可达**工作，修好即有机会让该文件转绿（+1 fidelity）。
 ## 20. 交接快照（当前，取代 §16；§16 保留作历史）
 
 ### 20.1 目标与判据的**当前值**
