@@ -4175,6 +4175,29 @@ release 构建下不打印原因（同 §19.71/§19.78）⇒ **下一轮第一�
 
 （附注：本轮 44 处插桩是一次性脚本生成的，脚本保留在 `/home/mouliangyu/ptmp/instrument_gbl.py`，
 「按行号全量插桩 + 只跑最小用例」这个手法对这类"多出口 pattern"很省时间，值得继续用。）
+
+### 19.84 A 类拒绝的**分派机制**已量清：5 个用例分两种decline，其中 2 个又是"对齐证明"主题
+
+`matchAndRewrite` → `lowerDirectOrFallback` 的顺序是：**tryLowerDirectBRC → tryLowerDirectE2B → lowerGroupSlotFallback**（都返回 `FailureOr<bool>`，"false"=不适用、继续下一条）。
+对 5 个残留用例逐个插桩（`return false;` 出口）：
+
+| 用例 | 命中的 decline | 含义 |
+|---|---|---|
+| e2b_f32_deinterleaved4 | 1891 + **1953** | 1891 = 直接事实不是 BRC 类（预期）；**1953 = E2B 事实存在，但 `isDirectMemoryDistAddressLegal(..., Load, dist)` 失败** ⇒ 地址对齐不可证明 |
+| e2b_bf16_deinterleaved2 | 1891 + **1953** | 同上 |
+| half_block_lane_stride2 | 1891 + **1942** | **1942 = 没有 E2B 类直接事实**（`directFact->kind == E2B` 不成立）⇒ 直接表里没有该形状的行 |
+| quarter_block_lane_stride4 | 1891 + **1942** | 同上 |
+
+**两点结论**：
+
+1. **deinterleaved 的两个用例 = §19.61/§19.65 的"对齐证明"主题在下降侧的同一表现**：
+   直接事实（E2B，`{G<8>, gb(2), b16/32, memContiguous, d(2)}`）两棵树都有 ✓，卡的是"地址必须可证明对齐"这条上游要求，而 fixture 用的是 `ptr + %off`（对齐未知）。
+   ⇒ 与 `load_store`/`group_memory`（代价侧）同源，是**同一个主题的第 3、4 个实例**。
+2. **lane-stride 的两个用例 = 直接表没有行**（两棵树的 E2B 行都只有 `G<8>` 且没有 lane-strided 结果）⇒ fork 当年必然靠**回退路径**成功；
+   而我们的回退在 §19.83 量到的位置失败（通用表 pair 不匹配）⇒ 下一步应查**回退路径产出的 pair**（slot-load 的布局 × 目标 ls 布局）为何不匹配通用表行。
+
+**综上，A 类的性质已被拆成两半**：一半是上游的对齐证明要求（与暂存补丁同主题，属裁决范畴），
+一半是回退路径的 pair 推导（属可达工作，下一步：在 `lowerGroupSlotFallback` 内打印它实际用的 source/result 布局，再对照通用表）。
 ## 20. 交接快照（当前，取代 §16；§16 保留作历史）
 
 ### 20.1 目标与判据的**当前值**
