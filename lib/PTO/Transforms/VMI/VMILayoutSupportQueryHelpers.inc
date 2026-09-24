@@ -263,9 +263,16 @@ inline LogicalResult getNarrowCastSupport(VMIVRegType sourceType,
 
 LogicalResult VMILayoutSupport::getTruncFSupport(VMITruncFOp op,
                                                  std::string *reason) const {
-  return getNarrowCastSupport(cast<VMIVRegType>(op.getSource().getType()),
-                              cast<VMIVRegType>(op.getResult().getType()),
-                              reason);
+  auto sourceType = cast<VMIVRegType>(op.getSource().getType());
+  auto resultType = cast<VMIVRegType>(op.getResult().getType());
+  if (succeeded(getNarrowCastSupport(sourceType, resultType, reason))) {
+    return success();
+  }
+  StringAttr rounding = op->getAttrOfType<StringAttr>("rounding");
+  bool zeroRound = rounding && rounding.getValue() == "Z";
+  return success(zeroRound && isBF16ContiguousCastLayoutPair(
+                           sourceType, resultType, sourceType.getLayoutAttr(),
+                           resultType.getLayoutAttr()));
 }
 
 LogicalResult VMILayoutSupport::getExtFSupport(VMIExtFOp op,
@@ -277,7 +284,12 @@ LogicalResult VMILayoutSupport::getExtFSupport(VMIExtFOp op,
           resultType.getLayoutAttr(), reason))) {
     return success();
   }
-  return success(isSpineScopedCastLayoutPair(
+  if (isSpineScopedCastLayoutPair(sourceType, resultType,
+                                  sourceType.getLayoutAttr(),
+                                  resultType.getLayoutAttr())) {
+    return success();
+  }
+  return success(isBF16ContiguousCastLayoutPair(
       sourceType, resultType, sourceType.getLayoutAttr(),
       resultType.getLayoutAttr()));
 }
