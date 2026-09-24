@@ -3361,3 +3361,26 @@ A1 的工作区改动与规格逐点对应（+23/−？，单文件）：
 
 **F5 现状**：A2 已落（净 +1）、**A1 已落（中性）**；**h4/h5/h10 + 两个 staging 排序半仍开**。
 范围也被遵守：未碰拒绝文本、未碰任何表行、未碰 family 行；h1/h12 已作为 A2 在内。
+### 19.53 case 级地图**重跑**（A1/A2 + 三族表行之后）：桶 B 从 8 → **3**，下降侧从 1 → **4**
+
+19 个失败（数量未变），但**构成发生了位移**：
+
+**桶 B：标记没有暴露关系（3，原 8）**
+
+    mask_granularity   :20
+    group_reduce       :56
+    group_broadcast_op :122
+
+**下降侧（failed to apply conversion patterns，4，原 1）**
+
+    ensure_layout      :14        ensure_mask_layout :14
+    group_broadcast    :14        generated          :12
+
+**其余（12，未变）**：fork 独有算子（producers、elementwise）、上游明确不支持（group_reduce_quarter、masked_load_store）、
+代价模型拒绝（group_memory:155）、解析（memory_compaction:9）、以及 5 个 COST/LOWER 期望不一致（vexpdif_invalid、same_layout_invalid、unified_merge_invalid、cast:471、cmp_merge_invalid）+ load_store:22。
+
+**这张图确认了三件事**：
+
+1. **三族表行 + A2 的效果在 case 级可见**：8 个桶 B 里已有 5 个（ensure_layout、ensure_mask_layout、group_broadcast、gb-load 的两个用例归入其中）**移到下降侧**；
+2. **桶 B 只剩 3 个具名停止点**，与 §19.42 的结论一致 —— 其中 **group_reduce 那一族**要特别小心（上游明文禁止把 one-carrier 行加回），**mask_granularity** 的三条 c→c 已有 lowering 拒绝的反例；
+3. **下降侧现在是最大的一簇（4 个文件 + 2 个真硬失败同族）**，而 F5 只剩 h4/h5/h10 —— 也就是说"**下一步的主战场就是 F5 的剩余半批与 F4**"。
