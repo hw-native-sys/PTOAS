@@ -4033,22 +4033,47 @@ dynamic 分支被直接喂 resultTypes，所以从来不会不一致（这解释
 
 **下一轮第一步（已想清）**：给 `getGroupBroadcastLayoutFactsForLayout` 做一次查询键插桩（env 守卫，同 §19.71/§19.75 手法），打印该形状的查询键与逐行匹配结果，
 即可判定是「行键写窄了（应按 `gsFitStride(2)` 表达）」还是「缺行」；两种修法都在**移植方的表**里，属**可达**工作，修好即有机会让该文件转绿（+1 fidelity）。
+### 19.79 桶 B 停止点 group_broadcast_op 转绿：**漏移植一行表行**（8305060e4，净 +1，fidelity 20 → 21/33）
+
+§19.78 的插桩计划如期收敛。三轮测量（全部 env 守卫、事后撤除、树已复核干净）：
+
+1. **候选是给了的**：`GBQ enter layout=gs(4,8) numGroups=4 resultType=vreg<128xf32, contiguous lane_stride = 2>` —— 正是本用例，且**从无 `keyBuild FAILED`**；
+2. **逐行匹配结果**：块类命中的行只 materialize 出 —— `contiguous`、`deinterleaved = 4`、`block_deinterleaved = 4`、`gs(4,1)`；
+   ⇒ **没有任何一行产出 lane-strided 结果** ⇒ 无 fact ⇒ 无关系 ⇒ pass 在该用例处 `has no exposed relation`；
+3. **fork 的表里有这一行**：`VMILayoutSupport.cpp:857-860`
+
+       // Group-4 broadcasts whose logical result occupies half of a physical
+       // part use lane-stride two so the partial tail is represented without a
+       // padded contiguous chunk.
+       {gb(4), gs(8), ls(2)},
+
+   —— 这是那一块里**唯一**没被移植过来的行（我们的表有 `{gb(4),gs(8),c()}`、`d(4)`、`bd(4)`、`gs(1)`，独缺它）。
+
+**修法**：原样补上该行（含 fork 自己的注释与出处）。
+
+**实测**：该用例现在打印 `relation=0 cost=0`，**与 fork 的 dump 逐字一致**；`vmi_layout_cost_conformance_group_broadcast_op.pto` **两行 RUN 全过**（此前是三个桶 B「no exposed relation」停止点之一）。
+
+**门禁**：**GATE PASS** —— 641 / **563** / **78**（净 +1）、**0 新增**、lit/vpto 620/619/1、**fidelity 21/33**。
+
+**方法论留痕**：这条链是「表行级缺口」的又一个实例，且与 §19.40/§19.60/§19.70 同源 ——
+**移植清单会漏行**（此前漏的是 F4 的两个函数、F5 没提 block_deinterleaved，这次漏的是一整块里的一行）。
+因此**差分仪器（step9/conformance_cost_diff.sh）+ 逐用例探针（per_case_lowering.py）+ 查询键插桩**仍是发现这类缺口最有效的手段，已在 §19.64/§19.70/§19.78 分别记录。
 ## 20. 交接快照（当前，取代 §16；§16 保留作历史）
 
 ### 20.1 目标与判据的**当前值**
 
 | 判据 | 目标 | 当前 |
 |---|---|---|
-| 上游 lit/vmi_new 不退化 | 起点 608 发现 / 606 通过 / 2 失败 | **641 发现 / 562 通过 / 79 失败**（多出的 33 个是新增的 conformance 用例；起点 84 → 79）|
-| 我们的 vmi_new 用例通过 | 33/33 | **20/33**（方言批 +3、cast.pto +1，见 §19.62/§19.67）；其中 **4 个 pmode 文件（§19.69）+ 8-bit 归约（§19.77）+ masked_store 对齐策略（§19.77）被上游刻意拒绝 ⇒ 可达集 27/33，分母待裁决** |
+| 上游 lit/vmi_new 不退化 | 起点 608 发现 / 606 通过 / 2 失败 | **641 发现 / 563 通过 / 78 失败**（多出的 33 个是新增的 conformance 用例；起点 84 → 78）|
+| 我们的 vmi_new 用例通过 | 33/33 | **21/33**（方言批 +3、cast.pto +1，见 §19.62/§19.67）；其中 **4 个 pmode 文件（§19.69）+ 8-bit 归约（§19.77）+ masked_store 对齐策略（§19.77）被上游刻意拒绝 ⇒ 可达集 27/33，分母待裁决** |
 | lit/vpto | 648 / 647 / 1（含既有失败）| **620 / 619 / 1**（仅既有 vmi_f4x2_to_bf16x2_vcvt_llvm.pto）|
 | 端到端性能结论可复现 | gbmc-amp-dep / truncf-amp2 | **未做**（前置已核实：19 个 sim-runs 基线在位、msprof/CANN 可用）|
 | 步骤 2b–9 | 全部完成 | 步骤 7：**F5 已完成**（A1/A2/h4-h5/h10 全部落地）、F3/F7 已落、**F4 判定为不需要**（§19.59）；**步骤 8 进行中**（18 例地图已建，§19.60）；**步骤 9 未开始** |
 
 ### 20.2 代码状态
 
-* 上游 worktree：.work/upstream-port/workspaces/vmi-layout-solver-upstream，HEAD **9dff7e90a**，树干净（仅 .codex/CLAUDE.md 换行符噪声）；
-* 分支 **feature/vmi-layout-solver-upstream** 已推 fork；自移植起点累计 **26 个提交，全部零回归或净提升**；
+* 上游 worktree：.work/upstream-port/workspaces/vmi-layout-solver-upstream，HEAD **8305060e4**，树干净（仅 .codex/CLAUDE.md 换行符噪声）；
+* 分支 **feature/vmi-layout-solver-upstream** 已推 fork；自移植起点累计 **27 个提交，全部零回归或净提升**；
 * 主树：计划文档（本文件）在 feature/vmi-layout-decision-layers，同样已推 fork。
 
 ### 20.3 已落地（按主题）
