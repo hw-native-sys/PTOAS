@@ -2418,3 +2418,45 @@ F2 的依赖是"step-3 的 \`validateCastOperationRelation\` 查询存在"——
 2. **F2 h5**（compress）：contiguity 守卫 vs 共享 reduce-layout fact 查询的**措辞/阶段冲突**，重访判据是"读该形状的查询消息、判定是否同因且更准确"；
 3. **F3 h4**：**已解决**（fallback 变体中性落地），并记下"曾因字面替换回归 \`group_store_compact_small\`"作为保留旧谓词的理由。
 另记：批次 C 那次 G2 的 \`MemoryInternals.cpp\` 49 → 48 是 \`[[maybe_unused]]\` 放在 \`static\` 之前导致正则失配的**人为产物**，不是定义丢失。
+
+## 19.20 缺口 #1 是假缺口：stride 是我们自己加的，且早已在上游树里（F3 h2 已落地）
+
+### 19.20.1 结论与证据
+
+用户的关键一问（传 stride 是我们加的还是主线演进丢掉了）答案是：**是我们加的，而且早就加进了这棵树**。
+
+* 上游原本只有三形参版本（上游自己的 \`929a1fe30\` 引入），我们**没有删它**，而是**并排加了重载**：
+  \`include/PTO/Transforms/VMILayoutSupport.h:874\` 的 stride 版签名，形参依次是 resultType、sourceGroupStride、numGroups、reason。
+* 来历：\`5fe30a018\`（add the stride-aware group_slot_load fact the solver drives）；
+  \`git merge-base --is-ancestor 5fe30a018 1c1bba8cc\` **为假**，即它在**移植开始之后**由我们加入（支撑层补齐的一部分）。
+* 头注释（同文件 862-873 行）写明：上游三形参声明**原样保留**，新增检查**都以 stride 操作数存在为前提**，
+  因此**上游调用者验收不变**，只有 solver（总是带该操作数）看到更严的 fork 规则。
+* F3 h2 想要的调用与我们重载的**实参逐一对应**，故**可照原文落地**。
+
+**为什么之前记成缺口**：它抄了 \`MANIFEST.md 8.1\`，而那份写在**支撑层尚未补齐**的时候，之后没人回头对树复核 —— 与**过期的 G1 门禁**同型。
+**本条写入文件作为规则**：缺口是对树的一个断言，动手前必须对着 HEAD 复核；\`MANIFEST.md 8.1\` 及其余旧结论一并列入步骤 7 的固定复核动作。
+
+### 19.20.2 落地（提交 8）
+
+\`648898a01\` 把 group_slot_load 形状检查的调用改为传 sourceGroupStride（cosmetic 的 accessPlan 与花括号改动未做，也不需要）。按**移植批次**门禁实测：
+
+| 门禁 | 结果 |
+|---|---|
+| \`ninja\` | exit 0 / 0 error，两个产物重链 |
+| G2 逐单元定义数 | 与 step-7 基线**完全一致** |
+| \`lit/vmi_new\` | **608 / 541 / 67**，无新增（与 step-6 期记录只差 \`b58fa790f\` 修掉的那一个）|
+| \`lit/vpto\` | **620 / 619 / 1**（既有 f4x2 转 bf16x2 vcvt 用例）|
+
+值得记一句：slots=1 与 slots=8 的**专用助手本来就已经各自校验 stride**，所以这次改动在 lowering 里属**重复校验**；
+fork 的意图是先把共享 support 模型问清楚，而实测说明它**不改变任何用例结局**。
+
+### 19.20.3 目标已延长并重新武装
+
+按用户要求：edit 把 maxGoalRounds 由 256 提到 **512**（objective 未改），再 resume 使 phase 由 blocked 转 active、activation 由 disarmed 转 armed（revision 6）。自动接力恢复。
+
+### 19.20.4 一个新识别出的**系统性**模式（后续批次的筛选准则）
+
+到目前为止，凡是把 lowering 的形状检查改去问 fork 共享 support 查询的改动，**两次里两次**都撞到负例测试（F2 h5 的 compress、批次 C 尝试里的 group_slot_widen）。
+原因一致：**共享查询的拒绝措辞与触发阶段和上游内联检查不同，而上游的负例测试断言的正是旧措辞**。
+F3 h2 之所以没撞上，只因它查的是**同一批**已被专用助手校验过的东西（重复校验，无措辞变化）。
+**因此**：这类 hunk 不该逐个硬拱，而应**成组地**放进步骤 8，连同负例 re-baseline 一起处置；步骤 7 只落**不改变拒绝措辞与阶段**的部分。
