@@ -3615,6 +3615,38 @@ elementwise、producers（**本轮期望重定基线**修好）。**重定基线
 cast、cmp_merge_invalid、ensure_layout、generated、group_broadcast_op、group_broadcast、group_memory、group_reduce、group_reduce_quarter、
 load_store（**§19.61 已立项，进行中**）、masked_load_store、mask_granularity、same_layout_invalid、unified_merge_invalid、vexpdif_invalid。
 
+### 19.61a **重要修订**：不是"缺 vldsx2 路径"——上游**已有**该路径，真正的缺陷是**代价模型的先决条件少了"地址可对齐"这一条**
+
+执行方按 §19.61 的指示去找站点时，先证明了**停止条件不触发**，并给出了准确位置；我接着读代码 + 做对照实验，**把 §19.61 的结论改了**（原文保留在上一节，作历史）：
+
+**（1）上游已经有这条能力**（不是缺口）：`VMIToVPTOPatternInternals1.cpp:455-488` 的 `lowerDirectDeinterleaved` **同时支持 factor 2 与 factor 4**，
+用 `getX2MemoryDistToken(elemType, "DINTLV")` + `isDirectMemoryDistAddressLegal(..., LoadX2, *dist)` 守卫，factor==4 走 `lowerDeinterleaved4`。
+
+**（2）对照实验（决定性）**：同一个 `pto.vmi.load → vreg<256xf32, deinterleaved = 4>`，只改**地址的可对齐性**：
+
+| 源 | 发出的指令 | 计数 | 代价模型 | 自洽？ |
+|---|---|---|---|---|
+| `%off`（**不可证明对齐**） | 4 × `pto.vldus` + **4 × `pto.vdintlv`**（蝴蝶） | 4 | 2 | **×**（load_store 的失败就是这条） |
+| `arith.constant 0`（**可证明对齐**） | 2 × `pto.vldsx2 "DINTLV_B32"` + **2 × `pto.vdintlv`** | **2** | 2 | **✓** |
+
+**（3）缺陷定位到我们移植的代价模型里的一处谓词**：`lib/PTO/Transforms/VMI/VMILayoutCostModel.cpp:116-150` 的 `realizesDeinterleavedPartsDirectly`，
+注释自己写的是"**Mirror the direct dense-split load shapes that avoid an explicit deinterleave action in buildLoad**"，但它的条件**只镜像了形状**：
+
+    bool isDenseSplitLoad = isa<VMILoadOp>(producer) && isFullPhysicalShape(type) && *arity <= *contiguousArity;
+    int64_t factor = layout.getFactor();
+    return factor != 0 && *arity % factor == 0;
+
+**完全没有校验地址可对齐性**，而下降侧真正的先决条件是 `isDirectMemoryDistAddressLegal` → `isKnownAddressAligned`（`VMIToVPTOConversionInternals.cpp:1589-1608`，它要求 dist contract 的 `getRequiredAlignmentBytes`）。 
+⇒ 对**不可证明对齐**的源，模型**仍然免收这次重排**，于是只按"剩余的 2 条 vdintlv"计价，而下降只能退回 4 条 ⇒ **模型系统性乐观**。
+
+**（4）性质判定**：这是**移植适配**问题，不是 fork 缺功能 —— fork 的下降当时**根本没有对齐要求**（`VMIToVPTO.cpp:6792-6849` 无条件发 `vldsx2`），
+所以"形状-only 谓词"在 fork 里是**自洽**的；到了上游底座，下降多了"地址可证明对齐"这一条合法性要求，我们的模型没跟上 ⇒ **模型与树的先决条件不一致**。
+这正属于目标里"让我们的 solver 在上游树上当决策引擎"要修的**决策质量**问题：现实中不可对齐的 load 会被按 2 计价（实际 4），**偏向去交错布局**。
+
+**（5）修法与验收判据（已交执行方）**：把该谓词的先决条件与下降对齐 —— 除了形状，还要 `isDirectMemoryDistAddressLegal(..., LoadX2, "DINTLV")` 成立才免收；
+把该查询从下降单元里**共享出来**（不要复制一份判定，避免两处漂移）。验收：**不可对齐**的 fixture 自洽（要么按 4 计价、要么不再免收），**可对齐**的 variant 保持 cost=2；
+门禁用两套件 + fidelity 且**逐个解释每个决策变化**（这条会真实改变布局选择，不是中性改动）。
+
 ## 20. 交接快照（当前，取代 §16；§16 保留作历史）
 
 ### 20.1 目标与判据的**当前值**
@@ -3652,9 +3684,10 @@ load_store（**§19.61 已立项，进行中**）、masked_load_store、mask_gra
    成功判据 = load_store 的自洽性检查转绿且 0 新增失败；它同时修掉"模型对去交错 load 过于乐观"的决策偏差与 2 条指令。
 2. **COST 类 7 例**（真正的 solver 侧工作）：unified_merge_invalid（我们**多给**关系）、vexpdif_invalid、same_layout_invalid（同）、cast:471（`extui_group_slots8_stride2` 期望 relation=1 cost=2，我们 0/0）、group_memory:155（我们**拒绝了** fork 保留的关系，双向）、group_reduce:56 / group_broadcast_op:122（桶 B 停止点，含次生 CHECK-COUNT）。
 3. **硬下降 5 例**：masked_load_store（masked_store 对齐合法性）、group_broadcast:14、ensure_layout:14、generated:12（三者均为"转换不适用 + 残留 op"）、group_reduce_quarter:22（8-bit 整数归约不支持）。
-4. **下降一致性断言 2 例**：cmp_merge_invalid:31（LOWER 期望文本）、**load_store:24 —— 见 §19.61，已升级为独立高价值项**：
-   代价模型说 2、这棵树发 4（fork 用 `vldsx2`+DINTLV 原生形式只发 2）⇒ 把 fork 这条分支搬进上游普通 load 下降，
-   **成功判据 = 该自洽性检查转绿且 0 新增失败**。优先于桶 B 停止点：它有明确判据、影响指令数与决策质量。
+4. **下降一致性断言 2 例**：cmp_merge_invalid:31（LOWER 期望文本）、**load_store:24 —— 见 §19.61 + §19.61a（结论已修订）**：
+   上游**已有** vldsx2+DINTLV 路径；真正的缺陷是 `VMILayoutCostModel.cpp` 的 `realizesDeinterleavedPartsDirectly` 只镜像形状、**没镜像"地址可证明对齐"**，
+   于是对不可对齐的 load 少收 2 条 ⇒ **模型乐观、偏向去交错布局**。验收：不可对齐 fixture 自洽 + 可对齐 variant 保持 cost=2 + 逐个解释决策变化。
+   优先于桶 B 停止点：判据明确、影响真实指令数与布局选择。
 5. **其他具名缺口**：gs8_widen_plain 的**关系表/合法性模型**缺口（§19.58 遗留）、step7/PORTING_GAPS.md 里的 F3 h2 stride shim 与 F2 h5 compress 措辞、item 4（两个 opt/ 用例的剪枝 witness 表）、memAny() 合法性模型。
    **桶 B 纪律**：§19.42 —— 文本清单不可信、上游**明文禁止**加回 group-reduce 的 one-carrier 行。
 6. **步骤 9**：先修量具（§19.49 差分的**路径规范化**、§19.50 capture5.sh **重指到上游树 + 自生成基线**），再全门禁（validate_port.sh）、A5 验证、性能复测（19 个 sim-runs 为基线）。
