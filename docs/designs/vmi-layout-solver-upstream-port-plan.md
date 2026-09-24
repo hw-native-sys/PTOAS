@@ -3873,22 +3873,45 @@ fork 的 `materializeMaskLayoutConversion`（fork VMIToVPTO.cpp:4775-4787）把 
 
 即 **contiguous 与 bd(4) 的物理 arity 对不上**（前者 2、后者 4）；而 dynamic 路径因为**被直接喂 `resultTypes`** 所以永远不会不一致（`resultCountMismatch=0`）。
 ⇒ 这是**类型转换/arity 约定**层面的问题（bd(4) 掩码的物理 arity 到底是 2 还是 4），需要先定性再动，且要对照 fork 的转换约定（**不能靠猜**）。
+### 19.73 generated.pto 转绿：factor-4 block 掩码要按它自己的布局切 chunk（c0a742b14，净 +1，fidelity 19 → 20/33）
+
+先把 arity 约定量清（小探针：对每种布局做一次恒等 ensure_mask_layout，数 1-to-N 之后的载波数）：
+
+| mask<128xb32> 的布局 | 载波数 |
+|---|---|
+| contiguous | 2 |
+| deinterleaved = 2 | 2 |
+| deinterleaved = 4 | 4 |
+| block_deinterleaved = 2 | 2 |
+| block_deinterleaved = 4 | 4 |
+
+规则：split 布局的载波数 = factor（contiguous 例外，等于物理 lanes-per-part 比例）；上游自己的 block-2 测试也期望 2。
+顺带量到：block_deinterleaved = 8 是非法布局（factor 只能是 2 或 4）——上游那个名为 block8 的测试其实用的是 factor 2。
+
+根因：factor-4 create_group_mask 的常量分支拿结果类型的 contiguous 形式去切 chunk（只有 2 个载波），再与结果类型（4 个载波）比对，恒被 physical result count mismatch 拒绝；
+dynamic 分支被直接喂 resultTypes，所以从来不会不一致（这解释了 §19.72 里两者失败点不同）。
+
+改法：常量分支的 chunking 改用结果布局本身（每个载波一个 chunk，共 4 个）；产出的 parts 本就是目标排列，随后那步布局转换正是 §19.72 落地的 bd↔contiguous 恒等转发。
+
+实测：两个 bd4 用例现在都 exit=0；整个文件管线 exit=0；generated.pto 两行 RUN 全过（此前 6 个用例有 2 个无法下降）。
+门禁 GATE PASS：641 / 562 / 79（净 +1）、0 新增、lit/vpto 620/619/1、fidelity 20/33。落地 c0a742b14（已推 fork）。
+本链条完整：§19.71 定位 → §19.72 恒等转发（规则来自 fork）+ 量清 arity → §19.73 常量分支按结果布局切 chunk。
 ## 20. 交接快照（当前，取代 §16；§16 保留作历史）
 
 ### 20.1 目标与判据的**当前值**
 
 | 判据 | 目标 | 当前 |
 |---|---|---|
-| 上游 lit/vmi_new 不退化 | 起点 608 发现 / 606 通过 / 2 失败 | **641 发现 / 561 通过 / 80 失败**（多出的 33 个是新增的 conformance 用例；起点 84 → 80）|
-| 我们的 vmi_new 用例通过 | 33/33 | **19/33**（方言批 +3、cast.pto +1，见 §19.62/§19.67）；其中 **4 个文件的前提已被上游删除（§19.69，pmode merge）⇒ 可达集 29/33，分母待裁决** |
+| 上游 lit/vmi_new 不退化 | 起点 608 发现 / 606 通过 / 2 失败 | **641 发现 / 562 通过 / 79 失败**（多出的 33 个是新增的 conformance 用例；起点 84 → 79）|
+| 我们的 vmi_new 用例通过 | 33/33 | **20/33**（方言批 +3、cast.pto +1，见 §19.62/§19.67）；其中 **4 个文件的前提已被上游删除（§19.69，pmode merge）⇒ 可达集 29/33，分母待裁决** |
 | lit/vpto | 648 / 647 / 1（含既有失败）| **620 / 619 / 1**（仅既有 vmi_f4x2_to_bf16x2_vcvt_llvm.pto）|
 | 端到端性能结论可复现 | gbmc-amp-dep / truncf-amp2 | **未做**（前置已核实：19 个 sim-runs 基线在位、msprof/CANN 可用）|
 | 步骤 2b–9 | 全部完成 | 步骤 7：**F5 已完成**（A1/A2/h4-h5/h10 全部落地）、F3/F7 已落、**F4 判定为不需要**（§19.59）；**步骤 8 进行中**（18 例地图已建，§19.60）；**步骤 9 未开始** |
 
 ### 20.2 代码状态
 
-* 上游 worktree：.work/upstream-port/workspaces/vmi-layout-solver-upstream，HEAD **1eb7e0ff5**，树干净（仅 .codex/CLAUDE.md 换行符噪声）；
-* 分支 **feature/vmi-layout-solver-upstream** 已推 fork；自移植起点累计 **24 个提交，全部零回归或净提升**；
+* 上游 worktree：.work/upstream-port/workspaces/vmi-layout-solver-upstream，HEAD **c0a742b14**，树干净（仅 .codex/CLAUDE.md 换行符噪声）；
+* 分支 **feature/vmi-layout-solver-upstream** 已推 fork；自移植起点累计 **25 个提交，全部零回归或净提升**；
 * 主树：计划文档（本文件）在 feature/vmi-layout-decision-layers，同样已推 fork。
 
 ### 20.3 已落地（按主题）
