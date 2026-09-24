@@ -2820,3 +2820,36 @@ F3 h2 之所以没撞上，只因它查的是**同一批**已被专用助手校�
 
 **下一步（细化到 case 级）**：把 21 个失败文件**每个在哪个用例、以什么原因停下**列出来（错误行号 + 原因），这才是剩余 fidelity 工作的真实地图；
 file 级 12/33 从此只作为对外指标，不再作为定位工具。
+
+### 19.29 case 级 fidelity 地图（21 个失败文件的停止点与原因；六行落地后重测）
+
+格式：文件 → 首个失败点（文件内行号）→ 原因。按桶归类：
+
+**B：标记没有暴露关系（7）**
+
+    group_reduce        :56   mask_granularity :20   group_broadcast    :43
+    vsel_zero           :19   ensure_mask_layout :24  unified           :19
+    group_broadcast_op  :122
+
+**F：期望/下降不匹配（8）**
+
+    same_layout_invalid :30 (COST)   unified_merge_invalid :32 (COST)
+    vexpdif_invalid     :30 (COST)   cast                  :471 (COST)
+    cmp_merge_invalid   :31 (LOWER)  load_store            :22 (cost/lowering mismatch)
+    generated           :12 (failed to apply conversion patterns)
+    ensure_layout       :14 (failed to apply conversion patterns)
+
+**A：上游方言缺该算子（2）**：\`producers\`（\`pto.vmi.fma\`）、\`elementwise\`（\`pto.vmi.addf\`）
+
+**E：上游明确不支持（2）**：\`group_reduce_quarter\`（8-bit 整数 reduce）、\`masked_load_store\`（目的地址证明不足）
+
+**C：代价模型拒绝了暴露的关系（1）**：\`group_memory\` :155
+
+**D：解析错误（1）**：\`memory_compaction\` :9
+
+**这张图立刻给出三条结论**：
+
+1. **六行确实动了东西**：\`ensure_layout\` 从桶 B（\`no exposed relation\`）**移到了 F**（\`failed to apply conversion patterns\` @ :14）——
+   即它的**第一个 RUN（cost 侧）现在通过了**，失败落在**第二个 RUN（lowering 侧）**。这再次印证 §19.28 的 case 级判断，也说明六行落地是对的。
+2. **桶 B 缩到 7 个，且这 7 个是可逐个查的具名停止点**（不是笼统的"没暴露关系"）——比上一轮的 8 个更可操作。
+3. **桶 F 里有 2 个是"下降侧"失败**（\`generated\`、\`ensure_layout\`），另 4 个是 COST 期望不一致（其中 \`cast\` 停在 **471 行**，说明它**绝大多数用例已过**、只差很晚的一处）。
