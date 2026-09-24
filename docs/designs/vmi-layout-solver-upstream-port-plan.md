@@ -3309,3 +3309,22 @@ LOWER-NOT、以及缺失 store 指令三处同时失败。
 * pmode 拼写（我们在拷贝的测试里按上游方言改过，§19.25）；
 * fork 独有算子在**上游方言里不存在**（addf、fma 等 bucket A 三项），因此它们只出现在 A 侧；
 * 其余才是**真正的决策差异**，需要逐条裁决（§19.23 四类）。
+### 19.50 步骤 9 的量具复查（第二件）：端到端基线在位，**IR 级预筛缺基线且脚本需重指**
+
+读 .work/upstream-port/perf/ 后确认：
+
+**在位（可直接用于步骤 9 的端到端复现）**：
+
+* 9 个自包含用例（含决定性的 gbmc-amp-dep、truncf-amp2），各带 kernel.pto / ptoas.flags / main.cpp / launch.cpp / golden.py / compare.py；
+* **19 个已记录的 sim-runs/ 目录**（base/split 成对：dep_base/dep_split、truncf_merge/truncf_split/truncf_split2、ew_k1/ew_k2、c6_base/c6_split、c18_base/c18_split、ml_base/ml_split 等）；
+* loop_period.py（从 msprof 轨迹提稳态循环周期）与 msprof/CANN 环境（§19.22 已核实）。
+
+**缺口（步骤 9 之前必须补）**：
+
+1. capture5.sh 是**为 fork 树写的**：它用的二进制是 $R/.work/build-llvm19/tools/pto-test-opt/pto-test-opt（fork 的构建目录），
+   扫的是 $R/test/lit/vmi_new（fork 的用例），并且**依赖 /tmp/nomat_list.txt** —— 而 /tmp 文件名在本项目已有跨用户冲突的先例；
+2. **没有存储任何 IR 抓取基线**（目录里只有脚本）⇒ 想用"先比 IR、再花仿真机时"这个预筛，必须先**重指到上游树**并为**同一棵树生成两侧基线**（例如带/不带某个偏好开关的两次抓取），
+   而不是与"fork 的旧抓取"比对（那份不存在）。
+
+**处置**：把"重指 + 生成基线"列为步骤 9 的第一个子任务；端到端部分不受影响（19 个 sim-runs 就是基线）。
+这条与 §19.49 的路径规范化同属"量具要先修好再量"的同一主题。
