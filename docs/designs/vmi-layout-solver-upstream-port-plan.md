@@ -3964,6 +3964,36 @@ dynamic 分支被直接喂 resultTypes，所以从来不会不一致（这解释
 把**暂存补丁** `cost_model_memorydist_alignment.patch` 叠上去实测：**该 mismatch 消失**（文件只剩第一层的问题）。
 ⇒ **暂存补丁的收益从「1 个文件」变为「至少 2 个文件」**（load_store + group_memory），这是 §19.65 那次「1 换 4」裁决时需要补上的新筹码；
 本移植的纪律不允许为了让它们变绿而改期望或放宽 solver，所以仍**保持暂存**，但证据现在完整：**代价模型的地址合法性补丁 = 修 2 个 conformance，代价是 1 个上游 plan 翻转**。
+### 19.77 group_reduce_quarter 也**按构造不可达**：上游**刻意**拒绝 8-bit 整数归约（有 5 个测试为它背书）
+
+该文件只有 **1 个用例**，且**在 cost pass 就报错**：
+
+    group_reduce_quarter.pto:22:15: error: pto.vmi.group_reduce_addi op VMI-UNSUPPORTED:
+      8-bit integer reductions are not supported; explicitly convert the source to a supported 16-bit or 32-bit type
+    用例形状：源 vreg<64xi8, contiguous lane_stride = 4> + mask<64xb8, ...> → vreg<8xi8, gs(8,8)>，运行时无 not（期望成功）
+
+**证据链（三问三答）**：
+
+| 问题 | 结论 |
+|---|---|
+| 这条拒绝是 fork 的还是上游的？| **上游的**：fork 树全树 grep 该消息 **0 命中**；消息来自 commit **0a3e01731**「fix(vmi,vpto): enforce reduction input types…」（**正是本移植的 base commit**，合并号 !158，issue 1531）|
+| 是有意为之还是顺带？| **有意**：`test/lit/` 里有 **5 个**文件为它背书 —— `vmi_group_reduce_addi_i8.pto`、`vmi_group_reduce_maxi_i8.pto`、`vmi_group_execution_unsupported.pto`、`vmi_group_execution_layout_unsupported.pto`，以及 `Inputs/check_integer_reduction_rejection.py` |
+| 我们能否绕过？| 不能（不改测试的前提下）：上游的政策是「前端必须先显式把源拓宽到 16/32 位再做归约」，而该 fixture 的源就是 i8 |
+
+⇒ 与 §19.69 的四个 pmode 文件**同族**（fork 侧断言的行为被上游删除/拒绝）。**可达集更新为 33 − 4 − 1 = 28**；当前通过 **20/28 可达**。
+
+**顺带把剩余失败按"在哪一层失败"重新分类**（本轮对 13 个失败文件逐个跑 cost pass）：
+
+| 层 | 文件 | 性质 |
+|---|---|---|
+| cost pass 报 "no exposed relation" | group_broadcast_op、group_reduce、mask_granularity | **我们自己的缺口**（三个桶 B 停止点，可达）|
+| cost pass 报 VMI-UNSUPPORTED | group_reduce_quarter | **上游刻意拒绝** ⇒ 不可达（本条）|
+| cost pass 报 "no exposed relation"（期望失败）| cmp_merge_invalid | pmode 前提已删除 ⇒ 不可达（§19.69）|
+| cost pass 通过，失败在下降/自洽性 | ensure_layout、group_broadcast、masked_load_store | **我们自己的缺口**（可达）|
+| 同上，且**第二层**由暂存补丁覆盖 | load_store、group_memory | 可达，**卡在 §19.65 的裁决** |
+| cost pass 通过（形状已合法）| same_layout_invalid、unified_merge_invalid、vexpdif_invalid | pmode 前提已删除 ⇒ 不可达（§19.69）|
+
+⇒ **真正可达且属于我们的只剩 6 个文件**：ensure_layout、group_broadcast、group_broadcast_op、group_reduce、mask_granularity、masked_load_store（+ 2 个卡在裁决的 load_store / group_memory）。
 ## 20. 交接快照（当前，取代 §16；§16 保留作历史）
 
 ### 20.1 目标与判据的**当前值**
@@ -3971,7 +4001,7 @@ dynamic 分支被直接喂 resultTypes，所以从来不会不一致（这解释
 | 判据 | 目标 | 当前 |
 |---|---|---|
 | 上游 lit/vmi_new 不退化 | 起点 608 发现 / 606 通过 / 2 失败 | **641 发现 / 562 通过 / 79 失败**（多出的 33 个是新增的 conformance 用例；起点 84 → 79）|
-| 我们的 vmi_new 用例通过 | 33/33 | **20/33**（方言批 +3、cast.pto +1，见 §19.62/§19.67）；其中 **4 个文件的前提已被上游删除（§19.69，pmode merge）⇒ 可达集 29/33，分母待裁决** |
+| 我们的 vmi_new 用例通过 | 33/33 | **20/33**（方言批 +3、cast.pto +1，见 §19.62/§19.67）；其中 **4 个 pmode 文件（§19.69）+ 1 个 8-bit 归约文件（§19.77）前提被上游删除/拒绝 ⇒ 可达集 28/33，分母待裁决** |
 | lit/vpto | 648 / 647 / 1（含既有失败）| **620 / 619 / 1**（仅既有 vmi_f4x2_to_bf16x2_vcvt_llvm.pto）|
 | 端到端性能结论可复现 | gbmc-amp-dep / truncf-amp2 | **未做**（前置已核实：19 个 sim-runs 基线在位、msprof/CANN 可用）|
 | 步骤 2b–9 | 全部完成 | 步骤 7：**F5 已完成**（A1/A2/h4-h5/h10 全部落地）、F3/F7 已落、**F4 判定为不需要**（§19.59）；**步骤 8 进行中**（18 例地图已建，§19.60）；**步骤 9 未开始** |
