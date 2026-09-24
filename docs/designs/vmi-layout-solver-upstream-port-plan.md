@@ -2774,3 +2774,21 @@ F3 h2 之所以没撞上，只因它查的是**同一批**已被专用助手校�
 **桶 B 的下一步读点（无构建）**：conformance 工具的候选域来自 \`collectCandidateLayouts(module)\`（模块里出现过的布局），
 而 planner 的 ensure 分支在 \`VMILayoutPlanner.cpp:1463+\`；两者与 \`r01_c_to_gs1\` 这类"两端都已注解"的形状如何交互，是下一个要读的地方。
 另注意：**两端都注解**的算子，按 \`e936a9876\` 的"注解配对即关系之锚"规则本应直接被采纳 —— 若 ensure 家族没走到那条路，说明该规则目前的适用范围**不覆盖 ensure 类算子**，这可能才是桶 B 的真正根因。
+
+### 19.27.2 第二个假设也被证伪：把"注解配对即关系之锚"推广到 ensure 家族 —— **中性**
+
+读点时确认了一个**真实的不对称**：ensure 分支（\`VMILayoutPlanner.cpp:1463-1495\`）在两端都已注解的情况下，**仍要求表里有这一对的行**（\`getEnsureLayoutFact\` / \`getEnsureMaskLayoutFact\` 成功）才产出关系；
+而 cast 家族在 \`e936a9876\` 之后是"两端注解即以注解元组为关系"。于是我把同一原则推广过去（只保留"操作数/结果类型是我们认识的"这一条，去掉表行门槛），并实测：
+
+| 读数 | 结果 |
+|---|---|
+| \`ninja\` | exit 0 / 0 error |
+| conformance | **12 passed / 21 failed（完全未变）** |
+| 全量 | **641 / 553 / 88**，失败集合与基线**逐项相同** |
+
+**判决：无收益 ⇒ 回退**（已回退、已重建、conformance 复测回到 12/21 基线）。
+于是**第二个假设也被证伪**：桶 B 的 ensure 用例**不是**被那道表行门槛卡住的。
+
+**桶 B 的下一步必须是instrumentation，而不是继续猜**：给 \`VMILayoutRelationProvider::enumerateRelations\` 加**临时的**分支追踪（或在工具侧打印它拿到的 \`op\` 与 \`candidateLayouts\`），
+回答三个具体问题：(i) 这些标记算子**是否真的走进了** ensure 分支；(ii) \`getExplicitLayout\` 对它们的类型是否返回了布局；(iii) \`makeReachableRelation\` 是否因**可达性**而不是因表行被否。
+三个问题都能用一次短暂的、提交前必须剥离的诊断打印回答 —— 这与本项目此前三次成功定位（stride_load 端口、broadcast 源端口、mask-granularity 方向）用的是同一手法。
