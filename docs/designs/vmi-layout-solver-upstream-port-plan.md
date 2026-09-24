@@ -3070,3 +3070,32 @@ r02 的形状是 mask<256xb16> contiguous -> deinterleaved = 4。于是对两张
 
 **同时暴露了下一步的真正战场**：ensure 家族（vec 与 mask 两支）现在都停在**下降侧**（VMI-RESIDUAL-OP），
 而 F5 的 h1/h12（forwardsPhysicalParts 恒等短路）正是"让 ensure 的下降能落地"的那一块 —— 两条线在这里合流。
+### 19.40 **全家族 fork-only 行清单**（本轮一次性核出：7 张共享表共 36 行 + 2 张 fork 独有表）
+
+用脚本对上游的 VMILayoutSupportTables.inc 与 fork 的 VMILayoutSupport.cpp 逐表做集合差（同一脚本可复跑）：
+
+| 表 | fork 独有行数 | 内容要点 |
+|---|---|---|
+| kDenseStoreLayoutPatterns | 3 | 三条 preferred 行（bits<16/32/8> 的 c→N<128/64/256>）|
+| kGroupBroadcastLoadLayoutPatterns | 1 | {gb(1), bits<16,32>, memContiguous, d(4)} |
+| kGroupReduceLayoutPatterns | **10** | 结果侧 gs(8) / gs(1) 家族（gb(1)/gb(2)/gb(4)/gbFull + bd/d/ls 组合）|
+| kLegalCastLayoutPatterns | **10** | gs→gs 的整数扩展/截断行，以及等宽 bits<16,16> c→c |
+| kLegalMaskGranularityCastLayoutPatterns | **6** | 含 **三条 c→c**（mb16→mb8、mb32→mb16、mb32→mb8）与三条 d(4) 变体 |
+| kVdintlvLayoutPatterns | 3 | chunk<1>/<2,4>/<4> 的 d/c 组合 |
+| kVintlvLayoutPatterns | 3 | 同上（交错方向）|
+| **fork 独有整表** | — | kGroupBroadcastLayoutPatterns、kWidthChangingBitcastLayoutPatterns |
+
+**安全分级（关键，不能一把注入）**：这份清单里**不是每一行都该恢复** —— 判据是"**lowering 是否真的实现它**"，因为我们已有两次实测反例：
+
+* **已恢复且实测安全（8 行）**：ensure-layout 6 行 + mask ensure 2 行（套件中性、case 级提升）；
+* **已实测不安全（3 行）**：kLegalMaskGranularityCast 的三条 **c→c**（mb16→mb8、mb32→mb16、mb32→mb8）——
+  早前把 mask<128xb32,c> → mask<128xb16,c> 手写进去时，**lowering 直接报 VMI-UNSUPPORTED**（"source/result layouts do not match a legal mask granularity cast table row"），
+  即这是"**fork 的表比上游 lowering 宽**"的那一类，恢复只会造出无法下降的计划；
+* **需先验证再用**：kLegalCastLayoutPatterns 的 10 条 gs 行（early 证据显示 gs cast 家族在上游**没有注册 lowering**，
+  所以对 extf/gs 那类形状，正确的路是"注解配对即关系"而不是补表行 —— 见 20.4 与该用例的处理）、group-reduce 的 10 条、dense-store 的 3 条、group-broadcast-load 的 1 条、vdintlv/vintlv 各 3 条、以及两张 fork 独有表。
+
+**流程（每族一次、有界）**：注入该族 fork-only 行 → 构建 → **两个套件 + case 级位移**三层实测 → 
+**套件中性且 case 级离开桶 B 才保留**；若 lowering 拒绝（如 mask-granularity c→c 那样）则**回退并记为"fork 表宽于上游 lowering"的具名条项**。
+
+**这张表把剩下的桶 B（4 个停止点）与若干 bucket F 的入口都变成了"按族取行、按流程实测"**，不再需要逐个 trace 猜方向；
+同时它给出一个可复跑的判据：**任何"fork 行比上游多"的地方，都要先问 lowering 认不认**。
