@@ -3119,3 +3119,29 @@ r02 的形状是 mask<256xb16> contiguous -> deinterleaved = 4。于是对两张
 **至此"桶 B → 下降侧"这条位移模式已在三个族上重现**（ensure-layout 六行、mask ensure 两行、group-broadcast-load 一行）：
 说明**桶 B 的本质是"表/枚举缺行"**，而**补上之后剩下的普遍是同一个下降侧缺口**（VMI-RESIDUAL-OP / failed to apply conversion patterns）——
 这正好把工作重心推向 F5 的 h1/h12（ensure 恒等短路与 fact 驱动转发），即 §19.39 说的"两条线合流"。
+### 19.42 **对 §19.40 清单的重要更正**：group-reduce 的"10 条 fork-only 行"是**文本差异的假象**，而且上游**明文禁止**把它们加回来
+
+我在准备注入 group-reduce 那 10 行前先读了上游表本体，发现两件事：
+
+1. **两张表的字段顺序不同**：上游 GroupReduceLayoutPattern 是 {block, sourceLayout, resultLayout, integer16AddResultLayout}（如 {gb(1), c(), gs(8), gs(8,2)}），
+   而 fork 的行是 {bits<8,16,32>, gb(1), c(), gs(8)} —— **elementBits 在前**。
+   也就是说 §19.40 的集合差是**逐文本**比较，对**模式 schema 不同**的表会给出**假阳性的"fork-only 行"**：
+   fork 的 {bits<8,16,32>, gb(1), c(), gs(8)} 与上游的 {gb(1), c(), gs(8), gs(8,2)} **语义上就是同一行**。
+2. 更关键：上游在表里留了**明文注释**（VMILayoutSupportTables.inc:211-219）：
+
+       // A one-carrier group packet row used to sit here: {gbCompact(), c(), gs(8)}
+       // It is removed (upstream MR) because the dense masked-row fallback below covers every shape it matched ...
+       // Do not add a dense one-carrier row back (for example {gb(4), c(), gs(8)} for 128xf32 group=4);
+       // the slots=1 form is the contract, pinned by vmi_to_vpto_group_reduce_gb4_contiguous_slots1.pto.
+
+   ⇒ 若按清单注入，就会**违反上游的一句明确指令**（那条行是被上游 MR 删掉的，且有测试钉住 slots=1 的约定）。
+
+**结论与规则修订**：
+
+1. §19.40 的清单**只对"schema 与上游一致"的表有效**；判据是**该行的文本能否直接作为上游表的合法行**（前三个族恰好都是：它们的行可直接插入并实测出预期的 case 级效果，这本身就是"真"的证明）；
+2. 对 schema 不同的表（group-reduce 已确认、cast 家族很可能同样——fork 行少了 CastTypeClass 注记），必须**按语义而不是文本**比对，且**注入前必须读表注释**：上游可能已经用别的行覆盖、甚至明文禁止加回；
+3. 由此**"补表行"这条路线的剩余价值有限**：真正已验证的三族（ensure-layout 6、mask ensure 2、gb-load 1）都已落地，其余"清单行"多半是文本假象；
+4. 剩下的桶 B 停止点（group_reduce:56、group_broadcast_op:122、mask_granularity:20）需要**各自的语义级调查**，而不是按文本清单批量注入；
+   mask_granularity 更是已有**反例**（三条 c→c 被 lowering 拒绝）。
+
+**这一步没有产生代码改动**（读完即停），但它避免了一次**违反上游明文约定**的注入 —— 与 §19.36/§19.38 同属"动手前先核对"的纪律。
