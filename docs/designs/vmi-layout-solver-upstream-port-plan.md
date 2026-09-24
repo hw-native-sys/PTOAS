@@ -4127,6 +4127,28 @@ fork 还带了自己的理由注释：「粒度转换本身不要求改变逻辑
 **这是第 2 次同类交易**，形状完全一致：**fork 的表/模型更宽 vs 上游刻意收窄，两侧各有一个测试背书**。
 （第 1 次是 §19.65 的代价模型地址合法性补丁：修 2 个 conformance、翻 1 个上游 plan。）
 两次的裁决可以一次做完 —— 两者的共同问题都是「移植的验收口径要不要接受 fork 侧更宽的行为」。
+
+### 19.82 group_broadcast 的 8 个失败用例：**两类，各需不同手段**（本轮量化定性，未改代码）
+
+该文件 11 个用例、3 个通过。本轮拆成两类，并**否掉了"再补一行表行"**这条路：
+
+| 类 | 用例数 | 失败面 | 首条诊断 | 性质 |
+|---|---|---|---|---|
+| A. 残留下降 | 5 | **下降**（cost pass 通过、relation 存在）| `failed to apply conversion patterns` + `VMI-RESIDUAL-OP`，残留 `pto.vmi.group_broadcast_load` | 下降 pattern 内部拒绝，**不是表缺口** |
+| B. 低精度 vsel | 3 | 下降（触发校验器）| `pto.vsel op src0 type must not use low-precision vector element type` | 需**实现决策** |
+
+**A 类已排除"表行"假说**：两棵树的 `kGroupBroadcastLoadLayoutPatterns` 逐行对照，**我们是 fork 的超集**
+（多 3 条 `memAny()` 行 + 1 条 `{gb(4),…,ls(2),G<1>()}` 行，fork 的行我们全有）⇒ 不缺行。
+拒绝点落在 `OneToNVMIGroupBroadcastLoadOpPattern`（`VMIToVPTOPatternInternals3.cpp:1432`）内部的若干 `notifyMatchFailure`，
+release 构建下不打印原因（同 §19.71/§19.78）⇒ **下一轮第一步：照同一手法给该 pattern 的失败出口插桩**，拿到真正的拒绝条件。
+
+**B 类性质已明确**：`pto.vsel` 在低精度元素上被上游校验器禁止（`lib/PTO/IR/VPTO.cpp:203`），而 per-group BRC 的合并
+`mergePerGroupBRCPart`（`PatternInternals3.cpp:1708-1722`）正是用 `vsel` 逐组覆盖 lane 区间 ⇒ 对 f8 必须换合并方式；
+允许的低精度算子只有显式访存/转换类（`vlds/vsts/vcvt/vmulscvt/vpack`）⇒ 可行路线是 **升宽 → vsel → 降回**（f8↔f16 两个方向都精确）。
+这会往成本模型里加转换（每次合并 +2），属**实现决策**而非补行，故先记录不擅动。
+
+**剩余纯可达未做项**因此明确为：`group_broadcast`（A+B 都要修）、`ensure_layout`（f16↔d4 语义）；
+另 3 个卡在裁决：`load_store`、`group_memory`（§19.65）、`mask_granularity`（§19.81）。
 ## 20. 交接快照（当前，取代 §16；§16 保留作历史）
 
 ### 20.1 目标与判据的**当前值**
