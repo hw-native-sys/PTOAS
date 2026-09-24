@@ -3849,6 +3849,30 @@ tie-break 插桩方式（env 守卫 + llvm::errs，只在两个比较器里打�
 **结论与下一步**：这一族的缺口在 **mask 的 contiguous ↔ block_deinterleaved 材料化**（`tryMaskLayoutMaterializers` 链上没有它），而**不是** factor-4 掩码生成本身；
 与 §19.63/§19.65 的 mask 工作（h4/h5 只路由了 deinterleaved2/4 的 arity）属同一片区域：**下一个增量 = 为 block_deinterleaved 补上这条 mask materializer**，随后单独处理 constant 路径的 `materializeGroupMaskResults` 失败。
 （附注：`F5_mask_layout_conversions.diff` 里 **0 次**提到 block_deinterleaved ⇒ 又一个「规格清单没覆盖到」的 hunk，与 §19.70 的 F4 缺口同源。）
+### 19.72 §19.71 的假设**被修正并落地**：bd 掩码的转换是**恒等转发**，不是链上缺 materializer（1eb7e0ff5）
+
+§19.71 推测「要为 block_deinterleaved 在 materializer 链上补一条」。本轮查 fork 的同名函数后**修正**：
+fork 的 `materializeMaskLayoutConversion`（fork VMIToVPTO.cpp:4775-4787）把 `contiguous ↔ block_deinterleaved` 与它自己的 identity 情形**并列**，直接**转发同一批 parts**（先 `verifyIdentityPartForwarding`），即：
+**bd 掩码与 contiguous 掩码把同样的谓词位放在同样的物理载波里**，block 因子只是重新解释载波内的 lane 分组 ⇒ **无需搬运**。
+
+所以真正的缺口是「我们的 identity materializer 只认 `sourceLayout == resultLayout`」（`VMIToVPTODataLayoutInternals.cpp:1313-1326`）⇒ 补上那两个 pair 即可（+15 行，含注释引用 fork 行号）。
+
+**实测**：
+
+| 用例 | 修改前 | 修改后 |
+|---|---|---|
+| generated::create_group_mask_**dynamic**_block_deinterleaved4 | exit 1（`failed to apply conversion patterns` + `pto.vmi.create_group_mask` 残留）| **exit 0** |
+| generated::create_group_mask_**constant**_block_deinterleaved4 | exit 1 | 仍 exit 1（**另一个原因**，见下）|
+
+**门禁**：**GATE PASS** —— 641/561/80、**0 新增**、lit/vpto 620/619/1、fidelity 19/33（文件仍红，因为 constant 那条未修，故分母不动）。
+⇒ 属**净中性但真实的能力增量**（把一个原本失败的用例修到能下降，且规则来自 fork 自身），与 A1/h10 同类的落地形态。
+
+**constant 那条的精确剩余原因（本轮插桩量到）**：
+
+    F4 results=2  resultTypes=4  materializations=2        ← 常量路径产出 2 个 contiguous 掩码，而 bd(4) 结果需要 4 个载波
+
+即 **contiguous 与 bd(4) 的物理 arity 对不上**（前者 2、后者 4）；而 dynamic 路径因为**被直接喂 `resultTypes`** 所以永远不会不一致（`resultCountMismatch=0`）。
+⇒ 这是**类型转换/arity 约定**层面的问题（bd(4) 掩码的物理 arity 到底是 2 还是 4），需要先定性再动，且要对照 fork 的转换约定（**不能靠猜**）。
 ## 20. 交接快照（当前，取代 §16；§16 保留作历史）
 
 ### 20.1 目标与判据的**当前值**
@@ -3863,8 +3887,8 @@ tie-break 插桩方式（env 守卫 + llvm::errs，只在两个比较器里打�
 
 ### 20.2 代码状态
 
-* 上游 worktree：.work/upstream-port/workspaces/vmi-layout-solver-upstream，HEAD **1458a7d85**，树干净（仅 .codex/CLAUDE.md 换行符噪声）；
-* 分支 **feature/vmi-layout-solver-upstream** 已推 fork；自移植起点累计 **23 个提交，全部零回归或净提升**；
+* 上游 worktree：.work/upstream-port/workspaces/vmi-layout-solver-upstream，HEAD **1eb7e0ff5**，树干净（仅 .codex/CLAUDE.md 换行符噪声）；
+* 分支 **feature/vmi-layout-solver-upstream** 已推 fork；自移植起点累计 **24 个提交，全部零回归或净提升**；
 * 主树：计划文档（本文件）在 feature/vmi-layout-decision-layers，同样已推 fork。
 
 ### 20.3 已落地（按主题）
