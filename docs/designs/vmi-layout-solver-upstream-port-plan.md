@@ -2516,3 +2516,32 @@ F3 h2 之所以没撞上，只因它查的是**同一批**已被专用助手校�
 2. **表承认但代价模型偏好 contiguous**：那是 cost 比序问题（与 §19.16 的 frontier/Pareto 讨论同族），修点在代价模型而不是枚举。
 
 读法：查 group-load 表在该形状下的行 + planner 里 group_load 分支候选择序的代价；两条都能在**无构建**的情况下判定。
+
+### 19.21.5 读完了：**上游在 fork 之后给 strided group_load 加了 memAny 行**，我们的 solver 于是选了不可下降的 contiguous
+
+**表本体（三处逐一核过）：**
+
+* **fork 点**（\`ca7ccb409\`，即我从 fork 分叉时的上游内容）：group-load 表**只有**这些行——
+
+      {bits<8,16,32>(), gb(1,4), memContiguous(), c()},   {bits<8,16,32>(), gb(1,2), memContiguous(), c()},
+      {bits<8,16,32>(), gb(1),   memContiguous(), c()},   {bits<8,16,32>(), gb(2),   memContiguous(), c()},
+      {bits<8,16,32>(), gb(4),   memContiguous(), c()},   {bits<8,16,32>(), gbFull(), memAny(), c()},
+      {bits<32>(),      gb(2),   memBlockAligned(), bd(2)}, {bits<32>(), gb(4), memBlockAligned(), bd(4)},
+
+* **上游后来加了三条 \`memAny()\` 行**（注释写着"strided source 需要自己的一行"）：
+
+      {bits<8,16,32>(), gb(1), memAny(), c()},   {bits<8,16,32>(), gb(2), memAny(), c()},   {bits<8,16,32>(), gb(4), memAny(), c()},
+
+* 我们的 fork **保留的是窄表**（无这三条）——这就是 fork 里从没这个问题、移植后才出现的原因。
+
+**于是因果链闭合**：移植后我们的 solver 看到的是**上游的宽表**，对 "f32 / 64B group / stride 96B（跨 3 个 32B 块）" 这个形状，
+窄的 \`memAny()\` 行给出了一条**免转换的 \`contiguous\`** 结果布局；我们的 solver 依代价选了它（无 ensure、最省），
+而 lowering 对 strided 源只认两条路（块跨步 vsldb 计划要求 **block-deinterleaved** 结果；或整 chunk 计划要求 group 达一个物理 part），于是报出那条 generic 拒绝。
+**上游 pre-port 的流程选的是 \`bd2\`**（测试期望里 vcvt 的输入就是 \`block_deinterleaved = 2\`）—— 也就是**上游的赋值并不只是"取表里最省的那一行"**。
+
+**这不是表 bug、也不是测试 bug，而是"我们的 solver 与上游 lowering 的合法性口径不一致"**：solver 认为可采纳的（\`memAny()+c()\`），lowering 不认。
+这与本项目里已解决的两次同型（\`ea1c1e6bb\` 的 preferred 行、\`bccd44a29\` 的双向查询）是一类：**让 solver 的口径与 support/lowering 的真相一致**。
+
+**待验修复（下一步，solver 侧、非表、非测试）**：group_load 分支里，当**源 row stride 是 strided**（≠ group size）且形状为 f32 整块组时，
+不要把 \`memAny()\` 那条 \`c()\` 当作合法候选/不要让代价模型偏好它，而要求落到 \`memBlockAligned()\` 的 \`bd\` 行（镜像 lowering 的 \`isSupportedBlockStrideF32GroupLoad\` 前提）。
+预期：该用例**转绿**（因为回到了上游的 bd2 选择，truncf 诊断随之出现），且失败集合**严格子集**；任何其他用例的计划变化都必须被解释，否则回退并把本条并入步骤 8。
