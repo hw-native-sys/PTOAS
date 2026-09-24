@@ -3943,6 +3943,27 @@ dynamic 分支被直接喂 resultTypes，所以从来不会不一致（这解释
 
 **下一轮第一步（已想清，可直接做）**：用 §19.70 的逐用例探针手法写一个最小 `ensure_layout` 探针 `vreg<128xf32, contiguous> → gs(2,8)`，跑 `-vmi-to-vpto`：
 能下降 ⇒ 选「补模型转换」；不能下降 ⇒ 选「收窄事实查询」。**先测再改**，与 h10/§19.71 同一纪律。
+### 19.76 group_memory 的两层拦截：**非法候选已修**（9dff7e90a），**第二层由暂存补丁覆盖**（新证据）
+
+§19.75 的下一步测量直接给出了答案 —— 用最小 `ensure_layout` 探针验证「contiguous → gs(2,8)」是否可下降，结果**在解析期就报错**：
+
+    error: !pto.vmi.vreg<128xf32, #pto.vmi.layout<num_groups = 2, slots = 8>>
+           expected num_groups layout to describe exactly one logical result lane per group
+
+⇒ **该类型本身非法**（vreg 的 group-slot 布局要求「每组恰好一条逻辑 lane」，即 num_groups == 元素数；128 lane 的 vreg 只能配 num_groups=128）。
+而事实查询里 `VMIVRegType::get(ctx, elementCount, elemType, layout)` 是**直接构造、不过校验器**，于是它为一个不存在的类型给出了 fact ⇒ 关系被暴露 ⇒ 代价模型（正确地）拒收 ⇒ **整个 conformance run 在该用例处中止**。
+
+**修法（已落地 9dff7e90a，+12 行含注释）**：`getGroupStoreLayoutFactsForLayout` 增加合法性闸 —— `layout.isGroupSlots() && numGroups != valueType.getElementCount()` 直接拒绝。
+实测：cost pass **exit=1 → exit=0，0 次 rejected**，且该用例的关系集与 fork 一致（fork 的 dump 只有 contiguous 一条）。
+门禁 **GATE PASS**：641/562/79、**0 新增**、lit/vpto 620/619/1、fidelity 20/33（文件仍红，因为它还有第二层）。
+
+**第二层（本轮同时量到，属新证据）**：修掉上面那条后，同文件的 `deinterleave_load_contiguous` 暴露出来：
+
+    relation cost=0, emitted rearrangements=1     ← 与 §19.61/§19.63 同一族（模型按「直接形式」计价）
+
+把**暂存补丁** `cost_model_memorydist_alignment.patch` 叠上去实测：**该 mismatch 消失**（文件只剩第一层的问题）。
+⇒ **暂存补丁的收益从「1 个文件」变为「至少 2 个文件」**（load_store + group_memory），这是 §19.65 那次「1 换 4」裁决时需要补上的新筹码；
+本移植的纪律不允许为了让它们变绿而改期望或放宽 solver，所以仍**保持暂存**，但证据现在完整：**代价模型的地址合法性补丁 = 修 2 个 conformance，代价是 1 个上游 plan 翻转**。
 ## 20. 交接快照（当前，取代 §16；§16 保留作历史）
 
 ### 20.1 目标与判据的**当前值**
@@ -3957,8 +3978,8 @@ dynamic 分支被直接喂 resultTypes，所以从来不会不一致（这解释
 
 ### 20.2 代码状态
 
-* 上游 worktree：.work/upstream-port/workspaces/vmi-layout-solver-upstream，HEAD **c0a742b14**，树干净（仅 .codex/CLAUDE.md 换行符噪声）；
-* 分支 **feature/vmi-layout-solver-upstream** 已推 fork；自移植起点累计 **25 个提交，全部零回归或净提升**；
+* 上游 worktree：.work/upstream-port/workspaces/vmi-layout-solver-upstream，HEAD **9dff7e90a**，树干净（仅 .codex/CLAUDE.md 换行符噪声）；
+* 分支 **feature/vmi-layout-solver-upstream** 已推 fork；自移植起点累计 **26 个提交，全部零回归或净提升**；
 * 主树：计划文档（本文件）在 feature/vmi-layout-decision-layers，同样已推 fork。
 
 ### 20.3 已落地（按主题）
