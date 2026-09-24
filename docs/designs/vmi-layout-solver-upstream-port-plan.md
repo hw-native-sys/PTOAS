@@ -4237,6 +4237,30 @@ fork 侧没有这段（fork **统一 slots=8**，所以它的表行 `{gb(1), gs(
 ⇒ **"上游要求地址对齐证明"这一个设计主题，覆盖了 12 个失败文件里的 4 个（并含 group_broadcast 的 5 个用例）**；
 该主题由 `0a3e01731`/`6b1ba8d99` 等上游 fix 引入，fork 时代不存在。
 剩下的真实移植缺口只有：`ensure_layout`（f16↔d4 语义）、`group_broadcast` 的低精度 vsel 合并（3 例）、以及 3 个 pmode/8-bit 前提文件。
+
+### 19.86 **步骤 9 启动**：性能量具与前置已核实，两个放大用例用**当前移植编译器**编译通过
+
+按 §20.1 的判据（端到端性能结论可复现：`gbmc-amp-dep`、`truncf-amp2`），本轮做了三件前置工作：
+
+**（1）量具就位（`perf/README.md` 已给出确切命令）**：`perf/` 里有冻结的 harness —— 9 个自包含用例（`cases/`）、
+`capture5.sh`/`cmp5.sh`（IR 级差分，先于花模拟器时间）、`loop_period.py`（从 msprof trace 取稳态 loop period）、**21 个 `sim-runs/` 记录档**；
+`msprof` 在 `/usr/local/Ascend/cann-9.0.0/bin/msprof` ✓；`test/vpto/scripts/run_host_vpto_validation.sh` 在移植 worktree 里 ✓。
+
+**（2）一个重要的**修正**：不需要"重建 ptoas 二进制"** —— `builds/…/tools/ptoas/ptoas` 只有 3.6 KB，是**Python 包装脚本**（运行 CMake 包树里的 CLI），
+真正要新鲜的是 `python/ptoas/mlir/_mlir_libs/libPTOASCompiler.so`；实测其时间戳（18:11）**晚于当前 HEAD 的提交时间（18:06）** ⇒ 编译用的是**当前移植编译器** ✓。
+（`ninja -C <build> ptoas` 报 unknown target，正是因为本工程的 ninja 目标里**没有** `ptoas` 这个可执行目标。）
+
+**（3）两个放大用例编译通过（`COMPILE_ONLY=1`，不花模拟器时间）**：
+
+    gbmc-amp-dep: step1 fatobj ✓（VF_SIMT size verification passed）→ step2 launch object ✓ → step3 link kernel .so ✓ → "All 1 VPTO case(s) passed"
+    truncf-amp2 : 同样三步全过
+
+**（4）变体语义已弄清**：记录档里的 `*_base` / `*_split` 是同用例的**两种方案（merge / split）**，
+`cmp_dep.py` 从 `/home/mouliangyu/msprof-op-simulator-runs/<tag>/out/OPPROF_*/simulator/core0.veccore0/{trace.json,core0.veccore0_instr_exe.csv}` 读数据
+（注意：那是**原始绝对路径**，冻结的 `sim-runs/` 只是副本 ⇒ 新跑出来的结果要按同样结构落盘再比）。
+
+**（5）模拟器实跑已发起**（`DEVICE=SIM` 不带 `COMPILE_ONLY`，`WORK_SPACE=/home/mouliangyu/ptmp/perf_sim_dep`，后台进行）：
+跑完后用 `loop_period.py` 取稳态 loop period，与记录档中**同方案**的那一条比（README：绝对 tick 有 ±3 抖动，<1% 视为噪声；判据是"方向和量级"）。
 ## 20. 交接快照（当前，取代 §16；§16 保留作历史）
 
 ### 20.1 目标与判据的**当前值**
