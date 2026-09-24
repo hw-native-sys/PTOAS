@@ -4058,6 +4058,41 @@ dynamic 分支被直接喂 resultTypes，所以从来不会不一致（这解释
 **方法论留痕**：这条链是「表行级缺口」的又一个实例，且与 §19.40/§19.60/§19.70 同源 ——
 **移植清单会漏行**（此前漏的是 F4 的两个函数、F5 没提 block_deinterleaved，这次漏的是一整块里的一行）。
 因此**差分仪器（step9/conformance_cost_diff.sh）+ 逐用例探针（per_case_lowering.py）+ 查询键插桩**仍是发现这类缺口最有效的手段，已在 §19.64/§19.70/§19.78 分别记录。
+### 19.80 group_reduce 的停止点：**上游刻意加的 deinterleaved 门槛**（第 7 个"前提被上游改变"的文件）
+
+沿用 §19.79 的方法（fork dump 对照 → 候选/表行核对 → 定位拒绝点）：
+
+**用例**（文件第 56 行的标记点）：
+
+    @two_block_deinterleaved
+      source: vreg<64xf16, deinterleaved = 2>     mask: mask<64xb16, deinterleaved = 2>
+      result: vreg<2xf16, gs(num_groups = 2, slots = 8)>     num_groups = 2, reassoc
+
+**两侧对照**：fork 的 dump 给出 `relation=0 cost=0 operand0=deinterleaved = 2 operand1=deinterleaved = 2 result0=gs(2,8)`；我们 **no exposed relation**。
+
+**逐层排除（与 §19.79 同法，但这次结论相反）**：
+
+| 层 | 结论 |
+|---|---|
+| 表行 | **有**：`{gb(2), d(2), gs(8), gs(8, 2)}`（`VMILayoutSupportTables.inc:204`），第 4 列只是 16-bit 整数和的 native 布局，与本例无关 |
+| 候选布局 | **有**：`getGroupReduceQueryLayouts`（VMILayoutPlanner.cpp:788-801）无条件加入 contiguous + d(2)/d(4) + bd(2)/bd(4) |
+| **拒绝点** | `isExecutableGroupReducePattern`（`VMILayoutSupportMaterialization.inc:312-334`）的 deinterleaved 条件：<br>`key.elementCount < key.lanesPerPart * factor` → **64 < 128 × 2 = 256 ⇒ false（不可执行）**，该行被跳过 ⇒ 无 fact ⇒ 无关系 |
+
+（f16 的 `lanesPerPart` 是 **128**，所以 64 元素的 d(2) 源永远过不了这个门槛。）
+
+**门槛的来源（决定"可达/不可达"的关键一问）**：
+
+* fork 全树 grep **0 命中** ⇒ 不是 fork 的规则；
+* **pristine origin/master 里有**（`git show origin/master:lib/.../VMILayoutSupportMaterialization.inc` 命中 1）；
+* 是上游 commit **`6b1ba8d99`「fix(vmi): align grouped reductions with the slots=1 dense fallback」** 加的。
+* 门槛自己的注释说明了理由：「deinterleaved 源每组至少要占满一个物理 chunk，否则**产出它的 load 没有下降**，应改用 dense masked-row 方案」。
+
+⇒ 与 §19.69（pmode）/§19.77（8-bit 归约、masked_store 对齐）**同族**：fork-only 的 conformance 断言了上游刻意收窄的行为 ⇒ **在本底座上按构造不可达**。
+**可达集 33 − 7 = 26**；当前通过 **21/26 可达**。
+
+**一个成体系的观察（值得写进结论）**：33 个 conformance 文件里已有 **7 个**断言的是"上游之前的"行为 ——
+4 个 pmode=merge、1 个 8-bit 整数归约、1 个 masked_store 对齐、1 个 group_reduce deinterleaved 门槛。
+每个都有上游 commit/测试背书（不是我们没实现），因此分母问题不再是"个别例外"，而是**这批 fork 测试本身早于上游的若干次收窄**。
 ## 20. 交接快照（当前，取代 §16；§16 保留作历史）
 
 ### 20.1 目标与判据的**当前值**
@@ -4065,7 +4100,7 @@ dynamic 分支被直接喂 resultTypes，所以从来不会不一致（这解释
 | 判据 | 目标 | 当前 |
 |---|---|---|
 | 上游 lit/vmi_new 不退化 | 起点 608 发现 / 606 通过 / 2 失败 | **641 发现 / 563 通过 / 78 失败**（多出的 33 个是新增的 conformance 用例；起点 84 → 78）|
-| 我们的 vmi_new 用例通过 | 33/33 | **21/33**（方言批 +3、cast.pto +1，见 §19.62/§19.67）；其中 **4 个 pmode 文件（§19.69）+ 8-bit 归约（§19.77）+ masked_store 对齐策略（§19.77）被上游刻意拒绝 ⇒ 可达集 27/33，分母待裁决** |
+| 我们的 vmi_new 用例通过 | 33/33 | **21/33**（方言批 +3、cast.pto +1，见 §19.62/§19.67）；其中 **7 个文件断言的是上游收窄前的行为（§19.69/§19.77/§19.80：4 pmode + 8-bit 归约 + masked_store 对齐 + group_reduce 门槛）⇒ 可达集 26/33，分母待裁决** |
 | lit/vpto | 648 / 647 / 1（含既有失败）| **620 / 619 / 1**（仅既有 vmi_f4x2_to_bf16x2_vcvt_llvm.pto）|
 | 端到端性能结论可复现 | gbmc-amp-dep / truncf-amp2 | **未做**（前置已核实：19 个 sim-runs 基线在位、msprof/CANN 可用）|
 | 步骤 2b–9 | 全部完成 | 步骤 7：**F5 已完成**（A1/A2/h4-h5/h10 全部落地）、F3/F7 已落、**F4 判定为不需要**（§19.59）；**步骤 8 进行中**（18 例地图已建，§19.60）；**步骤 9 未开始** |
