@@ -3896,6 +3896,30 @@ dynamic 分支被直接喂 resultTypes，所以从来不会不一致（这解释
 实测：两个 bd4 用例现在都 exit=0；整个文件管线 exit=0；generated.pto 两行 RUN 全过（此前 6 个用例有 2 个无法下降）。
 门禁 GATE PASS：641 / 562 / 79（净 +1）、0 新增、lit/vpto 620/619/1、fidelity 20/33。落地 c0a742b14（已推 fork）。
 本链条完整：§19.71 定位 → §19.72 恒等转发（规则来自 fork）+ 量清 arity → §19.73 常量分支按结果布局切 chunk。
+### 19.74 group_memory：**我们暴露了一条自己代价模型拒收的关系**（定位到层，未改代码）
+
+失败点（本轮实测）：
+
+    vmi_layout_cost_conformance_group_memory.pto:155:5: error: cost model rejected exposed layout relation #1 operand0=#pto.vmi.layout<num_groups = 2, slots = 8>
+    对应用例 @group_store_contiguous_full_chunk（value 声明为 contiguous，num_groups = 2）
+
+**两侧 dump 的关键差异**：
+
+    fork 侧：group_store_contiguous_full_chunk relation=0 cost=0 operand0=contiguous    relations=1
+    我们：  relation=0 cost=0 operand0=contiguous（同上）**外加** relation #1 operand0=gs(2,8)（代价模型拒收 ⇒ pass 中止）
+
+**已排除的原因（重要，省下一轮时间）**：两棵树的 group_store 关系枚举**逐字相同**（fork VMILayoutPlanner.cpp:1947-1971 vs 我们的 2176-2200：都是 explicit + polymorphicLayouts + preferred 回退），
+⇒ 差异**不在枚举**，而在其后的一层：要么是 `getGroupStoreLayoutFactsForLayout`（fork :3695 / 我们 :2164）对 `gs(2,8)` 这类布局**过分宽松**（fork 当年没给出这条 fact），要么是我们**代价模型的 store 分支**缺少该布局的计价路径。
+
+**两条候选修法与风险**：
+
+| 方向 | 依据 | 风险 |
+|---|---|---|
+| 收窄 support 事实查询（对齐 fork 的关系集） | fork 的 dump 该用例只有 1 条关系 ⇒ fork 的查询拒了它；我们在 §19.55 一脉也确认「收窄拒绝」是安全形态 | 可能移走别处依赖该候选的布局选择（需 0 新增门禁）|
+| 让代价模型能计价该关系 | 「每条暴露的关系都必须可计价」是 pass 的契约；若该布局其实可下降，模型缺的只是计价分支 | 若该布局实际不可下降，则等于给模型加了假能力（正是 §19.61/19.63 反复出现的「模型乐观」形态）|
+
+**判定所需的下一次测量**：把 store 分支对这条关系的失败原因打出来（临时插桩，同 §19.71 手法），看它是「无对应动作可建模」还是「被某个形状检查拒了」——前者指向收窄查询，后者指向补计价分支。
+（另：该文件其余用例的 COST 期望与我们的输出在 §19.74 之前是逐条一致的，所以这**一条**是文件唯一的拦路点：修好即 +1 fidelity。）
 ## 20. 交接快照（当前，取代 §16；§16 保留作历史）
 
 ### 20.1 目标与判据的**当前值**
