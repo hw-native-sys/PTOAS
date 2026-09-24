@@ -3715,6 +3715,38 @@ fork 当年能让直接形式胜出，是因为 fork 的模型把不可对齐地
 
 **（5）两条可复用量具**：关系代价可用 conformance dump 直接量（本轮用 /home/mouliangyu/ptmp/plan_cost_probe.pto 这种「把一个 op 的候选关系逐个标价」的小文件），比读代码推断便宜且可靠；
 tie-break 插桩方式（env 守卫 + llvm::errs，只在两个比较器里打键）已验证可用 —— release 构建下 LLVM_DEBUG 是空操作，这是可行的替代。
+### 19.66 步骤 9 差分仪器的首次实战：定位并修好「注解 cast 对**被算作免费**」（已落地 debf9c37a，0 新增）
+
+**量具**：上轮建好的 .work/upstream-port/step9/conformance_cost_diff.sh 首次运行（规范化为每条用例一行后与 fork 记录档逐例比对）：
+
+    fork 侧 33 文件 / 368 用例；本树 33 文件 / 265 用例
+    两侧同名用例 229 条，其中「关系/代价确有差异」27 条；仅 fork 有 81 条；仅本树有 3 条
+
+27 条差异里去掉 elementwise/producers 的 **op 改名**（addf→vadd 等，属既定移植），真正的代价差异**集中在 cast**：
+
+    extui_u16_u32_group_slots2/4/8   fork 1  →  我们 0
+    extui_u8_u16_group_slots2/4/8    fork 1  →  我们 0
+    extui_u8_u16_group_slots2_multichunk fork 8  →  我们 0
+    extui_u8_u32_group_slots2/4/8    fork 2  →  我们 0
+
+⇒ **整族 group-slot 扩展被算成 0**（决策层会因此偏好这些布局）。
+
+**根因（三段测量，逐段收敛）**：
+1. 规则本身**完全正确**：VMILayoutSupportSolverCosts.inc 的 getCastIntrinsicRearrangementCost 与 fork（lib/PTO/Transforms/VMILayoutSupport.cpp:1999-2040）**逐字相同**；
+   插桩（VMI_CASTCOST_DEBUG）显示它确实被调用并对 gs(2,2) 算出 levels=1 arity=1（即 1）；
+2. 但到达代价模型的**关系**里代价字段是空的：在 buildRelation 插桩，跑 cast.pto 时 **68 条 cast 关系全部 intrinsic=0，非零 0 条**；
+3. 定位到**我们移植期新增的**「注解配对即关系」分支（VMILayoutPlanner.cpp:1395-1416，来自 e936a9876）：它用**三参数构造** VMILayoutOpRelation（op/ports/directProducer），
+   于是 intrinsicRearrangementCost 保持默认 0 —— 正是该文件开头警告过的形态：「**声明了却从不赋值的字段会让每个 cast 静默免费**」。
+
+**修法是让注解对走与其它行相同的计价查询**（getCastLayoutFactsForLayout(Source, annotatedSource) 取 resultLayout 匹配的那条 fact），拿不到价的关系就不提供。
+
+**实测效果**（同一差分仪器复跑）：该族代价与 fork 一致 —— u16→u32 的 gs(2,2/4/8)=1、u8→u16 的 gs=1、multichunk=8、u8→u32 的 gs=2；
+「仅本树有」38→31、「仅 fork 有」141→134。门禁 **GATE PASS**：641/560/81、**0 新增**、lit/vpto 620/619/1、fidelity 18/33。
+
+**剩余缺口（下一个增量，证据已备）**：cast.pto 仍未转绿，且失败点**换了一条**：文件第 469-471 行要求 extui_group_slots8_stride2 **有两条关系**
+（relation=0 cost=0 与 relation=1 cost=2），我们只给一条 —— 因为 **注解配对分支一旦命中就 return**，后面按 numGroups 实例化的行（polymorphicLayouts）根本没被枚举。
+修它要动一个**移植期的刻意决定**（§19.55 一脉：「注解对不得被携带 ensure_layout 的替代方案打败」，其机制就是那个 early return），
+因此正确性影响面更大：改法是「枚举全部 + 保证注解对优先」，**必须单独测量**（可能移动布局选择）。
 ## 20. 交接快照（当前，取代 §16；§16 保留作历史）
 
 ### 20.1 目标与判据的**当前值**
@@ -3729,8 +3761,8 @@ tie-break 插桩方式（env 守卫 + llvm::errs，只在两个比较器里打�
 
 ### 20.2 代码状态
 
-* 上游 worktree：.work/upstream-port/workspaces/vmi-layout-solver-upstream，HEAD **e0bb0ebe5**，树干净（仅 .codex/CLAUDE.md 换行符噪声）；
-* 分支 **feature/vmi-layout-solver-upstream** 已推 fork；自移植起点累计 **21 个提交，全部零回归或净提升**；
+* 上游 worktree：.work/upstream-port/workspaces/vmi-layout-solver-upstream，HEAD **debf9c37a**，树干净（仅 .codex/CLAUDE.md 换行符噪声）；
+* 分支 **feature/vmi-layout-solver-upstream** 已推 fork；自移植起点累计 **22 个提交，全部零回归或净提升**；
 * 主树：计划文档（本文件）在 feature/vmi-layout-decision-layers，同样已推 fork。
 
 ### 20.3 已落地（按主题）
@@ -3750,7 +3782,10 @@ tie-break 插桩方式（env 守卫 + llvm::errs，只在两个比较器里打�
 1. ~~方言/语法类 3 例~~ **已完成**（0b2974dec + 88e61f553，净 +3、fidelity 15 → 18/33，§19.62）：三个文件全部转绿；映射表与两个判断题的实证见 §19.62。
    **代价模型的地址合法性（§19.61a → §19.63）**：共享查询**已落地**（e0bb0ebe5，门禁零移动）；代价模型侧补丁**已实测但暂存**
    （自洽性判据已修好：load_deinterleaved "cost=2 vs 4 emitted" → "cost=4 vs 4"；暂存原因是一个**指令中性**的择优翻转，其根因本轮已量到：**位置分奖励「多加一次转换」**，而两条 tie-break 修法一为「1 换 4」、一为无效 ⇒ **待偏好层裁决**（筹码：6 个用例，见 §19.65 与 staged/README.md）。
-2. **COST 类 7 例**（真正的 solver 侧工作）：unified_merge_invalid（我们**多给**关系）、vexpdif_invalid、same_layout_invalid（同）、cast:471（`extui_group_slots8_stride2` 期望 relation=1 cost=2，我们 0/0）、group_memory:155（我们**拒绝了** fork 保留的关系，双向）、group_reduce:56 / group_broadcast_op:122（桶 B 停止点，含次生 CHECK-COUNT）。
+2. **COST 类（真正的 solver 侧工作）**：
+   **已完成一半**（§19.66，debf9c37a）：cast 族的**代价字段为空**已修好（group-slot 扩展 0 → 与 fork 一致的 1/2/8），0 新增；
+   **下一步（证据已备）**：cast.pto 要求的**第二条关系**（stride 归一化行）没被枚举 —— 注解配对分支命中即 return；改法须单独测量（动的是 §19.55 的刻意决定）。
+   其余：unified_merge_invalid（我们**多给**关系）、vexpdif_invalid、same_layout_invalid（同）、cast:471（`extui_group_slots8_stride2` 期望 relation=1 cost=2，我们 0/0）、group_memory:155（我们**拒绝了** fork 保留的关系，双向）、group_reduce:56 / group_broadcast_op:122（桶 B 停止点，含次生 CHECK-COUNT）。
 3. **硬下降 5 例**：masked_load_store（masked_store 对齐合法性）、group_broadcast:14、ensure_layout:14、generated:12（三者均为"转换不适用 + 残留 op"）、group_reduce_quarter:22（8-bit 整数归约不支持）。
 4. **下降一致性断言 2 例**：cmp_merge_invalid:31（LOWER 期望文本）、**load_store:24 —— 见 §19.61 + §19.61a（结论已修订）**：
    上游**已有** vldsx2+DINTLV 路径；真正的缺陷在 `VMILayoutCostModel.cpp` **`buildLoad`** 的两条直接配对加载分支：只按形状判定"直接实现"，
