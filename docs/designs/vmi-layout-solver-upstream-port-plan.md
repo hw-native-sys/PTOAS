@@ -3399,3 +3399,18 @@ A1 的工作区改动与规格逐点对应（+23/−？，单文件）：
 
 **h10 单独一次**，且**先测**：只有当 chunked 路径**并未**产出等价 IR 才动它，动之前先报告发现。
 之后是 **F4（手工合并）** 与 **步骤 8**；桶 B 若回头再做，注意 §19.42（group_reduce 的文本清单不可信、上游明文禁止加回 one-carrier 行）。
+### 19.55 h4/h5 在飞改动**逐处复核**（本轮只读）
+
+与处方一致，且做得比处方更精确 —— **拒绝被收窄到"真正的非法 arity"，而不是被删掉**：
+
+* materializeDeinterleaved2MaskLayout：当 sourceParts.size() != resultTypes.size() 时，
+  按方向改道 materializeStagingDeintToContiguousMaskLayout / materializeStagingContiguousToDeintMaskLayout（factor=2）；
+  余下的 invalidArity **只保留** empty 与 % 2 != 0 两种真非法情形，**原消息不变**；
+* materializeDeinterleaved4MaskLayout：同形（factor=4，方向由 contiguousToDeint4 判定），余下只保留 empty 与 % 4 != 0。
+
+**这个形状值得记下来**：它对应的不是"移除一个拒绝"，而是"**把拒绝的范围收窄到真正非法的输入**"——
+对负例测试的影响因此更可能只是"**某个原来被拒的形状现在能下降**"，而不是"拒绝能力整体消失"；
+这也让筛查更有针对性：只需检查那些用例里被拒的形状是否属于"不等 arity 但 arity 本身合法"的那类。
+
+**待它提交后**按 §19.54 的筛查规则复核：两个套件 + fidelity、每个变化用例的"期望文本 vs 管线现状"，
+若仅有该类翻转则落地并把证据交回主线裁决（同 A2 流程），超出则回退。
