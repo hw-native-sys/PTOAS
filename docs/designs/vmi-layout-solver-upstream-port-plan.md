@@ -4149,6 +4149,32 @@ release 构建下不打印原因（同 §19.71/§19.78）⇒ **下一轮第一�
 
 **剩余纯可达未做项**因此明确为：`group_broadcast`（A+B 都要修）、`ensure_layout`（f16↔d4 语义）；
 另 3 个卡在裁决：`load_store`、`group_memory`（§19.65）、`mask_granularity`（§19.81）。
+
+### 19.83 A 类的拒绝条件**已量到**（env 插桩两处，事后撤除、树干净）
+
+**插桩一（pattern 全域）**：用脚本给 `OneToNVMIGroupBroadcastLoadOpPattern` 体内（`VMIToVPTOPatternInternals3.cpp:1432-2048`）**全部 44 个失败出口**各插一条带原行号的 env 守卫打印；
+跑最小用例 `pc_e2b_bf16_deinterleaved2.pto` 后**只有一处命中（11 次）**：
+
+    GBL fail line 1875   → 即 `lowerGroupBroadcastParts(...)` 失败的那个 return
+
+**插桩二（该 helper 内部）**：给 `lowerGroupBroadcastParts`（`VMIToVPTOPatternInternals1.cpp:1976`）的 4 个出口各插一条打印，并**把 support 查询的 reason 打出来**，得到确因：
+
+    11 ×  GBL1 tableRowReason: source/result layouts do not match a supported group_broadcast table row
+
+即拒绝来自 `getGroupBroadcastLayoutFactForLayouts`（`VMILayoutSupport.cpp:486-487`，与 §19.78 读到的同一函数）。
+
+**推理链（本轮新增的关键判断）**：这条查询是**通用 group_broadcast 表**（`kGroupBroadcastLayoutPatterns`）的查询，
+而它被调用说明这个用例**走到了"group-slot-load + group_broadcast"的回退路径**，而不是直接 BRC/E2B 路径 ——
+而它需要的 pair 是「slot-load 产出的 gs 源布局 → `deinterleaved = 2` 结果」，通用表里没有这样的行（两棵树都没有）；
+用例本身是 `group_broadcast_load ptr<bf16> → vreg<256xbf16, d(2)>, num_groups = 8, 单位 stride`。
+
+**因此下一轮的问题是"为什么走到回退路径"，而不是"补哪一行"**：
+直接路径的入口条件是 `validateDirectE2BBasicContract`（`PatternInternals3.cpp:1437-1471`：contiguous 或 d(2)/d(4)、b16/b32、单位 stride、num_groups = 8 —— **本用例逐条都满足**），
+所以要么是更早的分派条件（例如按布局/块类选择路径的那一段）把它推给了回退，要么是直接路径后续的某一步静默失败后回退。
+**下一轮第一步**：在分派处（`matchAndRewrite` 里选 direct/fallback 的那几行）插桩，打印**选了哪条路径以及为什么**，即可定位。
+
+（附注：本轮 44 处插桩是一次性脚本生成的，脚本保留在 `/home/mouliangyu/ptmp/instrument_gbl.py`，
+「按行号全量插桩 + 只跑最小用例」这个手法对这类"多出口 pattern"很省时间，值得继续用。）
 ## 20. 交接快照（当前，取代 §16；§16 保留作历史）
 
 ### 20.1 目标与判据的**当前值**
