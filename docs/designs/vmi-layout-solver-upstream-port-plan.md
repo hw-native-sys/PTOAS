@@ -2580,3 +2580,29 @@ F3 h2 之所以没撞上，只因它查的是**同一批**已被专用助手校�
 **\`llvm-lit\` 不在 PATH**，但一直是按绝对路径调用的（\`/home/mouliangyu/projects/github.com/vpto-dev/llvm-project/build-shared/bin/llvm-lit\`）—— 这不是缺口，只是记下来免得下次误判。
 
 ⇒ **步骤 9 在本机可跑**：全门禁（\`validate_port.sh\` + 两个套件 + 差分）、A5 侧先用 \`capture5.sh\` 做 IR 级比较再花仿真机时、性能结论按 \`sim-runs/\` 的成对基线复现。
+
+## 19.23 步骤 8 的侦察（本轮实测）：56 个 FileCheck-only 差异**主要是"我们的 solver 选了不同（通常同样合法）的布局"**
+
+做法：在干净树上跑 \`llvm-lit -v lit/vmi_new\`（67 failures，与 608/541/67 基线一致），然后对日志归类。
+
+**错误类别计数**（按日志里的 error 行）：\`no match found\` 83、\`ASSIGN-SAME\` 37、\`CHECK\` 22、\`ASSIGN\` 16、\`match on wrong line\` 7、\`CHECK-DAG\` 4、\`CHECK-COUNT\` 4 —— 即 **FileCheck 类占绝大多数**；
+另有 9 处 \`'<stdin>' is empty.\`（工具无输出 ⇒ 属于那 8-9 个硬失败类），以及 \`VMI-LAYOUT-CONTRACT\` 8、\`VMI-UNSUPPORTED\` 6、\`VMI-RESIDUAL-OP\` 2 的工具侧报错。
+
+**首个不匹配期望的分桶**（每个 RUN 取第一处）：**含布局期望的 42 条 / 不含的 42 条**（样本 84 条，多于 67 个用例是因为一个用例多条 RUN）。
+含布局的那半直接写着 \`#pto.vmi.layout<contiguous>\` / \`deinterleaved = 2|4\` / \`contiguous, lane_stride = 2|4\` / \`num_groups = 8, slots = 8\` 这类**结果布局**；
+不含布局的那半多是布局差异的**下游后果**（\`call @callee\` 的多结果形态、\`vadds\`、\`extf\`、\`mask_and\` 等）。
+
+**两个具体样例**（日志原文）：
+
+* \`vmi_layout_assignment_group_slots_scf_for.pto:53\`：期望 group_load 结果 \`contiguous\`，我们给 \`block_deinterleaved = 2\`（并让 mask 侧也走 bd2）；
+* \`vmi_layout_assignment_group_reduce_s32_store.pto:32\`：期望先有一处 \`pto.vmi.ensure_layout\` 把 source 拆开，我们的计划**省掉了那次转换**（更省）。
+  注意它与 item 3（§19.21.6）方向**相反**：那里上游选 bd2、我们选 contiguous；这里上游期望 contiguous、我们选 bd2 —— 说明差异是**逐形状的决策差异**，不是单向偏好 bug。
+
+**结论与步骤 8 的裁决规则（写死）**：这些不是拼写差异，而是**不同决策引擎的合法决策差异**（上游的 CHECK 行编码的是**上游 LayoutSolver 的决策**）。因此步骤 8 的做法只能是**逐例裁决**，且必须给出理由：
+
+1. 若我们的决策**合法且不劣**（更少的 ensure、更少的 ls 数量、层次顺序一致）⇒ **更新该上游用例的期望**（这属于移植的一部分，_不是_ 往我们自己的用例里抄上游决定）；
+2. 若我们的决策**更差或明显不合理** ⇒ 记为该用例对应的**solver 缺陷**并修 solver（这才是"我们的 solver 是决策引擎"的应有状态）；
+3. 若差异来自 **lowering 侧**（调用边界、多结果 call、缺 op）⇒ 归**步骤 7**；
+4. 拼写/属性名类（如 \`dintlv→intlv\`、\`merge/zeroing→zero\`）⇒ 直接改名，无裁决成本。
+
+⇒ 步骤 8 的工作量由此**从"56 个未知差异"变成"逐例裁决 + 四类处理"**，并且第 1 类必须成批处理（同一决策原因往往命中多个用例）。
