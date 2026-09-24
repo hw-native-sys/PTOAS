@@ -2853,3 +2853,22 @@ file 级 12/33 从此只作为对外指标，不再作为定位工具。
    即它的**第一个 RUN（cost 侧）现在通过了**，失败落在**第二个 RUN（lowering 侧）**。这再次印证 §19.28 的 case 级判断，也说明六行落地是对的。
 2. **桶 B 缩到 7 个，且这 7 个是可逐个查的具名停止点**（不是笼统的"没暴露关系"）——比上一轮的 8 个更可操作。
 3. **桶 F 里有 2 个是"下降侧"失败**（\`generated\`、\`ensure_layout\`），另 4 个是 COST 期望不一致（其中 \`cast\` 停在 **471 行**，说明它**绝大多数用例已过**、只差很晚的一处）。
+
+### 19.30 F5 提交 A 的**拆分判决**（主线裁决；依据是执行方的诊断与实测）
+
+执行方落地并实测了 F5 提交 A（h1 + h6/h7/h8 + h12），结果是 **1 修复 + 4 回归**，净 −3 ⇒ 按规矩回退。两条关键事实：
+
+* **修复的是** \`vmi_to_vpto_gs1_consumer_matrix\` —— 那正是 **8 个真硬失败之一**；
+* **回归的 4 个**（\`vmi_layout_assignment_group_load_s16_stride_store\`、\`..._s32_stride_store\`、\`..._s32_stride_broadcast_reduce\`、\`vmi_stride_group_load_block_granularity\`）
+  都是 RUN 里带 \`not ... -vmi-to-vpto | FileCheck --check-prefix=LOWERERR\` 的**负例**；
+  而 h1/h12 的作用恰恰是**通过转发把某个拒绝去掉**（\`forwardsPhysicalParts\` 恒等短路），所以它们翻转的正是这类用例。
+
+**判决：拆成 A1 / A2 两次，且 A2 不在此刻落。**
+
+* **A1 = h6/h7/h8**（\`laneStride == 4\` 时首次 unpack/pack 用 \`b16\` 中间类型）：**不动任何拒绝**、属纯正确性移植 ⇒ 按**移植批次**标准落地。
+* **A2 = h1 + h12**（ensure 的 \`forwardsPhysicalParts\` 恒等短路 + \`OneToN\` 模式的 fact 驱动转发）：**它移除一个拒绝** ⇒ 必然翻转那 4 个 \`LOWERERR\` 负例。
+  **不落地，转入步骤 8 的负例裁决批次**：对那 4 个用例逐个判定"形状现在是否真的可下降"——
+  若可下降（support 的 fact 已声明这是恒等转发），则它们期望的拒绝已过时、应随步骤 8 更新期望；若不可下降，则恒等短路掩盖了真实缺陷，要回退 h1/h12。
+  **但 A2 有价值，不许丢**：\`vmi_to_vpto_gs1_consumer_matrix\` 这个真硬失败的修复**极可能来自 h1/h12**，所以要在**完整 delta 就位后**裁决，而不是因一次净 −3 就作废。
+
+**并行进展（执行方，本轮在飞）**：RUN 顺序修复已落到两个文件的工作区（把 \`-vmi-lower-unified-to-legacy\` 移到 \`-test-vmi-layout-cost-conformance\` **之前**），我复核过 diff —— **只动了这一处**；预期恰好这 2 个文件转绿（fidelity 12/33 → 14/33）。
