@@ -4026,6 +4026,11 @@ dynamic 分支被直接喂 resultTypes，所以从来不会不一致（这解释
 * 而我们的表**一处都没用** `gsFit*` ⇒ 很可能正是当年 fork 用于覆盖「四个 block + 任意组数」这类形状的机制（fork 的关系集覆盖到了 `num_groups = 4`）。
 * 交叉印证：`VMILayoutSupportQueryHelpers.inc:104` 的 `hasOneLanePerGroup = valueType.getElementCount() == numGroups` 与 §19.76 那条类型合法性规则**完全一致** ✓（同一约束在两处出现，也说明它是这套模型的固有前提）。
 
+**又一层细化（本轮读到匹配器实现）**：`matchesGroupBroadcastLayoutPattern`（`VMILayoutSupportMaterialization.inc:396-402`）**只比较三件事** —— 块类（`matchesGroupBlockPattern`）、元素位宽模式、是否 integerOnly；
+行里写的 `sourceLayout` / `resultLayout` 是**被 materialize 出来**（`materializeLayoutPattern(..., numGroups)`），**不是用来匹配查询的**。
+⇒ 于是本用例能否出 fact，取决于：① 它的块类是否命中某行（`{gb(1), gs(8), ls(2)}` 看着应当命中，因为 128 元素 / 4 组 → groupSize = 32 = 一个 VCG 块）；② 之后 Source-keyed 查询 `getGroupBroadcastLayoutFactsForLayout` 是否把它过滤掉。
+这两点在下一轮用同一手法插桩即可一次判定（打印 key 的四个字段 + 每行的块类匹配结果）。
+
 **下一轮第一步（已想清）**：给 `getGroupBroadcastLayoutFactsForLayout` 做一次查询键插桩（env 守卫，同 §19.71/§19.75 手法），打印该形状的查询键与逐行匹配结果，
 即可判定是「行键写窄了（应按 `gsFitStride(2)` 表达）」还是「缺行」；两种修法都在**移植方的表**里，属**可达**工作，修好即有机会让该文件转绿（+1 fidelity）。
 ## 20. 交接快照（当前，取代 §16；§16 保留作历史）
