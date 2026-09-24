@@ -2568,3 +2568,15 @@ F3 h2 之所以没撞上，只因它查的是**同一批**已被专用助手校�
 **更深一层的缺陷（记入 backlog）**：表里的 \`memAny()\` 行（上游 fork 后新增，见 §19.21.5）**承认**了一个 lowering 不接受的形状，
 而我们的代价模型偏好"无需转换"的计划，于是没有任何环节在赋值期拦住它——pre-port 是靠那个"多余 ensure 无法物化"**间接**拦下的。
 这属于\`solver 合法性口径 vs lowering 真相\`的同一族（\`ea1c1e6bb\`、\`bccd44a29\`），但**修点在合法性模型**（要不要让 planner 直接拒绝该 component），需单独立项与实测，不在本轮硬拱。
+
+## 19.22 步骤 9 的前置核查（本轮只读完成）
+
+**性能量具在位且是冻结版**（\`.work/upstream-port/perf/\`）：9 个自包含用例（含决定性的 \`gbmc-amp-dep\` 与 \`truncf-amp2\`，各带 \`kernel.pto\` / \`ptoas.flags\` / \`main.cpp\` / \`launch.cpp\` / \`golden.py\` / \`compare.py\`）、
+\`capture5.sh\`（按 RUN 抓取全部用例的下降 MLIR，用于在花仿真机时之前先比 IR）、\`cmp5.sh\`（两份抓取的逐用例行数差）、\`loop_period.py\`（从 msprof 轨迹提稳态循环周期），
+以及 **19 个已记录的 \`sim-runs/\`**（base/split 成对：dep_base/dep_split、truncf_merge/truncf_split、ew_k1/ew_k2 …）—— 也就是说复现性能结论这件事**有参考基线**。
+
+**环境可用性（实测）**：\`msprof\` 在 \`/usr/local/Ascend/cann-9.0.0/bin/msprof\`，\`ASCEND_HOME_PATH\` = \`/usr/local/Ascend/cann-9.0.0\`，
+\`/usr/local/Ascend/ascend-toolkit/latest\` 存在，\`ninja\` 在 PATH（\`msprof.py\` 不在，但我们用的是 \`msprof\` 本体）。
+**\`llvm-lit\` 不在 PATH**，但一直是按绝对路径调用的（\`/home/mouliangyu/projects/github.com/vpto-dev/llvm-project/build-shared/bin/llvm-lit\`）—— 这不是缺口，只是记下来免得下次误判。
+
+⇒ **步骤 9 在本机可跑**：全门禁（\`validate_port.sh\` + 两个套件 + 差分）、A5 侧先用 \`capture5.sh\` 做 IR 级比较再花仿真机时、性能结论按 \`sim-runs/\` 的成对基线复现。
