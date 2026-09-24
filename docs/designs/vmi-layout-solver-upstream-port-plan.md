@@ -3042,3 +3042,31 @@ pto.vmi.vcmps 与 pto.vmi.vcmp 同属 VMILowerUnifiedToLegacy 的 Category C1（
 因此 :262 那条 lowering 行**不是**陈旧的（否则该文件不会 PASS），无需再动。
 
 **这三条与 §19.36 属同一主题**：*量具必须与被量的层次匹配*；本节把"预检要用权威管线""集合断言用精确名""不自动回退他人改动"补成纪律。
+### 19.39 桶 B 的第一次 trace：ensure_mask_layout 的停止点是**缺两条 mask 表行**（已注入、已核实）
+
+按 §19.29/§19.36 的方法：给 ensure 分支加 env 门控 trace（提交前已剥离，源码 0 命中），跑 vmi_layout_cost_conformance_ensure_mask_layout：
+
+    [ensure] entered pto.vmi.ensure_mask_layout   ×3
+    [ensure] relation reachable=yes              ×2
+    [ensure] bail: no table row                  ×1   ← 第 3 个用例（文件 :24 → r02_c_to_d4_b16）
+
+r02 的形状是 mask<256xb16> contiguous -> deinterleaved = 4。于是对两张 mask ensure 表做集合差（上游 23 行 / fork 19 行）：
+
+**fork 有、上游没有的恰好两条**，而且正是 r02 需要的那一对：
+
+    {mb16(), N<256, 768>(), c(), d(4)},
+    {mb16(), N<256, 768>(), d(4), c()},
+
+**注入后的实测（与六行的形态完全一致）**：
+
+| 层面 | 结果 |
+|---|---|
+| 上游套件 | **641 / 555 / 86，失败集合逐字节相同（0 新增、0 修复）** |
+| **case 级** | 该文件**离开桶 B**：不再报 no exposed relation，改为停在**下降侧**（:14 VMI-RESIDUAL-OP: failed to convert all VMI ops/types to VPTO）|
+| file 级 | fidelity 仍 14/33（文件因剩余的下降原因仍红）|
+
+**判决：按移植批次保留并提交**（对 fork 表的忠实度 + case 级证据 + 套件中性），提交信息写明三层证据。
+这也再次印证 §19.28 的结论：**file 级指标看不见 case 级进展**，所以每次这类改动都要单独报 case 级位移。
+
+**同时暴露了下一步的真正战场**：ensure 家族（vec 与 mask 两支）现在都停在**下降侧**（VMI-RESIDUAL-OP），
+而 F5 的 h1/h12（forwardsPhysicalParts 恒等短路）正是"让 ensure 的下降能落地"的那一块 —— 两条线在这里合流。
