@@ -2792,3 +2792,31 @@ F3 h2 之所以没撞上，只因它查的是**同一批**已被专用助手校�
 **桶 B 的下一步必须是instrumentation，而不是继续猜**：给 \`VMILayoutRelationProvider::enumerateRelations\` 加**临时的**分支追踪（或在工具侧打印它拿到的 \`op\` 与 \`candidateLayouts\`），
 回答三个具体问题：(i) 这些标记算子**是否真的走进了** ensure 分支；(ii) \`getExplicitLayout\` 对它们的类型是否返回了布局；(iii) \`makeReachableRelation\` 是否因**可达性**而不是因表行被否。
 三个问题都能用一次短暂的、提交前必须剥离的诊断打印回答 —— 这与本项目此前三次成功定位（stride_load 端口、broadcast 源端口、mask-granularity 方向）用的是同一手法。
+
+### 19.28 六行注入**重新判定**：case 级有收益、file 级看不见 —— 我 19.27.1 的"证伪"结论被更正
+
+本轮改用 instrumentation（env 门控的临时打印，提交前已剥离）追了 \`vmi_layout_cost_conformance_ensure_layout\` 的第一个失败用例：
+
+    [ensure] entered op=pto.vmi.ensure_layout   ×7
+    [ensure] srcExplicit=yes resExplicit=yes    ×7
+    [ensure] relation reachable=yes             ×6
+    [ensure] bail: no table row for the pair    ×1   ← 第 7 个用例 r04_c_to_d4_f16
+
+补上六行后再跑：**所有 ensure 用例都不再 bail**（首个失败点从第 28 行移到第 40 行，即 r04 已通、轮到 r08）。
+**所以 §19.27.1 那句"假设被证伪"是错的**：六行**确实**为它们覆盖的形状暴露了关系，只是
+**file 级指标（12/33）看不见** —— 每个文件都在**更后面的另一个用例**上以**别的原因**失败。
+这更正已写入提交 \`e789c46a5\` 的信息里。
+
+**判决：按"移植批次"标准保留**（对 fork 表的忠实度），三条证据全部实测：
+
+| 层面 | 结果 |
+|---|---|
+| 上游套件 | **641 / 553 / 88，失败集合逐字节相同（0 新增、0 修复）** ⇒ 不引入任何该套件可见的放宽 |
+| case 级 | ensure 家族的 \`no table row\` bail **全部消失** |
+| file 级 | fidelity **仍 12/33**（如上，指标太粗）|
+
+**两个被污染的读数（诚实记录）**：同一次改动先后被报成 **490** 与 **232** 个失败 —— 两次都发生在**其它写者正在重建共享 build 目录**的窗口里，
+且与本轮的安静测量及同窗口的 conformance 复测**互相矛盾**；按规矩记为**污染、不作为证据**。此后我把"测量前先确认无并发写者"当成本轮起的前置动作。
+
+**下一步（细化到 case 级）**：把 21 个失败文件**每个在哪个用例、以什么原因停下**列出来（错误行号 + 原因），这才是剩余 fidelity 工作的真实地图；
+file 级 12/33 从此只作为对外指标，不再作为定位工具。
