@@ -3453,3 +3453,46 @@ A1 的工作区改动与规格逐点对应（+23/−？，单文件）：
 
 **若 chunked 已等价 ⇒ h10 与 A1 同类（潜伏正确性、可中性落地或直接不做）；若不等价 ⇒ 按 F5 处方实现并实测**。
 这条与 §19.42 同类：**映射里的结构描述需要对着树复核**（"某个分支不存在"是可证伪的断言）。
+## 20. 交接快照（当前，取代 §16；§16 保留作历史）
+
+### 20.1 目标与判据的**当前值**
+
+| 判据 | 目标 | 当前 |
+|---|---|---|
+| 上游 lit/vmi_new 不退化 | 起点 608 发现 / 606 通过 / 2 失败 | **641 发现 / 557 通过 / 84 失败**（多出的 33 个是新增的 conformance 用例）|
+| 我们的 vmi_new 用例通过 | 33/33 | **15/33** |
+| lit/vpto | 648 / 647 / 1（含既有失败）| **620 / 619 / 1**（仅既有 vmi_f4x2_to_bf16x2_vcvt_llvm.pto）|
+| 端到端性能结论可复现 | gbmc-amp-dep / truncf-amp2 | **未做**（前置已核实：19 个 sim-runs 基线在位、msprof/CANN 可用）|
+| 步骤 2b–9 | 全部完成 | 步骤 7 部分（F5 三批 + F3/F7 + F2 部分）、**步骤 8 未完成**、**步骤 9 未开始** |
+
+### 20.2 代码状态
+
+* 上游 worktree：.work/upstream-port/workspaces/vmi-layout-solver-upstream，HEAD **0f5b60402**，树干净（仅 .codex/CLAUDE.md 换行符噪声）；
+* 分支 **feature/vmi-layout-solver-upstream** 已推 fork；自移植起点累计 **17 个提交，全部零回归或净提升**；
+* 主树：计划文档（本文件）在 feature/vmi-layout-decision-layers，同样已推 fork。
+
+### 20.3 已落地（按主题）
+
+**solver 侧（我们的决策引擎）**：成本模型/planner 移植（e46bb4110）、决策权交回（657590cd7）、stride_store/stride_load 端口修正（914368bec/71978e4fd）、无注解结果不再钉住（453ed8e3b）、pre-lowering 拼写交给降级（5cc2fe723）、broadcast 源端口与 preferred 行（ea1c1e6bb）、dense carrier↔group packet 动作（daaa86b22）、mask 粒度表双向查询（bccd44a29）、注解配对即关系（e936a9876）、group_reduce 拒绝原因透传（b58fa790f）。
+
+**步骤 6**：packed-store mask normalize pass 接线（92d08341f），两个套件中性。
+
+**步骤 7（部分）**：共享 cast fact 进形状检查（4fad83fdb，移植批）、F3/F7 内存与 group-store 形状检查（f759c8256，含 fallback 变体）、group_slot_load 的 stride 适配（648898a01）、**F5 的 A2（5fefeb3cc，净 +1）与四例重定基线（a92b2dc3f）、A1（f65cf4003，中性）、h4/h5（0f5b60402，净 +1、fidelity +1）**。
+
+**步骤 8（部分）**：conformance 套件搬入（2b783862c，此前**根本不在树里**）、属性可丢弃性转发（217e2c3f7）、两行与 unified 的期望重定基线（db1447ea1、e765b94e0）、三族表行（e789c46a5、93bee34e0、59b9307f9）。
+
+### 20.4 待办（按优先级）
+
+1. **h10**（F5 最后一小块）：按 §19.57 的二分判据 —— 找"两端 gs 且 arity 相同"的 mask 粒度用例，看上游 chunked 路径是否已产出等价 IR；等价则与 A1 同类（可中性落地或不做），不等价则实现并实测。
+2. **F4**（步骤 7 批次 E）：materializeDataLayoutConversion 的**手工合并**（上游 post-fork 的 067da4864、dce6afea0 建的是同一函数，我们不是超集），规格在 step7/F4_data_layout_conversion.diff。
+3. **步骤 8 其余**：56 个 FileCheck-only 差异按 §19.23 四类逐例裁决（**先跑一次 case 级分类**）；两个具名缺口（step7/PORTING_GAPS.md：F3 h2 的 stride shim、F2 h5 的 compress 措辞）在此一并处置。
+4. **步骤 9**：先修量具（§19.49 差分的**路径规范化**、§19.50 capture5.sh **重指到上游树 + 生成基线**），再全门禁（validate_port.sh）、A5 验证、性能复测（19 个 sim-runs 为基线）。
+5. 挂起项：桶 B 剩余 3 个停止点（group_broadcast_op:122、mask_granularity:20、group_reduce:56，各自语义级调查；**注意 §19.42：文本清单不可信、上游明文禁止加回 group-reduce 的 one-carrier 行**）、item 4（两个 opt/ 用例的剪枝 witness 表）、memAny() 合法性模型立项。
+
+### 20.5 工具与纪律（接手者必读）
+
+* **门禁**：probes/gate2.sh <label> [--expect-subset <基线文件>] —— 把七条纪律一次性跑完（并发写者拒绝、噪声排除的脏树、构建、产物新鲜度、**精确名**失败集合、严格子集、双套件、fidelity、PROVENANCE）；
+* **测量**：probes/measure.sh <label>（全量 + 失败集合落盘）；
+* **缺口与暂存**：step7/PORTING_GAPS.md（具名缺口 + 重访判据）、staged/（三块可重放补丁 + README）；
+* **纪律**（本文档各节）：19.36（**严格子集对"已失败文件"是盲的** ⇒ 改期望必须做内容核对）、19.38（**预检用权威管线**、**集合断言用精确名**、**不自动回退他人改动**）、19.42（**结构描述与"fork-only 行"都要对着树复核**，注意 schema 差异造成的假阳性）、19.49/19.55（**测量前确认无并发写者**；**收窄拒绝 ≠ 移除拒绝**，前者可安全落地）；
+* **单写者原则**：谁拿树谁宣布；另一方不写不测；读-改之间靠文件观察守卫兜底（本项目已拦住三次）。
