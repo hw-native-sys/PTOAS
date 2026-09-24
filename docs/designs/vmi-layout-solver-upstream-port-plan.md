@@ -2669,3 +2669,29 @@ F3 h2 之所以没撞上，只因它查的是**同一批**已被专用助手校�
 1. **最大的一块是 B（8/21）**，而且它是**我们 harness 自己的诊断**（\`marker has no exposed relation\`）—— 这意味着它不是上游测试的问题，而是**移植后的 planner 在这些形状下没暴露关系**；先查 B 的性价比最高。
 2. A/D/E 三类**不是忠实度问题**，而是**上游方言/能力与 fork 的差异**（fork 独有的算子、上游删掉的能力、输入语法），应归入步骤 8 的「改写输入」类，且每改一个都要记原因。
 3. 因此「12/33」里的**可归因缺口**是：B 8 + C 1 + F 6 = **15**，A/D/E 6 属于方言/能力差异。
+
+### 19.26.1 桶 B 的逐算子定位（本轮续查）
+
+机制：conformance 工具对**每个带标记的算子**直接问 \`VMILayoutRelationProvider().enumerateRelations(op, candidateLayouts)\`，
+失败就打 \`test layout-cost conformance marker has no exposed relation\`（\`pto-test-vmi-layout-cost-conformance.cpp:182-195\`）。**该 pass 不做任何 lowering**。
+桶 B 里报「没有关系」的算子逐个抓出来是：
+
+| 文件 | 标记所在的算子 |
+|---|---|
+| \`ensure_layout\` | \`pto.vmi.ensure_layout\`（vreg<256xf16, …>）|
+| \`group_broadcast_load\` | \`pto.vmi.group_broadcast_load\` {num_groups = 8}|
+| \`group_broadcast_op\` | \`pto.vmi.group_broadcast\` {num_groups = 4}|
+| \`group_reduce\` | \`pto.vmi.group_reduce_addf\` {num_groups = 2, reassoc}|
+| \`ensure_mask_layout\` | \`pto.vmi.ensure_mask_layout\`（mask<256xb16…>）|
+| \`mask_granularity\` | \`pto.vmi.ensure_mask_granularity\`（mask<64…>）|
+| \`unified\` | \`pto.vmi.vcmp\` {cmp = lt, pmode = zero}|
+| \`vsel_zero\` | \`pto.vmi.vsel\` {pmode = zero}|
+| \`vexpdif_invalid\` | \`pto.vmi.load\`（结果已带 deinterleaved 布局）|
+
+**分两类，处置不同**：
+
+1. **统一拼写（pre-lowering）的标记**：\`vcmp\`、\`vsel\` —— 我们的 \`5cc2fe723\` 明确**不再处理 pre-lowering 统一拼写**（上游管线先降级、再赋值），
+   而这个 pass **不跑降级**，所以按设计就查不到关系。**忠实的翻译**是把这些用例的 COST RUN 加上 \`-vmi-lower-unified-to-legacy\`（或把输入改成 legacy 拼写）—— 这是**测试/harness 侧**改动，不是产品行为改动。
+2. **legacy 拼写的标记**：\`ensure_layout\`、\`ensure_mask_layout\`、\`ensure_mask_granularity\`、\`group_broadcast\`、\`group_broadcast_load\`、\`group_reduce_addf\`、\`load(deint)\` ——
+   这些是**真实的 relation-provider 缺口**（与本项目已修的 \`stride_load\` 端口、\`broadcast\` 源端口、\`bccd44a29\` 的 mask-granularity 双向查询同类），必须逐算子查。
+   注意其中 \`ensure_layout\` / \`ensure_mask_layout\` 正落在 F5 的 h1/h12 缺口上（\`forwardsPhysicalParts\` 只被代价模型消费），**两条线索在这里汇合**。
