@@ -2460,3 +2460,47 @@ fork 的意图是先把共享 support 模型问清楚，而实测说明它**不�
 原因一致：**共享查询的拒绝措辞与触发阶段和上游内联检查不同，而上游的负例测试断言的正是旧措辞**。
 F3 h2 之所以没撞上，只因它查的是**同一批**已被专用助手校验过的东西（重复校验，无措辞变化）。
 **因此**：这类 hunk 不该逐个硬拱，而应**成组地**放进步骤 8，连同负例 re-baseline 一起处置；步骤 7 只落**不改变拒绝措辞与阶段**的部分。
+
+## 19.21 item 3 的实测答案、由它暴露的一个**候选枚举缺口**，以及 D/E 批次的落地计划
+
+### 19.21.1 item 3（\`vmi_layout_assignment_group_load_block8_truncf\`）：拒绝者不是 assignment
+
+* **阶段实测**：只跑到 \`-vmi-layout-assignment\` **成功**（模块正常打印、无错）—— 所以**我们的 planner 不拒绝这个 component**；
+  之前那句"我们的枚举把下游拒绝的布局交给 group_load"在**那个形态下被证伪**。
+* **真正的拒绝点**：加上 \`-vmi-to-vpto\` 后报出的是 **lowering 的形状检查**（文本在 \`VMIToVPTOMemoryInternals.cpp:806\`）：
+
+      :21:10: error: VMI-UNSUPPORTED: pto.vmi.group_load requires a supported UB source, a contiguous or
+      block_deinterleaved f32 result layout, and a group/row-stride shape the block plans can address ...
+        %4 = "pto.vmi.group_load"(...){num_groups = 8} : ... -> !pto.vmi.vreg<128xf32, #pto.vmi.layout<contiguous>>
+
+* **端口与配对**：端口是 **group_load 的 result**，被赋成 \`contiguous\`；决定结局的是它与**访存形状**（stride 24、num_groups 8、128×f32：每 group 16 元素=64B，stride 24 元素=96B）的配对，由**上游自己的 strided-plan 判定**裁决。
+* **哪个诊断才是诚实的**：测试钉的是 **truncf** 那条，而那条文本里写明 vcvt 的**输入**布局是 \`block_deinterleaved = 2\` —— 那**正是 group_load 的 result**。
+  也就是说：**pre-port 的赋值给了该 result \`block_deinterleaved = 2\`，我们给了 \`contiguous\`**；两个拒绝各自诚实地描述了同一输入的不同缺陷，**谁先报由赋值选择决定**。
+
+### 19.21.2 由它暴露的**候选枚举缺口**（比"消息"问题更根本）
+
+我读了 planner 的 group_load 分支（\`VMILayoutPlanner.cpp:2108-2143\`），它与紧随其后的 group_store 分支（\`2145+\`）同形：
+
+1. 候选 = **result 类型上的显式布局**（若有）+ **调用方交给 provider 的 domain**（\`polymorphicLayouts\`）；
+2. 逐个用 \`getGroupLoadLayoutFact(typed, rowStride, numGroups)\` **校验**，通过才产出关系；
+3. 只有在**候选为空**时才去问 preferred 行（2122-2127）。
+
+**问题**：这个分支**从不枚举 group_load 自己的合法布局表**，只"校验调用方给的那几个"。而 load 家族的 polymorphic 集是 \`contiguous/ls2/d2/d4\` 一类，
+**不含 \`block_deinterleaved = 2\`** —— 于是 planner **根本拿不到 bd2 这个选项**，只能给 contiguous，接着被 lowering 的 strided-plan 判定拒掉。
+对照上游 pre-port：它有按 support 表 seeding 的约束路径（正是步骤 5 那批被删掉/离开决策路径的 seed 管线），所以**它能选 bd2**。
+
+**结论**：这是**与 \`ea1c1e6bb\` 第三块同族**的缺口（"候选池没有唯一可用行时，去问 preferred/表"），只是这一次缺的是 **group_load 的合法结果布局**。
+而用户的既有约束正好适用：**这些新 layout 我们的确是要枚举出来的，不能丢掉**。
+
+**待验修复（有界实验）**：在 group_load 分支里，除显式布局与调用方 domain 外，**按 support 表枚举该形状的合法结果布局**（或在池中无合法行时回退到表/preferred 行），
+然后实测：预期 \`vmi_layout_assignment_group_load_block8_truncf\` **转为通过**（它期望的 truncf 诊断会因选择 bd2 而出现，从而是**上游行为**的恢复，不是改消息）；
+接受条件是**失败集合严格子集**，且任何其他用例的计划变化都必须被解释，否则回退并把本条并入步骤 8。
+
+### 19.21.3 步骤 7 批次 D/E 的落地计划（据 F5/F4 规格）
+
+* **F5（批次 D，12 hunks，-34/+132）**目标单元：\`VMIToVPTODataLayoutInternals.cpp\`（\`materializeMaskLayoutConversion\`、\`materializeAdjacentMaskGranularityConversion\`、\`createPredicateIntlv\`）与 \`VMIToVPTOPatternInternals0.cpp\`（\`OneToNVMIEnsureMaskLayoutOpPattern\`）。
+  内容分三类：①**纯新增能力**（ensure 的 \`forwardsPhysicalParts\` 快路径、contiguous↔block-deinterleaved 的恒等转发）；②**新增 staging 助手**（\`materializeStagingDeintToContiguousMaskLayout\` / \`materializeStagingContiguousToDeintMaskLayout\` 的原型在 hunk 2，定义在后几个 hunk，被 hunk 4/5 调用）；③**把"拒绝"改成"委托给 staging 助手"**（hunk 4/5）与一处 unpack 顺序修正（hunk 6）。
+  **批次内互相依赖 ⇒ 必须整批落地**；其中第 ③ 类**改变接受范围**，按 §19.20.4 的准则要预期可能的负例翻转。
+* **F4（批次 E，2 hunks，-2/+114）**目标单元：\`VMIToVPTODataLayoutInternals.cpp\` 的 \`materializeDataLayoutConversion\`；
+  规格明确：上游 post-fork 的两个提交（\`067da4864\` 组合式 dense 物化、\`dce6afea0\` dense lane-stride ↔ group-slot 桥）**建的是同一个函数，我们不是超集** ⇒ **必须手工合并**，且排在 F5 之后（F4 要穿过 F5 的路径）。
+* **门禁准则（写死）**：整批落地后若失败集合是**严格子集或相等**则提交；若出现负例翻转，**回退**并把翻转清单记为**步骤 8 re-baseline 候选**（不在部分 delta 上动负例文本）。
