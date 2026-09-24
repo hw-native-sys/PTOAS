@@ -3747,22 +3747,42 @@ tie-break 插桩方式（env 守卫 + llvm::errs，只在两个比较器里打�
 （relation=0 cost=0 与 relation=1 cost=2），我们只给一条 —— 因为 **注解配对分支一旦命中就 return**，后面按 numGroups 实例化的行（polymorphicLayouts）根本没被枚举。
 修它要动一个**移植期的刻意决定**（§19.55 一脉：「注解对不得被携带 ensure_layout 的替代方案打败」，其机制就是那个 early return），
 因此正确性影响面更大：改法是「枚举全部 + 保证注解对优先」，**必须单独测量**（可能移动布局选择）。
+### 19.67 cast.pto 转绿：**注解对不再独占枚举**（1458a7d85，净 +1，fidelity 18 → **19/33**）
+
+**缺口（上轮已备好证据）**：注解配对分支一旦命中就 return，导致 cast.pto 要求的那条「第二条关系」永远不会出现。
+
+**改法**：注解对**先入同一个 relations 列表**，随后继续枚举（表的行不再被隐藏）。它**保留 preferencePenalty = 0** —— 它是 IR 声明的对，不该在偏好键上被别的行打败。
+
+**实测（关系清单与 fork 逐字对齐）**：
+
+    extui_group_slots8_stride2 pto.vmi.extui relation=0 cost=0 operand0=gs(2,8,lane_stride = 2) result0=gs(2,8)
+    extui_group_slots8_stride2 pto.vmi.extui relation=1 cost=2 operand0=gs(2,8)                    result0=gs(2,8)
+    （fork 记录档 probes/fork_conformance_dump.txt 中同一用例就是这两行）
+
+**门禁**：**GATE PASS** —— 641 / **561** / **80**（净 +1）、**0 新增**、lit/vpto 620/619/1、**fidelity 19/33**；cast.pto 两行 RUN 全过。
+
+**被否掉的变体（留痕，因为它看起来更干净）**：把注解对的偏好键改成与表行相同的算法（这样两者会在去重键上合并，清单只留两条而不是三条）——
+实测**回归** vmi_layout_assignment_group_slot_load：该用例需要「IR 声明的对」压过枚举行。
+因此保留 penalty 0：多出的那一条与 relation=0 **端口完全相同**、仅偏好键不同 ⇒ 选中同一组布局，无代价，只是清单里多一行。
+
+**这条链的完整形态值得记**：上轮修好「注解对**被算作免费**」（代价字段从未赋值，68/68 关系 intrinsic=0）→ 本轮修好「注解对**独占枚举**」。
+两者同源：注解通路是为了让 IR 声明的布局不被solver 的重新发明打败而加的，但它因此**绕过了表**，既没拿到表的价，也挡住了表的行。
 ## 20. 交接快照（当前，取代 §16；§16 保留作历史）
 
 ### 20.1 目标与判据的**当前值**
 
 | 判据 | 目标 | 当前 |
 |---|---|---|
-| 上游 lit/vmi_new 不退化 | 起点 608 发现 / 606 通过 / 2 失败 | **641 发现 / 560 通过 / 81 失败**（多出的 33 个是新增的 conformance 用例；起点 84 → 81）|
-| 我们的 vmi_new 用例通过 | 33/33 | **18/33**（方言批 +3，见 §19.62）|
+| 上游 lit/vmi_new 不退化 | 起点 608 发现 / 606 通过 / 2 失败 | **641 发现 / 561 通过 / 80 失败**（多出的 33 个是新增的 conformance 用例；起点 84 → 80）|
+| 我们的 vmi_new 用例通过 | 33/33 | **19/33**（方言批 +3、cast.pto +1，见 §19.62/§19.67）|
 | lit/vpto | 648 / 647 / 1（含既有失败）| **620 / 619 / 1**（仅既有 vmi_f4x2_to_bf16x2_vcvt_llvm.pto）|
 | 端到端性能结论可复现 | gbmc-amp-dep / truncf-amp2 | **未做**（前置已核实：19 个 sim-runs 基线在位、msprof/CANN 可用）|
 | 步骤 2b–9 | 全部完成 | 步骤 7：**F5 已完成**（A1/A2/h4-h5/h10 全部落地）、F3/F7 已落、**F4 判定为不需要**（§19.59）；**步骤 8 进行中**（18 例地图已建，§19.60）；**步骤 9 未开始** |
 
 ### 20.2 代码状态
 
-* 上游 worktree：.work/upstream-port/workspaces/vmi-layout-solver-upstream，HEAD **debf9c37a**，树干净（仅 .codex/CLAUDE.md 换行符噪声）；
-* 分支 **feature/vmi-layout-solver-upstream** 已推 fork；自移植起点累计 **22 个提交，全部零回归或净提升**；
+* 上游 worktree：.work/upstream-port/workspaces/vmi-layout-solver-upstream，HEAD **1458a7d85**，树干净（仅 .codex/CLAUDE.md 换行符噪声）；
+* 分支 **feature/vmi-layout-solver-upstream** 已推 fork；自移植起点累计 **23 个提交，全部零回归或净提升**；
 * 主树：计划文档（本文件）在 feature/vmi-layout-decision-layers，同样已推 fork。
 
 ### 20.3 已落地（按主题）
@@ -3783,9 +3803,9 @@ tie-break 插桩方式（env 守卫 + llvm::errs，只在两个比较器里打�
    **代价模型的地址合法性（§19.61a → §19.63）**：共享查询**已落地**（e0bb0ebe5，门禁零移动）；代价模型侧补丁**已实测但暂存**
    （自洽性判据已修好：load_deinterleaved "cost=2 vs 4 emitted" → "cost=4 vs 4"；暂存原因是一个**指令中性**的择优翻转，其根因本轮已量到：**位置分奖励「多加一次转换」**，而两条 tie-break 修法一为「1 换 4」、一为无效 ⇒ **待偏好层裁决**（筹码：6 个用例，见 §19.65 与 staged/README.md）。
 2. **COST 类（真正的 solver 侧工作）**：
-   **已完成一半**（§19.66，debf9c37a）：cast 族的**代价字段为空**已修好（group-slot 扩展 0 → 与 fork 一致的 1/2/8），0 新增；
-   **下一步（证据已备）**：cast.pto 要求的**第二条关系**（stride 归一化行）没被枚举 —— 注解配对分支命中即 return；改法须单独测量（动的是 §19.55 的刻意决定）。
-   其余：unified_merge_invalid（我们**多给**关系）、vexpdif_invalid、same_layout_invalid（同）、cast:471（`extui_group_slots8_stride2` 期望 relation=1 cost=2，我们 0/0）、group_memory:155（我们**拒绝了** fork 保留的关系，双向）、group_reduce:56 / group_broadcast_op:122（桶 B 停止点，含次生 CHECK-COUNT）。
+   **cast.pto 已转绿**（§19.66 §19.67：代价字段修好 + 注解对不再独占枚举 ⇒ 净 +2 个用例中 +1 fidelity，另 +1 由定价修正贡献为决策质量）。
+   **下一步**：unified_merge_invalid（我们**多给**关系）、vexpdif_invalid、same_layout_invalid、group_memory（双向）、group_reduce:56 / group_broadcast_op:122（桶 B）——
+   可直接用 step9/conformance_cost_diff.sh 的清单驱动（当前口径：两侧同名用例差异 27 条、仅 fork 有 134 条）。、vexpdif_invalid、same_layout_invalid（同）、cast:471（`extui_group_slots8_stride2` 期望 relation=1 cost=2，我们 0/0）、group_memory:155（我们**拒绝了** fork 保留的关系，双向）、group_reduce:56 / group_broadcast_op:122（桶 B 停止点，含次生 CHECK-COUNT）。
 3. **硬下降 5 例**：masked_load_store（masked_store 对齐合法性）、group_broadcast:14、ensure_layout:14、generated:12（三者均为"转换不适用 + 残留 op"）、group_reduce_quarter:22（8-bit 整数归约不支持）。
 4. **下降一致性断言 2 例**：cmp_merge_invalid:31（LOWER 期望文本）、**load_store:24 —— 见 §19.61 + §19.61a（结论已修订）**：
    上游**已有** vldsx2+DINTLV 路径；真正的缺陷在 `VMILayoutCostModel.cpp` **`buildLoad`** 的两条直接配对加载分支：只按形状判定"直接实现"，
