@@ -3453,6 +3453,89 @@ A1 的工作区改动与规格逐点对应（+23/−？，单文件）：
 
 **若 chunked 已等价 ⇒ h10 与 A1 同类（潜伏正确性、可中性落地或直接不做）；若不等价 ⇒ 按 F5 处方实现并实测**。
 这条与 §19.42 同类：**映射里的结构描述需要对着树复核**（"某个分支不存在"是可证伪的断言）。
+### 19.58 h10 实测裁决：**不等价**（chunked 路径根本产不出结果），已实现并落地（66e88eb30，门禁 PASS）
+
+按 §19.57 的判据执行"先测后动"：把 conformance 文件里的 gs 用例抽成**最小 .pto 单独跑**，并保存改动前 IR 基线。
+
+| 用例（isolate） | 改动前 | 改动后 |
+|---|---|---|
+| gs1_widen：mask<8xb8, gs(8,1)> → mask<8xb16, gs(8,1)> | **exit 1**：`failed to apply conversion patterns` + **VMI-RESIDUAL-OP** | **exit 0**：每个载波一条 `pto.punpack "LOWER"`（共 8 条） |
+| gs8_widen：gs(8,8,ls=2) → gs(8,8) | exit 0（折叠为恒等） | exit 0，IR **逐字节相同** |
+| gs8_narrow：gs(8,8) → gs(8,8,ls=2) | exit 0 | exit 0，IR **逐字节相同** |
+| gs8_widen_plain：gs(8,8) → gs(8,8) | exit 1 | exit 1（**不变**，见文末遗留） |
+
+**机理（这才是"为什么是硬失败"）**：`getVMITypeLayoutFactor` 只对 `isDenseSplit()`（deinterleaved / block_deinterleaved）返回 factor，
+**group slots 返回 1**；于是 `materializeMaskGranularityParts` 的 parts 循环只跑一次、part 0 的 chunk 数也是 1，
+**产出 1 个结果而 arity 是 8** ⇒ `checkMaskGranularityResultArity` 失败 ⇒ 整个转换不适用 ⇒ 残留 VMI op。
+即：**不是"慢路径/等价 IR"，而是根本产不出** ⇒ 按 §19.57 判为**不等价**，动手。
+
+**实现**：在 `materializeMaskGranularityParts` 开头加 gs↔gs **等 arity** 的 per-carrier 快路径（fork h10 的同义），
+但条件**比 fork 更窄**：额外要求 `plan.sourceArity > 1`。理由：arity==1 的单载波 gs 用例现在走 chunked 路径是**恒等折叠**（正确），
+按 fork 原条件会让它也进快路径、发出 b16→b16 的 punpack；收窄后这些用例 IR 逐字节不变（上表已证）。
+
+**门禁（probes/gate2.sh h10-per-carrier-group-slots --expect-subset failset_head_0f5b60402.txt）**：GATE PASS ——
+641/557/84（**NEW failures: 0**）、lit/vpto 620/619/1、fidelity 15/33、构建 exit 0、产物新鲜。
+⇒ 本轮是**能力增益、套件中性**（同 A1 的"潜伏正确性"性质，但形态更强：从**硬失败**变为**能下降**）。
+fidelity 未动的原因很明确：该 conformance 文件在 **line 20** 就被**另一个**（成本计划层）"no exposed relation"停住，根因与本条不同族。
+
+**遗留（另立条目）**：`gs8_widen_plain`（gs→gs **同 layout、两端 granularity 不同**）仍在**更早的合法性闸**被拒：
+`VMI-UNSUPPORTED: mask granularity cast layout relation is unsupported` —— 属**关系表/合法性模型**层面，与 h10 的材料化层不同族。
+
+### 19.59 F4 裁决：**上游已用更一般的形式实现，且不在关键路径上**（本轮只读，不改代码）
+
+规格要求的两个 hunk，在上游都能找到对应实现，只是**位置与形态不同**：
+
+* 规格 hunk 1（4 组 layout 对经 contiguous 中间层）上游已抽成 `getDataLayoutIntermediatePlan` + `materializeDataLayoutViaContiguous`，
+  中间层 arity 用 `getUnitStridePartCount(n, laneStride) = ceil(n/laneStride)` **一般化**，而 fork 是 hardcode 的 `(n+1)/2` / `n`；
+* 规格 hunk 2（deint4↔deint2 **直接** chunked）上游由 `materializeDeinterleaved4DataLayout`（deint4↔contiguous）+ 既有 deint2↔contiguous **复合**得到，而不是一步到位。
+
+**关键路径判定（实测，不是推理）**：对 18 个仍失败的 conformance 文件逐例取"失败的 RUN 行 + 首条 error"（§19.60 表），
+**没有任何一例涉及 deinterleaved 4↔2 的 data layout 转换**。⇒ F4 既不阻塞 33/33，也不阻塞"上游不退化"；
+fork 的 hunk 2 是**中间 op 更少的优化**，不是能力缺口。
+
+**决定：不做 F4 的手工合并** —— 依据纪律"落地要有实测收益"（§19.x：无实测收益的 solver 侧改动回退），
+把结论与**重访判据**（若将来出现 deint4↔deint2 的 IR 形状差异或性能证据）交执行方补记进 step7/PORTING_GAPS.md。
+
+### 19.60 步骤 8：18 个失败 conformance 文件的**逐文件地图**（本轮实测产物）+ 两条方法教训
+
+失败的 RUN 行与首条 error（完整 verbose 日志：/home/mouliangyu/ptmp/fidelity_verbose.txt）：
+
+| 文件 | 首个失败处 | 首条 error | 归类 |
+|---|---|---|---|
+| unified_merge_invalid | RUN 11 | COST 期望未命中（**我们多给了关系**：relation=0 cost=0，fork 期望拒绝） | COST 关系 |
+| cast | RUN 1 | COST（`extui_group_slots8_stride2` 期望 relation=1 cost=2，我们 relation=0 cost=0） | COST 数值 |
+| vexpdif_invalid / same_layout_invalid | RUN 11 | COST | COST 关系 |
+| group_memory | RUN 11 | **我们拒绝了** fork 保留的关系（cost model rejected … `gs(2,8)`）+ COST | COST 双向 |
+| masked_load_store | RUN 11/12 | VMI-UNSUPPORTED：masked_store 需要可证明的存储对齐 | 硬下降 |
+| group_broadcast | RUN 11/12 | `failed to apply conversion patterns` + VMI-RESIDUAL-OP | 硬下降 |
+| ensure_layout | RUN 11/12 | 同上 | 硬下降 |
+| generated | RUN 11/12 | 同上 | 硬下降 |
+| group_reduce_quarter | RUN 11 | VMI-UNSUPPORTED：8-bit 整数归约不支持 | 硬下降 |
+| cmp_merge_invalid | RUN 11/12 | LOWER 期望文本未命中 | 下降一致性断言 |
+| load_store | RUN 11 | `relation cost=2, emitted rearrangements=4` | 下降一致性断言 |
+| producers | — | **`custom op 'pto.vmi.fma' is unknown`**（测试文件在上游树上**无法解析**） | 方言/语法 |
+| elementwise | — | **`custom op 'pto.vmi.addf' is unknown`** | 方言/语法 |
+| memory_compaction | — | `9:50: expected ':'`（fork 的 4 操作数 stride_load） | 方言/语法 |
+| group_reduce | RUN 11 | line 56 `marker has no exposed relation` + CHECK-COUNT(3/13) | 桶 B 停止点 |
+| group_broadcast_op | RUN 11 | line 122 同上 + COST | 桶 B 停止点 |
+| mask_granularity | RUN 11 | line 20 同上 + CHECK-COUNT(2/37) | 桶 B 停止点 |
+
+**教训 1（方法，比 §19.42 更硬）**：**同一份"fork-only op 清单"我算错了两次，且两次都看起来合理**：
+先用 `tools.grep('VMI_Op<"') `得 118/137（**漏掉宏定义形式**，如 `VMI_VecScalarOp<"vadds">`），
+再用 JS 正则整文件读得 91/110（**被 read 的行数限制截断**）；只有用 **bash 对整文件**做 `^def … : VMI_…Op<"name"` 才得到 **124/143**。
+⇒ 纪律：**清单类断言必须在 shell 里对整文件做，并覆盖宏形式**；工具化的"整文件读取/带 cap 的 grep"只能作为线索。
+（可证伪的中间产物也救过一次：`vadds` 若不存在，上游自己的测试就会解析失败。）
+
+**教训 2（结论）**：bash 口径下 fork-only 的 **23** 个 VMI op 全是**按类型拆分的逐元素算术**
+（`addf addi subf subi mulf muli divf fma minf maxf mini maxi negf negi absf absi sqrt exp ln relu shli shrui shrsi`），
+上游合并为 **v 前缀族**（`vadd vsub vmul vdiv vmin vmax vneg vabs vsqrt vexp vln vrelu vshl vshr`），且**上游没有 vfma**；
+上游-only 仅 4 个（`vsubc vsubcs vunzip vzip`）。因此：
+
+* elementwise / producers 两文件的移植是**逐例语义映射**（f/i 变体合并、移位的有符号性如何编码），**不是改名**；`pto.vmi.fma` 若无忠实对应物须**保留该例并报告**；
+* memory_compaction 的 stride_load **少一个操作数是语义变更**（上游另有 `vmi_repeat_stride_removed_invalid.pto` **明文断言旧 4 操作数形式非法**）⇒ 必须先读该测试作为迁移证据。
+
+三例已交执行方，按"**有据映射、无据保留并报告、绝不改期望文本**"的规则处理。
+
 ## 20. 交接快照（当前，取代 §16；§16 保留作历史）
 
 ### 20.1 目标与判据的**当前值**
@@ -3463,12 +3546,12 @@ A1 的工作区改动与规格逐点对应（+23/−？，单文件）：
 | 我们的 vmi_new 用例通过 | 33/33 | **15/33** |
 | lit/vpto | 648 / 647 / 1（含既有失败）| **620 / 619 / 1**（仅既有 vmi_f4x2_to_bf16x2_vcvt_llvm.pto）|
 | 端到端性能结论可复现 | gbmc-amp-dep / truncf-amp2 | **未做**（前置已核实：19 个 sim-runs 基线在位、msprof/CANN 可用）|
-| 步骤 2b–9 | 全部完成 | 步骤 7 部分（F5 三批 + F3/F7 + F2 部分）、**步骤 8 未完成**、**步骤 9 未开始** |
+| 步骤 2b–9 | 全部完成 | 步骤 7：**F5 已完成**（A1/A2/h4-h5/h10 全部落地）、F3/F7 已落、**F4 判定为不需要**（§19.59）；**步骤 8 进行中**（18 例地图已建，§19.60）；**步骤 9 未开始** |
 
 ### 20.2 代码状态
 
-* 上游 worktree：.work/upstream-port/workspaces/vmi-layout-solver-upstream，HEAD **0f5b60402**，树干净（仅 .codex/CLAUDE.md 换行符噪声）；
-* 分支 **feature/vmi-layout-solver-upstream** 已推 fork；自移植起点累计 **17 个提交，全部零回归或净提升**；
+* 上游 worktree：.work/upstream-port/workspaces/vmi-layout-solver-upstream，HEAD **66e88eb30**，树干净（仅 .codex/CLAUDE.md 换行符噪声）；
+* 分支 **feature/vmi-layout-solver-upstream** 已推 fork；自移植起点累计 **18 个提交，全部零回归或净提升**；
 * 主树：计划文档（本文件）在 feature/vmi-layout-decision-layers，同样已推 fork。
 
 ### 20.3 已落地（按主题）
@@ -3477,17 +3560,23 @@ A1 的工作区改动与规格逐点对应（+23/−？，单文件）：
 
 **步骤 6**：packed-store mask normalize pass 接线（92d08341f），两个套件中性。
 
-**步骤 7（部分）**：共享 cast fact 进形状检查（4fad83fdb，移植批）、F3/F7 内存与 group-store 形状检查（f759c8256，含 fallback 变体）、group_slot_load 的 stride 适配（648898a01）、**F5 的 A2（5fefeb3cc，净 +1）与四例重定基线（a92b2dc3f）、A1（f65cf4003，中性）、h4/h5（0f5b60402，净 +1、fidelity +1）**。
+**步骤 7**：共享 cast fact 进形状检查（4fad83fdb，移植批）、F3/F7 内存与 group-store 形状检查（f759c8256，含 fallback 变体）、group_slot_load 的 stride 适配（648898a01）、**F5 全批落地**：A2（5fefeb3cc，净 +1）与四例重定基线（a92b2dc3f）、A1（f65cf4003，中性）、h4/h5（0f5b60402，净 +1、fidelity +1）、**h10（66e88eb30，套件中性、把 gs↔gs 多载波 mask 粒度转换从硬失败变为能下降，§19.58）**；F4 经实测判定**不需要**（§19.59）。
 
 **步骤 8（部分）**：conformance 套件搬入（2b783862c，此前**根本不在树里**）、属性可丢弃性转发（217e2c3f7）、两行与 unified 的期望重定基线（db1447ea1、e765b94e0）、三族表行（e789c46a5、93bee34e0、59b9307f9）。
 
 ### 20.4 待办（按优先级）
 
-1. **h10**（F5 最后一小块）：按 §19.57 的二分判据 —— 找"两端 gs 且 arity 相同"的 mask 粒度用例，看上游 chunked 路径是否已产出等价 IR；等价则与 A1 同类（可中性落地或不做），不等价则实现并实测。
-2. **F4**（步骤 7 批次 E）：materializeDataLayoutConversion 的**手工合并**（上游 post-fork 的 067da4864、dce6afea0 建的是同一函数，我们不是超集），规格在 step7/F4_data_layout_conversion.diff。
-3. **步骤 8 其余**：56 个 FileCheck-only 差异按 §19.23 四类逐例裁决（**先跑一次 case 级分类**）；两个具名缺口（step7/PORTING_GAPS.md：F3 h2 的 stride shim、F2 h5 的 compress 措辞）在此一并处置。
-4. **步骤 9**：先修量具（§19.49 差分的**路径规范化**、§19.50 capture5.sh **重指到上游树 + 生成基线**），再全门禁（validate_port.sh）、A5 验证、性能复测（19 个 sim-runs 为基线）。
-5. 挂起项：桶 B 剩余 3 个停止点（group_broadcast_op:122、mask_granularity:20、group_reduce:56，各自语义级调查；**注意 §19.42：文本清单不可信、上游明文禁止加回 group-reduce 的 one-carrier 行**）、item 4（两个 opt/ 用例的剪枝 witness 表）、memAny() 合法性模型立项。
+**已完成（本条快照更新时）**：h10（66e88eb30，§19.58）；F4 判定为**不需要**（§19.59，实测不在关键路径）；18 例逐文件地图已建（§19.60）。
+
+1. **方言/语法类 3 例**（步骤 8 的最前置项，**已交执行方**）：elementwise（`pto.vmi.addf`）、producers（`pto.vmi.fma`）、memory_compaction（4 操作数 stride_load）——
+   这两个套件里唯一"**在上游树上根本无法解析**"的文件；按 §19.60 教训 2 的"**有据映射、无据保留并报告、绝不改期望文本**"处理。
+   注意上游的 23 个 fork-only op 全是逐类型拆分的逐元素算术，映射需要**逐个读两边 ODS**；`fma` 无忠实对应物时保留并报告。
+2. **COST 类 7 例**（真正的 solver 侧工作）：unified_merge_invalid（我们**多给**关系）、vexpdif_invalid、same_layout_invalid（同）、cast:471（`extui_group_slots8_stride2` 期望 relation=1 cost=2，我们 0/0）、group_memory:155（我们**拒绝了** fork 保留的关系，双向）、group_reduce:56 / group_broadcast_op:122（桶 B 停止点，含次生 CHECK-COUNT）。
+3. **硬下降 5 例**：masked_load_store（masked_store 对齐合法性）、group_broadcast:14、ensure_layout:14、generated:12（三者均为"转换不适用 + 残留 op"）、group_reduce_quarter:22（8-bit 整数归约不支持）。
+4. **下降一致性断言 2 例**：cmp_merge_invalid:31（LOWER 期望文本）、load_store:24（**cost=2 但实测发出 4 次重排** —— 成本模型与材料化的一致性缺口，值得单独立项）。
+5. **其他具名缺口**：gs8_widen_plain 的**关系表/合法性模型**缺口（§19.58 遗留）、step7/PORTING_GAPS.md 里的 F3 h2 stride shim 与 F2 h5 compress 措辞、item 4（两个 opt/ 用例的剪枝 witness 表）、memAny() 合法性模型。
+   **桶 B 纪律**：§19.42 —— 文本清单不可信、上游**明文禁止**加回 group-reduce 的 one-carrier 行。
+6. **步骤 9**：先修量具（§19.49 差分的**路径规范化**、§19.50 capture5.sh **重指到上游树 + 自生成基线**），再全门禁（validate_port.sh）、A5 验证、性能复测（19 个 sim-runs 为基线）。
 
 ### 20.5 工具与纪律（接手者必读）
 
