@@ -171,6 +171,32 @@ bool isSpineScopedCastLayoutPair(VMIVRegType sourceType,
   return false;
 }
 
+// Validation-only acceptance for an already assigned contiguous BF16/F32 cast
+// pair.  This is deliberately not a layout candidate and is never queried by
+// layout assignment or propagation.
+bool isBF16ContiguousCastLayoutPair(VMIVRegType sourceType,
+                                    VMIVRegType resultType,
+                                    VMILayoutAttr sourceLayout,
+                                    VMILayoutAttr resultLayout) {
+  bool invalidLayout =
+      !sourceLayout || !resultLayout || !sourceLayout.isContiguous() ||
+      !resultLayout.isContiguous() || sourceLayout.getLaneStride() != 1 ||
+      resultLayout.getLaneStride() != 1;
+  if (invalidLayout) {
+    return false;
+  }
+  bool isBF16ToF32 = sourceType.getElementType().isBF16() &&
+                    resultType.getElementType().isF32();
+  bool isF32ToBF16 = sourceType.getElementType().isF32() &&
+                    resultType.getElementType().isBF16();
+  if (!isBF16ToF32 && !isF32ToBF16) {
+    return false;
+  }
+  int64_t elementCount = sourceType.getElementCount();
+  return elementCount == resultType.getElementCount() &&
+         (elementCount == 64 || elementCount == 128 || elementCount == 256);
+}
+
 // vunzip / vzip only change the element width and keep the logical lane
 // order, so they are layout-preserving: every operand must carry one layout
 // family.  They are deliberately *not* cast facts -- a cast relation such as

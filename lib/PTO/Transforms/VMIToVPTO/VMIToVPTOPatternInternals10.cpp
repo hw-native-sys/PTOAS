@@ -15,6 +15,14 @@
 // pair size.
 constexpr size_t kSplitWidePartsPerHalf = 2;
 
+static bool isBF16PairElementCount(int64_t elementCount) {
+  return elementCount == 64 || elementCount == 128 || elementCount == 256;
+}
+
+static bool isBF16ReduceResultElementCount(int64_t elementCount) {
+  return elementCount == 2 || elementCount == 4 || elementCount == 8;
+}
+
 struct OneToNVMIExtFOpPattern : OneToNOpConversionPattern<VMIExtFOp> {
   using OneToNOpConversionPattern<VMIExtFOp>::OneToNOpConversionPattern;
 
@@ -78,6 +86,79 @@ private:
             BFloat16Type::get(rewriter.getContext()));
     }
     return ResultViewPlan{isPackedBF16x2, vcvtResultType};
+  }
+
+  LogicalResult lowerContiguousBF16PairWidening(
+      VMIExtFOp op, ValueRange sourceParts, ArrayRef<VRegType> resultTypes,
+      OneToNPatternRewriter &rewriter) const {
+    bool invalidArity =
+        sourceParts.empty() || resultTypes.empty() ||
+        resultTypes.size() % sourceParts.size() != 0;
+    if (invalidArity) {
+      return rewriter.notifyMatchFailure(
+          op, "unsupported BF16 pair widening arity");
+    }
+    auto sourceType = dyn_cast<VRegType>(sourceParts.front().getType());
+    bool invalidSourceType =
+        !sourceType || !sourceType.getElementType().isBF16();
+    if (invalidSourceType) {
+      return rewriter.notifyMatchFailure(
+          op, "BF16 pair widening requires BF16 physical sources");
+    }
+    for (Value sourcePart : sourceParts) {
+      bool mismatchedSourceType = sourcePart.getType() != sourceType;
+      if (mismatchedSourceType) {
+        return rewriter.notifyMatchFailure(
+            op, "BF16 pair widening sources must have matching types");
+      }
+    }
+    for (VRegType resultType : resultTypes) {
+      if (!resultType.getElementType().isF32()) {
+        return rewriter.notifyMatchFailure(
+            op, "BF16 pair widening requires F32 physical results");
+      }
+    }
+    size_t resultsPerSource = resultTypes.size() / sourceParts.size();
+    if (resultsPerSource != 1 && resultsPerSource != kSplitWidePartsPerHalf) {
+      return rewriter.notifyMatchFailure(
+          op, "BF16 pair widening expects one or two results per source");
+    }
+
+    FailureOr<Value> zero =
+        createZeroVector(op.getLoc(), sourceType, rewriter);
+    if (failed(zero)) {
+      return rewriter.notifyMatchFailure(
+          op, "failed to build BF16 pair widening zero vector");
+    }
+    SmallVector<std::pair<Value, Value>> interleaved;
+    interleaved.reserve(sourceParts.size());
+    for (Value sourcePart : sourceParts) {
+      auto pair = rewriter.create<VintlvOp>(
+          op.getLoc(), TypeRange{sourceType, sourceType}, *zero, sourcePart);
+      interleaved.emplace_back(pair.getLow(), pair.getHigh());
+    }
+
+    SmallVector<Value> results;
+    results.reserve(resultTypes.size());
+    for (size_t half = 0; half < resultsPerSource; ++half) {
+      for (size_t sourceIndex = 0; sourceIndex < sourceParts.size();
+           ++sourceIndex) {
+        Value carrier = half == 0 ? interleaved[sourceIndex].first
+                                  : interleaved[sourceIndex].second;
+        FailureOr<Value> result = bitcastVReg(
+            op.getLoc(), carrier, resultTypes[half * sourceParts.size() +
+                                               sourceIndex],
+            rewriter);
+        if (failed(result)) {
+          return rewriter.notifyMatchFailure(
+              op, "failed to bitcast BF16 pair widening result");
+        }
+        results.push_back(*result);
+      }
+    }
+    replaceOpWithFlatConvertedValues(rewriter, op, results,
+                                     *this->getTypeConverter());
+    return success();
   }
 
   static Value createVcvtResult(Location loc, VRegType resultType,
@@ -299,6 +380,24 @@ private:
       return lowerPackedLaneStride2(op, sourceParts, plan, rewriter);
     }
 
+    auto sourceVMIType = cast<VMIVRegType>(op.getSource().getType());
+    auto resultVMIType = cast<VMIVRegType>(op.getResult().getType());
+    bool supportedLogicalShape =
+        sourceVMIType.getElementType().isBF16() &&
+        resultVMIType.getElementType().isF32() &&
+        sourceVMIType.getElementCount() == resultVMIType.getElementCount() &&
+        isBF16PairElementCount(sourceVMIType.getElementCount());
+    bool contiguousBF16PairWidening =
+        sourceLayout && resultLayout && sourceLayout.isContiguous() &&
+        sourceLayout.getLaneStride() == 1 && resultLayout.isContiguous() &&
+        resultLayout.getLaneStride() == 1 &&
+        supportedLogicalShape &&
+        plan.resultTypes.front().getElementType().isF32();
+    if (contiguousBF16PairWidening) {
+      return lowerContiguousBF16PairWidening(
+          op, sourceParts, plan.resultTypes, rewriter);
+    }
+
     FailureOr<bool> spineCompositeWidening = tryLowerSpineCompositeWidening(
         op, sourceParts, plan, sourceBits, sourceLayout, resultLayout, viewPlan,
         rewriter);
@@ -345,6 +444,7 @@ public:
                              resultLayout, rewriter);
   }
 };
+
 
 static bool hasUnsupportedPackedTruncFConversion(Type sourceElementType,
                                                  Type resultElementType) {
@@ -687,6 +787,196 @@ private:
     return TruncFNarrowingPlan{parts, sourceFactor, resultLaneStride};
   }
 
+  FailureOr<bool> tryLowerContiguousBF16PairNarrowing(
+      VMITruncFOp op, ValueRange sourceParts, ArrayRef<VRegType> resultTypes,
+      VMILayoutAttr sourceLayout, VMILayoutAttr resultLayout,
+      OneToNPatternRewriter &rewriter) const {
+    auto sourceVMIType = cast<VMIVRegType>(op.getSource().getType());
+    auto resultVMIType = cast<VMIVRegType>(op.getResult().getType());
+    bool supportedLogicalShape =
+        sourceVMIType.getElementType().isF32() &&
+        resultVMIType.getElementType().isBF16() &&
+        sourceVMIType.getElementCount() == resultVMIType.getElementCount() &&
+        isBF16PairElementCount(sourceVMIType.getElementCount());
+    StringAttr rounding = op->getAttrOfType<StringAttr>("rounding");
+    bool applicable =
+        sourceLayout && resultLayout && sourceLayout.isContiguous() &&
+        sourceLayout.getLaneStride() == 1 && resultLayout.isContiguous() &&
+        resultLayout.getLaneStride() == 1 && supportedLogicalShape && rounding &&
+        rounding.getValue() == "Z" && !sourceParts.empty() &&
+        !resultTypes.empty();
+    if (!applicable) {
+      return false;
+    }
+    auto sourceType = dyn_cast<VRegType>(sourceParts.front().getType());
+    bool invalidSourceType =
+        !sourceType || !sourceType.getElementType().isF32();
+    if (invalidSourceType) {
+      return rewriter.notifyMatchFailure(
+          op, "BF16 pair narrowing requires F32 physical sources");
+    }
+    for (Value sourcePart : sourceParts) {
+      bool mismatchedSourceType = sourcePart.getType() != sourceType;
+      if (mismatchedSourceType) {
+        return rewriter.notifyMatchFailure(
+            op, "BF16 pair narrowing sources must have matching types");
+      }
+    }
+    for (VRegType resultType : resultTypes) {
+      if (!resultType.getElementType().isBF16()) {
+        return rewriter.notifyMatchFailure(
+            op, "BF16 pair narrowing requires BF16 physical results");
+      }
+    }
+    bool invalidPairArity =
+        sourceParts.size() != resultTypes.size() &&
+        sourceParts.size() != kSplitWidePartsPerHalf * resultTypes.size();
+    if (invalidPairArity) {
+      return rewriter.notifyMatchFailure(
+          op, "BF16 pair narrowing expects one or two sources per result");
+    }
+
+    Type carrierElementType = IntegerType::get(
+        rewriter.getContext(), kElementBits16,
+        IntegerType::SignednessSemantics::Signless);
+    VRegType carrierType = VRegType::get(
+        rewriter.getContext(), sourceType.getElementCount() * kPairWidth,
+        carrierElementType);
+    SmallVector<Value> carrierSources;
+    carrierSources.reserve(sourceParts.size());
+    for (Value sourcePart : sourceParts) {
+      FailureOr<Value> carrier =
+          bitcastVReg(op.getLoc(), sourcePart, carrierType, rewriter);
+      if (failed(carrier)) {
+        return rewriter.notifyMatchFailure(
+            op, "failed to bitcast BF16 pair narrowing source");
+      }
+      carrierSources.push_back(*carrier);
+    }
+
+    size_t sourcesPerResult = sourceParts.size() / resultTypes.size();
+    Value zero;
+    if (sourcesPerResult == 1) {
+      FailureOr<Value> zeroValue =
+          createZeroVector(op.getLoc(), carrierType, rewriter);
+      if (failed(zeroValue)) {
+        return rewriter.notifyMatchFailure(
+            op, "failed to build BF16 pair narrowing zero vector");
+      }
+      zero = *zeroValue;
+    }
+    SmallVector<Value> results;
+    results.reserve(resultTypes.size());
+    for (size_t resultIndex = 0; resultIndex < resultTypes.size();
+         ++resultIndex) {
+      size_t sourceIndex = resultIndex * sourcesPerResult;
+      Value rhs = sourcesPerResult == kSplitWidePartsPerHalf
+                      ? carrierSources[sourceIndex + 1]
+                      : zero;
+      auto pair = rewriter.create<VdintlvOp>(
+          op.getLoc(), TypeRange{carrierType, carrierType},
+          carrierSources[sourceIndex], rhs);
+      FailureOr<Value> result = bitcastVReg(
+          op.getLoc(), pair.getHigh(), resultTypes[resultIndex], rewriter);
+      if (failed(result)) {
+        return rewriter.notifyMatchFailure(
+            op, "failed to bitcast BF16 pair narrowing result");
+      }
+      results.push_back(*result);
+    }
+    replaceOpWithFlatConvertedValues(rewriter, op, results,
+                                     *this->getTypeConverter());
+    return true;
+  }
+
+  FailureOr<bool> tryLowerGroupSlotBF16ReduceNarrowing(
+      VMITruncFOp op, ValueRange sourceParts, ArrayRef<Type> resultTypes,
+      VMILayoutAttr sourceLayout, VMILayoutAttr resultLayout,
+      OneToNPatternRewriter &rewriter) const {
+    auto sourceVMIType = cast<VMIVRegType>(op.getSource().getType());
+    auto resultVMIType = cast<VMIVRegType>(op.getResult().getType());
+    StringAttr rounding = op->getAttrOfType<StringAttr>("rounding");
+    bool supportedLogicalShape =
+        sourceVMIType.getElementType().isF32() &&
+        resultVMIType.getElementType().isBF16() &&
+        sourceVMIType.getElementCount() == resultVMIType.getElementCount() &&
+        isBF16ReduceResultElementCount(sourceVMIType.getElementCount());
+    bool supportedLayouts =
+        sourceLayout && resultLayout && sourceLayout.isGroupSlots() &&
+        resultLayout.isGroupSlots() &&
+        sourceLayout.getNumGroups() == resultLayout.getNumGroups() &&
+        sourceLayout.getSlots() == resultLayout.getSlots() &&
+        (sourceLayout.getSlots() == 1 || sourceLayout.getSlots() == 8) &&
+        sourceLayout.getNumGroups() == sourceVMIType.getElementCount();
+    bool applicable = supportedLogicalShape && supportedLayouts && rounding &&
+                      rounding.getValue() == "Z" && !sourceParts.empty() &&
+                      !resultTypes.empty() &&
+                      sourceParts.size() == resultTypes.size();
+    if (!applicable) {
+      return false;
+    }
+
+    auto sourceType = dyn_cast<VRegType>(sourceParts.front().getType());
+    if (!sourceType || !sourceType.getElementType().isF32()) {
+      return rewriter.notifyMatchFailure(
+          op, "BF16 group-slot narrowing requires F32 physical sources");
+    }
+    for (Value sourcePart : sourceParts) {
+      if (sourcePart.getType() != sourceType) {
+        return rewriter.notifyMatchFailure(
+            op, "BF16 group-slot narrowing sources must have matching types");
+      }
+    }
+
+    for (Type resultType : resultTypes) {
+      auto resultVRegType = dyn_cast<VRegType>(resultType);
+      if (!resultVRegType || !resultVRegType.getElementType().isBF16() ||
+          resultVRegType.getElementCount() !=
+              sourceType.getElementCount() * kPairWidth) {
+        return rewriter.notifyMatchFailure(
+            op, "BF16 group-slot narrowing requires matching physical widths");
+      }
+    }
+
+    Type carrierElementType = IntegerType::get(
+        rewriter.getContext(), kElementBits16,
+        IntegerType::SignednessSemantics::Signless);
+    VRegType carrierType = VRegType::get(
+        rewriter.getContext(), sourceType.getElementCount() * kPairWidth,
+        carrierElementType);
+    FailureOr<Value> zero =
+        createZeroVector(op.getLoc(), carrierType, rewriter);
+    if (failed(zero)) {
+      return rewriter.notifyMatchFailure(
+          op, "failed to build BF16 group-slot narrowing zero vector");
+    }
+
+    SmallVector<Value> results;
+    results.reserve(resultTypes.size());
+    for (auto [sourcePart, physicalResultType] :
+         llvm::zip_equal(sourceParts, resultTypes)) {
+      FailureOr<Value> carrier =
+          bitcastVReg(op.getLoc(), sourcePart, carrierType, rewriter);
+      if (failed(carrier)) {
+        return rewriter.notifyMatchFailure(
+            op, "failed to bitcast BF16 group-slot narrowing source");
+      }
+      auto pair = rewriter.create<VdintlvOp>(
+          op.getLoc(), TypeRange{carrierType, carrierType}, *carrier, *zero);
+      FailureOr<Value> result = bitcastVReg(
+          op.getLoc(), pair.getHigh(), cast<VRegType>(physicalResultType),
+          rewriter);
+      if (failed(result)) {
+        return rewriter.notifyMatchFailure(
+            op, "failed to bitcast BF16 group-slot narrowing result");
+      }
+      results.push_back(*result);
+    }
+    replaceOpWithFlatConvertedValues(rewriter, op, results,
+                                     *this->getTypeConverter());
+    return true;
+  }
+
   LogicalResult lowerGroupSlotTrunc(
       VMITruncFOp op, ValueRange sourceParts, ArrayRef<Type> resultTypes,
       VMILayoutAttr sourceLayout, VMILayoutAttr resultLayout,
@@ -703,6 +993,14 @@ private:
         sourceParts.size() != resultTypes.size();
     if (invalidShape) {
       return rewriter.notifyMatchFailure(op, "unsupported group-slot truncf shape");
+    }
+    FailureOr<bool> reduceNarrowing = tryLowerGroupSlotBF16ReduceNarrowing(
+        op, sourceParts, resultTypes, sourceLayout, resultLayout, rewriter);
+    if (failed(reduceNarrowing)) {
+      return failure();
+    }
+    if (*reduceNarrowing) {
+      return success();
     }
     SmallVector<Value> results;
     results.reserve(resultTypes.size());
@@ -849,6 +1147,15 @@ private:
     if (unsupportedGroupSlotLayout) {
       return rewriter.notifyMatchFailure(
           op, "group-slot layout for non-f32 truncf not supported");
+    }
+    FailureOr<bool> pairNarrowing = tryLowerContiguousBF16PairNarrowing(
+        op, sourceParts, physicalPlan->resultTypes, sourceLayout, resultLayout,
+        rewriter);
+    if (failed(pairNarrowing)) {
+      return failure();
+    }
+    if (*pairNarrowing) {
+      return success();
     }
     FailureOr<bool> sameWidth = tryLowerSameWidthTrunc(
         op, sourceParts, *physicalPlan, sourceLayout, resultLayout, rewriter);
@@ -1176,4 +1483,3 @@ public:
                                   *this->getTypeConverter());
   }
 };
-

@@ -1,0 +1,103 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under
+// the terms of the CANN Open Software License Agreement Version 2.0 (the
+// "License").  Please refer to the License for details.  You may not use this
+// file except in compliance with the License.  THIS SOFTWARE IS PROVIDED ON
+// AN "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, EITHER
+// EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT,
+// MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE. See LICENSE in the
+// root of the software repository for the full text of the License.
+
+// RUN: pto-test-opt %s -vmi-lower-unified-to-legacy -vmi-to-vpto | FileCheck %s
+
+module {
+  func.func @f32_to_bf16_pair_64(
+      %src: !pto.vmi.vreg<64xf32, #pto.vmi.layout<contiguous>>)
+      -> !pto.vmi.vreg<32x!pto.f4E2M1x2,
+                        #pto.vmi.layout<contiguous, lane_stride = 4>> {
+    %result = pto.vmi.vcvt %src {rounding = "Z", saturate = "NOSAT"}
+        : !pto.vmi.vreg<64xf32, #pto.vmi.layout<contiguous>>
+        -> !pto.vmi.vreg<64xbf16, #pto.vmi.layout<contiguous>>
+    %pair = pto.vmi.vinterpret_cast %result
+        : !pto.vmi.vreg<64xbf16, #pto.vmi.layout<contiguous>>
+        -> !pto.vmi.vreg<32x!pto.bf16x2, #pto.vmi.layout<contiguous>>
+    %packed = pto.vmi.vcvt %pair {rounding = "R"}
+        : !pto.vmi.vreg<32x!pto.bf16x2, #pto.vmi.layout<contiguous>>
+        -> !pto.vmi.vreg<32x!pto.f4E2M1x2,
+                          #pto.vmi.layout<contiguous, lane_stride = 4>>
+    return %packed : !pto.vmi.vreg<32x!pto.f4E2M1x2,
+                                   #pto.vmi.layout<contiguous, lane_stride = 4>>
+  }
+
+  func.func @f32_to_bf16_pair_128(
+      %src: !pto.vmi.vreg<128xf32, #pto.vmi.layout<contiguous>>)
+      -> !pto.vmi.vreg<64x!pto.f4E2M1x2,
+                        #pto.vmi.layout<contiguous, lane_stride = 4>> {
+    %result = pto.vmi.vcvt %src {rounding = "Z", saturate = "NOSAT"}
+        : !pto.vmi.vreg<128xf32, #pto.vmi.layout<contiguous>>
+        -> !pto.vmi.vreg<128xbf16, #pto.vmi.layout<contiguous>>
+    %pair = pto.vmi.vinterpret_cast %result
+        : !pto.vmi.vreg<128xbf16, #pto.vmi.layout<contiguous>>
+        -> !pto.vmi.vreg<64x!pto.bf16x2, #pto.vmi.layout<contiguous>>
+    %packed = pto.vmi.vcvt %pair {rounding = "R"}
+        : !pto.vmi.vreg<64x!pto.bf16x2, #pto.vmi.layout<contiguous>>
+        -> !pto.vmi.vreg<64x!pto.f4E2M1x2,
+                          #pto.vmi.layout<contiguous, lane_stride = 4>>
+    return %packed : !pto.vmi.vreg<64x!pto.f4E2M1x2,
+                                   #pto.vmi.layout<contiguous, lane_stride = 4>>
+  }
+
+  func.func @f32_to_bf16_pair_256(
+      %src: !pto.vmi.vreg<256xf32, #pto.vmi.layout<contiguous>>)
+      -> !pto.vmi.vreg<128x!pto.f4E2M1x2,
+                        #pto.vmi.layout<contiguous, lane_stride = 4>> {
+    %result = pto.vmi.vcvt %src {rounding = "Z", saturate = "NOSAT"}
+        : !pto.vmi.vreg<256xf32, #pto.vmi.layout<contiguous>>
+        -> !pto.vmi.vreg<256xbf16, #pto.vmi.layout<contiguous>>
+    %pair = pto.vmi.vinterpret_cast %result
+        : !pto.vmi.vreg<256xbf16, #pto.vmi.layout<contiguous>>
+        -> !pto.vmi.vreg<128x!pto.bf16x2, #pto.vmi.layout<contiguous>>
+    %packed = pto.vmi.vcvt %pair {rounding = "R"}
+        : !pto.vmi.vreg<128x!pto.bf16x2, #pto.vmi.layout<contiguous>>
+        -> !pto.vmi.vreg<128x!pto.f4E2M1x2,
+                          #pto.vmi.layout<contiguous, lane_stride = 4>>
+    return %packed : !pto.vmi.vreg<128x!pto.f4E2M1x2,
+                                   #pto.vmi.layout<contiguous, lane_stride = 4>>
+  }
+
+  func.func @bf16_to_f32_pair_128(
+      %src: !pto.vmi.vreg<128xbf16, #pto.vmi.layout<contiguous>>,
+      %mask: !pto.vmi.mask<128xb32, #pto.vmi.layout<contiguous>>)
+      -> !pto.vmi.vreg<2xf32, #pto.vmi.layout<num_groups = 2, slots = 1>> {
+    %result = pto.vmi.vcvt %src
+        : !pto.vmi.vreg<128xbf16, #pto.vmi.layout<contiguous>>
+        -> !pto.vmi.vreg<128xf32, #pto.vmi.layout<contiguous>>
+    %reduced = pto.vmi.vcmax %result, %mask {group = 2}
+        : !pto.vmi.vreg<128xf32, #pto.vmi.layout<contiguous>>,
+          !pto.vmi.mask<128xb32, #pto.vmi.layout<contiguous>>
+        -> !pto.vmi.vreg<2xf32, #pto.vmi.layout<num_groups = 2, slots = 1>>
+    return %reduced : !pto.vmi.vreg<2xf32, #pto.vmi.layout<num_groups = 2, slots = 1>>
+  }
+}
+
+// CHECK-LABEL: func.func @f32_to_bf16_pair_64(
+// CHECK: %[[F32_64:.*]] = pto.vbitcast %{{.*}} : !pto.vreg<64xf32> -> !pto.vreg<128xi16>
+// CHECK: %[[ZERO64:.*]] = pto.vdup {{.*}} -> !pto.vreg<128xi16>
+// CHECK: %[[LOW64:.*]], %[[HIGH64:.*]] = pto.vdintlv %[[F32_64]], %[[ZERO64]]
+// CHECK: %{{.*}} = pto.vbitcast %[[HIGH64]] : !pto.vreg<128xi16> -> !pto.vreg<128xbf16>
+// CHECK-COUNT-1: pto.vcvt
+// CHECK-LABEL: func.func @f32_to_bf16_pair_128(
+// CHECK: %[[F32_128_0:.*]] = pto.vbitcast %{{.*}} : !pto.vreg<64xf32> -> !pto.vreg<128xi16>
+// CHECK: %[[F32_128_1:.*]] = pto.vbitcast %{{.*}} : !pto.vreg<64xf32> -> !pto.vreg<128xi16>
+// CHECK: pto.vdintlv %[[F32_128_0]], %[[F32_128_1]]
+// CHECK-COUNT-1: pto.vcvt
+// CHECK-LABEL: func.func @f32_to_bf16_pair_256(
+// CHECK: pto.vdintlv
+// CHECK: pto.vdintlv
+// CHECK-COUNT-2: pto.vcvt
+// CHECK-LABEL: func.func @bf16_to_f32_pair_128(
+// CHECK: %[[BF16_ZERO:.*]] = pto.vdup {{.*}} -> !pto.vreg<128xbf16>
+// CHECK: %[[LOW128:.*]], %[[HIGH128:.*]] = pto.vintlv %[[BF16_ZERO]], %{{.*}}
+// CHECK: %{{.*}} = pto.vbitcast %[[LOW128]] : !pto.vreg<128xbf16> -> !pto.vreg<64xf32>
+// CHECK: %{{.*}} = pto.vbitcast %[[HIGH128]] : !pto.vreg<128xbf16> -> !pto.vreg<64xf32>
+// CHECK-NOT: pto.vcvt
