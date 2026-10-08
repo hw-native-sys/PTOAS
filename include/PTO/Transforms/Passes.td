@@ -439,7 +439,10 @@ def VPTONormalizeContainer : Pass<"vpto-normalize-container", "ModuleOp"> {
   let summary = "Normalize and verify VPTO kernel container shape";
   let description = [{
     Normalizes a VPTO kernel module carrying `pto.kernel_kind` into the canonical
-    outer container form. Existing containers are left in place. The pass
+    outer container form. Existing containers are left in place. A module that
+    carries `pto.kernel_kind` and already contains child modules is rejected:
+    wrapping it would silently add another container level instead of
+    normalizing either shape, so the pass fails on the mixed input. The pass
     verifies that the resulting top-level module contains only child modules and
     that every child module carries `pto.kernel_kind`.
   }];

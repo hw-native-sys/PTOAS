@@ -28,6 +28,19 @@ static bool isVPTOKernelSubmodule(ModuleOp module) {
   return module->hasAttr(FunctionKernelKindAttr::name);
 }
 
+/// Return the first direct child module of \p module, if any.
+static ModuleOp findChildModule(ModuleOp module) {
+  if (module.getBodyRegion().empty()) {
+    return ModuleOp();
+  }
+  for (Operation &op : module.getBodyRegion().front().getOperations()) {
+    if (auto child = dyn_cast<ModuleOp>(op)) {
+      return child;
+    }
+  }
+  return ModuleOp();
+}
+
 static LogicalResult verifyNormalizedVPTOContainer(ModuleOp module) {
   bool hasChildModules = false;
   for (Operation &op : module.getBodyRegion().front().getOperations()) {
@@ -59,6 +72,23 @@ struct VPTONormalizeContainerPass
   void runOnOperation() override {
     ModuleOp module = getOperation();
     if (isVPTOKernelSubmodule(module)) {
+      // A module carrying 'pto.kernel_kind' is a kernel body: wrapping it into
+      // the canonical container is correct only when it holds function bodies.
+      // A module that already holds child modules is either a container that
+      // wrongly keeps the attribute or a half-normalized mixture; wrapping it
+      // would silently push the existing children one container level deeper,
+      // which the top-level-only verifier below cannot detect.
+      if (ModuleOp nested = findChildModule(module)) {
+        auto diag = module.emitError()
+                    << "a module carrying '" << FunctionKernelKindAttr::name
+                    << "' must not already contain child modules; expected "
+                       "either a kernel module with function bodies or a "
+                       "container of kernel submodules";
+        diag.attachNote(nested.getLoc()) << "child module";
+        signalPassFailure();
+        return;
+      }
+
       MLIRContext *context = module.getContext();
       SmallVector<NamedAttribute> outerAttrs;
       for (NamedAttribute attr : module->getAttrs()) {
