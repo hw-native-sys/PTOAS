@@ -1,0 +1,21 @@
+// RUN: ptoas --pto-arch=a5 %s -o - | FileCheck %s
+
+module attributes {pto.target_arch = "a5", pto.kernel_kind = #pto.kernel_kind<cube>} {
+  func.func @a5_normalize_tmov_use_before_def() attributes {pto.kernel} {
+    %11 = pto.alloc_tile : !pto.tile_buf<mat, 1x4x!pto.f8E8M0, slayout=row_major, fractal=32>
+    %15 = pto.alloc_tile : !pto.tile_buf<scaling, 1x4x!pto.f8E8M0, slayout=row_major, fractal=32>
+
+    pto.tmov ins(%11 : !pto.tile_buf<mat, 1x4x!pto.f8E8M0, slayout=row_major, fractal=32>)
+      outs(%15 : !pto.tile_buf<scaling, 1x4x!pto.f8E8M0, slayout=row_major, fractal=32>)
+
+    %13 = pto.alloc_tile : !pto.tile_buf<left, 1x512xf8E4M3FN, valid=1x128, blayout=col_major, slayout=row_major>
+
+    pto.tget_scale_addr ins(%13 : !pto.tile_buf<left, 1x512xf8E4M3FN, valid=1x128, blayout=col_major, slayout=row_major>)
+      outs(%15 : !pto.tile_buf<scaling, 1x4x!pto.f8E8M0, slayout=row_major, fractal=32>)
+    return
+  }
+}
+
+// CHECK: GetScaleAddr
+// CHECK: TASSIGN
+// CHECK: TMOV

@@ -1,0 +1,143 @@
+// RUN: pto-test-opt --pto-a5-normalize-tmov %s | FileCheck %s
+// RUN: pto-test-opt --pass-pipeline="builtin.module(func.func(pto-a5-normalize-tmov,pto-a5-normalize-tmov))" %s | FileCheck %s
+
+// Issue #1463: definitions and address binding must precede the scale copy.
+!mat = !pto.tile_buf<mat, 1x4x!pto.f8E8M0, slayout=row_major, fractal=32>
+!scale = !pto.tile_buf<scaling, 1x4x!pto.f8E8M0, slayout=row_major, fractal=32>
+!left = !pto.tile_buf<left, 1x512xf8E4M3FN, valid=1x128, blayout=col_major, slayout=row_major>
+!right = !pto.tile_buf<right, 128x32xf8E4M3FN, valid=128x16, slayout=col_major>
+!rscale = !pto.tile_buf<scaling, 4x32x!pto.f8E8M0, valid=4x16, blayout=col_major, slayout=col_major, fractal=32>
+!rmat = !pto.tile_buf<mat, 4x32x!pto.f8E8M0, valid=4x16, blayout=col_major, slayout=col_major, fractal=32>
+!dynamic = !pto.tile_buf<left, 1x512xf8E4M3FN, valid=?x?, blayout=col_major, slayout=row_major>
+
+module attributes {pto.target_arch = "a5"} {
+  func.func private @consume(!scale)
+  // CHECK-LABEL: func.func @late_left(
+  // CHECK: %[[SRC:.*]] = pto.alloc_tile {{.*}}!pto.tile_buf<left,
+  // CHECK-NEXT: pto.tget_scale_addr ins(%[[SRC]]
+  // CHECK-NEXT: pto.tmov
+  func.func @late_left() {
+    %mat = pto.alloc_tile : !mat
+    %dst = pto.alloc_tile : !scale
+    pto.tmov ins(%mat : !mat) outs(%dst : !scale)
+    %src = pto.alloc_tile : !left
+    pto.tget_scale_addr ins(%src : !left) outs(%dst : !scale)
+    return
+  }
+
+  // CHECK-LABEL: func.func @early_left(
+  // CHECK: %[[EARLY:.*]] = pto.alloc_tile {{.*}}!pto.tile_buf<left,
+  // CHECK-NEXT: pto.tget_scale_addr ins(%[[EARLY]]
+  // CHECK-NEXT: pto.tmov
+  func.func @early_left() {
+    %mat = pto.alloc_tile : !mat
+    %dst = pto.alloc_tile : !scale
+    %src = pto.alloc_tile : !left
+    pto.tmov ins(%mat : !mat) outs(%dst : !scale)
+    pto.tget_scale_addr ins(%src : !left) outs(%dst : !scale)
+    return
+  }
+
+  // CHECK-LABEL: func.func @late_right(
+  // CHECK: %[[RIGHT:.*]] = pto.alloc_tile {{.*}}!pto.tile_buf<right,
+  // CHECK-NEXT: pto.tget_scale_addr ins(%[[RIGHT]]
+  // CHECK-NEXT: pto.tmov
+  func.func @late_right() {
+    %mat = pto.alloc_tile : !rmat
+    %dst = pto.alloc_tile : !rscale
+    pto.tmov ins(%mat : !rmat) outs(%dst : !rscale)
+    %src = pto.alloc_tile : !right
+    pto.tget_scale_addr ins(%src : !right) outs(%dst : !rscale)
+    return
+  }
+
+  // CHECK-LABEL: func.func @block_argument(
+  // CHECK: pto.tget_scale_addr
+  // CHECK-NEXT: pto.tmov
+  func.func @block_argument(%src : !left) {
+    %mat = pto.alloc_tile : !mat
+    %dst = pto.alloc_tile : !scale
+    pto.tmov ins(%mat : !mat) outs(%dst : !scale)
+    pto.tget_scale_addr ins(%src : !left) outs(%dst : !scale)
+    return
+  }
+
+  // CHECK-LABEL: func.func @outer_capture(
+  // CHECK: scf.if
+  // CHECK: pto.tget_scale_addr
+  // CHECK-NEXT: pto.tmov
+  func.func @outer_capture(%cond : i1) {
+    %src = pto.alloc_tile : !left
+    scf.if %cond {
+      %mat = pto.alloc_tile : !mat
+      %dst = pto.alloc_tile : !scale
+      pto.tmov ins(%mat : !mat) outs(%dst : !scale)
+      pto.tget_scale_addr ins(%src : !left) outs(%dst : !scale)
+    }
+    return
+  }
+
+  // CHECK-LABEL: func.func @predecessor_definition(
+  // CHECK: cf.br
+  // CHECK: pto.tget_scale_addr
+  // CHECK-NEXT: pto.tmov
+  func.func @predecessor_definition() {
+    %src = pto.alloc_tile : !left
+    cf.br ^next
+    ^next:
+    %mat = pto.alloc_tile : !mat
+    %dst = pto.alloc_tile : !scale
+    pto.tmov ins(%mat : !mat) outs(%dst : !scale)
+    pto.tget_scale_addr ins(%src : !left) outs(%dst : !scale)
+    return
+  }
+
+  // CHECK-LABEL: func.func @dynamic_dependencies(
+  // CHECK: arith.constant 128
+  // CHECK: arith.index_cast
+  // CHECK: arith.addi
+  // CHECK: arith.minsi
+  // CHECK: pto.alloc_tile addr =
+  // CHECK-NEXT: pto.tget_scale_addr
+  // CHECK-NEXT: pto.tmov
+  func.func @dynamic_dependencies(%base : i64, %n : index) {
+    %mat = pto.alloc_tile : !mat
+    %dst = pto.alloc_tile : !scale
+    pto.tmov ins(%mat : !mat) outs(%dst : !scale)
+    %c1 = arith.constant 1 : index
+    %c128 = arith.constant 128 : index
+    %offset = arith.index_cast %c128 : index to i64
+    %addr = arith.addi %base, %offset : i64
+    %valid = arith.minsi %n, %c128 : index
+    %src = pto.alloc_tile addr = %addr valid_row = %c1 valid_col = %valid : !dynamic
+    pto.tget_scale_addr ins(%src : !dynamic) outs(%dst : !scale)
+    return
+  }
+
+  // CHECK-LABEL: func.func @intervening_dst_use(
+  // CHECK: pto.tmov
+  // CHECK: pto.alloc_tile {{.*}}!pto.tile_buf<left,
+  // CHECK: call @consume
+  // CHECK: pto.tget_scale_addr
+  func.func @intervening_dst_use() {
+    %mat = pto.alloc_tile : !mat
+    %dst = pto.alloc_tile : !scale
+    pto.tmov ins(%mat : !mat) outs(%dst : !scale)
+    %src = pto.alloc_tile : !left
+    func.call @consume(%dst) : (!scale) -> ()
+    pto.tget_scale_addr ins(%src : !left) outs(%dst : !scale)
+    return
+  }
+
+  // CHECK-LABEL: func.func @no_matching_tmov(
+  // CHECK: pto.alloc_tile
+  // CHECK: pto.alloc_tile
+  // CHECK-NEXT: pto.tget_scale_addr
+  // CHECK-NEXT: return
+  func.func @no_matching_tmov() {
+    %dst = pto.alloc_tile : !scale
+    %src = pto.alloc_tile : !left
+    pto.tget_scale_addr ins(%src : !left) outs(%dst : !scale)
+    return
+  }
+}
