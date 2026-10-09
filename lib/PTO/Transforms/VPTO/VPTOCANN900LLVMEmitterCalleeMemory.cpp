@@ -174,6 +174,9 @@ FailureOr<StringRef> buildCopyMatrixCcToUbCallee(MLIRContext *context, Type dest
   if (dstElem.isF16()) {
     return StringAttr::get(context, "llvm.hivm.FIX.L0C.TO.UB.f322f16.EXT").getValue();
   }
+  if (dstElem.isBF16()) {
+    return StringAttr::get(context, "llvm.hivm.FIX.L0C.TO.UB.f322bf16.EXT").getValue();
+  }
   if (dstElem.isF32()) {
     return StringAttr::get(context, "llvm.hivm.FIX.L0C.TO.UB.f32.EXT").getValue();
   }
