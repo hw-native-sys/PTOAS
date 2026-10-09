@@ -1,7 +1,6 @@
-# PTO 与 PTOAS 用户手册
+# PTOAS 用户手册
 
-- [概述](overview/what_is_pto.md)
-    - [什么是 PTO](overview/what_is_pto.md)
+- [概述](overview/what_is_ptoas.md)
     - [什么是 PTOAS](overview/what_is_ptoas.md)
 
 - [安装指南](installation/installation.md)
