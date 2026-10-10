@@ -302,6 +302,9 @@ static void rewriteSectionsForKind(ModuleOp module, FunctionKernelKind kind) {
 static ModuleOp cloneModuleForKind(ModuleOp source, FunctionKernelKind kind,
                                    OpBuilder &builder) {
   auto cloned = cast<ModuleOp>(source->clone());
+  // Split children are siblings, so they must not inherit the same symbol
+  // name from a named source module.
+  cloned->removeAttr(SymbolTable::getSymbolAttrName());
   cloned->setAttr(FunctionKernelKindAttr::name,
                   FunctionKernelKindAttr::get(cloned.getContext(), kind));
   eraseSectionSplitCandidatesWithoutSectionKind(cloned, kind);
@@ -322,6 +325,19 @@ static LogicalResult materializeExplicitKernelKindSections(ModuleOp module) {
   }
   rewriteSectionsForKind(module, kindAttr.getKernelKind());
   return success();
+}
+
+static DictionaryAttr getModuleAttrsWithoutSymbolName(ModuleOp module) {
+  SmallVector<NamedAttribute> attrs;
+  attrs.reserve(module->getAttrs().size());
+  auto symbolAttrName = SymbolTable::getSymbolAttrName();
+  for (NamedAttribute attr : module->getAttrs()) {
+    auto attrName = attr.getName();
+    if (attrName != symbolAttrName) {
+      attrs.push_back(attr);
+    }
+  }
+  return DictionaryAttr::get(module.getContext(), attrs);
 }
 
 static LogicalResult splitCVModule(ModuleOp module) {
@@ -355,16 +371,10 @@ static LogicalResult splitCVModule(ModuleOp module) {
     return success();
   }
 
-  SmallVector<NamedAttribute> outerAttrs;
-  outerAttrs.reserve(module->getAttrs().size());
-  for (NamedAttribute attr : module->getAttrs()) {
-    if (attr.getName() != SymbolTable::getSymbolAttrName()) {
-      outerAttrs.push_back(attr);
-    }
-  }
-
+  Attribute moduleSymbolName =
+      module->getAttr(SymbolTable::getSymbolAttrName());
   auto outer = ModuleOp::create(module.getLoc());
-  outer->setAttrs(DictionaryAttr::get(module.getContext(), outerAttrs));
+  outer->setAttrs(getModuleAttrsWithoutSymbolName(module));
   OpBuilder builder(outer.getBody(), outer.getBody()->end());
   if (needVector) {
     cloneModuleForKind(module, FunctionKernelKind::Vector, builder);
@@ -375,6 +385,9 @@ static LogicalResult splitCVModule(ModuleOp module) {
 
   module.getBodyRegion().takeBody(outer.getBodyRegion());
   module->setAttrs(outer->getAttrs());
+  if (moduleSymbolName) {
+    module->setAttr(SymbolTable::getSymbolAttrName(), moduleSymbolName);
+  }
   return success();
 }
 
