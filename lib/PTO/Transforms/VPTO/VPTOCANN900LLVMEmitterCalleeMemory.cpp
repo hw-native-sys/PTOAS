@@ -165,17 +165,91 @@ StringRef buildCopyMatrixCcToCbufCallee(MLIRContext *context) {
   return StringAttr::get(context, "llvm.hivm.FIX.L0C.TO.L1.f32.EXT").getValue();
 }
 
-FailureOr<StringRef> buildCopyMatrixCcToUbCallee(MLIRContext *context, Type destinationType) {
-  auto ptrType = dyn_cast<pto::PtrType>(destinationType);
-  if (!ptrType) {
+namespace {
+// Element kinds that participate in FIX.L0C.TO.UB intrinsic selection.
+enum class CopyMatrixCcToUbElemKind { F32Src, I32Src, F16, BF16, F32, HiF8, F8E4M3, F8E5M2, S8, U8, I32, Other };
+
+CopyMatrixCcToUbElemKind classifyCopyMatrixCcToUbSource(Type type) {
+  if (type.isF32()) {
+    return CopyMatrixCcToUbElemKind::F32Src;
+  }
+  if (type.isSignlessInteger(mlir::pto::kValue32)) {
+    return CopyMatrixCcToUbElemKind::I32Src;
+  }
+  return CopyMatrixCcToUbElemKind::Other;
+}
+
+CopyMatrixCcToUbElemKind classifyCopyMatrixCcToUbDestination(Type type) {
+  if (type.isF16()) {
+    return CopyMatrixCcToUbElemKind::F16;
+  }
+  if (type.isBF16()) {
+    return CopyMatrixCcToUbElemKind::BF16;
+  }
+  if (type.isF32()) {
+    return CopyMatrixCcToUbElemKind::F32;
+  }
+  if (pto::isPTOHiFloat8Type(type) || pto::isPTOHiFloat8x2Type(type)) {
+    return CopyMatrixCcToUbElemKind::HiF8;
+  }
+  if (pto::isPTOFloat8E4M3LikeType(type)) {
+    return CopyMatrixCcToUbElemKind::F8E4M3;
+  }
+  if (pto::isPTOFloat8E5M2LikeType(type)) {
+    return CopyMatrixCcToUbElemKind::F8E5M2;
+  }
+  auto intType = dyn_cast<IntegerType>(type);
+  if (intType && intType.getWidth() == mlir::pto::kValue8) {
+    return intType.isUnsigned() ? CopyMatrixCcToUbElemKind::U8 : CopyMatrixCcToUbElemKind::S8;
+  }
+  if (intType && intType.getWidth() == mlir::pto::kValue32) {
+    return CopyMatrixCcToUbElemKind::I32;
+  }
+  return CopyMatrixCcToUbElemKind::Other;
+}
+
+struct CopyMatrixCcToUbCalleeEntry {
+  CopyMatrixCcToUbElemKind source;
+  CopyMatrixCcToUbElemKind destination;
+  StringRef callee;
+};
+
+constexpr CopyMatrixCcToUbCalleeEntry kCopyMatrixCcToUbCallees[] = {
+    {CopyMatrixCcToUbElemKind::F32Src, CopyMatrixCcToUbElemKind::F16, "llvm.hivm.FIX.L0C.TO.UB.f322f16.EXT"},
+    {CopyMatrixCcToUbElemKind::F32Src, CopyMatrixCcToUbElemKind::BF16, "llvm.hivm.FIX.L0C.TO.UB.f322bf16.EXT"},
+    {CopyMatrixCcToUbElemKind::F32Src, CopyMatrixCcToUbElemKind::F32, "llvm.hivm.FIX.L0C.TO.UB.f32.EXT"},
+    {CopyMatrixCcToUbElemKind::F32Src, CopyMatrixCcToUbElemKind::HiF8, "llvm.hivm.FIX.L0C.TO.UB.f322hif8.EXT"},
+    {CopyMatrixCcToUbElemKind::F32Src, CopyMatrixCcToUbElemKind::F8E4M3, "llvm.hivm.FIX.L0C.TO.UB.f322f8e4m3.EXT"},
+    {CopyMatrixCcToUbElemKind::F32Src, CopyMatrixCcToUbElemKind::F8E5M2, "llvm.hivm.FIX.L0C.TO.UB.f322f8e5m2.EXT"},
+    {CopyMatrixCcToUbElemKind::F32Src, CopyMatrixCcToUbElemKind::S8, "llvm.hivm.FIX.L0C.TO.UB.f322s8.EXT"},
+    {CopyMatrixCcToUbElemKind::F32Src, CopyMatrixCcToUbElemKind::U8, "llvm.hivm.FIX.L0C.TO.UB.f322u8.EXT"},
+    {CopyMatrixCcToUbElemKind::I32Src, CopyMatrixCcToUbElemKind::F16, "llvm.hivm.FIX.L0C.TO.UB.s322f16.EXT"},
+    {CopyMatrixCcToUbElemKind::I32Src, CopyMatrixCcToUbElemKind::BF16, "llvm.hivm.FIX.L0C.TO.UB.s322bf16.EXT"},
+    {CopyMatrixCcToUbElemKind::I32Src, CopyMatrixCcToUbElemKind::I32, "llvm.hivm.FIX.L0C.TO.UB.s32.EXT"},
+    {CopyMatrixCcToUbElemKind::I32Src, CopyMatrixCcToUbElemKind::S8, "llvm.hivm.FIX.L0C.TO.UB.s322s8.EXT"},
+    {CopyMatrixCcToUbElemKind::I32Src, CopyMatrixCcToUbElemKind::U8, "llvm.hivm.FIX.L0C.TO.UB.s322u8.EXT"},
+};
+} // namespace
+
+FailureOr<StringRef> buildCopyMatrixCcToUbCallee(MLIRContext *context, Type sourceType,
+                                                 Type destinationType) {
+  auto srcPtrType = dyn_cast<pto::PtrType>(sourceType);
+  auto dstPtrType = dyn_cast<pto::PtrType>(destinationType);
+  if (!srcPtrType || !dstPtrType) {
     return failure();
   }
-  Type dstElem = ptrType.getElementType();
-  if (dstElem.isF16()) {
-    return StringAttr::get(context, "llvm.hivm.FIX.L0C.TO.UB.f322f16.EXT").getValue();
-  }
-  if (dstElem.isF32()) {
-    return StringAttr::get(context, "llvm.hivm.FIX.L0C.TO.UB.f32.EXT").getValue();
+
+  // The intrinsic encodes the accumulator/destination element pair; the quant
+  // formula itself rides in the packed config bits, so modes sharing a pair
+  // (e.g. f32_bf16 and qf322bf16_pre_vec) share one callee. i16 destinations
+  // have no EXT-form intrinsic on this target and stay unsupported.
+  CopyMatrixCcToUbElemKind source = classifyCopyMatrixCcToUbSource(srcPtrType.getElementType());
+  CopyMatrixCcToUbElemKind destination =
+      classifyCopyMatrixCcToUbDestination(dstPtrType.getElementType());
+  for (const CopyMatrixCcToUbCalleeEntry &entry : kCopyMatrixCcToUbCallees) {
+    if (entry.source == source && entry.destination == destination) {
+      return StringAttr::get(context, entry.callee).getValue();
+    }
   }
   return failure();
 }

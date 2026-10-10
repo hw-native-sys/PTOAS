@@ -1,0 +1,201 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You should not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+
+// End-to-end coverage for pto.mte_l0c_ub pre_quant destinations: wrapper
+// round-trip, wrapper expansion, and the LLVM FIX.L0C.TO.UB intrinsic selected
+// per (source, destination) element-type pair. All probes live in one kernel
+// so their op order is stable across pipeline dumps. Append a new mte_l0c_ub
+// probe and its CHECK lines here when the emitter gains another destination
+// family (i16 has no EXT-form intrinsic and stays unsupported).
+
+// RUN: ptoas --pto-arch=a5 --pto-backend=vpto --emit-vpto --mlir-print-ir-before=vpto-expand-wrapper-ops %s -o /dev/null 2>&1 | FileCheck %s --check-prefix=ROUNDTRIP
+// RUN: ptoas --pto-arch=a5 --pto-backend=vpto --emit-vpto --mlir-print-ir-after=vpto-expand-wrapper-ops %s -o /dev/null 2>&1 | FileCheck %s --check-prefix=EXPAND
+// RUN: ( mkdir -p %T && ptoas --pto-arch=a5 --pto-backend=vpto %s -o %t --mlir-print-ir-after=convert-func-to-llvm 2>&1 || true ) | FileCheck %s
+
+module attributes {pto.target_arch = "a5", pto.kernel_kind = #pto.kernel_kind<cube>} {
+  func.func @ub_pre_quant_probes(%src_f32: !pto.ptr<f32, l0c>,
+                                 %src_i32: !pto.ptr<i32, l0c>,
+                                 %dst_bf16: !pto.ptr<bf16, ub>,
+                                 %dst_f16: !pto.ptr<f16, ub>,
+                                 %dst_f32: !pto.ptr<f32, ub>,
+                                 %dst_hif8: !pto.ptr<!pto.hif8, ub>,
+                                 %dst_f8e4m3: !pto.ptr<f8E4M3FN, ub>,
+                                 %dst_f8e5m2: !pto.ptr<f8E5M2, ub>,
+                                 %dst_i32: !pto.ptr<i32, ub>,
+                                 %dst_ui32: !pto.ptr<ui32, ub>,
+                                 %dst_i8: !pto.ptr<i8, ub>,
+                                 %dst_ui8: !pto.ptr<ui8, ub>,
+                                 %scale: !pto.ptr<f32, scaling>) attributes {pto.kernel} {
+    %c0_i64 = arith.constant 0 : i64
+    %c16_i64 = arith.constant 16 : i64
+    %c32_i64 = arith.constant 32 : i64
+    %c1_bf16 = arith.constant 1.000000e+00 : bf16
+
+    // f32 accumulator -> bf16, scalar pre_quant (#1588).
+    pto.mte_l0c_ub %src_f32, %dst_bf16, %c16_i64, %c16_i64, %c16_i64, %c32_i64, dst_mode(%c0_i64),
+      pre_quant(%c1_bf16, mode = f32_bf16),
+      nz2nd
+      : !pto.ptr<f32, l0c>, !pto.ptr<bf16, ub>, i64, i64, i64, i64, i64,
+        bf16
+
+    // f32 accumulator -> f16, vector pre_quant.
+    pto.mte_l0c_ub %src_f32, %dst_f16, %c16_i64, %c16_i64, %c16_i64, %c32_i64, dst_mode(%c0_i64),
+      pre_quant(%scale, mode = qf322f16_pre_vec),
+      nz2nd
+      : !pto.ptr<f32, l0c>, !pto.ptr<f16, ub>, i64, i64, i64, i64, i64,
+        !pto.ptr<f32, scaling>
+
+    // f32 accumulator -> f32, vector pre_quant.
+    pto.mte_l0c_ub %src_f32, %dst_f32, %c16_i64, %c16_i64, %c16_i64, %c32_i64, dst_mode(%c0_i64),
+      pre_quant(%scale, mode = qf322f32_pre_vec),
+      nz2nd
+      : !pto.ptr<f32, l0c>, !pto.ptr<f32, ub>, i64, i64, i64, i64, i64,
+        !pto.ptr<f32, scaling>
+
+    // f32 accumulator -> bf16, vector pre_quant.
+    pto.mte_l0c_ub %src_f32, %dst_bf16, %c16_i64, %c16_i64, %c16_i64, %c32_i64, dst_mode(%c0_i64),
+      pre_quant(%scale, mode = qf322bf16_pre_vec),
+      nz2nd
+      : !pto.ptr<f32, l0c>, !pto.ptr<bf16, ub>, i64, i64, i64, i64, i64,
+        !pto.ptr<f32, scaling>
+
+    // f32 accumulator -> hif8, vector pre_quant.
+    pto.mte_l0c_ub %src_f32, %dst_hif8, %c16_i64, %c16_i64, %c16_i64, %c32_i64, dst_mode(%c0_i64),
+      pre_quant(%scale, mode = qf322hif8_pre_vec),
+      nz2nd
+      : !pto.ptr<f32, l0c>, !pto.ptr<!pto.hif8, ub>, i64, i64, i64, i64, i64,
+        !pto.ptr<f32, scaling>
+
+    // f32 accumulator -> f8E4M3, vector pre_quant.
+    pto.mte_l0c_ub %src_f32, %dst_f8e4m3, %c16_i64, %c16_i64, %c16_i64, %c32_i64, dst_mode(%c0_i64),
+      pre_quant(%scale, mode = qf322fp8_pre_vec),
+      nz2nd
+      : !pto.ptr<f32, l0c>, !pto.ptr<f8E4M3FN, ub>, i64, i64, i64, i64, i64,
+        !pto.ptr<f32, scaling>
+
+    // f32 accumulator -> f8E5M2, vector pre_quant.
+    pto.mte_l0c_ub %src_f32, %dst_f8e5m2, %c16_i64, %c16_i64, %c16_i64, %c32_i64, dst_mode(%c0_i64),
+      pre_quant(%scale, mode = qf322fp8_pre_vec),
+      nz2nd
+      : !pto.ptr<f32, l0c>, !pto.ptr<f8E5M2, ub>, i64, i64, i64, i64, i64,
+        !pto.ptr<f32, scaling>
+
+    // f32 accumulator -> i8, vector pre_quant.
+    pto.mte_l0c_ub %src_f32, %dst_i8, %c16_i64, %c16_i64, %c16_i64, %c32_i64, dst_mode(%c0_i64),
+      pre_quant(%scale, mode = qf322b8_pre_vec),
+      nz2nd
+      : !pto.ptr<f32, l0c>, !pto.ptr<i8, ub>, i64, i64, i64, i64, i64,
+        !pto.ptr<f32, scaling>
+
+    // f32 accumulator -> ui8, vector pre_quant.
+    pto.mte_l0c_ub %src_f32, %dst_ui8, %c16_i64, %c16_i64, %c16_i64, %c32_i64, dst_mode(%c0_i64),
+      pre_quant(%scale, mode = qf322b8_pre_vec),
+      nz2nd
+      : !pto.ptr<f32, l0c>, !pto.ptr<ui8, ub>, i64, i64, i64, i64, i64,
+        !pto.ptr<f32, scaling>
+
+    // i32 accumulator -> f16, vector pre_quant (deqf16).
+    pto.mte_l0c_ub %src_i32, %dst_f16, %c16_i64, %c16_i64, %c16_i64, %c32_i64, dst_mode(%c0_i64),
+      pre_quant(%scale, mode = deqf16_vec),
+      nz2nd
+      : !pto.ptr<i32, l0c>, !pto.ptr<f16, ub>, i64, i64, i64, i64, i64,
+        !pto.ptr<f32, scaling>
+
+    // i32 accumulator -> bf16, vector pre_quant (qs322bf16, A5-only).
+    pto.mte_l0c_ub %src_i32, %dst_bf16, %c16_i64, %c16_i64, %c16_i64, %c32_i64, dst_mode(%c0_i64),
+      pre_quant(%scale, mode = qs322bf16_pre_vec),
+      nz2nd
+      : !pto.ptr<i32, l0c>, !pto.ptr<bf16, ub>, i64, i64, i64, i64, i64,
+        !pto.ptr<f32, scaling>
+
+    // i32 accumulator -> i32, vector pre_quant (deqs32_int).
+    pto.mte_l0c_ub %src_i32, %dst_i32, %c16_i64, %c16_i64, %c16_i64, %c32_i64, dst_mode(%c0_i64),
+      pre_quant(%scale, mode = deqs32_int_vec),
+      nz2nd
+      : !pto.ptr<i32, l0c>, !pto.ptr<i32, ub>, i64, i64, i64, i64, i64,
+        !pto.ptr<f32, scaling>
+
+    // i32 accumulator -> ui32: the verifier's I32 destination family accepts
+    // any 32-bit signedness, so ui32 must map to the same s32 callee.
+    pto.mte_l0c_ub %src_i32, %dst_ui32, %c16_i64, %c16_i64, %c16_i64, %c32_i64, dst_mode(%c0_i64),
+      pre_quant(%scale, mode = deqs32_int_vec),
+      nz2nd
+      : !pto.ptr<i32, l0c>, !pto.ptr<ui32, ub>, i64, i64, i64, i64, i64,
+        !pto.ptr<f32, scaling>
+
+    // i32 accumulator -> i8, vector pre_quant (req8).
+    pto.mte_l0c_ub %src_i32, %dst_i8, %c16_i64, %c16_i64, %c16_i64, %c32_i64, dst_mode(%c0_i64),
+      pre_quant(%scale, mode = req8_vec),
+      nz2nd
+      : !pto.ptr<i32, l0c>, !pto.ptr<i8, ub>, i64, i64, i64, i64, i64,
+        !pto.ptr<f32, scaling>
+    return
+  }
+}
+
+// ROUNDTRIP-LABEL: func.func @ub_pre_quant_probes(
+// ROUNDTRIP: pre_quant(%{{.*}}, mode = f32_bf16)
+// ROUNDTRIP: pre_quant(%{{.*}}, mode = qf322f16_pre_vec)
+// ROUNDTRIP: pre_quant(%{{.*}}, mode = qf322f32_pre_vec)
+// ROUNDTRIP: pre_quant(%{{.*}}, mode = qf322bf16_pre_vec)
+// ROUNDTRIP: pre_quant(%{{.*}}, mode = qf322hif8_pre_vec)
+// ROUNDTRIP: pre_quant(%{{.*}}, mode = qf322fp8_pre_vec)
+// ROUNDTRIP: pre_quant(%{{.*}}, mode = qf322fp8_pre_vec)
+// ROUNDTRIP: pre_quant(%{{.*}}, mode = qf322b8_pre_vec)
+// ROUNDTRIP: pre_quant(%{{.*}}, mode = qf322b8_pre_vec)
+// ROUNDTRIP: pre_quant(%{{.*}}, mode = deqf16_vec)
+// ROUNDTRIP: pre_quant(%{{.*}}, mode = qs322bf16_pre_vec)
+// ROUNDTRIP: pre_quant(%{{.*}}, mode = deqs32_int_vec)
+// ROUNDTRIP: pre_quant(%{{.*}}, mode = deqs32_int_vec)
+// ROUNDTRIP: pre_quant(%{{.*}}, mode = req8_vec)
+
+// EXPAND-LABEL: func.func @ub_pre_quant_probes(
+// EXPAND: pto.set_quant_pre
+// EXPAND: pto.copy_matrix_cc_to_ub
+// EXPAND: pto.set_fpc
+// EXPAND: pto.copy_matrix_cc_to_ub
+// EXPAND: pto.set_fpc
+// EXPAND: pto.copy_matrix_cc_to_ub
+// EXPAND: pto.set_fpc
+// EXPAND: pto.copy_matrix_cc_to_ub
+// EXPAND: pto.set_fpc
+// EXPAND: pto.copy_matrix_cc_to_ub
+// EXPAND: pto.set_fpc
+// EXPAND: pto.copy_matrix_cc_to_ub
+// EXPAND: pto.set_fpc
+// EXPAND: pto.copy_matrix_cc_to_ub
+// EXPAND: pto.set_fpc
+// EXPAND: pto.copy_matrix_cc_to_ub
+// EXPAND: pto.set_fpc
+// EXPAND: pto.copy_matrix_cc_to_ub
+// EXPAND: pto.set_fpc
+// EXPAND: pto.copy_matrix_cc_to_ub
+// EXPAND: pto.set_fpc
+// EXPAND: pto.copy_matrix_cc_to_ub
+// EXPAND: pto.set_fpc
+// EXPAND: pto.copy_matrix_cc_to_ub
+// EXPAND: pto.set_fpc
+// EXPAND: pto.copy_matrix_cc_to_ub
+// EXPAND: pto.set_fpc
+// EXPAND: pto.copy_matrix_cc_to_ub
+
+// CHECK-LABEL: llvm.func @ub_pre_quant_probes_mix_aic
+// CHECK: llvm.call @llvm.hivm.FIX.L0C.TO.UB.f322bf16.EXT
+// CHECK: llvm.call @llvm.hivm.FIX.L0C.TO.UB.f322f16.EXT
+// CHECK: llvm.call @llvm.hivm.FIX.L0C.TO.UB.f32.EXT
+// CHECK: llvm.call @llvm.hivm.FIX.L0C.TO.UB.f322bf16.EXT
+// CHECK: llvm.call @llvm.hivm.FIX.L0C.TO.UB.f322hif8.EXT
+// CHECK: llvm.call @llvm.hivm.FIX.L0C.TO.UB.f322f8e4m3.EXT
+// CHECK: llvm.call @llvm.hivm.FIX.L0C.TO.UB.f322f8e5m2.EXT
+// CHECK: llvm.call @llvm.hivm.FIX.L0C.TO.UB.f322s8.EXT
+// CHECK: llvm.call @llvm.hivm.FIX.L0C.TO.UB.f322u8.EXT
+// CHECK: llvm.call @llvm.hivm.FIX.L0C.TO.UB.s322f16.EXT
+// CHECK: llvm.call @llvm.hivm.FIX.L0C.TO.UB.s322bf16.EXT
+// CHECK: llvm.call @llvm.hivm.FIX.L0C.TO.UB.s32.EXT
+// CHECK: llvm.call @llvm.hivm.FIX.L0C.TO.UB.s32.EXT
+// CHECK: llvm.call @llvm.hivm.FIX.L0C.TO.UB.s322s8.EXT

@@ -1316,7 +1316,8 @@ public:
 
     FailureOr<StringRef> calleeName = std::is_same_v<CopyOp, pto::CopyMatrixCcToCbufOp>
                                           ? FailureOr<StringRef>(buildCopyMatrixCcToCbufCallee(op.getContext()))
-                                          : buildCopyMatrixCcToUbCallee(op.getContext(), op.getDestination().getType());
+                                          : buildCopyMatrixCcToUbCallee(op.getContext(), op.getSource().getType(),
+                                                                        op.getDestination().getType());
     if (failed(calleeName)) {
       return rewriter.notifyMatchFailure(op, "unsupported copy_matrix_cc_to_{cbuf,ub} element type");
     }
