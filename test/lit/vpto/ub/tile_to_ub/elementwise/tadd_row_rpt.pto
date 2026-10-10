@@ -21,7 +21,7 @@ module attributes {pto.target_arch = "a3", pto.kernel_kind = #pto.kernel_kind<ve
     // CHECK-DAG: %[[STRIDE:.*]] = arith.constant 12 : i64
     // CHECK: pto.ub.vadd {{%[^,]+}}, {{%[^,]+}}, {{%[^,]+}}
     // CHECK-SAME: %[[RPT]],
-    // CHECK-SAME: %[[STRIDE]], %[[STRIDE]],
+    // CHECK-SAME: %[[STRIDE]], %[[STRIDE]], %[[STRIDE]]
     // CHECK-SAME: : !pto.ptr<f32, ub>, !pto.ptr<f32, ub>, !pto.ptr<f32, ub>, i64, i64, i64, i64, i64, i64, i64
     // CHECK: pto.ub.set_mask %c-1_i64{{[0-9_]*}}, %c-1_i64{{[0-9_]*}}
     // CHECK-NOT: pto.ub.set_mask_count

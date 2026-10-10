@@ -1034,7 +1034,7 @@ private:
                    Value repeat, Value repStride) const {
     b.create<UBop>(loc, dst, s0, s1, repeat,
                    i64c1(loc, b), i64c1(loc, b), i64c1(loc, b),
-                   repStride, repStride, i64c0(loc, b));
+                   repStride, repStride, repStride);
   }
 
   // Shared lowering prologue: compute the element pointer type of the

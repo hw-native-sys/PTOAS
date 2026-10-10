@@ -696,7 +696,8 @@ def LowerPTOToUBufOps : Pass<"pto-lower-to-ubuf-ops", "mlir::func::FuncOp"> {
   let dependentDialects = [
     "mlir::pto::PTODialect",
     "mlir::func::FuncDialect",
-    "mlir::arith::ArithDialect"
+    "mlir::arith::ArithDialect",
+    "mlir::scf::SCFDialect"
   ];
 }
 

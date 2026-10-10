@@ -21,7 +21,7 @@ module attributes {pto.target_arch = "a3", pto.kernel_kind = #pto.kernel_kind<ve
     // CHECK-DAG: %[[STRIDE:.*]] = arith.constant 16 : i64
     // CHECK: pto.ub.vadd {{%[^,]+}}, {{%[^,]+}}, {{%[^,]+}}
     // CHECK-SAME: %[[RPT]],
-    // CHECK-SAME: %[[STRIDE]], %[[STRIDE]],
+    // CHECK-SAME: %[[STRIDE]], %[[STRIDE]], %[[STRIDE]]
     // CHECK-SAME: : !pto.ptr<f32, ub>, !pto.ptr<f32, ub>, !pto.ptr<f32, ub>, i64, i64, i64, i64, i64, i64, i64
     // CHECK: pto.ub.set_mask %c-1_i64{{[0-9_]*}}, %c-1_i64{{[0-9_]*}}
     pto.tadd ins(%src0, %src1 : !pto.tile_buf<loc=vec, dtype=f32, rows=5, cols=128, v_row=5, v_col=40, blayout=row_major, slayout=none_box, fractal=512, pad=0>, !pto.tile_buf<loc=vec, dtype=f32, rows=5, cols=128, v_row=5, v_col=40, blayout=row_major, slayout=none_box, fractal=512, pad=0>) outs(%dst : !pto.tile_buf<loc=vec, dtype=f32, rows=5, cols=128, v_row=5, v_col=40, blayout=row_major, slayout=none_box, fractal=512, pad=0>)
