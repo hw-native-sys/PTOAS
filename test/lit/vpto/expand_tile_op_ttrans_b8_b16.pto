@@ -1,0 +1,77 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+
+// ttrans b8/b16 expansion regressions (PTOAS issue #1604):
+//   - tall (rows >= cols) b8: vgather2 zero-extends each i8/ui8 byte into one
+//     i16/ui16 lane, and the store must pack the low byte of every lane back
+//     into contiguous bytes with dist = "PK_B16" (port of TTransB8ColWise's
+//     DIST_PK_B16 store). A plain NORM store interleaves the bytes with zeros.
+//   - wide (rows < cols) b16: RowWise path (vlds + 16-bit-offset vscatter),
+//     port of TTransB16RowWise.
+//   - wide b8: RowWise path loads with dist = "UNPK_B8" and scatters the b8
+//     form's even-numbered bytes, port of TTransB8RowWise.
+//
+// RUN: ptoas --pto-arch=a5 --pto-backend=vpto --emit-vpto --enable-tile-op-expand %s -o - 2>/dev/null | FileCheck %s
+
+// CHECK-LABEL: func.func @TTRANS_i8_tall_32x32
+// CHECK-NOT: pto.ttrans ins
+// CHECK: pto.vgather2 {{.*}} : !pto.ptr<i8, ub>, !pto.vreg<128xi16>, !pto.mask<b16> -> !pto.vreg<128xi16>
+// CHECK: pto.vsts {{.*}} {dist = "PK_B16"} : !pto.vreg<128xi16>, !pto.ptr<i8, ub>, !pto.mask<b16>
+
+// CHECK-LABEL: func.func @TTRANS_ui8_tall_32x32
+// CHECK-NOT: pto.ttrans ins
+// CHECK: pto.vgather2 {{.*}} : !pto.ptr<ui8, ub>, !pto.vreg<128xi16>, !pto.mask<b16> -> !pto.vreg<128xui16>
+// CHECK: pto.vsts {{.*}} {dist = "PK_B16"} : !pto.vreg<128xui16>, !pto.ptr<ui8, ub>, !pto.mask<b16>
+
+// CHECK-LABEL: func.func @TTRANS_f16_wide_16x32
+// CHECK-NOT: pto.ttrans ins
+// CHECK: pto.vlds {{.*}} : !pto.ptr<f16, ub> -> !pto.vreg<128xf16>
+// CHECK: pto.vscatter {{.*}} : !pto.vreg<128xf16>, !pto.ptr<f16, ub>, !pto.vreg<128xi16>, !pto.mask<b16>
+
+// CHECK-LABEL: func.func @TTRANS_i8_wide_32x64
+// CHECK-NOT: pto.ttrans ins
+// CHECK: pto.vlds {{.*}} {dist = "UNPK_B8"} : !pto.ptr<i8, ub> -> !pto.vreg<256xi8>
+// CHECK: pto.vscatter {{.*}} : !pto.vreg<256xi8>, !pto.ptr<i8, ub>, !pto.vreg<128xi16>, !pto.mask<b16>
+
+module attributes {pto.kernel_kind = #pto.kernel_kind<vector>} {
+  func.func @TTRANS_i8_tall_32x32() {
+    %src = pto.alloc_tile : !pto.tile_buf<loc=vec, dtype=i8, rows=32, cols=32, v_row=32, v_col=32, blayout=row_major, slayout=none_box, fractal=512, pad=0>
+    %tmp = pto.alloc_tile : !pto.tile_buf<loc=vec, dtype=i8, rows=32, cols=32, v_row=32, v_col=32, blayout=row_major, slayout=none_box, fractal=512, pad=0>
+    %dst = pto.alloc_tile : !pto.tile_buf<loc=vec, dtype=i8, rows=32, cols=32, v_row=32, v_col=32, blayout=row_major, slayout=none_box, fractal=512, pad=0>
+    pto.ttrans ins(%src, %tmp : !pto.tile_buf<loc=vec, dtype=i8, rows=32, cols=32, v_row=32, v_col=32, blayout=row_major, slayout=none_box, fractal=512, pad=0>, !pto.tile_buf<loc=vec, dtype=i8, rows=32, cols=32, v_row=32, v_col=32, blayout=row_major, slayout=none_box, fractal=512, pad=0>)
+              outs(%dst : !pto.tile_buf<loc=vec, dtype=i8, rows=32, cols=32, v_row=32, v_col=32, blayout=row_major, slayout=none_box, fractal=512, pad=0>)
+    return
+  }
+
+  func.func @TTRANS_ui8_tall_32x32() {
+    %src = pto.alloc_tile : !pto.tile_buf<loc=vec, dtype=ui8, rows=32, cols=32, v_row=32, v_col=32, blayout=row_major, slayout=none_box, fractal=512, pad=0>
+    %tmp = pto.alloc_tile : !pto.tile_buf<loc=vec, dtype=ui8, rows=32, cols=32, v_row=32, v_col=32, blayout=row_major, slayout=none_box, fractal=512, pad=0>
+    %dst = pto.alloc_tile : !pto.tile_buf<loc=vec, dtype=ui8, rows=32, cols=32, v_row=32, v_col=32, blayout=row_major, slayout=none_box, fractal=512, pad=0>
+    pto.ttrans ins(%src, %tmp : !pto.tile_buf<loc=vec, dtype=ui8, rows=32, cols=32, v_row=32, v_col=32, blayout=row_major, slayout=none_box, fractal=512, pad=0>, !pto.tile_buf<loc=vec, dtype=ui8, rows=32, cols=32, v_row=32, v_col=32, blayout=row_major, slayout=none_box, fractal=512, pad=0>)
+              outs(%dst : !pto.tile_buf<loc=vec, dtype=ui8, rows=32, cols=32, v_row=32, v_col=32, blayout=row_major, slayout=none_box, fractal=512, pad=0>)
+    return
+  }
+
+  func.func @TTRANS_f16_wide_16x32() {
+    %src = pto.alloc_tile : !pto.tile_buf<loc=vec, dtype=f16, rows=16, cols=32, v_row=16, v_col=32, blayout=row_major, slayout=none_box, fractal=512, pad=0>
+    %tmp = pto.alloc_tile : !pto.tile_buf<loc=vec, dtype=f16, rows=16, cols=32, v_row=16, v_col=32, blayout=row_major, slayout=none_box, fractal=512, pad=0>
+    %dst = pto.alloc_tile : !pto.tile_buf<loc=vec, dtype=f16, rows=32, cols=16, v_row=32, v_col=16, blayout=row_major, slayout=none_box, fractal=512, pad=0>
+    pto.ttrans ins(%src, %tmp : !pto.tile_buf<loc=vec, dtype=f16, rows=16, cols=32, v_row=16, v_col=32, blayout=row_major, slayout=none_box, fractal=512, pad=0>, !pto.tile_buf<loc=vec, dtype=f16, rows=16, cols=32, v_row=16, v_col=32, blayout=row_major, slayout=none_box, fractal=512, pad=0>)
+              outs(%dst : !pto.tile_buf<loc=vec, dtype=f16, rows=32, cols=16, v_row=32, v_col=16, blayout=row_major, slayout=none_box, fractal=512, pad=0>)
+    return
+  }
+
+  func.func @TTRANS_i8_wide_32x64() {
+    %src = pto.alloc_tile : !pto.tile_buf<loc=vec, dtype=i8, rows=32, cols=64, v_row=32, v_col=64, blayout=row_major, slayout=none_box, fractal=512, pad=0>
+    %tmp = pto.alloc_tile : !pto.tile_buf<loc=vec, dtype=i8, rows=32, cols=64, v_row=32, v_col=64, blayout=row_major, slayout=none_box, fractal=512, pad=0>
+    %dst = pto.alloc_tile : !pto.tile_buf<loc=vec, dtype=i8, rows=64, cols=32, v_row=64, v_col=32, blayout=row_major, slayout=none_box, fractal=512, pad=0>
+    pto.ttrans ins(%src, %tmp : !pto.tile_buf<loc=vec, dtype=i8, rows=32, cols=64, v_row=32, v_col=64, blayout=row_major, slayout=none_box, fractal=512, pad=0>, !pto.tile_buf<loc=vec, dtype=i8, rows=32, cols=64, v_row=32, v_col=64, blayout=row_major, slayout=none_box, fractal=512, pad=0>)
+              outs(%dst : !pto.tile_buf<loc=vec, dtype=i8, rows=64, cols=32, v_row=64, v_col=32, blayout=row_major, slayout=none_box, fractal=512, pad=0>)
+    return
+  }
+}

@@ -34,6 +34,12 @@ CASE_SHAPES = [
     ("f32_32x32", pto.f32, 32, 32),  # square b32
     ("i32_8x64", pto.i32, 8, 64),
     ("f16_64x16", pto.f16, 64, 16),  # tall b16 (16*2=32 aligned)
+    ("f16_16x32", pto.f16, 16, 32),  # wide b16: RowWise path (32*2=64 aligned)
+    ("i16_16x32", pto.i16, 16, 32),  # wide b16
+    ("i8_32x32", pto.i8, 32, 32),    # tall b8: ColWise PK_B16 path (32*1=32 aligned)
+    ("ui8_32x32", pto.ui8, 32, 32),  # tall b8
+    ("i8_32x64", pto.i8, 32, 64),    # wide b8: RowWise UNPK_B8 path (64*1=64 aligned)
+    ("ui8_32x64", pto.ui8, 32, 64),  # wide b8
 ]
 
 
@@ -71,7 +77,8 @@ for _name, _dtype, _rows, _cols in CASE_SHAPES:
 # numpy dtype mapping for input generation + golden
 _PTO_TO_NP = {
     pto.f32: np.float32, pto.f16: np.float16,
-    pto.i32: np.int32,
+    pto.i32: np.int32, pto.i16: np.int16,
+    pto.i8: np.int8, pto.ui8: np.uint8,
 }
 
 
