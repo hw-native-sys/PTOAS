@@ -6,28 +6,14 @@
 // INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY OR FITNESS FOR A PARTICULAR PURPOSE.
 // See the License in the root of the software repository for the full text of the License.
 
-// Issue #1599: the 8-bit row-extreme relaxation is A5-only. On A2/A3 every
-// 8-bit row reduction keeps the shared 16/32-bit integer + f16/f32 whitelist.
+// Issue #1599: the 8-bit row-extreme relaxation is A5-only. On A2/A3 an i8
+// trowmax keeps the shared 16/32-bit integer + f16/f32 whitelist and must
+// never see the A5 message. One failing op per file: ptoas stops reporting
+// verifier errors after the first failure in some build variants.
 
 // RUN: not ptoas --pto-arch=a3 --pto-level=level2 --emit-pto-ir %s 2>&1 | FileCheck %s
 
 module {
-  func.func @trowsum_i8_rejected_on_a2a3() {
-    %src = pto.alloc_tile : !pto.tile_buf<vec, 8x32xi8>
-    %tmp = pto.alloc_tile : !pto.tile_buf<vec, 8x32xi8>
-    %dst = pto.alloc_tile : !pto.tile_buf<vec, 8x32xi8, valid=8x1>
-    pto.trowsum ins(%src, %tmp : !pto.tile_buf<vec, 8x32xi8>, !pto.tile_buf<vec, 8x32xi8>) outs(%dst : !pto.tile_buf<vec, 8x32xi8, valid=8x1>)
-    return
-  }
-
-  func.func @trowprod_i8_rejected_on_a2a3() {
-    %src = pto.alloc_tile : !pto.tile_buf<vec, 8x32xi8>
-    %tmp = pto.alloc_tile : !pto.tile_buf<vec, 8x32xi8>
-    %dst = pto.alloc_tile : !pto.tile_buf<vec, 8x32xi8, valid=8x1>
-    pto.trowprod ins(%src, %tmp : !pto.tile_buf<vec, 8x32xi8>, !pto.tile_buf<vec, 8x32xi8>) outs(%dst : !pto.tile_buf<vec, 8x32xi8, valid=8x1>)
-    return
-  }
-
   func.func @trowmax_i8_rejected_on_a2a3() {
     %src = pto.alloc_tile : !pto.tile_buf<vec, 8x32xi8>
     %tmp = pto.alloc_tile : !pto.tile_buf<vec, 8x32xi8>
@@ -37,7 +23,5 @@ module {
   }
 }
 
-// CHECK: error: 'pto.trowsum' op expects element type to be i16/i32/f16/f32
-// CHECK: error: 'pto.trowprod' op expects A2/A3 trowprod element type to be i16/i32/f16/f32
 // CHECK: error: 'pto.trowmax' op expects element type to be i16/i32/f16/f32
 // CHECK-NOT: expects A5 trowmax element type
