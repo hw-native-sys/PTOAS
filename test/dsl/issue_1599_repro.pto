@@ -1,0 +1,82 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software: you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY OR FITNESS FOR A PARTICULAR PURPOSE.
+// See the License in the root of the software repository for the full text of the License.
+
+// Issue #1599 repro: A5 pto.trowmax / pto.trowmin with i8 / ui8 element type.
+// pto-isa A5 TRowMax / TRowMin accept int8_t / uint8_t, but the shared
+// row-reduction element-type whitelist only allowed i16/i32/f16/f32, so MLIR
+// verification rejected the op before the VPTO backend ran. The A5 row-extreme
+// whitelist now accepts 8-bit integers and the TileLib template widens them
+// losslessly to 16 bits for the vector reduction.
+
+// RUN: ptoas --pto-arch=a5 --pto-level=level2 --emit-pto-ir %s 2>&1 | FileCheck %s --check-prefix=IR
+// RUN: ptoas --pto-arch=a5 --pto-backend=vpto --emit-vpto %s -o - | FileCheck %s
+
+// IR-LABEL: func.func @rowmax_i8_anchor_uniform
+// IR: pto.trowmax ins(%{{.*}}, %{{.*}} : !pto.tile_buf<vec, 8x32xi8>, !pto.tile_buf<vec, 8x32xi8>) outs(%{{.*}} : !pto.tile_buf<vec, 8x32xi8, valid=8x1>)
+// IR-LABEL: func.func @rowmax_ui8_anchor_uniform
+// IR: pto.trowmax ins(%{{.*}}, %{{.*}} : !pto.tile_buf<vec, 8x32xui8>, !pto.tile_buf<vec, 8x32xui8>) outs(%{{.*}} : !pto.tile_buf<vec, 8x32xui8, valid=8x1>)
+// IR-LABEL: func.func @rowmin_i8_anchor_uniform
+// IR: pto.trowmin ins(%{{.*}}, %{{.*}} : !pto.tile_buf<vec, 8x32xi8>, !pto.tile_buf<vec, 8x32xi8>) outs(%{{.*}} : !pto.tile_buf<vec, 8x32xi8, valid=8x1>)
+// IR-LABEL: func.func @rowmin_ui8_anchor_uniform
+// IR: pto.trowmin ins(%{{.*}}, %{{.*}} : !pto.tile_buf<vec, 8x32xui8>, !pto.tile_buf<vec, 8x32xui8>) outs(%{{.*}} : !pto.tile_buf<vec, 8x32xui8, valid=8x1>)
+
+// CHECK-LABEL: func.func @rowmax_i8_anchor_uniform
+// The i8 row is widened to even/odd i16 halves, reduced with the 16-bit
+// group reduction, combined in lane 0, narrowed back, and stored.
+// CHECK: pto.vcvt
+// CHECK: pto.vcmax
+// CHECK: pto.vcvt
+// CHECK: pto.vmax
+// CHECK: pto.vcvt
+// CHECK: pto.vsts
+// CHECK-LABEL: func.func @rowmax_ui8_anchor_uniform
+// CHECK: pto.vcvt
+// CHECK: pto.vcmax
+// CHECK: pto.vsts
+// CHECK-LABEL: func.func @rowmin_i8_anchor_uniform
+// CHECK: pto.vcvt
+// CHECK: pto.vcmin
+// CHECK: pto.vsts
+// CHECK-LABEL: func.func @rowmin_ui8_anchor_uniform
+// CHECK: pto.vcvt
+// CHECK: pto.vcmin
+// CHECK: pto.vsts
+
+module attributes {pto.target_arch = "a5", pto.kernel_kind = #pto.kernel_kind<vector>} {
+  func.func @rowmax_i8_anchor_uniform() {
+    %src = pto.alloc_tile : !pto.tile_buf<vec, 8x32xi8>
+    %tmp = pto.alloc_tile : !pto.tile_buf<vec, 8x32xi8>
+    %dst = pto.alloc_tile : !pto.tile_buf<vec, 8x32xi8, valid=8x1>
+    pto.trowmax ins(%src, %tmp : !pto.tile_buf<vec, 8x32xi8>, !pto.tile_buf<vec, 8x32xi8>) outs(%dst : !pto.tile_buf<vec, 8x32xi8, valid=8x1>)
+    return
+  }
+
+  func.func @rowmax_ui8_anchor_uniform() {
+    %src = pto.alloc_tile : !pto.tile_buf<vec, 8x32xui8>
+    %tmp = pto.alloc_tile : !pto.tile_buf<vec, 8x32xui8>
+    %dst = pto.alloc_tile : !pto.tile_buf<vec, 8x32xui8, valid=8x1>
+    pto.trowmax ins(%src, %tmp : !pto.tile_buf<vec, 8x32xui8>, !pto.tile_buf<vec, 8x32xui8>) outs(%dst : !pto.tile_buf<vec, 8x32xui8, valid=8x1>)
+    return
+  }
+
+  func.func @rowmin_i8_anchor_uniform() {
+    %src = pto.alloc_tile : !pto.tile_buf<vec, 8x32xi8>
+    %tmp = pto.alloc_tile : !pto.tile_buf<vec, 8x32xi8>
+    %dst = pto.alloc_tile : !pto.tile_buf<vec, 8x32xi8, valid=8x1>
+    pto.trowmin ins(%src, %tmp : !pto.tile_buf<vec, 8x32xi8>, !pto.tile_buf<vec, 8x32xi8>) outs(%dst : !pto.tile_buf<vec, 8x32xi8, valid=8x1>)
+    return
+  }
+
+  func.func @rowmin_ui8_anchor_uniform() {
+    %src = pto.alloc_tile : !pto.tile_buf<vec, 8x32xui8>
+    %tmp = pto.alloc_tile : !pto.tile_buf<vec, 8x32xui8>
+    %dst = pto.alloc_tile : !pto.tile_buf<vec, 8x32xui8, valid=8x1>
+    pto.trowmin ins(%src, %tmp : !pto.tile_buf<vec, 8x32xui8>, !pto.tile_buf<vec, 8x32xui8>) outs(%dst : !pto.tile_buf<vec, 8x32xui8, valid=8x1>)
+    return
+  }
+}

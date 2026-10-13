@@ -42,6 +42,7 @@ pto.<op> ins(%src, %tmp : !pto.tile_buf<...>, !pto.tile_buf<...>)
 - For `pto.trowsum`, `pto.trowprod`, `pto.trowmax`, and `pto.trowmin`, PTO IR keeps `%tmp` for ABI/workspace plumbing but does not impose extra `%tmp` element-type, shape, or layout constraints beyond requiring a `loc=vec` tile.
 - `pto.trowargmax` and `pto.trowargmin` require an integer destination element type for the row-local index result.
 - Numeric widening / narrowing inside the reduction is target-defined by the selected template (e.g. `trowsum` may widen `i16` accumulation internally before storing to `dst`).
+- On A5, `pto.trowmax` and `pto.trowmin` additionally accept 8-bit integer sources (`i8`/`si8`/`ui8`); the A5 TileLib template widens each 8-bit row losslessly to 16 bits for the vector reduction, so the stored `dst` result is exact for min/max. `pto.trowsum` and `pto.trowprod` still require 16/32-bit integers, `f16`, or `f32` sources.
 
 **Example:**
 

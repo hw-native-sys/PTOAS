@@ -18,6 +18,9 @@ UNSIGNED_DTYPES = ("ui8", "ui16", "ui32")
 INT_DTYPES = SIGNED_DTYPES + UNSIGNED_DTYPES
 NUMERIC_DTYPES = ("i8", "i16", "i32", "ui8", "ui16", "ui32", "f16", "bf16", "f32")
 ROW_REDUCTION_DTYPES = ("i16", "i32", "ui16", "ui32", "f16", "f32")
+# Row extremes (trowmax/trowmin) additionally accept 8-bit integers on A5:
+# the template widens them losslessly to 16 bits before the vector reduction.
+ROW_EXTREME_DTYPES = ROW_REDUCTION_DTYPES + ("i8", "si8", "ui8")
 
 
 def same_dtype_signatures(arity, dtypes=NUMERIC_DTYPES):

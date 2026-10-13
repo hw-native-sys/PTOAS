@@ -84,19 +84,37 @@ static bool isSupportedRowReductionElemType(Type elem)
     return elem.isInteger(mlir::pto::kValue16) || elem.isInteger(mlir::pto::kValue32) || elem.isF16() || elem.isF32();
 }
 
+// Row extremes (trowmax/trowmin) on A5 additionally accept 8-bit integers of
+// any signedness: the A5 TileLib template widens them losslessly to 16 bits
+// before the vector reduction, and narrowing the winner back to 8 bits is
+// exact for min/max. A2/A3 keep the shared whitelist because their row
+// extreme instruction surface has no 8-bit form.
+static bool isRowExtremeInt8ElemType(Type elem)
+{
+    auto intType = dyn_cast<IntegerType>(elem);
+    return intType != nullptr && intType.getWidth() == mlir::pto::kValue8;
+}
+
 static LogicalResult verifyTRowReductionTail(Operation *op, Type srcTy,
                                              Type dstTy,
-                                             StringRef elemTypeError) {
+                                             StringRef elemTypeError,
+                                             bool allowInt8OnA5 = false) {
   if (failed(verifyRowReductionValidRegion(
-          op, srcTy, dstTy, /*allowEmptyMarker=*/true)))
+          op, srcTy, dstTy, /*allowEmptyMarker=*/true))) {
     return failure();
-  if (!isSupportedRowReductionElemType(getElemTy(srcTy)))
+  }
+  Type srcElemTy = getElemTy(srcTy);
+  bool supportedElem = isSupportedRowReductionElemType(srcElemTy) ||
+                       (allowInt8OnA5 && isRowExtremeInt8ElemType(srcElemTy));
+  if (!supportedElem) {
     return op->emitOpError(elemTypeError);
+  }
   return success();
 }
 
 [[maybe_unused]] static LogicalResult verifyTRowReductionNoTmpCommon(
-    Operation* op, Type srcTy, Type dstTy, StringRef elemTypeError)
+    Operation* op, Type srcTy, Type dstTy, StringRef elemTypeError,
+    bool allowInt8OnA5 = false)
 {
     if (failed(verifyRowReductionSrcLayout(op, srcTy, "src")) ||
         failed(verifyRowReductionDstLayout(op, dstTy, "dst"))) {
@@ -105,11 +123,12 @@ static LogicalResult verifyTRowReductionTail(Operation *op, Type srcTy,
     if (getElemTy(srcTy) != getElemTy(dstTy)) {
         return op->emitOpError("expects src and dst to have the same element type");
     }
-    return verifyTRowReductionTail(op, srcTy, dstTy, elemTypeError);
+    return verifyTRowReductionTail(op, srcTy, dstTy, elemTypeError, allowInt8OnA5);
 }
 
 static LogicalResult verifyTRowReductionWithTmpCommon(
-    Operation* op, Type srcTy, Type tmpTy, Type dstTy, StringRef elemTypeError)
+    Operation* op, Type srcTy, Type tmpTy, Type dstTy, StringRef elemTypeError,
+    bool allowInt8OnA5 = false)
 {
     if (failed(verifyRowReductionSrcLayout(op, srcTy, "src")) || failed(verifyVecTileStorage(op, tmpTy, "tmp")) ||
         failed(verifyRowReductionDstLayout(op, dstTy, "dst"))) {
@@ -121,8 +140,9 @@ static LogicalResult verifyTRowReductionWithTmpCommon(
     if (getTargetArch(op) != PTOArch::A5 && getElemTy(srcTy) != getElemTy(tmpTy)) {
         return op->emitOpError("expects A2/A3 tmp to have the same element type as src and dst");
     }
-    if (failed(verifyTRowReductionTail(op, srcTy, dstTy, elemTypeError)))
+    if (failed(verifyTRowReductionTail(op, srcTy, dstTy, elemTypeError, allowInt8OnA5))) {
         return failure();
+    }
     if (getTargetArch(op) != PTOArch::A5 && failed(verifyTmpCapacityAtLeast(op, tmpTy, mlir::pto::kValue32))) {
         return failure();
     }

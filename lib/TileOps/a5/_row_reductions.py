@@ -11,8 +11,9 @@
 
 from ptodsl import pto
 import ptodsl.tilelib as tilelib
+from ptodsl._ast_rewrite import rewrite_jit_function
 
-from ._common import ROW_REDUCTION_DTYPES, element_store_dist
+from ._common import ROW_EXTREME_DTYPES, ROW_REDUCTION_DTYPES, element_store_dist
 from ._part import pad_max, pad_min
 
 
@@ -93,12 +94,84 @@ def _zero(dtype):
     return pto.i8(0)
 
 
+def _row_extreme_wide_dtype(dtype):
+    """Order-preserving 16-bit partner type for an 8-bit row-extreme source.
+
+    The result is a resolved MLIR type, not a module-level dtype descriptor:
+    helpers such as ``pad_min`` dispatch on ``str(dtype)``, and descriptors
+    stringify to an opaque repr instead of a dtype name.
+    """
+    if str(dtype) == "ui8":
+        return pto.ui16.resolve()
+    return pto.i16.resolve()
+
+
+def _narrow_row_extreme(acc, dtype, one_mask):
+    """Narrow the lane-0 16-bit extreme back to one 8-bit lane and store it.
+
+    Narrowing is exact for min/max because every widened input came from the
+    8-bit range, and lane 0 of the narrowed vector keeps lane 0 of the source.
+    """
+    wide_dtype = _row_extreme_wide_dtype(dtype)
+    full_mask_wide = pto.make_mask(wide_dtype, pto.PAT.ALL)
+    # NOSAT truncation, not saturation: every widened input came from the
+    # 8-bit range, so truncating the lane-0 winner back to u8 bits is exact;
+    # saturating to the unsigned range would clamp negative minima to zero.
+    result = pto.vcvt(acc, pto.ui8, full_mask_wide, sat="NOSAT", part=pto.VcvtPartMode.EVEN)
+    if str(dtype) != "ui8":
+        result = pto.vbitcast(result, dtype)
+    return result, one_mask
+
+
+@rewrite_jit_function
+def _run_row_extreme_widened(src, dst, dtype, reduce_op, combine_op):
+    """8-bit row extremes via lossless widening to 16 bits (issue #1599).
+
+    One 8-bit vector register splits into even/odd 16-bit halves; each half
+    is reduced with the 16-bit group reduction and folded into the lane-0
+    accumulator. Narrowing the winner back to 8 bits is exact for min/max
+    because every widened input came from the 8-bit range.
+    """
+    valid_rows, valid_cols = src.valid_shape
+    src_cols = src.shape[1]
+    dst_cols = dst.shape[1]
+    src_ptr = src.as_ptr()
+    dst_ptr = dst.as_ptr()
+    wide_dtype = _row_extreme_wide_dtype(dtype)
+    lanes = pto.elements_per_vreg(dtype)
+    one_mask, _ = pto.make_mask(dtype, 1)
+    one_mask_wide, _ = pto.make_mask(wide_dtype, 1)
+    init = pad_min(wide_dtype) if combine_op is pto.vmax else pad_max(wide_dtype)
+
+    for row in range(0, valid_rows, 1):
+        remained = valid_cols
+        acc = pto.vbr(init)
+        for col in range(0, valid_cols, lanes):
+            remaining_cols = remained
+            mask_i8, remained = pto.make_mask(dtype, remaining_cols)
+            # A prefix of n valid 8-bit lanes splits into ceil(n/2) valid even
+            # lanes and floor(n/2) valid odd lanes after the widening split.
+            mask_even, _ = pto.make_mask(wide_dtype, (remaining_cols + 1) // 2)
+            mask_odd, _ = pto.make_mask(wide_dtype, remaining_cols // 2)
+            src_addr = pto.addptr(src_ptr, row * src_cols + col)
+            raw = pto.vlds(src_addr, 0)
+            even = pto.vcvt(raw, wide_dtype, mask_i8, part=pto.VcvtPartMode.EVEN)
+            odd = pto.vcvt(raw, wide_dtype, mask_i8, part=pto.VcvtPartMode.ODD)
+            acc = combine_op(acc, reduce_op(even, mask_even), one_mask_wide)
+            acc = combine_op(acc, reduce_op(odd, mask_odd), one_mask_wide)
+        # Lane 0 of acc holds the row extreme; narrowing it back to 8 bits is
+        # exact and lands it in lane 0 of the result vector.
+        result, store_mask = _narrow_row_extreme(acc, dtype, one_mask)
+        dst_addr = pto.addptr(dst_ptr, row * dst_cols)
+        pto.vsts(result, dst_addr, 0, store_mask, dist=element_store_dist(dtype))
+
+
 def register_row_extreme(*, op, name, reduce_op, combine_op):
     @tilelib.tile_template(
         op=op,
         target="a5",
         name=name,
-        dtypes=[(dtype, dtype, dtype) for dtype in ROW_REDUCTION_DTYPES],
+        dtypes=[(dtype, dtype, dtype) for dtype in ROW_EXTREME_DTYPES],
         iteration_axis="row",
         op_engine="vector",
         op_class="reduction",
@@ -114,6 +187,9 @@ def register_row_extreme(*, op, name, reduce_op, combine_op):
     def template(src: pto.Tile, tmp: pto.Tile, dst: pto.Tile):
         _ = tmp
         dtype = dst.dtype
+        if str(dtype) in {"i8", "si8", "ui8"}:
+            _run_row_extreme_widened(src, dst, dtype, reduce_op, combine_op)
+            return
         valid_rows, valid_cols = src.valid_shape
         src_cols = src.shape[1]
         dst_cols = dst.shape[1]

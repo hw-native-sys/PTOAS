@@ -1,0 +1,43 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software: you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY OR FITNESS FOR A PARTICULAR PURPOSE.
+// See the License in the root of the software repository for the full text of the License.
+
+// Issue #1599: A5 row extremes accept 8-bit integers (i8/si8/ui8). The ops
+// must verify and survive level-2 printing unchanged.
+
+// RUN: ptoas --pto-arch=a5 --pto-level=level2 --emit-pto-ir %s 2>&1 | FileCheck %s
+
+module {
+  func.func @row_extremes_i8_ui8() {
+    %src_i8 = pto.alloc_tile : !pto.tile_buf<vec, 8x32xi8>
+    %tmp_i8 = pto.alloc_tile : !pto.tile_buf<vec, 8x32xi8>
+    %dst_i8 = pto.alloc_tile : !pto.tile_buf<vec, 8x32xi8, valid=8x1>
+    pto.trowmax ins(%src_i8, %tmp_i8 : !pto.tile_buf<vec, 8x32xi8>, !pto.tile_buf<vec, 8x32xi8>) outs(%dst_i8 : !pto.tile_buf<vec, 8x32xi8, valid=8x1>)
+    pto.trowmin ins(%src_i8, %tmp_i8 : !pto.tile_buf<vec, 8x32xi8>, !pto.tile_buf<vec, 8x32xi8>) outs(%dst_i8 : !pto.tile_buf<vec, 8x32xi8, valid=8x1>)
+
+    %src_ui8 = pto.alloc_tile : !pto.tile_buf<vec, 8x32xui8>
+    %tmp_ui8 = pto.alloc_tile : !pto.tile_buf<vec, 8x32xui8>
+    %dst_ui8 = pto.alloc_tile : !pto.tile_buf<vec, 8x32xui8, valid=8x1>
+    pto.trowmax ins(%src_ui8, %tmp_ui8 : !pto.tile_buf<vec, 8x32xui8>, !pto.tile_buf<vec, 8x32xui8>) outs(%dst_ui8 : !pto.tile_buf<vec, 8x32xui8, valid=8x1>)
+    pto.trowmin ins(%src_ui8, %tmp_ui8 : !pto.tile_buf<vec, 8x32xui8>, !pto.tile_buf<vec, 8x32xui8>) outs(%dst_ui8 : !pto.tile_buf<vec, 8x32xui8, valid=8x1>)
+
+    %src_si8 = pto.alloc_tile : !pto.tile_buf<vec, 8x32xsi8>
+    %tmp_si8 = pto.alloc_tile : !pto.tile_buf<vec, 8x32xsi8>
+    %dst_si8 = pto.alloc_tile : !pto.tile_buf<vec, 8x32xsi8, valid=8x1>
+    pto.trowmax ins(%src_si8, %tmp_si8 : !pto.tile_buf<vec, 8x32xsi8>, !pto.tile_buf<vec, 8x32xsi8>) outs(%dst_si8 : !pto.tile_buf<vec, 8x32xsi8, valid=8x1>)
+    pto.trowmin ins(%src_si8, %tmp_si8 : !pto.tile_buf<vec, 8x32xsi8>, !pto.tile_buf<vec, 8x32xsi8>) outs(%dst_si8 : !pto.tile_buf<vec, 8x32xsi8, valid=8x1>)
+    return
+  }
+}
+
+// CHECK-LABEL: func.func @row_extremes_i8_ui8
+// CHECK: pto.trowmax ins(%{{.*}}, %{{.*}} : !pto.tile_buf<vec, 8x32xi8>, !pto.tile_buf<vec, 8x32xi8>) outs(%{{.*}} : !pto.tile_buf<vec, 8x32xi8, valid=8x1>)
+// CHECK: pto.trowmin ins(%{{.*}}, %{{.*}} : !pto.tile_buf<vec, 8x32xi8>, !pto.tile_buf<vec, 8x32xi8>) outs(%{{.*}} : !pto.tile_buf<vec, 8x32xi8, valid=8x1>)
+// CHECK: pto.trowmax ins(%{{.*}}, %{{.*}} : !pto.tile_buf<vec, 8x32xui8>, !pto.tile_buf<vec, 8x32xui8>) outs(%{{.*}} : !pto.tile_buf<vec, 8x32xui8, valid=8x1>)
+// CHECK: pto.trowmin ins(%{{.*}}, %{{.*}} : !pto.tile_buf<vec, 8x32xui8>, !pto.tile_buf<vec, 8x32xui8>) outs(%{{.*}} : !pto.tile_buf<vec, 8x32xui8, valid=8x1>)
+// CHECK: pto.trowmax ins(%{{.*}}, %{{.*}} : !pto.tile_buf<vec, 8x32xsi8>, !pto.tile_buf<vec, 8x32xsi8>) outs(%{{.*}} : !pto.tile_buf<vec, 8x32xsi8, valid=8x1>)
+// CHECK: pto.trowmin ins(%{{.*}}, %{{.*}} : !pto.tile_buf<vec, 8x32xsi8>, !pto.tile_buf<vec, 8x32xsi8>) outs(%{{.*}} : !pto.tile_buf<vec, 8x32xsi8, valid=8x1>)

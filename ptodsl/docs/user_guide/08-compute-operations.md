@@ -1993,8 +1993,13 @@ FP8, and HiF8 are rejected before IR emission; convert them explicitly first.
 and half as many lanes. Other supported input types retain their result type.
 
 The A5 VPTO TileLib implementations of `trowmax`, `trowmin`, `trowargmax`,
-and `trowargmin` use these row operations and follow the same source-type
-restriction. The template selector rejects unsupported source types.
+and `trowargmin` use these row operations and follow the vector source-type
+restriction, with one addition: on A5, the `trowmax` and `trowmin` tile
+entries also accept `i8`/`si8`/`ui8` sources. Their template widens 8-bit
+rows losslessly to 16 bits for the vector reduction, so no explicit
+conversion is needed for row min/max. `trowsum`, `trowprod`, and the arg
+reductions still reject 8-bit sources; the template selector rejects all
+unsupported source types.
 
 #### `pto.vcadd(vec: VRegType, mask: MaskType) -> VRegType`
 

@@ -214,6 +214,20 @@ static LogicalResult verifyTRowReductionOp(Operation *op, Type srcTy,
       "expects element type to be i16/i32/f16/f32");
 }
 
+// A5 row extremes additionally accept 8-bit integers (issue #1599): the A5
+// TileLib template widens them losslessly to 16 bits for the vector reduction.
+static LogicalResult verifyTRowExtremeReductionOp(Operation *op, Type srcTy,
+                                                  Value tmp, Type dstTy,
+                                                  StringRef elemTypeError) {
+  if (!tmp) {
+    return verifyTRowReductionNoTmpCommon(op, srcTy, dstTy, elemTypeError,
+                                          /*allowInt8OnA5=*/true);
+  }
+  return verifyTRowReductionWithTmpCommon(op, srcTy, tmp.getType(), dstTy,
+                                          elemTypeError,
+                                          /*allowInt8OnA5=*/true);
+}
+
 static LogicalResult verifyTRowArgReductionOp(Operation *op, Type srcTy,
                                               Value tmp, Type dstTy) {
   if (!tmp)
@@ -224,10 +238,15 @@ static LogicalResult verifyTRowArgReductionOp(Operation *op, Type srcTy,
 }
 
 mlir::LogicalResult mlir::pto::TRowMaxOp::verify() {
-    auto verifyByArch = [this]() {
+    auto verifyA2A3 = [this]() {
         return verifyTRowReductionOp(getOperation(), getSrc().getType(), getTmp(), getDst().getType());
     };
-    return dispatchVerifierByArch(getOperation(), verifyByArch, verifyByArch);
+    auto verifyA5 = [this]() {
+        return verifyTRowExtremeReductionOp(
+            getOperation(), getSrc().getType(), getTmp(), getDst().getType(),
+            "expects A5 trowmax element type to be i8/i16/i32/f16/f32");
+    };
+    return dispatchVerifierByArch(getOperation(), verifyA2A3, verifyA5);
 }
 
 mlir::LogicalResult mlir::pto::TRowArgMaxOp::verify() {
@@ -237,10 +256,15 @@ mlir::LogicalResult mlir::pto::TRowArgMaxOp::verify() {
 
 
 mlir::LogicalResult mlir::pto::TRowMinOp::verify() {
-    auto verifyByArch = [this]() {
+    auto verifyA2A3 = [this]() {
         return verifyTRowReductionOp(getOperation(), getSrc().getType(), getTmp(), getDst().getType());
     };
-    return dispatchVerifierByArch(getOperation(), verifyByArch, verifyByArch);
+    auto verifyA5 = [this]() {
+        return verifyTRowExtremeReductionOp(
+            getOperation(), getSrc().getType(), getTmp(), getDst().getType(),
+            "expects A5 trowmin element type to be i8/i16/i32/f16/f32");
+    };
+    return dispatchVerifierByArch(getOperation(), verifyA2A3, verifyA5);
 }
 
 mlir::LogicalResult mlir::pto::TRowArgMinOp::verify() {
