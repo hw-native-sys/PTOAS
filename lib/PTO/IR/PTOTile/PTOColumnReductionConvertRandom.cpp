@@ -126,12 +126,98 @@ static LogicalResult verifyTCvtTmp(TCvtOp op, Type srcTy, Type dstTy,
   return success();
 }
 
+// Match the direct A5 ISA path, whose source columns count logical nibbles
+// in C++ but packed bytes in tile_buf. Padding may differ between the tiles;
+// their logical valid regions, rather than physical shapes, must agree.
+static LogicalResult verifyDirectFp4ToFp8TCvt(TCvtOp op, Type srcTy,
+                                            Type dstTy) {
+  auto src = cast<pto::TileBufType>(srcTy);
+  auto dst = cast<pto::TileBufType>(dstTy);
+  if (failed(verifyTileBufInVec(op, srcTy, "src", /*allowLowPrecision=*/true)) ||
+      failed(verifyTileBufInVec(op, dstTy, "dst", /*allowLowPrecision=*/true))) {
+    return failure();
+  }
+  if (!isRowMajorTileBuf(srcTy) ||
+      src.getSLayoutValueI32() != static_cast<int32_t>(pto::SLayout::NoneBox) ||
+      src.getCompactModeI32() != static_cast<int32_t>(pto::CompactMode::Null)) {
+    return op.emitOpError("expects direct FP4/FP8 src to use ND layout with compact=null");
+  }
+  bool dstND = isRowMajorTileBuf(dstTy) &&
+               dst.getSLayoutValueI32() == static_cast<int32_t>(pto::SLayout::NoneBox);
+  bool dstNZ = isColMajorTileBuf(dstTy) &&
+               dst.getSLayoutValueI32() == static_cast<int32_t>(pto::SLayout::RowMajor) &&
+               dst.getSFractalSizeI32() == 512;
+  if (!dstND && !dstNZ) {
+    return op.emitOpError("expects direct FP4/FP8 dst to use ND or standard 512-byte NZ layout");
+  }
+  int32_t compact = dst.getCompactModeI32();
+  if (compact != static_cast<int32_t>(pto::CompactMode::Null) &&
+      !(dstNZ && compact == static_cast<int32_t>(pto::CompactMode::Normal))) {
+    return op.emitOpError("expects direct FP4/FP8 dst compact=null, or compact=normal for NZ");
+  }
+
+  auto srcShape = src.getShape();
+  auto dstShape = dst.getShape();
+  constexpr int64_t maxOffset = 0x7FFFFFFF;
+  for (auto shape : {srcShape, dstShape}) {
+    if (llvm::any_of(shape, [](int64_t dim) {
+          return dim <= 0 || dim > 0x7FFFFFFF;
+        })) {
+      return op.emitOpError("expects direct FP4/FP8 physical dimensions to be static positive signed 32-bit integers");
+    }
+  }
+  // Check before doubling packed columns or multiplying dimensions.
+  if (srcShape[1] > maxOffset / 2 ||
+      srcShape[0] > maxOffset / srcShape[1] ||
+      dstShape[0] > maxOffset / dstShape[1]) {
+    return op.emitOpError("expects direct FP4/FP8 logical columns and byte offsets to fit signed 32 bits");
+  }
+  if (srcShape[1] % 32 != 0) {
+    return op.emitOpError("expects direct FP4/FP8 src rows to have a multiple of 64 logical columns (32 packed bytes)");
+  }
+  if (dstNZ && (dstShape[0] % 16 != 0 || dstShape[0] > 0xFFFF)) {
+    return op.emitOpError("expects direct FP4/FP8 NZ physical rows to be a multiple of 16 and fit a 16-bit block stride");
+  }
+  if (std::min(srcShape[0], dstShape[0]) > 0xFFFF ||
+      srcShape[1] / 256 > 0xFFFF) {
+    return op.emitOpError("expects direct FP4/FP8 VF row and source register counts to fit 16 bits");
+  }
+  if (failed(verifyTileBufLayoutConstraints(op, srcTy, "src")) ||
+      failed(verifyTileBufLayoutConstraints(op, dstTy, "dst"))) {
+    return failure();
+  }
+  auto srcValid = src.getValidShape();
+  auto dstValid = dst.getValidShape();
+  if (srcValid[1] == ShapedType::kDynamic || dstValid[1] == ShapedType::kDynamic) {
+    return op.emitOpError("expects direct FP4/FP8 packed-axis valid columns to be static");
+  }
+  if (failed(verifyTileBufSameLogicalExtent(op, srcTy, dstTy, "src", "dst",
+                                          /*compareValidShape=*/true))) {
+    return failure();
+  }
+  if (op.getTmp()) {
+    return verifyVecTileCommon(op, op.getTmp().getType(), "tmp");
+  }
+  return success();
+}
+
 llvm::LogicalResult mlir::pto::TCvtOp::verify() {
   Type srcTy = getSrc().getType();
   Type dstTy = getDst().getType();
   if (failed(verifyTileBufCommon(*this, srcTy, "src", /*allowLowPrecision=*/true)) ||
       failed(verifyTileBufCommon(*this, dstTy, "dst", /*allowLowPrecision=*/true))) {
     return failure();
+  }
+  Type srcElem = getElemTy(srcTy);
+  Type dstElem = getElemTy(dstTy);
+  if (isA5DirectFp4ToFp8TCvtPair(srcElem, dstElem)) {
+    auto verifyA2A3 = [this]() -> LogicalResult {
+      return emitOpError("expects A2/A3 tcvt low-precision element types to be unsupported");
+    };
+    auto verifyA5 = [this, srcTy, dstTy]() -> LogicalResult {
+      return verifyDirectFp4ToFp8TCvt(*this, srcTy, dstTy);
+    };
+    return dispatchVerifierByArch(getOperation(), verifyA2A3, verifyA5);
   }
   // A resolved subview keeps its parent's physical shape so the generated
   // Tile retains the parent stride. Its valid shape is the logical tcvt
@@ -145,8 +231,6 @@ llvm::LogicalResult mlir::pto::TCvtOp::verify() {
                                             /*compareValidShape=*/true))) {
     return failure();
   }
-  Type srcElem = getElemTy(srcTy);
-  Type dstElem = getElemTy(dstTy);
   auto verifyA2A3 = [this, &srcTy, &dstTy, &srcElem, &dstElem]() -> LogicalResult {
     if (isPTOLowPrecisionType(srcElem) || isPTOLowPrecisionType(dstElem)) {
       return emitOpError("expects A2/A3 tcvt low-precision element types to be unsupported");
