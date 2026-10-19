@@ -246,6 +246,24 @@ struct ArithConstantToEmitC : public OpConversionPattern<arith::ConstantOp> {
     }
 
     if (auto floatAttr = dyn_cast_or_null<FloatAttr>(valueAttr)) {
+      // Non-finite values must not flow through `APFloat::toString`: it prints
+      // them as "Inf"/"NaN" (capitalized), which is not a C++ literal. Emit the
+      // standard `INFINITY`/`NAN` macros instead, mirroring MLIR's own
+      // CppEmitter `printFloat` behavior.
+      const APFloat &floatVal = floatAttr.getValue();
+      if (!floatVal.isFinite()) {
+        std::string valStr;
+        if (floatVal.isNaN()) {
+          valStr = "NAN";
+        } else {
+          valStr = floatVal.isNegative() ? "-INFINITY" : "INFINITY";
+        }
+        // The macros are float-typed already; a `f` suffix would corrupt the
+        // identifier (`INFINITYf` is undeclared), so no suffix is appended.
+        auto constAttr = emitc::OpaqueAttr::get(rewriter.getContext(), valStr);
+        rewriter.replaceOpWithNewOp<emitc::ConstantOp>(op, newType, constAttr);
+        return success();
+      }
       constexpr unsigned kFloatLiteralCapacity = 32;
       SmallString<kFloatLiteralCapacity> valStr;
       floatAttr.getValue().toString(valStr);
@@ -255,9 +273,7 @@ struct ArithConstantToEmitC : public OpConversionPattern<arith::ConstantOp> {
       const bool hasFloatMarker =
           s.contains('.') || s.contains('e') || s.contains('E') ||
           s.contains('p') || s.contains('P') || s.starts_with("0x") ||
-          s.starts_with("0X") || s.starts_with("nan") ||
-          s.starts_with("-nan") || s.starts_with("inf") ||
-          s.starts_with("-inf");
+          s.starts_with("0X");
       if (!hasFloatMarker)
         valStr.append(".0");
       // Suffix: keep `f` for f16/f32; omit for f64.

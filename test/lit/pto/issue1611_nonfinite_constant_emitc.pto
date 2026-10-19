@@ -1,0 +1,48 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You should not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+
+// RUN: ptoas --pto-level=level3 --pto-arch=a3 %s -o - | FileCheck %s
+// RUN: ptoas --pto-level=level3 --pto-arch=a5 %s -o - | FileCheck %s
+
+// Issue #1611: non-finite f32 constants broadcast through pto.texpands must
+// lower to the standard C99 macros (`-INFINITY` / `INFINITY` / `NAN`) instead
+// of APFloat's display spelling `Inf`/`NaN`, which is not a C++ identifier.
+// The finite positive control keeps the plain `1.0f` literal.
+
+module attributes {pto.target_arch = "a2a3"} {
+  func.func @probe_kernel(%arg1: !pto.ptr<f32>) attributes {pto.kernel_kind = #pto.kernel_kind<vector>} {
+    %c0_i64 = arith.constant 0 : i64
+    %c128_index = arith.constant 128 : index
+    %c1_index = arith.constant 1 : index
+    %c0_index = arith.constant 0 : index
+    %neg_inf = arith.constant 0xFF800000 : f32
+    %pos_inf = arith.constant 0x7F800000 : f32
+    %nan = arith.constant 0x7FC00000 : f32
+    %one = arith.constant 1.000000e+00 : f32
+    %out_view = pto.make_tensor_view %arg1, shape = [%c128_index, %c128_index], strides = [%c128_index, %c1_index] {layout = #pto.layout<nd>}: !pto.tensor_view<?x?xf32>
+    %result = pto.alloc_tile addr = %c0_i64 valid_row = %c128_index valid_col = %c128_index : !pto.tile_buf<loc=vec, dtype=f32, rows=128, cols=128, v_row=?, v_col=?, blayout=row_major, slayout=none_box, fractal=512, pad=0>
+    pto.texpands ins(%neg_inf : f32) outs(%result : !pto.tile_buf<loc=vec, dtype=f32, rows=128, cols=128, v_row=?, v_col=?, blayout=row_major, slayout=none_box, fractal=512, pad=0>)
+    %out_pview = pto.partition_view %out_view, offsets = [%c0_index, %c0_index], sizes = [%c128_index, %c128_index] : !pto.tensor_view<?x?xf32> -> !pto.partition_tensor_view<128x128xf32>
+    pto.tstore ins(%result : !pto.tile_buf<loc=vec, dtype=f32, rows=128, cols=128, v_row=?, v_col=?, blayout=row_major, slayout=none_box, fractal=512, pad=0>) outs(%out_pview : !pto.partition_tensor_view<128x128xf32>)
+    pto.texpands ins(%pos_inf : f32) outs(%result : !pto.tile_buf<loc=vec, dtype=f32, rows=128, cols=128, v_row=?, v_col=?, blayout=row_major, slayout=none_box, fractal=512, pad=0>)
+    pto.texpands ins(%nan : f32) outs(%result : !pto.tile_buf<loc=vec, dtype=f32, rows=128, cols=128, v_row=?, v_col=?, blayout=row_major, slayout=none_box, fractal=512, pad=0>)
+    pto.texpands ins(%one : f32) outs(%result : !pto.tile_buf<loc=vec, dtype=f32, rows=128, cols=128, v_row=?, v_col=?, blayout=row_major, slayout=none_box, fractal=512, pad=0>)
+    return
+  }
+}
+
+// CHECK-LABEL: AICORE void probe_kernel(
+// The non-finite constants must become the C99 macros, with no `f` suffix
+// appended to the macro identifier.
+// CHECK: = -INFINITY;
+// CHECK-NOT: Inf
+// CHECK: = INFINITY;
+// CHECK: = NAN;
+// CHECK-NOT: NaN
+// Finite control keeps a normal float literal.
+// CHECK: = 1.0f;
