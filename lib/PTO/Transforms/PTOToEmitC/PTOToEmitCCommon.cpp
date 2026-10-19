@@ -1383,8 +1383,10 @@ bool getStaticMemrefLayout(MemRefType mrTy, SmallVectorImpl<int64_t> &strides,
 // shared state.
 std::string getStructTypeName(pto::StructType st) {
   std::string s = "PtoStruct";
-  for (Type f : st.getFieldTypes())
-    s += "_" + mangleStructFieldType(f);
+  for (Type f : st.getFieldTypes()) {
+    s.push_back('_');
+    s += mangleStructFieldType(f);
+  }
   return s;
 }
 
