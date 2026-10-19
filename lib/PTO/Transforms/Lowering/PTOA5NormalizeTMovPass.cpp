@@ -118,6 +118,69 @@ static bool isScaleAddrScalarType(Type type) {
   return isa<IntegerType, IndexType, FloatType>(type);
 }
 
+static bool isSameBlockTileAllocation(Value value, Block *block) {
+  auto alloc = value.getDefiningOp<pto::AllocTileOp>();
+  return alloc && alloc->getBlock() == block;
+}
+
+static bool preservesScaleAddrBinding(Operation *op, Value dst) {
+  if (op->getNumRegions() || op->getNumSuccessors()) {
+    return false;
+  }
+  if (auto binding = dyn_cast<pto::TGetScaleAddrOp>(op)) {
+    // Distinct allocations are distinct mutable handles, even if their data
+    // storage addresses coincide. Do not infer this for aliases/block arguments.
+    return binding.getDst() != dst &&
+           isSameBlockTileAllocation(binding.getDst(), op->getBlock());
+  }
+  if (auto mov = dyn_cast<pto::TMovOp>(op)) {
+    // These copies write tile data, not the tile handle's address. Keep the
+    // unrelated quantizing forms outside this narrowly scoped proof.
+    return pto::classifyTMovForm(mov.getFp()) == pto::TMovForm::NoTileAux;
+  }
+  // Explicitly known fixed-handle data operations and fresh descriptors only.
+  // In particular, tassign is Pure in ODS but mutates the emitted tile handle:
+  // accepting arbitrary pure tile operations would make this proof unsound.
+  if (isa<pto::AllocTileOp, pto::MakeTensorViewOp, pto::PartitionViewOp,
+          pto::TMatmulMxOp, pto::TMatmulMxAccOp, pto::TStoreOp>(op)) {
+    return true;
+  }
+  return llvm::all_of(op->getOperandTypes(), isScaleAddrScalarType) &&
+         llvm::all_of(op->getResultTypes(), isScaleAddrScalarType) &&
+         isPure(op);
+}
+
+static bool hasEstablishedScaleAddrBinding(pto::TGetScaleAddrOp op,
+                                          pto::TMovOp matchingTMov) {
+  // Only reason about independently allocated handles in this block. Do not
+  // attempt to prove cross-block/region or alias equivalence.
+  Block *block = op->getBlock();
+  if (!isSameBlockTileAllocation(op.getSrc(), block) ||
+      !isSameBlockTileAllocation(op.getDst(), block)) {
+    return false;
+  }
+  for (Operation *cursor = op->getPrevNode(); cursor;
+       cursor = cursor->getPrevNode()) {
+    if (auto binding = dyn_cast<pto::TGetScaleAddrOp>(cursor)) {
+      if (binding.getDst() == op.getDst()) {
+        if (binding.getSrc() != op.getSrc()) {
+          return false;
+        }
+        // Equal repeated bindings preserve the state, but only an earlier
+        // binding that dominates the copy can establish the required proof.
+        if (binding->isBeforeInBlock(matchingTMov)) {
+          return true;
+        }
+        continue;
+      }
+    }
+    if (!preservesScaleAddrBinding(cursor, op.getDst())) {
+      return false;
+    }
+  }
+  return false;
+}
+
 static bool canHoistScaleAddrDependency(Operation *op) {
   if (op->getNumRegions() || op->getNumSuccessors()) {
     return false;
@@ -296,6 +359,11 @@ LogicalResult PTOA5NormalizeTMovPass::hoistScaleAddrOpsBeforeTMov(
   for (pto::TGetScaleAddrOp op : scaleAddrOps) {
     auto matchingTMov = findMatchingScaleTileTMov(op);
     if (!matchingTMov) {
+      continue;
+    }
+    if (hasEstablishedScaleAddrBinding(op, matchingTMov)) {
+      // Preserve the repeated binding's position; no reader is crossed and no
+      // operation or dependency is erased or moved on this path.
       continue;
     }
     if (failed(hoistScaleAddr(op, matchingTMov, dominance))) {

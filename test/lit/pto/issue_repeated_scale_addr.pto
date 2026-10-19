@@ -1,0 +1,108 @@
+// RUN: pto-test-opt --pto-a5-normalize-tmov %s | FileCheck %s
+// RUN: pto-test-opt --pto-a5-normalize-tmov %s > %t.once
+// RUN: pto-test-opt --pto-a5-normalize-tmov %t.once > %t.twice
+// RUN: diff %t.once %t.twice
+// RUN: FileCheck %s < %t.twice
+
+// Reduced from both captured test_matmul_mx_base_and_acc controls. The left
+// operand is f8E4M3FN in their emitted PTO, including the FP4xFP8 control.
+// Keep both scale copies, the base/store/rebind/acc order, and distinct handles
+// whose numeric addresses coincide. Only upstream loads become local inputs.
+!lmat = !pto.tile_buf<mat, 64x128xf8E4M3FN, blayout=col_major, slayout=row_major, fractal=512>
+!rmat = !pto.tile_buf<mat, 128x128xf8E4M3FN, blayout=col_major, slayout=row_major, fractal=512>
+!left = !pto.tile_buf<left, 64x128xf8E4M3FN, blayout=col_major, slayout=row_major, fractal=512>
+!right = !pto.tile_buf<right, 128x128xf8E4M3FN, slayout=col_major, fractal=512>
+!lm = !pto.tile_buf<mat, 64x4x!pto.f8E8M0, slayout=row_major, fractal=32>
+!rm = !pto.tile_buf<mat, 4x128x!pto.f8E8M0, blayout=col_major, slayout=col_major, fractal=32>
+!ls = !pto.tile_buf<scaling, 64x4x!pto.f8E8M0, slayout=row_major, fractal=32>
+!rs = !pto.tile_buf<scaling, 4x128x!pto.f8E8M0, blayout=col_major, slayout=col_major, fractal=32>
+!acc = !pto.tile_buf<acc, 64x128xf32, blayout=col_major, slayout=row_major, fractal=1024>
+// CHECK-LABEL: func.func @base_store_acc(
+// CHECK: %[[LEFT:.*]] = pto.alloc_tile addr = {{.*}}!pto.tile_buf<left,
+// CHECK: %[[LS:.*]] = pto.alloc_tile addr = {{.*}}!pto.tile_buf<scaling, 64x4x
+// CHECK: pto.tget_scale_addr ins(%[[LEFT]]{{.*}}outs(%[[LS]]
+// CHECK-NEXT: pto.tmov {{.*}}outs(%[[LS]]
+// CHECK: %[[RIGHT:.*]] = pto.alloc_tile addr = {{.*}}!pto.tile_buf<right,
+// CHECK: %[[RS:.*]] = pto.alloc_tile addr = {{.*}}!pto.tile_buf<scaling, 4x128x
+// CHECK: pto.tget_scale_addr ins(%[[RIGHT]]{{.*}}outs(%[[RS]]
+// CHECK-NEXT: pto.tmov {{.*}}outs(%[[RS]]
+// CHECK-NEXT: %{{.*}} = pto.alloc_tile {{.*}}!pto.tile_buf<acc,
+// CHECK-NEXT: pto.tmatmul.mx ins(%[[LEFT]], %[[LS]], %[[RIGHT]], %[[RS]]
+// CHECK-NEXT: %{{.*}} = pto.partition_view
+// CHECK-NEXT: pto.tstore
+// CHECK-NEXT: pto.tget_scale_addr ins(%[[LEFT]]{{.*}}outs(%[[LS]]
+// CHECK-NEXT: pto.tget_scale_addr ins(%[[RIGHT]]{{.*}}outs(%[[RS]]
+// CHECK-NEXT: pto.tmatmul.mx.acc
+// CHECK-NEXT: return
+// CHECK-LABEL: func.func @repeated_copy(
+// CHECK: %[[LEFT2:.*]] = pto.alloc_tile addr = {{.*}}!pto.tile_buf<left,
+// CHECK-NEXT: %[[RIGHT2:.*]] = pto.alloc_tile addr = {{.*}}!pto.tile_buf<right,
+// CHECK-NEXT: %[[LS2:.*]] = pto.alloc_tile addr = {{.*}}!pto.tile_buf<scaling, 64x4x
+// CHECK-NEXT: %[[RS2:.*]] = pto.alloc_tile addr = {{.*}}!pto.tile_buf<scaling, 4x128x
+// CHECK-NEXT: %{{.*}} = pto.alloc_tile {{.*}}!pto.tile_buf<acc,
+// CHECK-NEXT: pto.tget_scale_addr ins(%[[LEFT2]]{{.*}}outs(%[[LS2]]
+// CHECK-NEXT: pto.tget_scale_addr ins(%[[RIGHT2]]{{.*}}outs(%[[RS2]]
+// CHECK-NEXT: pto.tmov {{.*}}outs(%[[LS2]]
+// CHECK-NEXT: pto.tmov {{.*}}outs(%[[RS2]]
+// CHECK-NEXT: pto.tmatmul.mx ins(%[[LEFT2]], %[[LS2]], %[[RIGHT2]], %[[RS2]]
+// CHECK-NEXT: pto.tmov {{.*}}outs(%[[LS2]]
+// CHECK-NEXT: pto.tget_scale_addr ins(%[[LEFT2]]{{.*}}outs(%[[LS2]]
+// CHECK-NEXT: pto.tmatmul.mx.acc
+// CHECK-NEXT: pto.tget_scale_addr ins(%[[LEFT2]]{{.*}}outs(%[[LS2]]
+// CHECK-NEXT: pto.tmatmul.mx.acc
+// CHECK-NEXT: return
+module attributes {pto.target_arch = "a5"} {
+  func.func @base_store_acc(%out : !pto.tensor_view<?x?xf32>) attributes {pto.kernel_kind = #pto.kernel_kind<cube>} {
+    %zero = arith.constant 0 : i64
+    %lmat = pto.alloc_tile : !lmat
+    %rmat = pto.alloc_tile : !rmat
+    %lm = pto.alloc_tile : !lm
+    %rm = pto.alloc_tile : !rm
+    %c0 = arith.constant 0 : index
+    %c64 = arith.constant 64 : index
+    %c128 = arith.constant 128 : index
+    %left = pto.alloc_tile addr = %zero : !left
+    pto.tmov ins(%lmat : !lmat) outs(%left : !left)
+    %ls = pto.alloc_tile addr = %zero : !ls
+    pto.tmov ins(%lm : !lm) outs(%ls : !ls)
+    %right = pto.alloc_tile addr = %zero : !right
+    pto.tmov ins(%rmat : !rmat) outs(%right : !right)
+    %rs = pto.alloc_tile addr = %zero : !rs
+    pto.tmov ins(%rm : !rm) outs(%rs : !rs)
+    pto.tget_scale_addr ins(%left : !left) outs(%ls : !ls)
+    pto.tget_scale_addr ins(%right : !right) outs(%rs : !rs)
+    %acc = pto.alloc_tile : !acc
+    pto.tmatmul.mx ins(%left, %ls, %right, %rs : !left, !ls, !right, !rs) outs(%acc : !acc)
+    %part = pto.partition_view %out, offsets = [%c0, %c0], sizes = [%c64, %c128] : !pto.tensor_view<?x?xf32> -> !pto.partition_tensor_view<64x128xf32>
+    pto.tstore ins(%acc : !acc) outs(%part : !pto.partition_tensor_view<64x128xf32>)
+    pto.tget_scale_addr ins(%left : !left) outs(%ls : !ls)
+    pto.tget_scale_addr ins(%right : !right) outs(%rs : !rs)
+    pto.tmatmul.mx.acc ins(%acc, %left, %ls, %right, %rs : !acc, !left, !ls, !right, !rs) outs(%acc : !acc)
+    return
+  }
+
+  // TMOV data writes preserve the independently established handle address.
+  func.func @repeated_copy() attributes {pto.kernel_kind = #pto.kernel_kind<cube>} {
+    %zero = arith.constant 0 : i64
+    %lmat = pto.alloc_tile : !lmat
+    %rmat = pto.alloc_tile : !rmat
+    %lm = pto.alloc_tile : !lm
+    %rm = pto.alloc_tile : !rm
+    %left = pto.alloc_tile addr = %zero : !left
+    %right = pto.alloc_tile addr = %zero : !right
+    %ls = pto.alloc_tile addr = %zero : !ls
+    %rs = pto.alloc_tile addr = %zero : !rs
+    %acc = pto.alloc_tile : !acc
+    pto.tget_scale_addr ins(%left : !left) outs(%ls : !ls)
+    pto.tget_scale_addr ins(%right : !right) outs(%rs : !rs)
+    pto.tmov ins(%lm : !lm) outs(%ls : !ls)
+    pto.tmov ins(%rm : !rm) outs(%rs : !rs)
+    pto.tmatmul.mx ins(%left, %ls, %right, %rs : !left, !ls, !right, !rs) outs(%acc : !acc)
+    pto.tmov ins(%lm : !lm) outs(%ls : !ls)
+    pto.tget_scale_addr ins(%left : !left) outs(%ls : !ls)
+    pto.tmatmul.mx.acc ins(%acc, %left, %ls, %right, %rs : !acc, !left, !ls, !right, !rs) outs(%acc : !acc)
+    pto.tget_scale_addr ins(%left : !left) outs(%ls : !ls)
+    pto.tmatmul.mx.acc ins(%acc, %left, %ls, %right, %rs : !acc, !left, !ls, !right, !rs) outs(%acc : !acc)
+    return
+  }
+}

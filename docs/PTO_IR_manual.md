@@ -8122,6 +8122,15 @@ dst = reinterpret(src)
 - **Total byte size must match**: `sizeof(srcElem) * drcNumel == sizeof(dstElem) * dstNumel`.
 - **No boxed/non-boxed conversion**:
   - cannot reshape between `SLayout::NoneBox` and boxed layouts.
+- **A5 MX scale transpose view**: exact `!pto.f8E8M0` to `!pto.f8E8M0`
+  is supported in `mat` storage with `compact=0`, `fractal=32`, and dual
+  `row_major`/`row_major` ↔ `col_major`/`col_major` layouts. Static physical
+  rows and columns must be swapped (for example, `[128, 2]` ↔ `[2, 128]`).
+  Both tiles retain layout and valid-shape bounds checks; result valid extents
+  must be positive and static. The source may use runtime `alloc_tile` valid
+  operands. The view aliases the same bytes and preserves the E8M0 scale codes.
+  This support does not extend to mixed dtypes, other low-precision types,
+  bitcasts, or A2/A3.
 
 **Hardware Mapping:**
 

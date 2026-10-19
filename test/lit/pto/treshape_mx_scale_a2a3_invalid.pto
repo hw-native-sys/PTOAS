@@ -1,0 +1,27 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+
+// RUN: pto-test-opt --split-input-file --verify-diagnostics %s
+
+module attributes {pto.target_arch = "a2"} {
+  func.func @mx_scale_a2(%src: !pto.tile_buf<loc=mat, dtype=!pto.f8E8M0, rows=128, cols=2, v_row=128, v_col=2, blayout=row_major, slayout=row_major, fractal=32, pad=0>) {
+    // expected-error@+1 {{expects E8M0 scale treshape to target A5}}
+    %view = pto.treshape %src : !pto.tile_buf<loc=mat, dtype=!pto.f8E8M0, rows=128, cols=2, v_row=128, v_col=2, blayout=row_major, slayout=row_major, fractal=32, pad=0> -> !pto.tile_buf<loc=mat, dtype=!pto.f8E8M0, rows=2, cols=128, v_row=2, v_col=128, blayout=col_major, slayout=col_major, fractal=32, pad=0>
+    return
+  }
+}
+
+// -----
+
+module attributes {pto.target_arch = "a3"} {
+  func.func @mx_scale_a3(%src: !pto.tile_buf<loc=mat, dtype=!pto.f8E8M0, rows=2, cols=128, v_row=2, v_col=128, blayout=col_major, slayout=col_major, fractal=32, pad=0>) {
+    // expected-error@+1 {{expects E8M0 scale treshape to target A5}}
+    %view = pto.treshape %src : !pto.tile_buf<loc=mat, dtype=!pto.f8E8M0, rows=2, cols=128, v_row=2, v_col=128, blayout=col_major, slayout=col_major, fractal=32, pad=0> -> !pto.tile_buf<loc=mat, dtype=!pto.f8E8M0, rows=128, cols=2, v_row=128, v_col=2, blayout=row_major, slayout=row_major, fractal=32, pad=0>
+    return
+  }
+}
