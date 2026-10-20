@@ -57,18 +57,17 @@
 //   vadds/vmuls/vmaxs/vmins/vshls/vshrs
 //   vaddc vaddcs standalone vintlv/vdintlv vselr vgatherb vmull
 //   Adjacent contiguous load/rearrange and rearrange/store compositions are
-//   first combined into the corresponding legacy memory operation.
-//
-// Pre-steps before the category worklist:
-//   - Small-shape f16 vexpdif (below 128 lanes) is widened to the f32 form
-//     with two extf ops; see expandSmallShapeF16Vexpdif.
-//   - Adjacent interleaved memory-op compositions are combined.
+//   first combined into the corresponding legacy memory operation, and
+//   small-shape f16 vexpdif (below one f16 physical part) is widened to the
+//   f32 form with two extf ops (see expandSmallShapeF16Vexpdif) before the
+//   worklist runs.
 //
 //===----------------------------------------------------------------------===//
 
 #include "PTO/Support/CodeConstants.h"
 #include "PTO/IR/PTO.h"
 #include "PTO/IR/PTOTypeUtils.h"
+#include "PTO/IR/VMIUtils.h"
 #include "PTO/Transforms/Passes.h"
 #include "VMI/VMIIndexUtils.h"
 
@@ -991,26 +990,36 @@ static void lowerBitwiseNotOnVRegOrMask(UnifiedOp op, OpBuilder &builder) {
 
 // The f16 vexpdif lowering needs one packed f16 source part to become
 // EVEN/ODD f32 result parts, a contiguous -> deinterleave(2) relation that
-// only materializes from 128 lanes up: both the 32-bit c <-> d(2)
-// ensure_layout bridge and the v128f16 interleave hardware entry stop there.
-// Below that count the layout tables pin the result to a 1:1 part relation,
-// the 2x arity check in the VMIToVPTO pattern fails, and the op survives as
-// a residual. Widen x and max to f32 first and keep the op on the 1:1 f32
+// only materializes once the source fills whole f16 physical parts: the
+// interleave hardware entry consumes a whole v128f16 part, and the 32-bit
+// c <-> d(2) ensure_layout bridge in VMILayoutSupportTables.inc carries the
+// matching N<128, 256> bounds for the public lane counts (1, 2, 4, 8, 64,
+// 128, 256; see docs/isa/vmi-isa/00-architecture-overview.md). Below one
+// part the layout tables pin the result to a 1:1 part relation, the 2x
+// arity check in the VMIToVPTO pattern fails, and the op survives as a
+// residual. Widen x and max to f32 first and keep the op on the 1:1 f32
 // path, which every public lane count lowers. f16 values are exact in f32,
 // so the documented per-lane semantics exp(x - max) is unchanged.
 static void expandSmallShapeF16Vexpdif(ModuleOp module) {
-  constexpr int64_t kVexpdifInterleaveMinLanes = 128;
+  FailureOr<int64_t> f16LanesPerPart =
+      getDataLanesPerPart(Float16Type::get(module.getContext()));
+  if (failed(f16LanesPerPart)) {
+    return;
+  }
   module.walk([&](VMIVexpdifOp op) {
     auto xType = cast<VMIVRegType>(op.getX().getType());
     bool needsWidening = xType.getElementType().isF16() &&
-                         xType.getElementCount() < kVexpdifInterleaveMinLanes;
+                         xType.getElementCount() < *f16LanesPerPart;
     if (!needsWidening) {
       return;
     }
     OpBuilder builder(op);
+    // The widened type stays layout-less: layout assignment derives the
+    // widening cast relation itself (ls(2) f16 -> contiguous f32), and the
+    // source layout would only synthesize a relation the legal table does
+    // not carry (e.g. ls(2) -> ls(2) for a 16 -> 32 cast).
     auto wideType = VMIVRegType::get(op.getContext(), xType.getElementCount(),
-                                     builder.getF32Type(),
-                                     xType.getLayoutAttr());
+                                     builder.getF32Type(), Attribute());
     Value x = builder.create<VMIExtFOp>(op.getLoc(), wideType, op.getX())
                    .getResult();
     Value max = builder.create<VMIExtFOp>(op.getLoc(), wideType, op.getMax())
