@@ -477,6 +477,9 @@ static Type getEmitCVariableStorageType(Type valueType) {
 // emitter prints cf.br/cf.cond_br operands by variable name rather than by
 // recursively emitting an expression. Materialize such operands so CFG-based
 // lowering (e.g. scf.while -> cf.*) stays valid.
+// Successor block arguments are assigned sequentially by the emitter. Snapshot
+// source block arguments before any of those assignments so an earlier write
+// cannot clobber a value still needed by a later copy (including swaps/cycles).
 void materializeControlFlowOperands(Operation *rootOp) {
   llvm::SmallVector<Operation *, kBranchInlineCapacity> branches;
   rootOp->walk([&branches](Operation *op) {
@@ -491,7 +494,7 @@ void materializeControlFlowOperands(Operation *rootOp) {
     for (OpOperand &operand : op->getOpOperands()) {
       Value value = operand.get();
       auto expr = dyn_cast_or_null<emitc::ExpressionOp>(value.getDefiningOp());
-      if (!expr) {
+      if (!expr && !isa<BlockArgument>(value)) {
         continue;
       }
 

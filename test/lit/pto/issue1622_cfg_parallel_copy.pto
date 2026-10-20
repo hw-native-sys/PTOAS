@@ -1,0 +1,148 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+
+// RUN: ptoas --pto-arch=a3 %s | FileCheck %s
+// RUN: ptoas --pto-arch=a5 %s | FileCheck %s
+
+// Successor operands are a parallel copy: every right-hand side must keep its
+// value from before the branch, even when an earlier copy updates that value.
+module {
+  // CHECK-LABEL: AICORE int32_t while_chain(
+  // CHECK: [[CHAIN_NEXT:v[0-9]+]] = (int32_t) ((uint32_t) [[CHAIN_A:v[0-9]+]] +
+  // CHECK: [[CHAIN_OLD_A:v[0-9]+]] = [[CHAIN_A]];
+  // CHECK: [[CHAIN_A]] = [[CHAIN_NEXT]];
+  // CHECK-NEXT: {{v[0-9]+}} = [[CHAIN_OLD_A]];
+  // CHECK: goto {{label[0-9]+}};
+  func.func @while_chain(%initial: i32, %limit: i32) -> i32 {
+    %zero = arith.constant 0 : i32
+    %one = arith.constant 1 : i32
+    %state:3 = scf.while (%a = %initial, %b = %zero, %i = %zero)
+        : (i32, i32, i32) -> (i32, i32, i32) {
+      %keep = arith.cmpi slt, %i, %limit : i32
+      scf.condition(%keep) %a, %b, %i : i32, i32, i32
+    } do {
+    ^bb0(%a: i32, %b: i32, %i: i32):
+      %next_a = arith.addi %a, %one : i32
+      %next_i = arith.addi %i, %one : i32
+      scf.yield %next_a, %a, %next_i : i32, i32, i32
+    }
+    %result = arith.subi %state#0, %state#1 : i32
+    return %result : i32
+  }
+
+  // CHECK-LABEL: AICORE int32_t while_swap(
+  // CHECK: // pto: %next_i
+  // CHECK: [[SWAP_OLD_B:v[0-9]+]] = [[SWAP_B:v[0-9]+]];
+  // CHECK: [[SWAP_OLD_A:v[0-9]+]] = [[SWAP_A:v[0-9]+]];
+  // CHECK: [[SWAP_A]] = [[SWAP_OLD_B]];
+  // CHECK-NEXT: [[SWAP_B]] = [[SWAP_OLD_A]];
+  // CHECK: goto {{label[0-9]+}};
+  func.func @while_swap(%lhs: i32, %rhs: i32, %limit: i32) -> i32 {
+    %zero = arith.constant 0 : i32
+    %one = arith.constant 1 : i32
+    %state:3 = scf.while (%a = %lhs, %b = %rhs, %i = %zero)
+        : (i32, i32, i32) -> (i32, i32, i32) {
+      %keep = arith.cmpi slt, %i, %limit : i32
+      scf.condition(%keep) %a, %b, %i : i32, i32, i32
+    } do {
+    ^bb0(%a: i32, %b: i32, %i: i32):
+      %next_i = arith.addi %i, %one : i32
+      scf.yield %b, %a, %next_i : i32, i32, i32
+    }
+    %result = arith.subi %state#0, %state#1 : i32
+    return %result : i32
+  }
+
+  // CHECK-LABEL: AICORE int32_t while_rotate(
+  // CHECK: // pto: %next_i
+  // CHECK: [[ROTATE_OLD_B:v[0-9]+]] = [[ROTATE_B:v[0-9]+]];
+  // CHECK: [[ROTATE_OLD_C:v[0-9]+]] = [[ROTATE_C:v[0-9]+]];
+  // CHECK: [[ROTATE_OLD_A:v[0-9]+]] = [[ROTATE_A:v[0-9]+]];
+  // CHECK: [[ROTATE_A]] = [[ROTATE_OLD_B]];
+  // CHECK-NEXT: [[ROTATE_B]] = [[ROTATE_OLD_C]];
+  // CHECK-NEXT: [[ROTATE_C]] = [[ROTATE_OLD_A]];
+  // CHECK: goto {{label[0-9]+}};
+  func.func @while_rotate(%first: i32, %second: i32, %third: i32,
+                          %limit: i32) -> i32 {
+    %zero = arith.constant 0 : i32
+    %one = arith.constant 1 : i32
+    %state:4 = scf.while (%a = %first, %b = %second, %c = %third, %i = %zero)
+        : (i32, i32, i32, i32) -> (i32, i32, i32, i32) {
+      %keep = arith.cmpi slt, %i, %limit : i32
+      scf.condition(%keep) %a, %b, %c, %i : i32, i32, i32, i32
+    } do {
+    ^bb0(%a: i32, %b: i32, %c: i32, %i: i32):
+      %next_i = arith.addi %i, %one : i32
+      scf.yield %b, %c, %a, %next_i : i32, i32, i32, i32
+    }
+    %difference = arith.subi %state#0, %state#1 : i32
+    %result = arith.muli %difference, %state#2 : i32
+    return %result : i32
+  }
+
+  // CHECK-LABEL: AICORE int32_t branch_swap(
+  // CHECK: // pto: %next_i
+  // CHECK: [[BRANCH_OLD_B:v[0-9]+]] = [[BRANCH_B:v[0-9]+]];
+  // CHECK: [[BRANCH_OLD_A:v[0-9]+]] = [[BRANCH_A:v[0-9]+]];
+  // CHECK: [[BRANCH_A]] = [[BRANCH_OLD_B]];
+  // CHECK-NEXT: [[BRANCH_B]] = [[BRANCH_OLD_A]];
+  // CHECK: goto {{label[0-9]+}};
+  func.func @branch_swap(%lhs: i32, %rhs: i32, %limit: i32) -> i32 {
+    %zero = arith.constant 0 : i32
+    %one = arith.constant 1 : i32
+    cf.br ^loop(%lhs, %rhs, %zero : i32, i32, i32)
+  ^loop(%a: i32, %b: i32, %i: i32):
+    %keep = arith.cmpi slt, %i, %limit : i32
+    cf.cond_br %keep, ^body, ^exit
+  ^body:
+    %next_i = arith.addi %i, %one : i32
+    cf.br ^loop(%b, %a, %next_i : i32, i32, i32)
+  ^exit:
+    %result = arith.subi %a, %b : i32
+    return %result : i32
+  }
+
+  // Both successor edges must snapshot their inputs before either edge writes
+  // the shared loop arguments. Test opposite rotations to distinguish them.
+  // CHECK-LABEL: AICORE int32_t conditional_rotate(
+  // CHECK: // pto: %next_i
+  // CHECK: [[COND_FORWARD:v[0-9]+]] = false;
+  // CHECK-NEXT: [[COND_FORWARD]] = {{v[0-9]+}};
+  // CHECK: [[TRUE_OLD_B:v[0-9]+]] = [[COND_B:v[0-9]+]];
+  // CHECK: [[TRUE_OLD_C:v[0-9]+]] = [[COND_C:v[0-9]+]];
+  // CHECK: [[TRUE_OLD_A:v[0-9]+]] = [[COND_A:v[0-9]+]];
+  // CHECK: [[FALSE_OLD_C:v[0-9]+]] = [[COND_C]];
+  // CHECK: [[FALSE_OLD_A:v[0-9]+]] = [[COND_A]];
+  // CHECK: [[FALSE_OLD_B:v[0-9]+]] = [[COND_B]];
+  // CHECK: if ([[COND_FORWARD]]) {
+  // CHECK-NEXT: [[COND_A]] = [[TRUE_OLD_B]];
+  // CHECK-NEXT: [[COND_B]] = [[TRUE_OLD_C]];
+  // CHECK-NEXT: [[COND_C]] = [[TRUE_OLD_A]];
+  // CHECK: } else {
+  // CHECK-NEXT: [[COND_A]] = [[FALSE_OLD_C]];
+  // CHECK-NEXT: [[COND_B]] = [[FALSE_OLD_A]];
+  // CHECK-NEXT: [[COND_C]] = [[FALSE_OLD_B]];
+  func.func @conditional_rotate(%first: i32, %second: i32, %third: i32,
+                                %limit: i32, %forward: i1) -> i32 {
+    %zero = arith.constant 0 : i32
+    %one = arith.constant 1 : i32
+    cf.br ^loop(%first, %second, %third, %zero : i32, i32, i32, i32)
+  ^loop(%a: i32, %b: i32, %c: i32, %i: i32):
+    %keep = arith.cmpi slt, %i, %limit : i32
+    cf.cond_br %keep, ^body, ^exit
+  ^body:
+    %next_i = arith.addi %i, %one : i32
+    cf.cond_br %forward,
+        ^loop(%b, %c, %a, %next_i : i32, i32, i32, i32),
+        ^loop(%c, %a, %b, %next_i : i32, i32, i32, i32)
+  ^exit:
+    %difference = arith.subi %a, %b : i32
+    %result = arith.muli %difference, %c : i32
+    return %result : i32
+  }
+}
