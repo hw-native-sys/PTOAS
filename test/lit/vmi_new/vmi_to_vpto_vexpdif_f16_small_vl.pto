@@ -10,8 +10,8 @@
 // deinterleave relation its dedicated lowering needs (the 32-bit c <-> d(2)
 // ensure_layout bridge and the v128f16 interleave hardware entry both stop at
 // 128 lanes), so vmi-lower-unified-to-legacy widens x and max to f32 first
-// and keeps the op on the 1:1 f32 path. The f16 interleave path at 128/256
-// lanes is covered by vmi_to_vpto_vexpdif_f16.pto.
+// and keeps the op on the 1:1 f32 path. The f16 interleave path at 128 lanes
+// is covered by vmi_to_vpto_vexpdif_f16.pto.
 
 // RUN: pto-test-opt %s -vmi-lower-unified-to-legacy | FileCheck %s --check-prefix=EXPAND
 // RUN: pto-test-opt %s -vmi-lower-unified-to-legacy -vmi-mask-granularity-assignment -vmi-layout-assignment | FileCheck %s --check-prefix=ASSIGN
@@ -26,6 +26,26 @@ module {
         : !pto.vmi.vreg<1xf16>, !pto.vmi.vreg<1xf16>,
           !pto.vmi.mask<1xpred> -> !pto.vmi.vreg<1xf32>
     return %result : !pto.vmi.vreg<1xf32>
+  }
+
+  func.func @vexpdif_f16_vl2(
+      %x: !pto.vmi.vreg<2xf16>,
+      %max: !pto.vmi.vreg<2xf16>,
+      %mask: !pto.vmi.mask<2xpred>) -> !pto.vmi.vreg<2xf32> {
+    %result = pto.vmi.vexpdif %x, %max, %mask
+        : !pto.vmi.vreg<2xf16>, !pto.vmi.vreg<2xf16>,
+          !pto.vmi.mask<2xpred> -> !pto.vmi.vreg<2xf32>
+    return %result : !pto.vmi.vreg<2xf32>
+  }
+
+  func.func @vexpdif_f16_vl4(
+      %x: !pto.vmi.vreg<4xf16>,
+      %max: !pto.vmi.vreg<4xf16>,
+      %mask: !pto.vmi.mask<4xpred>) -> !pto.vmi.vreg<4xf32> {
+    %result = pto.vmi.vexpdif %x, %max, %mask
+        : !pto.vmi.vreg<4xf16>, !pto.vmi.vreg<4xf16>,
+          !pto.vmi.mask<4xpred> -> !pto.vmi.vreg<4xf32>
+    return %result : !pto.vmi.vreg<4xf32>
   }
 
   func.func @vexpdif_f16_vl8(
@@ -53,6 +73,14 @@ module {
 // EXPAND: pto.vmi.extf %{{.*}} : !pto.vmi.vreg<1xf16> -> !pto.vmi.vreg<1xf32>
 // EXPAND: pto.vmi.extf %{{.*}} : !pto.vmi.vreg<1xf16> -> !pto.vmi.vreg<1xf32>
 // EXPAND: pto.vmi.vexpdif %{{.*}}, %{{.*}}, %{{.*}} : !pto.vmi.vreg<1xf32>, !pto.vmi.vreg<1xf32>, !pto.vmi.mask<1xpred> -> !pto.vmi.vreg<1xf32>
+// EXPAND-LABEL: func.func @vexpdif_f16_vl2(
+// EXPAND: pto.vmi.extf %{{.*}} : !pto.vmi.vreg<2xf16> -> !pto.vmi.vreg<2xf32>
+// EXPAND: pto.vmi.extf %{{.*}} : !pto.vmi.vreg<2xf16> -> !pto.vmi.vreg<2xf32>
+// EXPAND: pto.vmi.vexpdif %{{.*}}, %{{.*}}, %{{.*}} : !pto.vmi.vreg<2xf32>, !pto.vmi.vreg<2xf32>, !pto.vmi.mask<2xpred> -> !pto.vmi.vreg<2xf32>
+// EXPAND-LABEL: func.func @vexpdif_f16_vl4(
+// EXPAND: pto.vmi.extf %{{.*}} : !pto.vmi.vreg<4xf16> -> !pto.vmi.vreg<4xf32>
+// EXPAND: pto.vmi.extf %{{.*}} : !pto.vmi.vreg<4xf16> -> !pto.vmi.vreg<4xf32>
+// EXPAND: pto.vmi.vexpdif %{{.*}}, %{{.*}}, %{{.*}} : !pto.vmi.vreg<4xf32>, !pto.vmi.vreg<4xf32>, !pto.vmi.mask<4xpred> -> !pto.vmi.vreg<4xf32>
 // EXPAND-LABEL: func.func @vexpdif_f16_vl8(
 // EXPAND: pto.vmi.extf %{{.*}} : !pto.vmi.vreg<8xf16> -> !pto.vmi.vreg<8xf32>
 // EXPAND: pto.vmi.extf %{{.*}} : !pto.vmi.vreg<8xf16> -> !pto.vmi.vreg<8xf32>
@@ -77,6 +105,14 @@ module {
 // Each widened op lowers to two f16->f32 widening conversions and one f32
 // vexpdif on the same lanes; no EVEN/ODD interleave pair is emitted.
 // LOWER-LABEL: func.func @vexpdif_f16_vl1(
+// LOWER: pto.vcvt %{{.*}}, %{{.*}} {part = "EVEN"} : !pto.vreg<128xf16>, !pto.mask<b16> -> !pto.vreg<64xf32>
+// LOWER: pto.vcvt %{{.*}}, %{{.*}} {part = "EVEN"} : !pto.vreg<128xf16>, !pto.mask<b16> -> !pto.vreg<64xf32>
+// LOWER: pto.vexpdif %{{.*}}, %{{.*}}, %{{.*}}, "ODD" : !pto.vreg<64xf32>, !pto.vreg<64xf32>, !pto.mask<b32> -> !pto.vreg<64xf32>
+// LOWER-LABEL: func.func @vexpdif_f16_vl2(
+// LOWER: pto.vcvt %{{.*}}, %{{.*}} {part = "EVEN"} : !pto.vreg<128xf16>, !pto.mask<b16> -> !pto.vreg<64xf32>
+// LOWER: pto.vcvt %{{.*}}, %{{.*}} {part = "EVEN"} : !pto.vreg<128xf16>, !pto.mask<b16> -> !pto.vreg<64xf32>
+// LOWER: pto.vexpdif %{{.*}}, %{{.*}}, %{{.*}}, "ODD" : !pto.vreg<64xf32>, !pto.vreg<64xf32>, !pto.mask<b32> -> !pto.vreg<64xf32>
+// LOWER-LABEL: func.func @vexpdif_f16_vl4(
 // LOWER: pto.vcvt %{{.*}}, %{{.*}} {part = "EVEN"} : !pto.vreg<128xf16>, !pto.mask<b16> -> !pto.vreg<64xf32>
 // LOWER: pto.vcvt %{{.*}}, %{{.*}} {part = "EVEN"} : !pto.vreg<128xf16>, !pto.mask<b16> -> !pto.vreg<64xf32>
 // LOWER: pto.vexpdif %{{.*}}, %{{.*}}, %{{.*}}, "ODD" : !pto.vreg<64xf32>, !pto.vreg<64xf32>, !pto.mask<b32> -> !pto.vreg<64xf32>

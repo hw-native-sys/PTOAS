@@ -991,15 +991,17 @@ static void lowerBitwiseNotOnVRegOrMask(UnifiedOp op, OpBuilder &builder) {
 // The f16 vexpdif lowering needs one packed f16 source part to become
 // EVEN/ODD f32 result parts, a contiguous -> deinterleave(2) relation that
 // only materializes once the source fills whole f16 physical parts: the
-// interleave hardware entry consumes a whole v128f16 part, and the 32-bit
-// c <-> d(2) ensure_layout bridge in VMILayoutSupportTables.inc carries the
-// matching N<128, 256> bounds for the public lane counts (1, 2, 4, 8, 64,
-// 128, 256; see docs/isa/vmi-isa/00-architecture-overview.md). Below one
-// part the layout tables pin the result to a 1:1 part relation, the 2x
-// arity check in the VMIToVPTO pattern fails, and the op survives as a
-// residual. Widen x and max to f32 first and keep the op on the 1:1 f32
-// path, which every public lane count lowers. f16 values are exact in f32,
-// so the documented per-lane semantics exp(x - max) is unchanged.
+// interleave hardware entry consumes a whole v128f16 part (this threshold
+// must stay in sync with kVexpdifInterleaveLanes in
+// VPTOCANN900LLVMEmitterInternal.h), and the 32-bit c <-> d(2)
+// ensure_layout bridge in VMILayoutSupportTables.inc carries the matching
+// N<128, 256> bounds for the public lane counts (1, 2, 4, 8, 64, 128, 256;
+// see docs/isa/vmi-isa/00-architecture-overview.md). Below one part the
+// layout tables pin the result to a 1:1 part relation, the 2x arity check
+// in the VMIToVPTO pattern fails, and the op survives as a residual. Widen
+// x and max to f32 first and keep the op on the 1:1 f32 path, which every
+// public lane count lowers. f16 values are exact in f32, so the documented
+// per-lane semantics exp(x - max) is unchanged.
 static void expandSmallShapeF16Vexpdif(ModuleOp module) {
   FailureOr<int64_t> f16LanesPerPart =
       getDataLanesPerPart(Float16Type::get(module.getContext()));
