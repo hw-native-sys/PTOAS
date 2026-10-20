@@ -59,6 +59,11 @@
 //   Adjacent contiguous load/rearrange and rearrange/store compositions are
 //   first combined into the corresponding legacy memory operation.
 //
+// Pre-steps before the category worklist:
+//   - Small-shape f16 vexpdif (below 128 lanes) is widened to the f32 form
+//     with two extf ops; see expandSmallShapeF16Vexpdif.
+//   - Adjacent interleaved memory-op compositions are combined.
+//
 //===----------------------------------------------------------------------===//
 
 #include "PTO/Support/CodeConstants.h"
@@ -981,6 +986,41 @@ static void lowerBitwiseNotOnVRegOrMask(UnifiedOp op, OpBuilder &builder) {
 }
 
 //===----------------------------------------------------------------------===//
+// Small-shape f16 vexpdif expansion
+//===----------------------------------------------------------------------===//
+
+// The f16 vexpdif lowering needs one packed f16 source part to become
+// EVEN/ODD f32 result parts, a contiguous -> deinterleave(2) relation that
+// only materializes from 128 lanes up: both the 32-bit c <-> d(2)
+// ensure_layout bridge and the v128f16 interleave hardware entry stop there.
+// Below that count the layout tables pin the result to a 1:1 part relation,
+// the 2x arity check in the VMIToVPTO pattern fails, and the op survives as
+// a residual. Widen x and max to f32 first and keep the op on the 1:1 f32
+// path, which every public lane count lowers. f16 values are exact in f32,
+// so the documented per-lane semantics exp(x - max) is unchanged.
+static void expandSmallShapeF16Vexpdif(ModuleOp module) {
+  constexpr int64_t kVexpdifInterleaveMinLanes = 128;
+  module.walk([&](VMIVexpdifOp op) {
+    auto xType = cast<VMIVRegType>(op.getX().getType());
+    bool needsWidening = xType.getElementType().isF16() &&
+                         xType.getElementCount() < kVexpdifInterleaveMinLanes;
+    if (!needsWidening) {
+      return;
+    }
+    OpBuilder builder(op);
+    auto wideType = VMIVRegType::get(op.getContext(), xType.getElementCount(),
+                                     builder.getF32Type(),
+                                     xType.getLayoutAttr());
+    Value x = builder.create<VMIExtFOp>(op.getLoc(), wideType, op.getX())
+                   .getResult();
+    Value max = builder.create<VMIExtFOp>(op.getLoc(), wideType, op.getMax())
+                    .getResult();
+    op.getXMutable().assign(x);
+    op.getMaxMutable().assign(max);
+  });
+}
+
+//===----------------------------------------------------------------------===//
 // Pass definition
 //===----------------------------------------------------------------------===//
 
@@ -1003,6 +1043,7 @@ struct VMILowerUnifiedToLegacyPass
 void VMILowerUnifiedToLegacyPass::runOnOperation() {
   ModuleOp module = getOperation();
   combineInterleavedMemoryOps(module);
+  expandSmallShapeF16Vexpdif(module);
   SmallVector<Operation *, mlir::pto::kValue128> worklist;
 
   // Collect all unified VMI ops (walk encounters them in IR order).
