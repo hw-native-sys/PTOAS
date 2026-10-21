@@ -189,6 +189,10 @@ inline constexpr int64_t kAtomicVectorDimSize = 2;
 inline constexpr unsigned kSelectPatternBenefit = 2;
 
 // Named vector shapes of the specialized widening intrinsics (f16<->f32).
+// kVexpdifInterleaveLanes is also the threshold below which the VMI layer
+// widens f16 vexpdif to the f32 form (expandSmallShapeF16Vexpdif in
+// VMILowerUnifiedToLegacy.cpp derives it from getDataLanesPerPart(f16));
+// keep the two in sync when this contract changes.
 inline constexpr int64_t kVexpdifInterleaveLanes = 128;
 inline constexpr int64_t kVexpdifLanes = 64;
 inline constexpr int64_t kVmulscvtInputLanes = 64;

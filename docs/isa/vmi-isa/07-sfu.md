@@ -46,9 +46,15 @@
 - **lowering to `pto.mi`:**
   ```
   f32: K × pto.vexpdif
-  f16: 2K × pto.vexpdif
+  f16: 2K × pto.vexpdif          (L >= 128)
+  f16: 2 × pto.vmi.extf + f32 path (L < 128)
   ```
-  Fuses `vsub` + `vexp`.
+  Fuses `vsub` + `vexp`. The f16 form packs two elements per 32-bit lane, so
+  one `pto.vexpdif` instruction consumes only the EVEN or ODD half of every
+  physical source part; that interleave relation only materializes from 128
+  lanes up, so smaller f16 vectors are first widened to `f32` with two
+  elementwise extensions and lowered on the f32 path. `f16` values are exact
+  in `f32`, so the per-lane semantics `exp(x − max)` is unchanged.
 
 - **example:**
   ```mlir
