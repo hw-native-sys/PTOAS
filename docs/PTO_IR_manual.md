@@ -539,6 +539,13 @@ In addition to the `pto.*` operations documented below, PTOAS also accepts a lim
 
 NOTE: These third-party ops are supported only to the extent required by PTOAS front-end construction, analysis, and lowering. PTOAS does not imply full support for every operation in these dialects.
 
+For scalar `i1` values, signed widening and conversion operations (`arith.extsi`,
+`arith.index_cast`, and `arith.sitofp`) interpret the set bit as `-1`, so `true`
+converts to `-1` or `-1.0`. Their unsigned counterparts (`arith.extui`,
+`arith.index_castui`, and `arith.uitofp`) convert `true` to `1` or `1.0`.
+Both interpretations convert `false` to zero. Use unsigned conversions when a
+logical boolean must become a numeric `0` or `1`.
+
 ### 4.1 Pointer & View Operations
 
 ##### `pto.castptr` - Convert Pointer Representations

@@ -1,0 +1,272 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+
+// RUN: ptoas --pto-level=level2 --pto-arch=a3 %s -o - | FileCheck %s
+// RUN: ptoas --pto-level=level2 --pto-arch=a5 %s -o - | FileCheck %s
+
+// Signed i1 represents 0/-1, while unsigned i1 represents 0/1. Runtime
+// parameters must agree with folded constants after EmitC expression formation.
+// The single-use comparison also guards against casting the loaded integer
+// before the comparison instead of casting the resulting boolean.
+module {
+  func.func @i1_signed_index_i32(%value: i1) -> i32 {
+    %index = arith.index_cast %value : i1 to index
+    %result = arith.index_cast %index : index to i32
+    return %result : i32
+  }
+
+  func.func @i1_unsigned_index_i32(%value: i1) -> i32 {
+    %index = arith.index_castui %value : i1 to index
+    %result = arith.index_cast %index : index to i32
+    return %result : i32
+  }
+
+  func.func @i1_signed_index_i64(%value: i1) -> i64 {
+    %index = arith.index_cast %value : i1 to index
+    %result = arith.index_cast %index : index to i64
+    return %result : i64
+  }
+
+  func.func @i1_unsigned_index_i64(%value: i1) -> i64 {
+    %index = arith.index_castui %value : i1 to index
+    %result = arith.index_cast %index : index to i64
+    return %result : i64
+  }
+
+  func.func @i1_signed_float(%value: i1) -> f32 {
+    %result = arith.sitofp %value : i1 to f32
+    return %result : f32
+  }
+
+  func.func @i1_unsigned_float(%value: i1) -> f32 {
+    %result = arith.uitofp %value : i1 to f32
+    return %result : f32
+  }
+
+  func.func @i1_signed_ext_i32(%value: i1) -> i32 {
+    %result = arith.extsi %value : i1 to i32
+    return %result : i32
+  }
+
+  func.func @i1_unsigned_ext_i32(%value: i1) -> i32 {
+    %result = arith.extui %value : i1 to i32
+    return %result : i32
+  }
+
+  func.func @i1_signed_ext_i64(%value: i1) -> i64 {
+    %result = arith.extsi %value : i1 to i64
+    return %result : i64
+  }
+
+  func.func @i1_unsigned_ext_i64(%value: i1) -> i64 {
+    %result = arith.extui %value : i1 to i64
+    return %result : i64
+  }
+
+  func.func @i1_comparison_signed_index_i32(%source: !pto.ptr<i32>) -> i32 {
+    %zero = arith.constant 0 : index
+    %zero_i32 = arith.constant 0 : i32
+    %input = pto.load %source[%zero] : !pto.ptr<i32> -> i32
+    %condition = arith.cmpi sgt, %input, %zero_i32 : i32
+    %index = arith.index_cast %condition : i1 to index
+    %result = arith.index_cast %index : index to i32
+    return %result : i32
+  }
+
+  func.func @i1_comparison_index_i32(%source: !pto.ptr<i32>) -> i32 {
+    %zero = arith.constant 0 : index
+    %zero_i32 = arith.constant 0 : i32
+    %input = pto.load %source[%zero] : !pto.ptr<i32> -> i32
+    %condition = arith.cmpi sgt, %input, %zero_i32 : i32
+    %index = arith.index_castui %condition : i1 to index
+    %result = arith.index_cast %index : index to i32
+    return %result : i32
+  }
+
+  func.func @i1_comparison_signed_float(%value: i64) -> f32 {
+    %zero = arith.constant 0 : i64
+    %condition = arith.cmpi sgt, %value, %zero : i64
+    %result = arith.sitofp %condition : i1 to f32
+    return %result : f32
+  }
+
+  func.func @i1_comparison_unsigned_float(%value: i64) -> f32 {
+    %zero = arith.constant 0 : i64
+    %condition = arith.cmpi sgt, %value, %zero : i64
+    %result = arith.uitofp %condition : i1 to f32
+    return %result : f32
+  }
+
+  func.func @i1_cast_constants(%out32: !pto.ptr<i32>, %outf: !pto.ptr<f32>) {
+    %false = arith.constant false
+    %true = arith.constant true
+    %c0 = arith.constant 0 : index
+    %c1 = arith.constant 1 : index
+    %c2 = arith.constant 2 : index
+    %c3 = arith.constant 3 : index
+    %c4 = arith.constant 4 : index
+    %c5 = arith.constant 5 : index
+    %c6 = arith.constant 6 : index
+    %c7 = arith.constant 7 : index
+    %signed_false = arith.index_cast %false : i1 to index
+    %signed_true = arith.index_cast %true : i1 to index
+    %signed_false_i32 = arith.index_cast %signed_false : index to i32
+    %signed_true_i32 = arith.index_cast %signed_true : index to i32
+    pto.store %signed_false_i32, %out32[%c0] : !pto.ptr<i32>, i32
+    pto.store %signed_true_i32, %out32[%c1] : !pto.ptr<i32>, i32
+    %unsigned_false = arith.index_castui %false : i1 to index
+    %unsigned_true = arith.index_castui %true : i1 to index
+    %unsigned_false_i32 = arith.index_cast %unsigned_false : index to i32
+    %unsigned_true_i32 = arith.index_cast %unsigned_true : index to i32
+    pto.store %unsigned_false_i32, %out32[%c2] : !pto.ptr<i32>, i32
+    pto.store %unsigned_true_i32, %out32[%c3] : !pto.ptr<i32>, i32
+    %extsi_false = arith.extsi %false : i1 to i32
+    %extsi_true = arith.extsi %true : i1 to i32
+    pto.store %extsi_false, %out32[%c4] : !pto.ptr<i32>, i32
+    pto.store %extsi_true, %out32[%c5] : !pto.ptr<i32>, i32
+    %extui_false = arith.extui %false : i1 to i32
+    %extui_true = arith.extui %true : i1 to i32
+    pto.store %extui_false, %out32[%c6] : !pto.ptr<i32>, i32
+    pto.store %extui_true, %out32[%c7] : !pto.ptr<i32>, i32
+    %sitofp_false = arith.sitofp %false : i1 to f32
+    %sitofp_true = arith.sitofp %true : i1 to f32
+    pto.store %sitofp_false, %outf[%c0] : !pto.ptr<f32>, f32
+    pto.store %sitofp_true, %outf[%c1] : !pto.ptr<f32>, f32
+    %uitofp_false = arith.uitofp %false : i1 to f32
+    %uitofp_true = arith.uitofp %true : i1 to f32
+    pto.store %uitofp_false, %outf[%c2] : !pto.ptr<f32>, f32
+    pto.store %uitofp_true, %outf[%c3] : !pto.ptr<f32>, f32
+    return
+  }
+
+  // Ordinary signed conversions must retain their existing interpretation.
+  func.func @signed_i8_to_i64(%value: i8) -> i64 {
+    %result = arith.extsi %value : i8 to i64
+    return %result : i64
+  }
+
+  func.func @signed_i16_to_index(%value: i16) -> index {
+    %result = arith.index_cast %value : i16 to index
+    return %result : index
+  }
+
+  func.func @signed_i32_to_float(%value: i32) -> f32 {
+    %result = arith.sitofp %value : i32 to f32
+    return %result : f32
+  }
+}
+
+// CHECK-LABEL: AICORE int32_t i1_signed_index_i32(
+// CHECK-SAME: bool [[SIGNED_INDEX32:v[0-9]+]])
+// CHECK-DAG: const int64_t [[ZERO_INDEX32:v[0-9]+]] = 0;
+// CHECK-DAG: int64_t [[SIGNED_INDEX32_CARRIER:v[0-9]+]] = (int64_t) [[SIGNED_INDEX32]];
+// CHECK: return (int32_t) ([[ZERO_INDEX32]] - [[SIGNED_INDEX32_CARRIER]]);
+// CHECK-LABEL: AICORE int32_t i1_unsigned_index_i32(
+// CHECK-SAME: bool [[UNSIGNED_INDEX32:v[0-9]+]])
+// CHECK: int64_t [[UNSIGNED_INDEX32_CARRIER:v[0-9]+]] = (int64_t) [[UNSIGNED_INDEX32]];
+// CHECK: return (int32_t) [[UNSIGNED_INDEX32_CARRIER]];
+// CHECK-LABEL: AICORE int64_t i1_signed_index_i64(
+// CHECK-SAME: bool [[SIGNED_INDEX64:v[0-9]+]])
+// CHECK-DAG: const int64_t [[ZERO_INDEX64:v[0-9]+]] = 0;
+// CHECK-DAG: int64_t [[SIGNED_INDEX64_CARRIER:v[0-9]+]] = (int64_t) [[SIGNED_INDEX64]];
+// CHECK: return [[ZERO_INDEX64]] - [[SIGNED_INDEX64_CARRIER]];
+// CHECK-LABEL: AICORE int64_t i1_unsigned_index_i64(
+// CHECK-SAME: bool [[UNSIGNED_INDEX64:v[0-9]+]])
+// CHECK: int64_t [[UNSIGNED_INDEX64_CARRIER:v[0-9]+]] = (int64_t) [[UNSIGNED_INDEX64]];
+// CHECK: return [[UNSIGNED_INDEX64_CARRIER]];
+// CHECK-LABEL: AICORE float i1_signed_float(
+// CHECK-SAME: bool [[SIGNED_FLOAT:v[0-9]+]])
+// CHECK-DAG: const int32_t [[ZERO_FLOAT:v[0-9]+]] = 0;
+// CHECK-DAG: int32_t [[SIGNED_FLOAT_CARRIER:v[0-9]+]] = (int32_t) [[SIGNED_FLOAT]];
+// CHECK: return (float) ([[ZERO_FLOAT]] - [[SIGNED_FLOAT_CARRIER]]);
+// CHECK-LABEL: AICORE float i1_unsigned_float(
+// CHECK-SAME: bool [[UNSIGNED_FLOAT:v[0-9]+]])
+// CHECK: int32_t [[UNSIGNED_FLOAT_CARRIER:v[0-9]+]] = (int32_t) [[UNSIGNED_FLOAT]];
+// CHECK: return (float) [[UNSIGNED_FLOAT_CARRIER]];
+// CHECK-LABEL: AICORE int32_t i1_signed_ext_i32(
+// CHECK-SAME: bool [[SIGNED_EXT32:v[0-9]+]])
+// CHECK-DAG: const int32_t [[ZERO_EXT32:v[0-9]+]] = 0;
+// CHECK-DAG: int32_t [[SIGNED_EXT32_CARRIER:v[0-9]+]] = (int32_t) [[SIGNED_EXT32]];
+// CHECK: return [[ZERO_EXT32]] - [[SIGNED_EXT32_CARRIER]];
+// CHECK-LABEL: AICORE int32_t i1_unsigned_ext_i32(
+// CHECK-SAME: bool [[UNSIGNED_EXT32:v[0-9]+]])
+// CHECK: int32_t [[UNSIGNED_EXT32_CARRIER:v[0-9]+]] = (int32_t) [[UNSIGNED_EXT32]];
+// CHECK: return [[UNSIGNED_EXT32_CARRIER]];
+// CHECK-LABEL: AICORE int64_t i1_signed_ext_i64(
+// CHECK-SAME: bool [[SIGNED_EXT64:v[0-9]+]])
+// CHECK-DAG: const int64_t [[ZERO_EXT64:v[0-9]+]] = 0;
+// CHECK-DAG: int64_t [[SIGNED_EXT64_CARRIER:v[0-9]+]] = (int64_t) [[SIGNED_EXT64]];
+// CHECK: return [[ZERO_EXT64]] - [[SIGNED_EXT64_CARRIER]];
+// CHECK-LABEL: AICORE int64_t i1_unsigned_ext_i64(
+// CHECK-SAME: bool [[UNSIGNED_EXT64:v[0-9]+]])
+// CHECK: int64_t [[UNSIGNED_EXT64_CARRIER:v[0-9]+]] = (int64_t) [[UNSIGNED_EXT64]];
+// CHECK: return [[UNSIGNED_EXT64_CARRIER]];
+
+// CHECK-LABEL: AICORE int32_t i1_comparison_signed_index_i32(
+// CHECK: const int32_t [[CMP_SIGNED_INDEX_ZERO32:v[0-9]+]] = 0;
+// CHECK: int32_t [[CMP_SIGNED_INDEX_INPUT:v[0-9]+]] = {{.*}}[{{.*}}];
+// CHECK: int64_t [[CMP_SIGNED_INDEX_CARRIER:v[0-9]+]] = (int64_t) ([[CMP_SIGNED_INDEX_INPUT]] > [[CMP_SIGNED_INDEX_ZERO32]]);
+// CHECK: const int64_t [[CMP_SIGNED_INDEX_ZERO64:v[0-9]+]] = 0;
+// CHECK: return (int32_t) ([[CMP_SIGNED_INDEX_ZERO64]] - [[CMP_SIGNED_INDEX_CARRIER]]);
+
+// CHECK-LABEL: AICORE int32_t i1_comparison_index_i32(
+// CHECK: const int32_t [[CMP_ZERO:v[0-9]+]] = 0;
+// CHECK: int32_t [[CMP_INPUT:v[0-9]+]] = {{.*}}[{{.*}}];
+// CHECK: int64_t [[CMP_INDEX_CARRIER:v[0-9]+]] = (int64_t) ([[CMP_INPUT]] > [[CMP_ZERO]]);
+// CHECK: return (int32_t) [[CMP_INDEX_CARRIER]];
+
+// CHECK-LABEL: AICORE float i1_comparison_signed_float(
+// CHECK-SAME: int64_t [[CMP_SIGNED_INPUT:v[0-9]+]])
+// CHECK: const int64_t [[CMP_SIGNED_ZERO64:v[0-9]+]] = 0;
+// CHECK: int32_t [[CMP_SIGNED_CARRIER:v[0-9]+]] = (int32_t) ([[CMP_SIGNED_INPUT]] > [[CMP_SIGNED_ZERO64]]);
+// CHECK: const int32_t [[CMP_SIGNED_ZERO32:v[0-9]+]] = 0;
+// CHECK: return (float) ([[CMP_SIGNED_ZERO32]] - [[CMP_SIGNED_CARRIER]]);
+// CHECK-LABEL: AICORE float i1_comparison_unsigned_float(
+// CHECK-SAME: int64_t [[CMP_UNSIGNED_INPUT:v[0-9]+]])
+// CHECK: const int64_t [[CMP_UNSIGNED_ZERO:v[0-9]+]] = 0;
+// CHECK: int32_t [[CMP_UNSIGNED_CARRIER:v[0-9]+]] = (int32_t) ([[CMP_UNSIGNED_INPUT]] > [[CMP_UNSIGNED_ZERO]]);
+// CHECK: return (float) [[CMP_UNSIGNED_CARRIER]];
+
+// CHECK-LABEL: AICORE void i1_cast_constants(
+// CHECK-SAME: __gm__ int32_t* [[OUT32:v[0-9]+]], __gm__ float* [[OUTF:v[0-9]+]])
+// CHECK-DAG: const int32_t [[I0:v[0-9]+]] = 0;
+// CHECK-DAG: const int32_t [[IM1:v[0-9]+]] = -1;
+// CHECK-DAG: const int32_t [[I1:v[0-9]+]] = 1;
+// CHECK-DAG: const float [[F0:v[0-9]+]] = 0.0f;
+// CHECK-DAG: const float [[FM1:v[0-9]+]] = -1.0f;
+// CHECK-DAG: const float [[F1:v[0-9]+]] = 1.0f;
+// CHECK-DAG: const int64_t [[C0:v[0-9]+]] = 0;
+// CHECK-DAG: const int64_t [[C1:v[0-9]+]] = 1;
+// CHECK-DAG: const int64_t [[C2:v[0-9]+]] = 2;
+// CHECK-DAG: const int64_t [[C3:v[0-9]+]] = 3;
+// CHECK-DAG: const int64_t [[C4:v[0-9]+]] = 4;
+// CHECK-DAG: const int64_t [[C5:v[0-9]+]] = 5;
+// CHECK-DAG: const int64_t [[C6:v[0-9]+]] = 6;
+// CHECK-DAG: const int64_t [[C7:v[0-9]+]] = 7;
+// CHECK: ([[OUT32]]){{\[}}[[C0]]{{\]}} = [[I0]];
+// CHECK: ([[OUT32]]){{\[}}[[C1]]{{\]}} = [[IM1]];
+// CHECK: ([[OUT32]]){{\[}}[[C2]]{{\]}} = [[I0]];
+// CHECK: ([[OUT32]]){{\[}}[[C3]]{{\]}} = [[I1]];
+// CHECK: ([[OUT32]]){{\[}}[[C4]]{{\]}} = [[I0]];
+// CHECK: ([[OUT32]]){{\[}}[[C5]]{{\]}} = [[IM1]];
+// CHECK: ([[OUT32]]){{\[}}[[C6]]{{\]}} = [[I0]];
+// CHECK: ([[OUT32]]){{\[}}[[C7]]{{\]}} = [[I1]];
+// CHECK: ([[OUTF]]){{\[}}[[C0]]{{\]}} = [[F0]];
+// CHECK: ([[OUTF]]){{\[}}[[C1]]{{\]}} = [[FM1]];
+// CHECK: ([[OUTF]]){{\[}}[[C2]]{{\]}} = [[F0]];
+// CHECK: ([[OUTF]]){{\[}}[[C3]]{{\]}} = [[F1]];
+
+// CHECK-LABEL: AICORE int64_t signed_i8_to_i64(
+// CHECK-SAME: int8_t [[I8:v[0-9]+]])
+// CHECK: return (int64_t) [[I8]];
+// CHECK-LABEL: AICORE int64_t signed_i16_to_index(
+// CHECK-SAME: int16_t [[I16:v[0-9]+]])
+// CHECK: return (int64_t) [[I16]];
+// CHECK-LABEL: AICORE float signed_i32_to_float(
+// CHECK-SAME: int32_t [[I32:v[0-9]+]])
+// CHECK: return (float) [[I32]];

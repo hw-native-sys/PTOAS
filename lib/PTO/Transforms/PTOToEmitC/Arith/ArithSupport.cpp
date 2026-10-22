@@ -106,6 +106,28 @@ SignedDivParts buildSignedDivParts(ConversionPatternRewriter &rewriter,
 // holds. CeilDiv adjusts when signs are the same; FloorDiv when they differ.
 // Integer shifts on signless operands: compute in the unsigned C++ type of
 // the same width, then cast back. i1 shifts are widened to u8 and truncated.
+// Materialize i1 in an integer carrier before signed/unsigned conversion.
+// C++ bool promotes to 0/1, whereas a signed one-bit integer represents 0/-1.
+Value emitI1ToInteger(ConversionPatternRewriter &rewriter, Location loc,
+                     Value in, Type dstTy, bool isSigned) {
+  // Keep the integer carrier explicit: LLVM 19 can otherwise move a nested
+  // cast inside a comparison, leaving a bool-to-float cast at its consumer.
+  auto carrier = rewriter.create<emitc::ExpressionOp>(loc, dstTy);
+  carrier.setDoNotInline(true);
+  {
+    OpBuilder::InsertionGuard guard(rewriter);
+    rewriter.createBlock(&carrier.getRegion());
+    Value asInt = emitCCast(rewriter, loc, dstTy, in);
+    rewriter.create<emitc::YieldOp>(loc, asInt);
+  }
+  Value asInt = carrier.getResult();
+  if (!isSigned) {
+    return asInt;
+  }
+  Value zero = makeEmitCIntConstant(rewriter, loc, dstTy, 0);
+  return rewriter.create<emitc::SubOp>(loc, dstTy, zero, asInt).getResult();
+}
+
 // Emit the sign-extension or zero-extension of a signless integer operand to
 // `dstTy`. i1 sources are materialized as 0/-1 (signed) or passed through
 // (unsigned) before widening.
@@ -115,14 +137,7 @@ LogicalResult emitWidenedInt(Operation *op, Value in, IntegerType srcIntTy,
                                     ConversionPatternRewriter &rewriter) {
   auto loc = op->getLoc();
   if (srcIntTy.getWidth() == 1) {
-    if (isSigned) {
-      Value zero = makeEmitCIntConstant(rewriter, loc, dstTy, 0);
-      Value asInt = emitCCast(rewriter, loc, dstTy, in);
-      Value neg = rewriter.create<emitc::SubOp>(loc, dstTy, zero, asInt).getResult();
-      rewriter.replaceOp(op, neg);
-    } else {
-      rewriter.replaceOpWithNewOp<emitc::CastOp>(op, dstTy, in);
-    }
+    rewriter.replaceOp(op, emitI1ToInteger(rewriter, loc, in, dstTy, isSigned));
     return success();
   }
   if (isSigned) {

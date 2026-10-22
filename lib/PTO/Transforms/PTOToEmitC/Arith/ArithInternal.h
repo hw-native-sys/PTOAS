@@ -42,6 +42,8 @@ struct ArithCmpFConfig {
 unsigned getScalarIntOrIndexBitWidth(Type opTy);
 bool isScalarIntOrIndex(Type opTy);
 SignedDivParts buildSignedDivParts(ConversionPatternRewriter &rewriter, Location loc, Type dstTy, Value lhs, Value rhs);
+Value emitI1ToInteger(ConversionPatternRewriter &rewriter, Location loc,
+                     Value in, Type dstTy, bool isSigned);
 LogicalResult emitWidenedInt(Operation *op, Value in, IntegerType srcIntTy, IntegerType dstIntTy, Type dstTy, bool isSigned, ConversionPatternRewriter &rewriter);
 Value cmpFIsNaN(ConversionPatternRewriter &rewriter, Location loc, Value v);
 Value cmpFIsNotNaN(ConversionPatternRewriter &rewriter, Location loc, Value v);

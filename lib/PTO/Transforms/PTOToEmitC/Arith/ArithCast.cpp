@@ -99,6 +99,14 @@ struct ArithIndexCastUIToEmitC : public OpConversionPattern<arith::IndexCastUIOp
       return success();
     }
 
+    // bool already carries the required 0/1 value. Avoid unnecessary nested
+    // unsigned casts, which can lose comparison parentheses in LLVM 19.
+    if (*srcBW == 1) {
+      rewriter.replaceOp(op, emitI1ToInteger(rewriter, loc, adaptor.getIn(),
+                                           dstTy, /*isSigned=*/false));
+      return success();
+    }
+
     auto uSrcTy = getUnsignedIntOpaqueType(rewriter.getContext(), *srcBW);
     auto uDstTy = getUnsignedIntOpaqueType(rewriter.getContext(), *dstBW);
     Value srcU = emitCCast(rewriter, loc, uSrcTy, adaptor.getIn());
@@ -109,29 +117,33 @@ struct ArithIndexCastUIToEmitC : public OpConversionPattern<arith::IndexCastUIOp
   }
 };
 
-struct ArithUIToFPToEmitC : public OpConversionPattern<arith::UIToFPOp> {
-  using OpConversionPattern::OpConversionPattern;
-  LogicalResult matchAndRewrite(arith::UIToFPOp op, OpAdaptor adaptor,
+template <typename CastOp, bool isSigned>
+struct ArithIntToFPToEmitC : public OpConversionPattern<CastOp> {
+  using OpConversionPattern<CastOp>::OpConversionPattern;
+  LogicalResult matchAndRewrite(CastOp op, typename CastOp::Adaptor adaptor,
                                 ConversionPatternRewriter &rewriter) const override {
     auto loc = op.getLoc();
     auto srcIntTy = dyn_cast<IntegerType>(op.getIn().getType());
-    if (!srcIntTy)
+    if (!srcIntTy) {
       return rewriter.notifyMatchFailure(op, "expected scalar integer input");
-
-    Type dstTy = getTypeConverter()->convertType(op.getType());
-    if (!dstTy)
-      return failure();
-
-    // Convert via an unsigned integer type of the same width.
-    if (srcIntTy.getWidth() == 1) {
-      rewriter.replaceOpWithNewOp<emitc::CastOp>(op, dstTy, adaptor.getIn());
-      return success();
     }
-    Value srcU =
-        castSignlessIntToUnsignedSameWidth(rewriter, loc, adaptor.getIn(),
-                                           srcIntTy.getWidth());
-    Value fp = rewriter.create<emitc::CastOp>(loc, dstTy, srcU).getResult();
-    rewriter.replaceOp(op, fp);
+
+    Type dstTy = this->getTypeConverter()->convertType(op.getType());
+    if (!dstTy) {
+      return failure();
+    }
+
+    Value input = adaptor.getIn();
+    if (srcIntTy.getWidth() == 1) {
+      // A3 CCEC rejects bool/unsigned-to-float casts. Both i1 interpretations
+      // fit in int32_t, preserving 0/-1 (signed) or 0/1 (unsigned).
+      Type carrierTy = getSignedIntOpaqueType(rewriter.getContext(), kInt32BitWidth);
+      input = emitI1ToInteger(rewriter, loc, input, carrierTy, isSigned);
+    } else if (!isSigned) {
+      input = castSignlessIntToUnsignedSameWidth(rewriter, loc, input,
+                                               srcIntTy.getWidth());
+    }
+    rewriter.replaceOpWithNewOp<emitc::CastOp>(op, dstTy, input);
     return success();
   }
 };
@@ -216,6 +228,12 @@ struct ArithCastOPToEmitC : public OpConversionPattern<arith::IndexCastOp> {
     Type newTy = getTypeConverter()->convertType(op.getType());
     if (!newTy)
       return failure();
+    if (op.getIn().getType().isInteger(1)) {
+      rewriter.replaceOp(op, emitI1ToInteger(rewriter, op.getLoc(),
+                                           adaptor.getIn(), newTy,
+                                           /*isSigned=*/true));
+      return success();
+    }
     if (adaptor.getIn().getType() == newTy) {
       rewriter.replaceOp(op, adaptor.getIn());
       return success();
@@ -272,8 +290,8 @@ void populateArithArithCastPatterns(RewritePatternSet &patterns,
   patterns.add<ArithExtSIToEmitC>(typeConverter, ctx);
   patterns.add<ArithCastToEmitC<arith::ExtFOp>>(typeConverter, ctx);
   patterns.add<ArithCastToEmitC<arith::TruncFOp>>(typeConverter, ctx);
-  patterns.add<ArithUIToFPToEmitC>(typeConverter, ctx);
-  patterns.add<ArithCastToEmitC<arith::SIToFPOp>>(typeConverter, ctx);
+  patterns.add<ArithIntToFPToEmitC<arith::UIToFPOp, false>>(typeConverter, ctx);
+  patterns.add<ArithIntToFPToEmitC<arith::SIToFPOp, true>>(typeConverter, ctx);
   patterns.add<ArithFPToUIToEmitC>(typeConverter, ctx);
   patterns.add<ArithCastToEmitC<arith::FPToSIOp>>(typeConverter, ctx);
   patterns.add<ArithIndexCastUIToEmitC>(typeConverter, ctx);
