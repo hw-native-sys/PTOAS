@@ -82,6 +82,53 @@ enum class TCoreType {
   CUBE_AND_VECTOR
 };
  
+/// Byte granularity a GM access may touch around the bytes it logically
+/// addresses. `pto.tstore` from `loc=acc` drains through fixpipe, whose burst
+/// unit is 64 bytes (`FIXP_BURST_UNIT_LEN` in pto-isa
+/// `include/pto/common/constants.hpp`); the MTE3 path moves 32-byte DMA blocks
+/// (`BLOCK_BYTE_SIZE`). The ISA does not specify whether the bus
+/// read-modify-writes a partially covered burst, so disjointness is proven at
+/// the coarser of the two units and the proof holds either way.
+inline constexpr uint64_t kGmAccessGranuleBytes = 64;
+
+/// A strided byte-range window selected inside a GM root buffer.
+///
+/// Models what a chain of `pto.make_tensor_view` / `pto.partition_view`
+/// selects: `contigBytes` consecutive bytes, repeated over `outerDims`,
+/// counted from `byteOffset`. Two column slices of the same tensor interleave
+/// in the address space, so their flat bounding intervals always overlap even
+/// when no byte is shared — which a single `baseAddresses`/`allocateSize`
+/// interval cannot express, and enumerating one address per row cannot afford
+/// on GM-sized views (issue #1624).
+struct GMWindow {
+  /// First selected byte, relative to the root buffer.
+  uint64_t byteOffset{0};
+  /// Length of the innermost contiguous run, in bytes.
+  uint64_t contigBytes{0};
+  /// Enclosing dimensions, outermost first: (stride in bytes, trip count).
+  SmallVector<std::pair<uint64_t, uint64_t>, 4> outerDims;
+
+  /// Bytes spanned from `byteOffset` to the last selected byte, inclusive of
+  /// the gaps between runs.
+  uint64_t spanBytes() const {
+    uint64_t span = contigBytes;
+    for (auto [stride, count] : outerDims) {
+      if (count > 1) {
+        span += stride * (count - 1);
+      }
+    }
+    return span;
+  }
+
+  bool operator==(const GMWindow &other) const {
+    return byteOffset == other.byteOffset && contigBytes == other.contigBytes &&
+           outerDims == other.outerDims;
+  }
+
+  // std::optional<GMWindow> comparison needs both halves before C++20.
+  bool operator!=(const GMWindow &other) const { return !(*this == other); }
+};
+
 /// Meminfo of the target buffer
 /// 用于追踪 Buffer 的别名和根节点
 struct BaseMemInfo {
@@ -110,6 +157,13 @@ struct BaseMemInfo {
   // can refer to an unknown physical range. This object and its views may alias
   // other roots in the same address space; shared-root offsets remain usable.
   bool aliasesUnknownRange;
+  // Strided GM extent relative to rootBuffer, when the view chain that produced
+  // this object was fully static. Only ever used to prove two accesses on the
+  // SAME root cannot touch a common byte; absent means "no proof available" and
+  // leaves the baseAddresses/allocateSize behaviour untouched. Never set on a
+  // value that crosses a loop boundary, where the modelled offsets would
+  // describe the first iteration only.
+  std::optional<GMWindow> gmWindow;
  
   bool areVectorEqual(const SmallVector<uint64_t>& vec1,
                       const SmallVector<uint64_t>& vec2) const {
@@ -148,19 +202,22 @@ struct BaseMemInfo {
     if (baseBuffer != other.baseBuffer) {
       return false;
     }
+    if (gmWindow != other.gmWindow) {
+      return false;
+    }
     return true;
   }
- 
+
   std::unique_ptr<BaseMemInfo> clone() const {
-    return std::make_unique<BaseMemInfo>(
-        baseBuffer, rootBuffer, scope, baseAddresses, allocateSize,
-        hasKnownPhysicalAddresses, aliasesUnknownRange);
+    return clone(baseBuffer);
   }
 
   std::unique_ptr<BaseMemInfo> clone(Value cloneBaseBuffer) const {
-    return std::make_unique<BaseMemInfo>(
+    auto cloned = std::make_unique<BaseMemInfo>(
         cloneBaseBuffer, rootBuffer, scope, baseAddresses, allocateSize,
         hasKnownPhysicalAddresses, aliasesUnknownRange);
+    cloned->gmWindow = gmWindow;
+    return cloned;
   }
 };
  

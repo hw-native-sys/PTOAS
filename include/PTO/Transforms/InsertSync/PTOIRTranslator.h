@@ -84,6 +84,15 @@ private:
   // 处理 View/Alias (MakeTensorView, Subview, Mov)
   void UpdateAliasBufferInfo(Value result, Value source);
   void UpdateConservativeAliasBufferInfo(Value result, Value source);
+
+  // GM view 别名，并记录视图选中的跨步字节范围 (GMWindow)，供
+  // MemoryDependentAnalyzer 证明同根的两次访问不相交 (issue #1624)。
+  void UpdateMakeTensorViewAliasBufferInfo(pto::MakeTensorViewOp op);
+  void UpdatePartitionViewAliasBufferInfo(pto::PartitionViewOp op);
+
+  // 清除 value 上的 GMWindow：窗口只描述首次迭代，跨循环边界后不再成立。
+  void DropCarriedGMWindows(Value value);
+
   void UpdateTileSubViewAliasBufferInfo(pto::SubViewOp op);
   LogicalResult UpdateIntegerToPtrCastMemInfo(pto::CastPtrOp op);
   void UpdateMultiTileGetAliasBufferInfo(pto::MultiTileGetOp op);

@@ -18,6 +18,7 @@
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/IR/AsmState.h"
 #include "mlir/IR/Matchers.h"
+#include "mlir/Interfaces/LoopLikeInterface.h"
 #include "llvm/ADT/StringSwitch.h"
 #include "llvm/Support/Debug.h"
 #include "llvm/Support/FormatVariadic.h"
@@ -252,6 +253,115 @@ getPtoSubViewBaseAddresses(pto::SubViewOp op, pto::TileBufType sourceType,
   return addresses;
 }
 
+// Keeps the window arithmetic below inside 64 bits without per-expression
+// overflow checks. GM views are far smaller than this in every real kernel.
+static constexpr int64_t kMaxModelledViewExtent = 1LL << 31;
+
+static uint64_t getGMViewElemBytes(Type type) {
+  if (auto viewType = dyn_cast<pto::TensorViewType>(type)) {
+    return pto::getPTOStorageElemByteSize(viewType.getElementType());
+  }
+  if (auto viewType = dyn_cast<pto::PartitionTensorViewType>(type)) {
+    return pto::getPTOStorageElemByteSize(viewType.getElementType());
+  }
+  return 0;
+}
+
+static bool getModelledConstIndex(Value value, int64_t &out, int64_t lowerBound) {
+  return getConstIndexValue(value, out) && out >= lowerBound &&
+         out < kMaxModelledViewExtent;
+}
+
+/// Seeds a GM window from `pto.make_tensor_view`: the whole tensor, with the
+/// innermost dimension as the contiguous run. Returns nullopt whenever any
+/// extent is dynamic or the innermost dimension is not unit-strided, which
+/// leaves the view on the existing conservative path.
+static std::optional<GMWindow>
+buildMakeTensorViewWindow(pto::MakeTensorViewOp op) {
+  uint64_t elemBytes = getGMViewElemBytes(op.getResult().getType());
+  if (elemBytes == 0) {
+    return std::nullopt;
+  }
+  ValueRange shape = op.getShape();
+  ValueRange strides = op.getStrides();
+  if (shape.empty() || shape.size() != strides.size()) {
+    return std::nullopt;
+  }
+
+  SmallVector<int64_t> shapeConst(shape.size());
+  SmallVector<int64_t> strideConst(strides.size());
+  for (auto [i, dim] : llvm::enumerate(shape)) {
+    if (!getModelledConstIndex(dim, shapeConst[i], /*lowerBound=*/1)) {
+      return std::nullopt;
+    }
+  }
+  for (auto [i, stride] : llvm::enumerate(strides)) {
+    if (!getModelledConstIndex(stride, strideConst[i], /*lowerBound=*/1)) {
+      return std::nullopt;
+    }
+  }
+  if (strideConst.back() != 1) {
+    return std::nullopt;
+  }
+
+  GMWindow window;
+  window.contigBytes = static_cast<uint64_t>(shapeConst.back()) * elemBytes;
+  window.outerDims.reserve(shapeConst.size() - 1);
+  for (size_t i = 0; i + 1 < shapeConst.size(); ++i) {
+    window.outerDims.emplace_back(
+        static_cast<uint64_t>(strideConst[i]) * elemBytes,
+        static_cast<uint64_t>(shapeConst[i]));
+  }
+  return window;
+}
+
+/// Composes a `pto.partition_view` onto its source window. Composition rather
+/// than replacement is what makes nested partition views land on the right
+/// bytes.
+static std::optional<GMWindow>
+composePartitionViewWindow(const GMWindow &parent, pto::PartitionViewOp op,
+                           uint64_t elemBytes) {
+  ValueRange offsets = op.getOffsets();
+  ValueRange sizes = op.getSizes();
+  size_t rank = parent.outerDims.size() + 1;
+  if (offsets.size() != rank || sizes.size() != rank) {
+    return std::nullopt;
+  }
+
+  SmallVector<int64_t> offsetConst(rank);
+  SmallVector<int64_t> sizeConst(rank);
+  for (size_t i = 0; i < rank; ++i) {
+    if (!getModelledConstIndex(offsets[i], offsetConst[i], /*lowerBound=*/0) ||
+        !getModelledConstIndex(sizes[i], sizeConst[i], /*lowerBound=*/1)) {
+      return std::nullopt;
+    }
+  }
+
+  GMWindow window;
+  window.contigBytes = static_cast<uint64_t>(sizeConst.back()) * elemBytes;
+  uint64_t innerOffsetBytes =
+      static_cast<uint64_t>(offsetConst.back()) * elemBytes;
+  // A slice reaching past its parent's run would mean the modelled strides do
+  // not describe the access; stay conservative instead of guessing.
+  if (innerOffsetBytes + window.contigBytes > parent.contigBytes) {
+    return std::nullopt;
+  }
+  window.byteOffset = parent.byteOffset + innerOffsetBytes;
+
+  window.outerDims.reserve(parent.outerDims.size());
+  for (size_t i = 0; i + 1 < rank; ++i) {
+    auto [stride, count] = parent.outerDims[i];
+    if (static_cast<uint64_t>(offsetConst[i]) +
+            static_cast<uint64_t>(sizeConst[i]) >
+        count) {
+      return std::nullopt;
+    }
+    window.byteOffset += static_cast<uint64_t>(offsetConst[i]) * stride;
+    window.outerDims.emplace_back(stride, static_cast<uint64_t>(sizeConst[i]));
+  }
+  return window;
+}
+
 namespace {
 
 static func::FuncOp lookupSyncHelper(func::CallOp callOp) {
@@ -405,9 +515,9 @@ PTOIRTranslator::dispatchAllocOp(Operation *op) {
 std::optional<WalkResult>
 PTOIRTranslator::dispatchAliasViewOp(Operation *op) {
   if (auto makeViewOp = dyn_cast<pto::MakeTensorViewOp>(op)) {
-    UpdateAliasBufferInfo(makeViewOp.getResult(), makeViewOp.getPtr());
+    UpdateMakeTensorViewAliasBufferInfo(makeViewOp);
   } else if (auto subViewOp = dyn_cast<pto::PartitionViewOp>(op)) {
-    UpdateAliasBufferInfo(subViewOp.getResult(), subViewOp.getSource());
+    UpdatePartitionViewAliasBufferInfo(subViewOp);
   } else if (auto addPtrOp = dyn_cast<pto::AddPtrOp>(op)) {
     UpdateAliasBufferInfo(addPtrOp.getResult(), addPtrOp.getPtr());
   } else if (auto castPtrOp = dyn_cast<pto::CastPtrOp>(op)) {
@@ -841,6 +951,11 @@ void PTOIRTranslator::UpdateForOpInfo(scf::ForOp forOp) {
     assert(forOp.getInitArgs().size() == forOp.getRegionIterArgs().size());
     for (auto [i, arg] : llvm::enumerate(forOp.getInitArgs())) {
       UpdateAliasBufferInfo(forOp.getRegionIterArgs()[i], arg);
+      // An iter arg is only ever the init value on the first trip; later trips
+      // carry whatever the yield produced. A window describing the init would
+      // then claim disjointness for slices the loop actually revisits, so no
+      // GMWindow is allowed to cross a loop boundary.
+      DropCarriedGMWindows(forOp.getRegionIterArgs()[i]);
     }
   }
 
@@ -864,10 +979,12 @@ void PTOIRTranslator::UpdateWhileOpInfo(scf::WhileOp whileOp) {
   if (!whileOp.getInits().empty()) {
     for (auto [initArg, blockArg] : llvm::zip(whileOp.getInits(), whileOp.getBeforeArguments())) {
       UpdateAliasBufferInfo(blockArg, initArg);
+      DropCarriedGMWindows(blockArg);
     }
     auto conditionOp = whileOp.getConditionOp();
     for (auto [yieldedArg, blockArg] : llvm::zip(conditionOp.getArgs(), whileOp.getAfterArguments())) {
       UpdateAliasBufferInfo(blockArg, yieldedArg);
+      DropCarriedGMWindows(blockArg);
     }
   }
 
@@ -949,8 +1066,15 @@ void PTOIRTranslator::UpdateYieldOpInfo(scf::YieldOp yieldOp) {
   }
 
   assert(parentOp->getResults().size() == yieldOp->getOpOperands().size());
+  // A loop result is whatever the last trip yielded, but the window modelled
+  // inside the body describes the first. An scf.if result needs no such care:
+  // both arms are recorded, and neither repeats.
+  bool parentIsLoop = isa<LoopLikeOpInterface>(parentOp);
   for (auto [yieldVal, resultVal] : llvm::zip(yieldOp->getOpOperands(), parentOp->getResults())) {
     UpdateAliasBufferInfo(resultVal, yieldVal.get());
+    if (parentIsLoop) {
+      DropCarriedGMWindows(resultVal);
+    }
   }
 }
 
@@ -974,6 +1098,67 @@ void PTOIRTranslator::UpdateAliasBufferInfo(Value result, Value source) {
 void PTOIRTranslator::UpdateConservativeAliasBufferInfo(Value result,
                                                         Value source) {
   UpdateAliasBufferInfo(result, source);
+}
+
+// Same aliasing as UpdateAliasBufferInfo, plus the strided extent the view
+// selects. The window is layered on top of the existing clone: dropping it
+// only costs precision, so every bail-out below is safe.
+void PTOIRTranslator::UpdateMakeTensorViewAliasBufferInfo(
+    pto::MakeTensorViewOp op) {
+  Value result = op.getResult();
+  Value source = op.getPtr();
+  if (!result || !source || !buffer2MemInfoMap_.contains(source)) {
+    return;
+  }
+
+  std::optional<GMWindow> window = buildMakeTensorViewWindow(op);
+  auto &resultMemInfoVec = buffer2MemInfoMap_[result];
+  for (auto &parentInfo : buffer2MemInfoMap_[source]) {
+    auto cloned = parentInfo->clone(result);
+    // A window's offsets are relative to the root buffer, and the view starts
+    // at `source`. Only when the two coincide is a zero base correct: an
+    // intervening `pto.add_ptr` shifts the pointer without being modelled, so
+    // the window would describe the wrong bytes.
+    if (parentInfo->scope == pto::AddressSpace::GM &&
+        !parentInfo->aliasesUnknownRange && source == parentInfo->rootBuffer) {
+      cloned->gmWindow = window;
+    }
+    appendUniqueMemInfo(resultMemInfoVec, std::move(cloned));
+  }
+}
+
+void PTOIRTranslator::UpdatePartitionViewAliasBufferInfo(
+    pto::PartitionViewOp op) {
+  Value result = op.getResult();
+  Value source = op.getSource();
+  if (!result || !source || !buffer2MemInfoMap_.contains(source)) {
+    return;
+  }
+
+  uint64_t elemBytes = getGMViewElemBytes(source.getType());
+  auto &resultMemInfoVec = buffer2MemInfoMap_[result];
+  for (auto &parentInfo : buffer2MemInfoMap_[source]) {
+    auto cloned = parentInfo->clone(result);
+    // Composing onto the parent window, rather than rebuilding from the root,
+    // is what makes a nested partition_view land on the right bytes.
+    cloned->gmWindow =
+        (elemBytes != 0 && parentInfo->gmWindow)
+            ? composePartitionViewWindow(*parentInfo->gmWindow, op, elemBytes)
+            : std::nullopt;
+    appendUniqueMemInfo(resultMemInfoVec, std::move(cloned));
+  }
+}
+
+// A value that re-enters a loop body names a different slice on every trip,
+// while a window records the first trip only. Dropping it restores the
+// conservative answer; the rest of the alias record stays intact.
+void PTOIRTranslator::DropCarriedGMWindows(Value value) {
+  if (!value || !buffer2MemInfoMap_.contains(value)) {
+    return;
+  }
+  for (auto &info : buffer2MemInfoMap_[value]) {
+    info->gmWindow = std::nullopt;
+  }
 }
 
 LogicalResult
@@ -1170,6 +1355,14 @@ void PTOIRTranslator::printMemInfoList(llvm::raw_ostream &os,
       os << "(VEC)";
     } else {
       os << "(Other)"; // 处理 LEFT/RIGHT/ACC 等其他情况
+    }
+    if (info->gmWindow) {
+      const GMWindow &window = *info->gmWindow;
+      os << "{off=" << window.byteOffset << ",contig=" << window.contigBytes;
+      for (auto [stride, count] : window.outerDims) {
+        os << ",[" << stride << "x" << count << "]";
+      }
+      os << "}";
     }
     first = false;
   }
