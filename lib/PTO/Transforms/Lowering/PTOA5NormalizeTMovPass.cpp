@@ -8,6 +8,7 @@
 
 #include "PTO/IR/PTO.h"
 #include "PTO/Transforms/Passes.h"
+#include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/Func/IR/FuncOps.h"
 #include "mlir/IR/Dominance.h"
 #include "mlir/IR/PatternMatch.h"
@@ -288,6 +289,104 @@ static LogicalResult hoistScaleAddr(pto::TGetScaleAddrOp op,
   return success();
 }
 
+// A constant binding is removable only when both handles remain local and
+// every use accesses data through a fixed handle. Aliases, tassign (even
+// though Pure), calls and captured region uses retain the mutable binding:
+// memory effects alone cannot establish handle stability.
+static bool isFixedMxHandleUse(OpOperand &use, bool isScale) {
+  Operation *user = use.getOwner();
+  if (user->getNumRegions() || user->getNumSuccessors() ||
+      user->getNumResults()) {
+    return false;
+  }
+  Value value = use.get();
+  if (auto mov = dyn_cast<pto::TMovOp>(user)) {
+    return pto::classifyTMovForm(mov.getFp()) == pto::TMovForm::NoTileAux &&
+           (!isScale || (mov.getDst() == value && isA5ScaleTileTMov(mov)));
+  }
+  if (auto extract = dyn_cast<pto::TExtractOp>(user)) {
+    return isScale && extract.getDst() == value &&
+           isA5ScaleTileTExtract(extract);
+  }
+  if (auto matmul = dyn_cast<pto::TMatmulMxOp>(user)) {
+    return isScale ? (matmul.getAScale() == value ||
+                      matmul.getBScale() == value)
+                   : (matmul.getA() == value || matmul.getB() == value);
+  }
+  if (auto matmul = dyn_cast<pto::TMatmulMxAccOp>(user)) {
+    return isScale ? (matmul.getAScale() == value ||
+                      matmul.getBScale() == value)
+                   : (matmul.getA() == value || matmul.getB() == value);
+  }
+  return false;
+}
+
+static void foldConstantScaleAddr(pto::TGetScaleAddrOp op,
+                                  IRRewriter &rewriter) {
+  Block *block = op->getBlock();
+  auto data = op.getSrc().getDefiningOp<pto::AllocTileOp>();
+  auto scale = op.getDst().getDefiningOp<pto::AllocTileOp>();
+  if (!data || !scale || !data.getAddr() || data->getBlock() != block ||
+      scale->getBlock() != block) {
+    return;
+  }
+  auto dataType = dyn_cast<pto::TileBufType>(op.getSrc().getType());
+  auto scaleType = dyn_cast<pto::TileBufType>(op.getDst().getType());
+  auto dataAS = getAddressSpaceFromValueType(op.getSrc().getType());
+  auto scaleAS = getAddressSpaceFromValueType(op.getDst().getType());
+  if (!dataType || !scaleType || !dataAS || !scaleAS ||
+      (*dataAS != pto::AddressSpace::LEFT &&
+       *dataAS != pto::AddressSpace::RIGHT) ||
+      *scaleAS != pto::AddressSpace::SCALING ||
+      !isa<Float8E4M3FNType>(dataType.getElementType()) ||
+      !isa<pto::F8E8M0Type>(scaleType.getElementType())) {
+    return;
+  }
+  auto constant = data.getAddr().getDefiningOp<arith::ConstantOp>();
+  auto address = constant ? dyn_cast<IntegerAttr>(constant.getValue())
+                          : IntegerAttr();
+  if (!address || address.getValue().isNegative() ||
+      address.getValue().getBitWidth() != 64) {
+    return;
+  }
+  uint64_t dataAddress = address.getValue().getZExtValue();
+  if (dataAddress % 16 != 0) {
+    return;
+  }
+
+  // Exactly one binding, no earlier scale access and no aliases. Direct
+  // same-block users after the binding are dominated by it, also in loops.
+  for (OpOperand &use : op.getDst().getUses()) {
+    Operation *user = use.getOwner();
+    if (user == op.getOperation()) {
+      continue;
+    }
+    if (user->getBlock() != block || !op->isBeforeInBlock(user) ||
+        !isFixedMxHandleUse(use, /*isScale=*/true)) {
+      return;
+    }
+  }
+  for (OpOperand &use : op.getSrc().getUses()) {
+    Operation *user = use.getOwner();
+    if (user == op.getOperation()) {
+      continue;
+    }
+    if (user->getBlock() != block ||
+        !isFixedMxHandleUse(use, /*isScale=*/false)) {
+      return;
+    }
+  }
+
+  // GetScaleAddr is the data address shifted by four, not a payload read.
+  // Use a fresh constant: the old allocation address may be shared by other
+  // handles. Real data/scale dependencies retain the final physical address.
+  rewriter.setInsertionPoint(scale);
+  Value scaleAddress = rewriter.create<arith::ConstantIntOp>(
+      op.getLoc(), dataAddress >> 4, 64);
+  scale.getAddrMutable().assign(scaleAddress);
+  rewriter.eraseOp(op);
+}
+
 template <typename CfgT>
 static auto buildRowMajorConfigImpl(int, MLIRContext *ctx,
                                     pto::BLayoutAttr rowMajor, CfgT cfg)
@@ -489,6 +588,15 @@ void PTOA5NormalizeTMovPass::runOnOperation() {
   if (failed(normalizeRiskyVecVecTMov(func))) {
     signalPassFailure();
     return;
+  }
+
+  // Normalize all producers, retaining existing rejection and atomic
+  // dependency checks, before considering removal of any binding.
+  SmallVector<pto::TGetScaleAddrOp, kRiskyOpReserveSize> scaleAddrOps;
+  func.walk([&](pto::TGetScaleAddrOp op) { scaleAddrOps.push_back(op); });
+  IRRewriter rewriter(func.getContext());
+  for (pto::TGetScaleAddrOp op : scaleAddrOps) {
+    foldConstantScaleAddr(op, rewriter);
   }
 
   verifyNoResidualRiskyTMov(func);

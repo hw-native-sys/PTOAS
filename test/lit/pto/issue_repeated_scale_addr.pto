@@ -38,10 +38,11 @@
 // CHECK: %[[LEFT2:.*]] = pto.alloc_tile addr = {{.*}}!pto.tile_buf<left,
 // CHECK-NEXT: %[[RIGHT2:.*]] = pto.alloc_tile addr = {{.*}}!pto.tile_buf<right,
 // CHECK-NEXT: %[[LS2:.*]] = pto.alloc_tile addr = {{.*}}!pto.tile_buf<scaling, 64x4x
-// CHECK-NEXT: %[[RS2:.*]] = pto.alloc_tile addr = {{.*}}!pto.tile_buf<scaling, 4x128x
+// The independent RIGHT handle has one binding and folds; repeated LEFT stays.
+// CHECK-NEXT: %[[RSADDR:.*]] = arith.constant 0 : i64
+// CHECK-NEXT: %[[RS2:.*]] = pto.alloc_tile addr = %[[RSADDR]] {{.*}}!pto.tile_buf<scaling, 4x128x
 // CHECK-NEXT: %{{.*}} = pto.alloc_tile {{.*}}!pto.tile_buf<acc,
 // CHECK-NEXT: pto.tget_scale_addr ins(%[[LEFT2]]{{.*}}outs(%[[LS2]]
-// CHECK-NEXT: pto.tget_scale_addr ins(%[[RIGHT2]]{{.*}}outs(%[[RS2]]
 // CHECK-NEXT: pto.tmov {{.*}}outs(%[[LS2]]
 // CHECK-NEXT: pto.tmov {{.*}}outs(%[[RS2]]
 // CHECK-NEXT: pto.tmatmul.mx ins(%[[LEFT2]], %[[LS2]], %[[RIGHT2]], %[[RS2]]

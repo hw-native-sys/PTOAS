@@ -81,9 +81,9 @@ module attributes {pto.target_arch = "a5"} {
 }
 
 // IR-LABEL: func.func @late_left_binding(
-// IR: %[[LS:.*]] = pto.alloc_tile {{.*}}!pto.tile_buf<scaling,
+// IR: %[[SCALEADDR:.*]] = arith.constant 1024 : i64
+// IR-NEXT: %[[LS:.*]] = pto.alloc_tile addr = %[[SCALEADDR]] {{.*}}!pto.tile_buf<scaling,
 // IR: %[[LEFT:.*]] = pto.alloc_tile addr =
-// IR-NEXT: pto.tget_scale_addr ins(%[[LEFT]]{{.*}}outs(%[[LS]]
 // IR-NEXT: pto.textract {{.*}}outs(%[[LS]]
 // IR-NEXT: return
 
@@ -110,9 +110,12 @@ module attributes {pto.target_arch = "a5"} {
 // IR-NEXT: return
 
 // CPP-LABEL: AICORE void late_left_binding(
+// CPP: const int64_t [[FOLDEDADDR:v[0-9]+]] = 1024;
 // CPP: Tile<TileType::Mat, float8_e8m0_t, 64, 8,
-// CPP: GetScaleAddr(
-// CPP: TASSIGN(
+// CPP: Tile<TileType::ScaleLeft, {{.*}} [[FOLDEDLS:v[0-9]+]];
+// CPP: uint64_t [[FOLDEDPTR:v[0-9]+]] = (uint64_t) [[FOLDEDADDR]];
+// CPP-NEXT: TASSIGN([[FOLDEDLS]], [[FOLDEDPTR]]);
+// CPP-NOT: GetScaleAddr(
 // CPP: TEXTRACT(
 
 // CPP-LABEL: AICORE void alternating_shared_scale_handle(

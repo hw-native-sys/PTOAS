@@ -1,0 +1,155 @@
+// RUN: pto-test-opt --pto-a5-normalize-tmov %s | FileCheck %s --check-prefix=IR
+// RUN: pto-test-opt --pto-a5-normalize-tmov %s > %t.once
+// RUN: pto-test-opt --pto-a5-normalize-tmov %t.once > %t.twice
+// RUN: diff %t.once %t.twice
+// RUN: ptoas --pto-arch=a5 --pto-level=level3 --enable-insert-sync %s | FileCheck %s --check-prefix=CPP --implicit-check-not=GetScaleAddr
+
+!left = !pto.tile_buf<left, 64x128xf8E4M3FN, blayout=col_major, slayout=row_major, fractal=512>
+!right = !pto.tile_buf<right, 128x128xf8E4M3FN, slayout=col_major, fractal=512>
+!lmat = !pto.tile_buf<mat, 64x128xf8E4M3FN, blayout=col_major, slayout=row_major, fractal=512>
+!rmat = !pto.tile_buf<mat, 128x128xf8E4M3FN, blayout=col_major, slayout=row_major, fractal=512>
+!lm = !pto.tile_buf<mat, 64x8x!pto.f8E8M0, slayout=row_major, fractal=32>
+!rm = !pto.tile_buf<mat, 8x128x!pto.f8E8M0, blayout=col_major, slayout=col_major, fractal=32>
+!ls = !pto.tile_buf<scaling, 64x4x!pto.f8E8M0, slayout=row_major, fractal=32>
+!rs = !pto.tile_buf<scaling, 4x128x!pto.f8E8M0, blayout=col_major, slayout=col_major, fractal=32>
+!acc = !pto.tile_buf<acc, 64x128xf32, blayout=col_major, slayout=row_major, fractal=1024>
+
+!lwhole = !pto.tile_buf<mat, 64x4x!pto.f8E8M0, slayout=row_major, fractal=32>
+!rwhole = !pto.tile_buf<mat, 4x128x!pto.f8E8M0, blayout=col_major, slayout=col_major, fractal=32>
+
+module attributes {pto.target_arch = "a5"} {
+  // Nonzero LEFT and RIGHT addresses shift by four. The shared 512 constant
+  // and unrelated MAT allocation must remain unchanged.
+  // IR-LABEL: func.func @fold_tmov_pair(
+  // IR: %[[SHARED:.*]] = arith.constant 512 : i64
+  // IR: pto.alloc_tile addr = %[[SHARED]] {{.*}}!pto.tile_buf<mat,
+  // IR: %[[LA:.*]] = arith.constant 1024 : i64
+  // IR-NEXT: %[[LS:.*]] = pto.alloc_tile addr = %[[LA]] {{.*}}!pto.tile_buf<scaling, 64x4x
+  // IR: %[[RA:.*]] = arith.constant 2048 : i64
+  // IR-NEXT: %[[RS:.*]] = pto.alloc_tile addr = %[[RA]] {{.*}}!pto.tile_buf<scaling, 4x128x
+  // IR-NOT: tget_scale_addr
+  // IR: pto.tmatmul.mx
+  // IR-NEXT: return
+  // CPP-LABEL: AICORE void fold_tmov_pair(
+  // CPP-DAG: const int64_t [[LA:v[0-9]+]] = 1024;
+  // CPP-DAG: const int64_t [[RA:v[0-9]+]] = 2048;
+  // CPP: Tile<TileType::ScaleLeft, {{.*}} [[LS:v[0-9]+]];
+  // CPP: uint64_t [[LP:v[0-9]+]] = (uint64_t) [[LA]];
+  // CPP-NEXT: TASSIGN([[LS]], [[LP]]);
+  // CPP: Tile<TileType::ScaleRight, {{.*}} [[RS:v[0-9]+]];
+  // CPP: uint64_t [[RP:v[0-9]+]] = (uint64_t) [[RA]];
+  // CPP-NEXT: TASSIGN([[RS]], [[RP]]);
+  // CPP: set_flag(PIPE_MTE1, PIPE_M,
+  // CPP: wait_flag(PIPE_MTE1, PIPE_M,
+  // CPP: TMATMUL_MX(
+  func.func @fold_tmov_pair() attributes {pto.kernel_kind = #pto.kernel_kind<cube>} {
+    %z = arith.constant 0 : i64
+    %shared = arith.constant 512 : i64
+    %la = arith.constant 16384 : i64
+    %ra = arith.constant 32768 : i64
+    %lm = pto.alloc_tile addr = %shared : !lwhole
+    %rm = pto.alloc_tile addr = %z : !rwhole
+    %left = pto.alloc_tile addr = %la : !left
+    %right = pto.alloc_tile addr = %ra : !right
+    %ls = pto.alloc_tile addr = %shared : !ls
+    %rs = pto.alloc_tile addr = %shared : !rs
+    %acc = pto.alloc_tile addr = %z : !acc
+    pto.tmov ins(%lm : !lwhole) outs(%ls : !ls)
+    pto.tget_scale_addr ins(%left : !left) outs(%ls : !ls)
+    pto.tmov ins(%rm : !rwhole) outs(%rs : !rs)
+    pto.tget_scale_addr ins(%right : !right) outs(%rs : !rs)
+    pto.tmatmul.mx ins(%left, %ls, %right, %rs : !left, !ls, !right, !rs) outs(%acc : !acc)
+    return
+  }
+
+  // Distinct fresh handles reuse the same physical slots after an MMAD.
+  // Keep the real M -> MTE1 reuse and MTE1 -> M dependencies.
+  // IR-LABEL: func.func @fold_window_reuse(
+  // IR-NOT: tget_scale_addr
+  // IR: pto.tmatmul.mx
+  // IR-NOT: tget_scale_addr
+  // IR: pto.tmov
+  // IR: pto.textract
+  // IR-NOT: tget_scale_addr
+  // IR: pto.tmatmul.mx.acc
+  // IR-NEXT: return
+  // CPP-LABEL: AICORE void fold_window_reuse(
+  // CPP: TEXTRACT(
+  // CPP: TEXTRACT(
+  // CPP: set_flag(PIPE_MTE1, PIPE_M,
+  // CPP: wait_flag(PIPE_MTE1, PIPE_M,
+  // CPP: TMATMUL_MX(
+  // CPP: set_flag(PIPE_M, PIPE_MTE1,
+  // CPP: wait_flag(PIPE_M, PIPE_MTE1,
+  // CPP: TMOV(
+  // CPP: TEXTRACT(
+  // CPP: TEXTRACT(
+  // CPP: set_flag(PIPE_MTE1, PIPE_M,
+  // CPP: wait_flag(PIPE_MTE1, PIPE_M,
+  // CPP: TMATMUL_MX(
+  func.func @fold_window_reuse() attributes {pto.kernel_kind = #pto.kernel_kind<cube>} {
+    %z = arith.constant 0 : i64
+    %zi = arith.constant 0 : index
+    %four = arith.constant 4 : index
+    %la = arith.constant 16384 : i64
+    %ra = arith.constant 32768 : i64
+    %lm = pto.alloc_tile addr = %z : !lm
+    %rm = pto.alloc_tile addr = %la : !rm
+    %lmat = pto.alloc_tile addr = %z : !lmat
+    %rmat = pto.alloc_tile addr = %la : !rmat
+    %left0 = pto.alloc_tile addr = %la : !left
+    %right0 = pto.alloc_tile addr = %ra : !right
+    %ls0 = pto.alloc_tile addr = %z : !ls
+    %rs0 = pto.alloc_tile addr = %z : !rs
+    %acc = pto.alloc_tile addr = %z : !acc
+    pto.tmov ins(%lmat : !lmat) outs(%left0 : !left)
+    pto.tmov ins(%rmat : !rmat) outs(%right0 : !right)
+    pto.textract ins(%lm, %zi, %zi : !lm, index, index) outs(%ls0 : !ls)
+    pto.tget_scale_addr ins(%left0 : !left) outs(%ls0 : !ls)
+    pto.textract ins(%rm, %zi, %zi : !rm, index, index) outs(%rs0 : !rs)
+    pto.tget_scale_addr ins(%right0 : !right) outs(%rs0 : !rs)
+    pto.tmatmul.mx ins(%left0, %ls0, %right0, %rs0 : !left, !ls, !right, !rs) outs(%acc : !acc)
+    %left1 = pto.alloc_tile addr = %la : !left
+    %right1 = pto.alloc_tile addr = %ra : !right
+    %ls1 = pto.alloc_tile addr = %z : !ls
+    %rs1 = pto.alloc_tile addr = %z : !rs
+    pto.tmov ins(%lmat : !lmat) outs(%left1 : !left)
+    pto.tmov ins(%rmat : !rmat) outs(%right1 : !right)
+    pto.textract ins(%lm, %zi, %four : !lm, index, index) outs(%ls1 : !ls)
+    pto.tget_scale_addr ins(%left1 : !left) outs(%ls1 : !ls)
+    pto.textract ins(%rm, %four, %zi : !rm, index, index) outs(%rs1 : !rs)
+    pto.tget_scale_addr ins(%right1 : !right) outs(%rs1 : !rs)
+    pto.tmatmul.mx.acc ins(%acc, %left1, %ls1, %right1, %rs1 : !acc, !left, !ls, !right, !rs) outs(%acc : !acc)
+    return
+  }
+
+  // Fresh handles are created and bound inside the loop, never hoisted out.
+  // IR-LABEL: func.func @fold_loop_local(
+  // IR: scf.for
+  // IR: arith.constant 1024 : i64
+  // IR-NEXT: %[[LOOPLS:.*]] = pto.alloc_tile addr =
+  // IR-NOT: tget_scale_addr
+  // IR: pto.textract {{.*}}outs(%[[LOOPLS]]
+  // IR-NEXT: }
+  // CPP-LABEL: AICORE void fold_loop_local(
+  // CPP: const int64_t [[LOOPADDR:v[0-9]+]] = 1024;
+  // CPP: for (
+  // CPP: uint64_t [[LOOPPTR:v[0-9]+]] = (uint64_t) [[LOOPADDR]];
+  // CPP-NEXT: TASSIGN({{.*}}, [[LOOPPTR]]);
+  // CPP: TEXTRACT(
+  func.func @fold_loop_local() attributes {pto.kernel_kind = #pto.kernel_kind<cube>} {
+    %z = arith.constant 0 : i64
+    %la = arith.constant 16384 : i64
+    %zi = arith.constant 0 : index
+    %four = arith.constant 4 : index
+    %eight = arith.constant 8 : index
+    %lm = pto.alloc_tile addr = %z : !lm
+    scf.for %offset = %zi to %eight step %four {
+      %left = pto.alloc_tile addr = %la : !left
+      %ls = pto.alloc_tile addr = %z : !ls
+      pto.textract ins(%lm, %zi, %offset : !lm, index, index) outs(%ls : !ls)
+      pto.tget_scale_addr ins(%left : !left) outs(%ls : !ls)
+    }
+    return
+  }
+}

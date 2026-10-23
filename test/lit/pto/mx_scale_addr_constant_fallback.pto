@@ -1,0 +1,228 @@
+// RUN: pto-test-opt --pto-a5-normalize-tmov %s | FileCheck %s
+// Conservative fallbacks must keep the original allocation address and binding.
+!left = !pto.tile_buf<left, 64x128xf8E4M3FN, blayout=col_major, slayout=row_major, fractal=512>
+!right = !pto.tile_buf<right, 128x128xf8E4M3FN, slayout=col_major, fractal=512>
+!lmat = !pto.tile_buf<mat, 64x128xf8E4M3FN, blayout=col_major, slayout=row_major, fractal=512>
+!rmat = !pto.tile_buf<mat, 128x128xf8E4M3FN, blayout=col_major, slayout=row_major, fractal=512>
+!lm = !pto.tile_buf<mat, 64x8x!pto.f8E8M0, slayout=row_major, fractal=32>
+!rm = !pto.tile_buf<mat, 8x128x!pto.f8E8M0, blayout=col_major, slayout=col_major, fractal=32>
+!ls = !pto.tile_buf<scaling, 64x4x!pto.f8E8M0, slayout=row_major, fractal=32>
+!rs = !pto.tile_buf<scaling, 4x128x!pto.f8E8M0, blayout=col_major, slayout=col_major, fractal=32>
+!acc = !pto.tile_buf<acc, 64x128xf32, blayout=col_major, slayout=row_major, fractal=1024>
+
+module attributes {pto.target_arch = "a5"} {
+  func.func private @consume_data(!left)
+  func.func private @consume_scale(!ls)
+  // CHECK-LABEL: func.func @dynamic_address(
+  // CHECK: pto.tget_scale_addr
+  // CHECK: return
+  func.func @dynamic_address(%addr : i64) {
+    %z = arith.constant 0 : i64
+    %la = arith.constant 16384 : i64
+    %zi = arith.constant 0 : index
+    %lm = pto.alloc_tile addr = %z : !lm
+    %left = pto.alloc_tile addr = %addr : !left
+    %ls = pto.alloc_tile addr = %z : !ls
+    pto.tget_scale_addr ins(%left : !left) outs(%ls : !ls)
+    pto.textract ins(%lm, %zi, %zi : !lm, index, index) outs(%ls : !ls)
+    return
+  }
+
+  // CHECK-LABEL: func.func @missing_address(
+  // CHECK: pto.tget_scale_addr
+  // CHECK: return
+  func.func @missing_address() {
+    %z = arith.constant 0 : i64
+    %la = arith.constant 16384 : i64
+    %zi = arith.constant 0 : index
+    %lm = pto.alloc_tile addr = %z : !lm
+    %left = pto.alloc_tile : !left
+    %ls = pto.alloc_tile addr = %z : !ls
+    pto.tget_scale_addr ins(%left : !left) outs(%ls : !ls)
+    pto.textract ins(%lm, %zi, %zi : !lm, index, index) outs(%ls : !ls)
+    return
+  }
+
+  // CHECK-LABEL: func.func @data_alias(
+  // CHECK: pto.tget_scale_addr
+  // CHECK: return
+  func.func @data_alias() {
+    %z = arith.constant 0 : i64
+    %la = arith.constant 16384 : i64
+    %zi = arith.constant 0 : index
+    %lm = pto.alloc_tile addr = %z : !lm
+    %left = pto.alloc_tile addr = %la : !left
+    %ls = pto.alloc_tile addr = %z : !ls
+    pto.tget_scale_addr ins(%left : !left) outs(%ls : !ls)
+    pto.textract ins(%lm, %zi, %zi : !lm, index, index) outs(%ls : !ls)
+    %alias = builtin.unrealized_conversion_cast %left : !left to !left
+    return
+  }
+
+  // CHECK-LABEL: func.func @scale_alias(
+  // CHECK: pto.tget_scale_addr
+  // CHECK: return
+  func.func @scale_alias() {
+    %z = arith.constant 0 : i64
+    %la = arith.constant 16384 : i64
+    %zi = arith.constant 0 : index
+    %lm = pto.alloc_tile addr = %z : !lm
+    %left = pto.alloc_tile addr = %la : !left
+    %ls = pto.alloc_tile addr = %z : !ls
+    pto.tget_scale_addr ins(%left : !left) outs(%ls : !ls)
+    pto.textract ins(%lm, %zi, %zi : !lm, index, index) outs(%ls : !ls)
+    %alias = builtin.unrealized_conversion_cast %ls : !ls to !ls
+    return
+  }
+
+  // CHECK-LABEL: func.func @mutable_data(
+  // CHECK: pto.tget_scale_addr
+  // CHECK: return
+  func.func @mutable_data() {
+    %z = arith.constant 0 : i64
+    %la = arith.constant 16384 : i64
+    %zi = arith.constant 0 : index
+    %lm = pto.alloc_tile addr = %z : !lm
+    %left = pto.alloc_tile addr = %la : !left
+    %ls = pto.alloc_tile addr = %z : !ls
+    pto.tget_scale_addr ins(%left : !left) outs(%ls : !ls)
+    pto.textract ins(%lm, %zi, %zi : !lm, index, index) outs(%ls : !ls)
+    %assigned = pto.tassign %left, %z : !left -> !left
+    return
+  }
+
+  // CHECK-LABEL: func.func @mutable_scale(
+  // CHECK: pto.tget_scale_addr
+  // CHECK: return
+  func.func @mutable_scale() {
+    %z = arith.constant 0 : i64
+    %la = arith.constant 16384 : i64
+    %zi = arith.constant 0 : index
+    %lm = pto.alloc_tile addr = %z : !lm
+    %left = pto.alloc_tile addr = %la : !left
+    %ls = pto.alloc_tile addr = %z : !ls
+    pto.tget_scale_addr ins(%left : !left) outs(%ls : !ls)
+    pto.textract ins(%lm, %zi, %zi : !lm, index, index) outs(%ls : !ls)
+    %assigned = pto.tassign %ls, %z : !ls -> !ls
+    return
+  }
+
+  // CHECK-LABEL: func.func @unknown_data(
+  // CHECK: pto.tget_scale_addr
+  // CHECK: return
+  func.func @unknown_data() {
+    %z = arith.constant 0 : i64
+    %la = arith.constant 16384 : i64
+    %zi = arith.constant 0 : index
+    %lm = pto.alloc_tile addr = %z : !lm
+    %left = pto.alloc_tile addr = %la : !left
+    %ls = pto.alloc_tile addr = %z : !ls
+    pto.tget_scale_addr ins(%left : !left) outs(%ls : !ls)
+    pto.textract ins(%lm, %zi, %zi : !lm, index, index) outs(%ls : !ls)
+    func.call @consume_data(%left) : (!left) -> ()
+    return
+  }
+
+  // CHECK-LABEL: func.func @unknown_scale(
+  // CHECK: pto.tget_scale_addr
+  // CHECK: return
+  func.func @unknown_scale() {
+    %z = arith.constant 0 : i64
+    %la = arith.constant 16384 : i64
+    %zi = arith.constant 0 : index
+    %lm = pto.alloc_tile addr = %z : !lm
+    %left = pto.alloc_tile addr = %la : !left
+    %ls = pto.alloc_tile addr = %z : !ls
+    pto.tget_scale_addr ins(%left : !left) outs(%ls : !ls)
+    pto.textract ins(%lm, %zi, %zi : !lm, index, index) outs(%ls : !ls)
+    func.call @consume_scale(%ls) : (!ls) -> ()
+    return
+  }
+
+  // CHECK-LABEL: func.func @captured_data(
+  // CHECK: pto.tget_scale_addr
+  // CHECK: return
+  func.func @captured_data(%cond : i1) {
+    %z = arith.constant 0 : i64
+    %la = arith.constant 16384 : i64
+    %zi = arith.constant 0 : index
+    %lm = pto.alloc_tile addr = %z : !lm
+    %left = pto.alloc_tile addr = %la : !left
+    %ls = pto.alloc_tile addr = %z : !ls
+    pto.tget_scale_addr ins(%left : !left) outs(%ls : !ls)
+    pto.textract ins(%lm, %zi, %zi : !lm, index, index) outs(%ls : !ls)
+    scf.if %cond {
+      func.call @consume_data(%left) : (!left) -> ()
+    }
+    return
+  }
+
+  // CHECK-LABEL: func.func @captured_scale(
+  // CHECK: pto.tget_scale_addr
+  // CHECK: return
+  func.func @captured_scale(%cond : i1) {
+    %z = arith.constant 0 : i64
+    %la = arith.constant 16384 : i64
+    %zi = arith.constant 0 : index
+    %lm = pto.alloc_tile addr = %z : !lm
+    %left = pto.alloc_tile addr = %la : !left
+    %ls = pto.alloc_tile addr = %z : !ls
+    pto.tget_scale_addr ins(%left : !left) outs(%ls : !ls)
+    pto.textract ins(%lm, %zi, %zi : !lm, index, index) outs(%ls : !ls)
+    scf.if %cond {
+      pto.textract ins(%lm, %zi, %zi : !lm, index, index) outs(%ls : !ls)
+    }
+    return
+  }
+
+  // CHECK-LABEL: func.func @earlier_scale_write(
+  // CHECK: pto.tget_scale_addr
+  // CHECK: return
+  func.func @earlier_scale_write() {
+    %z = arith.constant 0 : i64
+    %la = arith.constant 16384 : i64
+    %zi = arith.constant 0 : index
+    %lm = pto.alloc_tile addr = %z : !lm
+    %left = pto.alloc_tile addr = %la : !left
+    %ls = pto.alloc_tile addr = %z : !ls
+    pto.textract ins(%lm, %zi, %zi : !lm, index, index) outs(%ls : !ls)
+    pto.textract ins(%lm, %zi, %zi : !lm, index, index) outs(%ls : !ls)
+    pto.tget_scale_addr ins(%left : !left) outs(%ls : !ls)
+    return
+  }
+
+  // CHECK-LABEL: func.func @repeated_binding(
+  // CHECK: pto.tget_scale_addr
+  // CHECK: pto.tget_scale_addr
+  // CHECK: return
+  func.func @repeated_binding() {
+    %z = arith.constant 0 : i64
+    %la = arith.constant 16384 : i64
+    %zi = arith.constant 0 : index
+    %lm = pto.alloc_tile addr = %z : !lm
+    %left = pto.alloc_tile addr = %la : !left
+    %ls = pto.alloc_tile addr = %z : !ls
+    pto.tget_scale_addr ins(%left : !left) outs(%ls : !ls)
+    pto.textract ins(%lm, %zi, %zi : !lm, index, index) outs(%ls : !ls)
+    pto.tget_scale_addr ins(%left : !left) outs(%ls : !ls)
+    return
+  }
+
+  // CHECK-LABEL: func.func @outer_data(
+  // CHECK: pto.tget_scale_addr
+  // CHECK: return
+  func.func @outer_data(%cond : i1) {
+    %z = arith.constant 0 : i64
+    %la = arith.constant 16384 : i64
+    %zi = arith.constant 0 : index
+    %lm = pto.alloc_tile addr = %z : !lm
+    %left = pto.alloc_tile addr = %la : !left
+    scf.if %cond {
+      %ls = pto.alloc_tile addr = %z : !ls
+    pto.tget_scale_addr ins(%left : !left) outs(%ls : !ls)
+    pto.textract ins(%lm, %zi, %zi : !lm, index, index) outs(%ls : !ls)
+    }
+    return
+  }
+
+}
