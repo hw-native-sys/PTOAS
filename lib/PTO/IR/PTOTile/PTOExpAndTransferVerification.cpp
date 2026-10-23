@@ -234,9 +234,14 @@ using TExtractCommon = TileTransferCommon;
 static FailureOr<TExtractCommon> verifyTExtractCommon(TExtractOp op,
                                                       bool allowLowPrecision) {
   const bool hasFp = static_cast<bool>(op.getFp());
+  // MX scale windows use index constants too; apply the same non-negative and
+  // full-parent physical bounds checks before their A5-specific layout checks.
+  const bool isMxScale = allowLowPrecision &&
+                         isPTOF8E8M0Type(getElemTy(op.getSrc().getType()));
   auto common = verifyTileTransferCommon(
       op, op.getSrc(), op.getDst(), op.getIndexRow(), op.getIndexCol(),
-      allowLowPrecision, /*includeIndexAndIntOpsInConstFold=*/hasFp,
+      allowLowPrecision,
+      /*includeIndexAndIntOpsInConstFold=*/hasFp || isMxScale,
       /*insert=*/false);
   if (failed(common))
     return failure();

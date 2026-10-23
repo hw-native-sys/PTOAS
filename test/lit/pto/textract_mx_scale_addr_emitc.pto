@@ -1,0 +1,141 @@
+// RUN: pto-test-opt --pto-a5-normalize-tmov %s | FileCheck %s --check-prefix=IR
+// RUN: ptoas --pto-arch=a5 --pto-level=level3 %s | FileCheck %s --check-prefix=CPP
+
+!left = !pto.tile_buf<left, 64x128xf8E4M3FN, blayout=col_major, slayout=row_major, fractal=512>
+!right = !pto.tile_buf<right, 128x128xf8E4M3FN, slayout=col_major, fractal=512>
+!lm = !pto.tile_buf<mat, 64x8x!pto.f8E8M0, slayout=row_major, fractal=32>
+!rm = !pto.tile_buf<mat, 8x128x!pto.f8E8M0, blayout=col_major, slayout=col_major, fractal=32>
+!ls = !pto.tile_buf<scaling, 64x4x!pto.f8E8M0, slayout=row_major, fractal=32>
+!rs = !pto.tile_buf<scaling, 4x128x!pto.f8E8M0, blayout=col_major, slayout=col_major, fractal=32>
+!acc = !pto.tile_buf<acc, 64x128xf32, blayout=col_major, slayout=row_major, fractal=1024>
+
+module attributes {pto.target_arch = "a5"} {
+  // A late data allocation is moved only to its matching scale producer.
+  func.func @late_left_binding() attributes {pto.kernel_kind = #pto.kernel_kind<cube>} {
+    %fixed_zero = arith.constant 0 : i64
+    %fixed_right_mat = arith.constant 4096 : i64
+    %zero = arith.constant 0 : index
+    %col = arith.constant 4 : index
+    %lm = pto.alloc_tile addr = %fixed_zero : !lm
+    %ls = pto.alloc_tile addr = %fixed_zero : !ls
+    pto.textract ins(%lm, %zero, %col : !lm, index, index) outs(%ls : !ls)
+    %addr = arith.constant 16384 : i64
+    %left = pto.alloc_tile addr = %addr : !left
+    pto.tget_scale_addr ins(%left : !left) outs(%ls : !ls)
+    return
+  }
+
+  // One mutable scale handle is rebound to different data slots after the
+  // preceding MMAD. Keep each association immediately before its own write.
+  func.func @alternating_shared_scale_handle() attributes {pto.kernel_kind = #pto.kernel_kind<cube>} {
+    %fixed_zero = arith.constant 0 : i64
+    %fixed_right_mat = arith.constant 4096 : i64
+    %zero = arith.constant 0 : index
+    %four = arith.constant 4 : index
+    %addr0 = arith.constant 0 : i64
+    %addr1 = arith.constant 16384 : i64
+    %lm = pto.alloc_tile addr = %fixed_zero : !lm
+    %rm = pto.alloc_tile addr = %fixed_right_mat : !rm
+    %left0 = pto.alloc_tile addr = %addr0 : !left
+    %left1 = pto.alloc_tile addr = %addr1 : !left
+    %right0 = pto.alloc_tile addr = %addr0 : !right
+    %right1 = pto.alloc_tile addr = %addr1 : !right
+    %ls = pto.alloc_tile addr = %addr0 : !ls
+    %rs = pto.alloc_tile addr = %addr0 : !rs
+    %acc = pto.alloc_tile addr = %fixed_zero : !acc
+    pto.textract ins(%lm, %zero, %zero : !lm, index, index) outs(%ls : !ls)
+    pto.tget_scale_addr ins(%left0 : !left) outs(%ls : !ls)
+    pto.textract ins(%rm, %zero, %zero : !rm, index, index) outs(%rs : !rs)
+    pto.tget_scale_addr ins(%right0 : !right) outs(%rs : !rs)
+    pto.tmatmul.mx ins(%left0, %ls, %right0, %rs : !left, !ls, !right, !rs) outs(%acc : !acc)
+    pto.textract ins(%lm, %zero, %four : !lm, index, index) outs(%ls : !ls)
+    pto.tget_scale_addr ins(%left1 : !left) outs(%ls : !ls)
+    pto.textract ins(%rm, %four, %zero : !rm, index, index) outs(%rs : !rs)
+    pto.tget_scale_addr ins(%right1 : !right) outs(%rs : !rs)
+    pto.tmatmul.mx.acc ins(%acc, %left1, %ls, %right1, %rs : !acc, !left, !ls, !right, !rs) outs(%acc : !acc)
+    return
+  }
+
+  // The loop's two runtime offsets are aligned and bounded by the parent
+  // 64x8 / 8x128 shapes. Bind inside each iteration; never move out of scf.for.
+  func.func @bounded_dynamic_scale_offsets() attributes {pto.kernel_kind = #pto.kernel_kind<cube>} {
+    %fixed_zero = arith.constant 0 : i64
+    %fixed_right_mat = arith.constant 4096 : i64
+    %zero = arith.constant 0 : index
+    %four = arith.constant 4 : index
+    %eight = arith.constant 8 : index
+    %lm = pto.alloc_tile addr = %fixed_zero : !lm
+    %rm = pto.alloc_tile addr = %fixed_right_mat : !rm
+    %left = pto.alloc_tile addr = %fixed_zero : !left
+    %right = pto.alloc_tile addr = %fixed_zero : !right
+    %ls = pto.alloc_tile addr = %fixed_zero : !ls
+    %rs = pto.alloc_tile addr = %fixed_zero : !rs
+    scf.for %offset = %zero to %eight step %four {
+      pto.textract ins(%lm, %zero, %offset : !lm, index, index) outs(%ls : !ls)
+      pto.tget_scale_addr ins(%left : !left) outs(%ls : !ls)
+      pto.textract ins(%rm, %offset, %zero : !rm, index, index) outs(%rs : !rs)
+      pto.tget_scale_addr ins(%right : !right) outs(%rs : !rs)
+    }
+    return
+  }
+}
+
+// IR-LABEL: func.func @late_left_binding(
+// IR: %[[LS:.*]] = pto.alloc_tile {{.*}}!pto.tile_buf<scaling,
+// IR: %[[LEFT:.*]] = pto.alloc_tile addr =
+// IR-NEXT: pto.tget_scale_addr ins(%[[LEFT]]{{.*}}outs(%[[LS]]
+// IR-NEXT: pto.textract {{.*}}outs(%[[LS]]
+// IR-NEXT: return
+
+// IR-LABEL: func.func @alternating_shared_scale_handle(
+// IR: pto.tget_scale_addr ins(%[[L0:[a-zA-Z0-9_]+]]{{.*}}outs(%[[SL:[a-zA-Z0-9_]+]]
+// IR-NEXT: pto.textract {{.*}}outs(%[[SL]]
+// IR-NEXT: pto.tget_scale_addr ins(%[[R0:[a-zA-Z0-9_]+]]{{.*}}outs(%[[SR:[a-zA-Z0-9_]+]]
+// IR-NEXT: pto.textract {{.*}}outs(%[[SR]]
+// IR-NEXT: pto.tmatmul.mx ins(%[[L0]], %[[SL]], %[[R0]], %[[SR]]
+// IR-NEXT: pto.tget_scale_addr ins(%[[L1:[a-zA-Z0-9_]+]]{{.*}}outs(%[[SL]]
+// IR-NEXT: pto.textract {{.*}}outs(%[[SL]]
+// IR-NEXT: pto.tget_scale_addr ins(%[[R1:[a-zA-Z0-9_]+]]{{.*}}outs(%[[SR]]
+// IR-NEXT: pto.textract {{.*}}outs(%[[SR]]
+// IR-NEXT: pto.tmatmul.mx.acc ins(%{{.*}}, %[[L1]], %[[SL]], %[[R1]], %[[SR]]
+// IR-NEXT: return
+
+// IR-LABEL: func.func @bounded_dynamic_scale_offsets(
+// IR: scf.for %[[OFFSET:.*]] =
+// IR-NEXT: pto.tget_scale_addr
+// IR-NEXT: pto.textract ins(%{{.*}}, %{{.*}}, %[[OFFSET]]
+// IR-NEXT: pto.tget_scale_addr
+// IR-NEXT: pto.textract ins(%{{.*}}, %[[OFFSET]],
+// IR-NEXT: }
+// IR-NEXT: return
+
+// CPP-LABEL: AICORE void late_left_binding(
+// CPP: Tile<TileType::Mat, float8_e8m0_t, 64, 8,
+// CPP: GetScaleAddr(
+// CPP: TASSIGN(
+// CPP: TEXTRACT(
+
+// CPP-LABEL: AICORE void alternating_shared_scale_handle(
+// CPP: GetScaleAddr(
+// CPP: TASSIGN(
+// CPP: TEXTRACT(
+// CPP: GetScaleAddr(
+// CPP: TASSIGN(
+// CPP: TEXTRACT(
+// CPP: TMATMUL_MX(
+// CPP: GetScaleAddr(
+// CPP: TASSIGN(
+// CPP: TEXTRACT(
+// CPP: GetScaleAddr(
+// CPP: TASSIGN(
+// CPP: TEXTRACT(
+// CPP: TMATMUL_MX(
+
+// CPP-LABEL: AICORE void bounded_dynamic_scale_offsets(
+// CPP: for (
+// CPP: GetScaleAddr(
+// CPP: TASSIGN(
+// CPP: TEXTRACT(
+// CPP: GetScaleAddr(
+// CPP: TASSIGN(
+// CPP: TEXTRACT(

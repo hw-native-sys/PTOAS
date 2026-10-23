@@ -102,16 +102,31 @@ static Operation *findInterveningUseOfDst(Operation *start, const Operation *end
   return nullptr;
 }
 
-static pto::TMovOp findMatchingScaleTileTMov(pto::TGetScaleAddrOp op) {
+static bool isA5ScaleTileTExtract(pto::TExtractOp op) {
+  auto srcAS = getAddressSpaceFromValueType(op.getSrc().getType());
+  auto dstAS = getAddressSpaceFromValueType(op.getDst().getType());
+  return srcAS && dstAS && *srcAS == pto::AddressSpace::MAT &&
+         *dstAS == pto::AddressSpace::SCALING && !op.getFp() &&
+         !op.getPreQuantScalar() &&
+         op.getReluPreMode() == pto::ReluPreMode::NoRelu &&
+         !op.getAccToVecModeAttr();
+}
+
+static Operation *findMatchingScaleTileProducer(pto::TGetScaleAddrOp op) {
   Value dst = op.getDst();
-  for (Operation *cursor = op->getPrevNode(); cursor; cursor = cursor->getPrevNode()) {
-    auto mov = dyn_cast<pto::TMovOp>(cursor);
-    if (!mov || mov.getDst() != dst || !isA5ScaleTileTMov(mov)) {
-      continue;
+  for (Operation *cursor = op->getPrevNode(); cursor;
+       cursor = cursor->getPrevNode()) {
+    if (auto mov = dyn_cast<pto::TMovOp>(cursor)) {
+      if (mov.getDst() == dst && isA5ScaleTileTMov(mov)) {
+        return cursor;
+      }
+    } else if (auto extract = dyn_cast<pto::TExtractOp>(cursor)) {
+      if (extract.getDst() == dst && isA5ScaleTileTExtract(extract)) {
+        return cursor;
+      }
     }
-    return mov;
   }
-  return {};
+  return nullptr;
 }
 
 static bool isScaleAddrScalarType(Type type) {
@@ -138,6 +153,10 @@ static bool preservesScaleAddrBinding(Operation *op, Value dst) {
     // unrelated quantizing forms outside this narrowly scoped proof.
     return pto::classifyTMovForm(mov.getFp()) == pto::TMovForm::NoTileAux;
   }
+  if (auto extract = dyn_cast<pto::TExtractOp>(op)) {
+    // A base Mat->Scaling extraction writes data through the bound handle.
+    return isA5ScaleTileTExtract(extract);
+  }
   // Explicitly known fixed-handle data operations and fresh descriptors only.
   // In particular, tassign is Pure in ODS but mutates the emitted tile handle:
   // accepting arbitrary pure tile operations would make this proof unsound.
@@ -151,7 +170,7 @@ static bool preservesScaleAddrBinding(Operation *op, Value dst) {
 }
 
 static bool hasEstablishedScaleAddrBinding(pto::TGetScaleAddrOp op,
-                                          pto::TMovOp matchingTMov) {
+                                          Operation *matchingProducer) {
   // Only reason about independently allocated handles in this block. Do not
   // attempt to prove cross-block/region or alias equivalence.
   Block *block = op->getBlock();
@@ -168,7 +187,7 @@ static bool hasEstablishedScaleAddrBinding(pto::TGetScaleAddrOp op,
         }
         // Equal repeated bindings preserve the state, but only an earlier
         // binding that dominates the copy can establish the required proof.
-        if (binding->isBeforeInBlock(matchingTMov)) {
+        if (binding->isBeforeInBlock(matchingProducer)) {
           return true;
         }
         continue;
@@ -227,18 +246,20 @@ static LogicalResult collectScaleAddrDependencies(
 }
 
 static LogicalResult hoistScaleAddr(pto::TGetScaleAddrOp op,
-                                   pto::TMovOp matchingTMov,
+                                   Operation *matchingProducer,
                                    DominanceInfo &dominance) {
+  StringRef producerName = isa<pto::TMovOp>(matchingProducer) ? "TMOV" : "TEXTRACT";
   // The binding changes the destination address, including for uses captured
   // by nested regions. Neither crossing those uses nor silently keeping the
   // binding after the copy establishes safe backend semantics.
-  if (Operation *use = findInterveningUseOfDst(matchingTMov, op, op.getDst())) {
-    auto diagnostic = op.emitOpError(
-        "cannot safely establish scaling address before matching TMOV: "
-        "intervening destination use");
+  if (Operation *use = findInterveningUseOfDst(matchingProducer, op, op.getDst())) {
+    auto diagnostic = op.emitOpError();
+    diagnostic << "cannot safely establish scaling address before matching "
+               << producerName << ": intervening destination use";
     diagnostic.attachNote(use->getLoc())
         << "intervening destination use: " << use->getName();
-    diagnostic.attachNote(matchingTMov.getLoc()) << "matching TMOV is here";
+    diagnostic.attachNote(matchingProducer->getLoc())
+        << "matching " << producerName << " is here";
     return failure();
   }
   llvm::SmallPtrSet<Operation *, kRiskyOpReserveSize> collected;
@@ -246,23 +267,24 @@ static LogicalResult hoistScaleAddr(pto::TGetScaleAddrOp op,
   Operation *blockingDef = nullptr;
   for (Value operand : op->getOperands()) {
     if (failed(collectScaleAddrDependencies(
-            operand, matchingTMov, op, dominance, collected, dependencies,
+            operand, matchingProducer, op, dominance, collected, dependencies,
             blockingDef))) {
-      auto diagnostic = op.emitOpError(
-          "cannot safely establish scaling address before matching TMOV: "
-          "operand dependency cannot be hoisted");
+      auto diagnostic = op.emitOpError();
+      diagnostic << "cannot safely establish scaling address before matching "
+                 << producerName << ": operand dependency cannot be hoisted";
       if (blockingDef) {
         diagnostic.attachNote(blockingDef->getLoc())
             << "blocking dependency: " << blockingDef->getName();
       }
-      diagnostic.attachNote(matchingTMov.getLoc()) << "matching TMOV is here";
+      diagnostic.attachNote(matchingProducer->getLoc())
+          << "matching " << producerName << " is here";
       return failure();
     }
   }
   for (Operation *dependency : dependencies) {
-    dependency->moveBefore(matchingTMov);
+    dependency->moveBefore(matchingProducer);
   }
-  op->moveBefore(matchingTMov);
+  op->moveBefore(matchingProducer);
   return success();
 }
 
@@ -345,28 +367,28 @@ struct PTOA5NormalizeTMovPass
   void runOnOperation() override;
 
 private:
-  LogicalResult hoistScaleAddrOpsBeforeTMov(func::FuncOp func) const;
+  LogicalResult hoistScaleAddrOpsBeforeProducer(func::FuncOp func) const;
   LogicalResult normalizeRiskyVecVecTMov(func::FuncOp func) const;
   LogicalResult rewriteRiskyVecVecTMov(IRRewriter &rewriter, pto::TMovOp op) const;
   void verifyNoResidualRiskyTMov(func::FuncOp func);
 };
 
-LogicalResult PTOA5NormalizeTMovPass::hoistScaleAddrOpsBeforeTMov(
+LogicalResult PTOA5NormalizeTMovPass::hoistScaleAddrOpsBeforeProducer(
     func::FuncOp func) const {
   SmallVector<pto::TGetScaleAddrOp, kRiskyOpReserveSize> scaleAddrOps;
   DominanceInfo dominance(func);
   func.walk([&](pto::TGetScaleAddrOp op) { scaleAddrOps.push_back(op); });
   for (pto::TGetScaleAddrOp op : scaleAddrOps) {
-    auto matchingTMov = findMatchingScaleTileTMov(op);
-    if (!matchingTMov) {
+    auto matchingProducer = findMatchingScaleTileProducer(op);
+    if (!matchingProducer) {
       continue;
     }
-    if (hasEstablishedScaleAddrBinding(op, matchingTMov)) {
+    if (hasEstablishedScaleAddrBinding(op, matchingProducer)) {
       // Preserve the repeated binding's position; no reader is crossed and no
       // operation or dependency is erased or moved on this path.
       continue;
     }
-    if (failed(hoistScaleAddr(op, matchingTMov, dominance))) {
+    if (failed(hoistScaleAddr(op, matchingProducer, dominance))) {
       return failure();
     }
   }
@@ -459,7 +481,7 @@ void PTOA5NormalizeTMovPass::runOnOperation() {
     return;
   }
 
-  if (failed(hoistScaleAddrOpsBeforeTMov(func))) {
+  if (failed(hoistScaleAddrOpsBeforeProducer(func))) {
     signalPassFailure();
     return;
   }

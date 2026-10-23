@@ -1,0 +1,426 @@
+// TEXTRACT counterpart of issue_repeated_scale_addr_invalid.pto; keep the original TMOV coverage.
+// RUN: pto-test-opt --split-input-file --verify-diagnostics --pto-a5-normalize-tmov %s
+
+!lmat = !pto.tile_buf<mat, 64x128xf8E4M3FN, blayout=col_major, slayout=row_major, fractal=512>
+!rmat = !pto.tile_buf<mat, 128x128xf8E4M3FN, blayout=col_major, slayout=row_major, fractal=512>
+!left = !pto.tile_buf<left, 64x128xf8E4M3FN, blayout=col_major, slayout=row_major, fractal=512>
+!right = !pto.tile_buf<right, 128x128xf8E4M3FN, slayout=col_major, fractal=512>
+!lm = !pto.tile_buf<mat, 64x4x!pto.f8E8M0, slayout=row_major, fractal=32>
+!rm = !pto.tile_buf<mat, 4x128x!pto.f8E8M0, blayout=col_major, slayout=col_major, fractal=32>
+!ls = !pto.tile_buf<scaling, 64x4x!pto.f8E8M0, slayout=row_major, fractal=32>
+!rs = !pto.tile_buf<scaling, 4x128x!pto.f8E8M0, blayout=col_major, slayout=col_major, fractal=32>
+!acc = !pto.tile_buf<acc, 64x128xf32, blayout=col_major, slayout=row_major, fractal=1024>
+module attributes {pto.target_arch = "a5"} {
+  func.func @different_source(%cond : i1) attributes {pto.kernel_kind = #pto.kernel_kind<cube>} {
+    %zero = arith.constant 0 : i64
+    %extract_zero = arith.constant 0 : index
+    %lmat = pto.alloc_tile : !lmat
+    %rmat = pto.alloc_tile : !rmat
+    %lm = pto.alloc_tile : !lm
+    %rm = pto.alloc_tile : !rm
+    %left = pto.alloc_tile addr = %zero : !left
+    %right = pto.alloc_tile addr = %zero : !right
+    %ls = pto.alloc_tile addr = %zero : !ls
+    %rs = pto.alloc_tile addr = %zero : !rs
+    %acc = pto.alloc_tile : !acc
+    %other = pto.alloc_tile addr = %zero : !left
+    pto.tget_scale_addr ins(%left : !left) outs(%ls : !ls)
+    pto.tget_scale_addr ins(%right : !right) outs(%rs : !rs)
+    // expected-note@+1 {{matching TEXTRACT is here}}
+    pto.textract ins(%lm, %extract_zero, %extract_zero : !lm, index, index) outs(%ls : !ls)
+    pto.textract ins(%rm, %extract_zero, %extract_zero : !rm, index, index) outs(%rs : !rs)
+    // expected-note@+1 {{intervening destination use: pto.tmatmul.mx}}
+    pto.tmatmul.mx ins(%left, %ls, %right, %rs : !left, !ls, !right, !rs) outs(%acc : !acc)
+    // expected-error@+1 {{cannot safely establish scaling address before matching TEXTRACT: intervening destination use}}
+    pto.tget_scale_addr ins(%other : !left) outs(%ls : !ls)
+    return
+  }
+}
+
+// -----
+
+!lmat = !pto.tile_buf<mat, 64x128xf8E4M3FN, blayout=col_major, slayout=row_major, fractal=512>
+!rmat = !pto.tile_buf<mat, 128x128xf8E4M3FN, blayout=col_major, slayout=row_major, fractal=512>
+!left = !pto.tile_buf<left, 64x128xf8E4M3FN, blayout=col_major, slayout=row_major, fractal=512>
+!right = !pto.tile_buf<right, 128x128xf8E4M3FN, slayout=col_major, fractal=512>
+!lm = !pto.tile_buf<mat, 64x4x!pto.f8E8M0, slayout=row_major, fractal=32>
+!rm = !pto.tile_buf<mat, 4x128x!pto.f8E8M0, blayout=col_major, slayout=col_major, fractal=32>
+!ls = !pto.tile_buf<scaling, 64x4x!pto.f8E8M0, slayout=row_major, fractal=32>
+!rs = !pto.tile_buf<scaling, 4x128x!pto.f8E8M0, blayout=col_major, slayout=col_major, fractal=32>
+!acc = !pto.tile_buf<acc, 64x128xf32, blayout=col_major, slayout=row_major, fractal=1024>
+module attributes {pto.target_arch = "a5"} {
+  func.func @intervening_different_binding(%cond : i1) attributes {pto.kernel_kind = #pto.kernel_kind<cube>} {
+    %zero = arith.constant 0 : i64
+    %extract_zero = arith.constant 0 : index
+    %lmat = pto.alloc_tile : !lmat
+    %rmat = pto.alloc_tile : !rmat
+    %lm = pto.alloc_tile : !lm
+    %rm = pto.alloc_tile : !rm
+    %left = pto.alloc_tile addr = %zero : !left
+    %right = pto.alloc_tile addr = %zero : !right
+    %ls = pto.alloc_tile addr = %zero : !ls
+    %rs = pto.alloc_tile addr = %zero : !rs
+    %acc = pto.alloc_tile : !acc
+    %other = pto.alloc_tile addr = %zero : !left
+    pto.tget_scale_addr ins(%left : !left) outs(%ls : !ls)
+    pto.tget_scale_addr ins(%right : !right) outs(%rs : !rs)
+    pto.tget_scale_addr ins(%other : !left) outs(%ls : !ls)
+    // expected-note@+1 {{matching TEXTRACT is here}}
+    pto.textract ins(%lm, %extract_zero, %extract_zero : !lm, index, index) outs(%ls : !ls)
+    pto.textract ins(%rm, %extract_zero, %extract_zero : !rm, index, index) outs(%rs : !rs)
+    // expected-note@+1 {{intervening destination use: pto.tmatmul.mx}}
+    pto.tmatmul.mx ins(%left, %ls, %right, %rs : !left, !ls, !right, !rs) outs(%acc : !acc)
+    // expected-error@+1 {{cannot safely establish scaling address before matching TEXTRACT: intervening destination use}}
+    pto.tget_scale_addr ins(%left : !left) outs(%ls : !ls)
+    return
+  }
+}
+
+// -----
+
+!lmat = !pto.tile_buf<mat, 64x128xf8E4M3FN, blayout=col_major, slayout=row_major, fractal=512>
+!rmat = !pto.tile_buf<mat, 128x128xf8E4M3FN, blayout=col_major, slayout=row_major, fractal=512>
+!left = !pto.tile_buf<left, 64x128xf8E4M3FN, blayout=col_major, slayout=row_major, fractal=512>
+!right = !pto.tile_buf<right, 128x128xf8E4M3FN, slayout=col_major, fractal=512>
+!lm = !pto.tile_buf<mat, 64x4x!pto.f8E8M0, slayout=row_major, fractal=32>
+!rm = !pto.tile_buf<mat, 4x128x!pto.f8E8M0, blayout=col_major, slayout=col_major, fractal=32>
+!ls = !pto.tile_buf<scaling, 64x4x!pto.f8E8M0, slayout=row_major, fractal=32>
+!rs = !pto.tile_buf<scaling, 4x128x!pto.f8E8M0, blayout=col_major, slayout=col_major, fractal=32>
+!acc = !pto.tile_buf<acc, 64x128xf32, blayout=col_major, slayout=row_major, fractal=1024>
+module attributes {pto.target_arch = "a5"} {
+  func.func @source_tassign(%cond : i1) attributes {pto.kernel_kind = #pto.kernel_kind<cube>} {
+    %zero = arith.constant 0 : i64
+    %extract_zero = arith.constant 0 : index
+    %lmat = pto.alloc_tile : !lmat
+    %rmat = pto.alloc_tile : !rmat
+    %lm = pto.alloc_tile : !lm
+    %rm = pto.alloc_tile : !rm
+    %left = pto.alloc_tile addr = %zero : !left
+    %right = pto.alloc_tile addr = %zero : !right
+    %ls = pto.alloc_tile addr = %zero : !ls
+    %rs = pto.alloc_tile addr = %zero : !rs
+    %acc = pto.alloc_tile : !acc
+    pto.tget_scale_addr ins(%left : !left) outs(%ls : !ls)
+    pto.tget_scale_addr ins(%right : !right) outs(%rs : !rs)
+    // expected-note@+1 {{matching TEXTRACT is here}}
+    pto.textract ins(%lm, %extract_zero, %extract_zero : !lm, index, index) outs(%ls : !ls)
+    pto.textract ins(%rm, %extract_zero, %extract_zero : !rm, index, index) outs(%rs : !rs)
+    %new_addr = arith.constant 1024 : i64
+    %rebound = pto.tassign %left, %new_addr : !left -> !left
+    // expected-note@+1 {{intervening destination use: pto.tmatmul.mx}}
+    pto.tmatmul.mx ins(%left, %ls, %right, %rs : !left, !ls, !right, !rs) outs(%acc : !acc)
+    // expected-error@+1 {{cannot safely establish scaling address before matching TEXTRACT: intervening destination use}}
+    pto.tget_scale_addr ins(%left : !left) outs(%ls : !ls)
+    return
+  }
+}
+
+// -----
+
+!lmat = !pto.tile_buf<mat, 64x128xf8E4M3FN, blayout=col_major, slayout=row_major, fractal=512>
+!rmat = !pto.tile_buf<mat, 128x128xf8E4M3FN, blayout=col_major, slayout=row_major, fractal=512>
+!left = !pto.tile_buf<left, 64x128xf8E4M3FN, blayout=col_major, slayout=row_major, fractal=512>
+!right = !pto.tile_buf<right, 128x128xf8E4M3FN, slayout=col_major, fractal=512>
+!lm = !pto.tile_buf<mat, 64x4x!pto.f8E8M0, slayout=row_major, fractal=32>
+!rm = !pto.tile_buf<mat, 4x128x!pto.f8E8M0, blayout=col_major, slayout=col_major, fractal=32>
+!ls = !pto.tile_buf<scaling, 64x4x!pto.f8E8M0, slayout=row_major, fractal=32>
+!rs = !pto.tile_buf<scaling, 4x128x!pto.f8E8M0, blayout=col_major, slayout=col_major, fractal=32>
+!acc = !pto.tile_buf<acc, 64x128xf32, blayout=col_major, slayout=row_major, fractal=1024>
+module attributes {pto.target_arch = "a5"} {
+  func.func @destination_tassign(%cond : i1) attributes {pto.kernel_kind = #pto.kernel_kind<cube>} {
+    %zero = arith.constant 0 : i64
+    %extract_zero = arith.constant 0 : index
+    %lmat = pto.alloc_tile : !lmat
+    %rmat = pto.alloc_tile : !rmat
+    %lm = pto.alloc_tile : !lm
+    %rm = pto.alloc_tile : !rm
+    %left = pto.alloc_tile addr = %zero : !left
+    %right = pto.alloc_tile addr = %zero : !right
+    %ls = pto.alloc_tile addr = %zero : !ls
+    %rs = pto.alloc_tile addr = %zero : !rs
+    %acc = pto.alloc_tile : !acc
+    pto.tget_scale_addr ins(%left : !left) outs(%ls : !ls)
+    pto.tget_scale_addr ins(%right : !right) outs(%rs : !rs)
+    // expected-note@+1 {{matching TEXTRACT is here}}
+    pto.textract ins(%lm, %extract_zero, %extract_zero : !lm, index, index) outs(%ls : !ls)
+    pto.textract ins(%rm, %extract_zero, %extract_zero : !rm, index, index) outs(%rs : !rs)
+    // expected-note@+1 {{intervening destination use: pto.tassign}}
+    %rebound = pto.tassign %ls, %zero : !ls -> !ls
+    pto.tmatmul.mx ins(%left, %ls, %right, %rs : !left, !ls, !right, !rs) outs(%acc : !acc)
+    // expected-error@+1 {{cannot safely establish scaling address before matching TEXTRACT: intervening destination use}}
+    pto.tget_scale_addr ins(%left : !left) outs(%ls : !ls)
+    return
+  }
+}
+
+// -----
+
+!lmat = !pto.tile_buf<mat, 64x128xf8E4M3FN, blayout=col_major, slayout=row_major, fractal=512>
+!rmat = !pto.tile_buf<mat, 128x128xf8E4M3FN, blayout=col_major, slayout=row_major, fractal=512>
+!left = !pto.tile_buf<left, 64x128xf8E4M3FN, blayout=col_major, slayout=row_major, fractal=512>
+!right = !pto.tile_buf<right, 128x128xf8E4M3FN, slayout=col_major, fractal=512>
+!lm = !pto.tile_buf<mat, 64x4x!pto.f8E8M0, slayout=row_major, fractal=32>
+!rm = !pto.tile_buf<mat, 4x128x!pto.f8E8M0, blayout=col_major, slayout=col_major, fractal=32>
+!ls = !pto.tile_buf<scaling, 64x4x!pto.f8E8M0, slayout=row_major, fractal=32>
+!rs = !pto.tile_buf<scaling, 4x128x!pto.f8E8M0, blayout=col_major, slayout=col_major, fractal=32>
+!acc = !pto.tile_buf<acc, 64x128xf32, blayout=col_major, slayout=row_major, fractal=1024>
+module attributes {pto.target_arch = "a5"} {
+  func.func private @opaque()
+  func.func @unknown_call(%cond : i1) attributes {pto.kernel_kind = #pto.kernel_kind<cube>} {
+    %zero = arith.constant 0 : i64
+    %extract_zero = arith.constant 0 : index
+    %lmat = pto.alloc_tile : !lmat
+    %rmat = pto.alloc_tile : !rmat
+    %lm = pto.alloc_tile : !lm
+    %rm = pto.alloc_tile : !rm
+    %left = pto.alloc_tile addr = %zero : !left
+    %right = pto.alloc_tile addr = %zero : !right
+    %ls = pto.alloc_tile addr = %zero : !ls
+    %rs = pto.alloc_tile addr = %zero : !rs
+    %acc = pto.alloc_tile : !acc
+    pto.tget_scale_addr ins(%left : !left) outs(%ls : !ls)
+    pto.tget_scale_addr ins(%right : !right) outs(%rs : !rs)
+    // expected-note@+1 {{matching TEXTRACT is here}}
+    pto.textract ins(%lm, %extract_zero, %extract_zero : !lm, index, index) outs(%ls : !ls)
+    pto.textract ins(%rm, %extract_zero, %extract_zero : !rm, index, index) outs(%rs : !rs)
+    func.call @opaque() : () -> ()
+    // expected-note@+1 {{intervening destination use: pto.tmatmul.mx}}
+    pto.tmatmul.mx ins(%left, %ls, %right, %rs : !left, !ls, !right, !rs) outs(%acc : !acc)
+    // expected-error@+1 {{cannot safely establish scaling address before matching TEXTRACT: intervening destination use}}
+    pto.tget_scale_addr ins(%left : !left) outs(%ls : !ls)
+    return
+  }
+}
+
+// -----
+
+!lmat = !pto.tile_buf<mat, 64x128xf8E4M3FN, blayout=col_major, slayout=row_major, fractal=512>
+!rmat = !pto.tile_buf<mat, 128x128xf8E4M3FN, blayout=col_major, slayout=row_major, fractal=512>
+!left = !pto.tile_buf<left, 64x128xf8E4M3FN, blayout=col_major, slayout=row_major, fractal=512>
+!right = !pto.tile_buf<right, 128x128xf8E4M3FN, slayout=col_major, fractal=512>
+!lm = !pto.tile_buf<mat, 64x4x!pto.f8E8M0, slayout=row_major, fractal=32>
+!rm = !pto.tile_buf<mat, 4x128x!pto.f8E8M0, blayout=col_major, slayout=col_major, fractal=32>
+!ls = !pto.tile_buf<scaling, 64x4x!pto.f8E8M0, slayout=row_major, fractal=32>
+!rs = !pto.tile_buf<scaling, 4x128x!pto.f8E8M0, blayout=col_major, slayout=col_major, fractal=32>
+!acc = !pto.tile_buf<acc, 64x128xf32, blayout=col_major, slayout=row_major, fractal=1024>
+module attributes {pto.target_arch = "a5"} {
+  func.func @nested_reader(%cond : i1) attributes {pto.kernel_kind = #pto.kernel_kind<cube>} {
+    %zero = arith.constant 0 : i64
+    %extract_zero = arith.constant 0 : index
+    %lmat = pto.alloc_tile : !lmat
+    %rmat = pto.alloc_tile : !rmat
+    %lm = pto.alloc_tile : !lm
+    %rm = pto.alloc_tile : !rm
+    %left = pto.alloc_tile addr = %zero : !left
+    %right = pto.alloc_tile addr = %zero : !right
+    %ls = pto.alloc_tile addr = %zero : !ls
+    %rs = pto.alloc_tile addr = %zero : !rs
+    %acc = pto.alloc_tile : !acc
+    pto.tget_scale_addr ins(%left : !left) outs(%ls : !ls)
+    pto.tget_scale_addr ins(%right : !right) outs(%rs : !rs)
+    // expected-note@+1 {{matching TEXTRACT is here}}
+    pto.textract ins(%lm, %extract_zero, %extract_zero : !lm, index, index) outs(%ls : !ls)
+    pto.textract ins(%rm, %extract_zero, %extract_zero : !rm, index, index) outs(%rs : !rs)
+    scf.if %cond {
+      // expected-note@+1 {{intervening destination use: pto.tmatmul.mx}}
+    pto.tmatmul.mx ins(%left, %ls, %right, %rs : !left, !ls, !right, !rs) outs(%acc : !acc)
+    }
+    // expected-error@+1 {{cannot safely establish scaling address before matching TEXTRACT: intervening destination use}}
+    pto.tget_scale_addr ins(%left : !left) outs(%ls : !ls)
+    return
+  }
+}
+
+// -----
+
+!lmat = !pto.tile_buf<mat, 64x128xf8E4M3FN, blayout=col_major, slayout=row_major, fractal=512>
+!rmat = !pto.tile_buf<mat, 128x128xf8E4M3FN, blayout=col_major, slayout=row_major, fractal=512>
+!left = !pto.tile_buf<left, 64x128xf8E4M3FN, blayout=col_major, slayout=row_major, fractal=512>
+!right = !pto.tile_buf<right, 128x128xf8E4M3FN, slayout=col_major, fractal=512>
+!lm = !pto.tile_buf<mat, 64x4x!pto.f8E8M0, slayout=row_major, fractal=32>
+!rm = !pto.tile_buf<mat, 4x128x!pto.f8E8M0, blayout=col_major, slayout=col_major, fractal=32>
+!ls = !pto.tile_buf<scaling, 64x4x!pto.f8E8M0, slayout=row_major, fractal=32>
+!rs = !pto.tile_buf<scaling, 4x128x!pto.f8E8M0, blayout=col_major, slayout=col_major, fractal=32>
+!acc = !pto.tile_buf<acc, 64x128xf32, blayout=col_major, slayout=row_major, fractal=1024>
+module attributes {pto.target_arch = "a5"} {
+  func.func @nested_source_rebind(%cond : i1) attributes {pto.kernel_kind = #pto.kernel_kind<cube>} {
+    %zero = arith.constant 0 : i64
+    %extract_zero = arith.constant 0 : index
+    %lmat = pto.alloc_tile : !lmat
+    %rmat = pto.alloc_tile : !rmat
+    %lm = pto.alloc_tile : !lm
+    %rm = pto.alloc_tile : !rm
+    %left = pto.alloc_tile addr = %zero : !left
+    %right = pto.alloc_tile addr = %zero : !right
+    %ls = pto.alloc_tile addr = %zero : !ls
+    %rs = pto.alloc_tile addr = %zero : !rs
+    %acc = pto.alloc_tile : !acc
+    pto.tget_scale_addr ins(%left : !left) outs(%ls : !ls)
+    pto.tget_scale_addr ins(%right : !right) outs(%rs : !rs)
+    // expected-note@+1 {{matching TEXTRACT is here}}
+    pto.textract ins(%lm, %extract_zero, %extract_zero : !lm, index, index) outs(%ls : !ls)
+    pto.textract ins(%rm, %extract_zero, %extract_zero : !rm, index, index) outs(%rs : !rs)
+    scf.if %cond {
+      %rebound = pto.tassign %left, %zero : !left -> !left
+    }
+    // expected-note@+1 {{intervening destination use: pto.tmatmul.mx}}
+    pto.tmatmul.mx ins(%left, %ls, %right, %rs : !left, !ls, !right, !rs) outs(%acc : !acc)
+    // expected-error@+1 {{cannot safely establish scaling address before matching TEXTRACT: intervening destination use}}
+    pto.tget_scale_addr ins(%left : !left) outs(%ls : !ls)
+    return
+  }
+}
+
+// -----
+
+!lmat = !pto.tile_buf<mat, 64x128xf8E4M3FN, blayout=col_major, slayout=row_major, fractal=512>
+!rmat = !pto.tile_buf<mat, 128x128xf8E4M3FN, blayout=col_major, slayout=row_major, fractal=512>
+!left = !pto.tile_buf<left, 64x128xf8E4M3FN, blayout=col_major, slayout=row_major, fractal=512>
+!right = !pto.tile_buf<right, 128x128xf8E4M3FN, slayout=col_major, fractal=512>
+!lm = !pto.tile_buf<mat, 64x4x!pto.f8E8M0, slayout=row_major, fractal=32>
+!rm = !pto.tile_buf<mat, 4x128x!pto.f8E8M0, blayout=col_major, slayout=col_major, fractal=32>
+!ls = !pto.tile_buf<scaling, 64x4x!pto.f8E8M0, slayout=row_major, fractal=32>
+!rs = !pto.tile_buf<scaling, 4x128x!pto.f8E8M0, blayout=col_major, slayout=col_major, fractal=32>
+!acc = !pto.tile_buf<acc, 64x128xf32, blayout=col_major, slayout=row_major, fractal=1024>
+module attributes {pto.target_arch = "a5"} {
+  func.func @aliased_other_binding(%cond : i1) attributes {pto.kernel_kind = #pto.kernel_kind<cube>} {
+    %zero = arith.constant 0 : i64
+    %extract_zero = arith.constant 0 : index
+    %lmat = pto.alloc_tile : !lmat
+    %rmat = pto.alloc_tile : !rmat
+    %lm = pto.alloc_tile : !lm
+    %rm = pto.alloc_tile : !rm
+    %left = pto.alloc_tile addr = %zero : !left
+    %right = pto.alloc_tile addr = %zero : !right
+    %ls = pto.alloc_tile addr = %zero : !ls
+    %rs = pto.alloc_tile addr = %zero : !rs
+    %acc = pto.alloc_tile : !acc
+    %other = pto.alloc_tile addr = %zero : !left
+    %alias = pto.tassign %ls, %zero : !ls -> !ls
+    pto.tget_scale_addr ins(%left : !left) outs(%ls : !ls)
+    pto.tget_scale_addr ins(%right : !right) outs(%rs : !rs)
+    // expected-note@+1 {{matching TEXTRACT is here}}
+    pto.textract ins(%lm, %extract_zero, %extract_zero : !lm, index, index) outs(%ls : !ls)
+    pto.textract ins(%rm, %extract_zero, %extract_zero : !rm, index, index) outs(%rs : !rs)
+    pto.tget_scale_addr ins(%other : !left) outs(%alias : !ls)
+    // expected-note@+1 {{intervening destination use: pto.tmatmul.mx}}
+    pto.tmatmul.mx ins(%left, %ls, %right, %rs : !left, !ls, !right, !rs) outs(%acc : !acc)
+    // expected-error@+1 {{cannot safely establish scaling address before matching TEXTRACT: intervening destination use}}
+    pto.tget_scale_addr ins(%left : !left) outs(%ls : !ls)
+    return
+  }
+}
+
+// -----
+
+!lmat = !pto.tile_buf<mat, 64x128xf8E4M3FN, blayout=col_major, slayout=row_major, fractal=512>
+!rmat = !pto.tile_buf<mat, 128x128xf8E4M3FN, blayout=col_major, slayout=row_major, fractal=512>
+!left = !pto.tile_buf<left, 64x128xf8E4M3FN, blayout=col_major, slayout=row_major, fractal=512>
+!right = !pto.tile_buf<right, 128x128xf8E4M3FN, slayout=col_major, fractal=512>
+!lm = !pto.tile_buf<mat, 64x4x!pto.f8E8M0, slayout=row_major, fractal=32>
+!rm = !pto.tile_buf<mat, 4x128x!pto.f8E8M0, blayout=col_major, slayout=col_major, fractal=32>
+!ls = !pto.tile_buf<scaling, 64x4x!pto.f8E8M0, slayout=row_major, fractal=32>
+!rs = !pto.tile_buf<scaling, 4x128x!pto.f8E8M0, blayout=col_major, slayout=col_major, fractal=32>
+!acc = !pto.tile_buf<acc, 64x128xf32, blayout=col_major, slayout=row_major, fractal=1024>
+module attributes {pto.target_arch = "a5"} {
+  func.func @different_destination(%cond : i1) attributes {pto.kernel_kind = #pto.kernel_kind<cube>} {
+    %zero = arith.constant 0 : i64
+    %extract_zero = arith.constant 0 : index
+    %lmat = pto.alloc_tile : !lmat
+    %rmat = pto.alloc_tile : !rmat
+    %lm = pto.alloc_tile : !lm
+    %rm = pto.alloc_tile : !rm
+    %left = pto.alloc_tile addr = %zero : !left
+    %right = pto.alloc_tile addr = %zero : !right
+    %ls = pto.alloc_tile addr = %zero : !ls
+    %rs = pto.alloc_tile addr = %zero : !rs
+    %acc = pto.alloc_tile : !acc
+    %other = pto.alloc_tile addr = %zero : !ls
+    pto.tget_scale_addr ins(%left : !left) outs(%other : !ls)
+    pto.tget_scale_addr ins(%right : !right) outs(%rs : !rs)
+    // expected-note@+1 {{matching TEXTRACT is here}}
+    pto.textract ins(%lm, %extract_zero, %extract_zero : !lm, index, index) outs(%ls : !ls)
+    pto.textract ins(%rm, %extract_zero, %extract_zero : !rm, index, index) outs(%rs : !rs)
+    // expected-note@+1 {{intervening destination use: pto.tmatmul.mx}}
+    pto.tmatmul.mx ins(%left, %ls, %right, %rs : !left, !ls, !right, !rs) outs(%acc : !acc)
+    // expected-error@+1 {{cannot safely establish scaling address before matching TEXTRACT: intervening destination use}}
+    pto.tget_scale_addr ins(%left : !left) outs(%ls : !ls)
+    return
+  }
+}
+
+// -----
+
+!lmat = !pto.tile_buf<mat, 64x128xf8E4M3FN, blayout=col_major, slayout=row_major, fractal=512>
+!rmat = !pto.tile_buf<mat, 128x128xf8E4M3FN, blayout=col_major, slayout=row_major, fractal=512>
+!left = !pto.tile_buf<left, 64x128xf8E4M3FN, blayout=col_major, slayout=row_major, fractal=512>
+!right = !pto.tile_buf<right, 128x128xf8E4M3FN, slayout=col_major, fractal=512>
+!lm = !pto.tile_buf<mat, 64x4x!pto.f8E8M0, slayout=row_major, fractal=32>
+!rm = !pto.tile_buf<mat, 4x128x!pto.f8E8M0, blayout=col_major, slayout=col_major, fractal=32>
+!ls = !pto.tile_buf<scaling, 64x4x!pto.f8E8M0, slayout=row_major, fractal=32>
+!rs = !pto.tile_buf<scaling, 4x128x!pto.f8E8M0, blayout=col_major, slayout=col_major, fractal=32>
+!acc = !pto.tile_buf<acc, 64x128xf32, blayout=col_major, slayout=row_major, fractal=1024>
+module attributes {pto.target_arch = "a5"} {
+  func.func @cross_block(%cond : i1) attributes {pto.kernel_kind = #pto.kernel_kind<cube>} {
+    %zero = arith.constant 0 : i64
+    %extract_zero = arith.constant 0 : index
+    %lmat = pto.alloc_tile : !lmat
+    %rmat = pto.alloc_tile : !rmat
+    %lm = pto.alloc_tile : !lm
+    %rm = pto.alloc_tile : !rm
+    %left = pto.alloc_tile addr = %zero : !left
+    %right = pto.alloc_tile addr = %zero : !right
+    %ls = pto.alloc_tile addr = %zero : !ls
+    %rs = pto.alloc_tile addr = %zero : !rs
+    %acc = pto.alloc_tile : !acc
+    pto.tget_scale_addr ins(%left : !left) outs(%ls : !ls)
+    pto.tget_scale_addr ins(%right : !right) outs(%rs : !rs)
+    cf.br ^next
+  ^next:
+    // expected-note@+1 {{matching TEXTRACT is here}}
+    pto.textract ins(%lm, %extract_zero, %extract_zero : !lm, index, index) outs(%ls : !ls)
+    pto.textract ins(%rm, %extract_zero, %extract_zero : !rm, index, index) outs(%rs : !rs)
+    // expected-note@+1 {{intervening destination use: pto.tmatmul.mx}}
+    pto.tmatmul.mx ins(%left, %ls, %right, %rs : !left, !ls, !right, !rs) outs(%acc : !acc)
+    // expected-error@+1 {{cannot safely establish scaling address before matching TEXTRACT: intervening destination use}}
+    pto.tget_scale_addr ins(%left : !left) outs(%ls : !ls)
+    return
+  }
+}
+
+// -----
+
+!lmat = !pto.tile_buf<mat, 64x128xf8E4M3FN, blayout=col_major, slayout=row_major, fractal=512>
+!rmat = !pto.tile_buf<mat, 128x128xf8E4M3FN, blayout=col_major, slayout=row_major, fractal=512>
+!left = !pto.tile_buf<left, 64x128xf8E4M3FN, blayout=col_major, slayout=row_major, fractal=512>
+!right = !pto.tile_buf<right, 128x128xf8E4M3FN, slayout=col_major, fractal=512>
+!lm = !pto.tile_buf<mat, 64x4x!pto.f8E8M0, slayout=row_major, fractal=32>
+!rm = !pto.tile_buf<mat, 4x128x!pto.f8E8M0, blayout=col_major, slayout=col_major, fractal=32>
+!ls = !pto.tile_buf<scaling, 64x4x!pto.f8E8M0, slayout=row_major, fractal=32>
+!rs = !pto.tile_buf<scaling, 4x128x!pto.f8E8M0, blayout=col_major, slayout=col_major, fractal=32>
+!acc = !pto.tile_buf<acc, 64x128xf32, blayout=col_major, slayout=row_major, fractal=1024>
+module attributes {pto.target_arch = "a5"} {
+  func.func @no_binding_before_copy(%cond : i1) attributes {pto.kernel_kind = #pto.kernel_kind<cube>} {
+    %zero = arith.constant 0 : i64
+    %extract_zero = arith.constant 0 : index
+    %lmat = pto.alloc_tile : !lmat
+    %rmat = pto.alloc_tile : !rmat
+    %lm = pto.alloc_tile : !lm
+    %rm = pto.alloc_tile : !rm
+    %left = pto.alloc_tile addr = %zero : !left
+    %right = pto.alloc_tile addr = %zero : !right
+    %ls = pto.alloc_tile addr = %zero : !ls
+    %rs = pto.alloc_tile addr = %zero : !rs
+    %acc = pto.alloc_tile : !acc
+    pto.tget_scale_addr ins(%right : !right) outs(%rs : !rs)
+    // expected-note@+1 {{matching TEXTRACT is here}}
+    pto.textract ins(%lm, %extract_zero, %extract_zero : !lm, index, index) outs(%ls : !ls)
+    pto.textract ins(%rm, %extract_zero, %extract_zero : !rm, index, index) outs(%rs : !rs)
+    // expected-note@+1 {{intervening destination use: pto.tmatmul.mx}}
+    pto.tmatmul.mx ins(%left, %ls, %right, %rs : !left, !ls, !right, !rs) outs(%acc : !acc)
+    // expected-error@+1 {{cannot safely establish scaling address before matching TEXTRACT: intervening destination use}}
+    pto.tget_scale_addr ins(%left : !left) outs(%ls : !ls)
+    pto.tget_scale_addr ins(%left : !left) outs(%ls : !ls)
+    return
+  }
+}
