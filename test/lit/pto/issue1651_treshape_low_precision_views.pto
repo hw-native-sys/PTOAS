@@ -1,0 +1,80 @@
+// RUN: ptoas --pto-level=level3 --pto-arch=a5 %s -o - | FileCheck %s
+//
+// Byte-preserving FP8/E8M0 Mat treshape views must verify and lower; the
+// verifier keeps the documented constraints (same loc, equal total bytes,
+// matching boxed category) instead of rejecting low-precision dtypes.
+// Covers issue #1651: FP8 NZ->ZN boxed swap and non-square E8M0 view.
+
+module attributes {pto.target_arch = "a5"} {
+  func.func @issue1651_fp8_mat_nz_zn_view() attributes {pto.kernel_kind = #pto.kernel_kind<cube>} {
+    %c0 = arith.constant 0 : i64
+    %c16384 = arith.constant 16384 : i64
+
+    %src = pto.alloc_tile addr = %c0
+      : !pto.tile_buf<loc=mat, dtype=f8E4M3FN, rows=128, cols=128, v_row=128, v_col=128,
+                      blayout=col_major, slayout=row_major, fractal=512, pad=0>
+
+    %view = pto.treshape %src
+      : !pto.tile_buf<loc=mat, dtype=f8E4M3FN, rows=128, cols=128, v_row=128, v_col=128,
+                      blayout=col_major, slayout=row_major, fractal=512, pad=0>
+     -> !pto.tile_buf<loc=mat, dtype=f8E4M3FN, rows=128, cols=128, v_row=128, v_col=128,
+                      blayout=row_major, slayout=col_major, fractal=512, pad=0>
+
+    %out = pto.alloc_tile addr = %c16384
+      : !pto.tile_buf<loc=left, dtype=f8E4M3FN, rows=128, cols=128, v_row=128, v_col=128,
+                      blayout=row_major, slayout=col_major, fractal=512, pad=0>
+
+    pto.tmov
+      ins(%view
+          : !pto.tile_buf<loc=mat, dtype=f8E4M3FN, rows=128, cols=128, v_row=128, v_col=128,
+                          blayout=row_major, slayout=col_major, fractal=512, pad=0>)
+      outs(%out
+          : !pto.tile_buf<loc=left, dtype=f8E4M3FN, rows=128, cols=128, v_row=128, v_col=128,
+                          blayout=row_major, slayout=col_major, fractal=512, pad=0>)
+
+    return
+  }
+
+  func.func @issue1651_e8m0_nonsquare_view() attributes {pto.kernel_kind = #pto.kernel_kind<cube>} {
+    %c0 = arith.constant 0 : i64
+    %c512 = arith.constant 512 : i64
+
+    %src = pto.alloc_tile addr = %c0
+      : !pto.tile_buf<loc=mat, dtype=!pto.f8E8M0, rows=128, cols=4, v_row=128, v_col=4,
+                      blayout=row_major, slayout=row_major, fractal=32, pad=0>
+
+    %view = pto.treshape %src
+      : !pto.tile_buf<loc=mat, dtype=!pto.f8E8M0, rows=128, cols=4, v_row=128, v_col=4,
+                      blayout=row_major, slayout=row_major, fractal=32, pad=0>
+     -> !pto.tile_buf<loc=mat, dtype=!pto.f8E8M0, rows=4, cols=128, v_row=4, v_col=128,
+                      blayout=col_major, slayout=col_major, fractal=32, pad=0>
+
+    %out = pto.alloc_tile addr = %c512
+      : !pto.tile_buf<loc=left, dtype=!pto.f8E8M0, rows=4, cols=128, v_row=4, v_col=128,
+                      blayout=col_major, slayout=col_major, fractal=32, pad=0>
+
+    pto.tmov
+      ins(%view
+          : !pto.tile_buf<loc=mat, dtype=!pto.f8E8M0, rows=4, cols=128, v_row=4, v_col=128,
+                          blayout=col_major, slayout=col_major, fractal=32, pad=0>)
+      outs(%out
+          : !pto.tile_buf<loc=left, dtype=!pto.f8E8M0, rows=4, cols=128, v_row=4, v_col=128,
+                          blayout=col_major, slayout=col_major, fractal=32, pad=0>)
+
+    return
+  }
+}
+
+// CHECK-LABEL: AICORE void issue1651_fp8_mat_nz_zn_view()
+// CHECK: Tile<TileType::Mat, float8_e4m3_t, 128, 128, BLayout::ColMajor, 128, 128, SLayout::RowMajor, 512, PadValue::Null, CompactMode::Null> [[FP8_SRC:v[0-9]+]];
+// CHECK: Tile<TileType::Mat, float8_e4m3_t, 128, 128, BLayout::RowMajor, 128, 128, SLayout::ColMajor, 512, PadValue::Null, CompactMode::Null> [[FP8_VIEW:v[0-9]+]];
+// CHECK-NEXT: TRESHAPE([[FP8_VIEW]], [[FP8_SRC]]);
+// CHECK: Tile<TileType::Left, float8_e4m3_t, 128, 128, BLayout::ColMajor, 128, 128, SLayout::ColMajor, 512, PadValue::Null, CompactMode::Null> [[FP8_OUT:v[0-9]+]];
+// CHECK: TMOV([[FP8_OUT]], [[FP8_VIEW]]);
+
+// CHECK-LABEL: AICORE void issue1651_e8m0_nonsquare_view()
+// CHECK: Tile<TileType::Mat, float8_e8m0_t, 128, 4, BLayout::RowMajor, 128, 4, SLayout::RowMajor, 32, PadValue::Null, CompactMode::Null> [[E8M0_SRC:v[0-9]+]];
+// CHECK: Tile<TileType::Mat, float8_e8m0_t, 4, 128, BLayout::ColMajor, 4, 128, SLayout::ColMajor, 32, PadValue::Null, CompactMode::Null> [[E8M0_VIEW:v[0-9]+]];
+// CHECK-NEXT: TRESHAPE([[E8M0_VIEW]], [[E8M0_SRC]]);
+// CHECK: Tile<TileType::Left, float8_e8m0_t, 4, 128, BLayout::ColMajor, 4, 128, SLayout::ColMajor, 32, PadValue::Null, CompactMode::Null> [[E8M0_OUT:v[0-9]+]];
+// CHECK: TMOV([[E8M0_OUT]], [[E8M0_VIEW]]);

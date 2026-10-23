@@ -53,7 +53,7 @@ static std::optional<int64_t> getElemBytes(Type elemTy) {
     if (ft.isF64()) {
         return mlir::pto::kValue8;
     }
-    return std::nullopt;
+    // 8-bit float kinds fall through to the shared storage-width utility.
   }
   if (auto it = dyn_cast<IntegerType>(elemTy)) {
     int64_t bits = it.getWidth();
@@ -62,7 +62,13 @@ static std::optional<int64_t> getElemBytes(Type elemTy) {
     }
     return std::max<int64_t>(1, bits / mlir::pto::kValue8);
   }
-  return std::nullopt;
+  // Low-precision PTO element types (f8*, hif8, f4-packed, *x2) report their
+  // storage width through the shared utility.
+  int64_t bits = mlir::pto::getPTOStorageElemBitWidth(elemTy);
+  if (bits <= 0) {
+    return std::nullopt;
+  }
+  return std::max<int64_t>(1, bits / mlir::pto::kValue8);
 }
 
 static bool isLocallyBoundTileSource(Value value) {
@@ -183,8 +189,10 @@ mlir::LogicalResult mlir::pto::TReshapeOp::verify() {
     return emitOpError("expects src/result to be !pto.tile_buf types");
   }
 
-  if (failed(verifyTileBufCommon(*this, ts, "src")) ||
-      failed(verifyTileBufCommon(*this, tr, "dst"))) {
+  if (failed(verifyTileBufCommon(*this, ts, "src",
+                                 /*allowLowPrecision=*/true)) ||
+      failed(verifyTileBufCommon(*this, tr, "dst",
+                                 /*allowLowPrecision=*/true))) {
     return failure();
   }
 
