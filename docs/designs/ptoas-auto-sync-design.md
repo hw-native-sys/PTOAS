@@ -88,10 +88,21 @@
 | `scope` | `pto::AddressSpace` | 地址空间（GM/MAT/VEC/ACC/LEFT/RIGHT 等） |
 | `baseAddresses` | `SmallVector<uint64_t>` | 已知的偏移列表，配合 `allocateSize` 做精确区间重叠 |
 | `allocateSize` | `uint64_t` | 字节大小 |
+| `gmWindow` | `std::optional<GMWindow>` | GM view 链选中的跨步字节范围；缺省表示“无法证明”，不改变上面两个字段的行为 |
+
+`baseAddresses` + `allocateSize` 描述的是一段**平坦区间**，表达不了“同一个
+tensor 的两列切片”——列切片在地址空间里是交错的，平坦区间必然相交，哪怕没有
+任何一个字节重合（issue #1624）。`GMWindow` 补上这一层：
+
+| 字段 | 含义 |
+| --- | --- |
+| `byteOffset` | 相对 root 的首个选中字节 |
+| `contigBytes` | 最内层连续段长度（字节） |
+| `outerDims` | 外层维度，最外在前，每项为 `(字节 stride, 迭代次数)` |
 
 `operator==`（第 111 行）要求 `baseAddresses`、`rootBuffer`、`scope`、
-`allocateSize`、`baseBuffer` 全部相等才算同一缓冲；这是别名分析里的「严格相等」
-判定，命中后可直接走依赖路径。
+`allocateSize`、`baseBuffer`、`gmWindow` 全部相等才算同一缓冲；这是别名分析里的
+「严格相等」判定，命中后可直接走依赖路径。
 
 ### 3.4 同步指令：`SyncOperation`
 
@@ -381,10 +392,33 @@ hazard 判定按三类关系展开：
 
 1. `scope` 不同，直接不别名。
 2. `GM` 先比较 root，必要时追踪 `realRoot`。
-3. 地址和大小都已知，就做区间重叠。
-4. 信息缺失（地址未知、size 未知），保守按“可能重叠”。
+3. 同 root 且两侧都有 `gmWindow` 时，尝试跨步不相交证明（见 5.1.1）。
+4. 地址和大小都已知，就做区间重叠。
+5. 信息缺失（地址未知、size 未知），保守按“可能重叠”。
 
 这套规则在信息不足时会偏保守，但不会牺牲正确性。后续会继续补强动态 shape/offset 场景下的精细分析。
+
+#### 5.1.1 同 root 的跨步不相交证明
+
+`isGMWindowProvenDisjoint` 只在同 root 上成立——窗口偏移是相对 root 的，跨 root
+不可比。它返回 `true` 才会推翻保守结论，返回 `false` 时上层行为完全不变。
+
+证明在 **64 字节粒度**上做。64 来自 pto-isa `include/pto/common/constants.hpp`
+的 `FIXP_BURST_UNIT_LEN`（fixpipe burst 单元，比 MTE3 的 `BLOCK_BYTE_SIZE = 32`
+更粗）。ISA 没有规定总线对「只覆盖一部分的 burst」是否做 read-modify-write，所以
+先把连续段向外撑到整粒度再判，无论硬件是按字节精确还是按 burst 回写都成立。
+
+两条判据：
+
+1. **包络区间不相交**。覆盖常见的按行分块：同一 tensor 的两段不同行区间。
+2. **段起点同格 + 一个周期内两段不相碰**。覆盖列切片——这种情况下判据 1 永远不成立。
+   要求两侧 `outerDims` 完全相同、每个 stride 都是最内 stride `S` 的倍数、且
+   `contigA + contigB <= S`；此时任意两个段起点之差都同余于 `(offA - offB) mod S`，
+   只需排除该余数及其减 `S` 两个候选。
+
+此外，**任何 `GMWindow` 都不允许跨越循环边界**：`scf.for` 的 region iter arg、
+`scf.while` 的 before/after block arg、以及循环结果上的窗口都会被清空，否则窗口
+描述的只是首次迭代。`arith.select` / `scf.if` 走并集语义，只会放宽，不需处理。
 
 ### 5.2 例子：`[V][V][MTE3]`
 

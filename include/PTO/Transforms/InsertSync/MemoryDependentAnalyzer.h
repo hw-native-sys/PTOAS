@@ -34,9 +34,15 @@ public:
  
 private:
   bool isGMBufferOverlap(const BaseMemInfo *a, const BaseMemInfo *b) const;
-  
+
+  // Proves two same-root GM accesses cannot share a byte, using the strided
+  // window recorded by PTOIRTranslator. Returns false whenever no proof is
+  // available, which leaves the caller's conservative answer in place.
+  bool isGMWindowProvenDisjoint(const BaseMemInfo *a,
+                                const BaseMemInfo *b) const;
+
   bool isBufferAddressRangeOverlap(const BaseMemInfo *a, const BaseMemInfo *b) const;
-  
+
   bool isBufferOverlap(const BaseMemInfo *a, const BaseMemInfo *b,
                        int aIndex, int bIndex) const;
 };
