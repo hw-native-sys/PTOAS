@@ -15,6 +15,11 @@
 
 #include <algorithm>
 
+#include "mlir/Dialect/Arith/IR/Arith.h"
+#include "mlir/Dialect/SCF/IR/SCF.h"
+#include "mlir/Interfaces/SideEffectInterfaces.h"
+#include "llvm/ADT/STLExtras.h"
+
 #include "PTO/Transforms/InsertSync/SyncCommon.h"
 #include "PTO/Transforms/InsertSync/SyncMacroModel.h"
 
@@ -756,6 +761,233 @@ void SyncEventIdAllocation::IgnoreBackHeadAndTailSync() {
   }
 }
 
+// A backward release may cover two Mat reads when its wait precedes both
+// next-iteration writes. Unlike forward widening, the dependency roots need
+// not match: the surviving event deliberately protects their union.
+static bool canCoalesceMatBackedge(
+    const SyncIRs &ir, const SyncOperations &groups,
+    const llvm::DenseSet<SyncOperation *> &boundaries,
+    const SyncOperation *set, const SyncOperation *wait,
+    const SyncOperation *survivor, const SyncOperation *survivorWait) {
+  auto ordinary = [](const SyncOperation *op) {
+    return !op->uselessSync && !op->isCompensation &&
+           !op->reallocatedLoopHeadTailSync && !op->slotBoundaryMasks &&
+           !op->slotSSAExpr && op->slotCount == 1 && op->eventIdNum == 1 &&
+           op->GetMechanism() == SyncOperation::MECHANISM::EVENT &&
+           op->GetSrcPipe() == PipelineType::PIPE_MTE1 &&
+           op->GetDstPipe() == PipelineType::PIPE_MTE2;
+  };
+  if (!ordinary(set) || !ordinary(wait) || !ordinary(survivor) ||
+      !ordinary(survivorWait) || !set->eventIds.empty() ||
+      !wait->eventIds.empty() || survivor->eventIds.size() != 1 ||
+      survivorWait->eventIds != survivor->eventIds ||
+      set->GetType() != SyncOperation::TYPE::SET_EVENT ||
+      wait->GetType() != SyncOperation::TYPE::WAIT_EVENT ||
+      survivor->GetType() != SyncOperation::TYPE::SET_EVENT ||
+      survivorWait->GetType() != SyncOperation::TYPE::WAIT_EVENT ||
+      !set->GetForEndIndex() ||
+      set->GetForEndIndex() != wait->GetForEndIndex() ||
+      set->GetForEndIndex() != survivor->GetForEndIndex() ||
+      set->GetForEndIndex() != survivorWait->GetForEndIndex())
+    return false;
+
+  unsigned end = *set->GetForEndIndex();
+  if (end >= ir.size())
+    return false;
+  auto *loopEnd = dyn_cast<LoopInstanceElement>(ir[end].get());
+  if (!loopEnd || loopEnd->getLoopKind() != KindOfLoop::LOOP_END ||
+      !loopEnd->elementOp)
+    return false;
+  auto loop = dyn_cast<scf::ForOp>(loopEnd->elementOp);
+  if (!loop || !loop.getInitArgs().empty())
+    return false;
+  auto step = loop.getStep().getDefiningOp<arith::ConstantIndexOp>();
+  if (!step || step.value() <= 0)
+    return false;
+  unsigned begin = loopEnd->beginId;
+  unsigned earlyWait = survivorWait->GetSyncIRIndex();
+  unsigned lateWait = wait->GetSyncIRIndex();
+  unsigned earlySet = survivor->GetSyncIRIndex();
+  unsigned lateSet = set->GetSyncIRIndex();
+  if (!(begin < earlyWait && earlyWait + 1 == lateWait &&
+        lateWait < earlySet && earlySet < lateSet && lateSet < end))
+    return false;
+
+  // The whole loop body must be straight-line. In particular, moving a release
+  // past a nested region, conditional execution, or a hidden macro handshake
+  // is not justified by these four endpoint indices.
+  auto pureArithmetic = [](Operation *op) {
+    return op->getName().getDialectNamespace() == "arith" && isPure(op);
+  };
+  for (Operation &op : *loop.getBody()) {
+    if (op.getNumRegions() != 0)
+      return false;
+    // Some explicit synchronization and unknown calls have no SyncIR node.
+    // Whitelist the simple source body as well: this excludes manual flags,
+    // event arrays, buffer-ID ops, barriers, calls and unmodeled handshakes
+    // anywhere in the loop, including uses of the survivor's physical ID.
+    if (!pureArithmetic(&op) &&
+        !isa<scf::YieldOp, pto::AllocTileOp, pto::DeclareTileOp,
+             pto::PartitionViewOp, pto::TLoadOp, pto::TExtractOp,
+             pto::TPopOp, pto::TFreeOp, pto::TMatmulOp, pto::TMatmulAccOp,
+             pto::TMatmulMxOp, pto::TMatmulMxAccOp>(&op))
+      return false;
+  }
+  // Source operations omitted by the translator must not hide a wait or an
+  // event-ID use inside the actual moved interval. Only pure arithmetic and
+  // tile-handle declarations may appear between the known queued operations.
+  bool reachedLateSet = false;
+  for (Operation *op = ir[earlySet]->elementOp->getNextNode(); op;
+       op = op->getNextNode()) {
+    if (!pureArithmetic(op) &&
+        !isa<pto::AllocTileOp, pto::DeclareTileOp, pto::TExtractOp,
+             pto::TFreeOp>(op))
+      return false;
+    if (op == ir[lateSet]->elementOp) {
+      reachedLateSet = true;
+      break;
+    }
+  }
+  if (!reachedLateSet)
+    return false;
+  for (unsigned i = begin + 1; i < end; ++i) {
+    auto *compound = dyn_cast<CompoundInstanceElement>(ir[i].get());
+    if (!compound || !compound->elementOp ||
+        compound->elementOp->getBlock() != loop.getBody() ||
+        compound->macroOpInstanceId >= 0 ||
+        getSyncMacroModel(compound->elementOp))
+      return false;
+  }
+  auto isEndpoint = [&](unsigned index, bool load) {
+    auto *compound = dyn_cast<CompoundInstanceElement>(ir[index].get());
+    return compound && compound->kPipeValue ==
+                           (load ? PipelineType::PIPE_MTE2
+                                 : PipelineType::PIPE_MTE1) &&
+           (load ? isa<pto::TLoadOp>(compound->elementOp)
+                 : isa<pto::TExtractOp>(compound->elementOp));
+  };
+  if (!isEndpoint(earlyWait, true) || !isEndpoint(lateWait, true) ||
+      !isEndpoint(earlySet, false) || !isEndpoint(lateSet, false))
+    return false;
+  // Endpoint order alone does not rule out a cross-iteration cycle. Never
+  // move a release past a wait (including a block wait or barrier), or past an
+  // operation with an unknown internal handshake. TFREE only queues a credit;
+  // TEXTRACT only queues the Mat read/L0 write. The old set's trailing syncs
+  // and the new set's leading syncs are part of the crossed interval too.
+  for (unsigned i = earlySet; i <= lateSet; ++i) {
+    auto *compound = cast<CompoundInstanceElement>(ir[i].get());
+    if (i != earlySet &&
+        !isa<pto::TExtractOp, pto::TFreeOp>(compound->elementOp))
+      return false;
+    for (const auto *list : {&ir[i]->pipeBefore, &ir[i]->pipeAfter}) {
+      if (i == earlySet && list == &ir[i]->pipeBefore)
+        continue;
+      for (const auto *op : *list)
+        if (!op->uselessSync &&
+            op->GetType() != SyncOperation::TYPE::SET_EVENT)
+          return false;
+    }
+  }
+  auto knownMat = [](const SyncOperation *op) {
+    return !op->depRootBuffers.empty() && !op->depMemInfos.empty() &&
+           llvm::all_of(op->depMemInfos, [](const BaseMemInfo *info) {
+             return info && info->scope == AddressSpace::MAT &&
+                    info->hasKnownPhysicalAddresses &&
+                    !info->aliasesUnknownRange && info->allocateSize != 0 &&
+                    info->baseAddresses.size() == 1;
+           });
+  };
+  if (!knownMat(set) || !knownMat(wait) || !knownMat(survivor) ||
+      !knownMat(survivorWait))
+    return false;
+
+  llvm::DenseSet<const SyncOperation *> active;
+  for (const auto &node : ir)
+    for (const auto *list : {&node->pipeBefore, &node->pipeAfter})
+      for (const auto *op : *list)
+        if (!op->uselessSync)
+          active.insert(op);
+  const SyncOperation *prime = nullptr;
+  const SyncOperation *drain = nullptr;
+  for (const auto &group : groups) {
+    bool sharesId = llvm::any_of(group, [&](const auto &op) {
+      return active.contains(op.get()) &&
+             op->GetSrcPipe() == survivor->GetSrcPipe() &&
+             op->GetDstPipe() == survivor->GetDstPipe() &&
+             llvm::is_contained(op->eventIds, survivor->eventIds.front());
+    });
+    if (!sharesId || group.front()->GetSyncIndex() == survivor->GetSyncIndex())
+      continue;
+    if (group.size() != 2 || !active.contains(group[0].get()) ||
+        !active.contains(group[1].get()))
+      return false;
+    const auto *otherSet = group[0].get();
+    const auto *otherWait = group[1].get();
+    if (otherSet->GetType() != SyncOperation::TYPE::SET_EVENT ||
+        otherWait->GetType() != SyncOperation::TYPE::WAIT_EVENT ||
+        otherSet->eventIds != survivor->eventIds ||
+        otherWait->eventIds != survivor->eventIds ||
+        otherSet->slotSSAExpr || otherWait->slotSSAExpr ||
+        otherSet->slotBoundaryMasks || otherWait->slotBoundaryMasks)
+      return false;
+    // Reallocation reserves a carried event over [begin,end], including its
+    // prime and drain, rather than only [oldSet,newSet]. Detached boundaries
+    // from an earlier allocation attempt are deliberately ignored above.
+    if (boundaries.contains(const_cast<SyncOperation *>(otherSet)) &&
+        boundaries.contains(const_cast<SyncOperation *>(otherWait)) &&
+        otherSet->GetForEndIndex() == set->GetForEndIndex() &&
+        otherWait->GetForEndIndex() == set->GetForEndIndex() &&
+        otherSet->GetSyncIRIndex() == begin &&
+        otherWait->GetSyncIRIndex() == end &&
+        hasSameSyncDepRoots(otherSet, survivor) &&
+        hasSameSyncDepRoots(otherWait, survivor)) {
+      if (prime || drain)
+        return false;
+      prime = otherSet;
+      drain = otherWait;
+      continue;
+    }
+    // Only ordinary forward reuse completely outside this loop is allowed.
+    // Any other carried lifetime, even with endpoints outside the body, is
+    // conservatively rejected instead of guessing its cyclic live range.
+    if (otherSet->GetForEndIndex() || otherWait->GetForEndIndex() ||
+        otherSet->isCompensation || otherWait->isCompensation ||
+        otherSet->GetSyncIRIndex() >= otherWait->GetSyncIRIndex() ||
+        !(otherWait->GetSyncIRIndex() <= begin ||
+          otherSet->GetSyncIRIndex() >= end))
+      return false;
+  }
+  if (!prime || !drain)
+    return false;
+  // Body positions are the open interval (begin,end). At a shared boundary,
+  // an old forward token must be consumed before prime, and drain must consume
+  // our carried token before the next forward set. No ID lifetime expands.
+  auto orderedAt = [](const SyncOps &ops, const SyncOperation *a,
+                      const SyncOperation *b) {
+    auto x = llvm::find(ops, a), y = llvm::find(ops, b);
+    return x != ops.end() && y != ops.end() && x < y;
+  };
+  for (const auto &group : groups) {
+    if (group.size() != 2 || !active.contains(group[0].get()) ||
+        !active.contains(group[1].get()))
+      continue;
+    const auto *otherSet = group[0].get();
+    const auto *otherWait = group[1].get();
+    if (otherSet == survivor || otherSet == prime ||
+        otherSet->GetSrcPipe() != survivor->GetSrcPipe() ||
+        otherSet->GetDstPipe() != survivor->GetDstPipe() ||
+        !llvm::is_contained(otherSet->eventIds, survivor->eventIds.front()))
+      continue;
+    if (otherWait->GetSyncIRIndex() == begin &&
+        !orderedAt(ir[begin]->pipeBefore, otherWait, prime))
+      return false;
+    if (otherSet->GetSyncIRIndex() == end &&
+        !orderedAt(ir[end]->pipeAfter, drain, otherSet))
+      return false;
+  }
+  return true;
+}
+
 bool SyncEventIdAllocation::TryWidenByOtherSync(const SyncOperation *sync) {
   assert(!sync->isBarrierType());
   auto &syncPair = syncOperations_[sync->GetSyncIndex()];
@@ -767,11 +999,40 @@ bool SyncEventIdAllocation::TryWidenByOtherSync(const SyncOperation *sync) {
     return false;
   }
 
-  setSync->uselessSync = true;
-  waitSync->uselessSync = true;
-
   auto &widenSyncPair = syncOperations_[widenSync->GetSyncIndex()];
   SyncOperation *widenSet = widenSyncPair[0].get();
+  SyncOperation *widenWait = widenSyncPair[1].get();
+  if (setSync->GetForEndIndex() &&
+      setSync->GetSyncIRIndex() > waitSync->GetSyncIRIndex()) {
+    // Preserve the complete hazard union, including the boundary pair that
+    // primes and drains the survivor. The pool already reserves the full loop.
+    SmallVector<SyncOperation *> owners{widenSet, widenWait};
+    for (auto *boundary : insertedBackwardSync) {
+      if (!boundary->uselessSync &&
+          boundary->GetForEndIndex() == widenSet->GetForEndIndex() &&
+          ScopePair(boundary) == ScopePair(widenSet) &&
+          boundary->eventIds == widenSet->eventIds &&
+          hasSameSyncDepRoots(boundary, widenSet))
+        owners.push_back(boundary);
+    }
+    auto roots = widenSet->depRootBuffers;
+    auto infos = widenSet->depMemInfos;
+    for (const auto *source : {setSync, waitSync, widenWait}) {
+      for (Value root : source->depRootBuffers)
+        if (!llvm::is_contained(roots, root))
+          roots.push_back(root);
+      for (const auto *info : source->depMemInfos)
+        if (!llvm::is_contained(infos, info))
+          infos.push_back(info);
+    }
+    for (auto *owner : owners) {
+      owner->depRootBuffers = roots;
+      owner->depMemInfos = infos;
+      owner->SetDepSyncIRIndex(setSync->GetSyncIRIndex());
+    }
+  }
+  setSync->uselessSync = true;
+  waitSync->uselessSync = true;
 
   // If sync ranges are disjoint, we might need to merge the sync nodes in IR
   if (setSync->GetSyncIRIndex() != widenSet->GetSyncIRIndex()) {
@@ -837,10 +1098,6 @@ SyncEventIdAllocation::FindWidenSync(const SyncOperation *setSync,
             setSame->eventIds.empty()) {
           continue;
         }
-        if (!hasSameSyncDepRoots(setSame, setSync)) {
-          continue;
-        }
-
         auto &syncPair = syncOperations_[setSame->GetSyncIndex()];
         SyncOperation *waitSame = syncPair[1].get();
         if (waitSame->GetForEndIndex() != waitSync->GetForEndIndex()) {
@@ -848,11 +1105,14 @@ SyncEventIdAllocation::FindWidenSync(const SyncOperation *setSync,
         }
         // Check coverage/overlap
         bool canForwardReuse =
+            hasSameSyncDepRoots(setSame, setSync) &&
             (setSync->GetSyncIRIndex() > setSame->GetSyncIRIndex() &&
              setSync->GetSyncIRIndex() <= waitSame->GetSyncIRIndex());
-        // ... Backward reuse logic ...
-        if (canForwardReuse /* || canBackwardReuse */) {
-            return setSame; // Simplification: return first valid match
+        bool canBackwardReuse = canCoalesceMatBackedge(
+            syncIR_, syncOperations_, insertedBackwardSync, setSync, waitSync,
+            setSame, waitSame);
+        if (canForwardReuse || canBackwardReuse) {
+            return setSame;
         }
     }
   }
