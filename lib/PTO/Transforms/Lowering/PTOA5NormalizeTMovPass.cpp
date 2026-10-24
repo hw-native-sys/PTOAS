@@ -8,6 +8,7 @@
 
 #include "PTO/IR/PTO.h"
 #include "PTO/Transforms/Passes.h"
+#include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/Func/IR/FuncOps.h"
 #include "mlir/IR/Dominance.h"
 #include "mlir/IR/PatternMatch.h"
@@ -102,20 +103,102 @@ static Operation *findInterveningUseOfDst(Operation *start, const Operation *end
   return nullptr;
 }
 
-static pto::TMovOp findMatchingScaleTileTMov(pto::TGetScaleAddrOp op) {
+static bool isA5ScaleTileTExtract(pto::TExtractOp op) {
+  auto srcAS = getAddressSpaceFromValueType(op.getSrc().getType());
+  auto dstAS = getAddressSpaceFromValueType(op.getDst().getType());
+  return srcAS && dstAS && *srcAS == pto::AddressSpace::MAT &&
+         *dstAS == pto::AddressSpace::SCALING && !op.getFp() &&
+         !op.getPreQuantScalar() &&
+         op.getReluPreMode() == pto::ReluPreMode::NoRelu &&
+         !op.getAccToVecModeAttr();
+}
+
+static Operation *findMatchingScaleTileProducer(pto::TGetScaleAddrOp op) {
   Value dst = op.getDst();
-  for (Operation *cursor = op->getPrevNode(); cursor; cursor = cursor->getPrevNode()) {
-    auto mov = dyn_cast<pto::TMovOp>(cursor);
-    if (!mov || mov.getDst() != dst || !isA5ScaleTileTMov(mov)) {
-      continue;
+  for (Operation *cursor = op->getPrevNode(); cursor;
+       cursor = cursor->getPrevNode()) {
+    if (auto mov = dyn_cast<pto::TMovOp>(cursor)) {
+      if (mov.getDst() == dst && isA5ScaleTileTMov(mov)) {
+        return cursor;
+      }
+    } else if (auto extract = dyn_cast<pto::TExtractOp>(cursor)) {
+      if (extract.getDst() == dst && isA5ScaleTileTExtract(extract)) {
+        return cursor;
+      }
     }
-    return mov;
   }
-  return {};
+  return nullptr;
 }
 
 static bool isScaleAddrScalarType(Type type) {
   return isa<IntegerType, IndexType, FloatType>(type);
+}
+
+static bool isSameBlockTileAllocation(Value value, Block *block) {
+  auto alloc = value.getDefiningOp<pto::AllocTileOp>();
+  return alloc && alloc->getBlock() == block;
+}
+
+static bool preservesScaleAddrBinding(Operation *op, Value dst) {
+  if (op->getNumRegions() || op->getNumSuccessors()) {
+    return false;
+  }
+  if (auto binding = dyn_cast<pto::TGetScaleAddrOp>(op)) {
+    // Distinct allocations are distinct mutable handles, even if their data
+    // storage addresses coincide. Do not infer this for aliases/block arguments.
+    return binding.getDst() != dst &&
+           isSameBlockTileAllocation(binding.getDst(), op->getBlock());
+  }
+  if (auto mov = dyn_cast<pto::TMovOp>(op)) {
+    // These copies write tile data, not the tile handle's address. Keep the
+    // unrelated quantizing forms outside this narrowly scoped proof.
+    return pto::classifyTMovForm(mov.getFp()) == pto::TMovForm::NoTileAux;
+  }
+  if (auto extract = dyn_cast<pto::TExtractOp>(op)) {
+    // A base Mat->Scaling extraction writes data through the bound handle.
+    return isA5ScaleTileTExtract(extract);
+  }
+  // Explicitly known fixed-handle data operations and fresh descriptors only.
+  // In particular, tassign is Pure in ODS but mutates the emitted tile handle:
+  // accepting arbitrary pure tile operations would make this proof unsound.
+  if (isa<pto::AllocTileOp, pto::MakeTensorViewOp, pto::PartitionViewOp,
+          pto::TMatmulMxOp, pto::TMatmulMxAccOp, pto::TStoreOp>(op)) {
+    return true;
+  }
+  return llvm::all_of(op->getOperandTypes(), isScaleAddrScalarType) &&
+         llvm::all_of(op->getResultTypes(), isScaleAddrScalarType) &&
+         isPure(op);
+}
+
+static bool hasEstablishedScaleAddrBinding(pto::TGetScaleAddrOp op,
+                                          Operation *matchingProducer) {
+  // Only reason about independently allocated handles in this block. Do not
+  // attempt to prove cross-block/region or alias equivalence.
+  Block *block = op->getBlock();
+  if (!isSameBlockTileAllocation(op.getSrc(), block) ||
+      !isSameBlockTileAllocation(op.getDst(), block)) {
+    return false;
+  }
+  for (Operation *cursor = op->getPrevNode(); cursor;
+       cursor = cursor->getPrevNode()) {
+    if (auto binding = dyn_cast<pto::TGetScaleAddrOp>(cursor)) {
+      if (binding.getDst() == op.getDst()) {
+        if (binding.getSrc() != op.getSrc()) {
+          return false;
+        }
+        // Equal repeated bindings preserve the state, but only an earlier
+        // binding that dominates the copy can establish the required proof.
+        if (binding->isBeforeInBlock(matchingProducer)) {
+          return true;
+        }
+        continue;
+      }
+    }
+    if (!preservesScaleAddrBinding(cursor, op.getDst())) {
+      return false;
+    }
+  }
+  return false;
 }
 
 static bool canHoistScaleAddrDependency(Operation *op) {
@@ -164,18 +247,20 @@ static LogicalResult collectScaleAddrDependencies(
 }
 
 static LogicalResult hoistScaleAddr(pto::TGetScaleAddrOp op,
-                                   pto::TMovOp matchingTMov,
+                                   Operation *matchingProducer,
                                    DominanceInfo &dominance) {
+  StringRef producerName = isa<pto::TMovOp>(matchingProducer) ? "TMOV" : "TEXTRACT";
   // The binding changes the destination address, including for uses captured
   // by nested regions. Neither crossing those uses nor silently keeping the
   // binding after the copy establishes safe backend semantics.
-  if (Operation *use = findInterveningUseOfDst(matchingTMov, op, op.getDst())) {
-    auto diagnostic = op.emitOpError(
-        "cannot safely establish scaling address before matching TMOV: "
-        "intervening destination use");
+  if (Operation *use = findInterveningUseOfDst(matchingProducer, op, op.getDst())) {
+    auto diagnostic = op.emitOpError();
+    diagnostic << "cannot safely establish scaling address before matching "
+               << producerName << ": intervening destination use";
     diagnostic.attachNote(use->getLoc())
         << "intervening destination use: " << use->getName();
-    diagnostic.attachNote(matchingTMov.getLoc()) << "matching TMOV is here";
+    diagnostic.attachNote(matchingProducer->getLoc())
+        << "matching " << producerName << " is here";
     return failure();
   }
   llvm::SmallPtrSet<Operation *, kRiskyOpReserveSize> collected;
@@ -183,24 +268,140 @@ static LogicalResult hoistScaleAddr(pto::TGetScaleAddrOp op,
   Operation *blockingDef = nullptr;
   for (Value operand : op->getOperands()) {
     if (failed(collectScaleAddrDependencies(
-            operand, matchingTMov, op, dominance, collected, dependencies,
+            operand, matchingProducer, op, dominance, collected, dependencies,
             blockingDef))) {
-      auto diagnostic = op.emitOpError(
-          "cannot safely establish scaling address before matching TMOV: "
-          "operand dependency cannot be hoisted");
+      auto diagnostic = op.emitOpError();
+      diagnostic << "cannot safely establish scaling address before matching "
+                 << producerName << ": operand dependency cannot be hoisted";
       if (blockingDef) {
         diagnostic.attachNote(blockingDef->getLoc())
             << "blocking dependency: " << blockingDef->getName();
       }
-      diagnostic.attachNote(matchingTMov.getLoc()) << "matching TMOV is here";
+      diagnostic.attachNote(matchingProducer->getLoc())
+          << "matching " << producerName << " is here";
       return failure();
     }
   }
   for (Operation *dependency : dependencies) {
-    dependency->moveBefore(matchingTMov);
+    dependency->moveBefore(matchingProducer);
   }
-  op->moveBefore(matchingTMov);
+  op->moveBefore(matchingProducer);
   return success();
+}
+
+// A constant binding is removable only when both handles remain local and
+// every use accesses data through a fixed handle. Aliases, tassign (even
+// though Pure), calls and captured region uses retain the mutable binding:
+// memory effects alone cannot establish handle stability.
+static bool isFixedMxHandleUse(OpOperand &use, bool isScale) {
+  Operation *user = use.getOwner();
+  if (user->getNumRegions() || user->getNumSuccessors() ||
+      user->getNumResults()) {
+    return false;
+  }
+  Value value = use.get();
+  if (auto mov = dyn_cast<pto::TMovOp>(user)) {
+    return pto::classifyTMovForm(mov.getFp()) == pto::TMovForm::NoTileAux &&
+           (!isScale || (mov.getDst() == value && isA5ScaleTileTMov(mov)));
+  }
+  if (auto extract = dyn_cast<pto::TExtractOp>(user)) {
+    if (isScale) {
+      return extract.getDst() == value && isA5ScaleTileTExtract(extract);
+    }
+    // A5 MX K slices use TEXTRACT rather than TMOV to fill a fixed L0
+    // handle. Only the destination payload is written: a source use, alias,
+    // quantizing form or different memory path cannot establish this proof.
+    // The TEXTRACT verifier owns layout/shape legality, including RHS layout
+    // conversion; neither changes the allocated destination handle address.
+    auto sourceType = dyn_cast<pto::TileBufType>(extract.getSrc().getType());
+    auto sourceAS = getAddressSpaceFromValueType(extract.getSrc().getType());
+    auto destAS = getAddressSpaceFromValueType(extract.getDst().getType());
+    return extract.getDst() == value && sourceType && sourceAS && destAS &&
+           *sourceAS == pto::AddressSpace::MAT &&
+           (*destAS == pto::AddressSpace::LEFT ||
+            *destAS == pto::AddressSpace::RIGHT) &&
+           isa<Float8E4M3FNType>(sourceType.getElementType()) &&
+           !extract.getFp() && !extract.getPreQuantScalar() &&
+           extract.getReluPreMode() == pto::ReluPreMode::NoRelu &&
+           !extract.getAccToVecModeAttr();
+  }
+  if (auto matmul = dyn_cast<pto::TMatmulMxOp>(user)) {
+    return isScale ? (matmul.getAScale() == value ||
+                      matmul.getBScale() == value)
+                   : (matmul.getA() == value || matmul.getB() == value);
+  }
+  if (auto matmul = dyn_cast<pto::TMatmulMxAccOp>(user)) {
+    return isScale ? (matmul.getAScale() == value ||
+                      matmul.getBScale() == value)
+                   : (matmul.getA() == value || matmul.getB() == value);
+  }
+  return false;
+}
+
+static void foldConstantScaleAddr(pto::TGetScaleAddrOp op,
+                                  IRRewriter &rewriter) {
+  Block *block = op->getBlock();
+  auto data = op.getSrc().getDefiningOp<pto::AllocTileOp>();
+  auto scale = op.getDst().getDefiningOp<pto::AllocTileOp>();
+  if (!data || !scale || !data.getAddr() || data->getBlock() != block ||
+      scale->getBlock() != block) {
+    return;
+  }
+  auto dataType = dyn_cast<pto::TileBufType>(op.getSrc().getType());
+  auto scaleType = dyn_cast<pto::TileBufType>(op.getDst().getType());
+  auto dataAS = getAddressSpaceFromValueType(op.getSrc().getType());
+  auto scaleAS = getAddressSpaceFromValueType(op.getDst().getType());
+  if (!dataType || !scaleType || !dataAS || !scaleAS ||
+      (*dataAS != pto::AddressSpace::LEFT &&
+       *dataAS != pto::AddressSpace::RIGHT) ||
+      *scaleAS != pto::AddressSpace::SCALING ||
+      !isa<Float8E4M3FNType>(dataType.getElementType()) ||
+      !isa<pto::F8E8M0Type>(scaleType.getElementType())) {
+    return;
+  }
+  auto constant = data.getAddr().getDefiningOp<arith::ConstantOp>();
+  auto address = constant ? dyn_cast<IntegerAttr>(constant.getValue())
+                          : IntegerAttr();
+  if (!address || address.getValue().isNegative() ||
+      address.getValue().getBitWidth() != 64) {
+    return;
+  }
+  uint64_t dataAddress = address.getValue().getZExtValue();
+  if (dataAddress % 16 != 0) {
+    return;
+  }
+
+  // Exactly one binding, no earlier scale access and no aliases. Direct
+  // same-block users after the binding are dominated by it, also in loops.
+  for (OpOperand &use : op.getDst().getUses()) {
+    Operation *user = use.getOwner();
+    if (user == op.getOperation()) {
+      continue;
+    }
+    if (user->getBlock() != block || !op->isBeforeInBlock(user) ||
+        !isFixedMxHandleUse(use, /*isScale=*/true)) {
+      return;
+    }
+  }
+  for (OpOperand &use : op.getSrc().getUses()) {
+    Operation *user = use.getOwner();
+    if (user == op.getOperation()) {
+      continue;
+    }
+    if (user->getBlock() != block ||
+        !isFixedMxHandleUse(use, /*isScale=*/false)) {
+      return;
+    }
+  }
+
+  // GetScaleAddr is the data address shifted by four, not a payload read.
+  // Use a fresh constant: the old allocation address may be shared by other
+  // handles. Real data/scale dependencies retain the final physical address.
+  rewriter.setInsertionPoint(scale);
+  Value scaleAddress = rewriter.create<arith::ConstantIntOp>(
+      op.getLoc(), dataAddress >> 4, 64);
+  scale.getAddrMutable().assign(scaleAddress);
+  rewriter.eraseOp(op);
 }
 
 template <typename CfgT>
@@ -282,23 +483,28 @@ struct PTOA5NormalizeTMovPass
   void runOnOperation() override;
 
 private:
-  LogicalResult hoistScaleAddrOpsBeforeTMov(func::FuncOp func) const;
+  LogicalResult hoistScaleAddrOpsBeforeProducer(func::FuncOp func) const;
   LogicalResult normalizeRiskyVecVecTMov(func::FuncOp func) const;
   LogicalResult rewriteRiskyVecVecTMov(IRRewriter &rewriter, pto::TMovOp op) const;
   void verifyNoResidualRiskyTMov(func::FuncOp func);
 };
 
-LogicalResult PTOA5NormalizeTMovPass::hoistScaleAddrOpsBeforeTMov(
+LogicalResult PTOA5NormalizeTMovPass::hoistScaleAddrOpsBeforeProducer(
     func::FuncOp func) const {
   SmallVector<pto::TGetScaleAddrOp, kRiskyOpReserveSize> scaleAddrOps;
   DominanceInfo dominance(func);
   func.walk([&](pto::TGetScaleAddrOp op) { scaleAddrOps.push_back(op); });
   for (pto::TGetScaleAddrOp op : scaleAddrOps) {
-    auto matchingTMov = findMatchingScaleTileTMov(op);
-    if (!matchingTMov) {
+    auto matchingProducer = findMatchingScaleTileProducer(op);
+    if (!matchingProducer) {
       continue;
     }
-    if (failed(hoistScaleAddr(op, matchingTMov, dominance))) {
+    if (hasEstablishedScaleAddrBinding(op, matchingProducer)) {
+      // Preserve the repeated binding's position; no reader is crossed and no
+      // operation or dependency is erased or moved on this path.
+      continue;
+    }
+    if (failed(hoistScaleAddr(op, matchingProducer, dominance))) {
       return failure();
     }
   }
@@ -391,7 +597,7 @@ void PTOA5NormalizeTMovPass::runOnOperation() {
     return;
   }
 
-  if (failed(hoistScaleAddrOpsBeforeTMov(func))) {
+  if (failed(hoistScaleAddrOpsBeforeProducer(func))) {
     signalPassFailure();
     return;
   }
@@ -399,6 +605,15 @@ void PTOA5NormalizeTMovPass::runOnOperation() {
   if (failed(normalizeRiskyVecVecTMov(func))) {
     signalPassFailure();
     return;
+  }
+
+  // Normalize all producers, retaining existing rejection and atomic
+  // dependency checks, before considering removal of any binding.
+  SmallVector<pto::TGetScaleAddrOp, kRiskyOpReserveSize> scaleAddrOps;
+  func.walk([&](pto::TGetScaleAddrOp op) { scaleAddrOps.push_back(op); });
+  IRRewriter rewriter(func.getContext());
+  for (pto::TGetScaleAddrOp op : scaleAddrOps) {
+    foldConstantScaleAddr(op, rewriter);
   }
 
   verifyNoResidualRiskyTMov(func);

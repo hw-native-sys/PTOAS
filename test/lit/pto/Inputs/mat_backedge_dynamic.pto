@@ -1,0 +1,88 @@
+// Dedicated negative fixture; invoked by mat_backedge_event_coalescing.pto.
+!mat = !pto.tile_buf<mat, 64x64xf16, blayout=col_major, slayout=row_major, fractal=512>
+!left = !pto.tile_buf<left, 64x32xf16, blayout=col_major, slayout=row_major, fractal=512>
+module attributes {pto.target_arch = "a5"} {
+  func.func @keep_unknown_mat_address(%src: !pto.ptr<f16>, %trips: index, %condition: i1, %dynamic: i64) attributes {pto.kernel_kind = #pto.kernel_kind<cube>} {
+    %z = arith.constant 0 : index
+    %one = arith.constant 1 : index
+    %three = arith.constant 3 : index
+    %rows = arith.constant 64 : index
+    %half = arith.constant 32 : index
+    %a0 = arith.constant 0 : i64
+    %a1 = arith.constant 8192 : i64
+    %a2 = arith.constant 16384 : i64
+    %a3 = arith.constant 24576 : i64
+    %a4 = arith.constant 32768 : i64
+    %a5 = arith.constant 40960 : i64
+    %a6 = arith.constant 49152 : i64
+    %a7 = arith.constant 57344 : i64
+    %a8 = arith.constant 65536 : i64
+    %l0 = arith.constant 0 : i64
+    %l1 = arith.constant 4096 : i64
+    %l2 = arith.constant 8192 : i64
+    %l3 = arith.constant 12288 : i64
+    %l4 = arith.constant 16384 : i64
+    %l5 = arith.constant 20480 : i64
+    %l6 = arith.constant 24576 : i64
+    %l7 = arith.constant 28672 : i64
+    %l8 = arith.constant 32768 : i64
+    %l9 = arith.constant 36864 : i64
+    %l10 = arith.constant 40960 : i64
+    %l11 = arith.constant 45056 : i64
+    %sv = pto.make_tensor_view %src, shape = [%rows, %rows], strides = [%rows, %one] : !pto.tensor_view<?x?xf16>
+    %ps = pto.partition_view %sv, offsets = [%z, %z], sizes = [%rows, %rows] : !pto.tensor_view<?x?xf16> -> !pto.partition_tensor_view<64x64xf16>
+    scf.for %o = %z to %three step %one {
+      %h0 = pto.alloc_tile addr = %a0 : !mat
+      pto.tload ins(%ps : !pto.partition_tensor_view<64x64xf16>) outs(%h0 : !mat)
+      %h1 = pto.alloc_tile addr = %a1 : !mat
+      pto.tload ins(%ps : !pto.partition_tensor_view<64x64xf16>) outs(%h1 : !mat)
+      %h2 = pto.alloc_tile addr = %a2 : !mat
+      pto.tload ins(%ps : !pto.partition_tensor_view<64x64xf16>) outs(%h2 : !mat)
+      %hl0 = pto.alloc_tile addr = %l0 : !left
+      pto.textract ins(%h0, %z, %z : !mat, index, index) outs(%hl0 : !left)
+      %hl1 = pto.alloc_tile addr = %l1 : !left
+      pto.textract ins(%h1, %z, %z : !mat, index, index) outs(%hl1 : !left)
+      %hl2 = pto.alloc_tile addr = %l2 : !left
+      pto.textract ins(%h2, %z, %z : !mat, index, index) outs(%hl2 : !left)
+      scf.for %k = %z to %trips step %one {
+        %i0 = pto.alloc_tile addr = %a3 : !mat
+        pto.tload ins(%ps : !pto.partition_tensor_view<64x64xf16>) outs(%i0 : !mat)
+        %i1 = pto.alloc_tile addr = %a4 : !mat
+        pto.tload ins(%ps : !pto.partition_tensor_view<64x64xf16>) outs(%i1 : !mat)
+        %i2 = pto.alloc_tile addr = %a5 : !mat
+        pto.tload ins(%ps : !pto.partition_tensor_view<64x64xf16>) outs(%i2 : !mat)
+        %i3 = pto.alloc_tile addr = %a6 : !mat
+        pto.tload ins(%ps : !pto.partition_tensor_view<64x64xf16>) outs(%i3 : !mat)
+        %i4 = pto.alloc_tile addr = %a7 : !mat
+        pto.tload ins(%ps : !pto.partition_tensor_view<64x64xf16>) outs(%i4 : !mat)
+        %i5 = pto.alloc_tile addr = %dynamic : !mat
+        pto.tload ins(%ps : !pto.partition_tensor_view<64x64xf16>) outs(%i5 : !mat)
+        %v0_0 = pto.alloc_tile addr = %l0 : !left
+        pto.textract ins(%i0, %z, %z : !mat, index, index) outs(%v0_0 : !left)
+        %v0_1 = pto.alloc_tile addr = %l1 : !left
+        pto.textract ins(%i1, %z, %z : !mat, index, index) outs(%v0_1 : !left)
+        %v0_2 = pto.alloc_tile addr = %l2 : !left
+        pto.textract ins(%i2, %z, %z : !mat, index, index) outs(%v0_2 : !left)
+        %v0_3 = pto.alloc_tile addr = %l3 : !left
+        pto.textract ins(%i3, %z, %z : !mat, index, index) outs(%v0_3 : !left)
+        %v0_4 = pto.alloc_tile addr = %l4 : !left
+        pto.textract ins(%i4, %z, %z : !mat, index, index) outs(%v0_4 : !left)
+        %v0_5 = pto.alloc_tile addr = %l5 : !left
+        pto.textract ins(%i5, %z, %z : !mat, index, index) outs(%v0_5 : !left)
+        %v1_0 = pto.alloc_tile addr = %l6 : !left
+        pto.textract ins(%i0, %z, %half : !mat, index, index) outs(%v1_0 : !left)
+        %v1_1 = pto.alloc_tile addr = %l7 : !left
+        pto.textract ins(%i1, %z, %half : !mat, index, index) outs(%v1_1 : !left)
+        %v1_2 = pto.alloc_tile addr = %l8 : !left
+        pto.textract ins(%i2, %z, %half : !mat, index, index) outs(%v1_2 : !left)
+        %v1_3 = pto.alloc_tile addr = %l9 : !left
+        pto.textract ins(%i3, %z, %half : !mat, index, index) outs(%v1_3 : !left)
+        %v1_4 = pto.alloc_tile addr = %l10 : !left
+        pto.textract ins(%i4, %z, %half : !mat, index, index) outs(%v1_4 : !left)
+        %v1_5 = pto.alloc_tile addr = %l11 : !left
+        pto.textract ins(%i5, %z, %half : !mat, index, index) outs(%v1_5 : !left)
+      }
+    }
+    return
+  }
+}

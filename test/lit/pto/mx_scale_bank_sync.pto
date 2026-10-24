@@ -1,0 +1,251 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+
+// RUN: ptoas --pto-arch=a5 --pto-level=level3 --enable-insert-sync --check-sync-self-coverage %s | FileCheck %s
+// RUN: ptoas --pto-arch=a5 --pto-level=level3 --enable-unified-sync --check-sync-self-coverage %s | FileCheck %s
+// ScaleLeft and ScaleRight have independent physical banks. Natural M64
+// A ping/pong uses byte addresses 0/8192 (scale 0/512), while B uses 0/32768
+// (scale 0/2048). AS1[512,768) must not alias BS0[0,1024).
+// Same-bank reuse and unresolved explicit addresses must still synchronize
+// BEFORE the clobbering extraction, and every MMAD must wait for its inputs.
+
+
+!left = !pto.tile_buf<left, 64x128xf8E4M3FN, blayout=col_major, slayout=row_major, fractal=512>
+!right = !pto.tile_buf<right, 128x256xf8E4M3FN, slayout=col_major, fractal=512>
+!lmat = !pto.tile_buf<mat, 64x256xf8E4M3FN, blayout=col_major, slayout=row_major, fractal=512>
+!rmat = !pto.tile_buf<mat, 256x256xf8E4M3FN, blayout=col_major, slayout=row_major, fractal=512>
+!lm = !pto.tile_buf<mat, 64x8x!pto.f8E8M0, slayout=row_major, fractal=32>
+!rm = !pto.tile_buf<mat, 8x256x!pto.f8E8M0, blayout=col_major, slayout=col_major, fractal=32>
+!ls = !pto.tile_buf<scaling, 64x4x!pto.f8E8M0, slayout=row_major, fractal=32>
+!rs = !pto.tile_buf<scaling, 4x256x!pto.f8E8M0, blayout=col_major, slayout=col_major, fractal=32>
+!acc = !pto.tile_buf<acc, 64x256xf32, blayout=col_major, slayout=row_major, fractal=1024>
+
+module attributes {pto.target_arch = "a5"} {
+  // CHECK-LABEL: AICORE void separate_mx_banks(
+  // CHECK: // pto: %ls1
+  // CHECK-NEXT: Tile<TileType::ScaleLeft, {{.*}}> [[LS:[a-zA-Z0-9_]+]];
+  // CHECK: // pto: %rs1
+  // CHECK-NEXT: Tile<TileType::ScaleRight, {{.*}}> [[RS:[a-zA-Z0-9_]+]];
+  // CHECK-COUNT-4: TEXTRACT(
+  // CHECK: set_flag(PIPE_MTE1, PIPE_M, EVENT_ID[[READY0:[0-9]+]]);
+  // CHECK: wait_flag(PIPE_MTE1, PIPE_M, EVENT_ID[[READY0]]);
+  // CHECK: TMATMUL_MX(
+  // CHECK-NOT: set_flag(PIPE_M, PIPE_MTE1,
+  // CHECK-NOT: wait_flag(PIPE_M, PIPE_MTE1,
+  // CHECK: TEXTRACT([[LS]],
+  // CHECK-NOT: set_flag(PIPE_M, PIPE_MTE1,
+  // CHECK-NOT: wait_flag(PIPE_M, PIPE_MTE1,
+  // CHECK: TEXTRACT([[RS]],
+  // CHECK-NOT: set_flag(PIPE_M, PIPE_MTE1,
+  // CHECK-NOT: wait_flag(PIPE_M, PIPE_MTE1,
+  // CHECK: set_flag(PIPE_MTE1, PIPE_M, EVENT_ID[[READY1:[0-9]+]]);
+  // CHECK: wait_flag(PIPE_MTE1, PIPE_M, EVENT_ID[[READY1]]);
+  // CHECK: TMATMUL_MX(
+
+  func.func @separate_mx_banks() attributes {pto.kernel_kind = #pto.kernel_kind<cube>} {
+    %z = arith.constant 0 : i64
+    %slot1 = arith.constant 32768 : i64
+    %a1 = arith.constant 8192 : i64
+    %as1 = arith.constant 512 : i64
+    %bs1 = arith.constant 2048 : i64
+    %rmat_addr = arith.constant 65536 : i64
+    %lm_addr = arith.constant 131072 : i64
+    %rm_addr = arith.constant 131584 : i64
+    %zi = arith.constant 0 : index
+    %half = arith.constant 128 : index
+    %four = arith.constant 4 : index
+    %lmat = pto.alloc_tile addr = %z : !lmat
+    %rmat = pto.alloc_tile addr = %rmat_addr : !rmat
+    %lm = pto.alloc_tile addr = %lm_addr : !lm
+    %rm = pto.alloc_tile addr = %rm_addr : !rm
+    %left0 = pto.alloc_tile addr = %z : !left
+    %right0 = pto.alloc_tile addr = %z : !right
+    %left1 = pto.alloc_tile addr = %a1 : !left
+    %right1 = pto.alloc_tile addr = %slot1 : !right
+    %ls0 = pto.alloc_tile addr = %z : !ls
+    %rs0 = pto.alloc_tile addr = %z : !rs
+    %ls1 = pto.alloc_tile addr = %as1 : !ls
+    %rs1 = pto.alloc_tile addr = %bs1 : !rs
+    %acc = pto.alloc_tile addr = %z : !acc
+    pto.textract ins(%lmat, %zi, %zi : !lmat, index, index) outs(%left0 : !left)
+    pto.textract ins(%rmat, %zi, %zi : !rmat, index, index) outs(%right0 : !right)
+    pto.textract ins(%lm, %zi, %zi : !lm, index, index) outs(%ls0 : !ls)
+    pto.textract ins(%rm, %zi, %zi : !rm, index, index) outs(%rs0 : !rs)
+    pto.tmatmul.mx ins(%left0, %ls0, %right0, %rs0 : !left, !ls, !right, !rs) outs(%acc : !acc)
+    pto.textract ins(%lmat, %zi, %half : !lmat, index, index) outs(%left1 : !left)
+    pto.textract ins(%rmat, %half, %zi : !rmat, index, index) outs(%right1 : !right)
+    pto.textract ins(%lm, %zi, %four : !lm, index, index) outs(%ls1 : !ls)
+    pto.textract ins(%rm, %four, %zi : !rm, index, index) outs(%rs1 : !rs)
+    pto.tmatmul.mx.acc ins(%acc, %left1, %ls1, %right1, %rs1 : !acc, !left, !ls, !right, !rs) outs(%acc : !acc)
+    return
+  }
+  // CHECK-LABEL: AICORE void reuse_left_scale(
+  // CHECK: // pto: %ls1
+  // CHECK-NEXT: Tile<TileType::ScaleLeft, {{.*}}> [[LS:[a-zA-Z0-9_]+]];
+  // CHECK: // pto: %rs1
+  // CHECK-NEXT: Tile<TileType::ScaleRight, {{.*}}> [[RS:[a-zA-Z0-9_]+]];
+  // CHECK-COUNT-4: TEXTRACT(
+  // CHECK: set_flag(PIPE_MTE1, PIPE_M, EVENT_ID[[READY0:[0-9]+]]);
+  // CHECK: wait_flag(PIPE_MTE1, PIPE_M, EVENT_ID[[READY0]]);
+  // CHECK: TMATMUL_MX(
+  // CHECK-NOT: TEXTRACT([[LS]],
+  // CHECK: set_flag(PIPE_M, PIPE_MTE1, EVENT_ID[[WAR:[0-9]+]]);
+  // CHECK-NOT: TEXTRACT([[LS]],
+  // CHECK: wait_flag(PIPE_M, PIPE_MTE1, EVENT_ID[[WAR]]);
+  // CHECK: TEXTRACT([[LS]],
+  // CHECK: set_flag(PIPE_MTE1, PIPE_M, EVENT_ID[[READY1:[0-9]+]]);
+  // CHECK: wait_flag(PIPE_MTE1, PIPE_M, EVENT_ID[[READY1]]);
+  // CHECK: TMATMUL_MX(
+
+  func.func @reuse_left_scale() attributes {pto.kernel_kind = #pto.kernel_kind<cube>} {
+    %z = arith.constant 0 : i64
+    %slot1 = arith.constant 32768 : i64
+    %a1 = arith.constant 8192 : i64
+    %as1 = arith.constant 0 : i64
+    %bs1 = arith.constant 2048 : i64
+    %rmat_addr = arith.constant 65536 : i64
+    %lm_addr = arith.constant 131072 : i64
+    %rm_addr = arith.constant 131584 : i64
+    %zi = arith.constant 0 : index
+    %half = arith.constant 128 : index
+    %four = arith.constant 4 : index
+    %lmat = pto.alloc_tile addr = %z : !lmat
+    %rmat = pto.alloc_tile addr = %rmat_addr : !rmat
+    %lm = pto.alloc_tile addr = %lm_addr : !lm
+    %rm = pto.alloc_tile addr = %rm_addr : !rm
+    %left0 = pto.alloc_tile addr = %z : !left
+    %right0 = pto.alloc_tile addr = %z : !right
+    %left1 = pto.alloc_tile addr = %a1 : !left
+    %right1 = pto.alloc_tile addr = %slot1 : !right
+    %ls0 = pto.alloc_tile addr = %z : !ls
+    %rs0 = pto.alloc_tile addr = %z : !rs
+    %ls1 = pto.alloc_tile addr = %as1 : !ls
+    %rs1 = pto.alloc_tile addr = %bs1 : !rs
+    %acc = pto.alloc_tile addr = %z : !acc
+    pto.textract ins(%lmat, %zi, %zi : !lmat, index, index) outs(%left0 : !left)
+    pto.textract ins(%rmat, %zi, %zi : !rmat, index, index) outs(%right0 : !right)
+    pto.textract ins(%lm, %zi, %zi : !lm, index, index) outs(%ls0 : !ls)
+    pto.textract ins(%rm, %zi, %zi : !rm, index, index) outs(%rs0 : !rs)
+    pto.tmatmul.mx ins(%left0, %ls0, %right0, %rs0 : !left, !ls, !right, !rs) outs(%acc : !acc)
+    pto.textract ins(%lmat, %zi, %half : !lmat, index, index) outs(%left1 : !left)
+    pto.textract ins(%rmat, %half, %zi : !rmat, index, index) outs(%right1 : !right)
+    pto.textract ins(%lm, %zi, %four : !lm, index, index) outs(%ls1 : !ls)
+    pto.textract ins(%rm, %four, %zi : !rm, index, index) outs(%rs1 : !rs)
+    pto.tmatmul.mx.acc ins(%acc, %left1, %ls1, %right1, %rs1 : !acc, !left, !ls, !right, !rs) outs(%acc : !acc)
+    return
+  }
+  // CHECK-LABEL: AICORE void reuse_right_scale(
+  // CHECK: // pto: %ls1
+  // CHECK-NEXT: Tile<TileType::ScaleLeft, {{.*}}> [[LS:[a-zA-Z0-9_]+]];
+  // CHECK: // pto: %rs1
+  // CHECK-NEXT: Tile<TileType::ScaleRight, {{.*}}> [[RS:[a-zA-Z0-9_]+]];
+  // CHECK-COUNT-4: TEXTRACT(
+  // CHECK: set_flag(PIPE_MTE1, PIPE_M, EVENT_ID[[READY0:[0-9]+]]);
+  // CHECK: wait_flag(PIPE_MTE1, PIPE_M, EVENT_ID[[READY0]]);
+  // CHECK: TMATMUL_MX(
+  // CHECK-NOT: TEXTRACT([[RS]],
+  // CHECK: set_flag(PIPE_M, PIPE_MTE1, EVENT_ID[[WAR:[0-9]+]]);
+  // CHECK-NOT: TEXTRACT([[RS]],
+  // CHECK: wait_flag(PIPE_M, PIPE_MTE1, EVENT_ID[[WAR]]);
+  // CHECK: TEXTRACT([[RS]],
+  // CHECK: set_flag(PIPE_MTE1, PIPE_M, EVENT_ID[[READY1:[0-9]+]]);
+  // CHECK: wait_flag(PIPE_MTE1, PIPE_M, EVENT_ID[[READY1]]);
+  // CHECK: TMATMUL_MX(
+
+  func.func @reuse_right_scale() attributes {pto.kernel_kind = #pto.kernel_kind<cube>} {
+    %z = arith.constant 0 : i64
+    %slot1 = arith.constant 32768 : i64
+    %a1 = arith.constant 8192 : i64
+    %as1 = arith.constant 512 : i64
+    %bs1 = arith.constant 0 : i64
+    %rmat_addr = arith.constant 65536 : i64
+    %lm_addr = arith.constant 131072 : i64
+    %rm_addr = arith.constant 131584 : i64
+    %zi = arith.constant 0 : index
+    %half = arith.constant 128 : index
+    %four = arith.constant 4 : index
+    %lmat = pto.alloc_tile addr = %z : !lmat
+    %rmat = pto.alloc_tile addr = %rmat_addr : !rmat
+    %lm = pto.alloc_tile addr = %lm_addr : !lm
+    %rm = pto.alloc_tile addr = %rm_addr : !rm
+    %left0 = pto.alloc_tile addr = %z : !left
+    %right0 = pto.alloc_tile addr = %z : !right
+    %left1 = pto.alloc_tile addr = %a1 : !left
+    %right1 = pto.alloc_tile addr = %slot1 : !right
+    %ls0 = pto.alloc_tile addr = %z : !ls
+    %rs0 = pto.alloc_tile addr = %z : !rs
+    %ls1 = pto.alloc_tile addr = %as1 : !ls
+    %rs1 = pto.alloc_tile addr = %bs1 : !rs
+    %acc = pto.alloc_tile addr = %z : !acc
+    pto.textract ins(%lmat, %zi, %zi : !lmat, index, index) outs(%left0 : !left)
+    pto.textract ins(%rmat, %zi, %zi : !rmat, index, index) outs(%right0 : !right)
+    pto.textract ins(%lm, %zi, %zi : !lm, index, index) outs(%ls0 : !ls)
+    pto.textract ins(%rm, %zi, %zi : !rm, index, index) outs(%rs0 : !rs)
+    pto.tmatmul.mx ins(%left0, %ls0, %right0, %rs0 : !left, !ls, !right, !rs) outs(%acc : !acc)
+    pto.textract ins(%lmat, %zi, %half : !lmat, index, index) outs(%left1 : !left)
+    pto.textract ins(%rmat, %half, %zi : !rmat, index, index) outs(%right1 : !right)
+    pto.textract ins(%lm, %zi, %four : !lm, index, index) outs(%ls1 : !ls)
+    pto.textract ins(%rm, %four, %zi : !rm, index, index) outs(%rs1 : !rs)
+    pto.tmatmul.mx.acc ins(%acc, %left1, %ls1, %right1, %rs1 : !acc, !left, !ls, !right, !rs) outs(%acc : !acc)
+    return
+  }
+  // CHECK-LABEL: AICORE void dynamic_scale_address(
+  // CHECK: // pto: %ls1
+  // CHECK-NEXT: Tile<TileType::ScaleLeft, {{.*}}> [[LS:[a-zA-Z0-9_]+]];
+  // CHECK: // pto: %rs1
+  // CHECK-NEXT: Tile<TileType::ScaleRight, {{.*}}> [[RS:[a-zA-Z0-9_]+]];
+  // CHECK-COUNT-4: TEXTRACT(
+  // CHECK: set_flag(PIPE_MTE1, PIPE_M, EVENT_ID[[READY0:[0-9]+]]);
+  // CHECK: wait_flag(PIPE_MTE1, PIPE_M, EVENT_ID[[READY0]]);
+  // CHECK: TMATMUL_MX(
+  // CHECK-NOT: TEXTRACT([[LS]],
+  // CHECK: set_flag(PIPE_M, PIPE_MTE1, EVENT_ID[[WAR:[0-9]+]]);
+  // CHECK-NOT: TEXTRACT([[LS]],
+  // CHECK: wait_flag(PIPE_M, PIPE_MTE1, EVENT_ID[[WAR]]);
+  // CHECK: TEXTRACT([[LS]],
+  // CHECK: set_flag(PIPE_MTE1, PIPE_M, EVENT_ID[[READY1:[0-9]+]]);
+  // CHECK: wait_flag(PIPE_MTE1, PIPE_M, EVENT_ID[[READY1]]);
+  // CHECK: TMATMUL_MX(
+
+  func.func @dynamic_scale_address(%as1: i64) attributes {pto.kernel_kind = #pto.kernel_kind<cube>} {
+    %z = arith.constant 0 : i64
+    %slot1 = arith.constant 32768 : i64
+    %a1 = arith.constant 8192 : i64
+    %bs1 = arith.constant 2048 : i64
+    %rmat_addr = arith.constant 65536 : i64
+    %lm_addr = arith.constant 131072 : i64
+    %rm_addr = arith.constant 131584 : i64
+    %zi = arith.constant 0 : index
+    %half = arith.constant 128 : index
+    %four = arith.constant 4 : index
+    %lmat = pto.alloc_tile addr = %z : !lmat
+    %rmat = pto.alloc_tile addr = %rmat_addr : !rmat
+    %lm = pto.alloc_tile addr = %lm_addr : !lm
+    %rm = pto.alloc_tile addr = %rm_addr : !rm
+    %left0 = pto.alloc_tile addr = %z : !left
+    %right0 = pto.alloc_tile addr = %z : !right
+    %left1 = pto.alloc_tile addr = %a1 : !left
+    %right1 = pto.alloc_tile addr = %slot1 : !right
+    %ls0 = pto.alloc_tile addr = %z : !ls
+    %rs0 = pto.alloc_tile addr = %z : !rs
+    %ls1 = pto.alloc_tile addr = %as1 : !ls
+    %rs1 = pto.alloc_tile addr = %bs1 : !rs
+    %acc = pto.alloc_tile addr = %z : !acc
+    pto.textract ins(%lmat, %zi, %zi : !lmat, index, index) outs(%left0 : !left)
+    pto.textract ins(%rmat, %zi, %zi : !rmat, index, index) outs(%right0 : !right)
+    pto.textract ins(%lm, %zi, %zi : !lm, index, index) outs(%ls0 : !ls)
+    pto.textract ins(%rm, %zi, %zi : !rm, index, index) outs(%rs0 : !rs)
+    pto.tmatmul.mx ins(%left0, %ls0, %right0, %rs0 : !left, !ls, !right, !rs) outs(%acc : !acc)
+    pto.textract ins(%lmat, %zi, %half : !lmat, index, index) outs(%left1 : !left)
+    pto.textract ins(%rmat, %half, %zi : !rmat, index, index) outs(%right1 : !right)
+    pto.textract ins(%lm, %zi, %four : !lm, index, index) outs(%ls1 : !ls)
+    pto.textract ins(%rm, %four, %zi : !rm, index, index) outs(%rs1 : !rs)
+    pto.tmatmul.mx.acc ins(%acc, %left1, %ls1, %right1, %rs1 : !acc, !left, !ls, !right, !rs) outs(%acc : !acc)
+    return
+  }
+}

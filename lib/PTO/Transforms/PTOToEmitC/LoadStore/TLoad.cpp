@@ -95,23 +95,40 @@ struct PTOTLoadToTLOAD : public OpConversionPattern<pto::TLoadOp> {
     Value src = peelGlobalTensorConversionBridge(adaptor.getSrc());
     Value dst = adaptor.getDst();
 
+    // A declared l2_bypass read lowers through exactly one of two mechanisms.
+    // When the byte `offset` operand is present (the a2/a3 driver-owned
+    // uncached-alias distance), the address is redirected to the no-cache
+    // alias and the instruction itself stays an ordinary TLOAD. When it is
+    // absent, the policy rides on the load instruction instead: the
+    // pto-isa TLOAD overload takes TLoadL2Hint as a template argument, and
+    // NotAllocKeep streams the read without allocating L2 lines -- the
+    // "declaration accepted but does nothing" gap for bare-attribute loads.
+    bool hasBypassPolicy = false;
     if (auto policy = op.getCachePolicyAttr();
-        policy && policy.getValue() == pto::LoadCachePolicy::L2Bypass &&
-        op.getOffset()) {
-      auto adjustedSrc =
-          offsetTLoadSource(op, src, adaptor.getOffset(), rewriter);
-      if (failed(adjustedSrc)) {
-        return failure();
+        policy && policy.getValue() == pto::LoadCachePolicy::L2Bypass) {
+      hasBypassPolicy = true;
+      if (op.getOffset()) {
+        auto adjustedSrc =
+            offsetTLoadSource(op, src, adaptor.getOffset(), rewriter);
+        if (failed(adjustedSrc)) {
+          return failure();
+        }
+        src = *adjustedSrc;
       }
-      src = *adjustedSrc;
     }
 
     if (failed(convertTransferSource(rewriter, op, src, op.getSrc(),
                                      op.getDst().getType())))
       return failure();
 
+    ArrayAttr templateArgs = ArrayAttr{};
+    if (hasBypassPolicy && !op.getOffset()) {
+      templateArgs = rewriter.getArrayAttr(SmallVector<Attribute>{
+          emitc::OpaqueAttr::get(rewriter.getContext(),
+                                 "pto::TLoadL2Hint::NotAllocKeep")});
+    }
     rewriter.create<emitc::CallOpaqueOp>(op.getLoc(), TypeRange{}, "TLOAD",
-                                       ArrayAttr{}, ArrayAttr{},
+                                       ArrayAttr{}, templateArgs,
                                        ValueRange{dst, src});
 
     if (op->getNumResults() == 1) {

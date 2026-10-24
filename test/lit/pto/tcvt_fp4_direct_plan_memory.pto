@@ -1,0 +1,76 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+
+// RUN: ptoas --pto-arch=a5 --pto-level=level2 --emit-pto-ir --mlir-print-ir-after=pto-plan-memory %s 2>&1 1>/dev/null | FileCheck %s
+
+module {
+  func.func @tcvt_fp4_plan_32x512(%keep: !pto.tile_buf<vec, 1x32xi8>) {
+    %src = pto.alloc_tile : !pto.tile_buf<loc=vec, dtype=!pto.f4E2M1x2, rows=32, cols=256, v_row=32, v_col=256, blayout=row_major, slayout=none_box, fractal=512, pad=0, compact=0>
+    %dst = pto.alloc_tile : !pto.tile_buf<loc=vec, dtype=f8E4M3FN, rows=32, cols=512, v_row=32, v_col=512, blayout=col_major, slayout=row_major, fractal=512, pad=0, compact=0>
+    %tail = pto.alloc_tile : !pto.tile_buf<vec, 1x32xi8>
+    pto.tcvt ins(%src : !pto.tile_buf<loc=vec, dtype=!pto.f4E2M1x2, rows=32, cols=256, v_row=32, v_col=256, blayout=row_major, slayout=none_box, fractal=512, pad=0, compact=0>) outs(%dst : !pto.tile_buf<loc=vec, dtype=f8E4M3FN, rows=32, cols=512, v_row=32, v_col=512, blayout=col_major, slayout=row_major, fractal=512, pad=0, compact=0>)
+    pto.tmov ins(%keep : !pto.tile_buf<vec, 1x32xi8>) outs(%tail : !pto.tile_buf<vec, 1x32xi8>)
+    pto.tcvt ins(%src : !pto.tile_buf<loc=vec, dtype=!pto.f4E2M1x2, rows=32, cols=256, v_row=32, v_col=256, blayout=row_major, slayout=none_box, fractal=512, pad=0, compact=0>) outs(%dst : !pto.tile_buf<loc=vec, dtype=f8E4M3FN, rows=32, cols=512, v_row=32, v_col=512, blayout=col_major, slayout=row_major, fractal=512, pad=0, compact=0>)
+    pto.tprint ins(%tail : !pto.tile_buf<vec, 1x32xi8>)
+    return
+  }
+  func.func @tcvt_fp4_plan_padded(%keep: !pto.tile_buf<vec, 1x32xi8>) {
+    %src = pto.alloc_tile : !pto.tile_buf<loc=vec, dtype=!pto.f4E2M1x2, rows=7, cols=160, v_row=5, v_col=129, blayout=row_major, slayout=none_box, fractal=512, pad=0, compact=0>
+    %dst = pto.alloc_tile : !pto.tile_buf<loc=vec, dtype=f8E4M3FN, rows=32, cols=384, v_row=5, v_col=258, blayout=col_major, slayout=row_major, fractal=512, pad=0, compact=0>
+    %tail = pto.alloc_tile : !pto.tile_buf<vec, 1x32xi8>
+    pto.tcvt ins(%src : !pto.tile_buf<loc=vec, dtype=!pto.f4E2M1x2, rows=7, cols=160, v_row=5, v_col=129, blayout=row_major, slayout=none_box, fractal=512, pad=0, compact=0>) outs(%dst : !pto.tile_buf<loc=vec, dtype=f8E4M3FN, rows=32, cols=384, v_row=5, v_col=258, blayout=col_major, slayout=row_major, fractal=512, pad=0, compact=0>)
+    pto.tmov ins(%keep : !pto.tile_buf<vec, 1x32xi8>) outs(%tail : !pto.tile_buf<vec, 1x32xi8>)
+    pto.tcvt ins(%src : !pto.tile_buf<loc=vec, dtype=!pto.f4E2M1x2, rows=7, cols=160, v_row=5, v_col=129, blayout=row_major, slayout=none_box, fractal=512, pad=0, compact=0>) outs(%dst : !pto.tile_buf<loc=vec, dtype=f8E4M3FN, rows=32, cols=384, v_row=5, v_col=258, blayout=col_major, slayout=row_major, fractal=512, pad=0, compact=0>)
+    pto.tprint ins(%tail : !pto.tile_buf<vec, 1x32xi8>)
+    return
+  }
+  func.func @tcvt_fp4_plan_normal(%keep: !pto.tile_buf<vec, 1x32xi8>) {
+    %src = pto.alloc_tile : !pto.tile_buf<loc=vec, dtype=!pto.f4E2M1x2, rows=7, cols=160, v_row=5, v_col=129, blayout=row_major, slayout=none_box, fractal=512, pad=0, compact=0>
+    %dst = pto.alloc_tile : !pto.tile_buf<loc=vec, dtype=f8E4M3FN, rows=32, cols=384, v_row=5, v_col=258, blayout=col_major, slayout=row_major, fractal=512, pad=0, compact=1>
+    %tail = pto.alloc_tile : !pto.tile_buf<vec, 1x32xi8>
+    pto.tcvt ins(%src : !pto.tile_buf<loc=vec, dtype=!pto.f4E2M1x2, rows=7, cols=160, v_row=5, v_col=129, blayout=row_major, slayout=none_box, fractal=512, pad=0, compact=0>) outs(%dst : !pto.tile_buf<loc=vec, dtype=f8E4M3FN, rows=32, cols=384, v_row=5, v_col=258, blayout=col_major, slayout=row_major, fractal=512, pad=0, compact=1>)
+    pto.tmov ins(%keep : !pto.tile_buf<vec, 1x32xi8>) outs(%tail : !pto.tile_buf<vec, 1x32xi8>)
+    pto.tcvt ins(%src : !pto.tile_buf<loc=vec, dtype=!pto.f4E2M1x2, rows=7, cols=160, v_row=5, v_col=129, blayout=row_major, slayout=none_box, fractal=512, pad=0, compact=0>) outs(%dst : !pto.tile_buf<loc=vec, dtype=f8E4M3FN, rows=32, cols=384, v_row=5, v_col=258, blayout=col_major, slayout=row_major, fractal=512, pad=0, compact=1>)
+    pto.tprint ins(%tail : !pto.tile_buf<vec, 1x32xi8>)
+    return
+  }
+}
+
+// CHECK-LABEL: func.func @tcvt_fp4_plan_32x512
+// CHECK-DAG: %[[Z0:.*]] = arith.constant 0 : i64
+// CHECK-DAG: %[[D0:.*]] = arith.constant 8192 : i64
+// CHECK-DAG: %[[T0:.*]] = arith.constant 24576 : i64
+// CHECK: pto.alloc_tile addr = %[[Z0]]
+// CHECK: pto.alloc_tile addr = %[[D0]]
+// CHECK: pto.alloc_tile addr = %[[T0]]
+// CHECK-NOT: pto.alloc_tile
+// CHECK: pto.tcvt ins(%{{[^,]+}} {{.*}}) outs(%{{[^,]+}} :
+// CHECK-NOT: pto.alloc_tile
+// CHECK: return
+// CHECK-LABEL: func.func @tcvt_fp4_plan_padded
+// CHECK-DAG: %[[Z1:.*]] = arith.constant 0 : i64
+// CHECK-DAG: %[[D1:.*]] = arith.constant 1280 : i64
+// CHECK-DAG: %[[T1:.*]] = arith.constant 13568 : i64
+// CHECK: pto.alloc_tile addr = %[[Z1]]
+// CHECK: pto.alloc_tile addr = %[[D1]]
+// CHECK: pto.alloc_tile addr = %[[T1]]
+// CHECK-NOT: pto.alloc_tile
+// CHECK: pto.tcvt ins(%{{[^,]+}} {{.*}}) outs(%{{[^,]+}} :
+// CHECK-NOT: pto.alloc_tile
+// CHECK: return
+// CHECK-LABEL: func.func @tcvt_fp4_plan_normal
+// CHECK-DAG: %[[Z2:.*]] = arith.constant 0 : i64
+// CHECK-DAG: %[[D2:.*]] = arith.constant 1280 : i64
+// CHECK-DAG: %[[T2:.*]] = arith.constant 13568 : i64
+// CHECK: pto.alloc_tile addr = %[[Z2]]
+// CHECK: pto.alloc_tile addr = %[[D2]]
+// CHECK: pto.alloc_tile addr = %[[T2]]
+// CHECK-NOT: pto.alloc_tile
+// CHECK: pto.tcvt ins(%{{[^,]+}} {{.*}}) outs(%{{[^,]+}} :
+// CHECK-NOT: pto.alloc_tile
+// CHECK: return

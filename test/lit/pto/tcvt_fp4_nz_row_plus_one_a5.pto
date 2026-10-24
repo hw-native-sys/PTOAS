@@ -1,0 +1,38 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+
+// RUN: ptoas --pto-arch=a5 --pto-level=level2 %s | FileCheck %s --check-prefix=CPP
+// RUN: ptoas --pto-arch=a5 --pto-level=level2 --emit-pto-ir --mlir-print-ir-after=pto-plan-memory %s 2>&1 1>/dev/null | FileCheck %s --check-prefix=PLAN
+
+module {
+  func.func @tcvt_fp4_nz_row_plus_one(%keep: !pto.tile_buf<vec, 1x32xi8>) attributes {pto.kernel_kind = #pto.kernel_kind<vector>} {
+    %src = pto.alloc_tile : !pto.tile_buf<loc=vec, dtype=!pto.f4E2M1x2, rows=128, cols=128, v_row=128, v_col=128, blayout=row_major, slayout=none_box, fractal=512, pad=0, compact=0>
+    %dst = pto.alloc_tile : !pto.tile_buf<loc=vec, dtype=f8E4M3FN, rows=128, cols=256, v_row=128, v_col=256, blayout=col_major, slayout=row_major, fractal=512, pad=0, compact=2>
+    %tail = pto.alloc_tile : !pto.tile_buf<vec, 1x32xi8>
+    pto.tcvt ins(%src : !pto.tile_buf<loc=vec, dtype=!pto.f4E2M1x2, rows=128, cols=128, v_row=128, v_col=128, blayout=row_major, slayout=none_box, fractal=512, pad=0, compact=0>) outs(%dst : !pto.tile_buf<loc=vec, dtype=f8E4M3FN, rows=128, cols=256, v_row=128, v_col=256, blayout=col_major, slayout=row_major, fractal=512, pad=0, compact=2>)
+    pto.tmov ins(%keep : !pto.tile_buf<vec, 1x32xi8>) outs(%tail : !pto.tile_buf<vec, 1x32xi8>)
+    pto.tcvt ins(%src : !pto.tile_buf<loc=vec, dtype=!pto.f4E2M1x2, rows=128, cols=128, v_row=128, v_col=128, blayout=row_major, slayout=none_box, fractal=512, pad=0, compact=0>) outs(%dst : !pto.tile_buf<loc=vec, dtype=f8E4M3FN, rows=128, cols=256, v_row=128, v_col=256, blayout=col_major, slayout=row_major, fractal=512, pad=0, compact=2>)
+    pto.tprint ins(%tail : !pto.tile_buf<vec, 1x32xi8>)
+    return
+  }
+}
+
+// The existing RowPlusOne allocator computes the conservative 33023-byte
+// envelope and aligns to 33024 bytes. Dense product(shape) would incorrectly
+// start the overlapping-live tail at 49152, within the last padded NZ panel.
+// PLAN-LABEL: func.func @tcvt_fp4_nz_row_plus_one
+// PLAN-DAG: %[[SRC:.*]] = arith.constant 0 : i64
+// PLAN-DAG: %[[DST:.*]] = arith.constant 16384 : i64
+// PLAN-DAG: %[[TAIL:.*]] = arith.constant 49408 : i64
+// PLAN: pto.alloc_tile addr = %[[SRC]]
+// PLAN: pto.alloc_tile addr = %[[DST]]
+// PLAN: pto.alloc_tile addr = %[[TAIL]]
+
+// CPP-LABEL: AICORE void tcvt_fp4_nz_row_plus_one(
+// CPP: Tile<TileType::Vec, float8_e4m3_t, 128, 256, BLayout::ColMajor, 128, 256, SLayout::RowMajor, 512, PadValue::Null, CompactMode::RowPlusOne>
+// CPP: TCVT(

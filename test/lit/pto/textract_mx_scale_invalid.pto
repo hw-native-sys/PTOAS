@@ -1,0 +1,601 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+
+// RUN: pto-test-opt --split-input-file --verify-diagnostics %s
+
+module attributes {pto.target_arch = "a5"} {
+  func.func @left_src_wrong_slayout(%src: !pto.tile_buf<loc=mat, dtype=!pto.f8E8M0, rows=256, cols=8, v_row=256, v_col=8, blayout=row_major, slayout=col_major, fractal=32, pad=0, compact=0>, %dst: !pto.tile_buf<loc=scaling, dtype=!pto.f8E8M0, rows=256, cols=4, v_row=256, v_col=4, blayout=row_major, slayout=row_major, fractal=32, pad=0, compact=0>) {
+    %row = arith.constant 0 : index
+    %col = arith.constant 0 : index
+    // expected-error@+1 {{expects src to use the row_major slayout on A5}}
+    pto.textract ins(%src, %row, %col : !pto.tile_buf<loc=mat, dtype=!pto.f8E8M0, rows=256, cols=8, v_row=256, v_col=8, blayout=row_major, slayout=col_major, fractal=32, pad=0, compact=0>, index, index)
+                 outs(%dst : !pto.tile_buf<loc=scaling, dtype=!pto.f8E8M0, rows=256, cols=4, v_row=256, v_col=4, blayout=row_major, slayout=row_major, fractal=32, pad=0, compact=0>)
+    return
+  }
+}
+
+// -----
+
+module attributes {pto.target_arch = "a5"} {
+  func.func @right_src_wrong_slayout(%src: !pto.tile_buf<loc=mat, dtype=!pto.f8E8M0, rows=8, cols=256, v_row=8, v_col=256, blayout=col_major, slayout=row_major, fractal=32, pad=0, compact=0>, %dst: !pto.tile_buf<loc=scaling, dtype=!pto.f8E8M0, rows=4, cols=256, v_row=4, v_col=256, blayout=col_major, slayout=col_major, fractal=32, pad=0, compact=0>) {
+    %row = arith.constant 0 : index
+    %col = arith.constant 0 : index
+    // expected-error@+1 {{expects src to use the col_major slayout on A5}}
+    pto.textract ins(%src, %row, %col : !pto.tile_buf<loc=mat, dtype=!pto.f8E8M0, rows=8, cols=256, v_row=8, v_col=256, blayout=col_major, slayout=row_major, fractal=32, pad=0, compact=0>, index, index)
+                 outs(%dst : !pto.tile_buf<loc=scaling, dtype=!pto.f8E8M0, rows=4, cols=256, v_row=4, v_col=256, blayout=col_major, slayout=col_major, fractal=32, pad=0, compact=0>)
+    return
+  }
+}
+
+// -----
+
+module attributes {pto.target_arch = "a5"} {
+  func.func @rr_to_cc_is_not_transpose(%src: !pto.tile_buf<loc=mat, dtype=!pto.f8E8M0, rows=256, cols=256, v_row=256, v_col=256, blayout=row_major, slayout=row_major, fractal=32, pad=0, compact=0>, %dst: !pto.tile_buf<loc=scaling, dtype=!pto.f8E8M0, rows=4, cols=256, v_row=4, v_col=256, blayout=col_major, slayout=col_major, fractal=32, pad=0, compact=0>) {
+    %row = arith.constant 0 : index
+    %col = arith.constant 0 : index
+    // expected-error@+1 {{expects src to use the col_major blayout on A5}}
+    pto.textract ins(%src, %row, %col : !pto.tile_buf<loc=mat, dtype=!pto.f8E8M0, rows=256, cols=256, v_row=256, v_col=256, blayout=row_major, slayout=row_major, fractal=32, pad=0, compact=0>, index, index)
+                 outs(%dst : !pto.tile_buf<loc=scaling, dtype=!pto.f8E8M0, rows=4, cols=256, v_row=4, v_col=256, blayout=col_major, slayout=col_major, fractal=32, pad=0, compact=0>)
+    return
+  }
+}
+
+// -----
+
+module attributes {pto.target_arch = "a5"} {
+  func.func @cc_to_rr_is_not_transpose(%src: !pto.tile_buf<loc=mat, dtype=!pto.f8E8M0, rows=256, cols=256, v_row=256, v_col=256, blayout=col_major, slayout=col_major, fractal=32, pad=0, compact=0>, %dst: !pto.tile_buf<loc=scaling, dtype=!pto.f8E8M0, rows=256, cols=4, v_row=256, v_col=4, blayout=row_major, slayout=row_major, fractal=32, pad=0, compact=0>) {
+    %row = arith.constant 0 : index
+    %col = arith.constant 0 : index
+    // expected-error@+1 {{expects src to use the row_major blayout on A5}}
+    pto.textract ins(%src, %row, %col : !pto.tile_buf<loc=mat, dtype=!pto.f8E8M0, rows=256, cols=256, v_row=256, v_col=256, blayout=col_major, slayout=col_major, fractal=32, pad=0, compact=0>, index, index)
+                 outs(%dst : !pto.tile_buf<loc=scaling, dtype=!pto.f8E8M0, rows=256, cols=4, v_row=256, v_col=4, blayout=row_major, slayout=row_major, fractal=32, pad=0, compact=0>)
+    return
+  }
+}
+
+// -----
+
+module attributes {pto.target_arch = "a5"} {
+  func.func @left_dst_wrong_slayout(%src: !pto.tile_buf<loc=mat, dtype=!pto.f8E8M0, rows=256, cols=8, v_row=256, v_col=8, blayout=row_major, slayout=row_major, fractal=32, pad=0, compact=0>, %dst: !pto.tile_buf<loc=scaling, dtype=!pto.f8E8M0, rows=256, cols=4, v_row=256, v_col=4, blayout=row_major, slayout=col_major, fractal=32, pad=0, compact=0>) {
+    %row = arith.constant 0 : index
+    %col = arith.constant 0 : index
+    // expected-error@+1 {{expects dst to use the row_major slayout on A5}}
+    pto.textract ins(%src, %row, %col : !pto.tile_buf<loc=mat, dtype=!pto.f8E8M0, rows=256, cols=8, v_row=256, v_col=8, blayout=row_major, slayout=row_major, fractal=32, pad=0, compact=0>, index, index)
+                 outs(%dst : !pto.tile_buf<loc=scaling, dtype=!pto.f8E8M0, rows=256, cols=4, v_row=256, v_col=4, blayout=row_major, slayout=col_major, fractal=32, pad=0, compact=0>)
+    return
+  }
+}
+
+// -----
+
+module attributes {pto.target_arch = "a5"} {
+  func.func @right_dst_wrong_slayout(%src: !pto.tile_buf<loc=mat, dtype=!pto.f8E8M0, rows=8, cols=256, v_row=8, v_col=256, blayout=col_major, slayout=col_major, fractal=32, pad=0, compact=0>, %dst: !pto.tile_buf<loc=scaling, dtype=!pto.f8E8M0, rows=4, cols=256, v_row=4, v_col=256, blayout=col_major, slayout=row_major, fractal=32, pad=0, compact=0>) {
+    %row = arith.constant 0 : index
+    %col = arith.constant 0 : index
+    // expected-error@+1 {{expects dst to use the col_major slayout on A5}}
+    pto.textract ins(%src, %row, %col : !pto.tile_buf<loc=mat, dtype=!pto.f8E8M0, rows=8, cols=256, v_row=8, v_col=256, blayout=col_major, slayout=col_major, fractal=32, pad=0, compact=0>, index, index)
+                 outs(%dst : !pto.tile_buf<loc=scaling, dtype=!pto.f8E8M0, rows=4, cols=256, v_row=4, v_col=256, blayout=col_major, slayout=row_major, fractal=32, pad=0, compact=0>)
+    return
+  }
+}
+
+// -----
+
+module attributes {pto.target_arch = "a5"} {
+  func.func @src_wrong_fractal(%src: !pto.tile_buf<loc=mat, dtype=!pto.f8E8M0, rows=256, cols=8, v_row=256, v_col=8, blayout=row_major, slayout=row_major, fractal=512, pad=0, compact=0>, %dst: !pto.tile_buf<loc=scaling, dtype=!pto.f8E8M0, rows=256, cols=4, v_row=256, v_col=4, blayout=row_major, slayout=row_major, fractal=32, pad=0, compact=0>) {
+    %row = arith.constant 0 : index
+    %col = arith.constant 0 : index
+    // expected-error@+1 {{expects src to use fractal=32 on A5}}
+    pto.textract ins(%src, %row, %col : !pto.tile_buf<loc=mat, dtype=!pto.f8E8M0, rows=256, cols=8, v_row=256, v_col=8, blayout=row_major, slayout=row_major, fractal=512, pad=0, compact=0>, index, index)
+                 outs(%dst : !pto.tile_buf<loc=scaling, dtype=!pto.f8E8M0, rows=256, cols=4, v_row=256, v_col=4, blayout=row_major, slayout=row_major, fractal=32, pad=0, compact=0>)
+    return
+  }
+}
+
+// -----
+
+module attributes {pto.target_arch = "a5"} {
+  func.func @dst_wrong_fractal(%src: !pto.tile_buf<loc=mat, dtype=!pto.f8E8M0, rows=256, cols=8, v_row=256, v_col=8, blayout=row_major, slayout=row_major, fractal=32, pad=0, compact=0>, %dst: !pto.tile_buf<loc=scaling, dtype=!pto.f8E8M0, rows=256, cols=4, v_row=256, v_col=4, blayout=row_major, slayout=row_major, fractal=512, pad=0, compact=0>) {
+    %row = arith.constant 0 : index
+    %col = arith.constant 0 : index
+    // expected-error@+1 {{expects dst to use fractal=32 on A5}}
+    pto.textract ins(%src, %row, %col : !pto.tile_buf<loc=mat, dtype=!pto.f8E8M0, rows=256, cols=8, v_row=256, v_col=8, blayout=row_major, slayout=row_major, fractal=32, pad=0, compact=0>, index, index)
+                 outs(%dst : !pto.tile_buf<loc=scaling, dtype=!pto.f8E8M0, rows=256, cols=4, v_row=256, v_col=4, blayout=row_major, slayout=row_major, fractal=512, pad=0, compact=0>)
+    return
+  }
+}
+
+// -----
+
+module attributes {pto.target_arch = "a5"} {
+  func.func @left_src_unaligned_rows(%src: !pto.tile_buf<loc=mat, dtype=!pto.f8E8M0, rows=257, cols=8, v_row=257, v_col=8, blayout=row_major, slayout=row_major, fractal=32, pad=0, compact=0>, %dst: !pto.tile_buf<loc=scaling, dtype=!pto.f8E8M0, rows=256, cols=4, v_row=256, v_col=4, blayout=row_major, slayout=row_major, fractal=32, pad=0, compact=0>) {
+    %row = arith.constant 0 : index
+    %col = arith.constant 0 : index
+    // expected-error@+1 {{expects A5 MX scale textract src physical shape to be aligned to [16, 2]}}
+    pto.textract ins(%src, %row, %col : !pto.tile_buf<loc=mat, dtype=!pto.f8E8M0, rows=257, cols=8, v_row=257, v_col=8, blayout=row_major, slayout=row_major, fractal=32, pad=0, compact=0>, index, index)
+                 outs(%dst : !pto.tile_buf<loc=scaling, dtype=!pto.f8E8M0, rows=256, cols=4, v_row=256, v_col=4, blayout=row_major, slayout=row_major, fractal=32, pad=0, compact=0>)
+    return
+  }
+}
+
+// -----
+
+module attributes {pto.target_arch = "a5"} {
+  func.func @left_src_unaligned_cols(%src: !pto.tile_buf<loc=mat, dtype=!pto.f8E8M0, rows=256, cols=9, v_row=256, v_col=9, blayout=row_major, slayout=row_major, fractal=32, pad=0, compact=0>, %dst: !pto.tile_buf<loc=scaling, dtype=!pto.f8E8M0, rows=256, cols=4, v_row=256, v_col=4, blayout=row_major, slayout=row_major, fractal=32, pad=0, compact=0>) {
+    %row = arith.constant 0 : index
+    %col = arith.constant 0 : index
+    // expected-error@+1 {{expects A5 MX scale textract src physical shape to be aligned to [16, 2]}}
+    pto.textract ins(%src, %row, %col : !pto.tile_buf<loc=mat, dtype=!pto.f8E8M0, rows=256, cols=9, v_row=256, v_col=9, blayout=row_major, slayout=row_major, fractal=32, pad=0, compact=0>, index, index)
+                 outs(%dst : !pto.tile_buf<loc=scaling, dtype=!pto.f8E8M0, rows=256, cols=4, v_row=256, v_col=4, blayout=row_major, slayout=row_major, fractal=32, pad=0, compact=0>)
+    return
+  }
+}
+
+// -----
+
+module attributes {pto.target_arch = "a5"} {
+  func.func @left_dst_unaligned_rows(%src: !pto.tile_buf<loc=mat, dtype=!pto.f8E8M0, rows=256, cols=8, v_row=256, v_col=8, blayout=row_major, slayout=row_major, fractal=32, pad=0, compact=0>, %dst: !pto.tile_buf<loc=scaling, dtype=!pto.f8E8M0, rows=255, cols=4, v_row=255, v_col=4, blayout=row_major, slayout=row_major, fractal=32, pad=0, compact=0>) {
+    %row = arith.constant 0 : index
+    %col = arith.constant 0 : index
+    // expected-error@+1 {{expects A5 MX scale textract dst physical shape to be aligned to [16, 2]}}
+    pto.textract ins(%src, %row, %col : !pto.tile_buf<loc=mat, dtype=!pto.f8E8M0, rows=256, cols=8, v_row=256, v_col=8, blayout=row_major, slayout=row_major, fractal=32, pad=0, compact=0>, index, index)
+                 outs(%dst : !pto.tile_buf<loc=scaling, dtype=!pto.f8E8M0, rows=255, cols=4, v_row=255, v_col=4, blayout=row_major, slayout=row_major, fractal=32, pad=0, compact=0>)
+    return
+  }
+}
+
+// -----
+
+module attributes {pto.target_arch = "a5"} {
+  func.func @left_dst_unaligned_cols(%src: !pto.tile_buf<loc=mat, dtype=!pto.f8E8M0, rows=256, cols=8, v_row=256, v_col=8, blayout=row_major, slayout=row_major, fractal=32, pad=0, compact=0>, %dst: !pto.tile_buf<loc=scaling, dtype=!pto.f8E8M0, rows=256, cols=3, v_row=256, v_col=3, blayout=row_major, slayout=row_major, fractal=32, pad=0, compact=0>) {
+    %row = arith.constant 0 : index
+    %col = arith.constant 0 : index
+    // expected-error@+1 {{expects A5 MX scale textract dst physical shape to be aligned to [16, 2]}}
+    pto.textract ins(%src, %row, %col : !pto.tile_buf<loc=mat, dtype=!pto.f8E8M0, rows=256, cols=8, v_row=256, v_col=8, blayout=row_major, slayout=row_major, fractal=32, pad=0, compact=0>, index, index)
+                 outs(%dst : !pto.tile_buf<loc=scaling, dtype=!pto.f8E8M0, rows=256, cols=3, v_row=256, v_col=3, blayout=row_major, slayout=row_major, fractal=32, pad=0, compact=0>)
+    return
+  }
+}
+
+// -----
+
+module attributes {pto.target_arch = "a5"} {
+  func.func @right_src_unaligned_rows(%src: !pto.tile_buf<loc=mat, dtype=!pto.f8E8M0, rows=9, cols=256, v_row=9, v_col=256, blayout=col_major, slayout=col_major, fractal=32, pad=0, compact=0>, %dst: !pto.tile_buf<loc=scaling, dtype=!pto.f8E8M0, rows=4, cols=256, v_row=4, v_col=256, blayout=col_major, slayout=col_major, fractal=32, pad=0, compact=0>) {
+    %row = arith.constant 0 : index
+    %col = arith.constant 0 : index
+    // expected-error@+1 {{expects A5 MX scale textract src physical shape to be aligned to [2, 16]}}
+    pto.textract ins(%src, %row, %col : !pto.tile_buf<loc=mat, dtype=!pto.f8E8M0, rows=9, cols=256, v_row=9, v_col=256, blayout=col_major, slayout=col_major, fractal=32, pad=0, compact=0>, index, index)
+                 outs(%dst : !pto.tile_buf<loc=scaling, dtype=!pto.f8E8M0, rows=4, cols=256, v_row=4, v_col=256, blayout=col_major, slayout=col_major, fractal=32, pad=0, compact=0>)
+    return
+  }
+}
+
+// -----
+
+module attributes {pto.target_arch = "a5"} {
+  func.func @right_src_unaligned_cols(%src: !pto.tile_buf<loc=mat, dtype=!pto.f8E8M0, rows=8, cols=257, v_row=8, v_col=257, blayout=col_major, slayout=col_major, fractal=32, pad=0, compact=0>, %dst: !pto.tile_buf<loc=scaling, dtype=!pto.f8E8M0, rows=4, cols=256, v_row=4, v_col=256, blayout=col_major, slayout=col_major, fractal=32, pad=0, compact=0>) {
+    %row = arith.constant 0 : index
+    %col = arith.constant 0 : index
+    // expected-error@+1 {{expects A5 MX scale textract src physical shape to be aligned to [2, 16]}}
+    pto.textract ins(%src, %row, %col : !pto.tile_buf<loc=mat, dtype=!pto.f8E8M0, rows=8, cols=257, v_row=8, v_col=257, blayout=col_major, slayout=col_major, fractal=32, pad=0, compact=0>, index, index)
+                 outs(%dst : !pto.tile_buf<loc=scaling, dtype=!pto.f8E8M0, rows=4, cols=256, v_row=4, v_col=256, blayout=col_major, slayout=col_major, fractal=32, pad=0, compact=0>)
+    return
+  }
+}
+
+// -----
+
+module attributes {pto.target_arch = "a5"} {
+  func.func @right_dst_unaligned_rows(%src: !pto.tile_buf<loc=mat, dtype=!pto.f8E8M0, rows=8, cols=256, v_row=8, v_col=256, blayout=col_major, slayout=col_major, fractal=32, pad=0, compact=0>, %dst: !pto.tile_buf<loc=scaling, dtype=!pto.f8E8M0, rows=3, cols=256, v_row=3, v_col=256, blayout=col_major, slayout=col_major, fractal=32, pad=0, compact=0>) {
+    %row = arith.constant 0 : index
+    %col = arith.constant 0 : index
+    // expected-error@+1 {{expects A5 MX scale textract dst physical shape to be aligned to [2, 16]}}
+    pto.textract ins(%src, %row, %col : !pto.tile_buf<loc=mat, dtype=!pto.f8E8M0, rows=8, cols=256, v_row=8, v_col=256, blayout=col_major, slayout=col_major, fractal=32, pad=0, compact=0>, index, index)
+                 outs(%dst : !pto.tile_buf<loc=scaling, dtype=!pto.f8E8M0, rows=3, cols=256, v_row=3, v_col=256, blayout=col_major, slayout=col_major, fractal=32, pad=0, compact=0>)
+    return
+  }
+}
+
+// -----
+
+module attributes {pto.target_arch = "a5"} {
+  func.func @right_dst_unaligned_cols(%src: !pto.tile_buf<loc=mat, dtype=!pto.f8E8M0, rows=8, cols=256, v_row=8, v_col=256, blayout=col_major, slayout=col_major, fractal=32, pad=0, compact=0>, %dst: !pto.tile_buf<loc=scaling, dtype=!pto.f8E8M0, rows=4, cols=255, v_row=4, v_col=255, blayout=col_major, slayout=col_major, fractal=32, pad=0, compact=0>) {
+    %row = arith.constant 0 : index
+    %col = arith.constant 0 : index
+    // expected-error@+1 {{expects A5 MX scale textract dst physical shape to be aligned to [2, 16]}}
+    pto.textract ins(%src, %row, %col : !pto.tile_buf<loc=mat, dtype=!pto.f8E8M0, rows=8, cols=256, v_row=8, v_col=256, blayout=col_major, slayout=col_major, fractal=32, pad=0, compact=0>, index, index)
+                 outs(%dst : !pto.tile_buf<loc=scaling, dtype=!pto.f8E8M0, rows=4, cols=255, v_row=4, v_col=255, blayout=col_major, slayout=col_major, fractal=32, pad=0, compact=0>)
+    return
+  }
+}
+
+// -----
+
+module attributes {pto.target_arch = "a5"} {
+  func.func @left_unaligned_row_offset(%src: !pto.tile_buf<loc=mat, dtype=!pto.f8E8M0, rows=272, cols=8, v_row=272, v_col=8, blayout=row_major, slayout=row_major, fractal=32, pad=0, compact=0>, %dst: !pto.tile_buf<loc=scaling, dtype=!pto.f8E8M0, rows=256, cols=4, v_row=256, v_col=4, blayout=row_major, slayout=row_major, fractal=32, pad=0, compact=0>) {
+    %row = arith.constant 4 : index
+    %col = arith.constant 0 : index
+    // expected-error@+1 {{expects A5 MX scale textract indexRow to be aligned to 16}}
+    pto.textract ins(%src, %row, %col : !pto.tile_buf<loc=mat, dtype=!pto.f8E8M0, rows=272, cols=8, v_row=272, v_col=8, blayout=row_major, slayout=row_major, fractal=32, pad=0, compact=0>, index, index)
+                 outs(%dst : !pto.tile_buf<loc=scaling, dtype=!pto.f8E8M0, rows=256, cols=4, v_row=256, v_col=4, blayout=row_major, slayout=row_major, fractal=32, pad=0, compact=0>)
+    return
+  }
+}
+
+// -----
+
+module attributes {pto.target_arch = "a5"} {
+  func.func @left_unaligned_col_offset(%src: !pto.tile_buf<loc=mat, dtype=!pto.f8E8M0, rows=256, cols=8, v_row=256, v_col=8, blayout=row_major, slayout=row_major, fractal=32, pad=0, compact=0>, %dst: !pto.tile_buf<loc=scaling, dtype=!pto.f8E8M0, rows=256, cols=4, v_row=256, v_col=4, blayout=row_major, slayout=row_major, fractal=32, pad=0, compact=0>) {
+    %row = arith.constant 0 : index
+    %col = arith.constant 3 : index
+    // expected-error@+1 {{expects A5 MX scale textract indexCol to be aligned to 2}}
+    pto.textract ins(%src, %row, %col : !pto.tile_buf<loc=mat, dtype=!pto.f8E8M0, rows=256, cols=8, v_row=256, v_col=8, blayout=row_major, slayout=row_major, fractal=32, pad=0, compact=0>, index, index)
+                 outs(%dst : !pto.tile_buf<loc=scaling, dtype=!pto.f8E8M0, rows=256, cols=4, v_row=256, v_col=4, blayout=row_major, slayout=row_major, fractal=32, pad=0, compact=0>)
+    return
+  }
+}
+
+// -----
+
+module attributes {pto.target_arch = "a5"} {
+  func.func @right_unaligned_row_offset(%src: !pto.tile_buf<loc=mat, dtype=!pto.f8E8M0, rows=8, cols=256, v_row=8, v_col=256, blayout=col_major, slayout=col_major, fractal=32, pad=0, compact=0>, %dst: !pto.tile_buf<loc=scaling, dtype=!pto.f8E8M0, rows=4, cols=256, v_row=4, v_col=256, blayout=col_major, slayout=col_major, fractal=32, pad=0, compact=0>) {
+    %row = arith.constant 3 : index
+    %col = arith.constant 0 : index
+    // expected-error@+1 {{expects A5 MX scale textract indexRow to be aligned to 2}}
+    pto.textract ins(%src, %row, %col : !pto.tile_buf<loc=mat, dtype=!pto.f8E8M0, rows=8, cols=256, v_row=8, v_col=256, blayout=col_major, slayout=col_major, fractal=32, pad=0, compact=0>, index, index)
+                 outs(%dst : !pto.tile_buf<loc=scaling, dtype=!pto.f8E8M0, rows=4, cols=256, v_row=4, v_col=256, blayout=col_major, slayout=col_major, fractal=32, pad=0, compact=0>)
+    return
+  }
+}
+
+// -----
+
+module attributes {pto.target_arch = "a5"} {
+  func.func @right_unaligned_col_offset(%src: !pto.tile_buf<loc=mat, dtype=!pto.f8E8M0, rows=8, cols=272, v_row=8, v_col=272, blayout=col_major, slayout=col_major, fractal=32, pad=0, compact=0>, %dst: !pto.tile_buf<loc=scaling, dtype=!pto.f8E8M0, rows=4, cols=256, v_row=4, v_col=256, blayout=col_major, slayout=col_major, fractal=32, pad=0, compact=0>) {
+    %row = arith.constant 0 : index
+    %col = arith.constant 4 : index
+    // expected-error@+1 {{expects A5 MX scale textract indexCol to be aligned to 16}}
+    pto.textract ins(%src, %row, %col : !pto.tile_buf<loc=mat, dtype=!pto.f8E8M0, rows=8, cols=272, v_row=8, v_col=272, blayout=col_major, slayout=col_major, fractal=32, pad=0, compact=0>, index, index)
+                 outs(%dst : !pto.tile_buf<loc=scaling, dtype=!pto.f8E8M0, rows=4, cols=256, v_row=4, v_col=256, blayout=col_major, slayout=col_major, fractal=32, pad=0, compact=0>)
+    return
+  }
+}
+
+// -----
+
+module attributes {pto.target_arch = "a5"} {
+  func.func @left_row_out_of_bounds(%src: !pto.tile_buf<loc=mat, dtype=!pto.f8E8M0, rows=256, cols=8, v_row=256, v_col=8, blayout=row_major, slayout=row_major, fractal=32, pad=0, compact=0>, %dst: !pto.tile_buf<loc=scaling, dtype=!pto.f8E8M0, rows=256, cols=4, v_row=256, v_col=4, blayout=row_major, slayout=row_major, fractal=32, pad=0, compact=0>) {
+    %row = arith.constant 16 : index
+    %col = arith.constant 0 : index
+    // expected-error@+1 {{expects indexRow + dst.rows <= src.rows}}
+    pto.textract ins(%src, %row, %col : !pto.tile_buf<loc=mat, dtype=!pto.f8E8M0, rows=256, cols=8, v_row=256, v_col=8, blayout=row_major, slayout=row_major, fractal=32, pad=0, compact=0>, index, index)
+                 outs(%dst : !pto.tile_buf<loc=scaling, dtype=!pto.f8E8M0, rows=256, cols=4, v_row=256, v_col=4, blayout=row_major, slayout=row_major, fractal=32, pad=0, compact=0>)
+    return
+  }
+}
+
+// -----
+
+module attributes {pto.target_arch = "a5"} {
+  func.func @left_col_out_of_bounds(%src: !pto.tile_buf<loc=mat, dtype=!pto.f8E8M0, rows=256, cols=8, v_row=256, v_col=8, blayout=row_major, slayout=row_major, fractal=32, pad=0, compact=0>, %dst: !pto.tile_buf<loc=scaling, dtype=!pto.f8E8M0, rows=256, cols=4, v_row=256, v_col=4, blayout=row_major, slayout=row_major, fractal=32, pad=0, compact=0>) {
+    %row = arith.constant 0 : index
+    %col = arith.constant 6 : index
+    // expected-error@+1 {{expects indexCol + dst.cols <= src.cols}}
+    pto.textract ins(%src, %row, %col : !pto.tile_buf<loc=mat, dtype=!pto.f8E8M0, rows=256, cols=8, v_row=256, v_col=8, blayout=row_major, slayout=row_major, fractal=32, pad=0, compact=0>, index, index)
+                 outs(%dst : !pto.tile_buf<loc=scaling, dtype=!pto.f8E8M0, rows=256, cols=4, v_row=256, v_col=4, blayout=row_major, slayout=row_major, fractal=32, pad=0, compact=0>)
+    return
+  }
+}
+
+// -----
+
+module attributes {pto.target_arch = "a5"} {
+  func.func @right_row_out_of_bounds(%src: !pto.tile_buf<loc=mat, dtype=!pto.f8E8M0, rows=8, cols=256, v_row=8, v_col=256, blayout=col_major, slayout=col_major, fractal=32, pad=0, compact=0>, %dst: !pto.tile_buf<loc=scaling, dtype=!pto.f8E8M0, rows=4, cols=256, v_row=4, v_col=256, blayout=col_major, slayout=col_major, fractal=32, pad=0, compact=0>) {
+    %row = arith.constant 6 : index
+    %col = arith.constant 0 : index
+    // expected-error@+1 {{expects indexRow + dst.rows <= src.rows}}
+    pto.textract ins(%src, %row, %col : !pto.tile_buf<loc=mat, dtype=!pto.f8E8M0, rows=8, cols=256, v_row=8, v_col=256, blayout=col_major, slayout=col_major, fractal=32, pad=0, compact=0>, index, index)
+                 outs(%dst : !pto.tile_buf<loc=scaling, dtype=!pto.f8E8M0, rows=4, cols=256, v_row=4, v_col=256, blayout=col_major, slayout=col_major, fractal=32, pad=0, compact=0>)
+    return
+  }
+}
+
+// -----
+
+module attributes {pto.target_arch = "a5"} {
+  func.func @right_col_out_of_bounds(%src: !pto.tile_buf<loc=mat, dtype=!pto.f8E8M0, rows=8, cols=256, v_row=8, v_col=256, blayout=col_major, slayout=col_major, fractal=32, pad=0, compact=0>, %dst: !pto.tile_buf<loc=scaling, dtype=!pto.f8E8M0, rows=4, cols=256, v_row=4, v_col=256, blayout=col_major, slayout=col_major, fractal=32, pad=0, compact=0>) {
+    %row = arith.constant 0 : index
+    %col = arith.constant 16 : index
+    // expected-error@+1 {{expects indexCol + dst.cols <= src.cols}}
+    pto.textract ins(%src, %row, %col : !pto.tile_buf<loc=mat, dtype=!pto.f8E8M0, rows=8, cols=256, v_row=8, v_col=256, blayout=col_major, slayout=col_major, fractal=32, pad=0, compact=0>, index, index)
+                 outs(%dst : !pto.tile_buf<loc=scaling, dtype=!pto.f8E8M0, rows=4, cols=256, v_row=4, v_col=256, blayout=col_major, slayout=col_major, fractal=32, pad=0, compact=0>)
+    return
+  }
+}
+
+// -----
+
+module attributes {pto.target_arch = "a5"} {
+  func.func @negative_row_offset(%src: !pto.tile_buf<loc=mat, dtype=!pto.f8E8M0, rows=256, cols=8, v_row=256, v_col=8, blayout=row_major, slayout=row_major, fractal=32, pad=0, compact=0>, %dst: !pto.tile_buf<loc=scaling, dtype=!pto.f8E8M0, rows=256, cols=4, v_row=256, v_col=4, blayout=row_major, slayout=row_major, fractal=32, pad=0, compact=0>) {
+    %row = arith.constant -16 : index
+    %col = arith.constant 0 : index
+    // expected-error@+1 {{expects indexRow to be non-negative}}
+    pto.textract ins(%src, %row, %col : !pto.tile_buf<loc=mat, dtype=!pto.f8E8M0, rows=256, cols=8, v_row=256, v_col=8, blayout=row_major, slayout=row_major, fractal=32, pad=0, compact=0>, index, index)
+                 outs(%dst : !pto.tile_buf<loc=scaling, dtype=!pto.f8E8M0, rows=256, cols=4, v_row=256, v_col=4, blayout=row_major, slayout=row_major, fractal=32, pad=0, compact=0>)
+    return
+  }
+}
+
+// -----
+
+module attributes {pto.target_arch = "a5"} {
+  func.func @negative_col_offset(%src: !pto.tile_buf<loc=mat, dtype=!pto.f8E8M0, rows=256, cols=8, v_row=256, v_col=8, blayout=row_major, slayout=row_major, fractal=32, pad=0, compact=0>, %dst: !pto.tile_buf<loc=scaling, dtype=!pto.f8E8M0, rows=256, cols=4, v_row=256, v_col=4, blayout=row_major, slayout=row_major, fractal=32, pad=0, compact=0>) {
+    %row = arith.constant 0 : index
+    %col = arith.constant -2 : index
+    // expected-error@+1 {{expects indexCol to be non-negative}}
+    pto.textract ins(%src, %row, %col : !pto.tile_buf<loc=mat, dtype=!pto.f8E8M0, rows=256, cols=8, v_row=256, v_col=8, blayout=row_major, slayout=row_major, fractal=32, pad=0, compact=0>, index, index)
+                 outs(%dst : !pto.tile_buf<loc=scaling, dtype=!pto.f8E8M0, rows=256, cols=4, v_row=256, v_col=4, blayout=row_major, slayout=row_major, fractal=32, pad=0, compact=0>)
+    return
+  }
+}
+
+// -----
+
+module attributes {pto.target_arch = "a5"} {
+  func.func @mixed_e8m0_and_i8(%src: !pto.tile_buf<loc=mat, dtype=!pto.f8E8M0, rows=256, cols=8, v_row=256, v_col=8, blayout=row_major, slayout=row_major, fractal=32, pad=0, compact=0>, %dst: !pto.tile_buf<loc=scaling, dtype=i8, rows=256, cols=4, v_row=256, v_col=4, blayout=row_major, slayout=row_major, fractal=32, pad=0, compact=0>) {
+    %row = arith.constant 0 : index
+    %col = arith.constant 0 : index
+    // expected-error@+1 {{expects src and dst to have the same element type}}
+    pto.textract ins(%src, %row, %col : !pto.tile_buf<loc=mat, dtype=!pto.f8E8M0, rows=256, cols=8, v_row=256, v_col=8, blayout=row_major, slayout=row_major, fractal=32, pad=0, compact=0>, index, index)
+                 outs(%dst : !pto.tile_buf<loc=scaling, dtype=i8, rows=256, cols=4, v_row=256, v_col=4, blayout=row_major, slayout=row_major, fractal=32, pad=0, compact=0>)
+    return
+  }
+}
+
+// -----
+
+module attributes {pto.target_arch = "a5"} {
+  func.func @mixed_ui8_and_e8m0(%src: !pto.tile_buf<loc=mat, dtype=ui8, rows=256, cols=8, v_row=256, v_col=8, blayout=row_major, slayout=row_major, fractal=32, pad=0, compact=0>, %dst: !pto.tile_buf<loc=scaling, dtype=!pto.f8E8M0, rows=256, cols=4, v_row=256, v_col=4, blayout=row_major, slayout=row_major, fractal=32, pad=0, compact=0>) {
+    %row = arith.constant 0 : index
+    %col = arith.constant 0 : index
+    // expected-error@+1 {{expects src and dst to have the same element type}}
+    pto.textract ins(%src, %row, %col : !pto.tile_buf<loc=mat, dtype=ui8, rows=256, cols=8, v_row=256, v_col=8, blayout=row_major, slayout=row_major, fractal=32, pad=0, compact=0>, index, index)
+                 outs(%dst : !pto.tile_buf<loc=scaling, dtype=!pto.f8E8M0, rows=256, cols=4, v_row=256, v_col=4, blayout=row_major, slayout=row_major, fractal=32, pad=0, compact=0>)
+    return
+  }
+}
+
+// -----
+
+module attributes {pto.target_arch = "a5"} {
+  func.func @ordinary_dtype_does_not_bypass_mat_layout(%src: !pto.tile_buf<loc=mat, dtype=f16, rows=256, cols=8, v_row=256, v_col=8, blayout=row_major, slayout=row_major, fractal=32, pad=0, compact=0>, %dst: !pto.tile_buf<loc=scaling, dtype=f16, rows=256, cols=4, v_row=256, v_col=4, blayout=row_major, slayout=row_major, fractal=32, pad=0, compact=0>) {
+    %row = arith.constant 0 : index
+    %col = arith.constant 0 : index
+    // expected-error@+1 {{expects A5 textract src to use a supported mat blayout/slayout combination}}
+    pto.textract ins(%src, %row, %col : !pto.tile_buf<loc=mat, dtype=f16, rows=256, cols=8, v_row=256, v_col=8, blayout=row_major, slayout=row_major, fractal=32, pad=0, compact=0>, index, index)
+                 outs(%dst : !pto.tile_buf<loc=scaling, dtype=f16, rows=256, cols=4, v_row=256, v_col=4, blayout=row_major, slayout=row_major, fractal=32, pad=0, compact=0>)
+    return
+  }
+}
+
+// -----
+
+module attributes {pto.target_arch = "a5"} {
+  func.func @e8m0_does_not_enable_left_data(%src: !pto.tile_buf<loc=mat, dtype=!pto.f8E8M0, rows=256, cols=8, v_row=256, v_col=8, blayout=row_major, slayout=row_major, fractal=32, pad=0, compact=0>, %dst: !pto.tile_buf<loc=left, dtype=!pto.f8E8M0, rows=256, cols=4, v_row=256, v_col=4, blayout=col_major, slayout=row_major, fractal=32, pad=0, compact=0>) {
+    %row = arith.constant 0 : index
+    %col = arith.constant 0 : index
+    // expected-error@+1 {{expects A5 textract element type to be an fp8/f16/bf16/f32 or int8 family type}}
+    pto.textract ins(%src, %row, %col : !pto.tile_buf<loc=mat, dtype=!pto.f8E8M0, rows=256, cols=8, v_row=256, v_col=8, blayout=row_major, slayout=row_major, fractal=32, pad=0, compact=0>, index, index)
+                 outs(%dst : !pto.tile_buf<loc=left, dtype=!pto.f8E8M0, rows=256, cols=4, v_row=256, v_col=4, blayout=col_major, slayout=row_major, fractal=32, pad=0, compact=0>)
+    return
+  }
+}
+
+// -----
+
+module attributes {pto.target_arch = "a5"} {
+  func.func @e8m0_does_not_enable_vec_source(%src: !pto.tile_buf<loc=vec, dtype=!pto.f8E8M0, rows=256, cols=8, v_row=256, v_col=8, blayout=row_major, slayout=row_major, fractal=32, pad=0, compact=0>, %dst: !pto.tile_buf<loc=scaling, dtype=!pto.f8E8M0, rows=256, cols=4, v_row=256, v_col=4, blayout=row_major, slayout=row_major, fractal=32, pad=0, compact=0>) {
+    %row = arith.constant 0 : index
+    %col = arith.constant 0 : index
+    // expected-error@+1 {{expects A5 textract element type to be an fp8/f16/bf16/f32 or int8 family type}}
+    pto.textract ins(%src, %row, %col : !pto.tile_buf<loc=vec, dtype=!pto.f8E8M0, rows=256, cols=8, v_row=256, v_col=8, blayout=row_major, slayout=row_major, fractal=32, pad=0, compact=0>, index, index)
+                 outs(%dst : !pto.tile_buf<loc=scaling, dtype=!pto.f8E8M0, rows=256, cols=4, v_row=256, v_col=4, blayout=row_major, slayout=row_major, fractal=32, pad=0, compact=0>)
+    return
+  }
+}
+
+// -----
+
+module attributes {pto.target_arch = "a5"} {
+  // expected-error@+1 {{tile_buf valid_col (6) exceeds col (4)}}
+  func.func @dst_valid_extent_exceeds_shape(%src: !pto.tile_buf<loc=mat, dtype=!pto.f8E8M0, rows=256, cols=8, v_row=256, v_col=8, blayout=row_major, slayout=row_major, fractal=32, pad=0, compact=0>, %dst: !pto.tile_buf<loc=scaling, dtype=!pto.f8E8M0, rows=256, cols=4, v_row=256, v_col=6, blayout=row_major, slayout=row_major, fractal=32, pad=0, compact=0>) {
+    %row = arith.constant 0 : index
+    %col = arith.constant 0 : index
+    pto.textract ins(%src, %row, %col : !pto.tile_buf<loc=mat, dtype=!pto.f8E8M0, rows=256, cols=8, v_row=256, v_col=8, blayout=row_major, slayout=row_major, fractal=32, pad=0, compact=0>, index, index)
+                 outs(%dst : !pto.tile_buf<loc=scaling, dtype=!pto.f8E8M0, rows=256, cols=4, v_row=256, v_col=6, blayout=row_major, slayout=row_major, fractal=32, pad=0, compact=0>)
+    return
+  }
+}
+
+// -----
+
+module attributes {pto.target_arch = "a5"} {
+  func.func @prequant_is_not_supported(%src: !pto.tile_buf<loc=mat, dtype=!pto.f8E8M0, rows=256, cols=8, v_row=256, v_col=8, blayout=row_major, slayout=row_major, fractal=32, pad=0, compact=0>, %dst: !pto.tile_buf<loc=scaling, dtype=!pto.f8E8M0, rows=256, cols=4, v_row=256, v_col=4, blayout=row_major, slayout=row_major, fractal=32, pad=0, compact=0>) {
+    %row = arith.constant 0 : index
+    %col = arith.constant 0 : index
+    %pre = arith.constant 7 : i64
+    // expected-error@+1 {{expects preQuantScalar form to use loc=acc src}}
+    pto.textract ins(%src, %row, %col, %pre : !pto.tile_buf<loc=mat, dtype=!pto.f8E8M0, rows=256, cols=8, v_row=256, v_col=8, blayout=row_major, slayout=row_major, fractal=32, pad=0, compact=0>, index, index, i64)
+                 outs(%dst : !pto.tile_buf<loc=scaling, dtype=!pto.f8E8M0, rows=256, cols=4, v_row=256, v_col=4, blayout=row_major, slayout=row_major, fractal=32, pad=0, compact=0>)
+    return
+  }
+}
+
+// -----
+
+module attributes {pto.target_arch = "a5"} {
+  func.func @relu_is_not_supported(%src: !pto.tile_buf<loc=mat, dtype=!pto.f8E8M0, rows=256, cols=8, v_row=256, v_col=8, blayout=row_major, slayout=row_major, fractal=32, pad=0, compact=0>, %dst: !pto.tile_buf<loc=scaling, dtype=!pto.f8E8M0, rows=256, cols=4, v_row=256, v_col=4, blayout=row_major, slayout=row_major, fractal=32, pad=0, compact=0>) {
+    %row = arith.constant 0 : index
+    %col = arith.constant 0 : index
+    // expected-error@+1 {{expects reluPreMode form to use loc=acc src}}
+    pto.textract ins(%src, %row, %col : !pto.tile_buf<loc=mat, dtype=!pto.f8E8M0, rows=256, cols=8, v_row=256, v_col=8, blayout=row_major, slayout=row_major, fractal=32, pad=0, compact=0>, index, index)
+                 outs(%dst : !pto.tile_buf<loc=scaling, dtype=!pto.f8E8M0, rows=256, cols=4, v_row=256, v_col=4, blayout=row_major, slayout=row_major, fractal=32, pad=0, compact=0>) {reluPreMode = #pto<relu_pre_mode normal_relu>}
+    return
+  }
+}
+
+// -----
+
+module attributes {pto.target_arch = "a5"} {
+  func.func @fp_is_not_supported(%src: !pto.tile_buf<loc=mat, dtype=!pto.f8E8M0, rows=256, cols=8, v_row=256, v_col=8, blayout=row_major, slayout=row_major, fractal=32, pad=0, compact=0>, %dst: !pto.tile_buf<loc=scaling, dtype=!pto.f8E8M0, rows=256, cols=4, v_row=256, v_col=4, blayout=row_major, slayout=row_major, fractal=32, pad=0, compact=0>, %fp: !pto.tile_buf<loc=scaling, dtype=f16, rows=1, cols=32, v_row=1, v_col=32, blayout=row_major, slayout=none_box, fractal=512, pad=0, compact=0>) {
+    %row = arith.constant 0 : index
+    %col = arith.constant 0 : index
+    // expected-error@+1 {{expects fp form to use loc=acc src}}
+    pto.textract ins(%src, %row, %col : !pto.tile_buf<loc=mat, dtype=!pto.f8E8M0, rows=256, cols=8, v_row=256, v_col=8, blayout=row_major, slayout=row_major, fractal=32, pad=0, compact=0>, index, index fp %fp : !pto.tile_buf<loc=scaling, dtype=f16, rows=1, cols=32, v_row=1, v_col=32, blayout=row_major, slayout=none_box, fractal=512, pad=0, compact=0>)
+                 outs(%dst : !pto.tile_buf<loc=scaling, dtype=!pto.f8E8M0, rows=256, cols=4, v_row=256, v_col=4, blayout=row_major, slayout=row_major, fractal=32, pad=0, compact=0>)
+    return
+  }
+}
+
+// -----
+
+module attributes {pto.target_arch = "a5"} {
+  func.func @acc_to_vec_mode_is_not_supported(%src: !pto.tile_buf<loc=mat, dtype=!pto.f8E8M0, rows=256, cols=8, v_row=256, v_col=8, blayout=row_major, slayout=row_major, fractal=32, pad=0, compact=0>, %dst: !pto.tile_buf<loc=scaling, dtype=!pto.f8E8M0, rows=256, cols=4, v_row=256, v_col=4, blayout=row_major, slayout=row_major, fractal=32, pad=0, compact=0>) {
+    %row = arith.constant 0 : index
+    %col = arith.constant 0 : index
+    // expected-error@+1 {{expects accToVecMode only on A5 acc->vec textract forms}}
+    pto.textract ins(%src, %row, %col : !pto.tile_buf<loc=mat, dtype=!pto.f8E8M0, rows=256, cols=8, v_row=256, v_col=8, blayout=row_major, slayout=row_major, fractal=32, pad=0, compact=0>, index, index)
+                 outs(%dst : !pto.tile_buf<loc=scaling, dtype=!pto.f8E8M0, rows=256, cols=4, v_row=256, v_col=4, blayout=row_major, slayout=row_major, fractal=32, pad=0, compact=0>) {accToVecMode = #pto.acc_to_vec_mode<dual_mode_split_m>}
+    return
+  }
+}
+
+// -----
+
+module attributes {pto.target_arch = "a5"} {
+  func.func @left_compact_odd_groups(%src: !pto.tile_buf<loc=mat, dtype=!pto.f8E8M0, rows=256, cols=8, v_row=256, v_col=8, blayout=row_major, slayout=row_major, fractal=32, pad=0, compact=0>, %dst: !pto.tile_buf<loc=scaling, dtype=!pto.f8E8M0, rows=256, cols=4, v_row=256, v_col=3, blayout=row_major, slayout=row_major, fractal=32, pad=0, compact=1>) {
+    %row = arith.constant 0 : index
+    %col = arith.constant 0 : index
+    // expected-error@+1 {{expects A5 MX scale textract compact=normal dst valid scale-group extent to be provably positive and even}}
+    pto.textract ins(%src, %row, %col : !pto.tile_buf<loc=mat, dtype=!pto.f8E8M0, rows=256, cols=8, v_row=256, v_col=8, blayout=row_major, slayout=row_major, fractal=32, pad=0, compact=0>, index, index)
+                 outs(%dst : !pto.tile_buf<loc=scaling, dtype=!pto.f8E8M0, rows=256, cols=4, v_row=256, v_col=3, blayout=row_major, slayout=row_major, fractal=32, pad=0, compact=1>)
+    return
+  }
+}
+
+// -----
+
+module attributes {pto.target_arch = "a5"} {
+  func.func @left_compact_odd_alloc_groups(%src: !pto.tile_buf<loc=mat, dtype=!pto.f8E8M0, rows=256, cols=8, v_row=256, v_col=8, blayout=row_major, slayout=row_major, fractal=32, pad=0, compact=0>) {
+    %row = arith.constant 0 : index
+    %col = arith.constant 0 : index
+    %groups = arith.constant 3 : index
+    %dst = pto.alloc_tile valid_col = %groups : !pto.tile_buf<loc=scaling, dtype=!pto.f8E8M0, rows=256, cols=4, v_row=256, v_col=?, blayout=row_major, slayout=row_major, fractal=32, pad=0, compact=1>
+    // expected-error@+1 {{expects A5 MX scale textract compact=normal dst valid scale-group extent to be provably positive and even}}
+    pto.textract ins(%src, %row, %col : !pto.tile_buf<loc=mat, dtype=!pto.f8E8M0, rows=256, cols=8, v_row=256, v_col=8, blayout=row_major, slayout=row_major, fractal=32, pad=0, compact=0>, index, index)
+                 outs(%dst : !pto.tile_buf<loc=scaling, dtype=!pto.f8E8M0, rows=256, cols=4, v_row=256, v_col=?, blayout=row_major, slayout=row_major, fractal=32, pad=0, compact=1>)
+    return
+  }
+}
+
+// -----
+
+module attributes {pto.target_arch = "a5"} {
+  func.func @left_compact_unknown_groups(%src: !pto.tile_buf<loc=mat, dtype=!pto.f8E8M0, rows=256, cols=8, v_row=256, v_col=8, blayout=row_major, slayout=row_major, fractal=32, pad=0, compact=0>, %dst: !pto.tile_buf<loc=scaling, dtype=!pto.f8E8M0, rows=256, cols=4, v_row=256, v_col=?, blayout=row_major, slayout=row_major, fractal=32, pad=0, compact=1>) {
+    %row = arith.constant 0 : index
+    %col = arith.constant 0 : index
+    // expected-error@+1 {{expects A5 MX scale textract compact=normal dst valid scale-group extent to be provably positive and even}}
+    pto.textract ins(%src, %row, %col : !pto.tile_buf<loc=mat, dtype=!pto.f8E8M0, rows=256, cols=8, v_row=256, v_col=8, blayout=row_major, slayout=row_major, fractal=32, pad=0, compact=0>, index, index)
+                 outs(%dst : !pto.tile_buf<loc=scaling, dtype=!pto.f8E8M0, rows=256, cols=4, v_row=256, v_col=?, blayout=row_major, slayout=row_major, fractal=32, pad=0, compact=1>)
+    return
+  }
+}
+
+// -----
+
+module attributes {pto.target_arch = "a5"} {
+  func.func @left_compact_unknown_alloc_groups(%src: !pto.tile_buf<loc=mat, dtype=!pto.f8E8M0, rows=256, cols=8, v_row=256, v_col=8, blayout=row_major, slayout=row_major, fractal=32, pad=0, compact=0>, %groups: index) {
+    %row = arith.constant 0 : index
+    %col = arith.constant 0 : index
+    %dst = pto.alloc_tile valid_col = %groups : !pto.tile_buf<loc=scaling, dtype=!pto.f8E8M0, rows=256, cols=4, v_row=256, v_col=?, blayout=row_major, slayout=row_major, fractal=32, pad=0, compact=1>
+    // expected-error@+1 {{expects A5 MX scale textract compact=normal dst valid scale-group extent to be provably positive and even}}
+    pto.textract ins(%src, %row, %col : !pto.tile_buf<loc=mat, dtype=!pto.f8E8M0, rows=256, cols=8, v_row=256, v_col=8, blayout=row_major, slayout=row_major, fractal=32, pad=0, compact=0>, index, index)
+                 outs(%dst : !pto.tile_buf<loc=scaling, dtype=!pto.f8E8M0, rows=256, cols=4, v_row=256, v_col=?, blayout=row_major, slayout=row_major, fractal=32, pad=0, compact=1>)
+    return
+  }
+}
+
+// -----
+
+module attributes {pto.target_arch = "a5"} {
+  func.func @right_compact_odd_groups(%src: !pto.tile_buf<loc=mat, dtype=!pto.f8E8M0, rows=8, cols=256, v_row=8, v_col=256, blayout=col_major, slayout=col_major, fractal=32, pad=0, compact=0>, %dst: !pto.tile_buf<loc=scaling, dtype=!pto.f8E8M0, rows=4, cols=256, v_row=3, v_col=256, blayout=col_major, slayout=col_major, fractal=32, pad=0, compact=1>) {
+    %row = arith.constant 0 : index
+    %col = arith.constant 0 : index
+    // expected-error@+1 {{expects A5 MX scale textract compact=normal dst valid scale-group extent to be provably positive and even}}
+    pto.textract ins(%src, %row, %col : !pto.tile_buf<loc=mat, dtype=!pto.f8E8M0, rows=8, cols=256, v_row=8, v_col=256, blayout=col_major, slayout=col_major, fractal=32, pad=0, compact=0>, index, index)
+                 outs(%dst : !pto.tile_buf<loc=scaling, dtype=!pto.f8E8M0, rows=4, cols=256, v_row=3, v_col=256, blayout=col_major, slayout=col_major, fractal=32, pad=0, compact=1>)
+    return
+  }
+}
+
+// -----
+
+module attributes {pto.target_arch = "a5"} {
+  func.func @right_compact_odd_alloc_groups(%src: !pto.tile_buf<loc=mat, dtype=!pto.f8E8M0, rows=8, cols=256, v_row=8, v_col=256, blayout=col_major, slayout=col_major, fractal=32, pad=0, compact=0>) {
+    %row = arith.constant 0 : index
+    %col = arith.constant 0 : index
+    %groups = arith.constant 3 : index
+    %dst = pto.alloc_tile valid_row = %groups : !pto.tile_buf<loc=scaling, dtype=!pto.f8E8M0, rows=4, cols=256, v_row=?, v_col=256, blayout=col_major, slayout=col_major, fractal=32, pad=0, compact=1>
+    // expected-error@+1 {{expects A5 MX scale textract compact=normal dst valid scale-group extent to be provably positive and even}}
+    pto.textract ins(%src, %row, %col : !pto.tile_buf<loc=mat, dtype=!pto.f8E8M0, rows=8, cols=256, v_row=8, v_col=256, blayout=col_major, slayout=col_major, fractal=32, pad=0, compact=0>, index, index)
+                 outs(%dst : !pto.tile_buf<loc=scaling, dtype=!pto.f8E8M0, rows=4, cols=256, v_row=?, v_col=256, blayout=col_major, slayout=col_major, fractal=32, pad=0, compact=1>)
+    return
+  }
+}
+
+// -----
+
+module attributes {pto.target_arch = "a5"} {
+  func.func @right_compact_unknown_groups(%src: !pto.tile_buf<loc=mat, dtype=!pto.f8E8M0, rows=8, cols=256, v_row=8, v_col=256, blayout=col_major, slayout=col_major, fractal=32, pad=0, compact=0>, %dst: !pto.tile_buf<loc=scaling, dtype=!pto.f8E8M0, rows=4, cols=256, v_row=?, v_col=256, blayout=col_major, slayout=col_major, fractal=32, pad=0, compact=1>) {
+    %row = arith.constant 0 : index
+    %col = arith.constant 0 : index
+    // expected-error@+1 {{expects A5 MX scale textract compact=normal dst valid scale-group extent to be provably positive and even}}
+    pto.textract ins(%src, %row, %col : !pto.tile_buf<loc=mat, dtype=!pto.f8E8M0, rows=8, cols=256, v_row=8, v_col=256, blayout=col_major, slayout=col_major, fractal=32, pad=0, compact=0>, index, index)
+                 outs(%dst : !pto.tile_buf<loc=scaling, dtype=!pto.f8E8M0, rows=4, cols=256, v_row=?, v_col=256, blayout=col_major, slayout=col_major, fractal=32, pad=0, compact=1>)
+    return
+  }
+}
+
+// -----
+
+module attributes {pto.target_arch = "a5"} {
+  func.func @right_compact_unknown_alloc_groups(%src: !pto.tile_buf<loc=mat, dtype=!pto.f8E8M0, rows=8, cols=256, v_row=8, v_col=256, blayout=col_major, slayout=col_major, fractal=32, pad=0, compact=0>, %groups: index) {
+    %row = arith.constant 0 : index
+    %col = arith.constant 0 : index
+    %dst = pto.alloc_tile valid_row = %groups : !pto.tile_buf<loc=scaling, dtype=!pto.f8E8M0, rows=4, cols=256, v_row=?, v_col=256, blayout=col_major, slayout=col_major, fractal=32, pad=0, compact=1>
+    // expected-error@+1 {{expects A5 MX scale textract compact=normal dst valid scale-group extent to be provably positive and even}}
+    pto.textract ins(%src, %row, %col : !pto.tile_buf<loc=mat, dtype=!pto.f8E8M0, rows=8, cols=256, v_row=8, v_col=256, blayout=col_major, slayout=col_major, fractal=32, pad=0, compact=0>, index, index)
+                 outs(%dst : !pto.tile_buf<loc=scaling, dtype=!pto.f8E8M0, rows=4, cols=256, v_row=?, v_col=256, blayout=col_major, slayout=col_major, fractal=32, pad=0, compact=1>)
+    return
+  }
+}
+
+// -----
+
+module attributes {pto.target_arch = "a5"} {
+  func.func @compact_alloc_groups_exceed_physical(%src: !pto.tile_buf<loc=mat, dtype=!pto.f8E8M0, rows=256, cols=8, v_row=256, v_col=8, blayout=row_major, slayout=row_major, fractal=32, pad=0, compact=0>) {
+    %row = arith.constant 0 : index
+    %col = arith.constant 0 : index
+    %groups = arith.constant 6 : index
+    %dst = pto.alloc_tile valid_col = %groups : !pto.tile_buf<loc=scaling, dtype=!pto.f8E8M0, rows=256, cols=4, v_row=256, v_col=?, blayout=row_major, slayout=row_major, fractal=32, pad=0, compact=1>
+    // expected-error@+1 {{expects A5 MX scale textract compact=normal dst valid scale-group extent to fit its physical shape}}
+    pto.textract ins(%src, %row, %col : !pto.tile_buf<loc=mat, dtype=!pto.f8E8M0, rows=256, cols=8, v_row=256, v_col=8, blayout=row_major, slayout=row_major, fractal=32, pad=0, compact=0>, index, index)
+                 outs(%dst : !pto.tile_buf<loc=scaling, dtype=!pto.f8E8M0, rows=256, cols=4, v_row=256, v_col=?, blayout=row_major, slayout=row_major, fractal=32, pad=0, compact=1>)
+    return
+  }
+}

@@ -1,0 +1,62 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+
+// RUN: ptoas --pto-arch=a5 --pto-level=level2 %s | FileCheck %s
+
+// Runtime source valid operands must not prevent a statically initialized view.
+// The only TMOV in each case consumes the view into the scaling address space.
+module {
+  func.func @mx_scale_rr_to_cc(%rows: index, %cols: index) attributes {pto.kernel_kind = #pto.kernel_kind<cube>} {
+    %src = pto.alloc_tile valid_row = %rows valid_col = %cols
+      : !pto.tile_buf<loc=mat, dtype=!pto.f8E8M0, rows=128, cols=2, v_row=?, v_col=?, blayout=row_major, slayout=row_major, fractal=32, pad=0, compact=0>
+    %view = pto.treshape %src
+      : !pto.tile_buf<loc=mat, dtype=!pto.f8E8M0, rows=128, cols=2, v_row=?, v_col=?, blayout=row_major, slayout=row_major, fractal=32, pad=0, compact=0>
+     -> !pto.tile_buf<loc=mat, dtype=!pto.f8E8M0, rows=2, cols=128, v_row=2, v_col=128, blayout=col_major, slayout=col_major, fractal=32, pad=0, compact=0>
+    %out = pto.alloc_tile
+      : !pto.tile_buf<loc=scaling, dtype=!pto.f8E8M0, rows=2, cols=128, v_row=2, v_col=128, blayout=col_major, slayout=col_major, fractal=32, pad=0, compact=0>
+    pto.tmov ins(%view : !pto.tile_buf<loc=mat, dtype=!pto.f8E8M0, rows=2, cols=128, v_row=2, v_col=128, blayout=col_major, slayout=col_major, fractal=32, pad=0, compact=0>)
+             outs(%out : !pto.tile_buf<loc=scaling, dtype=!pto.f8E8M0, rows=2, cols=128, v_row=2, v_col=128, blayout=col_major, slayout=col_major, fractal=32, pad=0, compact=0>)
+    return
+  }
+
+  func.func @mx_scale_cc_to_rr(%rows: index, %cols: index) attributes {pto.kernel_kind = #pto.kernel_kind<cube>} {
+    %src = pto.alloc_tile valid_row = %rows valid_col = %cols
+      : !pto.tile_buf<loc=mat, dtype=!pto.f8E8M0, rows=2, cols=128, v_row=?, v_col=?, blayout=col_major, slayout=col_major, fractal=32, pad=0, compact=0>
+    %view = pto.treshape %src
+      : !pto.tile_buf<loc=mat, dtype=!pto.f8E8M0, rows=2, cols=128, v_row=?, v_col=?, blayout=col_major, slayout=col_major, fractal=32, pad=0, compact=0>
+     -> !pto.tile_buf<loc=mat, dtype=!pto.f8E8M0, rows=128, cols=2, v_row=128, v_col=2, blayout=row_major, slayout=row_major, fractal=32, pad=0, compact=0>
+    %out = pto.alloc_tile
+      : !pto.tile_buf<loc=scaling, dtype=!pto.f8E8M0, rows=128, cols=2, v_row=128, v_col=2, blayout=row_major, slayout=row_major, fractal=32, pad=0, compact=0>
+    pto.tmov ins(%view : !pto.tile_buf<loc=mat, dtype=!pto.f8E8M0, rows=128, cols=2, v_row=128, v_col=2, blayout=row_major, slayout=row_major, fractal=32, pad=0, compact=0>)
+             outs(%out : !pto.tile_buf<loc=scaling, dtype=!pto.f8E8M0, rows=128, cols=2, v_row=128, v_col=2, blayout=row_major, slayout=row_major, fractal=32, pad=0, compact=0>)
+    return
+  }
+}
+
+// CHECK-LABEL: AICORE void mx_scale_rr_to_cc(
+// CHECK: Tile<TileType::Mat, float8_e8m0_t, 128, 2, BLayout::RowMajor, -1, -1, SLayout::RowMajor, 32, PadValue::Null, CompactMode::Null> [[RR:v[0-9]+]]
+// CHECK: TASSIGN([[RR]],
+// CHECK: Tile<TileType::Mat, float8_e8m0_t, 2, 128, BLayout::ColMajor, 2, 128, SLayout::ColMajor, 32, PadValue::Null, CompactMode::Null> [[CCVIEW:v[0-9]+]];
+// CHECK-NEXT: TRESHAPE([[CCVIEW]], [[RR]]);
+// CHECK-NOT: TASSIGN([[CCVIEW]],
+// CHECK-NOT: TTRANS
+// CHECK-NOT: TCVT
+// CHECK: TMOV({{v[0-9]+}}, [[CCVIEW]]);
+// CHECK-NOT: TMOV
+// CHECK-NOT: TRESHAPE
+// CHECK-LABEL: AICORE void mx_scale_cc_to_rr(
+// CHECK: Tile<TileType::Mat, float8_e8m0_t, 2, 128, BLayout::ColMajor, -1, -1, SLayout::ColMajor, 32, PadValue::Null, CompactMode::Null> [[CC:v[0-9]+]]
+// CHECK: TASSIGN([[CC]],
+// CHECK: Tile<TileType::Mat, float8_e8m0_t, 128, 2, BLayout::RowMajor, 128, 2, SLayout::RowMajor, 32, PadValue::Null, CompactMode::Null> [[RRVIEW:v[0-9]+]];
+// CHECK-NEXT: TRESHAPE([[RRVIEW]], [[CC]]);
+// CHECK-NOT: TASSIGN([[RRVIEW]],
+// CHECK-NOT: TTRANS
+// CHECK-NOT: TCVT
+// CHECK: TMOV({{v[0-9]+}}, [[RRVIEW]]);
+// CHECK-NOT: TMOV
+// CHECK-NOT: TRESHAPE

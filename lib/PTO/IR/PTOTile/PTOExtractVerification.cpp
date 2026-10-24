@@ -330,12 +330,98 @@ static bool isTExtractA5SupportedPair(pto::AddressSpace srcSpace,
            dstSpace == pto::AddressSpace::VEC));
 }
 
+static bool isTExtractA5MxScale(const TExtractCommon &c) {
+  return c.srcSpace && *c.srcSpace == pto::AddressSpace::MAT &&
+         c.dstSpace && *c.dstSpace == pto::AddressSpace::SCALING &&
+         isPTOF8E8M0Type(c.srcElem) && c.srcElem == c.dstElem;
+}
+
+static LogicalResult verifyTExtractA5MxScale(TExtractOp op,
+                                            const TExtractCommon &c) {
+  const bool isLeftScale =
+      c.dstTb.getBLayoutValueI32() ==
+      static_cast<int32_t>(pto::BLayout::RowMajor);
+  // ScaleLeft uses RR/32 boxes; ScaleRight uses CC/32 boxes. The source
+  // must have the same orientation because the MX load cannot transpose it.
+  if (failed(verifyA5MxMatScaleLayout(op, c.srcTb, "src", isLeftScale)) ||
+      failed(verifyA5MxMatScaleLayout(op, c.dstTb, "dst", isLeftScale))) {
+    return failure();
+  }
+  const int64_t rowAlignment = isLeftScale ? 16 : 2;
+  const int64_t colAlignment = isLeftScale ? 2 : 16;
+  auto verifyShape = [&](pto::TileBufType tb,
+                         StringRef name) -> LogicalResult {
+    auto shape = tb.getShape();
+    if (shape[0] <= 0 || shape[1] <= 0) {
+      return op.emitOpError()
+             << "expects A5 MX scale textract " << name
+             << " physical shape to be positive and static";
+    }
+    if (shape[0] % rowAlignment != 0 || shape[1] % colAlignment != 0) {
+      return op.emitOpError()
+             << "expects A5 MX scale textract " << name
+             << " physical shape to be aligned to [" << rowAlignment << ", "
+             << colAlignment << "]";
+    }
+    return success();
+  };
+  if (failed(verifyShape(c.srcTb, "src")) ||
+      failed(verifyShape(c.dstTb, "dst"))) {
+    return failure();
+  }
+  if (c.dstTb.getCompactModeI32() ==
+      static_cast<int32_t>(pto::CompactMode::Normal)) {
+    const unsigned groupDim = isLeftScale ? 1 : 0;
+    int64_t groups = c.dstTb.getValidShape()[groupDim];
+    if (groups < 0) {
+      if (auto alloc = op.getDst().getDefiningOp<pto::AllocTileOp>()) {
+        auto known = getConstantIntegerValue(
+            isLeftScale ? alloc.getValidCol() : alloc.getValidRow());
+        if (known)
+          groups = *known;
+      }
+    }
+    // Compact MX loads use valid K/32 directly and shift it by one. An
+    // unproven or odd group count would silently omit part of the window.
+    if (groups <= 0 || groups % 2 != 0) {
+      return op.emitOpError(
+          "expects A5 MX scale textract compact=normal dst valid scale-group "
+          "extent to be provably positive and even");
+    }
+    if (groups > c.dstTb.getShape()[groupDim]) {
+      return op.emitOpError(
+          "expects A5 MX scale textract compact=normal dst valid scale-group "
+          "extent to fit its physical shape");
+    }
+  }
+  // The ISA shifts these offsets by 4/1 for ScaleLeft and 1/4 for
+  // ScaleRight. Reject constants that would silently lose low bits.
+  auto row = getConstantIntegerValueEx(
+      op.getIndexRow(), /*includeIndexAndIntOpsInConstFold=*/true);
+  auto col = getConstantIntegerValueEx(
+      op.getIndexCol(), /*includeIndexAndIntOpsInConstFold=*/true);
+  if (row && *row % rowAlignment != 0) {
+    return op.emitOpError()
+           << "expects A5 MX scale textract indexRow to be aligned to "
+           << rowAlignment;
+  }
+  if (col && *col % colAlignment != 0) {
+    return op.emitOpError()
+           << "expects A5 MX scale textract indexCol to be aligned to "
+           << colAlignment;
+  }
+  return success();
+}
+
 static LogicalResult verifyTExtractA5Mat(TExtractOp op,
                                          const TExtractCommon &c) {
   const bool hasPreQuantScalar = static_cast<bool>(op.getPreQuantScalar());
   const bool hasRelu = op.getReluPreMode() != pto::ReluPreMode::NoRelu;
   if (hasPreQuantScalar || hasRelu) {
     return op.emitOpError("expects mat-source textract to use the base form without preQuantScalar or reluPreMode");
+  }
+  if (isTExtractA5MxScale(c)) {
+    return verifyTExtractA5MxScale(op, c);
   }
   if (!hasMatExtractSourceLayoutA5(c.srcTb, *c.dstSpace)) {
     return op.emitOpError("expects A5 textract src to use a supported mat blayout/slayout combination");
@@ -395,7 +481,7 @@ static LogicalResult verifyTExtractA5(TExtractOp op) {
   const TExtractCommon &c = *common;
   const bool hasPreQuantScalar = static_cast<bool>(op.getPreQuantScalar());
   const bool hasRelu = op.getReluPreMode() != pto::ReluPreMode::NoRelu;
-  if (!isA5ExtractElemType(c.dstElem)) {
+  if (!isA5ExtractElemType(c.dstElem) && !isTExtractA5MxScale(c)) {
     return op.emitOpError("expects A5 textract element type to be an fp8/f16/bf16/f32 or int8 family type");
   }
   if (failed(verifyTExtractFpFormLoc(op, c.srcSpace))) {

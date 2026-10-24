@@ -9,9 +9,9 @@
 // RUN: ptoas --pto-level=level3 --pto-arch=a3 --emit-pto-ir %s 2>&1 \
 // RUN:   | FileCheck %s --check-prefix=PTOIR
 // RUN: ptoas --pto-level=level3 --pto-arch=a3 %s 2>&1 \
-// RUN:   | FileCheck %s --check-prefix=EMITC --implicit-check-not=TLoadL2Hint
+// RUN:   | FileCheck %s --check-prefix=EMITC
 // RUN: ptoas --pto-level=level3 --pto-arch=a5 %s 2>&1 \
-// RUN:   | FileCheck %s --check-prefix=EMITC --implicit-check-not=TLoadL2Hint
+// RUN:   | FileCheck %s --check-prefix=EMITC
 // RUN: ptoas --pto-level=level3 --pto-arch=a3 --emit-pto-ir %s -o %t.pto
 // RUN: ptoas --pto-level=level3 --pto-arch=a3 --emit-pto-ir %t.pto 2>&1 \
 // RUN:   | FileCheck %s --check-prefix=PTOIR
@@ -89,12 +89,14 @@ module {
 
 // EMITC-LABEL: default_load(
 // EMITC-NOT: TASSIGN
+// EMITC-NOT: TLoadL2Hint
 // EMITC: TLOAD(
 // EMITC-LABEL: l2_bypass_load(
 // EMITC-NOT: TASSIGN
-// EMITC: TLOAD(
+// EMITC: TLOAD<pto::TLoadL2Hint::NotAllocKeep>(
 // EMITC-LABEL: l2_bypass_offset_i64(
 // EMITC-SAME: > [[SRC:v[0-9]+]], {{.*}}> [[DST:v[0-9]+]], int64_t [[OFFSET:v[0-9]+]])
+// EMITC-NOT: TLoadL2Hint
 // EMITC: __gm__ float* [[DATA:v[0-9]+]] = PTOAS__GLOBAL_TENSOR_DATA([[SRC]]);
 // EMITC: __gm__ uint8_t* [[BYTES:v[0-9]+]] = reinterpret_cast<__gm__ uint8_t*>([[DATA]]);
 // EMITC: __gm__ float* [[ADJUSTED_DATA:v[0-9]+]] = (__gm__ float*) ([[BYTES]] + [[OFFSET]]);
@@ -111,6 +113,7 @@ module {
 // EMITC-LABEL: default_offset_ignored(
 // EMITC-NOT: PTOAS__GLOBAL_TENSOR_DATA
 // EMITC-NOT: TASSIGN
+// EMITC-NOT: TLoadL2Hint
 // EMITC: TLOAD(
 // EMITC-NEXT: TLOAD(
 // EMITC-NEXT: return;

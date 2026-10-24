@@ -1,0 +1,128 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+
+// RUN: ptoas --pto-arch=a5 --pto-level=level2 %s | FileCheck %s
+
+// Mat scale windows preserve the RR/CC orientation and emit MX TEXTRACT.
+module {
+  func.func @mx_scale_left_k_slice() attributes {pto.kernel_kind = #pto.kernel_kind<cube>} {
+    %row = arith.constant 0 : index
+    %col = arith.constant 4 : index
+    %src = pto.alloc_tile : !pto.tile_buf<loc=mat, dtype=!pto.f8E8M0, rows=256, cols=8, v_row=256, v_col=8, blayout=row_major, slayout=row_major, fractal=32, pad=0, compact=0>
+    %dst = pto.alloc_tile : !pto.tile_buf<loc=scaling, dtype=!pto.f8E8M0, rows=256, cols=4, v_row=256, v_col=4, blayout=row_major, slayout=row_major, fractal=32, pad=0, compact=0>
+    pto.textract ins(%src, %row, %col : !pto.tile_buf<loc=mat, dtype=!pto.f8E8M0, rows=256, cols=8, v_row=256, v_col=8, blayout=row_major, slayout=row_major, fractal=32, pad=0, compact=0>, index, index)
+                 outs(%dst : !pto.tile_buf<loc=scaling, dtype=!pto.f8E8M0, rows=256, cols=4, v_row=256, v_col=4, blayout=row_major, slayout=row_major, fractal=32, pad=0, compact=0>)
+    return
+  }
+
+  func.func @mx_scale_right_k_slice() attributes {pto.kernel_kind = #pto.kernel_kind<cube>} {
+    %row = arith.constant 4 : index
+    %col = arith.constant 0 : index
+    %src = pto.alloc_tile : !pto.tile_buf<loc=mat, dtype=!pto.f8E8M0, rows=8, cols=256, v_row=8, v_col=256, blayout=col_major, slayout=col_major, fractal=32, pad=0, compact=0>
+    %dst = pto.alloc_tile : !pto.tile_buf<loc=scaling, dtype=!pto.f8E8M0, rows=4, cols=256, v_row=4, v_col=256, blayout=col_major, slayout=col_major, fractal=32, pad=0, compact=0>
+    pto.textract ins(%src, %row, %col : !pto.tile_buf<loc=mat, dtype=!pto.f8E8M0, rows=8, cols=256, v_row=8, v_col=256, blayout=col_major, slayout=col_major, fractal=32, pad=0, compact=0>, index, index)
+                 outs(%dst : !pto.tile_buf<loc=scaling, dtype=!pto.f8E8M0, rows=4, cols=256, v_row=4, v_col=256, blayout=col_major, slayout=col_major, fractal=32, pad=0, compact=0>)
+    return
+  }
+
+  func.func @mx_scale_left_two_dimensional() attributes {pto.kernel_kind = #pto.kernel_kind<cube>} {
+    %row = arith.constant 16 : index
+    %col = arith.constant 2 : index
+    %src = pto.alloc_tile : !pto.tile_buf<loc=mat, dtype=!pto.f8E8M0, rows=32, cols=8, v_row=32, v_col=8, blayout=row_major, slayout=row_major, fractal=32, pad=0, compact=0>
+    %dst = pto.alloc_tile : !pto.tile_buf<loc=scaling, dtype=!pto.f8E8M0, rows=16, cols=4, v_row=16, v_col=4, blayout=row_major, slayout=row_major, fractal=32, pad=0, compact=0>
+    pto.textract ins(%src, %row, %col : !pto.tile_buf<loc=mat, dtype=!pto.f8E8M0, rows=32, cols=8, v_row=32, v_col=8, blayout=row_major, slayout=row_major, fractal=32, pad=0, compact=0>, index, index)
+                 outs(%dst : !pto.tile_buf<loc=scaling, dtype=!pto.f8E8M0, rows=16, cols=4, v_row=16, v_col=4, blayout=row_major, slayout=row_major, fractal=32, pad=0, compact=0>)
+    return
+  }
+
+  func.func @mx_scale_right_two_dimensional() attributes {pto.kernel_kind = #pto.kernel_kind<cube>} {
+    %row = arith.constant 2 : index
+    %col = arith.constant 16 : index
+    %src = pto.alloc_tile : !pto.tile_buf<loc=mat, dtype=!pto.f8E8M0, rows=8, cols=32, v_row=8, v_col=32, blayout=col_major, slayout=col_major, fractal=32, pad=0, compact=0>
+    %dst = pto.alloc_tile : !pto.tile_buf<loc=scaling, dtype=!pto.f8E8M0, rows=4, cols=16, v_row=4, v_col=16, blayout=col_major, slayout=col_major, fractal=32, pad=0, compact=0>
+    pto.textract ins(%src, %row, %col : !pto.tile_buf<loc=mat, dtype=!pto.f8E8M0, rows=8, cols=32, v_row=8, v_col=32, blayout=col_major, slayout=col_major, fractal=32, pad=0, compact=0>, index, index)
+                 outs(%dst : !pto.tile_buf<loc=scaling, dtype=!pto.f8E8M0, rows=4, cols=16, v_row=4, v_col=16, blayout=col_major, slayout=col_major, fractal=32, pad=0, compact=0>)
+    return
+  }
+
+  func.func @mx_scale_left_compact_static() attributes {pto.kernel_kind = #pto.kernel_kind<cube>} {
+    %row = arith.constant 0 : index
+    %col = arith.constant 4 : index
+    %src = pto.alloc_tile : !pto.tile_buf<loc=mat, dtype=!pto.f8E8M0, rows=256, cols=8, v_row=256, v_col=8, blayout=row_major, slayout=row_major, fractal=32, pad=0, compact=0>
+    %dst = pto.alloc_tile : !pto.tile_buf<loc=scaling, dtype=!pto.f8E8M0, rows=256, cols=4, v_row=256, v_col=2, blayout=row_major, slayout=row_major, fractal=32, pad=0, compact=1>
+    pto.textract ins(%src, %row, %col : !pto.tile_buf<loc=mat, dtype=!pto.f8E8M0, rows=256, cols=8, v_row=256, v_col=8, blayout=row_major, slayout=row_major, fractal=32, pad=0, compact=0>, index, index)
+                 outs(%dst : !pto.tile_buf<loc=scaling, dtype=!pto.f8E8M0, rows=256, cols=4, v_row=256, v_col=2, blayout=row_major, slayout=row_major, fractal=32, pad=0, compact=1>)
+    return
+  }
+
+  func.func @mx_scale_right_compact_static() attributes {pto.kernel_kind = #pto.kernel_kind<cube>} {
+    %row = arith.constant 4 : index
+    %col = arith.constant 0 : index
+    %src = pto.alloc_tile : !pto.tile_buf<loc=mat, dtype=!pto.f8E8M0, rows=8, cols=256, v_row=8, v_col=256, blayout=col_major, slayout=col_major, fractal=32, pad=0, compact=0>
+    %dst = pto.alloc_tile : !pto.tile_buf<loc=scaling, dtype=!pto.f8E8M0, rows=4, cols=256, v_row=2, v_col=256, blayout=col_major, slayout=col_major, fractal=32, pad=0, compact=1>
+    pto.textract ins(%src, %row, %col : !pto.tile_buf<loc=mat, dtype=!pto.f8E8M0, rows=8, cols=256, v_row=8, v_col=256, blayout=col_major, slayout=col_major, fractal=32, pad=0, compact=0>, index, index)
+                 outs(%dst : !pto.tile_buf<loc=scaling, dtype=!pto.f8E8M0, rows=4, cols=256, v_row=2, v_col=256, blayout=col_major, slayout=col_major, fractal=32, pad=0, compact=1>)
+    return
+  }
+
+  func.func @mx_scale_left_compact_alloc_extent() attributes {pto.kernel_kind = #pto.kernel_kind<cube>} {
+    %row = arith.constant 0 : index
+    %col = arith.constant 4 : index
+    %groups = arith.constant 4 : index
+    %src = pto.alloc_tile : !pto.tile_buf<loc=mat, dtype=!pto.f8E8M0, rows=256, cols=8, v_row=256, v_col=8, blayout=row_major, slayout=row_major, fractal=32, pad=0, compact=0>
+    %dst = pto.alloc_tile valid_col = %groups : !pto.tile_buf<loc=scaling, dtype=!pto.f8E8M0, rows=256, cols=4, v_row=256, v_col=?, blayout=row_major, slayout=row_major, fractal=32, pad=0, compact=1>
+    pto.textract ins(%src, %row, %col : !pto.tile_buf<loc=mat, dtype=!pto.f8E8M0, rows=256, cols=8, v_row=256, v_col=8, blayout=row_major, slayout=row_major, fractal=32, pad=0, compact=0>, index, index)
+                 outs(%dst : !pto.tile_buf<loc=scaling, dtype=!pto.f8E8M0, rows=256, cols=4, v_row=256, v_col=?, blayout=row_major, slayout=row_major, fractal=32, pad=0, compact=1>)
+    return
+  }
+
+  func.func @mx_scale_right_compact_alloc_extent() attributes {pto.kernel_kind = #pto.kernel_kind<cube>} {
+    %row = arith.constant 4 : index
+    %col = arith.constant 0 : index
+    %groups = arith.constant 4 : index
+    %src = pto.alloc_tile : !pto.tile_buf<loc=mat, dtype=!pto.f8E8M0, rows=8, cols=256, v_row=8, v_col=256, blayout=col_major, slayout=col_major, fractal=32, pad=0, compact=0>
+    %dst = pto.alloc_tile valid_row = %groups : !pto.tile_buf<loc=scaling, dtype=!pto.f8E8M0, rows=4, cols=256, v_row=?, v_col=256, blayout=col_major, slayout=col_major, fractal=32, pad=0, compact=1>
+    pto.textract ins(%src, %row, %col : !pto.tile_buf<loc=mat, dtype=!pto.f8E8M0, rows=8, cols=256, v_row=8, v_col=256, blayout=col_major, slayout=col_major, fractal=32, pad=0, compact=0>, index, index)
+                 outs(%dst : !pto.tile_buf<loc=scaling, dtype=!pto.f8E8M0, rows=4, cols=256, v_row=?, v_col=256, blayout=col_major, slayout=col_major, fractal=32, pad=0, compact=1>)
+    return
+  }
+
+}
+
+// CHECK-LABEL: AICORE void mx_scale_left_k_slice(
+// CHECK: Tile<TileType::Mat, float8_e8m0_t, 256, 8, {{.*}}> [[SRC0:v[0-9]+]]
+// CHECK: Tile<TileType::ScaleLeft, float8_e8m0_t, 256, 4, BLayout::RowMajor, {{.*}}, SLayout::RowMajor, 32, PadValue::Null, CompactMode::Null> [[DST0:v[0-9]+]]
+// CHECK: TEXTRACT([[DST0]], [[SRC0]], {{v[0-9]+}}, {{v[0-9]+}});
+// CHECK-LABEL: AICORE void mx_scale_right_k_slice(
+// CHECK: Tile<TileType::Mat, float8_e8m0_t, 8, 256, {{.*}}> [[SRC1:v[0-9]+]]
+// CHECK: Tile<TileType::ScaleRight, float8_e8m0_t, 4, 256, BLayout::ColMajor, {{.*}}, SLayout::ColMajor, 32, PadValue::Null, CompactMode::Null> [[DST1:v[0-9]+]]
+// CHECK: TEXTRACT([[DST1]], [[SRC1]], {{v[0-9]+}}, {{v[0-9]+}});
+// CHECK-LABEL: AICORE void mx_scale_left_two_dimensional(
+// CHECK: Tile<TileType::Mat, float8_e8m0_t, 32, 8, {{.*}}> [[SRC2:v[0-9]+]]
+// CHECK: Tile<TileType::ScaleLeft, float8_e8m0_t, 16, 4, BLayout::RowMajor, {{.*}}, SLayout::RowMajor, 32, PadValue::Null, CompactMode::Null> [[DST2:v[0-9]+]]
+// CHECK: TEXTRACT([[DST2]], [[SRC2]], {{v[0-9]+}}, {{v[0-9]+}});
+// CHECK-LABEL: AICORE void mx_scale_right_two_dimensional(
+// CHECK: Tile<TileType::Mat, float8_e8m0_t, 8, 32, {{.*}}> [[SRC3:v[0-9]+]]
+// CHECK: Tile<TileType::ScaleRight, float8_e8m0_t, 4, 16, BLayout::ColMajor, {{.*}}, SLayout::ColMajor, 32, PadValue::Null, CompactMode::Null> [[DST3:v[0-9]+]]
+// CHECK: TEXTRACT([[DST3]], [[SRC3]], {{v[0-9]+}}, {{v[0-9]+}});
+// CHECK-LABEL: AICORE void mx_scale_left_compact_static(
+// CHECK: Tile<TileType::Mat, float8_e8m0_t, {{.*}}> [[SRC4:v[0-9]+]]
+// CHECK: Tile<TileType::ScaleLeft, float8_e8m0_t, 256, 4, BLayout::RowMajor, {{.*}}, SLayout::RowMajor, 32, PadValue::Null, CompactMode::Normal> [[DST4:v[0-9]+]]
+// CHECK: TEXTRACT([[DST4]], [[SRC4]], {{v[0-9]+}}, {{v[0-9]+}});
+// CHECK-LABEL: AICORE void mx_scale_right_compact_static(
+// CHECK: Tile<TileType::Mat, float8_e8m0_t, {{.*}}> [[SRC5:v[0-9]+]]
+// CHECK: Tile<TileType::ScaleRight, float8_e8m0_t, 4, 256, BLayout::ColMajor, {{.*}}, SLayout::ColMajor, 32, PadValue::Null, CompactMode::Normal> [[DST5:v[0-9]+]]
+// CHECK: TEXTRACT([[DST5]], [[SRC5]], {{v[0-9]+}}, {{v[0-9]+}});
+// CHECK-LABEL: AICORE void mx_scale_left_compact_alloc_extent(
+// CHECK: Tile<TileType::Mat, float8_e8m0_t, {{.*}}> [[SRC6:v[0-9]+]]
+// CHECK: Tile<TileType::ScaleLeft, float8_e8m0_t, 256, 4, BLayout::RowMajor, {{.*}}, SLayout::RowMajor, 32, PadValue::Null, CompactMode::Normal> [[DST6:v[0-9]+]]
+// CHECK: TEXTRACT([[DST6]], [[SRC6]], {{v[0-9]+}}, {{v[0-9]+}});
+// CHECK-LABEL: AICORE void mx_scale_right_compact_alloc_extent(
+// CHECK: Tile<TileType::Mat, float8_e8m0_t, {{.*}}> [[SRC7:v[0-9]+]]
+// CHECK: Tile<TileType::ScaleRight, float8_e8m0_t, 4, 256, BLayout::ColMajor, {{.*}}, SLayout::ColMajor, 32, PadValue::Null, CompactMode::Normal> [[DST7:v[0-9]+]]
+// CHECK: TEXTRACT([[DST7]], [[SRC7]], {{v[0-9]+}}, {{v[0-9]+}});

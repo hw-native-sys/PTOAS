@@ -1,0 +1,297 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+
+// RUN: pto-test-opt --split-input-file --verify-diagnostics %s
+
+module attributes {pto.target_arch = "a5"} {
+  func.func @e4m3_fnuz_unsupported(%src: !pto.tile_buf<loc=vec, dtype=!pto.f4E2M1x2, rows=32, cols=256, v_row=32, v_col=256, blayout=row_major, slayout=none_box, fractal=512, pad=0, compact=0>, %dst: !pto.tile_buf<loc=vec, dtype=f8E4M3FNUZ, rows=32, cols=512, v_row=32, v_col=512, blayout=row_major, slayout=none_box, fractal=512, pad=0, compact=0>) {
+    // expected-error@+1 {{expects A5 tcvt low-precision type pairs to match PTO-ISA support}}
+    pto.tcvt ins(%src : !pto.tile_buf<loc=vec, dtype=!pto.f4E2M1x2, rows=32, cols=256, v_row=32, v_col=256, blayout=row_major, slayout=none_box, fractal=512, pad=0, compact=0>) outs(%dst : !pto.tile_buf<loc=vec, dtype=f8E4M3FNUZ, rows=32, cols=512, v_row=32, v_col=512, blayout=row_major, slayout=none_box, fractal=512, pad=0, compact=0>)
+    return
+  }
+}
+
+// -----
+
+module attributes {pto.target_arch = "a5"} {
+  func.func @e4m3_b11fnuz_unsupported(%src: !pto.tile_buf<loc=vec, dtype=!pto.f4E2M1x2, rows=32, cols=256, v_row=32, v_col=256, blayout=row_major, slayout=none_box, fractal=512, pad=0, compact=0>, %dst: !pto.tile_buf<loc=vec, dtype=f8E4M3B11FNUZ, rows=32, cols=512, v_row=32, v_col=512, blayout=row_major, slayout=none_box, fractal=512, pad=0, compact=0>) {
+    // expected-error@+1 {{expects A5 tcvt low-precision type pairs to match PTO-ISA support}}
+    pto.tcvt ins(%src : !pto.tile_buf<loc=vec, dtype=!pto.f4E2M1x2, rows=32, cols=256, v_row=32, v_col=256, blayout=row_major, slayout=none_box, fractal=512, pad=0, compact=0>) outs(%dst : !pto.tile_buf<loc=vec, dtype=f8E4M3B11FNUZ, rows=32, cols=512, v_row=32, v_col=512, blayout=row_major, slayout=none_box, fractal=512, pad=0, compact=0>)
+    return
+  }
+}
+
+// -----
+
+module attributes {pto.target_arch = "a5"} {
+  func.func @e4m3_unsupported(%src: !pto.tile_buf<loc=vec, dtype=!pto.f4E2M1x2, rows=32, cols=256, v_row=32, v_col=256, blayout=row_major, slayout=none_box, fractal=512, pad=0, compact=0>, %dst: !pto.tile_buf<loc=vec, dtype=f8E4M3, rows=32, cols=512, v_row=32, v_col=512, blayout=row_major, slayout=none_box, fractal=512, pad=0, compact=0>) {
+    // expected-error@+1 {{expects A5 tcvt low-precision type pairs to match PTO-ISA support}}
+    pto.tcvt ins(%src : !pto.tile_buf<loc=vec, dtype=!pto.f4E2M1x2, rows=32, cols=256, v_row=32, v_col=256, blayout=row_major, slayout=none_box, fractal=512, pad=0, compact=0>) outs(%dst : !pto.tile_buf<loc=vec, dtype=f8E4M3, rows=32, cols=512, v_row=32, v_col=512, blayout=row_major, slayout=none_box, fractal=512, pad=0, compact=0>)
+    return
+  }
+}
+
+// -----
+
+module attributes {pto.target_arch = "a5"} {
+  func.func @e1m2_unsupported(%src: !pto.tile_buf<loc=vec, dtype=!pto.f4E1M2x2, rows=32, cols=256, v_row=32, v_col=256, blayout=row_major, slayout=none_box, fractal=512, pad=0, compact=0>, %dst: !pto.tile_buf<loc=vec, dtype=f8E4M3FN, rows=32, cols=512, v_row=32, v_col=512, blayout=row_major, slayout=none_box, fractal=512, pad=0, compact=0>) {
+    // expected-error@+1 {{expects A5 tcvt low-precision type pairs to match PTO-ISA support}}
+    pto.tcvt ins(%src : !pto.tile_buf<loc=vec, dtype=!pto.f4E1M2x2, rows=32, cols=256, v_row=32, v_col=256, blayout=row_major, slayout=none_box, fractal=512, pad=0, compact=0>) outs(%dst : !pto.tile_buf<loc=vec, dtype=f8E4M3FN, rows=32, cols=512, v_row=32, v_col=512, blayout=row_major, slayout=none_box, fractal=512, pad=0, compact=0>)
+    return
+  }
+}
+
+// -----
+
+module attributes {pto.target_arch = "a5"} {
+  func.func @e5m2_unsupported(%src: !pto.tile_buf<loc=vec, dtype=!pto.f4E2M1x2, rows=32, cols=256, v_row=32, v_col=256, blayout=row_major, slayout=none_box, fractal=512, pad=0, compact=0>, %dst: !pto.tile_buf<loc=vec, dtype=f8E5M2, rows=32, cols=512, v_row=32, v_col=512, blayout=row_major, slayout=none_box, fractal=512, pad=0, compact=0>) {
+    // expected-error@+1 {{expects A5 tcvt low-precision type pairs to match PTO-ISA support}}
+    pto.tcvt ins(%src : !pto.tile_buf<loc=vec, dtype=!pto.f4E2M1x2, rows=32, cols=256, v_row=32, v_col=256, blayout=row_major, slayout=none_box, fractal=512, pad=0, compact=0>) outs(%dst : !pto.tile_buf<loc=vec, dtype=f8E5M2, rows=32, cols=512, v_row=32, v_col=512, blayout=row_major, slayout=none_box, fractal=512, pad=0, compact=0>)
+    return
+  }
+}
+
+// -----
+
+module attributes {pto.target_arch = "a2"} {
+  func.func @unsupported_a2(%src: !pto.tile_buf<loc=vec, dtype=!pto.f4E2M1x2, rows=32, cols=256, v_row=32, v_col=256, blayout=row_major, slayout=none_box, fractal=512, pad=0, compact=0>, %dst: !pto.tile_buf<loc=vec, dtype=f8E4M3FN, rows=32, cols=512, v_row=32, v_col=512, blayout=row_major, slayout=none_box, fractal=512, pad=0, compact=0>) {
+    // expected-error@+1 {{expects A2/A3 tcvt low-precision element types to be unsupported}}
+    pto.tcvt ins(%src : !pto.tile_buf<loc=vec, dtype=!pto.f4E2M1x2, rows=32, cols=256, v_row=32, v_col=256, blayout=row_major, slayout=none_box, fractal=512, pad=0, compact=0>) outs(%dst : !pto.tile_buf<loc=vec, dtype=f8E4M3FN, rows=32, cols=512, v_row=32, v_col=512, blayout=row_major, slayout=none_box, fractal=512, pad=0, compact=0>)
+    return
+  }
+}
+
+// -----
+
+module attributes {pto.target_arch = "a3"} {
+  func.func @unsupported_a3(%src: !pto.tile_buf<loc=vec, dtype=!pto.f4E2M1x2, rows=32, cols=256, v_row=32, v_col=256, blayout=row_major, slayout=none_box, fractal=512, pad=0, compact=0>, %dst: !pto.tile_buf<loc=vec, dtype=f8E4M3FN, rows=32, cols=512, v_row=32, v_col=512, blayout=row_major, slayout=none_box, fractal=512, pad=0, compact=0>) {
+    // expected-error@+1 {{expects A2/A3 tcvt low-precision element types to be unsupported}}
+    pto.tcvt ins(%src : !pto.tile_buf<loc=vec, dtype=!pto.f4E2M1x2, rows=32, cols=256, v_row=32, v_col=256, blayout=row_major, slayout=none_box, fractal=512, pad=0, compact=0>) outs(%dst : !pto.tile_buf<loc=vec, dtype=f8E4M3FN, rows=32, cols=512, v_row=32, v_col=512, blayout=row_major, slayout=none_box, fractal=512, pad=0, compact=0>)
+    return
+  }
+}
+
+// -----
+
+module attributes {pto.target_arch = "a5"} {
+  func.func @src_not_vec(%src: !pto.tile_buf<loc=mat, dtype=!pto.f4E2M1x2, rows=32, cols=256, v_row=32, v_col=256, blayout=row_major, slayout=none_box, fractal=512, pad=0, compact=0>, %dst: !pto.tile_buf<loc=vec, dtype=f8E4M3FN, rows=32, cols=512, v_row=32, v_col=512, blayout=row_major, slayout=none_box, fractal=512, pad=0, compact=0>) {
+    // expected-error@+1 {{expects src to be in the vec address space}}
+    pto.tcvt ins(%src : !pto.tile_buf<loc=mat, dtype=!pto.f4E2M1x2, rows=32, cols=256, v_row=32, v_col=256, blayout=row_major, slayout=none_box, fractal=512, pad=0, compact=0>) outs(%dst : !pto.tile_buf<loc=vec, dtype=f8E4M3FN, rows=32, cols=512, v_row=32, v_col=512, blayout=row_major, slayout=none_box, fractal=512, pad=0, compact=0>)
+    return
+  }
+}
+
+// -----
+
+module attributes {pto.target_arch = "a5"} {
+  func.func @dst_not_vec(%src: !pto.tile_buf<loc=vec, dtype=!pto.f4E2M1x2, rows=32, cols=256, v_row=32, v_col=256, blayout=row_major, slayout=none_box, fractal=512, pad=0, compact=0>, %dst: !pto.tile_buf<loc=mat, dtype=f8E4M3FN, rows=32, cols=512, v_row=32, v_col=512, blayout=row_major, slayout=none_box, fractal=512, pad=0, compact=0>) {
+    // expected-error@+1 {{expects dst to be in the vec address space}}
+    pto.tcvt ins(%src : !pto.tile_buf<loc=vec, dtype=!pto.f4E2M1x2, rows=32, cols=256, v_row=32, v_col=256, blayout=row_major, slayout=none_box, fractal=512, pad=0, compact=0>) outs(%dst : !pto.tile_buf<loc=mat, dtype=f8E4M3FN, rows=32, cols=512, v_row=32, v_col=512, blayout=row_major, slayout=none_box, fractal=512, pad=0, compact=0>)
+    return
+  }
+}
+
+// -----
+
+module attributes {pto.target_arch = "a5"} {
+  func.func @src_col_major(%src: !pto.tile_buf<loc=vec, dtype=!pto.f4E2M1x2, rows=32, cols=256, v_row=32, v_col=256, blayout=col_major, slayout=none_box, fractal=512, pad=0, compact=0>, %dst: !pto.tile_buf<loc=vec, dtype=f8E4M3FN, rows=32, cols=512, v_row=32, v_col=512, blayout=row_major, slayout=none_box, fractal=512, pad=0, compact=0>) {
+    // expected-error@+1 {{expects direct FP4/FP8 src to use ND layout with compact=null}}
+    pto.tcvt ins(%src : !pto.tile_buf<loc=vec, dtype=!pto.f4E2M1x2, rows=32, cols=256, v_row=32, v_col=256, blayout=col_major, slayout=none_box, fractal=512, pad=0, compact=0>) outs(%dst : !pto.tile_buf<loc=vec, dtype=f8E4M3FN, rows=32, cols=512, v_row=32, v_col=512, blayout=row_major, slayout=none_box, fractal=512, pad=0, compact=0>)
+    return
+  }
+}
+
+// -----
+
+module attributes {pto.target_arch = "a5"} {
+  func.func @src_boxed(%src: !pto.tile_buf<loc=vec, dtype=!pto.f4E2M1x2, rows=32, cols=256, v_row=32, v_col=256, blayout=row_major, slayout=row_major, fractal=512, pad=0, compact=0>, %dst: !pto.tile_buf<loc=vec, dtype=f8E4M3FN, rows=32, cols=512, v_row=32, v_col=512, blayout=row_major, slayout=none_box, fractal=512, pad=0, compact=0>) {
+    // expected-error@+1 {{expects direct FP4/FP8 src to use ND layout with compact=null}}
+    pto.tcvt ins(%src : !pto.tile_buf<loc=vec, dtype=!pto.f4E2M1x2, rows=32, cols=256, v_row=32, v_col=256, blayout=row_major, slayout=row_major, fractal=512, pad=0, compact=0>) outs(%dst : !pto.tile_buf<loc=vec, dtype=f8E4M3FN, rows=32, cols=512, v_row=32, v_col=512, blayout=row_major, slayout=none_box, fractal=512, pad=0, compact=0>)
+    return
+  }
+}
+
+// -----
+
+module attributes {pto.target_arch = "a5"} {
+  func.func @src_normal(%src: !pto.tile_buf<loc=vec, dtype=!pto.f4E2M1x2, rows=32, cols=256, v_row=32, v_col=256, blayout=row_major, slayout=none_box, fractal=512, pad=0, compact=1>, %dst: !pto.tile_buf<loc=vec, dtype=f8E4M3FN, rows=32, cols=512, v_row=32, v_col=512, blayout=row_major, slayout=none_box, fractal=512, pad=0, compact=0>) {
+    // expected-error@+1 {{expects direct FP4/FP8 src to use ND layout with compact=null}}
+    pto.tcvt ins(%src : !pto.tile_buf<loc=vec, dtype=!pto.f4E2M1x2, rows=32, cols=256, v_row=32, v_col=256, blayout=row_major, slayout=none_box, fractal=512, pad=0, compact=1>) outs(%dst : !pto.tile_buf<loc=vec, dtype=f8E4M3FN, rows=32, cols=512, v_row=32, v_col=512, blayout=row_major, slayout=none_box, fractal=512, pad=0, compact=0>)
+    return
+  }
+}
+
+// -----
+
+module attributes {pto.target_arch = "a5"} {
+  func.func @dst_dn(%src: !pto.tile_buf<loc=vec, dtype=!pto.f4E2M1x2, rows=32, cols=256, v_row=32, v_col=256, blayout=row_major, slayout=none_box, fractal=512, pad=0, compact=0>, %dst: !pto.tile_buf<loc=vec, dtype=f8E4M3FN, rows=32, cols=512, v_row=32, v_col=512, blayout=col_major, slayout=none_box, fractal=512, pad=0, compact=0>) {
+    // expected-error@+1 {{expects direct FP4/FP8 dst to use ND or standard 512-byte NZ layout}}
+    pto.tcvt ins(%src : !pto.tile_buf<loc=vec, dtype=!pto.f4E2M1x2, rows=32, cols=256, v_row=32, v_col=256, blayout=row_major, slayout=none_box, fractal=512, pad=0, compact=0>) outs(%dst : !pto.tile_buf<loc=vec, dtype=f8E4M3FN, rows=32, cols=512, v_row=32, v_col=512, blayout=col_major, slayout=none_box, fractal=512, pad=0, compact=0>)
+    return
+  }
+}
+
+// -----
+
+module attributes {pto.target_arch = "a5"} {
+  func.func @dst_zn(%src: !pto.tile_buf<loc=vec, dtype=!pto.f4E2M1x2, rows=32, cols=256, v_row=32, v_col=256, blayout=row_major, slayout=none_box, fractal=512, pad=0, compact=0>, %dst: !pto.tile_buf<loc=vec, dtype=f8E4M3FN, rows=32, cols=512, v_row=32, v_col=512, blayout=row_major, slayout=col_major, fractal=512, pad=0, compact=0>) {
+    // expected-error@+1 {{expects direct FP4/FP8 dst to use ND or standard 512-byte NZ layout}}
+    pto.tcvt ins(%src : !pto.tile_buf<loc=vec, dtype=!pto.f4E2M1x2, rows=32, cols=256, v_row=32, v_col=256, blayout=row_major, slayout=none_box, fractal=512, pad=0, compact=0>) outs(%dst : !pto.tile_buf<loc=vec, dtype=f8E4M3FN, rows=32, cols=512, v_row=32, v_col=512, blayout=row_major, slayout=col_major, fractal=512, pad=0, compact=0>)
+    return
+  }
+}
+
+// -----
+
+module attributes {pto.target_arch = "a5"} {
+  func.func @dst_wrong_fractal(%src: !pto.tile_buf<loc=vec, dtype=!pto.f4E2M1x2, rows=32, cols=256, v_row=32, v_col=256, blayout=row_major, slayout=none_box, fractal=512, pad=0, compact=0>, %dst: !pto.tile_buf<loc=vec, dtype=f8E4M3FN, rows=32, cols=512, v_row=32, v_col=512, blayout=col_major, slayout=row_major, fractal=1024, pad=0, compact=0>) {
+    // expected-error@+1 {{expects direct FP4/FP8 dst to use ND or standard 512-byte NZ layout}}
+    pto.tcvt ins(%src : !pto.tile_buf<loc=vec, dtype=!pto.f4E2M1x2, rows=32, cols=256, v_row=32, v_col=256, blayout=row_major, slayout=none_box, fractal=512, pad=0, compact=0>) outs(%dst : !pto.tile_buf<loc=vec, dtype=f8E4M3FN, rows=32, cols=512, v_row=32, v_col=512, blayout=col_major, slayout=row_major, fractal=1024, pad=0, compact=0>)
+    return
+  }
+}
+
+// -----
+
+module attributes {pto.target_arch = "a5"} {
+  func.func @dst_nd_normal(%src: !pto.tile_buf<loc=vec, dtype=!pto.f4E2M1x2, rows=32, cols=256, v_row=32, v_col=256, blayout=row_major, slayout=none_box, fractal=512, pad=0, compact=0>, %dst: !pto.tile_buf<loc=vec, dtype=f8E4M3FN, rows=32, cols=512, v_row=32, v_col=512, blayout=row_major, slayout=none_box, fractal=512, pad=0, compact=1>) {
+    // expected-error@+1 {{expects direct FP4/FP8 dst compact=null, or compact=normal/row_plus_one for NZ}}
+    pto.tcvt ins(%src : !pto.tile_buf<loc=vec, dtype=!pto.f4E2M1x2, rows=32, cols=256, v_row=32, v_col=256, blayout=row_major, slayout=none_box, fractal=512, pad=0, compact=0>) outs(%dst : !pto.tile_buf<loc=vec, dtype=f8E4M3FN, rows=32, cols=512, v_row=32, v_col=512, blayout=row_major, slayout=none_box, fractal=512, pad=0, compact=1>)
+    return
+  }
+}
+
+// -----
+
+module attributes {pto.target_arch = "a5"} {
+  func.func @dst_nd_row_plus_one(%src: !pto.tile_buf<loc=vec, dtype=!pto.f4E2M1x2, rows=32, cols=256, v_row=32, v_col=256, blayout=row_major, slayout=none_box, fractal=512, pad=0, compact=0>, %dst: !pto.tile_buf<loc=vec, dtype=f8E4M3FN, rows=32, cols=512, v_row=32, v_col=512, blayout=row_major, slayout=none_box, fractal=512, pad=0, compact=2>) {
+    // expected-error@+1 {{expects direct FP4/FP8 dst compact=null, or compact=normal/row_plus_one for NZ}}
+    pto.tcvt ins(%src : !pto.tile_buf<loc=vec, dtype=!pto.f4E2M1x2, rows=32, cols=256, v_row=32, v_col=256, blayout=row_major, slayout=none_box, fractal=512, pad=0, compact=0>) outs(%dst : !pto.tile_buf<loc=vec, dtype=f8E4M3FN, rows=32, cols=512, v_row=32, v_col=512, blayout=row_major, slayout=none_box, fractal=512, pad=0, compact=2>)
+    return
+  }
+}
+
+// -----
+
+module attributes {pto.target_arch = "a5"} {
+  func.func @src_16byte_alignment(%src: !pto.tile_buf<loc=vec, dtype=!pto.f4E2M1x2, rows=32, cols=16, v_row=32, v_col=16, blayout=row_major, slayout=none_box, fractal=512, pad=0, compact=0>, %dst: !pto.tile_buf<loc=vec, dtype=f8E4M3FN, rows=32, cols=32, v_row=32, v_col=32, blayout=row_major, slayout=none_box, fractal=512, pad=0, compact=0>) {
+    // expected-error@+1 {{expects direct FP4/FP8 src rows to have a multiple of 64 logical columns}}
+    pto.tcvt ins(%src : !pto.tile_buf<loc=vec, dtype=!pto.f4E2M1x2, rows=32, cols=16, v_row=32, v_col=16, blayout=row_major, slayout=none_box, fractal=512, pad=0, compact=0>) outs(%dst : !pto.tile_buf<loc=vec, dtype=f8E4M3FN, rows=32, cols=32, v_row=32, v_col=32, blayout=row_major, slayout=none_box, fractal=512, pad=0, compact=0>)
+    return
+  }
+}
+
+// -----
+
+module attributes {pto.target_arch = "a5"} {
+  func.func @nz_rows_7(%src: !pto.tile_buf<loc=vec, dtype=!pto.f4E2M1x2, rows=32, cols=256, v_row=32, v_col=256, blayout=row_major, slayout=none_box, fractal=512, pad=0, compact=0>, %dst: !pto.tile_buf<loc=vec, dtype=f8E4M3FN, rows=7, cols=512, v_row=7, v_col=512, blayout=col_major, slayout=row_major, fractal=512, pad=0, compact=0>) {
+    // expected-error@+1 {{expects direct FP4/FP8 NZ physical rows to be a multiple of 16 and fit a 16-bit block stride}}
+    pto.tcvt ins(%src : !pto.tile_buf<loc=vec, dtype=!pto.f4E2M1x2, rows=32, cols=256, v_row=32, v_col=256, blayout=row_major, slayout=none_box, fractal=512, pad=0, compact=0>) outs(%dst : !pto.tile_buf<loc=vec, dtype=f8E4M3FN, rows=7, cols=512, v_row=7, v_col=512, blayout=col_major, slayout=row_major, fractal=512, pad=0, compact=0>)
+    return
+  }
+}
+
+// -----
+
+module attributes {pto.target_arch = "a5"} {
+  func.func @nz_rows_65536(%src: !pto.tile_buf<loc=vec, dtype=!pto.f4E2M1x2, rows=32, cols=256, v_row=32, v_col=256, blayout=row_major, slayout=none_box, fractal=512, pad=0, compact=0>, %dst: !pto.tile_buf<loc=vec, dtype=f8E4M3FN, rows=65536, cols=512, v_row=7, v_col=512, blayout=col_major, slayout=row_major, fractal=512, pad=0, compact=0>) {
+    // expected-error@+1 {{expects direct FP4/FP8 NZ physical rows to be a multiple of 16 and fit a 16-bit block stride}}
+    pto.tcvt ins(%src : !pto.tile_buf<loc=vec, dtype=!pto.f4E2M1x2, rows=32, cols=256, v_row=32, v_col=256, blayout=row_major, slayout=none_box, fractal=512, pad=0, compact=0>) outs(%dst : !pto.tile_buf<loc=vec, dtype=f8E4M3FN, rows=65536, cols=512, v_row=7, v_col=512, blayout=col_major, slayout=row_major, fractal=512, pad=0, compact=0>)
+    return
+  }
+}
+
+// -----
+
+module attributes {pto.target_arch = "a5"} {
+  func.func @dst_unaligned_cols(%src: !pto.tile_buf<loc=vec, dtype=!pto.f4E2M1x2, rows=32, cols=256, v_row=32, v_col=256, blayout=row_major, slayout=none_box, fractal=512, pad=0, compact=0>, %dst: !pto.tile_buf<loc=vec, dtype=f8E4M3FN, rows=32, cols=513, v_row=32, v_col=512, blayout=row_major, slayout=none_box, fractal=512, pad=0, compact=0>) {
+    // expected-error@+1 {{expects dst row-major none_box tile row byte size}}
+    pto.tcvt ins(%src : !pto.tile_buf<loc=vec, dtype=!pto.f4E2M1x2, rows=32, cols=256, v_row=32, v_col=256, blayout=row_major, slayout=none_box, fractal=512, pad=0, compact=0>) outs(%dst : !pto.tile_buf<loc=vec, dtype=f8E4M3FN, rows=32, cols=513, v_row=32, v_col=512, blayout=row_major, slayout=none_box, fractal=512, pad=0, compact=0>)
+    return
+  }
+}
+
+// -----
+
+module attributes {pto.target_arch = "a5"} {
+  func.func @logical_valid_odd(%src: !pto.tile_buf<loc=vec, dtype=!pto.f4E2M1x2, rows=32, cols=256, v_row=32, v_col=256, blayout=row_major, slayout=none_box, fractal=512, pad=0, compact=0>, %dst: !pto.tile_buf<loc=vec, dtype=f8E4M3FN, rows=32, cols=512, v_row=32, v_col=511, blayout=row_major, slayout=none_box, fractal=512, pad=0, compact=0>) {
+    // expected-error@+1 {{expects src and dst to have the same valid_shape}}
+    pto.tcvt ins(%src : !pto.tile_buf<loc=vec, dtype=!pto.f4E2M1x2, rows=32, cols=256, v_row=32, v_col=256, blayout=row_major, slayout=none_box, fractal=512, pad=0, compact=0>) outs(%dst : !pto.tile_buf<loc=vec, dtype=f8E4M3FN, rows=32, cols=512, v_row=32, v_col=511, blayout=row_major, slayout=none_box, fractal=512, pad=0, compact=0>)
+    return
+  }
+}
+
+// -----
+
+module attributes {pto.target_arch = "a5"} {
+  func.func @valid_rows_mismatch(%src: !pto.tile_buf<loc=vec, dtype=!pto.f4E2M1x2, rows=32, cols=256, v_row=5, v_col=256, blayout=row_major, slayout=none_box, fractal=512, pad=0, compact=0>, %dst: !pto.tile_buf<loc=vec, dtype=f8E4M3FN, rows=32, cols=512, v_row=6, v_col=512, blayout=row_major, slayout=none_box, fractal=512, pad=0, compact=0>) {
+    // expected-error@+1 {{expects src and dst to have the same valid_shape}}
+    pto.tcvt ins(%src : !pto.tile_buf<loc=vec, dtype=!pto.f4E2M1x2, rows=32, cols=256, v_row=5, v_col=256, blayout=row_major, slayout=none_box, fractal=512, pad=0, compact=0>) outs(%dst : !pto.tile_buf<loc=vec, dtype=f8E4M3FN, rows=32, cols=512, v_row=6, v_col=512, blayout=row_major, slayout=none_box, fractal=512, pad=0, compact=0>)
+    return
+  }
+}
+
+// -----
+
+module attributes {pto.target_arch = "a5"} {
+  func.func @packed_dynamic_valid(%src: !pto.tile_buf<loc=vec, dtype=!pto.f4E2M1x2, rows=32, cols=256, v_row=32, v_col=?, blayout=row_major, slayout=none_box, fractal=512, pad=0, compact=0>, %dst: !pto.tile_buf<loc=vec, dtype=f8E4M3FN, rows=32, cols=512, v_row=32, v_col=?, blayout=row_major, slayout=none_box, fractal=512, pad=0, compact=0>) {
+    // expected-error@+1 {{expects direct FP4/FP8 packed-axis valid columns to be static}}
+    pto.tcvt ins(%src : !pto.tile_buf<loc=vec, dtype=!pto.f4E2M1x2, rows=32, cols=256, v_row=32, v_col=?, blayout=row_major, slayout=none_box, fractal=512, pad=0, compact=0>) outs(%dst : !pto.tile_buf<loc=vec, dtype=f8E4M3FN, rows=32, cols=512, v_row=32, v_col=?, blayout=row_major, slayout=none_box, fractal=512, pad=0, compact=0>)
+    return
+  }
+}
+
+// -----
+
+module attributes {pto.target_arch = "a5"} {
+  func.func @logical_columns_overflow(%src: !pto.tile_buf<loc=vec, dtype=!pto.f4E2M1x2, rows=1, cols=1073741824, v_row=1, v_col=32, blayout=row_major, slayout=none_box, fractal=512, pad=0, compact=0>, %dst: !pto.tile_buf<loc=vec, dtype=f8E4M3FN, rows=1, cols=64, v_row=1, v_col=64, blayout=row_major, slayout=none_box, fractal=512, pad=0, compact=0>) {
+    // expected-error@+1 {{expects direct FP4/FP8 logical columns and byte offsets to fit signed 32 bits}}
+    pto.tcvt ins(%src : !pto.tile_buf<loc=vec, dtype=!pto.f4E2M1x2, rows=1, cols=1073741824, v_row=1, v_col=32, blayout=row_major, slayout=none_box, fractal=512, pad=0, compact=0>) outs(%dst : !pto.tile_buf<loc=vec, dtype=f8E4M3FN, rows=1, cols=64, v_row=1, v_col=64, blayout=row_major, slayout=none_box, fractal=512, pad=0, compact=0>)
+    return
+  }
+}
+
+// -----
+
+module attributes {pto.target_arch = "a5"} {
+  func.func @source_bytes_overflow(%src: !pto.tile_buf<loc=vec, dtype=!pto.f4E2M1x2, rows=65536, cols=32768, v_row=1, v_col=32, blayout=row_major, slayout=none_box, fractal=512, pad=0, compact=0>, %dst: !pto.tile_buf<loc=vec, dtype=f8E4M3FN, rows=1, cols=64, v_row=1, v_col=64, blayout=row_major, slayout=none_box, fractal=512, pad=0, compact=0>) {
+    // expected-error@+1 {{expects direct FP4/FP8 logical columns and byte offsets to fit signed 32 bits}}
+    pto.tcvt ins(%src : !pto.tile_buf<loc=vec, dtype=!pto.f4E2M1x2, rows=65536, cols=32768, v_row=1, v_col=32, blayout=row_major, slayout=none_box, fractal=512, pad=0, compact=0>) outs(%dst : !pto.tile_buf<loc=vec, dtype=f8E4M3FN, rows=1, cols=64, v_row=1, v_col=64, blayout=row_major, slayout=none_box, fractal=512, pad=0, compact=0>)
+    return
+  }
+}
+
+// -----
+
+module attributes {pto.target_arch = "a5"} {
+  func.func @destination_bytes_overflow(%src: !pto.tile_buf<loc=vec, dtype=!pto.f4E2M1x2, rows=1, cols=32, v_row=1, v_col=32, blayout=row_major, slayout=none_box, fractal=512, pad=0, compact=0>, %dst: !pto.tile_buf<loc=vec, dtype=f8E4M3FN, rows=65536, cols=32768, v_row=1, v_col=64, blayout=row_major, slayout=none_box, fractal=512, pad=0, compact=0>) {
+    // expected-error@+1 {{expects direct FP4/FP8 logical columns and byte offsets to fit signed 32 bits}}
+    pto.tcvt ins(%src : !pto.tile_buf<loc=vec, dtype=!pto.f4E2M1x2, rows=1, cols=32, v_row=1, v_col=32, blayout=row_major, slayout=none_box, fractal=512, pad=0, compact=0>) outs(%dst : !pto.tile_buf<loc=vec, dtype=f8E4M3FN, rows=65536, cols=32768, v_row=1, v_col=64, blayout=row_major, slayout=none_box, fractal=512, pad=0, compact=0>)
+    return
+  }
+}
+
+// -----
+
+module attributes {pto.target_arch = "a5"} {
+  func.func @vf_rows_overflow(%src: !pto.tile_buf<loc=vec, dtype=!pto.f4E2M1x2, rows=65536, cols=32, v_row=1, v_col=32, blayout=row_major, slayout=none_box, fractal=512, pad=0, compact=0>, %dst: !pto.tile_buf<loc=vec, dtype=f8E4M3FN, rows=65536, cols=64, v_row=1, v_col=64, blayout=row_major, slayout=none_box, fractal=512, pad=0, compact=0>) {
+    // expected-error@+1 {{expects direct FP4/FP8 VF row and source register counts to fit 16 bits}}
+    pto.tcvt ins(%src : !pto.tile_buf<loc=vec, dtype=!pto.f4E2M1x2, rows=65536, cols=32, v_row=1, v_col=32, blayout=row_major, slayout=none_box, fractal=512, pad=0, compact=0>) outs(%dst : !pto.tile_buf<loc=vec, dtype=f8E4M3FN, rows=65536, cols=64, v_row=1, v_col=64, blayout=row_major, slayout=none_box, fractal=512, pad=0, compact=0>)
+    return
+  }
+}
+
+// -----
+
+module attributes {pto.target_arch = "a5"} {
+  func.func @vf_registers_overflow(%src: !pto.tile_buf<loc=vec, dtype=!pto.f4E2M1x2, rows=1, cols=16777216, v_row=1, v_col=32, blayout=row_major, slayout=none_box, fractal=512, pad=0, compact=0>, %dst: !pto.tile_buf<loc=vec, dtype=f8E4M3FN, rows=1, cols=64, v_row=1, v_col=64, blayout=row_major, slayout=none_box, fractal=512, pad=0, compact=0>) {
+    // expected-error@+1 {{expects direct FP4/FP8 VF row and source register counts to fit 16 bits}}
+    pto.tcvt ins(%src : !pto.tile_buf<loc=vec, dtype=!pto.f4E2M1x2, rows=1, cols=16777216, v_row=1, v_col=32, blayout=row_major, slayout=none_box, fractal=512, pad=0, compact=0>) outs(%dst : !pto.tile_buf<loc=vec, dtype=f8E4M3FN, rows=1, cols=64, v_row=1, v_col=64, blayout=row_major, slayout=none_box, fractal=512, pad=0, compact=0>)
+    return
+  }
+}
