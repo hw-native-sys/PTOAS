@@ -305,8 +305,25 @@ static bool isFixedMxHandleUse(OpOperand &use, bool isScale) {
            (!isScale || (mov.getDst() == value && isA5ScaleTileTMov(mov)));
   }
   if (auto extract = dyn_cast<pto::TExtractOp>(user)) {
-    return isScale && extract.getDst() == value &&
-           isA5ScaleTileTExtract(extract);
+    if (isScale) {
+      return extract.getDst() == value && isA5ScaleTileTExtract(extract);
+    }
+    // A5 MX K slices use TEXTRACT rather than TMOV to fill a fixed L0
+    // handle. Only the destination payload is written: a source use, alias,
+    // quantizing form or different memory path cannot establish this proof.
+    // The TEXTRACT verifier owns layout/shape legality, including RHS layout
+    // conversion; neither changes the allocated destination handle address.
+    auto sourceType = dyn_cast<pto::TileBufType>(extract.getSrc().getType());
+    auto sourceAS = getAddressSpaceFromValueType(extract.getSrc().getType());
+    auto destAS = getAddressSpaceFromValueType(extract.getDst().getType());
+    return extract.getDst() == value && sourceType && sourceAS && destAS &&
+           *sourceAS == pto::AddressSpace::MAT &&
+           (*destAS == pto::AddressSpace::LEFT ||
+            *destAS == pto::AddressSpace::RIGHT) &&
+           isa<Float8E4M3FNType>(sourceType.getElementType()) &&
+           !extract.getFp() && !extract.getPreQuantScalar() &&
+           extract.getReluPreMode() == pto::ReluPreMode::NoRelu &&
+           !extract.getAccToVecModeAttr();
   }
   if (auto matmul = dyn_cast<pto::TMatmulMxOp>(user)) {
     return isScale ? (matmul.getAScale() == value ||
