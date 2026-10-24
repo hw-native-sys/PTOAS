@@ -1,0 +1,108 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+
+// RUN: pto-test-opt --pto-a5-normalize-tmov %s | FileCheck %s
+
+// The new destination-write whitelist must not erase dynamic/rebound handles
+// or conflicting scale associations merely because data uses TEXTRACT.
+!left = !pto.tile_buf<left, 64x128xf8E4M3FN, blayout=col_major, slayout=row_major, fractal=512>
+!right = !pto.tile_buf<right, 128x256xf8E4M3FN, slayout=col_major, fractal=512>
+!lmat = !pto.tile_buf<mat, 64x256xf8E4M3FN, blayout=col_major, slayout=row_major, fractal=512>
+!rmat = !pto.tile_buf<mat, 256x256xf8E4M3FN, blayout=col_major, slayout=row_major, fractal=512>
+!lm = !pto.tile_buf<mat, 64x8x!pto.f8E8M0, slayout=row_major, fractal=32>
+!rm = !pto.tile_buf<mat, 8x256x!pto.f8E8M0, blayout=col_major, slayout=col_major, fractal=32>
+!ls = !pto.tile_buf<scaling, 64x4x!pto.f8E8M0, slayout=row_major, fractal=32>
+!rs = !pto.tile_buf<scaling, 4x256x!pto.f8E8M0, blayout=col_major, slayout=col_major, fractal=32>
+!acc = !pto.tile_buf<acc, 64x256xf32, blayout=col_major, slayout=row_major, fractal=1024>
+
+module attributes {pto.target_arch = "a5"} {
+  func.func private @escape(!left)
+
+  // CHECK-LABEL: func.func @dynamic_data_extract(
+  // CHECK: pto.tget_scale_addr
+  // CHECK: pto.textract {{.*}}!pto.tile_buf<scaling,
+  // CHECK: return
+  func.func @dynamic_data_extract(%addr : i64) {
+    %z = arith.constant 0 : i64
+    %zi = arith.constant 0 : index
+    %lmat = pto.alloc_tile addr = %z : !lmat
+    %lm = pto.alloc_tile addr = %z : !lm
+    %left = pto.alloc_tile addr = %addr : !left
+    %ls = pto.alloc_tile addr = %z : !ls
+    pto.textract ins(%lmat, %zi, %zi : !lmat, index, index) outs(%left : !left)
+    pto.textract ins(%lm, %zi, %zi : !lm, index, index) outs(%ls : !ls)
+    pto.tget_scale_addr ins(%left : !left) outs(%ls : !ls)
+    return
+  }
+
+  // One mutable scale handle alternates between different fixed data slots.
+  // Both bindings remain, each before the scale payload write it controls.
+  // CHECK-LABEL: func.func @conflicting_data_extract_bindings(
+  // CHECK: pto.tget_scale_addr ins(%[[L0:.*]]{{.*}}outs(%[[S:.*]]
+  // CHECK-NEXT: pto.textract {{.*}}outs(%[[S]]
+  // CHECK: pto.tget_scale_addr ins(%[[L1:.*]]{{.*}}outs(%[[S]]
+  // CHECK-NEXT: pto.textract {{.*}}outs(%[[S]]
+  // CHECK: return
+  func.func @conflicting_data_extract_bindings() {
+    %z = arith.constant 0 : i64
+    %slot1 = arith.constant 32768 : i64
+    %zi = arith.constant 0 : index
+    %half = arith.constant 128 : index
+    %four = arith.constant 4 : index
+    %lmat = pto.alloc_tile addr = %z : !lmat
+    %lm = pto.alloc_tile addr = %z : !lm
+    %left0 = pto.alloc_tile addr = %z : !left
+    %left1 = pto.alloc_tile addr = %slot1 : !left
+    %ls = pto.alloc_tile addr = %z : !ls
+    pto.textract ins(%lmat, %zi, %zi : !lmat, index, index) outs(%left0 : !left)
+    pto.textract ins(%lmat, %zi, %half : !lmat, index, index) outs(%left1 : !left)
+    pto.textract ins(%lm, %zi, %zi : !lm, index, index) outs(%ls : !ls)
+    pto.tget_scale_addr ins(%left0 : !left) outs(%ls : !ls)
+    pto.textract ins(%lm, %zi, %four : !lm, index, index) outs(%ls : !ls)
+    pto.tget_scale_addr ins(%left1 : !left) outs(%ls : !ls)
+    return
+  }
+
+  // CHECK-LABEL: func.func @escaping_data_extract(
+  // CHECK: pto.tget_scale_addr
+  // CHECK: call @escape
+  // CHECK: return
+  func.func @escaping_data_extract() {
+    %z = arith.constant 0 : i64
+    %zi = arith.constant 0 : index
+    %lmat = pto.alloc_tile addr = %z : !lmat
+    %lm = pto.alloc_tile addr = %z : !lm
+    %left = pto.alloc_tile addr = %z : !left
+    %ls = pto.alloc_tile addr = %z : !ls
+    pto.textract ins(%lmat, %zi, %zi : !lmat, index, index) outs(%left : !left)
+    pto.textract ins(%lm, %zi, %zi : !lm, index, index) outs(%ls : !ls)
+    pto.tget_scale_addr ins(%left : !left) outs(%ls : !ls)
+    func.call @escape(%left) : (!left) -> ()
+    return
+  }
+
+  // TASSIGN mutates the address even though it is marked Pure in ODS.
+  // CHECK-LABEL: func.func @rebound_data_extract(
+  // CHECK: pto.tget_scale_addr
+  // CHECK: pto.tassign
+  // CHECK: return
+  func.func @rebound_data_extract() {
+    %z = arith.constant 0 : i64
+    %slot1 = arith.constant 32768 : i64
+    %zi = arith.constant 0 : index
+    %lmat = pto.alloc_tile addr = %z : !lmat
+    %lm = pto.alloc_tile addr = %z : !lm
+    %left = pto.alloc_tile addr = %z : !left
+    %ls = pto.alloc_tile addr = %z : !ls
+    pto.textract ins(%lmat, %zi, %zi : !lmat, index, index) outs(%left : !left)
+    pto.textract ins(%lm, %zi, %zi : !lm, index, index) outs(%ls : !ls)
+    pto.tget_scale_addr ins(%left : !left) outs(%ls : !ls)
+    %assigned = pto.tassign %left, %slot1 : !left -> !left
+    return
+  }
+}

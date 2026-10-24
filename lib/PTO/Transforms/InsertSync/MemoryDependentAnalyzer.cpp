@@ -170,6 +170,36 @@ bool MemoryDependentAnalyzer::DepBetween(
   return hasAlias;
 }
  
+// EmitC maps A5 E8M0 RR/CC scaling tiles to ScaleLeft/ScaleRight:
+// these live in distinct __ca__/__cb__ banks, even at equal numeric addresses.
+// Restrict this proof to direct, statically addressed allocation handles.
+// Views, pointer casts, dynamic addresses and ordinary Scaling remain
+// conservative until their bank provenance is represented explicitly.
+static std::optional<bool> getDirectA5MxScaleBank(const BaseMemInfo *info) {
+  if (info->scope != pto::AddressSpace::SCALING ||
+      !info->hasKnownPhysicalAddresses || info->aliasesUnknownRange ||
+      !info->baseBuffer || info->baseBuffer != info->rootBuffer) {
+    return std::nullopt;
+  }
+  auto alloc = info->rootBuffer.getDefiningOp<pto::AllocTileOp>();
+  auto type = dyn_cast<pto::TileBufType>(info->rootBuffer.getType());
+  if (!alloc || !pto::isTargetArchA5(alloc.getOperation()) || !type ||
+      !isa<pto::F8E8M0Type>(type.getElementType())) {
+    return std::nullopt;
+  }
+  const int32_t bl = type.getBLayoutValueI32();
+  const int32_t sl = type.getSLayoutValueI32();
+  if (bl == static_cast<int32_t>(pto::BLayout::RowMajor) &&
+      sl == static_cast<int32_t>(pto::SLayout::RowMajor)) {
+    return false; // ScaleLeft (__ca__).
+  }
+  if (bl == static_cast<int32_t>(pto::BLayout::ColMajor) &&
+      sl == static_cast<int32_t>(pto::SLayout::ColMajor)) {
+    return true; // ScaleRight (__cb__).
+  }
+  return std::nullopt;
+}
+
 bool MemoryDependentAnalyzer::MemAlias(const BaseMemInfo *a,
                                        const BaseMemInfo *b) const {
   pto::AddressSpace as = a->scope;
@@ -188,6 +218,12 @@ bool MemoryDependentAnalyzer::MemAlias(const BaseMemInfo *a,
     if (isTraceEnabled()) {
       llvm::errs() << "    -> Scope Mismatch. False.\n";
     }
+    return false;
+  }
+
+  const auto aBank = getDirectA5MxScaleBank(a);
+  const auto bBank = getDirectA5MxScaleBank(b);
+  if (aBank && bBank && *aBank != *bBank) {
     return false;
   }
 
