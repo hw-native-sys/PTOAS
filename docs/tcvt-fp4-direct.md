@@ -35,3 +35,14 @@ but are unnecessary for this pair. A2/A3, FP4 E1M2 and FP8 E5M2 are unsupported.
 ```sh
 ptoas --pto-arch=a5 --pto-level=level2 input.pto -o output.cpp
 ```
+
+### A5 FP4-to-FP8 padded NZ conversion
+
+Direct E2M1x2-to-E4M3FN TCVT accepts standard Vec NZ destinations with
+`compact=row_plus_one` (numeric compact tag 2). Logical Rows/Cols remain
+unchanged. The source remains ND with compact=null. Padded maximum panel pitch
+and byte offsets are checked in addition to ordinary direct-convert bounds.
+The existing RowPlusOne memory planner handles storage: a full 128x256 FP8
+destination reserves 33024 bytes after local alignment. This requires an ISA
+TCVT implementation supporting RowPlusOne and truthful padded storage sizing;
+it does not imply a runtime dependency pin has that support.

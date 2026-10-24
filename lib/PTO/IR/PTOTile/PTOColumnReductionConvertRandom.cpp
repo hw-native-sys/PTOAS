@@ -151,9 +151,12 @@ static LogicalResult verifyDirectFp4ToFp8TCvt(TCvtOp op, Type srcTy,
     return op.emitOpError("expects direct FP4/FP8 dst to use ND or standard 512-byte NZ layout");
   }
   int32_t compact = dst.getCompactModeI32();
+  const bool rowPlusOne =
+      compact == static_cast<int32_t>(pto::CompactMode::RowPlusOne);
   if (compact != static_cast<int32_t>(pto::CompactMode::Null) &&
-      !(dstNZ && compact == static_cast<int32_t>(pto::CompactMode::Normal))) {
-    return op.emitOpError("expects direct FP4/FP8 dst compact=null, or compact=normal for NZ");
+      !(dstNZ && (compact == static_cast<int32_t>(pto::CompactMode::Normal) ||
+                  rowPlusOne))) {
+    return op.emitOpError("expects direct FP4/FP8 dst compact=null, or compact=normal/row_plus_one for NZ");
   }
 
   auto srcShape = src.getShape();
@@ -177,6 +180,15 @@ static LogicalResult verifyDirectFp4ToFp8TCvt(TCvtOp op, Type srcTy,
   }
   if (dstNZ && (dstShape[0] % 16 != 0 || dstShape[0] > 0xFFFF)) {
     return op.emitOpError("expects direct FP4/FP8 NZ physical rows to be a multiple of 16 and fit a 16-bit block stride");
+  }
+  // RowPlusOne changes physical capacity, not logical Rows/Cols. Check the
+  // maximum padded panel pitch/capacity too; ordinary dense bounds are not a
+  // proof that the scatter offsets fit. Existing PlanMemory already accounts
+  // for RowPlusOne and rounds the allocation to the local 256-byte boundary.
+  if (rowPlusOne &&
+      (dstShape[0] + 1 > 0xFFFF ||
+       dstShape[0] + 1 > maxOffset / dstShape[1])) {
+    return op.emitOpError("expects direct FP4/FP8 row_plus_one padded stride and byte offsets to fit supported bounds");
   }
   if (std::min(srcShape[0], dstShape[0]) > 0xFFFF ||
       srcShape[1] / 256 > 0xFFFF) {
