@@ -307,11 +307,116 @@ bool MemoryDependentAnalyzer::isGMBufferOverlap(const BaseMemInfo *a,
     return isBufferAddressRangeOverlap(a, b);
   }
 
+  // Window offsets are relative to the root, so they are only comparable on a
+  // shared root. A proof here is the only way the interleaved column slices of
+  // one tensor are seen as independent: their flat ranges always overlap, and
+  // the allocateSize == 0 short circuit below would answer "overlap" anyway for
+  // a bare !pto.ptr kernel argument, whose byte size is never modelled.
+  if (isGMWindowProvenDisjoint(a, b)) {
+    return false;
+  }
+
   if (a->allocateSize == 0 || b->allocateSize == 0) {
     return true;
   }
 
   return isBufferAddressRangeOverlap(a, b);
+}
+
+// Inflates a window's contiguous run to whole access granules. Sound only when
+// the strides are granule multiples, which the caller checks: otherwise an
+// inflated run could reach into a neighbouring run of the same window and the
+// per-run reasoning below would no longer describe the access.
+static GMWindow inflateToGranule(const GMWindow &window) {
+  constexpr uint64_t granule = kGmAccessGranuleBytes;
+  GMWindow inflated = window;
+  uint64_t end = window.byteOffset + window.contigBytes;
+  inflated.byteOffset = window.byteOffset / granule * granule;
+  inflated.contigBytes =
+      (end + granule - 1) / granule * granule - inflated.byteOffset;
+  return inflated;
+}
+
+bool MemoryDependentAnalyzer::isGMWindowProvenDisjoint(
+    const BaseMemInfo *a, const BaseMemInfo *b) const {
+  if (!a->gmWindow || !b->gmWindow) {
+    return false;
+  }
+  const GMWindow &rawA = *a->gmWindow;
+  const GMWindow &rawB = *b->gmWindow;
+  if (rawA.contigBytes == 0 || rawB.contigBytes == 0) {
+    return false;
+  }
+
+  // Every stride must be a granule multiple, both so inflating a run cannot
+  // spill into the next one and so the lattice of run starts stays
+  // granule-aligned.
+  auto stridesAreGranuleAligned = [](const GMWindow &window) {
+    return llvm::all_of(window.outerDims, [](std::pair<uint64_t, uint64_t> dim) {
+      return dim.first != 0 && dim.first % kGmAccessGranuleBytes == 0;
+    });
+  };
+  if (!stridesAreGranuleAligned(rawA) || !stridesAreGranuleAligned(rawB)) {
+    return false;
+  }
+
+  const GMWindow windowA = inflateToGranule(rawA);
+  const GMWindow windowB = inflateToGranule(rawB);
+
+  // (a) Bounding intervals do not meet. Covers the common row-block tiling,
+  // where two views take different row ranges of the same tensor.
+  uint64_t endA = windowA.byteOffset + windowA.spanBytes();
+  uint64_t endB = windowB.byteOffset + windowB.spanBytes();
+  if (endA <= windowB.byteOffset || endB <= windowA.byteOffset) {
+    if (isTraceEnabled()) {
+      llvm::errs() << "    -> GM windows disjoint: bounding ranges ["
+                   << windowA.byteOffset << ", " << endA << ") vs ["
+                   << windowB.byteOffset << ", " << endB << ")\n";
+    }
+    return true;
+  }
+
+  // (b) Same lattice of run starts, and the two runs never meet inside one
+  // period. This is the column-slice case, where (a) can never succeed.
+  //
+  // With identical outerDims the run starts are offA + L and offB + L for a
+  // common lattice L. If every stride is a multiple of the innermost stride S
+  // then every element of L is too, so each difference of run starts is
+  // congruent to (offA - offB) mod S. Writing r for that residue, a shared byte
+  // needs some multiple of S to land in (-contigB, contigA); requiring
+  // contigA + contigB <= S leaves only r and r - S as candidates, which the two
+  // bounds below exclude.
+  if (windowA.outerDims != windowB.outerDims || windowA.outerDims.empty()) {
+    return false;
+  }
+  uint64_t innerStride = windowA.outerDims.back().first;
+  if (innerStride == 0) {
+    return false;
+  }
+  if (llvm::any_of(windowA.outerDims, [&](std::pair<uint64_t, uint64_t> dim) {
+        return dim.first % innerStride != 0;
+      })) {
+    return false;
+  }
+  if (windowA.contigBytes + windowB.contigBytes > innerStride) {
+    return false;
+  }
+
+  uint64_t residue = (windowA.byteOffset % innerStride + innerStride -
+                      windowB.byteOffset % innerStride) %
+                     innerStride;
+  if (residue < windowA.contigBytes ||
+      residue > innerStride - windowB.contigBytes) {
+    return false;
+  }
+
+  if (isTraceEnabled()) {
+    llvm::errs() << "    -> GM windows disjoint: runs of "
+                 << windowA.contigBytes << "B and " << windowB.contigBytes
+                 << "B at residue " << residue << " of stride " << innerStride
+                 << "\n";
+  }
+  return true;
 }
  
 bool MemoryDependentAnalyzer::isBufferAddressRangeOverlap(
