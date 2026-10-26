@@ -1,0 +1,58 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+
+// RUN: pto-test-opt --split-input-file --verify-diagnostics %s
+
+// Verifier bounds only: these argument tiles do not request local allocation.
+// At Rows=16, 126322560 is the largest 32-aligned Cols with
+// (Rows + 1) * Cols <= INT32_MAX. One more 32-byte block still fits
+// dense NZ, but exceeds the conservative RowPlusOne byte-offset bound.
+module attributes {pto.target_arch = "a5"} {
+  func.func @row_plus_one_last_aligned_capacity(%src: !pto.tile_buf<loc=vec, dtype=!pto.f4E2M1x2, rows=1, cols=32, v_row=1, v_col=32, blayout=row_major, slayout=none_box, fractal=512, pad=0, compact=0>, %dst: !pto.tile_buf<loc=vec, dtype=f8E4M3FN, rows=16, cols=126322560, v_row=1, v_col=64, blayout=col_major, slayout=row_major, fractal=512, pad=0, compact=2>) {
+    pto.tcvt ins(%src : !pto.tile_buf<loc=vec, dtype=!pto.f4E2M1x2, rows=1, cols=32, v_row=1, v_col=32, blayout=row_major, slayout=none_box, fractal=512, pad=0, compact=0>) outs(%dst : !pto.tile_buf<loc=vec, dtype=f8E4M3FN, rows=16, cols=126322560, v_row=1, v_col=64, blayout=col_major, slayout=row_major, fractal=512, pad=0, compact=2>)
+    return
+  }
+}
+
+// -----
+
+module attributes {pto.target_arch = "a5"} {
+  func.func @row_plus_one_capacity_overflow(%src: !pto.tile_buf<loc=vec, dtype=!pto.f4E2M1x2, rows=1, cols=32, v_row=1, v_col=32, blayout=row_major, slayout=none_box, fractal=512, pad=0, compact=0>, %dst: !pto.tile_buf<loc=vec, dtype=f8E4M3FN, rows=16, cols=126322592, v_row=1, v_col=64, blayout=col_major, slayout=row_major, fractal=512, pad=0, compact=2>) {
+    // expected-error@+1 {{expects direct FP4/FP8 row_plus_one padded stride and byte offsets to fit supported bounds}}
+    pto.tcvt ins(%src : !pto.tile_buf<loc=vec, dtype=!pto.f4E2M1x2, rows=1, cols=32, v_row=1, v_col=32, blayout=row_major, slayout=none_box, fractal=512, pad=0, compact=0>) outs(%dst : !pto.tile_buf<loc=vec, dtype=f8E4M3FN, rows=16, cols=126322592, v_row=1, v_col=64, blayout=col_major, slayout=row_major, fractal=512, pad=0, compact=2>)
+    return
+  }
+}
+
+// -----
+
+module attributes {pto.target_arch = "a5"} {
+  func.func @ordinary_nz_same_dense_capacity(%src: !pto.tile_buf<loc=vec, dtype=!pto.f4E2M1x2, rows=1, cols=32, v_row=1, v_col=32, blayout=row_major, slayout=none_box, fractal=512, pad=0, compact=0>, %dst: !pto.tile_buf<loc=vec, dtype=f8E4M3FN, rows=16, cols=126322592, v_row=1, v_col=64, blayout=col_major, slayout=row_major, fractal=512, pad=0, compact=0>) {
+    pto.tcvt ins(%src : !pto.tile_buf<loc=vec, dtype=!pto.f4E2M1x2, rows=1, cols=32, v_row=1, v_col=32, blayout=row_major, slayout=none_box, fractal=512, pad=0, compact=0>) outs(%dst : !pto.tile_buf<loc=vec, dtype=f8E4M3FN, rows=16, cols=126322592, v_row=1, v_col=64, blayout=col_major, slayout=row_major, fractal=512, pad=0, compact=0>)
+    return
+  }
+}
+
+// -----
+
+module attributes {pto.target_arch = "a5"} {
+  func.func @row_plus_one_max_aligned_pitch(%src: !pto.tile_buf<loc=vec, dtype=!pto.f4E2M1x2, rows=1, cols=32, v_row=1, v_col=32, blayout=row_major, slayout=none_box, fractal=512, pad=0, compact=0>, %dst: !pto.tile_buf<loc=vec, dtype=f8E4M3FN, rows=65520, cols=64, v_row=1, v_col=64, blayout=col_major, slayout=row_major, fractal=512, pad=0, compact=2>) {
+    pto.tcvt ins(%src : !pto.tile_buf<loc=vec, dtype=!pto.f4E2M1x2, rows=1, cols=32, v_row=1, v_col=32, blayout=row_major, slayout=none_box, fractal=512, pad=0, compact=0>) outs(%dst : !pto.tile_buf<loc=vec, dtype=f8E4M3FN, rows=65520, cols=64, v_row=1, v_col=64, blayout=col_major, slayout=row_major, fractal=512, pad=0, compact=2>)
+    return
+  }
+}
+
+// -----
+
+module attributes {pto.target_arch = "a5"} {
+  func.func @row_plus_one_pitch_overflow(%src: !pto.tile_buf<loc=vec, dtype=!pto.f4E2M1x2, rows=1, cols=32, v_row=1, v_col=32, blayout=row_major, slayout=none_box, fractal=512, pad=0, compact=0>, %dst: !pto.tile_buf<loc=vec, dtype=f8E4M3FN, rows=65536, cols=64, v_row=1, v_col=64, blayout=col_major, slayout=row_major, fractal=512, pad=0, compact=2>) {
+    // expected-error@+1 {{expects direct FP4/FP8 NZ physical rows to be a multiple of 16 and fit a 16-bit block stride}}
+    pto.tcvt ins(%src : !pto.tile_buf<loc=vec, dtype=!pto.f4E2M1x2, rows=1, cols=32, v_row=1, v_col=32, blayout=row_major, slayout=none_box, fractal=512, pad=0, compact=0>) outs(%dst : !pto.tile_buf<loc=vec, dtype=f8E4M3FN, rows=65536, cols=64, v_row=1, v_col=64, blayout=col_major, slayout=row_major, fractal=512, pad=0, compact=2>)
+    return
+  }
+}

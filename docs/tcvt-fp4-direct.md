@@ -9,7 +9,9 @@ negative zero, for all rounding and saturation modes supported by TCVT.
 Both tiles must be in `vec`. The source uses `row_major`/`none_box` with
 `compact=0` (Null). The destination uses either the same ND layout with Null,
 or standard NZ (`blayout=col_major`, `slayout=row_major`, `fractal=512`) with
-`compact=0` or `compact=1` (Normal). RowPlusOne is unsupported.
+`compact=0` (Null), `compact=1` (Normal), or opt-in `compact=2`
+(RowPlusOne). RowPlusOne is restricted to the standard NZ destination; it
+does not enable other dtype pairs or layouts.
 
 FP4 IR columns and valid columns count **packed bytes**; generated ISA Tile
 columns count **logical nibbles**. For example, an IR `32x256x!pto.f4E2M1x2`
@@ -46,3 +48,13 @@ The existing RowPlusOne memory planner handles storage: a full 128x256 FP8
 destination reserves 33024 bytes after local alignment. This requires an ISA
 TCVT implementation supporting RowPlusOne and truthful padded storage sizing;
 it does not imply a runtime dependency pin has that support.
+
+Allocation uses the maximum physical Rows/Cols even when the valid region is
+smaller or the valid row count is dynamic. For this standard FP8 NZ layout,
+RowPlusOne uses the valid row count rounded up to 16 plus one as its runtime
+panel pitch; the verifier bounds the maximum pitch with physical Rows + 1.
+The generic planner already reserves a conservative column-major envelope
+`((Cols - 1) * (Rows + 1) + Rows)` bytes, rounded to 256 bytes. This
+compiler change reuses that planner and preserves the existing Null and
+Normal behavior. It does not establish runtime support for generic dtypes or
+nonstandard boxed layouts.
