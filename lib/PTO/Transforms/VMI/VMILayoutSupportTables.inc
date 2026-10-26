@@ -481,6 +481,7 @@ struct VexpdifLayoutPattern {
     LayoutPattern sourceLayout;
     LayoutPattern resultLayout;
     bool preferred = false;
+    ElementCountPattern elementCounts = anyN();
 };
 
 static constexpr VexpdifLayoutPattern kVexpdifLayoutPatterns[] = {
@@ -494,6 +495,13 @@ static constexpr VexpdifLayoutPattern kVexpdifLayoutPatterns[] = {
     // An f16 source widens: the two physical results of one source part are
     // exactly the even and the odd lanes of that part.
     {bits<16>(), bits<32>(), c(), d(2), true},
+    // Below one full f16 physical part (the public lane counts 1, 2, 4, 8,
+    // and 64) the deinterleaved=2 result halves cannot fill whole parts and
+    // no ensure_layout bridge back to a contiguous consumer exists, so the
+    // VMIToVPTO lowering instead computes the EVEN and ODD halves on the
+    // packed source part and merges them with one vintlv: the result stays
+    // contiguous with one result part per source part.
+    {bits<16>(), bits<32>(), c(), c(), false, N<1, 2, 4, 8, 64>()},
 };
 
 // A lane-strided source is not in the table on purpose.  The mask shares the

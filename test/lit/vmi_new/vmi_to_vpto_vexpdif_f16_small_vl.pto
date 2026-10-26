@@ -1,0 +1,117 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See the License in the root of the software repository for the full text of the License.
+
+// Issue #1626: f16 vexpdif below one full f16 physical part cannot deliver
+// the deinterleaved=2 result the dedicated interleave relation needs (the
+// 32-bit c <-> d(2) ensure_layout bridge only exists from one full part up),
+// so against a contiguous consumer the merged table row applies: the source
+// stays packed and contiguous, and the VMIToVPTO lowering computes the EVEN
+// and ODD halves on it and merges them back with vintlv. The functions use
+// a vstore consumer, which is the shape that forces the contiguous result;
+// the unconstrained bare-return form keeps the preferred deinterleaved=2
+// pair and is covered by vmi_to_vpto_vexpdif_f16.pto at 128 lanes.
+
+// RUN: pto-test-opt %s -vmi-lower-unified-to-legacy -vmi-mask-granularity-assignment -vmi-layout-assignment | FileCheck %s --check-prefix=ASSIGN
+// RUN: pto-test-opt %s -vmi-lower-unified-to-legacy -vmi-mask-granularity-assignment -vmi-layout-assignment -vmi-to-vpto | FileCheck %s --check-prefix=LOWER
+
+module {
+  func.func @vexpdif_f16_vl1_store(
+      %x: !pto.vmi.vreg<1xf16>,
+      %max: !pto.vmi.vreg<1xf16>,
+      %mask: !pto.vmi.mask<1xpred>,
+      %out: !pto.ptr<f32, ub>) {
+    %result = pto.vmi.vexpdif %x, %max, %mask
+        : !pto.vmi.vreg<1xf16>, !pto.vmi.vreg<1xf16>,
+          !pto.vmi.mask<1xpred> -> !pto.vmi.vreg<1xf32>
+    %c0 = arith.constant 0 : index
+    pto.vmi.vstore %result, %out[%c0] : !pto.vmi.vreg<1xf32>, !pto.ptr<f32, ub>
+    return
+  }
+
+  func.func @vexpdif_f16_vl2_store(
+      %x: !pto.vmi.vreg<2xf16>,
+      %max: !pto.vmi.vreg<2xf16>,
+      %mask: !pto.vmi.mask<2xpred>,
+      %out: !pto.ptr<f32, ub>) {
+    %result = pto.vmi.vexpdif %x, %max, %mask
+        : !pto.vmi.vreg<2xf16>, !pto.vmi.vreg<2xf16>,
+          !pto.vmi.mask<2xpred> -> !pto.vmi.vreg<2xf32>
+    %c0 = arith.constant 0 : index
+    pto.vmi.vstore %result, %out[%c0] : !pto.vmi.vreg<2xf32>, !pto.ptr<f32, ub>
+    return
+  }
+
+  func.func @vexpdif_f16_vl4_store(
+      %x: !pto.vmi.vreg<4xf16>,
+      %max: !pto.vmi.vreg<4xf16>,
+      %mask: !pto.vmi.mask<4xpred>,
+      %out: !pto.ptr<f32, ub>) {
+    %result = pto.vmi.vexpdif %x, %max, %mask
+        : !pto.vmi.vreg<4xf16>, !pto.vmi.vreg<4xf16>,
+          !pto.vmi.mask<4xpred> -> !pto.vmi.vreg<4xf32>
+    %c0 = arith.constant 0 : index
+    pto.vmi.vstore %result, %out[%c0] : !pto.vmi.vreg<4xf32>, !pto.ptr<f32, ub>
+    return
+  }
+
+  func.func @vexpdif_f16_vl8_store(
+      %x: !pto.vmi.vreg<8xf16>,
+      %max: !pto.vmi.vreg<8xf16>,
+      %mask: !pto.vmi.mask<8xpred>,
+      %out: !pto.ptr<f32, ub>) {
+    %result = pto.vmi.vexpdif %x, %max, %mask
+        : !pto.vmi.vreg<8xf16>, !pto.vmi.vreg<8xf16>,
+          !pto.vmi.mask<8xpred> -> !pto.vmi.vreg<8xf32>
+    %c0 = arith.constant 0 : index
+    pto.vmi.vstore %result, %out[%c0] : !pto.vmi.vreg<8xf32>, !pto.ptr<f32, ub>
+    return
+  }
+
+  func.func @vexpdif_f16_vl64_store(
+      %x: !pto.vmi.vreg<64xf16>,
+      %max: !pto.vmi.vreg<64xf16>,
+      %mask: !pto.vmi.mask<64xpred>,
+      %out: !pto.ptr<f32, ub>) {
+    %result = pto.vmi.vexpdif %x, %max, %mask
+        : !pto.vmi.vreg<64xf16>, !pto.vmi.vreg<64xf16>,
+          !pto.vmi.mask<64xpred> -> !pto.vmi.vreg<64xf32>
+    %c0 = arith.constant 0 : index
+    pto.vmi.vstore %result, %out[%c0] : !pto.vmi.vreg<64xf32>, !pto.ptr<f32, ub>
+    return
+  }
+}
+
+// The merged relation keeps the packed source and the contiguous result.
+// ASSIGN-LABEL: func.func @vexpdif_f16_vl8_store(
+// ASSIGN: pto.vmi.vexpdif %{{.*}}, %{{.*}}, %{{.*}} : !pto.vmi.vreg<8xf16, #pto.vmi.layout<contiguous>>, !pto.vmi.vreg<8xf16, #pto.vmi.layout<contiguous>>, !pto.vmi.mask<8xb16, #pto.vmi.layout<contiguous>> -> !pto.vmi.vreg<8xf32, #pto.vmi.layout<contiguous>>
+// ASSIGN-LABEL: func.func @vexpdif_f16_vl64_store(
+// ASSIGN: pto.vmi.vexpdif %{{.*}}, %{{.*}}, %{{.*}} : !pto.vmi.vreg<64xf16, #pto.vmi.layout<contiguous>>, !pto.vmi.vreg<64xf16, #pto.vmi.layout<contiguous>>, !pto.vmi.mask<64xb16, #pto.vmi.layout<contiguous>> -> !pto.vmi.vreg<64xf32, #pto.vmi.layout<contiguous>>
+
+// Each op lowers to the EVEN and ODD halves on the same packed source part
+// plus one vintlv merge; the interleaved low output is the contiguous result
+// part the store consumes.
+// LOWER-LABEL: func.func @vexpdif_f16_vl1_store(
+// LOWER: pto.vexpdif %{{.*}}, %{{.*}}, %{{.*}}, "EVEN" : !pto.vreg<128xf16>, !pto.vreg<128xf16>, !pto.mask<b16> -> !pto.vreg<64xf32>
+// LOWER: pto.vexpdif %{{.*}}, %{{.*}}, %{{.*}}, "ODD" : !pto.vreg<128xf16>, !pto.vreg<128xf16>, !pto.mask<b16> -> !pto.vreg<64xf32>
+// LOWER: %{{.*}}, %{{.*}} = pto.vintlv %{{.*}}, %{{.*}} : !pto.vreg<64xf32>, !pto.vreg<64xf32> -> !pto.vreg<64xf32>, !pto.vreg<64xf32>
+// LOWER-LABEL: func.func @vexpdif_f16_vl2_store(
+// LOWER: pto.vexpdif %{{.*}}, %{{.*}}, %{{.*}}, "EVEN" : !pto.vreg<128xf16>, !pto.vreg<128xf16>, !pto.mask<b16> -> !pto.vreg<64xf32>
+// LOWER: pto.vexpdif %{{.*}}, %{{.*}}, %{{.*}}, "ODD" : !pto.vreg<128xf16>, !pto.vreg<128xf16>, !pto.mask<b16> -> !pto.vreg<64xf32>
+// LOWER: %{{.*}}, %{{.*}} = pto.vintlv %{{.*}}, %{{.*}} : !pto.vreg<64xf32>, !pto.vreg<64xf32> -> !pto.vreg<64xf32>, !pto.vreg<64xf32>
+// LOWER-LABEL: func.func @vexpdif_f16_vl4_store(
+// LOWER: pto.vexpdif %{{.*}}, %{{.*}}, %{{.*}}, "EVEN" : !pto.vreg<128xf16>, !pto.vreg<128xf16>, !pto.mask<b16> -> !pto.vreg<64xf32>
+// LOWER: pto.vexpdif %{{.*}}, %{{.*}}, %{{.*}}, "ODD" : !pto.vreg<128xf16>, !pto.vreg<128xf16>, !pto.mask<b16> -> !pto.vreg<64xf32>
+// LOWER: %{{.*}}, %{{.*}} = pto.vintlv %{{.*}}, %{{.*}} : !pto.vreg<64xf32>, !pto.vreg<64xf32> -> !pto.vreg<64xf32>, !pto.vreg<64xf32>
+// LOWER-LABEL: func.func @vexpdif_f16_vl8_store(
+// LOWER: pto.vexpdif %{{.*}}, %{{.*}}, %{{.*}}, "EVEN" : !pto.vreg<128xf16>, !pto.vreg<128xf16>, !pto.mask<b16> -> !pto.vreg<64xf32>
+// LOWER: pto.vexpdif %{{.*}}, %{{.*}}, %{{.*}}, "ODD" : !pto.vreg<128xf16>, !pto.vreg<128xf16>, !pto.mask<b16> -> !pto.vreg<64xf32>
+// LOWER: %{{.*}}, %{{.*}} = pto.vintlv %{{.*}}, %{{.*}} : !pto.vreg<64xf32>, !pto.vreg<64xf32> -> !pto.vreg<64xf32>, !pto.vreg<64xf32>
+// LOWER-LABEL: func.func @vexpdif_f16_vl64_store(
+// LOWER: pto.vexpdif %{{.*}}, %{{.*}}, %{{.*}}, "EVEN" : !pto.vreg<128xf16>, !pto.vreg<128xf16>, !pto.mask<b16> -> !pto.vreg<64xf32>
+// LOWER: pto.vexpdif %{{.*}}, %{{.*}}, %{{.*}}, "ODD" : !pto.vreg<128xf16>, !pto.vreg<128xf16>, !pto.mask<b16> -> !pto.vreg<64xf32>
+// LOWER: %{{.*}}, %{{.*}} = pto.vintlv %{{.*}}, %{{.*}} : !pto.vreg<64xf32>, !pto.vreg<64xf32> -> !pto.vreg<64xf32>, !pto.vreg<64xf32>

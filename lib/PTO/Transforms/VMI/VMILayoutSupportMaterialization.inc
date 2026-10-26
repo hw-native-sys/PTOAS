@@ -584,6 +584,20 @@ inline bool matchesVexpdifPhysicalShape(
     }
 
     int64_t partsPerSourcePart = static_cast<int64_t>(resultBits / sourceBits);
+    // Below one full source physical part, a widening row whose source and
+    // result are both contiguous is the merged form: the VMIToVPTO lowering
+    // computes the two halves on the packed source part and merges them with
+    // one vintlv, so it yields one result part per source part instead of
+    // the element-width ratio.
+    bool mergedContiguousForm =
+        partsPerSourcePart != 1 && fact.sourceLayout.isContiguous() && fact.resultLayout.isContiguous();
+    if (mergedContiguousForm) {
+        FailureOr<int64_t> lanesPerPart = getDataLanesPerPart(sourceType.getElementType());
+        bool belowOnePhysicalPart = succeeded(lanesPerPart) && sourceType.getElementCount() < *lanesPerPart;
+        if (belowOnePhysicalPart) {
+            partsPerSourcePart = 1;
+        }
+    }
     if (*maskParts != *sourceParts || *resultParts != partsPerSourcePart * *sourceParts) {
         return false;
     }

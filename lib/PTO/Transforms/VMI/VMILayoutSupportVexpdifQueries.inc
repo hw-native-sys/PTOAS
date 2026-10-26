@@ -58,7 +58,8 @@ FailureOr<SmallVector<VMIVexpdifLayoutFact, mlir::pto::kValue4>> VMILayoutSuppor
     SmallVector<VMIVexpdifLayoutFact, mlir::pto::kValue4> facts;
     for (const VexpdifLayoutPattern& pattern : kVexpdifLayoutPatterns) {
         if (!matchesElementBitsPattern(pattern.sourceBits, sourceType.getElementType()) ||
-            !matchesElementBitsPattern(pattern.resultBits, resultType.getElementType())) {
+            !matchesElementBitsPattern(pattern.resultBits, resultType.getElementType()) ||
+            !matchesElementCountPattern(pattern.elementCounts, sourceType.getElementCount())) {
             continue;
         }
 
@@ -104,7 +105,8 @@ FailureOr<VMIVexpdifLayoutFact> VMILayoutSupport::getPreferredVexpdifLayoutFact(
     MLIRContext* ctx = op.getContext();
     for (const VexpdifLayoutPattern& pattern : kVexpdifLayoutPatterns) {
         if (!pattern.preferred || !matchesElementBitsPattern(pattern.sourceBits, sourceType.getElementType()) ||
-            !matchesElementBitsPattern(pattern.resultBits, resultType.getElementType())) {
+            !matchesElementBitsPattern(pattern.resultBits, resultType.getElementType()) ||
+            !matchesElementCountPattern(pattern.elementCounts, sourceType.getElementCount())) {
             continue;
         }
 

@@ -46,9 +46,17 @@
 - **lowering to `pto.mi`:**
   ```
   f32: K × pto.vexpdif
-  f16: 2K × pto.vexpdif
+  f16: 2K × pto.vexpdif                  (L >= 128)
+  f16: 2K × pto.vexpdif + K × pto.vintlv (L < 128)
   ```
-  Fuses `vsub` + `vexp`.
+  Fuses `vsub` + `vexp`. The f16 form packs two elements per 32-bit lane, so
+  one `pto.vexpdif` instruction consumes only the EVEN or ODD half of every
+  physical source part. From one full f16 physical part up, the EVEN/ODD
+  halves are the deinterleaved result parts; below that (the public lane
+  counts 1, 2, 4, 8, and 64) no deinterleave bridge to a contiguous consumer
+  exists, so the layout keeps the source packed and the result contiguous
+  and one `pto.vintlv` merges the two halves back — every public lane count
+  uses the same interleave hardware entry.
 
 - **example:**
   ```mlir
