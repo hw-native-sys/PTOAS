@@ -266,6 +266,22 @@ def template_tstore_acc_to_gm_nz2dn(src: pto.Tile, dst: pto.PartitionTensorView)
     )
 
 
+def _nz_dst_stride(src, dst):
+    """Return the NZ column-block pitch in element units.
+
+    Mirrors the stride PTO-ISA TStoreAccNZ derives internally: the 16-row
+    aligned row count times the fractal width C0. C0 is 32 for 1-byte
+    elements and 16 otherwise, except that an f32 destination view whose
+    last dimension is 8 carries a channel-split NZ layout with C0 8.
+    """
+    name = str(src.dtype)
+    c0 = 32 if name in {"i8", "si8", "ui8"} else 16
+    shape = dst.shape
+    if name == "f32" and len(shape) == 5 and shape[4] == 8:
+        c0 = 8
+    return _acc_src_stride(src) * c0
+
+
 @tilelib.tile_template(
     op="pto.tstore",
     target="a5",
@@ -284,7 +300,7 @@ def template_tstore_acc_to_gm_nz2dn(src: pto.Tile, dst: pto.PartitionTensorView)
 def template_tstore_acc_to_gm_nz2nz(src: pto.Tile, dst: pto.PartitionTensorView):
     m, n = src.valid_shape
     src_stride = _acc_src_stride(src)
-    dst_stride = n
+    dst_stride = _nz_dst_stride(src, dst)
 
     pto.mte_l0c_gm(
         src.as_ptr(),
