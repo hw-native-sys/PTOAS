@@ -228,7 +228,10 @@ static LogicalResult verifyTGatherCompareSrcType(TGatherOp op, Type srcElem,
 
 // Compare-form kValue is either the authored scalar (same type as the src
 // element) or the K tile materialized from it (same element type, one
-// threshold per row, at least as many rows as src).
+// threshold per row, at least as many rows as src). PTOAS only emits the
+// typed encoding (K dtype == src dtype); pto-isa additionally accepts
+// same-width integer-coded K tiles as a legacy path, which PTOAS does not
+// generate.
 static LogicalResult verifyTGatherKValue(TGatherOp op, Type srcElem) {
   Type kTy = op.getKValue().getType();
   auto kTile = dyn_cast<pto::TileBufType>(kTy);
@@ -246,17 +249,26 @@ static LogicalResult verifyTGatherKValue(TGatherOp op, Type srcElem) {
     return op.emitOpError(
         "expects K tile kValue to have the same element type as src");
   }
+  // pto-isa addresses K linearly (kPtr[i], i < srcRows), so the K tile only
+  // needs srcRows linear elements; its packed shape may have fewer rows than
+  // the src tile.
   auto srcTile = dyn_cast<pto::TileBufType>(op.getSrc().getType());
   if (!srcTile || srcTile.getShape().size() != mlir::pto::kValue2 ||
       kTile.getShape().size() != mlir::pto::kValue2) {
     return success();
   }
   int64_t srcRows = srcTile.getShape()[0];
-  int64_t kRows = kTile.getShape()[0];
-  if (srcRows != ShapedType::kDynamic && kRows != ShapedType::kDynamic &&
-      kRows < srcRows) {
+  if (srcRows == ShapedType::kDynamic ||
+      llvm::is_contained(kTile.getShape(), ShapedType::kDynamic)) {
+    return success();
+  }
+  int64_t kElements = 1;
+  for (int64_t dim : kTile.getShape()) {
+    kElements *= dim;
+  }
+  if (kElements < srcRows) {
     return op.emitOpError(
-        "expects K tile kValue rows to be at least the src tile rows");
+        "expects K tile kValue to hold at least src rows linear elements");
   }
   return success();
 }

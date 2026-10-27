@@ -352,36 +352,37 @@ static LogicalResult materializeTGatherTmp(pto::TGatherOp op, bool requireExplic
 }
 
 // Compare-form K tile: one threshold per row stored in the src dtype (typed
-// encoding). pto-isa's compare TGATHER reads K flat elements [0, srcRows),
-// i.e. element (row, 0), so only Rows valid elements are required; keep each
-// row 32-byte aligned like every other vec tile.
-static FailureOr<pto::TileBufType> makeTGatherKType(pto::TGatherOp op, MLIRContext *ctx) {
-  auto srcTile = dyn_cast<pto::TileBufType>(op.getSrc().getType());
+// encoding). pto-isa's compare TGATHER addresses K linearly (kPtr[i] for
+// i < srcRows), so only the first srcRows linear elements must be valid; the
+// tile shape below just packs them into 32-byte rows with no wasted columns.
+static FailureOr<int64_t> getTGatherSrcRows(pto::TGatherOp op) {
   auto shape = getShapeVec(op.getSrc().getType());
-  bool hasStaticShape = srcTile && shape.size() == mlir::pto::kValue2 &&
-      shape[0] > 0 && shape[1] > 0 && !hasDynamicDim(shape);
-  if (!hasStaticShape) {
+  if (shape.size() != mlir::pto::kValue2 || shape[0] <= 0 || shape[1] <= 0 ||
+      hasDynamicDim(shape)) {
     return failure();
   }
-  // One tsetval per row initializes the K tile, so bound the row count to a
-  // physically allocatable vec tile (a 32-byte K row caps at this count in
-  // UBUF) and keep it far below op-count blowup territory.
-  constexpr int64_t kMaxKRows = 4096;
-  if (shape[0] > kMaxKRows) {
+  return shape[0];
+}
+
+static FailureOr<pto::TileBufType> makeTGatherKType(pto::TGatherOp op, int64_t rows,
+                                                    MLIRContext *ctx) {
+  constexpr int64_t kKRowAlignBytes = 32;
+  auto srcTile = dyn_cast<pto::TileBufType>(op.getSrc().getType());
+  if (!srcTile) {
     return failure();
   }
   Type elemTy = srcTile.getElementType();
   uint64_t elemBytes = mlir::pto::getPTOStorageElemByteSize(elemTy);
-  if (elemBytes == 0) {
+  if (elemBytes == 0 || elemBytes > kKRowAlignBytes) {
     return failure();
   }
-  constexpr int64_t kKRowAlignBytes = 32;
+  // Pack the rows thresholds contiguously: ceil(rows*elemBytes/32) rows of
+  // 32/elemBytes columns. Compare gathers use small row counts, so this stays
+  // within a few hundred bytes even at the rows cap.
   int64_t cols = kKRowAlignBytes / static_cast<int64_t>(elemBytes);
-  int64_t elements = 0;
-  if (llvm::MulOverflow(shape[0], cols, elements)) {
-    return failure();
-  }
-  return makeVecTmpType(ctx, {shape[0], cols}, elemTy, {shape[0], cols});
+  int64_t kRows = llvm::divideCeil(rows * static_cast<int64_t>(elemBytes),
+                                   kKRowAlignBytes);
+  return makeVecTmpType(ctx, {kRows, cols}, elemTy, {kRows, cols});
 }
 
 static FailureOr<int64_t> getConstantI64(Value value) {
@@ -520,11 +521,23 @@ static LogicalResult materializeTGatherKTile(pto::TGatherOp op, bool level3,
   if (!kValue || isa<pto::TileBufType>(kValue.getType())) {
     return success();
   }
-  FailureOr<pto::TileBufType> kType = makeTGatherKType(op, ctx);
+  // Each row's threshold is one scalar store, so keep the row count small;
+  // compare gathers operate on a handful of rows in practice.
+  constexpr int64_t kMaxKRows = 256;
+  FailureOr<int64_t> rows = getTGatherSrcRows(op);
+  if (failed(rows)) {
+    return op.emitOpError(
+        "requires a static tile_buf src shape to materialize the compare-form "
+        "K tile");
+  }
+  if (*rows > kMaxKRows) {
+    return op.emitOpError("compare-form K tile materialization supports src "
+                          "rows <= ") << kMaxKRows << ", got " << *rows;
+  }
+  FailureOr<pto::TileBufType> kType = makeTGatherKType(op, *rows, ctx);
   if (failed(kType)) {
     return op.emitOpError(
-        "requires a bounded static tile_buf src shape (rows <= 4096) to "
-          "materialize the compare-form K tile");
+        "cannot represent the compare-form K tile for the src element type");
   }
   OpBuilder builder(op);
   Value addrVal;
@@ -532,8 +545,9 @@ static LogicalResult materializeTGatherKTile(pto::TGatherOp op, bool level3,
     FailureOr<int64_t> addr = computeLevel3KAddr(op);
     if (failed(addr)) {
       return op.emitOpError(
-          "failed to place the materialized K tile: level3 tile addrs must be "
-          "constants on plain alloc_tile ops");
+          "failed to place the materialized K tile: VEC-space level3 tile "
+          "addrs must be constants on plain alloc_tile ops (VEC-space "
+          "alloc_multi_tile is not supported for K placement)");
     }
     addrVal = builder.create<arith::ConstantOp>(op.getLoc(),
                                                 builder.getI64IntegerAttr(*addr));
@@ -542,8 +556,7 @@ static LogicalResult materializeTGatherKTile(pto::TGatherOp op, bool level3,
                                                  Value(), Value(),
                                                  pto::ConvTileConfigAttr())
                     .getResult();
-  int64_t rows = getShapeVec(op.getSrc().getType())[0];
-  for (int64_t i = 0; i < rows; ++i) {
+  for (int64_t i = 0; i < *rows; ++i) {
     Value offset = builder.create<arith::ConstantIndexOp>(op.getLoc(), i);
     builder.create<pto::TSetValOp>(op.getLoc(), kTile, offset, kValue);
   }

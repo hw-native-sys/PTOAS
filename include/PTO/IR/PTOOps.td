@@ -5024,7 +5024,7 @@ def TGatherOp : PTO_TOp<"tgather", [
     Optional<PTODpsType>:$cdst,
     Optional<PTODpsType>:$indices,
     Optional<PTODpsType>:$tmp,
-    Optional<AnyType>:$kValue,
+    Optional<AnyTypeOf<[ScalarType, PTODpsType]>>:$kValue,
     OptionalAttr<PTO_MaskPatternAttr>:$maskPattern,
     OptionalAttr<StrAttr>:$axis,
     OptionalAttr<PTO_CmpModeAttr>:$cmpMode,
