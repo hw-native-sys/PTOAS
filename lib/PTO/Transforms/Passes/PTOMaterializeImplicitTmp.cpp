@@ -14,6 +14,7 @@
 #include "PTO/IR/PTO.h"
 #include "PTO/IR/PTODialect.h"
 #include "PTO/IR/PTOTypeUtils.h"
+#include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/Func/IR/FuncOps.h"
 #include "mlir/IR/Builders.h"
 #include "mlir/IR/BuiltinOps.h"
@@ -347,6 +348,160 @@ static LogicalResult materializeTGatherTmp(pto::TGatherOp op, bool requireExplic
     return failure();
   }
   rebuildTGatherWithTmp(op, *tmp);
+  return success();
+}
+
+// Compare-form K tile: one threshold per row stored in the src dtype (typed
+// encoding). pto-isa's compare TGATHER reads K flat elements [0, srcRows),
+// i.e. element (row, 0), so only Rows valid elements are required; keep each
+// row 32-byte aligned like every other vec tile.
+static FailureOr<pto::TileBufType> makeTGatherKType(pto::TGatherOp op, MLIRContext *ctx) {
+  auto srcTile = dyn_cast<pto::TileBufType>(op.getSrc().getType());
+  auto shape = getShapeVec(op.getSrc().getType());
+  bool hasStaticShape = srcTile && shape.size() == mlir::pto::kValue2 &&
+      shape[0] > 0 && shape[1] > 0 && !hasDynamicDim(shape);
+  if (!hasStaticShape) {
+    return failure();
+  }
+  // One tsetval per row initializes the K tile, so bound the row count to a
+  // physically allocatable vec tile (a 32-byte K row caps at this count in
+  // UBUF) and keep it far below op-count blowup territory.
+  constexpr int64_t kMaxKRows = 4096;
+  if (shape[0] > kMaxKRows) {
+    return failure();
+  }
+  Type elemTy = srcTile.getElementType();
+  uint64_t elemBytes = mlir::pto::getPTOStorageElemByteSize(elemTy);
+  if (elemBytes == 0) {
+    return failure();
+  }
+  constexpr int64_t kKRowAlignBytes = 32;
+  int64_t cols = kKRowAlignBytes / static_cast<int64_t>(elemBytes);
+  int64_t elements = 0;
+  if (llvm::MulOverflow(shape[0], cols, elements)) {
+    return failure();
+  }
+  return makeVecTmpType(ctx, {shape[0], cols}, elemTy, {shape[0], cols});
+}
+
+static FailureOr<int64_t> getConstantI64(Value value) {
+  if (auto constOp = value.getDefiningOp<arith::ConstantOp>()) {
+    if (auto intAttr = dyn_cast<IntegerAttr>(constOp.getValue())) {
+      return intAttr.getInt();
+    }
+  }
+  return failure();
+}
+
+static FailureOr<uint64_t> computeAllocTileBytes(Value tile) {
+  if (auto type = dyn_cast<pto::TileBufType>(tile.getType())) {
+    uint64_t elemBytes = mlir::pto::getPTOStorageElemByteSize(type.getElementType());
+    if (elemBytes == 0) {
+      return failure();
+    }
+    uint64_t numel = 1;
+    for (int64_t dim : type.getShape()) {
+      if (dim == ShapedType::kDynamic) {
+        return failure();
+      }
+      numel *= static_cast<uint64_t>(dim);
+    }
+    return numel * elemBytes;
+  }
+  return failure();
+}
+
+// At level3 every user tile carries an explicit constant addr and PlanMemory
+// is skipped, so place the K tile after the last used byte to keep the
+// address plan user-owned.
+static FailureOr<int64_t> computeLevel3KAddr(pto::TGatherOp op) {
+  constexpr int64_t kKAddrAlignBytes = 32;
+  int64_t maxEnd = 0;
+  bool blocked = false;
+  Operation *funcOp = op->getParentOp();
+  while (funcOp && !isa<func::FuncOp>(funcOp)) {
+    funcOp = funcOp->getParentOp();
+  }
+  if (!funcOp) {
+    return failure();
+  }
+  funcOp->walk([&](Operation *node) {
+    auto alloc = dyn_cast<pto::AllocTileOp>(node);
+    if (!alloc) {
+      if (isa<pto::AllocMultiTileOp>(node)) {
+        blocked = true;
+      }
+      return;
+    }
+    if (!alloc.getAddr()) {
+      return;
+    }
+    FailureOr<int64_t> addr = getConstantI64(alloc.getAddr());
+    FailureOr<uint64_t> bytes = computeAllocTileBytes(alloc.getResult());
+    if (failed(addr) || failed(bytes)) {
+      blocked = true;
+      return;
+    }
+    maxEnd = std::max(maxEnd, *addr + static_cast<int64_t>(*bytes));
+  });
+  if (blocked) {
+    return failure();
+  }
+  return llvm::alignTo(maxEnd, kKAddrAlignBytes);
+}
+
+// Lower the authored scalar kValue into the K tile expected by the pto-isa
+// compare TGATHER ABI. The scalar itself is forwarded to one tsetval per row,
+// so dynamic (non-constant) thresholds are supported as well.
+static LogicalResult materializeTGatherKTile(pto::TGatherOp op, bool level3,
+                                             MLIRContext *ctx) {
+  Value kValue = op.getKValue();
+  if (!kValue || isa<pto::TileBufType>(kValue.getType())) {
+    return success();
+  }
+  FailureOr<pto::TileBufType> kType = makeTGatherKType(op, ctx);
+  if (failed(kType)) {
+    return op.emitOpError(
+        "requires a bounded static tile_buf src shape (rows <= 4096) to "
+          "materialize the compare-form K tile");
+  }
+  OpBuilder builder(op);
+  Value addrVal;
+  if (level3) {
+    FailureOr<int64_t> addr = computeLevel3KAddr(op);
+    if (failed(addr)) {
+      return op.emitOpError(
+          "failed to place the materialized K tile: level3 tile addrs must be "
+          "constants on plain alloc_tile ops");
+    }
+    addrVal = builder.create<arith::ConstantOp>(op.getLoc(),
+                                                builder.getI64IntegerAttr(*addr));
+  }
+  Value kTile = builder.create<pto::AllocTileOp>(op.getLoc(), *kType, addrVal,
+                                                 Value(), Value(),
+                                                 pto::ConvTileConfigAttr())
+                    .getResult();
+  int64_t rows = getShapeVec(op.getSrc().getType())[0];
+  for (int64_t i = 0; i < rows; ++i) {
+    Value offset = builder.create<arith::ConstantIndexOp>(op.getLoc(), i);
+    builder.create<pto::TSetValOp>(op.getLoc(), kTile, offset, kValue);
+  }
+  SmallVector<Value> operands{op.getSrc(), op.getDst()};
+  int32_t hasCdst = op.getCdst() ? 1 : 0;
+  int32_t hasIndices = op.getIndices() ? 1 : 0;
+  int32_t hasTmp = op.getTmp() ? 1 : 0;
+  if (op.getCdst()) {
+    operands.push_back(op.getCdst());
+  }
+  if (op.getIndices()) {
+    operands.push_back(op.getIndices());
+  }
+  if (op.getTmp()) {
+    operands.push_back(op.getTmp());
+  }
+  operands.push_back(kTile);
+  rebuildWithOperands(op.getOperation(), operands,
+                      ArrayRef<int32_t>{1, 1, hasCdst, hasIndices, hasTmp, 1});
   return success();
 }
 
@@ -1237,6 +1392,25 @@ struct PTOMaterializeImplicitTmpPass
     return success();
   }
 
+  // Lower compare-form tgather scalar kValues into typed K tiles.
+  LogicalResult materializeTGatherKOps() {
+    func::FuncOp func = getOperation();
+    MLIRContext *ctx = func.getContext();
+    SmallVector<Operation *> tgatherOps;
+    func.walk([&tgatherOps](Operation *op) {
+      if (isa<pto::TGatherOp>(op)) {
+        tgatherOps.push_back(op);
+      }
+    });
+    for (Operation *op : tgatherOps) {
+      if (mlir::failed(materializeTGatherKTile(
+              cast<pto::TGatherOp>(op), requireExplicitTmp, ctx))) {
+        return failure();
+      }
+    }
+    return success();
+  }
+
   void runOnOperation() override {
     // Process every family so all diagnostics are emitted before failing.
     bool failed = false;
@@ -1245,7 +1419,8 @@ struct PTOMaterializeImplicitTmpPass
           &PTOMaterializeImplicitTmpPass::materializeRowExpandOps,
           &PTOMaterializeImplicitTmpPass::materializeOptionalTmpOps,
           &PTOMaterializeImplicitTmpPass::materializeRowReductionOps,
-          &PTOMaterializeImplicitTmpPass::materializeMandatoryTmpOps}) {
+          &PTOMaterializeImplicitTmpPass::materializeMandatoryTmpOps,
+          &PTOMaterializeImplicitTmpPass::materializeTGatherKOps}) {
       if (mlir::failed((this->*materialize)())) {
         failed = true;
       }

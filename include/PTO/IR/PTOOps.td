@@ -5012,6 +5012,10 @@ def TGatherOp : PTO_TOp<"tgather", [
     supply omitted scratch tiles when needed. Level3 requires an explicit tmp
     for compare forms and A2/A3 index forms. A5 index and mask-pattern forms
     need no tmp.
+
+    Compare-form kValue is authored as a scalar with the src element type;
+    PTOMaterializeImplicitTmp lowers it to a K tile (same element type, one
+    threshold per row) matching the pto-isa TGATHER compare ABI.
   }];
 
   let arguments = (ins
@@ -5020,7 +5024,7 @@ def TGatherOp : PTO_TOp<"tgather", [
     Optional<PTODpsType>:$cdst,
     Optional<PTODpsType>:$indices,
     Optional<PTODpsType>:$tmp,
-    Optional<ScalarType>:$kValue,
+    Optional<AnyType>:$kValue,
     OptionalAttr<PTO_MaskPatternAttr>:$maskPattern,
     OptionalAttr<StrAttr>:$axis,
     OptionalAttr<PTO_CmpModeAttr>:$cmpMode,

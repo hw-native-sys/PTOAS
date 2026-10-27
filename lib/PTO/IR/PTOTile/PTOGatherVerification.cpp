@@ -241,7 +241,31 @@ static LogicalResult verifyTGatherCompareElementTypes(TGatherOp op,
   if (cdstElem != dstElem) {
     return op.emitOpError("expects cdst to have the same element type as dst");
   }
-  if (op.getKValue().getType() != srcElem) {
+  // Compare-form kValue is either the authored scalar (same type as the src
+  // element) or the K tile materialized from it (same element type, one
+  // threshold per row, at least as many rows as src).
+  Type kTy = op.getKValue().getType();
+  if (auto kTile = dyn_cast<pto::TileBufType>(kTy)) {
+    if (failed(verifyTileBufCommon(op, kTy, "kValue"))) {
+      return failure();
+    }
+    Type kElem = getElemTy(kTy);
+    if (!kElem || kElem != srcElem) {
+      return op.emitOpError(
+          "expects K tile kValue to have the same element type as src");
+    }
+    auto srcTile = dyn_cast<pto::TileBufType>(op.getSrc().getType());
+    if (srcTile && srcTile.getShape().size() == mlir::pto::kValue2 &&
+        kTile.getShape().size() == mlir::pto::kValue2) {
+      int64_t srcRows = srcTile.getShape()[0];
+      int64_t kRows = kTile.getShape()[0];
+      if (srcRows != ShapedType::kDynamic && kRows != ShapedType::kDynamic &&
+          kRows < srcRows) {
+        return op.emitOpError(
+            "expects K tile kValue rows to be at least the src tile rows");
+      }
+    }
+  } else if (kTy != srcElem) {
     return op.emitOpError("expects kValue to have the same type as src element type");
   }
   auto cmpAttr = op.getCmpModeAttr();
