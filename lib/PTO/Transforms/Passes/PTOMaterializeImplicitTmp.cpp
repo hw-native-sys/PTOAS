@@ -512,6 +512,48 @@ static FailureOr<int64_t> computeLevel3KAddr(pto::TGatherOp op) {
   return llvm::alignTo(maxEnd, kKAddrAlignBytes);
 }
 
+// Allocate the typed K tile; at level3 place it after the VEC-space range.
+static FailureOr<Value> createTGatherKTile(pto::TGatherOp op,
+                                           pto::TileBufType kType, bool level3,
+                                           OpBuilder &builder) {
+  Value addrVal;
+  if (level3) {
+    FailureOr<int64_t> addr = computeLevel3KAddr(op);
+    if (failed(addr)) {
+      op.emitOpError("failed to place the materialized K tile: VEC-space level3 "
+                     "tile addrs must be constants on plain alloc_tile ops "
+                     "(VEC-space alloc_multi_tile is not supported for K "
+                     "placement)");
+      return failure();
+    }
+    addrVal = builder.create<arith::ConstantOp>(op.getLoc(),
+                                                builder.getI64IntegerAttr(*addr));
+  }
+  return builder.create<pto::AllocTileOp>(op.getLoc(), kType, addrVal, Value(),
+                                          Value(), pto::ConvTileConfigAttr())
+      .getResult();
+}
+
+// Rebuild the tgather with its kValue operand replaced by the K tile.
+static void rebuildTGatherWithK(pto::TGatherOp op, Value kTile) {
+  SmallVector<Value> operands{op.getSrc(), op.getDst()};
+  int32_t hasCdst = op.getCdst() ? 1 : 0;
+  int32_t hasIndices = op.getIndices() ? 1 : 0;
+  int32_t hasTmp = op.getTmp() ? 1 : 0;
+  if (op.getCdst()) {
+    operands.push_back(op.getCdst());
+  }
+  if (op.getIndices()) {
+    operands.push_back(op.getIndices());
+  }
+  if (op.getTmp()) {
+    operands.push_back(op.getTmp());
+  }
+  operands.push_back(kTile);
+  rebuildWithOperands(op.getOperation(), operands,
+                      ArrayRef<int32_t>{1, 1, hasCdst, hasIndices, hasTmp, 1});
+}
+
 // Lower the authored scalar kValue into the K tile expected by the pto-isa
 // compare TGATHER ABI. The scalar itself is forwarded to one tsetval per row,
 // so dynamic (non-constant) thresholds are supported as well.
@@ -540,42 +582,15 @@ static LogicalResult materializeTGatherKTile(pto::TGatherOp op, bool level3,
         "cannot represent the compare-form K tile for the src element type");
   }
   OpBuilder builder(op);
-  Value addrVal;
-  if (level3) {
-    FailureOr<int64_t> addr = computeLevel3KAddr(op);
-    if (failed(addr)) {
-      return op.emitOpError(
-          "failed to place the materialized K tile: VEC-space level3 tile "
-          "addrs must be constants on plain alloc_tile ops (VEC-space "
-          "alloc_multi_tile is not supported for K placement)");
-    }
-    addrVal = builder.create<arith::ConstantOp>(op.getLoc(),
-                                                builder.getI64IntegerAttr(*addr));
+  FailureOr<Value> kTile = createTGatherKTile(op, *kType, level3, builder);
+  if (failed(kTile)) {
+    return failure();
   }
-  Value kTile = builder.create<pto::AllocTileOp>(op.getLoc(), *kType, addrVal,
-                                                 Value(), Value(),
-                                                 pto::ConvTileConfigAttr())
-                    .getResult();
   for (int64_t i = 0; i < *rows; ++i) {
     Value offset = builder.create<arith::ConstantIndexOp>(op.getLoc(), i);
-    builder.create<pto::TSetValOp>(op.getLoc(), kTile, offset, kValue);
+    builder.create<pto::TSetValOp>(op.getLoc(), *kTile, offset, kValue);
   }
-  SmallVector<Value> operands{op.getSrc(), op.getDst()};
-  int32_t hasCdst = op.getCdst() ? 1 : 0;
-  int32_t hasIndices = op.getIndices() ? 1 : 0;
-  int32_t hasTmp = op.getTmp() ? 1 : 0;
-  if (op.getCdst()) {
-    operands.push_back(op.getCdst());
-  }
-  if (op.getIndices()) {
-    operands.push_back(op.getIndices());
-  }
-  if (op.getTmp()) {
-    operands.push_back(op.getTmp());
-  }
-  operands.push_back(kTile);
-  rebuildWithOperands(op.getOperation(), operands,
-                      ArrayRef<int32_t>{1, 1, hasCdst, hasIndices, hasTmp, 1});
+  rebuildTGatherWithK(op, *kTile);
   return success();
 }
 
