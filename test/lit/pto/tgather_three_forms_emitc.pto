@@ -13,6 +13,16 @@
 // PARSE: %[[CDST:[0-9]+]] = "pto.alloc_tile"
 // PARSE: %[[COUNT:[0-9]+]] = "pto.alloc_tile"
 // PARSE: "pto.tgather"(%[[SRC]], %[[CDST]], %[[COUNT]], %[[CTMP]], %[[KEY]]) <{offset = 7 : i32, operandSegmentSizes = array<i32: 1, 1, 1, 0, 1, 1>}>
+// PARSE: %[[MKEY:[0-9]+]] = "arith.constant"
+// PARSE: %[[MSRC:[0-9]+]] = "pto.alloc_tile"
+// PARSE: %[[MDST2:[0-9]+]] = "pto.alloc_tile"
+// PARSE: %[[MCDST2:[0-9]+]] = "pto.alloc_tile"
+// PARSE: "pto.tgather"(%[[MSRC]], %[[MDST2]], %[[MCDST2]], %[[MKEY]]) <{cmpMode = #pto<cmp gt>, operandSegmentSizes = array<i32: 1, 1, 1, 0, 0, 1>}>
+// PARSE: %[[KTSRC:[0-9]+]] = "pto.alloc_tile"
+// PARSE: %[[KTILE:[0-9]+]] = "pto.alloc_tile"
+// PARSE: %[[KTDST:[0-9]+]] = "pto.alloc_tile"
+// PARSE: %[[KTCDST:[0-9]+]] = "pto.alloc_tile"
+// PARSE: "pto.tgather"(%[[KTSRC]], %[[KTDST]], %[[KTCDST]], %[[KTILE]]) <{cmpMode = #pto<cmp eq>, operandSegmentSizes = array<i32: 1, 1, 1, 0, 0, 1>}>
 
 module {
   func.func @tgather_three_forms() {
@@ -33,11 +43,43 @@ module {
     pto.tgather ins(%src, %c0_f16, %cmp_tmp : !pto.tile_buf<loc=vec, dtype=f16, rows=1, cols=32, v_row=1, v_col=32, blayout=row_major, slayout=none_box, fractal=512, pad=0>, f16, !pto.tile_buf<loc=vec, dtype=ui8, rows=1, cols=32, v_row=1, v_col=32, blayout=row_major, slayout=none_box, fractal=512, pad=0>) outs(%cmp_dst, %cmp_cdst : !pto.tile_buf<loc=vec, dtype=i32, rows=1, cols=32, v_row=1, v_col=32, blayout=row_major, slayout=none_box, fractal=512, pad=0>, !pto.tile_buf<loc=vec, dtype=i32, rows=1, cols=32, v_row=1, v_col=32, blayout=row_major, slayout=none_box, fractal=512, pad=0>) {offset = 7 : i32}
     return
   }
+
+  func.func @compare_multi_row() {
+    %k = arith.constant 5.000000e-01 : f32
+    %src = pto.alloc_tile : !pto.tile_buf<loc=vec, dtype=f32, rows=4, cols=16, v_row=4, v_col=16, blayout=row_major, slayout=none_box, fractal=512, pad=0>
+    %dst = pto.alloc_tile : !pto.tile_buf<loc=vec, dtype=i32, rows=4, cols=16, v_row=4, v_col=16, blayout=row_major, slayout=none_box, fractal=512, pad=0>
+    %cdst = pto.alloc_tile : !pto.tile_buf<loc=vec, dtype=i32, rows=1, cols=8, v_row=1, v_col=4, blayout=row_major, slayout=none_box, fractal=512, pad=0>
+    pto.tgather ins(%src, %k : !pto.tile_buf<loc=vec, dtype=f32, rows=4, cols=16, v_row=4, v_col=16, blayout=row_major, slayout=none_box, fractal=512, pad=0>, f32)
+               outs(%dst, %cdst : !pto.tile_buf<loc=vec, dtype=i32, rows=4, cols=16, v_row=4, v_col=16, blayout=row_major, slayout=none_box, fractal=512, pad=0>, !pto.tile_buf<loc=vec, dtype=i32, rows=1, cols=8, v_row=1, v_col=4, blayout=row_major, slayout=none_box, fractal=512, pad=0>)
+               {cmpMode = #pto<cmp gt>}
+    return
+  }
+
+  func.func @compare_ktile_form() {
+    %src = pto.alloc_tile : !pto.tile_buf<loc=vec, dtype=f32, rows=2, cols=16, v_row=2, v_col=16, blayout=row_major, slayout=none_box, fractal=512, pad=0>
+    %ktile = pto.alloc_tile : !pto.tile_buf<loc=vec, dtype=f32, rows=1, cols=8, v_row=1, v_col=8, blayout=row_major, slayout=none_box, fractal=512, pad=0>
+    %dst = pto.alloc_tile : !pto.tile_buf<loc=vec, dtype=i32, rows=2, cols=16, v_row=2, v_col=16, blayout=row_major, slayout=none_box, fractal=512, pad=0>
+    %cdst = pto.alloc_tile : !pto.tile_buf<loc=vec, dtype=i32, rows=1, cols=8, v_row=1, v_col=2, blayout=row_major, slayout=none_box, fractal=512, pad=0>
+    pto.tgather ins(%src, %ktile : !pto.tile_buf<loc=vec, dtype=f32, rows=2, cols=16, v_row=2, v_col=16, blayout=row_major, slayout=none_box, fractal=512, pad=0>, !pto.tile_buf<loc=vec, dtype=f32, rows=1, cols=8, v_row=1, v_col=8, blayout=row_major, slayout=none_box, fractal=512, pad=0>)
+               outs(%dst, %cdst : !pto.tile_buf<loc=vec, dtype=i32, rows=2, cols=16, v_row=2, v_col=16, blayout=row_major, slayout=none_box, fractal=512, pad=0>, !pto.tile_buf<loc=vec, dtype=i32, rows=1, cols=8, v_row=1, v_col=2, blayout=row_major, slayout=none_box, fractal=512, pad=0>)
+               {cmpMode = #pto<cmp eq>}
+    return
+  }
 }
 
 // A3: TGATHER({{[_A-Za-z][_A-Za-z0-9]*}}, {{[_A-Za-z][_A-Za-z0-9]*}}, {{[_A-Za-z][_A-Za-z0-9]*}}, {{[_A-Za-z][_A-Za-z0-9]*}});
 // A3: TGATHER<Tile<TileType::Vec, half, 1, 32, BLayout::RowMajor, 1, 32, SLayout::NoneBox, 512, PadValue::Null, CompactMode::Null>, Tile<TileType::Vec, half, 1, 32, BLayout::RowMajor, 1, 32, SLayout::NoneBox, 512, PadValue::Null, CompactMode::Null>, MaskPattern::P1111>(
 // A3-NOT: reinterpret_cast<
 // A3-NOT: TGATHER<Tile<TileType::Vec, int32_t, 1, 32, BLayout::RowMajor, 1, 32, SLayout::NoneBox, 512, PadValue::Null, CompactMode::Null>, Tile<TileType::Vec, half, 1, 32, BLayout::RowMajor, 1, 32, SLayout::NoneBox, 512, PadValue::Null, CompactMode::Null>, Tile<TileType::Vec, uint8_t, 1, 32, BLayout::RowMajor, 1, 32, SLayout::NoneBox, 512, PadValue::Null, CompactMode::Null>, Tile<TileType::Vec, int32_t, 1, 32, BLayout::RowMajor, 1, 32, SLayout::NoneBox, 512, PadValue::Null, CompactMode::Null>, CmpMode::EQ, 7>(
-// A3: TGATHER<Tile<TileType::Vec, int32_t, 1, 32, BLayout::RowMajor, 1, 32, SLayout::NoneBox, 512, PadValue::Null, CompactMode::Null>, Tile<TileType::Vec, half, 1, 32, BLayout::RowMajor, 1, 32, SLayout::NoneBox, 512, PadValue::Null, CompactMode::Null>, Tile<TileType::Vec, uint8_t, 1, 32, BLayout::RowMajor, 1, 32, SLayout::NoneBox, 512, PadValue::Null, CompactMode::Null>, Tile<TileType::Vec, int32_t, 1, 32, BLayout::RowMajor, 1, 32, SLayout::NoneBox, 512, PadValue::Null, CompactMode::Null>, CmpMode::EQ>(
+// A3-NOT: TGATHER<Tile<TileType::Vec, int32_t, 1, 32, BLayout::RowMajor, 1, 32, SLayout::NoneBox, 512, PadValue::Null, CompactMode::Null>, Tile<TileType::Vec, half, 1, 32, BLayout::RowMajor, 1, 32, SLayout::NoneBox, 512, PadValue::Null, CompactMode::Null>, Tile<TileType::Vec, uint8_t, 1, 32, BLayout::RowMajor, 1, 32, SLayout::NoneBox, 512, PadValue::Null, CompactMode::Null>, Tile<TileType::Vec, int32_t, 1, 32, BLayout::RowMajor, 1, 32, SLayout::NoneBox, 512, PadValue::Null, CompactMode::Null>, CmpMode::EQ>(
+// A3: {{[_A-Za-z][_A-Za-z0-9]*}}.SetValue({{[_A-Za-z][_A-Za-z0-9]*}}, {{[_A-Za-z][_A-Za-z0-9]*}});
+// A3: TGATHER<Tile<TileType::Vec, int32_t, 1, 32, BLayout::RowMajor, 1, 32, SLayout::NoneBox, 512, PadValue::Null, CompactMode::Null>, Tile<TileType::Vec, half, 1, 32, BLayout::RowMajor, 1, 32, SLayout::NoneBox, 512, PadValue::Null, CompactMode::Null>, Tile<TileType::Vec, half, 1, 16, BLayout::RowMajor, 1, 16, SLayout::NoneBox, 512, PadValue::Null, CompactMode::Null>, Tile<TileType::Vec, int32_t, 1, 32, BLayout::RowMajor, 1, 32, SLayout::NoneBox, 512, PadValue::Null, CompactMode::Null>, Tile<TileType::Vec, uint8_t, 1, 32, BLayout::RowMajor, 1, 32, SLayout::NoneBox, 512, PadValue::Null, CompactMode::Null>, CmpMode::EQ>(
 // A3-SAME: {{[_A-Za-z][_A-Za-z0-9]*}}, {{[_A-Za-z][_A-Za-z0-9]*}}, {{[_A-Za-z][_A-Za-z0-9]*}}, {{[_A-Za-z][_A-Za-z0-9]*}}, {{[_A-Za-z][_A-Za-z0-9]*}}, {{[_A-Za-z][_A-Za-z0-9]*}});
+// A3-LABEL: void compare_multi_row(
+// Four rows of thresholds: four SetValue inits and a compact 1x8 typed K tile.
+// A3-COUNT-4: {{[_A-Za-z][_A-Za-z0-9]*}}.SetValue(
+// A3: TGATHER<{{.*}}Tile<TileType::Vec, float, 1, 8, BLayout::RowMajor, 1, 8{{.*}}>, {{.*}}CmpMode::GT>(
+// A3-LABEL: void compare_ktile_form(
+// Already a K tile: no re-materialization, no SetValue inits.
+// A3-NOT: SetValue
+// A3: TGATHER<{{.*}}Tile<TileType::Vec, float, 1, 8, BLayout::RowMajor, 1, 8{{.*}}>, {{.*}}CmpMode::EQ>(

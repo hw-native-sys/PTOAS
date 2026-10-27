@@ -7668,7 +7668,7 @@ Mask form:
 | `cdst` | `Optional<pto.tile_buf>` | Secondary destination tile used only by compare form |
 | `indices` | `Optional<pto.tile_buf>` | Index tile used only by index form |
 | `tmp` | `Optional<pto.tile_buf>` | Temporary tile for index/compare forms; level1/level2 allocate omitted scratch as needed |
-| `kValue` | `Optional<scalar>` | Scalar compare value used only by compare form |
+| `kValue` | `Optional<scalar or tile_buf>` | Compare threshold: authored as a scalar with the `src` element type, or the typed K tile materialized from it |
 | `maskPattern` | `Optional<MaskPatternAttr>` | Mask pattern used only by mask form |
 | `cmpMode` | `Optional<CmpModeAttr>` | Compare mode used only by compare form; defaults to `eq` when omitted |
 | `offset` | `Optional<i32>` | Compare-form gather base index offset; defaults to `0` when omitted |
@@ -7693,6 +7693,12 @@ pto.tgather ins(%src, %kValue[, %tmp] : !pto.tile_buf<...>, <scalar_type>[, !pto
            outs(%dst, %cdst : !pto.tile_buf<...>, !pto.tile_buf<...>)
            {cmpMode = #pto<cmp eq|gt>, offset = <i32>}
 
+// compare form after K tile materialization (the scalar operand is replaced
+// by the typed K tile; element type equals the src element type)
+pto.tgather ins(%src, %kTile[, %tmp] : !pto.tile_buf<...>, !pto.tile_buf<...>[, !pto.tile_buf<...>])
+           outs(%dst, %cdst : !pto.tile_buf<...>, !pto.tile_buf<...>)
+           {cmpMode = #pto<cmp eq|gt>, offset = <i32>}
+
 // mask pattern
 pto.tgather ins(%src, {maskPattern = #pto.mask_pattern<Pxxxx>} : !pto.tile_buf<...>, "row")
            outs(%dst : !pto.tile_buf<...>)
@@ -7709,6 +7715,11 @@ pto.tgather ins(%src, {maskPattern = #pto.mask_pattern<Pxxxx>} : !pto.tile_buf<.
   - Level3 requires an explicit `tmp` for A2/A3 index forms and compare forms on every architecture.
   - A5 index form needs no `tmp`; level1/level2 compare forms receive a placeholder tile when `tmp` is omitted. Mask form does not accept `tmp`.
   - Automatic A2/A3 index scratch requires static physical and valid shapes for `indices`; compare scratch requires a static physical shape for `src`.
+- **K tile materialization (compare form)**:
+  - The authored scalar `kValue` is lowered by `PTOMaterializeImplicitTmp` into a typed K tile with the `src` element type (pto-isa typed-K encoding) holding one threshold per row; dynamic (non-constant) scalar thresholds are supported.
+  - Requires a static `src` tile shape with at most 256 rows (one scalar store per row); larger row counts are rejected with a diagnostic.
+  - On level1/level2 the K tile address is assigned by PlanMemory together with any materialized tmp.
+  - On level3 the K tile is placed automatically after the last byte of the VEC address space, and must fit the VEC local memory (196608 bytes on A2/A3, 253952 on A5). Placement requires constant `addr` values on plain VEC-space `pto.alloc_tile` ops; VEC-space `pto.alloc_multi_tile`, `pto.tassign`, and `import_reserved_buffer` reject placement (their regions are not statically knowable), while a VEC-space `pto.reserve_buffer` with an explicit `base` is accounted as `[base, base + size)`. Non-VEC spaces number their own addresses and are ignored.
 - **Index gather: implementation checks (A2/A3)**:
   - `src` and `dst` element types must match and be one of `i16/i32/f16/f32`.
   - `indices` element type must be `i32`.
@@ -7727,7 +7738,7 @@ pto.tgather ins(%src, {maskPattern = #pto.mask_pattern<Pxxxx>} : !pto.tile_buf<.
   - `cmpMode` must be `eq` or `gt`.
   - `src`, `dst`, `cdst`, and `tmp` must all be `loc=vec` row-major tiles.
 - **Compare gather: implementation checks (A5)**:
-  - `dst` element type must be `i32`.
+  - `dst` element type must be `ui32`: the A5 pto-isa compare implementation stores counts through a `uint32_t` scalar store, so signed `i32` count tiles cannot compile.
   - `src` element type must be one of `i16/i32/f16/f32`.
   - `cmpMode` must be `eq` or `gt`.
   - `src`, `dst`, `cdst`, and `tmp` must all be `loc=vec` row-major tiles.

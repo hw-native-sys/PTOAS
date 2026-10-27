@@ -141,9 +141,14 @@ static ParseResult validateTGatherMaskInputs(OpAsmParser& parser, TGatherParseSt
 
 static ParseResult validateTGatherCompareInputs(OpAsmParser& parser, TGatherParseState& state)
 {
+    // The authored form uses a scalar kValue (src element type); after K tile
+    // materialization the operand is the tile itself. Accept both so the
+    // materialized IR round-trips.
     if (state.insOps.empty() ||
-        !(mlir::isa<IntegerType>(state.insTypes.front()) || mlir::isa<FloatType>(state.insTypes.front()))) {
-        return parser.emitError(parser.getCurrentLocation(), "compare-form tgather expects a scalar kValue operand");
+        !(mlir::isa<IntegerType>(state.insTypes.front()) || mlir::isa<FloatType>(state.insTypes.front()) ||
+          isTileLikeType(state.insTypes.front()))) {
+        return parser.emitError(parser.getCurrentLocation(),
+                                "compare-form tgather expects a scalar or K tile kValue operand");
     }
     state.hasKValue = true;
     if (state.insOps.size() >= kTGatherOptionalInputCount) {

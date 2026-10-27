@@ -166,6 +166,13 @@ void TGatherOp::getEffects(
   if (auto indices = getIndicesMutable(); !indices.empty()) {
     PTO_ADD_READ(effects, indices[0]);
   }
+  // The K tile is real scratch memory once the scalar kValue has been
+  // materialized; the read effect is what InsertSync/UnifiedSync use to build
+  // the tsetval (PIPE_S) -> tgather (PIPE_V) dependency edge. Reading the
+  // authored scalar form is harmless.
+  if (auto kValue = getKValueMutable(); !kValue.empty()) {
+    PTO_ADD_READ(effects, kValue[0]);
+  }
   addA2A3ScratchEffects(effects, getOperation(), getTmpMutable());
   PTO_ADD_WRITE(effects, getDstMutable());
 }

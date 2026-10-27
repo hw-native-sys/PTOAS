@@ -1,0 +1,28 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software: you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+
+// A5 compare-form tgather: the scalar threshold is materialized into a typed
+// K tile and the outputs use the A5 ui32 contract.
+
+// RUN: ptoas --pto-arch=a5 --pto-backend=emitc %s 2>&1 | FileCheck %s --check-prefix=A5
+
+module attributes {pto.target_arch = "a5"} {
+  func.func @compare_a5() {
+    %k = arith.constant 5.000000e-01 : f32
+    %src = pto.alloc_tile : !pto.tile_buf<loc=vec, dtype=f32, rows=4, cols=16, v_row=4, v_col=16, blayout=row_major, slayout=none_box, fractal=512, pad=0>
+    %dst = pto.alloc_tile : !pto.tile_buf<loc=vec, dtype=ui32, rows=4, cols=16, v_row=4, v_col=16, blayout=row_major, slayout=none_box, fractal=512, pad=0>
+    %cdst = pto.alloc_tile : !pto.tile_buf<loc=vec, dtype=ui32, rows=1, cols=8, v_row=1, v_col=4, blayout=row_major, slayout=none_box, fractal=512, pad=0>
+    pto.tgather ins(%src, %k : !pto.tile_buf<loc=vec, dtype=f32, rows=4, cols=16, v_row=4, v_col=16, blayout=row_major, slayout=none_box, fractal=512, pad=0>, f32)
+               outs(%dst, %cdst : !pto.tile_buf<loc=vec, dtype=ui32, rows=4, cols=16, v_row=4, v_col=16, blayout=row_major, slayout=none_box, fractal=512, pad=0>, !pto.tile_buf<loc=vec, dtype=ui32, rows=1, cols=8, v_row=1, v_col=4, blayout=row_major, slayout=none_box, fractal=512, pad=0>)
+               {cmpMode = #pto<cmp gt>}
+    return
+  }
+}
+
+// A5-COUNT-4: {{[_A-Za-z][_A-Za-z0-9]*}}.SetValue(
+// A5: TGATHER<Tile<TileType::Vec, uint32_t, 4, 16, BLayout::RowMajor, 4, 16, SLayout::NoneBox, 512, PadValue::Null, CompactMode::Null>, Tile<TileType::Vec, float, 4, 16, BLayout::RowMajor, 4, 16, SLayout::NoneBox, 512, PadValue::Null, CompactMode::Null>, Tile<TileType::Vec, float, 1, 8, BLayout::RowMajor, 1, 8, SLayout::NoneBox, 512, PadValue::Null, CompactMode::Null>, Tile<TileType::Vec, uint32_t, 1, 8, BLayout::RowMajor, 1, 4, SLayout::NoneBox, 512, PadValue::Null, CompactMode::Null>, Tile<TileType::Vec, float, 1, 8, BLayout::RowMajor, 1, 8, SLayout::NoneBox, 512, PadValue::Null, CompactMode::Null>, CmpMode::GT>(

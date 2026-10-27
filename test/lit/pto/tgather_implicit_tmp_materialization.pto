@@ -26,10 +26,10 @@ module {
   func.func @compare_no_tmp() {
     %key = arith.constant 1.0 : f16
     %src = pto.alloc_tile : !pto.tile_buf<vec, 2x32xf16>
-    %dst = pto.alloc_tile : !pto.tile_buf<vec, 2x32xi32>
-    %count = pto.alloc_tile : !pto.tile_buf<vec, 2x8xi32>
+    %dst = pto.alloc_tile : !pto.tile_buf<vec, 2x32xui32>
+    %count = pto.alloc_tile : !pto.tile_buf<vec, 2x8xui32>
     pto.tgather ins(%src, %key : !pto.tile_buf<vec, 2x32xf16>, f16)
-               outs(%dst, %count : !pto.tile_buf<vec, 2x32xi32>, !pto.tile_buf<vec, 2x8xi32>)
+               outs(%dst, %count : !pto.tile_buf<vec, 2x32xui32>, !pto.tile_buf<vec, 2x8xui32>)
                {cmpMode = #pto<cmp gt>, offset = 7 : i32}
     return
   }
@@ -37,10 +37,10 @@ module {
   func.func @compare_small_f32() {
     %key = arith.constant 0.0 : f32
     %src = pto.alloc_tile : !pto.tile_buf<vec, 1x8xf32>
-    %dst = pto.alloc_tile : !pto.tile_buf<vec, 1x8xi32>
-    %count = pto.alloc_tile : !pto.tile_buf<vec, 1x8xi32>
+    %dst = pto.alloc_tile : !pto.tile_buf<vec, 1x8xui32>
+    %count = pto.alloc_tile : !pto.tile_buf<vec, 1x8xui32>
     pto.tgather ins(%src, %key : !pto.tile_buf<vec, 1x8xf32>, f32)
-               outs(%dst, %count : !pto.tile_buf<vec, 1x8xi32>, !pto.tile_buf<vec, 1x8xi32>)
+               outs(%dst, %count : !pto.tile_buf<vec, 1x8xui32>, !pto.tile_buf<vec, 1x8xui32>)
     return
   }
 

@@ -103,7 +103,11 @@ struct PTOGatherToEmitC : public OpConversionPattern<pto::TGatherOp> {
     return success();
   }
 
-  // Compare-based gather: spell out the operand types plus the compare mode.
+  // Compare-based gather: TGATHER<DstT, SrcT, KT, CDstT, TmpT, CmpMode>(
+  //     dst, src0, kTile, cdst, tmp, offset) per the pto-isa compare overload.
+  // The K tile carries per-row thresholds in the src dtype (typed-K encoding,
+  // pto-isa PR 1992); it is materialized from the scalar kValue by
+  // PTOMaterializeImplicitTmp before EmitC.
   LogicalResult emitCompareGather(pto::TGatherOp op, OpAdaptor adaptor,
                                   ConversionPatternRewriter &rewriter,
                                   Value cdst) const {
@@ -112,8 +116,8 @@ struct PTOGatherToEmitC : public OpConversionPattern<pto::TGatherOp> {
     Value dst = adaptor.getDst();
     Value src0 = adaptor.getSrc();
     cdst = peelUnrealized(cdst);
-    Value tmp = adaptor.getTmp();
-    Value kValue = adaptor.getKValue();
+    Value tmp = peelUnrealized(adaptor.getTmp());
+    Value kTile = peelUnrealized(adaptor.getKValue());
 
     auto getOpaqueTok = [&rewriter, &op](Value v,
                                         StringRef name) -> FailureOr<std::string> {
@@ -125,10 +129,11 @@ struct PTOGatherToEmitC : public OpConversionPattern<pto::TGatherOp> {
 
     auto dstTokOr = getOpaqueTok(dst, "dst");
     auto srcTokOr = getOpaqueTok(src0, "src0");
+    auto kTokOr = getOpaqueTok(kTile, "kValue");
     auto cdstTokOr = getOpaqueTok(cdst, "cdst");
     auto tmpTokOr = getOpaqueTok(tmp, "tmp");
-    if (failed(dstTokOr) || failed(srcTokOr) || failed(cdstTokOr) ||
-        failed(tmpTokOr))
+    if (failed(dstTokOr) || failed(srcTokOr) || failed(kTokOr) ||
+        failed(cdstTokOr) || failed(tmpTokOr))
       return failure();
 
     auto cmpAttr = op.getCmpModeAttr();
@@ -142,15 +147,16 @@ struct PTOGatherToEmitC : public OpConversionPattern<pto::TGatherOp> {
     auto targs = rewriter.getArrayAttr({
         emitc::OpaqueAttr::get(ctx, *dstTokOr),
         emitc::OpaqueAttr::get(ctx, *srcTokOr),
-        emitc::OpaqueAttr::get(ctx, *tmpTokOr),
+        emitc::OpaqueAttr::get(ctx, *kTokOr),
         emitc::OpaqueAttr::get(ctx, *cdstTokOr),
+        emitc::OpaqueAttr::get(ctx, *tmpTokOr),
         emitc::OpaqueAttr::get(ctx, cmpTok),
     });
 
     rewriter.create<emitc::CallOpaqueOp>(
         loc, TypeRange{}, "TGATHER",
         /*args=*/ArrayAttr{}, /*templateArgs=*/targs,
-        /*operands=*/ValueRange{dst, src0, kValue, tmp, cdst, offsetVal});
+        /*operands=*/ValueRange{dst, src0, kTile, cdst, tmp, offsetVal});
 
     rewriter.eraseOp(op);
     return success();

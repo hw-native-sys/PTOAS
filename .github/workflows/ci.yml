@@ -52,7 +52,7 @@ on:
         description: "pto-isa ref (commit/tag/branch; empty = repository CI pin)"
         type: string
         # NOTE: Pin a known-good GitCode commit for deterministic runs.
-        default: 5649f0522ba9987fd22cbf18923b729b97c5f2ff
+        default: f3c72c60b74b62f1fb6d8aef5611141f94972b0e
 
 permissions:
   contents: read
@@ -482,7 +482,7 @@ jobs:
           SKIP_CASES: ${{ github.event.inputs.skip_cases || '' }}
           RUN_ONLY_CASES: ${{ github.event.inputs.run_only_cases || '' }}
           PTO_ISA_REPO: ${{ github.event.inputs.pto_isa_repo || 'https://gitcode.com/cann/pto-isa.git' }}
-          PTO_ISA_COMMIT: ${{ github.event.inputs.pto_isa_commit || '5649f0522ba9987fd22cbf18923b729b97c5f2ff' }}
+          PTO_ISA_COMMIT: ${{ github.event.inputs.pto_isa_commit || 'f3c72c60b74b62f1fb6d8aef5611141f94972b0e' }}
         run: |
           set -euo pipefail
           # For scheduled runs, default to DEFAULT_SKIP_CASES (known-bad/flaky).
