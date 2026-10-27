@@ -226,6 +226,41 @@ static LogicalResult verifyTGatherCompareSrcType(TGatherOp op, Type srcElem,
   return success();
 }
 
+// Compare-form kValue is either the authored scalar (same type as the src
+// element) or the K tile materialized from it (same element type, one
+// threshold per row, at least as many rows as src).
+static LogicalResult verifyTGatherKValue(TGatherOp op, Type srcElem) {
+  Type kTy = op.getKValue().getType();
+  auto kTile = dyn_cast<pto::TileBufType>(kTy);
+  if (!kTile) {
+    if (kTy != srcElem) {
+      return op.emitOpError("expects kValue to have the same type as src element type");
+    }
+    return success();
+  }
+  if (failed(verifyTileBufCommon(op, kTy, "kValue"))) {
+    return failure();
+  }
+  Type kElem = getElemTy(kTy);
+  if (!kElem || kElem != srcElem) {
+    return op.emitOpError(
+        "expects K tile kValue to have the same element type as src");
+  }
+  auto srcTile = dyn_cast<pto::TileBufType>(op.getSrc().getType());
+  if (!srcTile || srcTile.getShape().size() != mlir::pto::kValue2 ||
+      kTile.getShape().size() != mlir::pto::kValue2) {
+    return success();
+  }
+  int64_t srcRows = srcTile.getShape()[0];
+  int64_t kRows = kTile.getShape()[0];
+  if (srcRows != ShapedType::kDynamic && kRows != ShapedType::kDynamic &&
+      kRows < srcRows) {
+    return op.emitOpError(
+        "expects K tile kValue rows to be at least the src tile rows");
+  }
+  return success();
+}
+
 static LogicalResult verifyTGatherCompareElementTypes(TGatherOp op,
                                                       bool allowA5SrcTypes) {
   Type srcElem = getElemTy(op.getSrc().getType());
@@ -238,35 +273,17 @@ static LogicalResult verifyTGatherCompareElementTypes(TGatherOp op,
   if (!dstInt || dstInt.getWidth() != mlir::pto::kValue32) {
     return op.emitOpError("expects dst element type to be i32");
   }
+  if (allowA5SrcTypes && !dstInt.isUnsigned()) {
+    return op.emitOpError(
+        "expects A5 compare-form tgather dst/cdst element type to be ui32: "
+        "the A5 pto-isa compare implementation stores counts through a "
+        "uint32_t sprsts, so signed i32 count tiles cannot compile");
+  }
   if (cdstElem != dstElem) {
     return op.emitOpError("expects cdst to have the same element type as dst");
   }
-  // Compare-form kValue is either the authored scalar (same type as the src
-  // element) or the K tile materialized from it (same element type, one
-  // threshold per row, at least as many rows as src).
-  Type kTy = op.getKValue().getType();
-  if (auto kTile = dyn_cast<pto::TileBufType>(kTy)) {
-    if (failed(verifyTileBufCommon(op, kTy, "kValue"))) {
-      return failure();
-    }
-    Type kElem = getElemTy(kTy);
-    if (!kElem || kElem != srcElem) {
-      return op.emitOpError(
-          "expects K tile kValue to have the same element type as src");
-    }
-    auto srcTile = dyn_cast<pto::TileBufType>(op.getSrc().getType());
-    if (srcTile && srcTile.getShape().size() == mlir::pto::kValue2 &&
-        kTile.getShape().size() == mlir::pto::kValue2) {
-      int64_t srcRows = srcTile.getShape()[0];
-      int64_t kRows = kTile.getShape()[0];
-      if (srcRows != ShapedType::kDynamic && kRows != ShapedType::kDynamic &&
-          kRows < srcRows) {
-        return op.emitOpError(
-            "expects K tile kValue rows to be at least the src tile rows");
-      }
-    }
-  } else if (kTy != srcElem) {
-    return op.emitOpError("expects kValue to have the same type as src element type");
+  if (failed(verifyTGatherKValue(op, srcElem))) {
+    return failure();
   }
   auto cmpAttr = op.getCmpModeAttr();
   auto cmpMode = cmpAttr ? cmpAttr.getValue() : pto::CmpMode::EQ;

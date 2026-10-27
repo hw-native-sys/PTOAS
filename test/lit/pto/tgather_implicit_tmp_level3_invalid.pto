@@ -38,10 +38,10 @@ module {
     %a2 = arith.constant 256 : i64
     %key = arith.constant 1.0 : f32
     %src = pto.alloc_tile addr = %a0 : !pto.tile_buf<vec, 1x32xf32>
-    %dst = pto.alloc_tile addr = %a1 : !pto.tile_buf<vec, 1x32xi32>
-    %count = pto.alloc_tile addr = %a2 : !pto.tile_buf<vec, 1x8xi32>
+    %dst = pto.alloc_tile addr = %a1 : !pto.tile_buf<vec, 1x32xui32>
+    %count = pto.alloc_tile addr = %a2 : !pto.tile_buf<vec, 1x8xui32>
     pto.tgather ins(%src, %key : !pto.tile_buf<vec, 1x32xf32>, f32)
-               outs(%dst, %count : !pto.tile_buf<vec, 1x32xi32>, !pto.tile_buf<vec, 1x8xi32>)
+               outs(%dst, %count : !pto.tile_buf<vec, 1x32xui32>, !pto.tile_buf<vec, 1x8xui32>)
     return
   }
 }
