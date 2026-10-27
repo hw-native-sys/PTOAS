@@ -16,6 +16,10 @@
 // RUN: ptoas --pto-arch=a3 --pto-level=level3 %t/compact_rpo.pto 2>&1 | FileCheck %s --check-prefix=RPO
 // RUN: not ptoas --pto-arch=a3 --pto-level=level3 %t/dyn_addr.pto 2>&1 | FileCheck %s --check-prefix=DYN
 // RUN: not ptoas --pto-arch=a3 --pto-level=level3 %t/too_many_rows.pto 2>&1 | FileCheck %s --check-prefix=ROWS
+// RUN: ptoas --pto-arch=a3 --pto-level=level3 %t/reserve_based.pto 2>&1 | FileCheck %s --check-prefix=RES
+// RUN: not ptoas --pto-arch=a3 --pto-level=level3 %t/tassign.pto 2>&1 | FileCheck %s --check-prefix=TA
+// RUN: not ptoas --pto-arch=a3 --pto-level=level3 %t/reserve_auto.pto 2>&1 | FileCheck %s --check-prefix=RA
+// RUN: not ptoas --pto-arch=a3 --pto-level=level3 %t/ub_full.pto 2>&1 | FileCheck %s --check-prefix=UBF
 
 //--- space_filter.pto
 module attributes {pto.target_arch = "a2a3"} {
@@ -106,3 +110,87 @@ module attributes {pto.target_arch = "a2a3"} {
 }
 
 // ROWS: supports src rows <= 256
+
+//--- reserve_based.pto
+module attributes {pto.target_arch = "a2a3"} {
+  func.func @compare_kernel(%arg0 : !pto.ptr<f32>, %arg1 : !pto.ptr<i32>, %arg2 : !pto.ptr<i32>) attributes {pto.kernel_kind = #pto.kernel_kind<vector>} {
+    %c0 = arith.constant 0 : i64
+    %c2048 = arith.constant 2048 : i64
+    %c6144 = arith.constant 6144 : i64
+    %c8192 = arith.constant 8192 : i64
+    %k = arith.constant 5.000000e-01 : f32
+    %src = pto.alloc_tile addr = %c0 : !pto.tile_buf<loc=vec, dtype=f32, rows=8, cols=64, v_row=8, v_col=64, blayout=row_major, slayout=none_box, fractal=512, pad=0>
+    %tmp = pto.alloc_tile addr = %c2048 : !pto.tile_buf<loc=vec, dtype=ui8, rows=1, cols=4096, v_row=1, v_col=4096, blayout=row_major, slayout=none_box, fractal=512, pad=0>
+    %ids = pto.alloc_tile addr = %c6144 : !pto.tile_buf<loc=vec, dtype=i32, rows=8, cols=64, v_row=8, v_col=64, blayout=row_major, slayout=none_box, fractal=512, pad=0>
+    %count = pto.alloc_tile addr = %c8192 : !pto.tile_buf<loc=vec, dtype=i32, rows=1, cols=8, v_row=1, v_col=8, blayout=row_major, slayout=none_box, fractal=512, pad=0>
+    // A resolved VEC reserved region [8448, 8704): the K tile must land after it.
+    %rsv = pto.reserve_buffer {name = "slot", size = 256, location = #pto.address_space<vec>, auto = false, base = 8448} -> i32
+    pto.tgather ins(%src, %k, %tmp : !pto.tile_buf<loc=vec, dtype=f32, rows=8, cols=64, v_row=8, v_col=64, blayout=row_major, slayout=none_box, fractal=512, pad=0>, f32, !pto.tile_buf<loc=vec, dtype=ui8, rows=1, cols=4096, v_row=1, v_col=4096, blayout=row_major, slayout=none_box, fractal=512, pad=0>) outs(%ids, %count : !pto.tile_buf<loc=vec, dtype=i32, rows=8, cols=64, v_row=8, v_col=64, blayout=row_major, slayout=none_box, fractal=512, pad=0>, !pto.tile_buf<loc=vec, dtype=i32, rows=1, cols=8, v_row=1, v_col=8, blayout=row_major, slayout=none_box, fractal=512, pad=0>) {cmpMode = #pto<cmp gt>}
+    return
+  }
+}
+
+// RES: const int64_t {{v[0-9]+}} = 8704;
+
+//--- tassign.pto
+module attributes {pto.target_arch = "a2a3"} {
+  func.func @compare_kernel(%arg0 : !pto.ptr<f32>, %arg1 : !pto.ptr<i32>, %arg2 : !pto.ptr<i32>, %dyn : i64) attributes {pto.kernel_kind = #pto.kernel_kind<vector>} {
+    %c0 = arith.constant 0 : i64
+    %c2048 = arith.constant 2048 : i64
+    %c6144 = arith.constant 6144 : i64
+    %c8192 = arith.constant 8192 : i64
+    %k = arith.constant 5.000000e-01 : f32
+    %src = pto.alloc_tile addr = %c0 : !pto.tile_buf<loc=vec, dtype=f32, rows=8, cols=64, v_row=8, v_col=64, blayout=row_major, slayout=none_box, fractal=512, pad=0>
+    %tmp = pto.alloc_tile addr = %c2048 : !pto.tile_buf<loc=vec, dtype=ui8, rows=1, cols=4096, v_row=1, v_col=4096, blayout=row_major, slayout=none_box, fractal=512, pad=0>
+    %ids = pto.alloc_tile addr = %c6144 : !pto.tile_buf<loc=vec, dtype=i32, rows=8, cols=64, v_row=8, v_col=64, blayout=row_major, slayout=none_box, fractal=512, pad=0>
+    %count = pto.alloc_tile addr = %c8192 : !pto.tile_buf<loc=vec, dtype=i32, rows=1, cols=8, v_row=1, v_col=8, blayout=row_major, slayout=none_box, fractal=512, pad=0>
+    // Rebind the src tile to a runtime address and USE the rebound tile, so
+    // the rebind survives DCE and reaches K placement.
+    %rebound = pto.tassign %src, %dyn : !pto.tile_buf<loc=vec, dtype=f32, rows=8, cols=64, v_row=8, v_col=64, blayout=row_major, slayout=none_box, fractal=512, pad=0> -> !pto.tile_buf<loc=vec, dtype=f32, rows=8, cols=64, v_row=8, v_col=64, blayout=row_major, slayout=none_box, fractal=512, pad=0>
+    pto.tgather ins(%rebound, %k, %tmp : !pto.tile_buf<loc=vec, dtype=f32, rows=8, cols=64, v_row=8, v_col=64, blayout=row_major, slayout=none_box, fractal=512, pad=0>, f32, !pto.tile_buf<loc=vec, dtype=ui8, rows=1, cols=4096, v_row=1, v_col=4096, blayout=row_major, slayout=none_box, fractal=512, pad=0>) outs(%ids, %count : !pto.tile_buf<loc=vec, dtype=i32, rows=8, cols=64, v_row=8, v_col=64, blayout=row_major, slayout=none_box, fractal=512, pad=0>, !pto.tile_buf<loc=vec, dtype=i32, rows=1, cols=8, v_row=1, v_col=8, blayout=row_major, slayout=none_box, fractal=512, pad=0>) {cmpMode = #pto<cmp gt>}
+    return
+  }
+}
+
+// TA: failed to place the materialized K tile
+
+//--- reserve_auto.pto
+module attributes {pto.target_arch = "a2a3"} {
+  func.func @compare_kernel(%arg0 : !pto.ptr<f32>, %arg1 : !pto.ptr<i32>, %arg2 : !pto.ptr<i32>) attributes {pto.kernel_kind = #pto.kernel_kind<vector>} {
+    %c0 = arith.constant 0 : i64
+    %c2048 = arith.constant 2048 : i64
+    %c6144 = arith.constant 6144 : i64
+    %c8192 = arith.constant 8192 : i64
+    %k = arith.constant 5.000000e-01 : f32
+    %src = pto.alloc_tile addr = %c0 : !pto.tile_buf<loc=vec, dtype=f32, rows=8, cols=64, v_row=8, v_col=64, blayout=row_major, slayout=none_box, fractal=512, pad=0>
+    %tmp = pto.alloc_tile addr = %c2048 : !pto.tile_buf<loc=vec, dtype=ui8, rows=1, cols=4096, v_row=1, v_col=4096, blayout=row_major, slayout=none_box, fractal=512, pad=0>
+    %ids = pto.alloc_tile addr = %c6144 : !pto.tile_buf<loc=vec, dtype=i32, rows=8, cols=64, v_row=8, v_col=64, blayout=row_major, slayout=none_box, fractal=512, pad=0>
+    %count = pto.alloc_tile addr = %c8192 : !pto.tile_buf<loc=vec, dtype=i32, rows=1, cols=8, v_row=1, v_col=8, blayout=row_major, slayout=none_box, fractal=512, pad=0>
+    %rsv = pto.reserve_buffer {name = "auto_slot", size = 256, location = #pto.address_space<vec>, auto = true} -> i32
+    pto.tgather ins(%src, %k, %tmp : !pto.tile_buf<loc=vec, dtype=f32, rows=8, cols=64, v_row=8, v_col=64, blayout=row_major, slayout=none_box, fractal=512, pad=0>, f32, !pto.tile_buf<loc=vec, dtype=ui8, rows=1, cols=4096, v_row=1, v_col=4096, blayout=row_major, slayout=none_box, fractal=512, pad=0>) outs(%ids, %count : !pto.tile_buf<loc=vec, dtype=i32, rows=8, cols=64, v_row=8, v_col=64, blayout=row_major, slayout=none_box, fractal=512, pad=0>, !pto.tile_buf<loc=vec, dtype=i32, rows=1, cols=8, v_row=1, v_col=8, blayout=row_major, slayout=none_box, fractal=512, pad=0>) {cmpMode = #pto<cmp gt>}
+    return
+  }
+}
+
+// RA: pto.reserve_buffer requires 'auto = false' and explicit 'base' when --pto-level=level3
+
+//--- ub_full.pto
+module attributes {pto.target_arch = "a2a3"} {
+  func.func @compare_kernel(%arg0 : !pto.ptr<f32>, %arg1 : !pto.ptr<i32>, %arg2 : !pto.ptr<i32>) attributes {pto.kernel_kind = #pto.kernel_kind<vector>} {
+    %c0 = arith.constant 0 : i64
+    %c2048 = arith.constant 2048 : i64
+    %c6144 = arith.constant 6144 : i64
+    %c196544 = arith.constant 196544 : i64
+    %k = arith.constant 5.000000e-01 : f32
+    %src = pto.alloc_tile addr = %c0 : !pto.tile_buf<loc=vec, dtype=f32, rows=8, cols=64, v_row=8, v_col=64, blayout=row_major, slayout=none_box, fractal=512, pad=0>
+    %tmp = pto.alloc_tile addr = %c2048 : !pto.tile_buf<loc=vec, dtype=ui8, rows=1, cols=4096, v_row=1, v_col=4096, blayout=row_major, slayout=none_box, fractal=512, pad=0>
+    %ids = pto.alloc_tile addr = %c6144 : !pto.tile_buf<loc=vec, dtype=i32, rows=8, cols=64, v_row=8, v_col=64, blayout=row_major, slayout=none_box, fractal=512, pad=0>
+    // Ends exactly at the A2/A3 VEC capacity (196608); no room is left for K.
+    %filler = pto.alloc_tile addr = %c196544 : !pto.tile_buf<loc=vec, dtype=ui8, rows=1, cols=64, v_row=1, v_col=64, blayout=row_major, slayout=none_box, fractal=512, pad=0>
+    %count = pto.alloc_tile addr = %c2048 : !pto.tile_buf<loc=vec, dtype=i32, rows=1, cols=8, v_row=1, v_col=8, blayout=row_major, slayout=none_box, fractal=512, pad=0>
+    pto.tgather ins(%src, %k, %tmp : !pto.tile_buf<loc=vec, dtype=f32, rows=8, cols=64, v_row=8, v_col=64, blayout=row_major, slayout=none_box, fractal=512, pad=0>, f32, !pto.tile_buf<loc=vec, dtype=ui8, rows=1, cols=4096, v_row=1, v_col=4096, blayout=row_major, slayout=none_box, fractal=512, pad=0>) outs(%ids, %count : !pto.tile_buf<loc=vec, dtype=i32, rows=8, cols=64, v_row=8, v_col=64, blayout=row_major, slayout=none_box, fractal=512, pad=0>, !pto.tile_buf<loc=vec, dtype=i32, rows=1, cols=8, v_row=1, v_col=8, blayout=row_major, slayout=none_box, fractal=512, pad=0>) {cmpMode = #pto<cmp gt>}
+    return
+  }
+}
+
+// UBF: does not fit the VEC local memory

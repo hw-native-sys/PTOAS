@@ -477,6 +477,33 @@ static FailureOr<int64_t> computeLevel3KAddr(pto::TGatherOp op) {
     return failure();
   }
   funcOp->walk([&](Operation *node) {
+    if (auto reserve = dyn_cast<pto::ReserveBufferOp>(node)) {
+      if (reserve.getLocation().getAddressSpace() == pto::AddressSpace::VEC) {
+        auto baseAttr = reserve.getBaseAttr();
+        if (baseAttr) {
+          // A resolved reserved region occupies [base, base + size).
+          maxEnd =
+              std::max(maxEnd, baseAttr.getInt() + static_cast<int64_t>(reserve.getSize()));
+        } else {
+          // Auto-allocated reservation: the placement is not knowable here.
+          blocked = true;
+        }
+      }
+      return;
+    }
+    if (isa<pto::ImportReservedBufferOp>(node)) {
+      // The peer region address is only resolvable through the peer function.
+      blocked = true;
+      return;
+    }
+    if (auto assign = dyn_cast<pto::TAssignOp>(node)) {
+      // Runtime address rebinding defeats any static placement.
+      auto space = getTileAddressSpace(assign.getTile().getType());
+      if (!space || *space == pto::AddressSpace::VEC) {
+        blocked = true;
+      }
+      return;
+    }
     auto alloc = dyn_cast<pto::AllocTileOp>(node);
     if (!alloc) {
       if (auto multi = dyn_cast<pto::AllocMultiTileOp>(node)) {
@@ -521,9 +548,24 @@ static FailureOr<Value> createTGatherKTile(pto::TGatherOp op,
     FailureOr<int64_t> addr = computeLevel3KAddr(op);
     if (failed(addr)) {
       op.emitOpError("failed to place the materialized K tile: VEC-space level3 "
-                     "tile addrs must be constants on plain alloc_tile ops "
-                     "(VEC-space alloc_multi_tile is not supported for K "
-                     "placement)");
+                     "tile addrs must be constants on plain alloc_tile ops, and "
+                     "VEC-space pto.tassign / auto-allocated reserve_buffer / "
+                     "import_reserved_buffer usage prevents K placement");
+      return failure();
+    }
+    // Mirror PlanMemory's VEC local-memory sizes (getMemSpec).
+    const int64_t vecCapacityBytes =
+        pto::getTargetArch(op.getOperation()) == pto::PTOArch::A5 ? 253952
+                                                                  : 196608;
+    uint64_t elemBytes =
+        mlir::pto::getPTOStorageElemByteSize(kType.getElementType());
+    int64_t kBytes = static_cast<int64_t>(elemBytes);
+    for (int64_t dim : kType.getShape()) {
+      kBytes *= dim;
+    }
+    if (*addr + kBytes > vecCapacityBytes) {
+      op.emitOpError("the materialized K tile does not fit the VEC local "
+                     "memory at level3");
       return failure();
     }
     addrVal = builder.create<arith::ConstantOp>(op.getLoc(),

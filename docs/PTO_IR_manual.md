@@ -7708,7 +7708,7 @@ pto.tgather ins(%src, {maskPattern = #pto.mask_pattern<Pxxxx>} : !pto.tile_buf<.
   - The authored scalar `kValue` is lowered by `PTOMaterializeImplicitTmp` into a typed K tile with the `src` element type (pto-isa typed-K encoding) holding one threshold per row; dynamic (non-constant) scalar thresholds are supported.
   - Requires a static `src` tile shape with at most 256 rows (one scalar store per row); larger row counts are rejected with a diagnostic.
   - On level1/level2 the K tile address is assigned by PlanMemory together with any materialized tmp.
-  - On level3 the K tile is placed automatically after the last byte of the VEC address space; this requires constant `addr` values on plain VEC-space `pto.alloc_tile` ops and rejects VEC-space `pto.alloc_multi_tile` (non-VEC spaces number their own addresses and are ignored).
+  - On level3 the K tile is placed automatically after the last byte of the VEC address space, and must fit the VEC local memory (196608 bytes on A2/A3, 253952 on A5). Placement requires constant `addr` values on plain VEC-space `pto.alloc_tile` ops; VEC-space `pto.alloc_multi_tile`, `pto.tassign`, and `import_reserved_buffer` reject placement (their regions are not statically knowable), while a VEC-space `pto.reserve_buffer` with an explicit `base` is accounted as `[base, base + size)`. Non-VEC spaces number their own addresses and are ignored.
 - **Index gather: implementation checks (A2/A3)**:
   - `src` and `dst` element types must match and be one of `i16/i32/f16/f32`.
   - `indices` element type must be `i32`.
