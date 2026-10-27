@@ -393,27 +393,77 @@ static FailureOr<int64_t> getConstantI64(Value value) {
   return failure();
 }
 
+// Byte footprint of one allocated tile buffer, mirroring PlanMemory's
+// computeTileBufBytes/computeConvTileBytes rules (PTOPlanMemoryModern.cpp):
+// compact = row_plus_one buffers physically exceed product(shape) by one pad
+// element per major row, and conv buffers are sized by their explicit
+// buffer_size. Any shape that is not statically representable fails.
 static FailureOr<uint64_t> computeAllocTileBytes(Value tile) {
   if (auto type = dyn_cast<pto::TileBufType>(tile.getType())) {
     uint64_t elemBytes = mlir::pto::getPTOStorageElemByteSize(type.getElementType());
     if (elemBytes == 0) {
       return failure();
     }
+    ArrayRef<int64_t> shape = type.getShape();
     uint64_t numel = 1;
-    for (int64_t dim : type.getShape()) {
+    for (int64_t dim : shape) {
       if (dim == ShapedType::kDynamic) {
         return failure();
       }
       numel *= static_cast<uint64_t>(dim);
     }
+    if (type.getCompactModeI32() ==
+        static_cast<int32_t>(pto::CompactMode::RowPlusOne)) {
+      if (shape.size() != mlir::pto::kValue2) {
+        return failure();
+      }
+      bool rowMajor = type.getBLayoutValueI32() ==
+                      static_cast<int32_t>(pto::BLayout::RowMajor);
+      uint64_t major = static_cast<uint64_t>(rowMajor ? shape[0] : shape[1]);
+      uint64_t minor = static_cast<uint64_t>(rowMajor ? shape[1] : shape[0]);
+      if (major == 0 || minor == 0) {
+        return uint64_t{0};
+      }
+      return ((major - 1) * (minor + 1) + minor) * elemBytes;
+    }
     return numel * elemBytes;
+  }
+  if (auto convType = dyn_cast<pto::ConvTileBufType>(tile.getType())) {
+    uint64_t elemBytes =
+        mlir::pto::getPTOStorageElemByteSize(convType.getElementType());
+    if (elemBytes == 0 || convType.getBufferSizeValue() <= 0) {
+      return failure();
+    }
+    return static_cast<uint64_t>(convType.getBufferSizeValue()) * elemBytes;
   }
   return failure();
 }
 
+static std::optional<pto::AddressSpace> getTileAddressSpace(Type type) {
+  auto readSpace = [](auto tileType) -> std::optional<pto::AddressSpace> {
+    if (auto attr =
+            dyn_cast_or_null<pto::AddressSpaceAttr>(tileType.getMemorySpace())) {
+      return attr.getAddressSpace();
+    }
+    return std::nullopt;
+  };
+  if (auto tileType = dyn_cast<pto::TileBufType>(type)) {
+    return readSpace(tileType);
+  }
+  if (auto convType = dyn_cast<pto::ConvTileBufType>(type)) {
+    return readSpace(convType);
+  }
+  if (auto multiType = dyn_cast<pto::MultiTileBufType>(type)) {
+    return getTileAddressSpace(multiType.getSlotType());
+  }
+  return std::nullopt;
+}
+
 // At level3 every user tile carries an explicit constant addr and PlanMemory
-// is skipped, so place the K tile after the last used byte to keep the
-// address plan user-owned.
+// is skipped, so place the K tile after the last used byte of the VEC address
+// space to keep the address plan user-owned. Level3 addresses are per-space:
+// non-VEC allocs (mat/left/right/acc, ...) number their own spaces and must
+// not push the VEC-space K placement.
 static FailureOr<int64_t> computeLevel3KAddr(pto::TGatherOp op) {
   constexpr int64_t kKAddrAlignBytes = 32;
   int64_t maxEnd = 0;
@@ -428,9 +478,20 @@ static FailureOr<int64_t> computeLevel3KAddr(pto::TGatherOp op) {
   funcOp->walk([&](Operation *node) {
     auto alloc = dyn_cast<pto::AllocTileOp>(node);
     if (!alloc) {
-      if (isa<pto::AllocMultiTileOp>(node)) {
-        blocked = true;
+      if (auto multi = dyn_cast<pto::AllocMultiTileOp>(node)) {
+        auto space = getTileAddressSpace(multi.getResult().getType());
+        if (space && *space == pto::AddressSpace::VEC) {
+          blocked = true;
+        }
       }
+      return;
+    }
+    auto space = getTileAddressSpace(alloc.getResult().getType());
+    if (!space) {
+      blocked = true;
+      return;
+    }
+    if (*space != pto::AddressSpace::VEC) {
       return;
     }
     if (!alloc.getAddr()) {
