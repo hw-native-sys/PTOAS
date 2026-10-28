@@ -266,7 +266,12 @@ def template_tload_gm_to_mat_nd2nz(src: pto.PartitionTensorView, dst: pto.Tile):
         "nd2nz",
         shape=(m, k),
         src_layout=(src_inner_stride,),
-        dst_group=(1, 1, m, 0),
+        # Match PTO-ISA TLoadCubeND2NZ: the NZ loop3 destination stride is the
+        # tile's physical rows (the pitch of successive C0 fractals in L1),
+        # never the valid row count -- a valid-count pitch makes the next
+        # fractal overlap the previous one whenever the valid region is short
+        # and the inner extent crosses a C0 boundary.
+        dst_group=(1, 1, dst.shape[0], 0),
         ctrl=(0, False),
     )
 
