@@ -8133,6 +8133,15 @@ dst = reinterpret(src)
 - **Total byte size must match**: `sizeof(srcElem) * drcNumel == sizeof(dstElem) * dstNumel`.
 - **No boxed/non-boxed conversion**:
   - cannot reshape between `SLayout::NoneBox` and boxed layouts.
+- **A5 MX scale transpose view**: exact `!pto.f8E8M0` to `!pto.f8E8M0`
+  is supported in `mat` storage with `compact=0`, `fractal=32`, and dual
+  `row_major`/`row_major` ↔ `col_major`/`col_major` layouts. Static physical
+  rows and columns must be swapped (for example, `[128, 2]` ↔ `[2, 128]`).
+  Both tiles retain layout and valid-shape bounds checks; result valid extents
+  must be positive and static. The source may use runtime `alloc_tile` valid
+  operands. The view aliases the same bytes and preserves the E8M0 scale codes.
+  This support does not extend to mixed dtypes, other low-precision types,
+  bitcasts, or A2/A3.
 
 **Hardware Mapping:**
 
@@ -8497,9 +8506,24 @@ dst[i, j] = saturate(cast(src[i, j], rmode), satmode)
     `bf16 -> !pto.f4E2M1x2`, 
     `!pto.f4E1M2x2 -> bf16`, 
     `!pto.f4E2M1x2 -> bf16`, 
+    `!pto.f4E2M1x2 -> f8E4M3FN`, 
     `f8E4M3* -> f32`, 
     `f8E5M2* -> f32`, 
     `!pto.hif8 -> f32`.
+  - `!pto.f4E2M1x2 -> f8E4M3FN` converts in one step and carries extra layout
+    constraints. `dst` must be exactly `f8E4M3FN`; the other E4M3 spellings are
+    rejected. Both tiles live in `vec`. `src` uses `row_major`/`none_box` with
+    `compact=0`, and its `cols` must be a multiple of 32 packed bytes
+    (64 logical FP4 values). `dst` uses either the same ND layout with
+    `compact=0`, or standard NZ (`blayout=col_major`, `slayout=row_major`,
+    `fractal=512`) with `compact=0` or `compact=1`; NZ `rows` must be a
+    multiple of 16. `compact=2` (RowPlusOne) is rejected. Physical padding may
+    differ between the two tiles, but their logical valid regions must agree,
+    where `src` valid columns count packed bytes and `dst` valid columns count
+    FP8 elements. Valid columns must be static on both tiles; valid rows may be
+    dynamic. Every FP4 value, including negative zero, is preserved for all
+    rounding and saturation modes. This pair needs no `tmp` operand; one may
+    still be passed for source compatibility but is unused.
   - Non-low-precision pairs continue to use the existing target-defined behavior.
 
 **Hardware Mapping:**

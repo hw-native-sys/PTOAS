@@ -1,0 +1,50 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+// RUN: not pto-test-opt --pto-a5-normalize-tmov --mlir-print-ir-after-failure %s 2>&1 | FileCheck %s
+
+// A rejected changed-source binding must leave its dependency slice untouched.
+// CHECK: cannot safely establish scaling address before matching TMOV: intervening destination use
+// CHECK: IR Dump After
+// CHECK: pto.tget_scale_addr
+// CHECK: pto.tmov
+// CHECK: pto.tmatmul.mx ins(
+// CHECK-NEXT: %[[ADDR:.*]] = arith.constant 1024
+// CHECK-NEXT: %[[OTHER:.*]] = pto.alloc_tile addr = %[[ADDR]]
+// CHECK-NEXT: pto.tget_scale_addr ins(%[[OTHER]]
+!lmat = !pto.tile_buf<mat, 64x128xf8E4M3FN, blayout=col_major, slayout=row_major, fractal=512>
+!rmat = !pto.tile_buf<mat, 128x128xf8E4M3FN, blayout=col_major, slayout=row_major, fractal=512>
+!left = !pto.tile_buf<left, 64x128xf8E4M3FN, blayout=col_major, slayout=row_major, fractal=512>
+!right = !pto.tile_buf<right, 128x128xf8E4M3FN, slayout=col_major, fractal=512>
+!lm = !pto.tile_buf<mat, 64x4x!pto.f8E8M0, slayout=row_major, fractal=32>
+!rm = !pto.tile_buf<mat, 4x128x!pto.f8E8M0, blayout=col_major, slayout=col_major, fractal=32>
+!ls = !pto.tile_buf<scaling, 64x4x!pto.f8E8M0, slayout=row_major, fractal=32>
+!rs = !pto.tile_buf<scaling, 4x128x!pto.f8E8M0, blayout=col_major, slayout=col_major, fractal=32>
+!acc = !pto.tile_buf<acc, 64x128xf32, blayout=col_major, slayout=row_major, fractal=1024>
+module attributes {pto.target_arch = "a5"} {
+  func.func @unchanged_rejected_binding() attributes {pto.kernel_kind = #pto.kernel_kind<cube>} {
+    %zero = arith.constant 0 : i64
+    %lmat = pto.alloc_tile : !lmat
+    %rmat = pto.alloc_tile : !rmat
+    %lm = pto.alloc_tile : !lm
+    %rm = pto.alloc_tile : !rm
+    %left = pto.alloc_tile addr = %zero : !left
+    %right = pto.alloc_tile addr = %zero : !right
+    %ls = pto.alloc_tile addr = %zero : !ls
+    %rs = pto.alloc_tile addr = %zero : !rs
+    %acc = pto.alloc_tile : !acc
+    pto.tget_scale_addr ins(%left : !left) outs(%ls : !ls)
+    pto.tget_scale_addr ins(%right : !right) outs(%rs : !rs)
+    pto.tmov ins(%lm : !lm) outs(%ls : !ls)
+    pto.tmov ins(%rm : !rm) outs(%rs : !rs)
+    pto.tmatmul.mx ins(%left, %ls, %right, %rs : !left, !ls, !right, !rs) outs(%acc : !acc)
+    %addr = arith.constant 1024 : i64
+    %other = pto.alloc_tile addr = %addr : !left
+    pto.tget_scale_addr ins(%other : !left) outs(%ls : !ls)
+    return
+  }
+}

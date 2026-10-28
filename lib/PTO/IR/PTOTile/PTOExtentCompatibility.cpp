@@ -236,6 +236,10 @@ static bool isA5AccStorePreQuantDstType(Type srcElem, Type dstElem) {
          isPTOHiFloat8Type(dstElem) || isPTOFloat8E4M3LikeType(dstElem);
 }
 
+static bool isA5DirectFp4ToFp8TCvtPair(Type srcElem, Type dstElem) {
+  return isa<pto::F4E2M1x2Type>(srcElem) && isa<Float8E4M3FNType>(dstElem);
+}
+
 static bool isA5LowPrecisionTCvtPair(Type srcElem, Type dstElem) {
   if (srcElem.isF32()) {
     return isPTOFloat8Type(dstElem) || isPTOHiFloat8Type(dstElem);
@@ -247,7 +251,7 @@ static bool isA5LowPrecisionTCvtPair(Type srcElem, Type dstElem) {
     return isPTOFloat4PackedType(dstElem);
   }
   if (isPTOFloat4PackedType(srcElem)) {
-    return dstElem.isBF16();
+    return dstElem.isBF16() || isA5DirectFp4ToFp8TCvtPair(srcElem, dstElem);
   }
   if (isPTOFloat8Type(srcElem) || isPTOHiFloat8Type(srcElem)) {
     return dstElem.isF32();

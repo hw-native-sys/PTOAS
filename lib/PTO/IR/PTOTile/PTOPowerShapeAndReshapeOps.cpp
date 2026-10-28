@@ -180,6 +180,80 @@ mlir::LogicalResult mlir::pto::GetValidShapeOp::verify() {
 }
 
 
+// Tile-config constraints of the E8M0 scale transpose view: mat storage,
+// compact=null, fractal=32, and the two tiles swap RR <-> CC wholesale.
+static LogicalResult verifyMxScaleTReshapeConfig(TReshapeOp op,
+                                                 TileBufType srcTb,
+                                                 TileBufType dstTb) {
+  auto loc = getPTOMemorySpaceEnum(srcTb);
+  if (!loc || *loc != pto::AddressSpace::MAT) {
+    return op.emitOpError("expects E8M0 scale treshape to use mat storage");
+  }
+  if (srcTb.getCompactModeI32() !=
+          static_cast<int32_t>(pto::CompactMode::Null) ||
+      dstTb.getCompactModeI32() !=
+          static_cast<int32_t>(pto::CompactMode::Null)) {
+    return op.emitOpError("expects E8M0 scale treshape to use compact=null");
+  }
+  if (srcTb.getSFractalSizeI32() != mlir::pto::kValue32 ||
+      dstTb.getSFractalSizeI32() != mlir::pto::kValue32) {
+    return op.emitOpError("expects E8M0 scale treshape to use fractal=32");
+  }
+  auto isRR = [](TileBufType tb) {
+    return tb.getBLayoutValueI32() ==
+               static_cast<int32_t>(pto::BLayout::RowMajor) &&
+           tb.getSLayoutValueI32() ==
+               static_cast<int32_t>(pto::SLayout::RowMajor);
+  };
+  auto isCC = [](TileBufType tb) {
+    return tb.getBLayoutValueI32() ==
+               static_cast<int32_t>(pto::BLayout::ColMajor) &&
+           tb.getSLayoutValueI32() ==
+               static_cast<int32_t>(pto::SLayout::ColMajor);
+  };
+  if (!((isRR(srcTb) && isCC(dstTb)) ||
+        (isCC(srcTb) && isRR(dstTb)))) {
+    return op.emitOpError(
+        "expects E8M0 scale treshape to transpose RR and CC layouts");
+  }
+  if (srcTb.getShape()[0] != dstTb.getShape()[1] ||
+      srcTb.getShape()[1] != dstTb.getShape()[0]) {
+    return op.emitOpError(
+        "expects E8M0 scale treshape to transpose the physical shape");
+  }
+  return success();
+}
+
+static LogicalResult verifyMxScaleTReshapeA5(TReshapeOp op, TileBufType srcTb,
+                                             TileBufType dstTb) {
+  if (failed(verifyMxScaleTReshapeConfig(op, srcTb, dstTb))) {
+    return failure();
+  }
+  if (failed(verifyTileBufLayoutConstraints(op, srcTb, "src")) ||
+      failed(verifyTileBufLayoutConstraints(op, dstTb, "dst"))) {
+    return failure();
+  }
+  // TRESHAPE aliases the whole buffer; the result type initializes its valid
+  // extents. The source may instead have alloc_tile runtime valid operands.
+  auto dstValid = dstTb.getValidShape();
+  if (dstValid[0] <= 0 || dstValid[1] <= 0) {
+    return op.emitOpError(
+        "expects E8M0 scale treshape result valid extents to be positive and static");
+  }
+  return success();
+}
+
+static LogicalResult verifyMxScaleTReshape(TReshapeOp op, TileBufType srcTb,
+                                           TileBufType dstTb) {
+  auto verifyA2A3 = [&op]() -> LogicalResult {
+    return op.emitOpError("expects E8M0 scale treshape to target A5");
+  };
+  auto verifyA5 = [&]() -> LogicalResult {
+    return verifyMxScaleTReshapeA5(op, srcTb, dstTb);
+  };
+  return dispatchVerifierByArch(op.getOperation(), verifyA2A3, verifyA5);
+}
+
 mlir::LogicalResult mlir::pto::TReshapeOp::verify() {
   Type ts = getSrc().getType();
   Type tr = getResult().getType();
@@ -189,6 +263,8 @@ mlir::LogicalResult mlir::pto::TReshapeOp::verify() {
     return emitOpError("expects src/result to be !pto.tile_buf types");
   }
 
+  // Byte-preserving low-precision views are accepted (issue #1651); the
+  // element-width query covers every low-precision storage width.
   if (failed(verifyTileBufCommon(*this, ts, "src",
                                  /*allowLowPrecision=*/true)) ||
       failed(verifyTileBufCommon(*this, tr, "dst",
@@ -204,7 +280,8 @@ mlir::LogicalResult mlir::pto::TReshapeOp::verify() {
   Type dstElem = dstTb.getElementType();
   auto srcElemBytes = getElemBytes(srcElem);
   auto dstElemBytes = getElemBytes(dstElem);
-  if (!srcElem || !dstElem || !srcElemBytes.has_value() || !dstElemBytes.has_value()) {
+  if (!srcElem || !dstElem || !srcElemBytes.has_value() ||
+      !dstElemBytes.has_value()) {
     return emitOpError("failed to get element byte width for src/dst");
   }
 
@@ -227,6 +304,12 @@ mlir::LogicalResult mlir::pto::TReshapeOp::verify() {
     return emitOpError("cannot reshape between boxed and non-boxed tile layouts");
   }
 
+  // The MX scale transpose view keeps its dedicated constraints; every other
+  // byte-preserving view only needs the generic checks above.
+  const bool isMxScale = isPTOF8E8M0Type(srcElem) && srcElem == dstElem;
+  if (isMxScale) {
+    return verifyMxScaleTReshape(*this, srcTb, dstTb);
+  }
   return success();
 }
 

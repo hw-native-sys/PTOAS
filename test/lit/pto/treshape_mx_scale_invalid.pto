@@ -1,0 +1,171 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+
+// RUN: pto-test-opt --split-input-file --verify-diagnostics %s
+
+// NOTE: three former splits here (E8M0->ui8, ui8->E8M0, hif8->hif8
+// treshape) expected "dtype ... is not supported by this op yet". Upstream
+// !353 (issue #1651) accepts byte-preserving low-precision treshape views,
+// so those expectations no longer hold; the E8M0 scale-transpose path keeps
+// its dedicated constraints below.
+
+// -----
+
+// -----
+
+
+// -----
+
+
+module attributes {pto.target_arch = "a5"} {
+  func.func @wrong_memory(%src: !pto.tile_buf<vec, 128x2x!pto.f8E8M0, slayout=row_major, fractal=32>) {
+    // expected-error@+1 {{expects E8M0 scale treshape to use mat storage}}
+    %view = pto.treshape %src : !pto.tile_buf<vec, 128x2x!pto.f8E8M0, slayout=row_major, fractal=32> -> !pto.tile_buf<vec, 2x128x!pto.f8E8M0, blayout=col_major, slayout=col_major, fractal=32>
+    return
+  }
+}
+
+// -----
+
+module attributes {pto.target_arch = "a5"} {
+  func.func @different_memory(%src: !pto.tile_buf<mat, 128x2x!pto.f8E8M0, slayout=row_major, fractal=32>) {
+    // expected-error@+1 {{expects src and dst to use the same loc}}
+    %view = pto.treshape %src : !pto.tile_buf<mat, 128x2x!pto.f8E8M0, slayout=row_major, fractal=32> -> !pto.tile_buf<scaling, 2x128x!pto.f8E8M0, blayout=col_major, slayout=col_major, fractal=32>
+    return
+  }
+}
+
+// -----
+
+module attributes {pto.target_arch = "a5"} {
+  func.func @same_layout(%src: !pto.tile_buf<mat, 128x2x!pto.f8E8M0, slayout=row_major, fractal=32>) {
+    // expected-error@+1 {{expects E8M0 scale treshape to transpose RR and CC layouts}}
+    %view = pto.treshape %src : !pto.tile_buf<mat, 128x2x!pto.f8E8M0, slayout=row_major, fractal=32> -> !pto.tile_buf<mat, 2x128x!pto.f8E8M0, slayout=row_major, fractal=32>
+    return
+  }
+}
+
+// -----
+
+module attributes {pto.target_arch = "a5"} {
+  func.func @mixed_layout(%src: !pto.tile_buf<mat, 128x2x!pto.f8E8M0, slayout=col_major, fractal=32>) {
+    // expected-error@+1 {{expects E8M0 scale treshape to transpose RR and CC layouts}}
+    %view = pto.treshape %src : !pto.tile_buf<mat, 128x2x!pto.f8E8M0, slayout=col_major, fractal=32> -> !pto.tile_buf<mat, 2x128x!pto.f8E8M0, blayout=col_major, slayout=col_major, fractal=32>
+    return
+  }
+}
+
+// -----
+
+module attributes {pto.target_arch = "a5"} {
+  func.func @wrong_fractal(%src: !pto.tile_buf<mat, 128x32x!pto.f8E8M0, slayout=row_major, fractal=512>) {
+    // expected-error@+1 {{expects E8M0 scale treshape to use fractal=32}}
+    %view = pto.treshape %src : !pto.tile_buf<mat, 128x32x!pto.f8E8M0, slayout=row_major, fractal=512> -> !pto.tile_buf<mat, 32x128x!pto.f8E8M0, blayout=col_major, slayout=col_major, fractal=512>
+    return
+  }
+}
+
+// -----
+
+module attributes {pto.target_arch = "a5"} {
+  func.func @source_compact(%src: !pto.tile_buf<mat, 128x2x!pto.f8E8M0, slayout=row_major, fractal=32, compact=1>) {
+    // expected-error@+1 {{expects E8M0 scale treshape to use compact=null}}
+    %view = pto.treshape %src : !pto.tile_buf<mat, 128x2x!pto.f8E8M0, slayout=row_major, fractal=32, compact=1> -> !pto.tile_buf<mat, 2x128x!pto.f8E8M0, blayout=col_major, slayout=col_major, fractal=32>
+    return
+  }
+}
+
+// -----
+
+module attributes {pto.target_arch = "a5"} {
+  func.func @result_compact(%src: !pto.tile_buf<mat, 128x2x!pto.f8E8M0, slayout=row_major, fractal=32>) {
+    // expected-error@+1 {{expects E8M0 scale treshape to use compact=null}}
+    %view = pto.treshape %src : !pto.tile_buf<mat, 128x2x!pto.f8E8M0, slayout=row_major, fractal=32> -> !pto.tile_buf<mat, 2x128x!pto.f8E8M0, blayout=col_major, slayout=col_major, fractal=32, compact=2>
+    return
+  }
+}
+
+// -----
+
+module attributes {pto.target_arch = "a5"} {
+  func.func @unequal_bytes(%src: !pto.tile_buf<mat, 128x2x!pto.f8E8M0, slayout=row_major, fractal=32>) {
+    // expected-error@+1 {{expects src and dst to have the same total byte size}}
+    %view = pto.treshape %src : !pto.tile_buf<mat, 128x2x!pto.f8E8M0, slayout=row_major, fractal=32> -> !pto.tile_buf<mat, 2x64x!pto.f8E8M0, blayout=col_major, slayout=col_major, fractal=32>
+    return
+  }
+}
+
+// -----
+
+module attributes {pto.target_arch = "a5"} {
+  func.func @not_transposed(%src: !pto.tile_buf<mat, 128x2x!pto.f8E8M0, slayout=row_major, fractal=32>) {
+    // expected-error@+1 {{expects E8M0 scale treshape to transpose the physical shape}}
+    %view = pto.treshape %src : !pto.tile_buf<mat, 128x2x!pto.f8E8M0, slayout=row_major, fractal=32> -> !pto.tile_buf<mat, 4x64x!pto.f8E8M0, blayout=col_major, slayout=col_major, fractal=32>
+    return
+  }
+}
+
+// -----
+
+module attributes {pto.target_arch = "a5"} {
+  func.func @invalid_boxed_columns(%src: !pto.tile_buf<mat, 128x3x!pto.f8E8M0, slayout=row_major, fractal=32>) {
+    // expected-error@+1 {{expects src boxed tile cols to be a multiple of innerCols (2)}}
+    %view = pto.treshape %src : !pto.tile_buf<mat, 128x3x!pto.f8E8M0, slayout=row_major, fractal=32> -> !pto.tile_buf<mat, 3x128x!pto.f8E8M0, blayout=col_major, slayout=col_major, fractal=32>
+    return
+  }
+}
+
+// -----
+
+module attributes {pto.target_arch = "a5"} {
+  func.func @dynamic_result_rows(%src: !pto.tile_buf<mat, 128x2x!pto.f8E8M0, slayout=row_major, fractal=32>) {
+    // expected-error@+1 {{expects E8M0 scale treshape result valid extents to be positive and static}}
+    %view = pto.treshape %src : !pto.tile_buf<mat, 128x2x!pto.f8E8M0, slayout=row_major, fractal=32> -> !pto.tile_buf<mat, 2x128x!pto.f8E8M0, valid=?x128, blayout=col_major, slayout=col_major, fractal=32>
+    return
+  }
+}
+
+// -----
+
+module attributes {pto.target_arch = "a5"} {
+  func.func @dynamic_result_columns(%src: !pto.tile_buf<mat, 128x2x!pto.f8E8M0, slayout=row_major, fractal=32>) {
+    // expected-error@+1 {{expects E8M0 scale treshape result valid extents to be positive and static}}
+    %view = pto.treshape %src : !pto.tile_buf<mat, 128x2x!pto.f8E8M0, slayout=row_major, fractal=32> -> !pto.tile_buf<mat, 2x128x!pto.f8E8M0, valid=2x?, blayout=col_major, slayout=col_major, fractal=32>
+    return
+  }
+}
+
+// -----
+
+module attributes {pto.target_arch = "a5"} {
+  func.func @zero_result_rows(%src: !pto.tile_buf<mat, 128x2x!pto.f8E8M0, slayout=row_major, fractal=32>) {
+    // expected-error@+1 {{expects E8M0 scale treshape result valid extents to be positive and static}}
+    %view = pto.treshape %src : !pto.tile_buf<mat, 128x2x!pto.f8E8M0, slayout=row_major, fractal=32> -> !pto.tile_buf<mat, 2x128x!pto.f8E8M0, valid=0x128, blayout=col_major, slayout=col_major, fractal=32>
+    return
+  }
+}
+
+// -----
+
+module attributes {pto.target_arch = "a5"} {
+  func.func @zero_result_columns(%src: !pto.tile_buf<mat, 128x2x!pto.f8E8M0, slayout=row_major, fractal=32>) {
+    // expected-error@+1 {{expects E8M0 scale treshape result valid extents to be positive and static}}
+    %view = pto.treshape %src : !pto.tile_buf<mat, 128x2x!pto.f8E8M0, slayout=row_major, fractal=32> -> !pto.tile_buf<mat, 2x128x!pto.f8E8M0, valid=2x0, blayout=col_major, slayout=col_major, fractal=32>
+    return
+  }
+}
+
+// -----
+
+module attributes {pto.target_arch = "a5"} {
+  func.func @result_valid_exceeds_shape(%src: !pto.tile_buf<mat, 128x2x!pto.f8E8M0, slayout=row_major, fractal=32>) {
+    // expected-error@+1 {{tile_buf valid_row (3) exceeds row (2)}}
+    %view = pto.treshape %src : !pto.tile_buf<mat, 128x2x!pto.f8E8M0, slayout=row_major, fractal=32> -> !pto.tile_buf<mat, 2x128x!pto.f8E8M0, valid=3x128, blayout=col_major, slayout=col_major, fractal=32>
+    return
+  }
+}
