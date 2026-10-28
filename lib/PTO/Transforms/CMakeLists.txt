@@ -131,6 +131,7 @@ add_mlir_dialect_library(PTOTransforms
   Passes/PTOValidateVMIIR.cpp
   VMI/VMIExpandImplicitEnsureLayouts.cpp
   VMI/VMIPreAssignmentCombine.cpp
+  VMI/VMIFastmathState.cpp
   VMI/VMIControlFlowSupport.cpp
   VMI/VMILegalizeArithSelect.cpp
   VMI/VMIMaskGranularityAssignment.cpp

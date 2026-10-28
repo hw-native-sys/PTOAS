@@ -259,9 +259,12 @@ llvm::cl::opt<bool> enableInsertSync("enable-insert-sync",
 
 llvm::cl::opt<bool> enableVmiFastmath(
     "vmi-fastmath",
-    llvm::cl::desc("Enable VMI conversion fast paths that may change NaN "
-                   "results, including f32-to-bf16 narrowing. Enabled by "
-                   "default; pass --vmi-fastmath=false to disable"),
+    llvm::cl::desc("Select the VMI conversion state for the whole pipeline: it "
+                   "enables the conversion fast paths that may change NaN "
+                   "results, including f32-to-bf16 narrowing, and lets layout "
+                   "assignment offer the dense same-layout relation for those "
+                   "casts. Enabled by default; pass --vmi-fastmath=false to "
+                   "disable"),
     llvm::cl::init(true));
 
 llvm::cl::opt<unsigned> vmiLayoutMaxFrontierEntries(

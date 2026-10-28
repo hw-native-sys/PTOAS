@@ -1086,7 +1086,9 @@ std::optional<WalkResult> verifySupportedVMIReductionOp(Operation *op) {
   return verifySupportedVMIGroupReductionOp(op);
 }
 
-std::optional<WalkResult> verifySupportedVMIFloatOp(Operation *op) {
+std::optional<WalkResult> verifySupportedVMIFloatOp(Operation *op,
+                                                    bool enableVmiFastmath)
+{
   if (auto extf = dyn_cast<VMIExtFOp>(op)) {
     return verifySupportedShapeOp(
         extf, checkSupportedExtFShape,
@@ -1097,7 +1099,11 @@ std::optional<WalkResult> verifySupportedVMIFloatOp(Operation *op) {
   }
   if (auto truncf = dyn_cast<VMITruncFOp>(op)) {
     return verifySupportedShapeOp(
-        truncf, checkSupportedTruncFShape,
+        truncf,
+        [enableVmiFastmath](VMITruncFOp truncfOp, std::string *reason) {
+          return checkSupportedTruncFShape(truncfOp, reason,
+                                           enableVmiFastmath);
+        },
         "pto.vmi.truncf supports f32/f16/bf16 source narrowing (dense "
         "EvenOdd, Packed4, or f32 group_slots(num_groups=G, slots=1) to "
         "f16 group_slots(num_groups=G, slots=1)); non-f32 sources currently "
@@ -1257,7 +1263,8 @@ verifySupportedVMIChannelShuffleOp(Operation *op) {
 
 std::optional<WalkResult> verifySupportedVMIStandardOp(
     Operation *op, bool enableStableGatherMaskedLoad,
-    VMILoadSafetyPolicy loadSafety) {
+    VMILoadSafetyPolicy loadSafety, bool enableVmiFastmath)
+{
   if (auto memoryResult = verifySupportedVMIMemoryOp(
           op, enableStableGatherMaskedLoad, loadSafety);
       memoryResult.has_value()) {
@@ -1289,18 +1296,19 @@ std::optional<WalkResult> verifySupportedVMIStandardOp(
       reductionResult.has_value()) {
     return *reductionResult;
   }
-  if (auto floatResult = verifySupportedVMIFloatOp(op);
-      floatResult.has_value()) {
-    return *floatResult;
-  }
+    if (auto floatResult = verifySupportedVMIFloatOp(op, enableVmiFastmath);
+        floatResult.has_value()) {
+        return *floatResult;
+    }
   return verifySupportedVMIConversionOp(op);
 }
 
 static WalkResult verifySupportedVMIToVPTOOp(
     Operation *op, bool enableStableGatherMaskedLoad,
-    VMILoadSafetyPolicy loadSafety) {
+    VMILoadSafetyPolicy loadSafety, bool enableVmiFastmath)
+{
   if (auto standardResult = verifySupportedVMIStandardOp(
-          op, enableStableGatherMaskedLoad, loadSafety);
+      op, enableStableGatherMaskedLoad, loadSafety, enableVmiFastmath);
       standardResult.has_value()) {
     return *standardResult;
   }
@@ -1314,11 +1322,14 @@ static WalkResult verifySupportedVMIToVPTOOp(
 LogicalResult
 verifySupportedVMIToVPTOOps(ModuleOp module,
                             bool enableStableGatherMaskedLoad,
-                            VMILoadSafetyPolicy loadSafety) {
+                            VMILoadSafetyPolicy loadSafety,
+                            bool enableVmiFastmath)
+{
   WalkResult result = module.walk(
-      [enableStableGatherMaskedLoad, loadSafety](Operation *op) {
+      [enableStableGatherMaskedLoad, loadSafety,
+       enableVmiFastmath](Operation *op) {
         return verifySupportedVMIToVPTOOp(op, enableStableGatherMaskedLoad,
-                                          loadSafety);
+                                          loadSafety, enableVmiFastmath);
       });
   return failure(result.wasInterrupted());
 }

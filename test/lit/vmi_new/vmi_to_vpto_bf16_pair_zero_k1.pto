@@ -1,0 +1,70 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+
+// K=1 (one source part) f32-to-bf16 narrowing whose dense result feeds a
+// bf16x2 pair view.  The dense same-layout relation is real only when the
+// NaN-relaxed fastmath lowering runs; with fastmath disabled the same relation
+// must be refused with a diagnostic that names the fastmath condition, instead
+// of emitting one bare per-part vcvt (a half-filled register).  Issue #1619.
+// The 128/256-element shapes keep their honest 2:1 paired strict lowering and
+// stay in vmi_to_vpto_bf16_pair_zero.pto.
+
+// RUN: pto-test-opt %s -vmi-set-fastmath=vmi-fastmath=true -vmi-lower-unified-to-legacy -vmi-to-vpto | FileCheck %s
+// RUN: not pto-test-opt %s -vmi-set-fastmath=vmi-fastmath=false -vmi-lower-unified-to-legacy -vmi-to-vpto 2>&1 | FileCheck %s --check-prefix=STRICT-ERROR
+// RUN: not pto-test-opt %s -vmi-set-fastmath=vmi-fastmath=false -vmi-lower-unified-to-legacy -vmi-layout-assignment 2>&1 | FileCheck %s --check-prefix=ASSIGN-STRICT-ERROR
+// RUN: not pto-test-opt %s -vmi-lower-unified-to-legacy -vmi-to-vpto=vmi-fastmath=false 2>&1 | FileCheck %s --check-prefix=REMOVED
+// The layout-assigned validator grades the stated pair against the recorded
+// state too: the K=1 dense pair is accepted with fastmath on and rejected with
+// it off, at the same stage layout assignment validates its own output.
+// RUN: pto-test-opt %s -vmi-set-fastmath=vmi-fastmath=true -vmi-lower-unified-to-legacy -pto-validate-vmi-layout-ir
+// RUN: not pto-test-opt %s -vmi-set-fastmath=vmi-fastmath=false -vmi-lower-unified-to-legacy -pto-validate-vmi-layout-ir 2>&1 | FileCheck %s --check-prefix=LAYOUT-VALIDATE
+
+module {
+  func.func @f32_to_bf16_pair_64(
+      %src: !pto.vmi.vreg<64xf32, #pto.vmi.layout<contiguous>>)
+      -> !pto.vmi.vreg<32x!pto.f4E2M1x2,
+                        #pto.vmi.layout<contiguous, lane_stride = 4>> {
+    %result = pto.vmi.vcvt %src {rounding = "Z", saturate = "NOSAT"}
+        : !pto.vmi.vreg<64xf32, #pto.vmi.layout<contiguous>>
+        -> !pto.vmi.vreg<64xbf16, #pto.vmi.layout<contiguous>>
+    %pair = pto.vmi.vinterpret_cast %result
+        : !pto.vmi.vreg<64xbf16, #pto.vmi.layout<contiguous>>
+        -> !pto.vmi.vreg<32x!pto.bf16x2, #pto.vmi.layout<contiguous>>
+    %packed = pto.vmi.vcvt %pair {rounding = "R"}
+        : !pto.vmi.vreg<32x!pto.bf16x2, #pto.vmi.layout<contiguous>>
+        -> !pto.vmi.vreg<32x!pto.f4E2M1x2,
+                          #pto.vmi.layout<contiguous, lane_stride = 4>>
+    return %packed : !pto.vmi.vreg<32x!pto.f4E2M1x2,
+                                   #pto.vmi.layout<contiguous, lane_stride = 4>>
+  }
+}
+
+// CHECK-LABEL: func.func @f32_to_bf16_pair_64(
+// CHECK: %[[F32_64:.*]] = pto.vbitcast %{{.*}} : !pto.vreg<64xf32> -> !pto.vreg<128xi16>
+// CHECK: %[[ZERO64:.*]] = pto.vdup {{.*}} -> !pto.vreg<128xi16>
+// CHECK: %[[LOW64:.*]], %[[HIGH64:.*]] = pto.vdintlv %[[F32_64]], %[[ZERO64]]
+// CHECK: %{{.*}} = pto.vbitcast %[[HIGH64]] : !pto.vreg<128xi16> -> !pto.vreg<128xbf16>
+// CHECK-COUNT-1: pto.vcvt
+
+// STRICT-ERROR: dense same-layout BF16 narrowing relation is only realized by the NaN-relaxed fastmath lowering
+// STRICT-ERROR-SAME: rounding="Z" and saturate="NOSAT"
+// STRICT-ERROR-SAME: vmi-fastmath disabled
+
+// With fastmath disabled layout assignment refuses the hand-written dense pair
+// itself, so the failure is a validation diagnostic and not a lowering surprise.
+// ASSIGN-STRICT-ERROR: error: VMI-LAYOUT-CONTRACT: a dense same-layout BF16 narrowing (contiguous -> contiguous) is only realized by the NaN-relaxed fastmath lowering
+// ASSIGN-STRICT-ERROR-SAME: rounding="Z" and saturate="NOSAT"
+// ASSIGN-STRICT-ERROR-SAME: got vmi-fastmath disabled
+
+// The removed pass-local option fails with a pointer to the pipeline-wide knob
+// instead of being silently ignored.
+// REMOVED: error: -vmi-to-vpto=vmi-fastmath is no longer supported
+// REMOVED-SAME: record it with -vmi-set-fastmath=vmi-fastmath=<bool>
+
+// LAYOUT-VALIDATE: error: VMI-LAYOUT-CONTRACT: pto.vmi.truncf has no registered layout support
+// LAYOUT-VALIDATE-SAME: got vmi-fastmath disabled

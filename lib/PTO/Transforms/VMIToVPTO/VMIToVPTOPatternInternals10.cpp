@@ -1068,6 +1068,13 @@ private:
     }
     bool matchingPhysicalArity = sourceParts.size() == resultTypes.size();
     if (matchingPhysicalArity) {
+      // One source part per result part: each part is converted on its own.  For
+      // a same-layout *split* pair (d(2)/d(4) or lane-stride 2/4 on both sides)
+      // this is the honest lowering, because the result layout itself says the
+      // converted lanes sit where the vcvt puts them.  The dense contiguous
+      // `{c, c}` pair is the exception - there the same per-part vcvt writes
+      // the lanes at lane_stride 2 into a value that claims to be dense - and it
+      // is rejected by the caller before reaching this branch.
       return lowerDenseLaneStride(op, sourceParts, resultTypes, "EVEN",
                                   /*sourceIsPackedBF16x2=*/false, sourceType,
                                   rewriter);
@@ -1116,6 +1123,22 @@ private:
         enableVmiFastmath && rounding && rounding.getValue() == "Z" &&
         saturate && saturate.getValue() == "NOSAT";
     if (!useNaNRelaxedFastPath) {
+      // The matching-arity dense contiguous same-layout pair is only ever
+      // produced densely by the NaN-relaxed fastmath lowering above.  A legal
+      // layout assignment can no longer select it outside that state (candidate
+      // enumeration is state-qualified), so this is a defensive backstop for IR
+      // that bypasses both the candidate set and the up-front support
+      // verification: refuse it loudly instead of writing the converted lanes at
+      // lane_stride 2 into a value a consumer reads as dense (issue #1619).
+      if (requiresBF16NaNRelaxedLowering(sourceVMIType, resultVMIType,
+                                         sourceLayout, resultLayout)) {
+        op.emitError()
+            << "a dense same-layout f32-to-bf16 narrowing (contiguous -> "
+               "contiguous) is only implemented by the NaN-relaxed fastmath "
+               "lowering, which requires "
+            << describeBF16NarrowingState(op, enableVmiFastmath);
+        return failure();
+      }
       if (failed(lowerSameLayoutBF16PairNarrowingWithVcvt(
               op, sourceParts, resultTypes, rewriter))) {
         return failure();

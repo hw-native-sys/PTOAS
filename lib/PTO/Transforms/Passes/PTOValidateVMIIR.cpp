@@ -14,6 +14,7 @@
 #include "PTO/IR/PTO.h"
 #include "PTO/IR/VMIUtils.h"
 #include "PTO/Transforms/Passes.h"
+#include "PTO/Transforms/VMIFastmathState.h"
 #include "PTO/Transforms/VMILayoutSupport.h"
 
 #include "mlir/Dialect/ControlFlow/IR/ControlFlowOps.h"
@@ -738,7 +739,11 @@ static LogicalResult verifyVMIScalarSemanticSupport(
 
   if (auto truncf = dyn_cast<VMITruncFOp>(op)) {
     std::string reason;
-    if (failed(supports.getTruncFSupport(truncf, &reason))) {
+    // Grade against the pipeline state recorded on the module, like every other
+    // VMI pass: a standalone -pto-validate-vmi-ir run must accept exactly the IR
+    // the rest of the compiler accepts.
+    if (failed(supports.getTruncFSupport(
+        truncf, &reason, getVMIFastmathState(op)))) {
       return emitLayoutSupportContract(
           op, diagOS, "pto.vmi.truncf has no registered layout support",
           reason);

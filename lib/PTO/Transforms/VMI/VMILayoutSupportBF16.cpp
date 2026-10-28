@@ -15,6 +15,98 @@
 
 namespace mlir::pto {
 
+bool isDenseBF16NarrowingCast(VMIVRegType sourceType,
+                              VMIVRegType resultType)
+{
+    if (!sourceType || !resultType ||
+        !sourceType.getElementType().isF32() ||
+        !resultType.getElementType().isBF16() ||
+        sourceType.getElementCount() != resultType.getElementCount()) {
+        return false;
+    }
+    int64_t elementCount = sourceType.getElementCount();
+    return elementCount == 64 || elementCount == 128 || elementCount == 256;
+}
+
+bool isDenseBF16NarrowingSameLayoutPair(VMIVRegType sourceType,
+                                        VMIVRegType resultType,
+                                        VMILayoutAttr sourceLayout,
+                                        VMILayoutAttr resultLayout)
+{
+    if (!isDenseBF16NarrowingCast(sourceType, resultType) || !sourceLayout ||
+        !resultLayout || sourceLayout != resultLayout ||
+        !sourceLayout.isContiguous() ||
+        sourceLayout.getLaneStride() != 1) {
+        return false;
+    }
+    // A group-slot layout is dense in its own way, but its narrowing is realized
+    // by the dedicated group-slot lowering and is not the state-qualified dense
+    // relation.
+    return !sourceLayout.isGroupSlots();
+}
+
+bool requiresBF16NaNRelaxedLowering(VMIVRegType sourceType,
+                                    VMIVRegType resultType,
+                                    VMILayoutAttr sourceLayout,
+                                    VMILayoutAttr resultLayout)
+{
+    if (!isDenseBF16NarrowingSameLayoutPair(sourceType, resultType, sourceLayout,
+                                            resultLayout)) {
+        return false;
+    }
+    MLIRContext *context = sourceType.getContext();
+    auto assignedSource = VMIVRegType::get(
+        context, sourceType.getElementCount(), sourceType.getElementType(),
+        sourceLayout);
+    auto assignedResult = VMIVRegType::get(
+        context, resultType.getElementCount(), resultType.getElementType(),
+        resultLayout);
+    FailureOr<int64_t> sourceArity = getVMIPhysicalArity(assignedSource);
+    FailureOr<int64_t> resultArity = getVMIPhysicalArity(assignedResult);
+    return succeeded(sourceArity) && succeeded(resultArity) &&
+           *sourceArity == *resultArity;
+}
+
+bool requiresBF16NaNRelaxedLowering(VMIVRegType sourceType,
+                                    VMIVRegType resultType)
+{
+    if (!isDenseBF16NarrowingCast(sourceType, resultType)) {
+        return false;
+    }
+    VMILayoutAttr contiguous = VMILayoutAttr::getContiguous(sourceType.getContext());
+    return requiresBF16NaNRelaxedLowering(sourceType, resultType, contiguous,
+                                          contiguous);
+}
+
+bool hasBF16NaNRelaxedFastmathState(Operation *op, bool enableVmiFastmath)
+{
+    if (!op || !enableVmiFastmath) {
+        return false;
+    }
+    StringAttr rounding = op->getAttrOfType<StringAttr>("rounding");
+    StringAttr saturate = op->getAttrOfType<StringAttr>("saturate");
+    return rounding && rounding.getValue() == "Z" && saturate &&
+           saturate.getValue() == "NOSAT";
+}
+
+std::string describeBF16NarrowingState(Operation *op, bool enableVmiFastmath)
+{
+    std::string description;
+    llvm::raw_string_ostream stream(description);
+    stream << "vmi-fastmath enabled with rounding=\"Z\" and saturate=\"NOSAT\"; "
+              "got vmi-fastmath "
+           << (enableVmiFastmath ? "enabled" : "disabled");
+    StringAttr rounding =
+        op ? op->getAttrOfType<StringAttr>("rounding") : StringAttr();
+    StringAttr saturate =
+        op ? op->getAttrOfType<StringAttr>("saturate") : StringAttr();
+    stream << ", rounding=\""
+           << (rounding ? rounding.getValue() : StringRef("<none>"))
+           << "\", saturate=\""
+           << (saturate ? saturate.getValue() : StringRef("<none>")) << "\"";
+    return description;
+}
+
 // Validation-only acceptance for an already assigned BF16/F32 cast pair.
 // Regular contiguous, deinterleaved, and supported group-slot lane maps
 // preserve their padding and part order through the pairwise physical

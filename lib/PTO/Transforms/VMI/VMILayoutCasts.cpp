@@ -8,12 +8,43 @@
 
 // Layout relation enumeration: casts.
 #include "VMILayoutRelations.h"
+#include "PTO/Transforms/VMIFastmathState.h"
 #include "PTO/Transforms/VMILayoutPropagation.h"
 #include "llvm/ADT/TypeSwitch.h"
 namespace mlir::pto::layout_relations {
 
+// Whether this enumerated cast fact may be offered as a solver candidate.
+// One relation is state-qualified rather than table-defined: the *matching
+// arity* (K=1) dense same-layout `{c, c}` BF16/F32 narrowing pair.  The cast
+// tables list it, but only the NaN-relaxed fastmath lowering turns one physical
+// F32 source part into a dense BF16 value; every other state lowers the per-part
+// vcvt, which places the converted lanes at lane_stride 2.  Offering that pair
+// outside the fastmath state would let the cost model pick a relation the
+// lowering cannot produce (issue #1619), so the candidate set - not a stateless
+// seed - decides it.
+// The gate is deliberately arity-qualified: with twice as many source parts as
+// result parts the paired vcvt form is honest in *any* state, so those rows stay
+// candidates unconditionally (requiresBF16NaNRelaxedLowering is false).
+bool VMILayoutRelations::isAdmissibleCastFact(const VMICastLayoutFact& fact) const
+{
+    if (!op || op->getNumOperands() != 1 || op->getNumResults() != 1) {
+        return true;
+    }
+    auto sourceType = dyn_cast<VMIVRegType>(op->getOperand(0).getType());
+    auto resultType = dyn_cast<VMIVRegType>(op->getResult(0).getType());
+    if (!requiresBF16NaNRelaxedLowering(sourceType, resultType, fact.sourceLayout, fact.resultLayout)) {
+        return true;
+    }
+    // The state comes from the one module attribute every VMI pass shares, so a
+    // candidate decision and the lowering that consumes it cannot disagree.
+    return hasBF16NaNRelaxedFastmathState(op, getVMIFastmathState(op));
+}
+
 void VMILayoutRelations::appendCastFact(const VMICastLayoutFact& fact, const FailureOr<VMICastLayoutFact>& preferred)
 {
+    if (!isAdmissibleCastFact(fact)) {
+        return;
+    }
     appendReachableUniqueRelation(
         relations,
         VMILayoutOpRelation{
@@ -159,23 +190,36 @@ void VMILayoutRelations::appendSameWidthCastFacts(const CastRelationState& state
         appendSourceCastFacts(state, concreteSourceType);
     }
 }
-RelationResult VMILayoutRelations::buildCast()
+// Builds the state every cast phase threads through: whether this is an
+// equal-width numeric cast (which preserves layout) and the stateless preferred
+// row, vetoed when it names the state-qualified (K=1) dense pair outside the
+// fastmath state.  The veto drops the preference only for that pair: when the
+// lowering state refuses it there is no table-level preference among the rows
+// that remain, so the cost model decides on physical rearrangement cost alone
+// instead of being steered towards a relation that was not offered.  The 2:1
+// dense rows are honest in every state and keep their preference.
+CastRelationState VMILayoutRelations::makeCastRelationState(VMIVRegType sourceType, VMIVRegType resultType)
 {
-    if (op->getNumOperands() != 1 || op->getNumResults() != 1) {
-        return failure();
-    }
-    auto sourceType = dyn_cast<VMIVRegType>(op->getOperand(0).getType());
-    auto resultType = dyn_cast<VMIVRegType>(op->getResult(0).getType());
-    if (!sourceType || !resultType) {
-        return failure();
-    }
     bool sameWidthNumericCast = isa<VMIFPToSIOp, VMIFPToUIOp, VMISIToFPOp>(op) &&
                                 pto::getPTOStorageElemBitWidth(sourceType.getElementType()) != 0 &&
                                 pto::getPTOStorageElemBitWidth(sourceType.getElementType()) ==
                                     pto::getPTOStorageElemBitWidth(resultType.getElementType());
-    CastRelationState state{
-        sourceType, resultType, sameWidthNumericCast, supports.getPreferredCastLayoutFact(sourceType, resultType)};
+    FailureOr<VMICastLayoutFact> preferred = supports.getPreferredCastLayoutFact(sourceType, resultType);
+    if (succeeded(preferred) &&
+        requiresBF16NaNRelaxedLowering(
+            sourceType, resultType, preferred->sourceLayout, preferred->resultLayout) &&
+        !hasBF16NaNRelaxedFastmathState(op, getVMIFastmathState(op))) {
+        preferred = failure();
+    }
+    return CastRelationState{sourceType, resultType, sameWidthNumericCast, preferred};
+}
 
+// Appends the relations reachable from the source side: the table rows for the
+// source's own layout, the contiguous fallback, and one row set per instantiated
+// group-slot candidate.  Order is part of the contract - the cost model breaks
+// ties in append order - so the three phases keep their relative order.
+void VMILayoutRelations::appendSourceCandidateFacts(const CastRelationState& state, VMIVRegType sourceType)
+{
     appendSourceCastFacts(state, sourceType);
     // Casts whose producer has no explicit layout still need a contiguous
     // seed so the cost solver can materialize their result into a downstream
@@ -197,20 +241,35 @@ RelationResult VMILayoutRelations::buildCast()
             sourceType.getContext(), sourceType.getElementCount(), sourceType.getElementType(), layout);
         appendSourceCastFacts(state, concreteSourceType);
     }
+}
+
+RelationResult VMILayoutRelations::buildCast()
+{
+    if (op->getNumOperands() != 1 || op->getNumResults() != 1) {
+        return failure();
+    }
+    auto sourceType = dyn_cast<VMIVRegType>(op->getOperand(0).getType());
+    auto resultType = dyn_cast<VMIVRegType>(op->getResult(0).getType());
+    if (!sourceType || !resultType) {
+        return failure();
+    }
+    CastRelationState state = makeCastRelationState(sourceType, resultType);
+    appendSourceCandidateFacts(state, sourceType);
     appendAnnotatedCastFacts(state);
 
-    if (sameWidthNumericCast) {
+    if (state.sameWidthNumericCast) {
         // Same-width numeric casts preserve layout. Query the same-width
         // support facts for dense candidates from either side, including an
         // explicit result whose source is still unassigned.
         appendSameWidthCastFacts(state);
-    }
-
-    // A cast is also reachable from its result: the pass' own cast transfer
-    // queries the table for whichever side changed, so an annotated result
-    // states which rows apply.  Those rows are the IR's own consequence rather
-    // than a solver choice, so the solver's gate is not applied to them.
-    if (!sameWidthNumericCast) {
+    } else {
+        // A cast is also reachable from its result: the pass' own cast transfer
+        // queries the table for whichever side changed, so an annotated result
+        // states which rows apply.  These rows are enumerated through the same
+        // appendCastFact funnel as the source-side rows, so the state gate
+        // applies to them too.  Only the pair the IR itself states
+        // (appendAnnotatedCastFacts) bypasses the gate, and that pair is
+        // rejected by validation instead.
         appendResultCastFacts(state);
     }
     if (relations.empty()) {

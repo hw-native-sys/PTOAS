@@ -1,0 +1,74 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+
+// A K=1 (one source part) f32-to-bf16 narrowing that feeds an elementwise lane
+// consumer, not a store.  The dense same-layout {c, c} relation is only real in
+// the NaN-relaxed fastmath state, so outside it layout assignment must pick the
+// honest lane_stride = 2 relation and materialize one pack before the consumer;
+// the consumer then reads dense data.  Issue #1619 regressed exactly here: the
+// stateless seed pinned {c, c} and the lowering emitted a half-filled value.
+
+// Both passes read the state from the module attribute the vmi-set-fastmath
+// pass records, so a strict assignment cannot be paired with a fastmath
+// lowering by construction.
+// RUN: pto-test-opt %s -vmi-set-fastmath=vmi-fastmath=false -vmi-lower-unified-to-legacy -vmi-mask-granularity-assignment -vmi-layout-assignment | FileCheck %s --check-prefix=ASSIGN-STRICT
+// RUN: pto-test-opt %s -vmi-set-fastmath=vmi-fastmath=true -vmi-lower-unified-to-legacy -vmi-mask-granularity-assignment -vmi-layout-assignment | FileCheck %s --check-prefix=ASSIGN-FAST
+// RUN: pto-test-opt %s -vmi-set-fastmath=vmi-fastmath=false -vmi-lower-unified-to-legacy -vmi-mask-granularity-assignment -vmi-layout-assignment -vmi-to-vpto | FileCheck %s --check-prefix=STRICT --implicit-check-not=pto.vmi.
+// RUN: pto-test-opt %s -vmi-set-fastmath=vmi-fastmath=true -vmi-lower-unified-to-legacy -vmi-mask-granularity-assignment -vmi-layout-assignment -vmi-to-vpto | FileCheck %s --check-prefix=FAST --implicit-check-not=pto.vmi.
+
+module {
+  func.func @k1_narrow_dense_consumer(
+      %src: !pto.vmi.vreg<64xf32>,
+      %other: !pto.vmi.vreg<64xbf16>,
+      %dst: !pto.ptr<bf16, ub>,
+      %off: index) {
+    %c64 = arith.constant 64 : index
+    %m = pto.vmi.create_mask %c64 : index -> !pto.vmi.mask<64xpred>
+    %narrow = pto.vmi.truncf %src {rounding = "Z", saturate = "NOSAT"}
+        : !pto.vmi.vreg<64xf32> -> !pto.vmi.vreg<64xbf16>
+    %max = pto.vmi.vmax %narrow, %other, %m
+        : !pto.vmi.vreg<64xbf16>, !pto.vmi.vreg<64xbf16>, !pto.vmi.mask<64xpred>
+        -> !pto.vmi.vreg<64xbf16>
+    pto.vmi.vstore %max, %dst[%off]
+        : !pto.vmi.vreg<64xbf16>, !pto.ptr<bf16, ub>
+    return
+  }
+}
+
+// No fastmath: the narrowing result keeps the lane stride the per-part vcvt
+// really produces, and one ensure_layout packs it before the vmax.
+// ASSIGN-STRICT-LABEL: func.func @k1_narrow_dense_consumer(
+// ASSIGN-STRICT: pto.vmi.truncf {{.*}} -> !pto.vmi.vreg<64xbf16, #pto.vmi.layout<contiguous, lane_stride = 2>>
+// ASSIGN-STRICT: pto.vmi.ensure_layout {{.*}} : !pto.vmi.vreg<64xbf16, #pto.vmi.layout<contiguous, lane_stride = 2>> -> !pto.vmi.vreg<64xbf16, #pto.vmi.layout<contiguous>>
+// ASSIGN-STRICT: pto.vmi.vmax
+
+// Fastmath with rounding Z / NOSAT: the dense relation is real and is selected
+// without any materialization.
+// ASSIGN-FAST-LABEL: func.func @k1_narrow_dense_consumer(
+// ASSIGN-FAST: pto.vmi.truncf {{.*}} -> !pto.vmi.vreg<64xbf16, #pto.vmi.layout<contiguous>>
+// ASSIGN-FAST-NOT: pto.vmi.ensure_layout
+// ASSIGN-FAST: pto.vmi.vmax
+
+// The packed form: a single vcvt for the one source part, then one pack that
+// compacts the even lanes into the dense value the vmax consumes.
+// STRICT-LABEL: func.func @k1_narrow_dense_consumer(
+// STRICT-DAG: pto.vcvt {{.*}} {part = "EVEN"{{.*}} -> !pto.vreg<128xbf16>
+// STRICT-DAG: pto.vpack {{.*}} "LOWER"
+// STRICT: pto.vmax {{.*}} : !pto.vreg<128xbf16>, !pto.vreg<128xbf16>, !pto.mask<b16> -> !pto.vreg<128xbf16>
+
+// The dense form: the NaN-relaxed fastmath shift-and-deinterleave lowering
+// produces the dense value directly.
+// FAST-LABEL: func.func @k1_narrow_dense_consumer(
+// FAST-DAG: pto.vdup
+// FAST-DAG: pto.vdintlv
+// FAST: pto.vmax
+
+// The mismatch guard is kept as a defensive backstop: with one recorded state
+// the two passes can no longer disagree, so it is not reachable from a pipeline
+// that uses both of them.  Grading the relation an assignment would produce
+// against the state recorded on the module is what makes that true.

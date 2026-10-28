@@ -785,9 +785,11 @@ LogicalResult checkSupportedExtFShape(VMIExtFOp op,
 }
 
 LogicalResult checkSupportedTruncFShape(VMITruncFOp op,
-                                        std::string *reason = nullptr) {
+                                        std::string *reason,
+                                        bool enableVmiFastmath)
+{
   VMILayoutSupport supports;
-  if (failed(supports.getTruncFSupport(op, reason))) {
+  if (failed(supports.getTruncFSupport(op, reason, enableVmiFastmath))) {
     return failure();
   }
   return success();

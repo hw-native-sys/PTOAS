@@ -44,11 +44,11 @@ module {
 // ASSIGN-SAME: -> !pto.vmi.mask<64xb32, #pto.vmi.layout<contiguous>>
 // ASSIGN: %[[SUM:.*]] = pto.vmi.vadd
 // ASSIGN: %[[NARROW:.*]] = pto.vmi.truncf %[[SUM]]
-// ASSIGN-SAME: -> !pto.vmi.vreg<64xbf16, #pto.vmi.layout<contiguous>>
+// ASSIGN-SAME: -> !pto.vmi.vreg<64xbf16, #pto.vmi.layout<contiguous, lane_stride = 2>>
 // ASSIGN: %[[MASK16:.*]] = pto.vmi.create_mask %[[C64]]
-// ASSIGN-SAME: -> !pto.vmi.mask<64xb16, #pto.vmi.layout<contiguous>>
+// ASSIGN-SAME: -> !pto.vmi.mask<64xb16, #pto.vmi.layout<contiguous, lane_stride = 2>>
 // ASSIGN: pto.vmi.masked_store %[[NARROW]]
-// ASSIGN-SAME: !pto.vmi.mask<64xb16, #pto.vmi.layout<contiguous>>
+// ASSIGN-SAME: !pto.vmi.mask<64xb16, #pto.vmi.layout<contiguous, lane_stride = 2>>
 // ASSIGN: %[[REDUCE:.*]] = pto.vmi.group_reduce_addf %[[SUM]], %[[MASK32]]
 // ASSIGN-SAME: {num_groups = 1 : i64, reassoc}
 // ASSIGN-SAME: !pto.vmi.mask<64xb32, #pto.vmi.layout<contiguous>>
@@ -67,7 +67,7 @@ module {
 // LOWER: %[[ALL:.*]] = pto.pset_b32 "PAT_ALL"
 // LOWER: %[[SUM:.*]] = pto.vadd %[[SRC]], %[[RHS]], %[[ALL]]
 // LOWER: pto.vcvt {{.*}} {part = "EVEN", rnd = "R", sat = "SAT"}
-// LOWER: pto.vsts {{.*}}, %[[DST_BF16]][%[[ALIGNED_OFF]]], {{.*}} : !pto.vreg<128xbf16>, !pto.ptr<bf16, ub>, !pto.mask<b16>
+// LOWER: pto.vsts {{.*}}, %[[DST_BF16]][%[[ALIGNED_OFF]]], {{.*}} {dist = "PK_B32"} : !pto.vreg<128xbf16>, !pto.ptr<bf16, ub>, !pto.mask<b32>
 // LOWER: %[[REDUCED:.*]] = pto.vcadd %[[SUM]], %[[ALL]]
 // LOWER: %[[STORE_MASK:.*]] = pto.pset_b32 "PAT_VL1"
 // LOWER: pto.vsts %[[REDUCED]], %[[DST]][%[[ALIGNED_OFF]]], {{.*}} {dist = "1PT_B32"}

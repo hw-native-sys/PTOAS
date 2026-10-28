@@ -310,7 +310,18 @@ private:
 
     RelationResult buildReturn(func::ReturnOp returnOp);
     RelationResult buildCall(func::CallOp call);
+    /// Whether an enumerated cast fact is a legal *candidate* in the current
+    /// lowering state.  Only the dense same-layout BF16 narrowing relation is
+    /// state-qualified; every other fact is table-defined.
+    bool isAdmissibleCastFact(const VMICastLayoutFact& fact) const;
     void appendCastFact(const VMICastLayoutFact& fact, const FailureOr<VMICastLayoutFact>& preferred);
+    /// The state every cast phase threads through: the equal-width-numeric-cast
+    /// flag and the (state-vetoed) stateless preferred row.
+    CastRelationState makeCastRelationState(VMIVRegType sourceType, VMIVRegType resultType);
+    /// The source-side candidate phases, in append order: the source's own
+    /// layout rows, the contiguous fallback, and one row set per instantiated
+    /// group-slot candidate.
+    void appendSourceCandidateFacts(const CastRelationState& state, VMIVRegType sourceType);
     RelationResult buildCast();
     RelationResult buildEnsure();
     RelationResult buildMaskGranularity(VMIEnsureMaskGranularityOp ensure);

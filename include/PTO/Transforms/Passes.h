@@ -148,6 +148,7 @@ LogicalResult validateVMILayoutAssignedIR(ModuleOp module,
                                           bool verifyHelperSupports = true);
 std::unique_ptr<Pass> createPTOValidateVMIIRPass();
 std::unique_ptr<Pass> createPTOValidateVMILayoutIRPass();
+std::unique_ptr<Pass> createVMISetFastmathStatePass();
 std::unique_ptr<Pass> createVMIPreAssignmentCombinePass();
 std::unique_ptr<Pass> createVMIExpandImplicitEnsureLayoutsPass();
 std::unique_ptr<Pass> createVMIMaskGranularityAssignmentPass();

@@ -46,6 +46,8 @@
 
 #include "../VMI/VMIIndexUtils.h"
 
+#include "PTO/Transforms/VMIFastmathState.h"
+
 namespace mlir {
 namespace pto {
 #define GEN_PASS_DEF_VMITOVPTO

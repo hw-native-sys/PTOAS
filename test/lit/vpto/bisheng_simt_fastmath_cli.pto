@@ -15,4 +15,4 @@
 // CHECK: --simt-fastmath
 // CHECK-SAME: Enable Bisheng SIMT floating-point contraction and fast math combining for VPTO device compilation
 // CHECK: --vmi-fastmath
-// CHECK-SAME: Enable VMI conversion fast paths that may change NaN results, including f32-to-bf16 narrowing. Enabled by default; pass --vmi-fastmath=false to disable
+// CHECK-SAME: Select the VMI conversion state for the whole pipeline: it enables the conversion fast paths that may change NaN results, including f32-to-bf16 narrowing, and lets layout assignment offer the dense same-layout relation for those casts. Enabled by default; pass --vmi-fastmath=false to disable

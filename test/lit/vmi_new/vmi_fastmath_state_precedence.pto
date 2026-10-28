@@ -1,0 +1,38 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+
+// The VMI conversion state is recorded on the outermost module of the
+// compilation.  A pto.vmi_fastmath carried by a nested kernel module must not be
+// able to shadow the driver's --vmi-fastmath: the driver's value wins, and the
+// nested attribute is scrubbed before emission (the output below contains no
+// pto.vmi_fastmath at all).
+
+// RUN: ptoas --pto-arch=a5 --pto-backend=vpto --emit-vpto --vmi-fastmath=false %s -o - | FileCheck %s --check-prefix=STRICT
+// RUN: ptoas --pto-arch=a5 --pto-backend=vpto --emit-vpto --vmi-fastmath %s -o - | FileCheck %s --check-prefix=FAST
+
+module attributes {pto.target_arch = "a5"} {
+  module attributes {pto.backend = "vpto", pto.kernel_kind = #pto.kernel_kind<vector>, pto.vmi_fastmath = true} {
+    func.func @k1_bf16_narrow(%src: !pto.ptr<f32, ub>, %dst: !pto.ptr<bf16, ub>, %offset: index) {
+      %c64 = arith.constant 64 : index
+      %aligned_offset = arith.muli %offset, %c64 : index
+      %wide = pto.vmi.vload %src[%aligned_offset]
+          : !pto.ptr<f32, ub> -> !pto.vmi.vreg<64xf32>
+      %narrow = pto.vmi.vcvt %wide {rounding = "Z", saturate = "NOSAT"}
+          : !pto.vmi.vreg<64xf32> -> !pto.vmi.vreg<64xbf16>
+      pto.vmi.vstore %narrow, %dst[%aligned_offset]
+          : !pto.vmi.vreg<64xbf16>, !pto.ptr<bf16, ub>
+      return
+    }
+  }
+}
+
+// STRICT: pto.vcvt
+// STRICT-NOT: pto.vdintlv
+// FAST: pto.vdintlv
+// STRICT-NOT: pto.vmi_fastmath
+// FAST-NOT: pto.vmi_fastmath

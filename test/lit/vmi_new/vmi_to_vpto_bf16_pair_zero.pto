@@ -8,35 +8,24 @@
 // MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE. See LICENSE in the
 // root of the software repository for the full text of the License.
 
-// RUN: pto-test-opt %s -vmi-lower-unified-to-legacy -vmi-to-vpto=vmi-fastmath=true | FileCheck %s
-// RUN: pto-test-opt %s -vmi-lower-unified-to-legacy -vmi-to-vpto=vmi-fastmath=false | FileCheck %s --check-prefix=STRICT
+// The VMI conversion state is recorded once on the module (vmi-set-fastmath)
+// and read back by every VMI pass, so both runs pin it explicitly.
+// RUN: pto-test-opt %s -vmi-set-fastmath=vmi-fastmath=true -vmi-lower-unified-to-legacy -vmi-to-vpto | FileCheck %s
+// RUN: pto-test-opt %s -vmi-set-fastmath=vmi-fastmath=false -vmi-lower-unified-to-legacy -vmi-to-vpto | FileCheck %s --check-prefix=STRICT
 
 module {
-  func.func @f32_to_bf16_pair_64(
-      %src: !pto.vmi.vreg<64xf32, #pto.vmi.layout<contiguous>>)
-      -> !pto.vmi.vreg<32x!pto.f4E2M1x2,
-                        #pto.vmi.layout<contiguous, lane_stride = 4>> {
-    %result = pto.vmi.vcvt %src {rounding = "Z", saturate = "NOSAT"}
-        : !pto.vmi.vreg<64xf32, #pto.vmi.layout<contiguous>>
-        -> !pto.vmi.vreg<64xbf16, #pto.vmi.layout<contiguous>>
-    %pair = pto.vmi.vinterpret_cast %result
-        : !pto.vmi.vreg<64xbf16, #pto.vmi.layout<contiguous>>
-        -> !pto.vmi.vreg<32x!pto.bf16x2, #pto.vmi.layout<contiguous>>
-    %packed = pto.vmi.vcvt %pair {rounding = "R"}
-        : !pto.vmi.vreg<32x!pto.bf16x2, #pto.vmi.layout<contiguous>>
-        -> !pto.vmi.vreg<32x!pto.f4E2M1x2,
-                          #pto.vmi.layout<contiguous, lane_stride = 4>>
-    return %packed : !pto.vmi.vreg<32x!pto.f4E2M1x2,
-                                   #pto.vmi.layout<contiguous, lane_stride = 4>>
-  }
-
+  // Saturating narrowing keeps the honest lane_stride relation: the per-part
+  // vcvt writes the converted lanes at lane_stride 2, so the result says so and
+  // no dense value is ever claimed.  (The K=1 dense fastmath form lives in
+  // vmi_to_vpto_bf16_pair_zero_k1.pto; a dense pair here would be rejected.)
   func.func @f32_to_bf16_pair_64_sat(
       %src: !pto.vmi.vreg<64xf32, #pto.vmi.layout<contiguous>>)
-      -> !pto.vmi.vreg<64xbf16, #pto.vmi.layout<contiguous>> {
+      -> !pto.vmi.vreg<64xbf16, #pto.vmi.layout<contiguous, lane_stride = 2>> {
     %result = pto.vmi.vcvt %src {rounding = "Z", saturate = "SAT"}
         : !pto.vmi.vreg<64xf32, #pto.vmi.layout<contiguous>>
-        -> !pto.vmi.vreg<64xbf16, #pto.vmi.layout<contiguous>>
-    return %result : !pto.vmi.vreg<64xbf16, #pto.vmi.layout<contiguous>>
+        -> !pto.vmi.vreg<64xbf16, #pto.vmi.layout<contiguous, lane_stride = 2>>
+    return %result : !pto.vmi.vreg<64xbf16,
+                                    #pto.vmi.layout<contiguous, lane_stride = 2>>
   }
 
   func.func @f32_to_bf16_pair_128(
@@ -90,12 +79,6 @@ module {
   }
 }
 
-// CHECK-LABEL: func.func @f32_to_bf16_pair_64(
-// CHECK: %[[F32_64:.*]] = pto.vbitcast %{{.*}} : !pto.vreg<64xf32> -> !pto.vreg<128xi16>
-// CHECK: %[[ZERO64:.*]] = pto.vdup {{.*}} -> !pto.vreg<128xi16>
-// CHECK: %[[LOW64:.*]], %[[HIGH64:.*]] = pto.vdintlv %[[F32_64]], %[[ZERO64]]
-// CHECK: %{{.*}} = pto.vbitcast %[[HIGH64]] : !pto.vreg<128xi16> -> !pto.vreg<128xbf16>
-// CHECK-COUNT-1: pto.vcvt
 // CHECK-LABEL: func.func @f32_to_bf16_pair_64_sat(
 // CHECK: pto.vcvt
 // CHECK-NOT: pto.vdintlv
@@ -115,9 +98,6 @@ module {
 // CHECK: %{{.*}} = pto.vbitcast %[[HIGH128]] : !pto.vreg<128xbf16> -> !pto.vreg<64xf32>
 // CHECK-NOT: pto.vcvt
 
-// STRICT-LABEL: func.func @f32_to_bf16_pair_64(
-// STRICT: pto.vcvt
-// STRICT-NOT: pto.vdintlv
 // STRICT-LABEL: func.func @f32_to_bf16_pair_64_sat(
 // STRICT: pto.vcvt
 // STRICT-NOT: pto.vdintlv

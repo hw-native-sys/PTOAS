@@ -8,8 +8,8 @@
 // FOR A PARTICULAR PURPOSE. See LICENSE in the root of the software repository
 // for the full text of the License.
 
-// RUN: pto-test-opt %s -vmi-lower-unified-to-legacy -vmi-to-vpto=vmi-fastmath=true | FileCheck %s
-// RUN: pto-test-opt %s -vmi-lower-unified-to-legacy -vmi-to-vpto=vmi-fastmath=false | FileCheck %s --check-prefix=STRICT
+// RUN: pto-test-opt %s -vmi-set-fastmath=vmi-fastmath=true -vmi-lower-unified-to-legacy -vmi-to-vpto | FileCheck %s
+// RUN: pto-test-opt %s -vmi-set-fastmath=vmi-fastmath=false -vmi-lower-unified-to-legacy -vmi-to-vpto | FileCheck %s --check-prefix=STRICT
 
 // A reduction result has only 2/4/8 logical lanes, but each group-slot result
 // still occupies one physical 64xf32 -> 128xbf16 pair. Matching group-slot

@@ -6,8 +6,10 @@
 // INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
 // See LICENSE in the root of the software repository for the full text of the License.
 
-// RUN: pto-test-opt %s -vmi-lower-unified-to-legacy -vmi-to-vpto=vmi-fastmath=true | FileCheck %s
-// RUN: pto-test-opt %s -vmi-lower-unified-to-legacy -vmi-to-vpto=vmi-fastmath=false | FileCheck %s --check-prefix=STRICT
+// The VMI conversion state is recorded once on the module (vmi-set-fastmath)
+// and read back by every VMI pass, so both runs pin it explicitly.
+// RUN: pto-test-opt %s -vmi-set-fastmath=vmi-fastmath=true -vmi-lower-unified-to-legacy -vmi-to-vpto | FileCheck %s
+// RUN: pto-test-opt %s -vmi-set-fastmath=vmi-fastmath=false -vmi-lower-unified-to-legacy -vmi-to-vpto | FileCheck %s --check-prefix=STRICT
 
 module {
   func.func @trunc_d2(

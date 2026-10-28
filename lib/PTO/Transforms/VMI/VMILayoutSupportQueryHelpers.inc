@@ -263,12 +263,34 @@ inline LogicalResult getNarrowCastSupport(VMIVRegType sourceType,
 }
 
 LogicalResult VMILayoutSupport::getTruncFSupport(VMITruncFOp op,
-                                                 std::string *reason) const {
+                                                 std::string *reason,
+                                                 bool enableVmiFastmath) const
+{
   auto sourceType = cast<VMIVRegType>(op.getSource().getType());
   auto resultType = cast<VMIVRegType>(op.getResult().getType());
-  if (succeeded(getNarrowCastSupport(sourceType, resultType, reason))) {
-    return success();
-  }
+  // The dense same-layout BF16 narrowing pair is state-qualified: the cast
+  // table lists it, but only the NaN-relaxed fastmath lowering produces a dense
+  // BF16 result.  A hand-written or stale assignment of that pair outside that
+  // state must be rejected here, where the diagnostic can name the condition,
+  // instead of reaching a lowering that would write the converted lanes at
+  // lane_stride 2 into a value that claims to be dense.
+    if (requiresBF16NaNRelaxedLowering(
+        sourceType, resultType, sourceType.getLayoutAttr(),
+        resultType.getLayoutAttr()) &&
+        !hasBF16NaNRelaxedFastmathState(op.getOperation(), enableVmiFastmath)) {
+        if (reason) {
+            std::string message;
+            llvm::raw_string_ostream stream(message);
+            stream << "the dense same-layout BF16 narrowing relation is only realized "
+                      "by the NaN-relaxed fastmath lowering, which requires "
+                   << describeBF16NarrowingState(op.getOperation(), enableVmiFastmath);
+            *reason = message;
+        }
+        return failure();
+    }
+    if (succeeded(getNarrowCastSupport(sourceType, resultType, reason))) {
+        return success();
+    }
   StringAttr rounding = op->getAttrOfType<StringAttr>("rounding");
   bool zeroRound = rounding && rounding.getValue() == "Z";
   VMILayoutAttr sourceLayout = sourceType.getLayoutAttr();

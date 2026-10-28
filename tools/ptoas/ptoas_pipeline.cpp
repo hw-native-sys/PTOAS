@@ -13,6 +13,7 @@
 
 #include "ptoas_internal.h"
 #include "PTO/Transforms/VPTOBridgeTokens.h"
+#include "PTO/Transforms/VMIFastmathState.h"
 #include "PTO/Transforms/VMILayoutPlanner.h"
 
 #include "mlir/Dialect/Arith/Transforms/BufferizableOpInterfaceImpl.h"
@@ -1183,10 +1184,17 @@ static LogicalResult runVPTOBackendPipeline(OwningOpRef<ModuleOp> &module,
   if (failed(applyConfiguredPassManagerCLOptions(
           pm, "VPTO unified emission pipeline")))
     return failure();
+  // Record the VMI conversion state once, before any VMI pass runs.  It is the
+  // single source of truth: vmi-layout-assignment and vmi-to-vpto both read it
+  // back from the module (see VMIFastmathState.h), so they cannot disagree about
+  // which lowering the pipeline is allowed to emit.  The state is removed again
+  // after the pipeline so it does not leak into emitted IR.
+  pto::setVMIFastmathState(*module, enableVmiFastmath);
   if (failed(pm.run(module.get()))) {
     llvm::errs() << "Error: VPTO emission pipeline failed.\n";
     return failure();
   }
+  pto::clearVMIFastmathState(*module);
   return success();
 }
 
@@ -1236,9 +1244,7 @@ static void appendVMISemanticPipeline(OpPassManager &pm) {
   // VINTLV.  The explicit -vmi-expand-implicit-ensure-layouts test pass remains
   // available for callers that intentionally request that compatibility
   // rewrite.
-  pto::VMIToVPTOOptions vmiToVPTOOptions;
-  vmiToVPTOOptions.enableVmiFastmath = enableVmiFastmath;
-  pm.addPass(pto::createVMIToVPTOPass(vmiToVPTOOptions));
+  pm.addPass(pto::createVMIToVPTOPass());
   pm.addPass(pto::createVPTOPack4StoreMaskNormalizePass());
 
   pm.addPass(pto::createVPTOStatefulStreamFusionPass());

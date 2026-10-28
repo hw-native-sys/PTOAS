@@ -17,6 +17,7 @@
 #include "PTO/Transforms/VMIControlFlowSupport.h"
 #include "PTO/Transforms/VMILayoutPropagation.h"
 #include "VMILayoutStructuralAssignment.h"
+#include "PTO/Transforms/VMIFastmathState.h"
 #include "PTO/Transforms/VMILayoutPlanner.h"
 #include "PTO/Transforms/VMILayoutSupport.h"
 #include "PTO/Transforms/VMILayoutSpineAnalysis.h"
@@ -1069,6 +1070,19 @@ struct LayoutSolver {
     {
         auto sourceType = cast<VMIVRegType>(castOp.getSource().getType());
         auto resultType = cast<VMIVRegType>(castOp.getResult().getType());
+        // The *matching-arity* (K=1) dense same-layout BF16 narrowing pair is
+        // state-qualified: it is real only in the NaN-relaxed fastmath state
+        // (fastmath enabled plus rounding "Z" and saturate "NOSAT"; see
+        // VMILayoutCasts).  A stateless preferred-table seed cannot express that
+        // condition - it pins the dense pair in every state, which is exactly
+        // issue #1619 - so this shape is left to the costed candidate
+        // enumeration, which decides between the dense pair and the honest
+        // lane_stride 2 relation.  Every other cast keeps its seed and phase
+        // unchanged, including the 2:1 dense pairs, whose paired vcvt form is
+        // honest in every state.
+        if (requiresBF16NaNRelaxedLowering(sourceType, resultType)) {
+            return WalkResult::advance();
+        }
         FailureOr<VMICastLayoutFact> fact = getCastLayoutFactForSeed(op, castOp.getResult(), sourceType, resultType);
         VMILayoutAttr resultLayout = succeeded(fact) ? fact->resultLayout : getContiguousLayout();
         DataLayoutSeedPhase phase = succeeded(fact) ? getCastSeedPhase(*fact) : DataLayoutSeedPhase::Cast;
@@ -1899,6 +1913,33 @@ struct LayoutSolver {
         });
     }
 
+    // The dense same-layout BF16 narrowing pair is only real in the NaN-relaxed
+    // fastmath state.  Candidate enumeration never offers it outside that state,
+    // but hand-written IR can still *state* the pair with explicit layouts, and
+    // a stated pair is a relation the planner keeps.  Reject it here, before any
+    // lowering can write the converted lanes at lane_stride 2 into a value that
+    // claims to be dense.
+    LogicalResult validateBF16NarrowingState()
+    {
+        WalkResult result = module.walk([this](VMITruncFOp truncf) {
+            auto sourceType = dyn_cast<VMIVRegType>(truncf.getSource().getType());
+            auto resultType = dyn_cast<VMIVRegType>(truncf.getResult().getType());
+            if (!sourceType || !resultType ||
+                !requiresBF16NaNRelaxedLowering(
+                    sourceType, resultType, sourceType.getLayoutAttr(), resultType.getLayoutAttr()) ||
+                hasBF16NaNRelaxedFastmathState(truncf.getOperation(), getVMIFastmathState(module))) {
+                return WalkResult::advance();
+            }
+            truncf.emitError()
+                << kVMIDiagLayoutContractPrefix
+                << "a dense same-layout BF16 narrowing (contiguous -> contiguous) is only realized "
+                   "by the NaN-relaxed fastmath lowering, which requires "
+                << describeBF16NarrowingState(truncf.getOperation(), getVMIFastmathState(module));
+            return WalkResult::interrupt();
+        });
+        return failure(result.wasInterrupted());
+    }
+
     LogicalResult run()
     {
         if (failed(collect())) {
@@ -1944,6 +1985,9 @@ struct LayoutSolver {
         if (failed(materializeCallBoundaries())) {
             return failure();
         }
+        if (failed(validateBF16NarrowingState())) {
+            return failure();
+        }
         rewriteFunctionType();
         return validateVMILayoutAssignedIR(module, nullptr, false);
     }
@@ -1980,7 +2024,11 @@ struct VMILayoutAssignmentPass : public mlir::pto::impl::VMILayoutAssignmentBase
 
     void runOnOperation() override
     {
-        if (plannerOptions.maxFrontierEntriesPerComponent == 0 || plannerOptions.maxTransitionsPerComponent == 0) {
+        // The VMI conversion state is not a pass option: it is recorded once on
+        // the module (see VMIFastmathState.h) and read back here and by
+        // vmi-to-vpto, so the two passes cannot disagree.
+        if (plannerOptions.maxFrontierEntriesPerComponent == 0 ||
+            plannerOptions.maxTransitionsPerComponent == 0) {
             getOperation().emitError("VMI layout search budgets must be positive");
             signalPassFailure();
             return;

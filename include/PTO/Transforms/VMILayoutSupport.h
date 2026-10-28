@@ -564,7 +564,15 @@ public:
 
     LogicalResult getGroupBroadcastLoadSupport(VMIGroupBroadcastLoadOp op, std::string* reason = nullptr) const;
 
-    LogicalResult getTruncFSupport(VMITruncFOp op, std::string* reason = nullptr) const;
+    /// Whether the already-assigned layout pair of \p op has a registered
+    /// lowering.  \p enableVmiFastmath reflects the state the lowering will
+    /// actually run in: a dense same-layout BF16 narrowing pair is accepted only
+    /// in the NaN-relaxed fastmath state (fastmath on, rounding "Z", saturate
+    /// "NOSAT"), because that is the only lowering that produces a dense result.
+    /// \p enableVmiFastmath is required: the state is not a property of the IR
+    /// shape, so a defaulted value would grade the same IR differently depending
+    /// on the call site.
+    LogicalResult getTruncFSupport(VMITruncFOp op, std::string* reason, bool enableVmiFastmath) const;
 
     LogicalResult getExtFSupport(VMIExtFOp op, std::string* reason = nullptr) const;
 
@@ -810,6 +818,51 @@ bool isBF16SameLayoutCastPair(
 /// narrowing. This is validator-only and is not a layout-solver candidate.
 bool isDeinterleaved4ToContiguousBF16CastPair(
     VMIVRegType sourceType, VMIVRegType resultType, VMILayoutAttr sourceLayout, VMILayoutAttr resultLayout);
+
+/// True when the element types and element count name the dense (64/128/256
+/// element, non group-slot) F32 -> BF16 narrowing family.  Only this family has
+/// a dense same-layout `{c, c}` relation, and whether that relation is real
+/// depends on how the cast lowers, not on the width pair: only the NaN-relaxed
+/// fastmath lowering produces a dense BF16 result from one physical source
+/// part.  The strict per-part vcvt writes the converted lanes at lane_stride 2,
+/// so for this family the dense relation is state-qualified and must never be
+/// decided by a stateless preference table.
+bool isDenseBF16NarrowingCast(VMIVRegType sourceType, VMIVRegType resultType);
+
+/// True for the dense same-layout pair of the family above, i.e. the
+/// `{c(1), c(1)}` relation whose result claims one dense BF16 value per lane.
+bool isDenseBF16NarrowingSameLayoutPair(
+    VMIVRegType sourceType, VMIVRegType resultType, VMILayoutAttr sourceLayout, VMILayoutAttr resultLayout);
+
+/// True when the pair above has one source part per result part.  That is the
+/// only shape whose dense lowering is exclusively the NaN-relaxed fastmath
+/// path: with twice as many source parts as result parts the paired vcvt form
+/// is honest in any state, so it does not require the fastmath condition.
+bool requiresBF16NaNRelaxedLowering(
+    VMIVRegType sourceType, VMIVRegType resultType, VMILayoutAttr sourceLayout, VMILayoutAttr resultLayout);
+
+/// The same question for a cast whose layouts are not assigned yet: whether the
+/// dense same-layout pair of this narrowing family is the matching-arity (K=1)
+/// shape, i.e. the only shape whose dense lowering needs the NaN-relaxed
+/// fastmath state.  Decided from the dense contiguous layouts both sides start
+/// from, so the stateless cast seed can be gated by the same predicate the
+/// candidate set uses.
+bool requiresBF16NaNRelaxedLowering(VMIVRegType sourceType, VMIVRegType resultType);
+
+/// True when \p op is in the NaN-relaxed fastmath state that realizes the dense
+/// BF16 narrowing relation: fastmath enabled plus rounding "Z" and saturate
+/// "NOSAT".  Every other state must stay on the lane_stride 2 relation, which
+/// the per-part vcvt genuinely implements.
+bool hasBF16NaNRelaxedFastmathState(Operation* op, bool enableVmiFastmath);
+
+/// The state clause shared by every diagnostic about the dense BF16 narrowing
+/// relation: the required condition and the observed one, quoted consistently so
+/// users and CI can grep one string:
+/// ```
+/// requires vmi-fastmath enabled with rounding="Z" and saturate="NOSAT"; got
+/// vmi-fastmath <enabled|disabled>, rounding="<mode>", saturate="<mode>"
+/// ```
+std::string describeBF16NarrowingState(Operation* op, bool enableVmiFastmath);
 
 /// True when the direct E2B packet backing \p fact can be materialized at the
 /// address of \p op.  E2B needs a stricter base-address alignment than the

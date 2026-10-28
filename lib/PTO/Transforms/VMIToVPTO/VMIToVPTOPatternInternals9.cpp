@@ -32,6 +32,23 @@ struct VMIToVPTOPass : public mlir::pto::impl::VMIToVPTOBase<VMIToVPTOPass> {
 
   void runOnOperation() override {
     ModuleOp module = getOperation();
+    // A pipeline that still passes the removed pass-local option must fail with
+    // an explanation instead of silently running with the module state.  The
+    // occurrence count is the only reliable "was parsed" signal: the options
+    // struct's default value is copied into the pass through operator=, which
+    // marks hasValue() but is not a user-given value.
+    if (deprecatedVmiFastmath.getNumOccurrences() > 0) {
+      module.emitError()
+          << "-vmi-to-vpto=vmi-fastmath is no longer supported: the VMI "
+             "conversion state is pipeline-wide. Use --vmi-fastmath on the "
+             "driver, or record it with "
+             "-vmi-set-fastmath=vmi-fastmath=<bool> before the VMI passes.";
+      signalPassFailure();
+      return;
+    }
+    // The VMI conversion state is the module attribute the driver recorded, not
+    // a pass option, so this pass and vmi-layout-assignment read one value.
+    bool enableVmiFastmath = getVMIFastmathState(module);
     FailureOr<VMILoadSafetyPolicy> loadSafetyPolicy =
         parseLoadSafetyPolicy(loadSafety);
     if (failed(loadSafetyPolicy)) {
@@ -45,7 +62,8 @@ struct VMIToVPTOPass : public mlir::pto::impl::VMIToVPTOBase<VMIToVPTOPass> {
       return;
     }
     if (failed(verifySupportedVMIToVPTOOps(
-            module, enableStableGatherMaskedLoad, *loadSafetyPolicy))) {
+        module, enableStableGatherMaskedLoad, *loadSafetyPolicy,
+        enableVmiFastmath))) {
       signalPassFailure();
       return;
     }

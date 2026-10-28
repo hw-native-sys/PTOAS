@@ -1254,6 +1254,31 @@ def VMILayoutAssignment : Pass<"vmi-layout-assignment", "ModuleOp"> {
                            "mlir::scf::SCFDialect"];
 }
 
+def VMISetFastmathState : Pass<"vmi-set-fastmath", "ModuleOp"> {
+  let summary = "Record the VMI fastmath pipeline state on the module";
+  let description = [{
+    Records the VMI conversion state once on the module as
+    `pto.vmi_fastmath`.  That attribute is the single source of truth for
+    every VMI pass whose layout decisions depend on the lowering state (a dense
+    same-layout BF16 narrowing relation is only real when fastmath is enabled
+    and the cast rounds with Z and does not saturate), so those passes read it
+    back instead of taking their own option and cannot disagree.
+
+    The ptoas driver records `--vmi-fastmath` here.  Test pipelines that need a
+    specific state pin it with `-vmi-set-fastmath=vmi-fastmath=false`.
+  }];
+  let constructor = "mlir::pto::createVMISetFastmathStatePass()";
+  let options = [
+    Option<"enableVmiFastmath", "vmi-fastmath", "bool",
+           /*default=*/"true",
+           "The state to record. The default is true because enabled is the "
+           "historical conversion state and the state every benchmark baseline "
+           "uses; it is a recording knob, not a second user-facing switch - the "
+           "driver always records the value of --vmi-fastmath here, and test "
+           "pipelines should pass the value they mean explicitly.">,
+  ];
+}
+
 def VMILayoutRematerializeWeakProducers
     : Pass<"vmi-layout-rematerialize-weak-producers", "ModuleOp"> {
   let summary = "Rematerialize weak layout producers before layout assignment";
@@ -1433,11 +1458,13 @@ def VMIToVPTO : Pass<"vmi-to-vpto", "ModuleOp"> {
   }];
   let constructor = "mlir::pto::createVMIToVPTOPass()";
   let options = [
-    Option<"enableVmiFastmath", "vmi-fastmath", "bool",
-           /*default=*/"true",
-           "Enable VMI conversion fast paths that may change NaN results, "
-           "including f32-to-bf16 narrowing. Enabled by default; pass "
-           "vmi-fastmath=false to disable.">,
+    Option<"deprecatedVmiFastmath", "vmi-fastmath", "bool",
+           /*default=*/"false",
+           "Removed. This option used to select the VMI conversion state for "
+           "this pass alone, which is exactly the drift the state attribute "
+           "removes. Passing it is an error: use --vmi-fastmath on the driver, "
+           "or record the state with "
+           "-vmi-set-fastmath=vmi-fastmath=<bool> before the VMI passes.">,
     Option<"enableStableGatherMaskedLoad",
            "enable-stable-gather-masked-load", "bool",
            /*default=*/"false",
