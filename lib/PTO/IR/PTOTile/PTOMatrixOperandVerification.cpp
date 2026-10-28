@@ -10,7 +10,8 @@
 
 static LogicalResult verifyMatTileOperandsA2A3(Operation *op, Type lhsTy,
                                                Type rhsTy, Type dstTy,
-                                               bool allowLowPrecision) {
+                                               bool allowLowPrecision,
+                                               bool packedFp4Logical) {
   if (failed(verifyTileBufCommon(op, lhsTy, "lhs", allowLowPrecision)) ||
       failed(verifyTileBufCommon(op, rhsTy, "rhs", allowLowPrecision)) ||
       failed(verifyAccTileCommon(op, dstTy, "dst"))) {
@@ -27,21 +28,22 @@ static LogicalResult verifyMatTileOperandsA2A3(Operation *op, Type lhsTy,
     return op->emitOpError(
         "expects lhs, rhs, and dst to use the left, right, and acc address spaces");
   }
-  auto lhsShape = getMatmulLogicalShapeVec(lhsTy);
-  auto rhsShape = getMatmulLogicalShapeVec(rhsTy);
-  auto dstShape = getMatmulLogicalShapeVec(dstTy);
+  auto lhsShape = getMatmulLogicalShapeVec(lhsTy, packedFp4Logical);
+  auto rhsShape = getMatmulLogicalShapeVec(rhsTy, packedFp4Logical);
+  auto dstShape = getMatmulLogicalShapeVec(dstTy, packedFp4Logical);
   if ((lhsShape[0] != dstShape[0] || rhsShape[1] != dstShape[1] || lhsShape[1] != rhsShape[0])) {
     return op->emitOpError(
         "expects static matmul tile shapes lhs[M,K], rhs[K,N], and dst[M,N]");
   }
-  return verifyMatmulValidSizes(op, lhsTy, rhsTy, 0);
+  return verifyMatmulValidSizes(op, lhsTy, rhsTy, 0, packedFp4Logical);
 }
 
 static LogicalResult verifyMatTileOperandsA5(Operation *op, Type lhsTy,
                                              Type rhsTy, Type dstTy,
-                                             bool allowLowPrecision) {
+                                             bool allowLowPrecision,
+                                             bool packedFp4Logical) {
   if (failed(verifyMatTileOperandsA2A3(op, lhsTy, rhsTy, dstTy,
-                                       allowLowPrecision))) {
+                                       allowLowPrecision, packedFp4Logical))) {
     return failure();
   }
 
@@ -157,12 +159,13 @@ static LogicalResult verifyGemvTileOperands(Operation *op, Type lhsTy, Type rhsT
 static LogicalResult verifyA5MxMatTileOperands(Operation *op, Type lhsTy,
                                                Type rhsTy, Type dstTy) {
   if (failed(verifyMatTileOperandsA5(op, lhsTy, rhsTy, dstTy,
-                                     /*allowLowPrecision=*/true))) {
+                                     /*allowLowPrecision=*/true,
+                                     /*packedFp4Logical=*/true))) {
     return failure();
   }
 
-  auto lhsShape = getShapeVec(lhsTy);
-  auto rhsShape = getShapeVec(rhsTy);
+  auto lhsShape = getLogicalTileExtentVec(lhsTy, /*useValidShape=*/false);
+  auto rhsShape = getLogicalTileExtentVec(rhsTy, /*useValidShape=*/false);
   if (lhsShape.size() == mlir::pto::kValue2 && rhsShape.size() == mlir::pto::kValue2) {
       int64_t lhsK = lhsShape[1];
       int64_t rhsK = rhsShape[0];
@@ -181,8 +184,8 @@ static LogicalResult verifyA5MxMatTileOperands(Operation *op, Type lhsTy,
       }
   }
 
-  auto lhsValid = getValidShapeVec(lhsTy);
-  auto rhsValid = getValidShapeVec(rhsTy);
+  auto lhsValid = getLogicalTileExtentVec(lhsTy, /*useValidShape=*/true);
+  auto rhsValid = getLogicalTileExtentVec(rhsTy, /*useValidShape=*/true);
   if (lhsValid.size() == kLogicalTileRank && rhsValid.size() == kLogicalTileRank) {
     int64_t m = lhsValid[0];
     int64_t k = lhsValid[1];

@@ -1,0 +1,68 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+
+// RUN: ptoas --pto-arch=a5 %s | FileCheck %s
+
+!A = !pto.tile_buf<loc=left, dtype=!pto.f4E2M1x2, rows=16, cols=128, v_row=12, v_col=128, blayout=col_major, slayout=row_major, fractal=512, pad=0>
+!B = !pto.tile_buf<loc=right, dtype=!pto.f4E2M1x2, rows=128, cols=32, v_row=128, v_col=24, blayout=row_major, slayout=col_major, fractal=512, pad=0>
+!AS = !pto.tile_buf<loc=scaling, dtype=!pto.f8E8M0, rows=32, cols=4, v_row=24, v_col=4, blayout=row_major, slayout=row_major, fractal=32, pad=0>
+!BS = !pto.tile_buf<loc=scaling, dtype=!pto.f8E8M0, rows=4, cols=64, v_row=4, v_col=48, blayout=col_major, slayout=col_major, fractal=32, pad=0>
+!C = !pto.tile_buf<loc=acc, dtype=f32, rows=32, cols=64, v_row=24, v_col=48, blayout=col_major, slayout=row_major, fractal=512, pad=0>
+!Bias = !pto.tile_buf<loc=bias, dtype=f32, rows=1, cols=64, v_row=1, v_col=48, blayout=row_major, slayout=none_box, fractal=512, pad=0>
+!AM = !pto.tile_buf<loc=mat, dtype=!pto.f4E2M1x2, rows=32, cols=64, v_row=24, v_col=64, blayout=row_major, slayout=col_major, fractal=512, pad=0>
+!BM = !pto.tile_buf<loc=mat, dtype=!pto.f4E2M1x2, rows=64, cols=64, v_row=64, v_col=48, blayout=col_major, slayout=row_major, fractal=512, pad=0>
+!AW = !pto.tile_buf<loc=mat, dtype=!pto.f4E2M1x2, rows=32, cols=128, v_row=24, v_col=128, blayout=row_major, slayout=col_major, fractal=512, pad=0>
+!BW = !pto.tile_buf<loc=mat, dtype=!pto.f4E2M1x2, rows=128, cols=64, v_row=128, v_col=48, blayout=col_major, slayout=row_major, fractal=512, pad=0>
+
+module attributes {pto.target_arch = "a5"} {
+  func.func @fp4_native_mx(%am: !AM, %bm: !BM, %bias: !Bias) attributes {pto.kernel_kind = #pto.kernel_kind<cube>} {
+    %a = pto.alloc_tile : !A
+    %b = pto.alloc_tile : !B
+    %as = pto.alloc_tile : !AS
+    %bs = pto.alloc_tile : !BS
+    %c = pto.alloc_tile : !C
+    %c2 = pto.alloc_tile : !C
+    %c3 = pto.alloc_tile : !C
+    pto.tget_scale_addr ins(%a : !A) outs(%as : !AS)
+    pto.tget_scale_addr ins(%b : !B) outs(%bs : !BS)
+    pto.tmov ins(%am : !AM) outs(%a : !A)
+    pto.tmov ins(%bm : !BM) outs(%b : !B)
+    pto.tmatmul.mx ins(%a, %as, %b, %bs : !A, !AS, !B, !BS) outs(%c : !C)
+    pto.tmatmul.mx.acc ins(%c, %a, %as, %b, %bs : !C, !A, !AS, !B, !BS) outs(%c2 : !C)
+    pto.tmatmul.mx.bias ins(%a, %as, %b, %bs, %bias : !A, !AS, !B, !BS, !Bias) outs(%c3 : !C)
+    return
+  }
+  func.func @fp4_extract_k_offset(%am: !AW, %bm: !BW) attributes {pto.kernel_kind = #pto.kernel_kind<cube>} {
+    %c0 = arith.constant 0 : index
+    %c64 = arith.constant 64 : index
+    %a = pto.alloc_tile : !A
+    %b = pto.alloc_tile : !B
+    pto.textract ins(%am, %c0, %c64 : !AW, index, index) outs(%a : !A)
+    pto.textract ins(%bm, %c64, %c0 : !BW, index, index) outs(%b : !B)
+    return
+  }
+}
+
+// CHECK-LABEL: AICORE void fp4_native_mx(
+// CHECK: Tile<TileType::Left, float4_e2m1x2_t, 32, 128, BLayout::ColMajor, 24, 128,
+// CHECK: Tile<TileType::Right, float4_e2m1x2_t, 128, 64, BLayout::RowMajor, 128, 48,
+// CHECK: Tile<TileType::ScaleLeft, float8_e8m0_t, 32, 4, BLayout::RowMajor, 24, 4,
+// CHECK: Tile<TileType::ScaleRight, float8_e8m0_t, 4, 64, BLayout::ColMajor, 4, 48,
+// CHECK: Tile<TileType::Acc, float, 32, 64, BLayout::ColMajor, 24, 48,
+// CHECK: GetScaleAddr
+// CHECK: GetScaleAddr
+// CHECK: TMOV(
+// CHECK: TMOV(
+// CHECK: TMATMUL_MX(
+// CHECK: TMATMUL_MX(
+// CHECK: TMATMUL_MX(
+// CHECK-LABEL: AICORE void fp4_extract_k_offset(
+// CHECK: uint16_t [[OFFSET:[A-Za-z0-9_]+]] = {{.*}} * {{.*}};
+// CHECK: TEXTRACT({{.*}}, {{.*}}, {{.*}}, [[OFFSET]]);
+// CHECK: uint16_t [[OFFSET2:[A-Za-z0-9_]+]] = {{.*}} * {{.*}};
+// CHECK: TEXTRACT({{.*}}, {{.*}}, [[OFFSET2]], {{.*}});

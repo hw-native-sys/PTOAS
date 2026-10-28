@@ -1,4 +1,3 @@
-# coding=utf-8
 # Copyright (c) 2026 Huawei Technologies Co., Ltd.
 # This program is free software, you can redistribute it and/or modify it under the terms and conditions of
 # CANN Open Software License Agreement Version 2.0 (the "License").
@@ -21,8 +20,8 @@ from .._cube import MATMUL_MX_ACC_DTYPES, MATMUL_MX_BIAS_DTYPES, MATMUL_MX_DTYPE
                        is_post_update=False, tags=("cube", "matmul", "mx"))
 def template_tmatmul_mx(lhs: pto.Tile, lhs_scale: pto.Tile, rhs: pto.Tile, rhs_scale: pto.Tile, dst: pto.Tile):
     _ = lhs_scale, rhs_scale
-    m, k = lhs.valid_shape
-    _, n = rhs.valid_shape
+    m, n = dst.valid_shape
+    _, k = lhs.valid_shape
     pto.mad_mx(lhs.as_ptr(), rhs.as_ptr(), dst.as_ptr(), m, n, k, disable_gemv=True, sat="sat")
 
 
@@ -33,8 +32,8 @@ def template_tmatmul_mx(lhs: pto.Tile, lhs_scale: pto.Tile, rhs: pto.Tile, rhs_s
 def template_tmatmul_mx_acc(acc_in: pto.Tile, lhs: pto.Tile, lhs_scale: pto.Tile,
                             rhs: pto.Tile, rhs_scale: pto.Tile, dst: pto.Tile):
     _ = acc_in, lhs_scale, rhs_scale
-    m, k = lhs.valid_shape
-    _, n = rhs.valid_shape
+    m, n = dst.valid_shape
+    _, k = lhs.valid_shape
     pto.mad_mx_acc(lhs.as_ptr(), rhs.as_ptr(), dst.as_ptr(), m, n, k, disable_gemv=True, sat="sat")
 
 
@@ -45,7 +44,7 @@ def template_tmatmul_mx_acc(acc_in: pto.Tile, lhs: pto.Tile, lhs_scale: pto.Tile
 def template_tmatmul_mx_bias(lhs: pto.Tile, lhs_scale: pto.Tile, rhs: pto.Tile,
                              rhs_scale: pto.Tile, bias: pto.Tile, dst: pto.Tile):
     _ = lhs_scale, rhs_scale
-    m, k = lhs.valid_shape
-    _, n = rhs.valid_shape
+    m, n = dst.valid_shape
+    _, k = lhs.valid_shape
     pto.mad_mx_bias(lhs.as_ptr(), rhs.as_ptr(), dst.as_ptr(), bias.as_ptr(), m, n, k,
                     disable_gemv=True, sat="sat")

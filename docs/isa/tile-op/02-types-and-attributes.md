@@ -91,6 +91,20 @@ A logical partition (slice) of a `tensor_view`. Holds shape information for a ti
 
 `?` denotes a dynamic symbol resolved at runtime (via `pto.alloc_tile` operands or `pto.set_validshape`).
 
+Packed `!pto.f4E2M1x2` and `!pto.f4E1M2x2` tile shapes and valid shapes
+count byte carriers. Their logical value extent doubles the row dimension
+for `col_major`, or the column dimension for `row_major`. A5 MX matmul
+verifies logical `[M, K]` and `[K, N]` operands against an FP32 `[M, N]`
+accumulator and scales `[M, ceil(K/32)]` / `[ceil(K/32), N]`. For example,
+a left `col_major` carrier tile `[16, 128]` and a right `row_major` carrier
+tile `[128, 32]` produce logical `[32, 64]` output, with `[32, 4]` and
+`[4, 64]` scales. `tget_scale_addr` uses the same logical dimensions.
+
+FP4 Mat-to-Left/Right transfers compare logical extents when the packed axis
+changes with the base layout. `textract` offsets remain in source carrier
+coordinates; EmitC converts the packed-axis offset to logical values for
+the L1-to-L0 instruction. Non-packed dtypes retain their existing units.
+
 ## 2.6 AddressSpace
 
 Defines the physical storage location of a buffer in the Ascend NPU memory hierarchy.

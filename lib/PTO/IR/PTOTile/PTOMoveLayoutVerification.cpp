@@ -171,6 +171,10 @@ static LogicalResult verifyTMovGenericPreconditions(TMovOp op, bool isA5) {
   }
   auto srcShape = getShapeVec(srcTy);
   auto dstShape = getShapeVec(dstTy);
+  if (*srcSpace == pto::AddressSpace::MAT) {
+    srcShape = getLogicalTileExtentVec(srcTy, /*useValidShape=*/false);
+    dstShape = getLogicalTileExtentVec(dstTy, /*useValidShape=*/false);
+  }
   if (*srcSpace == pto::AddressSpace::MAT && srcShape != dstShape) {
     return op.emitOpError() << "expects mat-source tmov to use matching src/dst shapes";
   }

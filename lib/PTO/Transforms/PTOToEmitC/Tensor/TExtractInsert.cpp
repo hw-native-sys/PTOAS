@@ -39,10 +39,22 @@ struct PTOExtractToEmitC : public OpConversionPattern<pto::TExtractOp> {
       operands.push_back(castScalarToCppType(rewriter, loc, preQuantScalar,
                                              "uint64_t"));
     }
-    operands.push_back(
-        castScalarToCppType(rewriter, loc, adaptor.getIndexRow(), "uint16_t"));
-    operands.push_back(
-        castScalarToCppType(rewriter, loc, adaptor.getIndexCol(), "uint16_t"));
+    auto srcTy = dyn_cast<pto::TileBufType>(op.getSrc().getType());
+    const bool fp4Mat = srcTy &&
+        getAddressSpaceOrGM(srcTy.getMemorySpace()) == pto::AddressSpace::MAT &&
+        pto::isPTOFloat4PackedType(srcTy.getElementType());
+    auto convertOffset = [&](Value offset, int dim) {
+      Value converted = castScalarToCppType(rewriter, loc, offset, "uint16_t");
+      if (fp4Mat && renderTileTemplateDim(
+              1, srcTy.getElementType(),
+              getTileBufBLayoutValue(srcTy.getConfigAttr()), dim) == kFp4PackFactor) {
+        Value two = makeEmitCIntConstant(rewriter, loc, converted.getType(), kFp4PackFactor);
+        converted = rewriter.create<emitc::MulOp>(loc, converted.getType(), converted, two);
+      }
+      return converted;
+    };
+    operands.push_back(convertOffset(adaptor.getIndexRow(), 0));
+    operands.push_back(convertOffset(adaptor.getIndexCol(), 1));
     return operands;
   }
 

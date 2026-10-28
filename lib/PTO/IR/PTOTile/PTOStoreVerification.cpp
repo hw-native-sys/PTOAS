@@ -358,9 +358,13 @@ static SmallVector<int64_t, kShapeVecInlineCapacity> getValidShapeVec(Value valu
   return valid;
 }
 
-static SmallVector<int64_t, kShapeVecInlineCapacity> getMatmulLogicalShapeVec(Type ty) {
-  auto shape = getShapeVec(ty);
-  auto valid = getValidShapeVec(ty);
+static SmallVector<int64_t, kShapeVecInlineCapacity> getMatmulLogicalShapeVec(Type ty, bool packedFp4Logical) {
+  auto shape = packedFp4Logical
+                   ? getLogicalTileExtentVec(ty, /*useValidShape=*/false)
+                   : getShapeVec(ty);
+  auto valid = packedFp4Logical
+                   ? getLogicalTileExtentVec(ty, /*useValidShape=*/true)
+                   : getValidShapeVec(ty);
   if (!isa<pto::TileBufType>(ty) || shape.size() != valid.size()) {
     return shape;
   }

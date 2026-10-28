@@ -16,13 +16,14 @@ static LogicalResult verifyA5MxMatScaleTile(Operation *op, Type scaleTy,
     return failure();
 
   if (failed(verifyA5MxMatScaleDims(op, scaleName, getShapeVec(scaleTy),
-                                    getShapeVec(lhsTy), getShapeVec(rhsTy),
+                                    getLogicalTileExtentVec(lhsTy, /*useValidShape=*/false),
+                                    getLogicalTileExtentVec(rhsTy, /*useValidShape=*/false),
                                     "shape", isLeftScale))) {
     return failure();
   }
   if (failed(verifyA5MxMatScaleDims(
-          op, scaleName, getValidShapeVec(scaleTy), getValidShapeVec(lhsTy),
-          getValidShapeVec(rhsTy), "valid_shape", isLeftScale))) {
+          op, scaleName, getValidShapeVec(scaleTy), getLogicalTileExtentVec(lhsTy, /*useValidShape=*/true),
+          getLogicalTileExtentVec(rhsTy, /*useValidShape=*/true), "valid_shape", isLeftScale))) {
     return failure();
   }
 

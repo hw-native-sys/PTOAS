@@ -254,9 +254,14 @@ static LogicalResult verifyAccTileCommon(Operation *op, Type ty, StringRef name)
 }
 
 static LogicalResult verifyMatmulValidSizes(Operation *op, Type lhsTy,
-                                            Type rhsTy, int64_t minValue) {
-  auto lhsValid = getValidShapeVec(lhsTy);
-  auto rhsValid = getValidShapeVec(rhsTy);
+                                            Type rhsTy, int64_t minValue,
+                                            bool packedFp4Logical = false) {
+  auto lhsValid = packedFp4Logical
+                      ? getLogicalTileExtentVec(lhsTy, /*useValidShape=*/true)
+                      : getValidShapeVec(lhsTy);
+  auto rhsValid = packedFp4Logical
+                      ? getLogicalTileExtentVec(rhsTy, /*useValidShape=*/true)
+                      : getValidShapeVec(rhsTy);
   if (lhsValid.size() != mlir::pto::kValue2 || rhsValid.size() != mlir::pto::kValue2) {
       return success();
   }

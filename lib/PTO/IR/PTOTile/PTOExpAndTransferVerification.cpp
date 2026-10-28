@@ -195,6 +195,31 @@ struct TileTransferCommon {
   std::optional<pto::AddressSpace> dstSpace;
 };
 
+// L1-to-L0 FP4 transfers can move the packed axis when the base layout changes.
+// Offsets stay in source carrier coordinates; TEXTRACT consumes logical values.
+static LogicalResult verifyFp4MatExtractBounds(
+    Operation *op, Value indexRow, Value indexCol, pto::TileBufType srcTy,
+    pto::TileBufType dstTy, bool includeIndexAndIntOpsInConstFold) {
+  auto srcShape = getLogicalTileExtentVec(srcTy, /*useValidShape=*/false);
+  auto dstShape = getLogicalTileExtentVec(dstTy, /*useValidShape=*/false);
+  auto blayout = getTileBufBLayout(srcTy);
+  for (unsigned dim = 0; dim < kLogicalTileRank; ++dim) {
+    auto offset = getConstantIntegerValueEx(dim == 0 ? indexRow : indexCol,
+                                           includeIndexAndIntOpsInConstFold);
+    if (!offset || srcShape[dim] == ShapedType::kDynamic ||
+        dstShape[dim] == ShapedType::kDynamic)
+      continue;
+    int64_t logicalOffset =
+        getLogicalTileDim(*offset, srcTy.getElementType(), blayout, dim);
+    if (logicalOffset > srcShape[dim] ||
+        dstShape[dim] > srcShape[dim] - logicalOffset)
+      return op->emitOpError()
+             << "expects packed FP4 extract logical offset + dst extent <= src extent on axis "
+             << dim;
+  }
+  return success();
+}
+
 static FailureOr<TileTransferCommon> verifyTileTransferCommon(
     Operation *op, Value src, Value dst, Value indexRow, Value indexCol,
     bool allowLowPrecision, bool includeIndexAndIntOpsInConstFold,
@@ -210,8 +235,13 @@ static FailureOr<TileTransferCommon> verifyTileTransferCommon(
       failed(verifyNonNegativeIndexRowCol(
           *op, indexRow, indexCol, includeIndexAndIntOpsInConstFold)))
     return failure();
-  LogicalResult bounds =
-      insert ? verifyInsertStaticBoundsCommon(
+  const bool fp4MatExtract =
+      !insert && getPTOMemorySpaceEnum(srcTy) == pto::AddressSpace::MAT &&
+      isPTOFloat4PackedType(srcTb.getElementType());
+  LogicalResult bounds = fp4MatExtract
+      ? verifyFp4MatExtractBounds(op, indexRow, indexCol, srcTb, dstTb,
+                                 includeIndexAndIntOpsInConstFold)
+      : insert ? verifyInsertStaticBoundsCommon(
                    *op, indexRow, indexCol, srcTy, dstTy,
                    includeIndexAndIntOpsInConstFold)
              : verifyExtractStaticBoundsCommon(

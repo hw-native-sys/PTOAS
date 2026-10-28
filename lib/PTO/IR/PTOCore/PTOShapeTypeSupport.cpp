@@ -248,10 +248,12 @@ static LogicalResult verifyMatTileOperands(Operation *op, Type lhsTy, Type rhsTy
                                            bool allowLowPrecision = false);
 static LogicalResult verifyMatTileOperandsA2A3(Operation *op, Type lhsTy,
                                                Type rhsTy, Type dstTy,
-                                               bool allowLowPrecision = false);
+                                               bool allowLowPrecision = false,
+                                             bool packedFp4Logical = false);
 static LogicalResult verifyMatTileOperandsA5(Operation *op, Type lhsTy,
                                              Type rhsTy, Type dstTy,
-                                             bool allowLowPrecision = false);
+                                             bool allowLowPrecision = false,
+                                             bool packedFp4Logical = false);
 static LogicalResult verifyGemvTileOperands(Operation *op, Type lhsTy, Type rhsTy,
                                             Type dstTy);
 static LogicalResult verifyAsyncFlatContiguous1DGMViewLike(Operation *op,

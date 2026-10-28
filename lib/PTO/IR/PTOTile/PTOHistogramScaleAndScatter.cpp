@@ -102,9 +102,9 @@ static LogicalResult verifyTGetScaleAddrA5(TGetScaleAddrOp op) {
         "expects src to be in the left or right address space");
   if (!dstSpace || *dstSpace != pto::AddressSpace::SCALING)
     return op.emitOpError("expects dst to be in the scaling address space");
-  auto srcShape = getShapeVec(srcTy);
+  auto srcShape = getLogicalTileExtentVec(srcTy, /*useValidShape=*/false);
   auto dstShape = getShapeVec(dstTy);
-  auto srcValid = getValidShapeVec(srcTy);
+  auto srcValid = getLogicalTileExtentVec(srcTy, /*useValidShape=*/true);
   auto dstValid = getValidShapeVec(dstTy);
   if (srcShape.size() != kHistogramTileRank || dstShape.size() != kHistogramTileRank ||
       srcValid.size() != kHistogramTileRank || dstValid.size() != kHistogramTileRank)
