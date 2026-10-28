@@ -15,7 +15,8 @@ through the group-slot fallback.  That fallback must only use the block-strided
 offset=1 (4-byte aligned) cases here guard the lane-zero BRC path, the aligned
 ones guard the vsldb/E2B paths.  The two ctl_plain_* cases cover the plain
 contiguous load, whose unaligned form lowers to the stateful vldas+vldus
-sequence.
+sequence. Dense short loads followed by grouped broadcasts exercise the same
+fusion without explicit group attributes on the load.
 """
 
 import numpy as np
@@ -30,7 +31,7 @@ UB_SRC = 1024
 UB_OUT = 2048
 
 
-def build(name, group=None, offset=0, plain=False, stride=1):
+def build(name, group=None, offset=0, plain=False, stride=1, dense=False):
     @pto.jit(name=name, target="a5", backend="vpto", mode="explicit",
              kernel_kind="vector", insert_sync=False)
     def kernel(src: pto.ptr(pto.f32, "gm"), out: pto.ptr(pto.f32, "gm")):
@@ -43,9 +44,12 @@ def build(name, group=None, offset=0, plain=False, stride=1):
         if plain:
             value = pto.vmi.vload(ub_src, offset, size=LANES)
         else:
-            slots = pto.vmi.vload(
-                ub_src, offset, size=group, group=group, stride=stride
-            )
+            if dense:
+                slots = pto.vmi.vload(ub_src, offset, size=group)
+            else:
+                slots = pto.vmi.vload(
+                    ub_src, offset, size=group, group=group, stride=stride
+                )
             value = pto.vmi.vbrc(slots, size=LANES, group=group)
         pto.vmi.vstore(value, ub_out, 0)
         pto.set_flag("V", "MTE3", event_id=0)
@@ -92,6 +96,18 @@ for group in (8, 4, 2):
             expected[lane] = source[offset + lane // per_group]
         CASES.append(dict(name=name,
                           kernel=build(name, group=group, offset=offset),
+                          make_case=make_case(source, canary, expected),
+                          check=check_case))
+
+for group in (8, 4, 2, 1):
+    for offset in (0, 1):
+        name = f"dense_gbl_g{group}_off{offset}"
+        expected = canary.copy()
+        per_group = LANES // group
+        for lane in range(LANES):
+            expected[lane] = source[offset + lane // per_group]
+        CASES.append(dict(name=name,
+                          kernel=build(name, group=group, offset=offset, dense=True),
                           make_case=make_case(source, canary, expected),
                           check=check_case))
 

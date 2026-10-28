@@ -1,0 +1,102 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+
+// RUN: pto-test-opt %s -vmi-pre-assignment-combine | FileCheck %s
+
+module {
+  func.func private @unknown_write(!pto.ptr<bf16, ub>)
+  func.func @multiple_uses(%src: !pto.ptr<bf16, ub>, %off: index) -> (!pto.vmi.vreg<256xbf16>, !pto.vmi.vreg<8xbf16>) {
+    %load = pto.vmi.load %src[%off] : !pto.ptr<bf16, ub> -> !pto.vmi.vreg<8xbf16>
+    %out = pto.vmi.group_broadcast %load {num_groups = 8} : !pto.vmi.vreg<8xbf16> -> !pto.vmi.vreg<256xbf16>
+    return %out, %load : !pto.vmi.vreg<256xbf16>, !pto.vmi.vreg<8xbf16>
+  }
+  func.func @aliasing_store(%src: !pto.ptr<bf16, ub>, %off: index) -> !pto.vmi.vreg<256xbf16> {
+    %load = pto.vmi.load %src[%off] : !pto.ptr<bf16, ub> -> !pto.vmi.vreg<8xbf16>
+    %zero = arith.constant 0.0 : bf16
+    pto.store %zero, %src[%off] : !pto.ptr<bf16, ub>, bf16
+    %out = pto.vmi.group_broadcast %load {num_groups = 8} : !pto.vmi.vreg<8xbf16> -> !pto.vmi.vreg<256xbf16>
+    return %out : !pto.vmi.vreg<256xbf16>
+  }
+  func.func @unknown_effect(%src: !pto.ptr<bf16, ub>, %off: index) -> !pto.vmi.vreg<256xbf16> {
+    %load = pto.vmi.load %src[%off] : !pto.ptr<bf16, ub> -> !pto.vmi.vreg<8xbf16>
+    func.call @unknown_write(%src) : (!pto.ptr<bf16, ub>) -> ()
+    %out = pto.vmi.group_broadcast %load {num_groups = 8} : !pto.vmi.vreg<8xbf16> -> !pto.vmi.vreg<256xbf16>
+    return %out : !pto.vmi.vreg<256xbf16>
+  }
+  func.func @cross_block(%src: !pto.ptr<bf16, ub>, %off: index) -> !pto.vmi.vreg<256xbf16> {
+    %load = pto.vmi.load %src[%off] : !pto.ptr<bf16, ub> -> !pto.vmi.vreg<8xbf16>
+    cf.br ^next
+  ^next:
+    %out = pto.vmi.group_broadcast %load {num_groups = 8} : !pto.vmi.vreg<8xbf16> -> !pto.vmi.vreg<256xbf16>
+    return %out : !pto.vmi.vreg<256xbf16>
+  }
+  func.func @unsupported_shape(%src: !pto.ptr<bf16, ub>, %off: index) -> !pto.vmi.vreg<8xbf16> {
+    %load = pto.vmi.load %src[%off] : !pto.ptr<bf16, ub> -> !pto.vmi.vreg<8xbf16>
+    %out = pto.vmi.group_broadcast %load {num_groups = 8} : !pto.vmi.vreg<8xbf16> -> !pto.vmi.vreg<8xbf16>
+    return %out : !pto.vmi.vreg<8xbf16>
+  }
+  func.func @unsupported_result_layout(%src: !pto.ptr<bf16, ub>, %off: index)
+      -> !pto.vmi.vreg<256xbf16, #pto.vmi.layout<deinterleaved = 4>> {
+    %load = pto.vmi.load %src[%off] : !pto.ptr<bf16, ub> -> !pto.vmi.vreg<8xbf16>
+    %out = pto.vmi.group_broadcast %load {num_groups = 8}
+        : !pto.vmi.vreg<8xbf16> -> !pto.vmi.vreg<256xbf16, #pto.vmi.layout<deinterleaved = 4>>
+    return %out : !pto.vmi.vreg<256xbf16, #pto.vmi.layout<deinterleaved = 4>>
+  }
+  func.func @noalias_store(%off: index) -> !pto.vmi.vreg<256xbf16> {
+    %src = memref.alloc() : memref<256xbf16, #pto.address_space<vec>>
+    %dst = memref.alloc() : memref<256xbf16, #pto.address_space<vec>>
+    %load = pto.vmi.load %src[%off] : memref<256xbf16, #pto.address_space<vec>> -> !pto.vmi.vreg<8xbf16>
+    %zero = arith.constant 0.0 : bf16
+    pto.store %zero, %dst[%off] : memref<256xbf16, #pto.address_space<vec>>, bf16
+    %out = pto.vmi.group_broadcast %load {num_groups = 8} : !pto.vmi.vreg<8xbf16> -> !pto.vmi.vreg<256xbf16>
+    return %out : !pto.vmi.vreg<256xbf16>
+  }
+}
+
+// CHECK-LABEL: func.func @multiple_uses
+// CHECK: pto.vmi.load
+// CHECK-NOT: pto.vmi.group_broadcast_load
+// CHECK: pto.vmi.group_broadcast %{{.*}}
+// CHECK: return
+
+// CHECK-LABEL: func.func @aliasing_store
+// CHECK: pto.vmi.load
+// CHECK-NOT: pto.vmi.group_broadcast_load
+// CHECK: pto.vmi.group_broadcast %{{.*}}
+// CHECK: return
+
+// CHECK-LABEL: func.func @unknown_effect
+// CHECK: pto.vmi.load
+// CHECK-NOT: pto.vmi.group_broadcast_load
+// CHECK: pto.vmi.group_broadcast %{{.*}}
+// CHECK: return
+
+// CHECK-LABEL: func.func @cross_block
+// CHECK: pto.vmi.load
+// CHECK-NOT: pto.vmi.group_broadcast_load
+// CHECK: pto.vmi.group_broadcast %{{.*}}
+// CHECK: return
+
+// CHECK-LABEL: func.func @unsupported_shape
+// CHECK: pto.vmi.load
+// CHECK-NOT: pto.vmi.group_broadcast_load
+// CHECK: pto.vmi.group_broadcast %{{.*}}
+// CHECK: return
+
+// CHECK-LABEL: func.func @unsupported_result_layout
+// CHECK: pto.vmi.load
+// CHECK-NOT: pto.vmi.group_broadcast_load
+// CHECK: pto.vmi.group_broadcast %{{.*}}
+// CHECK: return
+
+// CHECK-LABEL: func.func @noalias_store
+// CHECK-NOT: pto.vmi.load
+// CHECK: pto.store
+// CHECK: pto.vmi.group_broadcast_load
+// CHECK-NOT: pto.vmi.group_broadcast %{{.*}}
+// CHECK: return

@@ -7,12 +7,14 @@
 // See LICENSE in the root of the software repository for the full text of the License.
 
 
-// RUN: ptoas --pto-arch=a5 --pto-backend=vpto --emit-vpto %s -o - | FileCheck %s
-// RUN: pto-test-opt %s -vmi-lower-unified-to-legacy -vmi-mask-granularity-assignment -vmi-layout-assignment -vmi-to-vpto | FileCheck %s
+// RUN: ptoas --pto-arch=a5 --pto-backend=vpto --emit-vpto %s -o - | FileCheck %s --check-prefixes=CHECK,FUSED
+// RUN: pto-test-opt %s -vmi-lower-unified-to-legacy -vmi-mask-granularity-assignment -vmi-layout-assignment -vmi-to-vpto | FileCheck %s --check-prefixes=CHECK,DIRECT
 
 // Compact broadcasts may produce fewer logical lanes than one physical carrier.
 // The planner must retain the support table's contiguous result relations so
-// both the default pipeline and direct layout assignment reach selector lowering.
+// both the default pipeline and direct layout assignment retain legal lowering.
+// The default pipeline may fuse supported loads into BRC; direct assignment
+// still exercises the unfused selector path.
 
 module {
   func.func @compact_broadcast_i8_1_1(%src: !pto.ptr<i8, ub>, %dst: !pto.ptr<i8, ub>) {
@@ -24,7 +26,8 @@ module {
   }
 
 // CHECK-LABEL: func.func @compact_broadcast_i8_1_1(
-// CHECK: pto.vselr
+// FUSED: pto.vlds {{.*}} {dist = "BRC_B8"}
+// DIRECT: pto.vselr
 // CHECK-NOT: pto.vmi.
   func.func @compact_broadcast_i8_2_1(%src: !pto.ptr<i8, ub>, %dst: !pto.ptr<i8, ub>) {
     %zero = arith.constant 0 : index
@@ -35,7 +38,8 @@ module {
   }
 
 // CHECK-LABEL: func.func @compact_broadcast_i8_2_1(
-// CHECK: pto.vselr
+// FUSED: pto.vlds {{.*}} {dist = "BRC_B8"}
+// DIRECT: pto.vselr
 // CHECK-NOT: pto.vmi.
   func.func @compact_broadcast_i8_2_2(%src: !pto.ptr<i8, ub>, %dst: !pto.ptr<i8, ub>) {
     %zero = arith.constant 0 : index
@@ -57,7 +61,8 @@ module {
   }
 
 // CHECK-LABEL: func.func @compact_broadcast_i8_4_1(
-// CHECK: pto.vselr
+// FUSED: pto.vlds {{.*}} {dist = "BRC_B8"}
+// DIRECT: pto.vselr
 // CHECK-NOT: pto.vmi.
   func.func @compact_broadcast_i8_4_2(%src: !pto.ptr<i8, ub>, %dst: !pto.ptr<i8, ub>) {
     %zero = arith.constant 0 : index
@@ -90,7 +95,8 @@ module {
   }
 
 // CHECK-LABEL: func.func @compact_broadcast_i8_8_1(
-// CHECK: pto.vselr
+// FUSED: pto.vlds {{.*}} {dist = "BRC_B8"}
+// DIRECT: pto.vselr
 // CHECK-NOT: pto.vmi.
   func.func @compact_broadcast_i8_8_2(%src: !pto.ptr<i8, ub>, %dst: !pto.ptr<i8, ub>) {
     %zero = arith.constant 0 : index
@@ -134,7 +140,8 @@ module {
   }
 
 // CHECK-LABEL: func.func @compact_broadcast_ui8_1_1(
-// CHECK: pto.vselr
+// FUSED: pto.vlds {{.*}} {dist = "BRC_B8"}
+// DIRECT: pto.vselr
 // CHECK-NOT: pto.vmi.
   func.func @compact_broadcast_ui8_2_1(%src: !pto.ptr<ui8, ub>, %dst: !pto.ptr<ui8, ub>) {
     %zero = arith.constant 0 : index
@@ -145,7 +152,8 @@ module {
   }
 
 // CHECK-LABEL: func.func @compact_broadcast_ui8_2_1(
-// CHECK: pto.vselr
+// FUSED: pto.vlds {{.*}} {dist = "BRC_B8"}
+// DIRECT: pto.vselr
 // CHECK-NOT: pto.vmi.
   func.func @compact_broadcast_ui8_2_2(%src: !pto.ptr<ui8, ub>, %dst: !pto.ptr<ui8, ub>) {
     %zero = arith.constant 0 : index
@@ -167,7 +175,8 @@ module {
   }
 
 // CHECK-LABEL: func.func @compact_broadcast_ui8_4_1(
-// CHECK: pto.vselr
+// FUSED: pto.vlds {{.*}} {dist = "BRC_B8"}
+// DIRECT: pto.vselr
 // CHECK-NOT: pto.vmi.
   func.func @compact_broadcast_ui8_4_2(%src: !pto.ptr<ui8, ub>, %dst: !pto.ptr<ui8, ub>) {
     %zero = arith.constant 0 : index
@@ -200,7 +209,8 @@ module {
   }
 
 // CHECK-LABEL: func.func @compact_broadcast_ui8_8_1(
-// CHECK: pto.vselr
+// FUSED: pto.vlds {{.*}} {dist = "BRC_B8"}
+// DIRECT: pto.vselr
 // CHECK-NOT: pto.vmi.
   func.func @compact_broadcast_ui8_8_2(%src: !pto.ptr<ui8, ub>, %dst: !pto.ptr<ui8, ub>) {
     %zero = arith.constant 0 : index
@@ -244,7 +254,8 @@ module {
   }
 
 // CHECK-LABEL: func.func @compact_broadcast_si8_1_1(
-// CHECK: pto.vselr
+// FUSED: pto.vlds {{.*}} {dist = "BRC_B8"}
+// DIRECT: pto.vselr
 // CHECK-NOT: pto.vmi.
   func.func @compact_broadcast_si8_2_1(%src: !pto.ptr<si8, ub>, %dst: !pto.ptr<si8, ub>) {
     %zero = arith.constant 0 : index
@@ -255,7 +266,8 @@ module {
   }
 
 // CHECK-LABEL: func.func @compact_broadcast_si8_2_1(
-// CHECK: pto.vselr
+// FUSED: pto.vlds {{.*}} {dist = "BRC_B8"}
+// DIRECT: pto.vselr
 // CHECK-NOT: pto.vmi.
   func.func @compact_broadcast_si8_2_2(%src: !pto.ptr<si8, ub>, %dst: !pto.ptr<si8, ub>) {
     %zero = arith.constant 0 : index
@@ -277,7 +289,8 @@ module {
   }
 
 // CHECK-LABEL: func.func @compact_broadcast_si8_4_1(
-// CHECK: pto.vselr
+// FUSED: pto.vlds {{.*}} {dist = "BRC_B8"}
+// DIRECT: pto.vselr
 // CHECK-NOT: pto.vmi.
   func.func @compact_broadcast_si8_4_2(%src: !pto.ptr<si8, ub>, %dst: !pto.ptr<si8, ub>) {
     %zero = arith.constant 0 : index
@@ -310,7 +323,8 @@ module {
   }
 
 // CHECK-LABEL: func.func @compact_broadcast_si8_8_1(
-// CHECK: pto.vselr
+// FUSED: pto.vlds {{.*}} {dist = "BRC_B8"}
+// DIRECT: pto.vselr
 // CHECK-NOT: pto.vmi.
   func.func @compact_broadcast_si8_8_2(%src: !pto.ptr<si8, ub>, %dst: !pto.ptr<si8, ub>) {
     %zero = arith.constant 0 : index
@@ -354,7 +368,8 @@ module {
   }
 
 // CHECK-LABEL: func.func @compact_broadcast_i16_1_1(
-// CHECK: pto.vselr
+// FUSED: pto.vlds {{.*}} {dist = "BRC_B16"}
+// DIRECT: pto.vselr
 // CHECK-NOT: pto.vmi.
   func.func @compact_broadcast_i16_2_1(%src: !pto.ptr<i16, ub>, %dst: !pto.ptr<i16, ub>) {
     %zero = arith.constant 0 : index
@@ -365,7 +380,8 @@ module {
   }
 
 // CHECK-LABEL: func.func @compact_broadcast_i16_2_1(
-// CHECK: pto.vselr
+// FUSED: pto.vlds {{.*}} {dist = "BRC_B16"}
+// DIRECT: pto.vselr
 // CHECK-NOT: pto.vmi.
   func.func @compact_broadcast_i16_2_2(%src: !pto.ptr<i16, ub>, %dst: !pto.ptr<i16, ub>) {
     %zero = arith.constant 0 : index
@@ -387,7 +403,8 @@ module {
   }
 
 // CHECK-LABEL: func.func @compact_broadcast_i16_4_1(
-// CHECK: pto.vselr
+// FUSED: pto.vlds {{.*}} {dist = "BRC_B16"}
+// DIRECT: pto.vselr
 // CHECK-NOT: pto.vmi.
   func.func @compact_broadcast_i16_4_2(%src: !pto.ptr<i16, ub>, %dst: !pto.ptr<i16, ub>) {
     %zero = arith.constant 0 : index
@@ -420,7 +437,8 @@ module {
   }
 
 // CHECK-LABEL: func.func @compact_broadcast_i16_8_1(
-// CHECK: pto.vselr
+// FUSED: pto.vlds {{.*}} {dist = "BRC_B16"}
+// DIRECT: pto.vselr
 // CHECK-NOT: pto.vmi.
   func.func @compact_broadcast_i16_8_2(%src: !pto.ptr<i16, ub>, %dst: !pto.ptr<i16, ub>) {
     %zero = arith.constant 0 : index
@@ -464,7 +482,8 @@ module {
   }
 
 // CHECK-LABEL: func.func @compact_broadcast_ui16_1_1(
-// CHECK: pto.vselr
+// FUSED: pto.vlds {{.*}} {dist = "BRC_B16"}
+// DIRECT: pto.vselr
 // CHECK-NOT: pto.vmi.
   func.func @compact_broadcast_ui16_2_1(%src: !pto.ptr<ui16, ub>, %dst: !pto.ptr<ui16, ub>) {
     %zero = arith.constant 0 : index
@@ -475,7 +494,8 @@ module {
   }
 
 // CHECK-LABEL: func.func @compact_broadcast_ui16_2_1(
-// CHECK: pto.vselr
+// FUSED: pto.vlds {{.*}} {dist = "BRC_B16"}
+// DIRECT: pto.vselr
 // CHECK-NOT: pto.vmi.
   func.func @compact_broadcast_ui16_2_2(%src: !pto.ptr<ui16, ub>, %dst: !pto.ptr<ui16, ub>) {
     %zero = arith.constant 0 : index
@@ -497,7 +517,8 @@ module {
   }
 
 // CHECK-LABEL: func.func @compact_broadcast_ui16_4_1(
-// CHECK: pto.vselr
+// FUSED: pto.vlds {{.*}} {dist = "BRC_B16"}
+// DIRECT: pto.vselr
 // CHECK-NOT: pto.vmi.
   func.func @compact_broadcast_ui16_4_2(%src: !pto.ptr<ui16, ub>, %dst: !pto.ptr<ui16, ub>) {
     %zero = arith.constant 0 : index
@@ -530,7 +551,8 @@ module {
   }
 
 // CHECK-LABEL: func.func @compact_broadcast_ui16_8_1(
-// CHECK: pto.vselr
+// FUSED: pto.vlds {{.*}} {dist = "BRC_B16"}
+// DIRECT: pto.vselr
 // CHECK-NOT: pto.vmi.
   func.func @compact_broadcast_ui16_8_2(%src: !pto.ptr<ui16, ub>, %dst: !pto.ptr<ui16, ub>) {
     %zero = arith.constant 0 : index
@@ -574,7 +596,8 @@ module {
   }
 
 // CHECK-LABEL: func.func @compact_broadcast_si16_1_1(
-// CHECK: pto.vselr
+// FUSED: pto.vlds {{.*}} {dist = "BRC_B16"}
+// DIRECT: pto.vselr
 // CHECK-NOT: pto.vmi.
   func.func @compact_broadcast_si16_2_1(%src: !pto.ptr<si16, ub>, %dst: !pto.ptr<si16, ub>) {
     %zero = arith.constant 0 : index
@@ -585,7 +608,8 @@ module {
   }
 
 // CHECK-LABEL: func.func @compact_broadcast_si16_2_1(
-// CHECK: pto.vselr
+// FUSED: pto.vlds {{.*}} {dist = "BRC_B16"}
+// DIRECT: pto.vselr
 // CHECK-NOT: pto.vmi.
   func.func @compact_broadcast_si16_2_2(%src: !pto.ptr<si16, ub>, %dst: !pto.ptr<si16, ub>) {
     %zero = arith.constant 0 : index
@@ -607,7 +631,8 @@ module {
   }
 
 // CHECK-LABEL: func.func @compact_broadcast_si16_4_1(
-// CHECK: pto.vselr
+// FUSED: pto.vlds {{.*}} {dist = "BRC_B16"}
+// DIRECT: pto.vselr
 // CHECK-NOT: pto.vmi.
   func.func @compact_broadcast_si16_4_2(%src: !pto.ptr<si16, ub>, %dst: !pto.ptr<si16, ub>) {
     %zero = arith.constant 0 : index
@@ -640,7 +665,8 @@ module {
   }
 
 // CHECK-LABEL: func.func @compact_broadcast_si16_8_1(
-// CHECK: pto.vselr
+// FUSED: pto.vlds {{.*}} {dist = "BRC_B16"}
+// DIRECT: pto.vselr
 // CHECK-NOT: pto.vmi.
   func.func @compact_broadcast_si16_8_2(%src: !pto.ptr<si16, ub>, %dst: !pto.ptr<si16, ub>) {
     %zero = arith.constant 0 : index
@@ -684,7 +710,8 @@ module {
   }
 
 // CHECK-LABEL: func.func @compact_broadcast_i32_1_1(
-// CHECK: pto.vselr
+// FUSED: pto.vlds {{.*}} {dist = "BRC_B32"}
+// DIRECT: pto.vselr
 // CHECK-NOT: pto.vmi.
   func.func @compact_broadcast_i32_2_1(%src: !pto.ptr<i32, ub>, %dst: !pto.ptr<i32, ub>) {
     %zero = arith.constant 0 : index
@@ -695,7 +722,8 @@ module {
   }
 
 // CHECK-LABEL: func.func @compact_broadcast_i32_2_1(
-// CHECK: pto.vselr
+// FUSED: pto.vlds {{.*}} {dist = "BRC_B32"}
+// DIRECT: pto.vselr
 // CHECK-NOT: pto.vmi.
   func.func @compact_broadcast_i32_2_2(%src: !pto.ptr<i32, ub>, %dst: !pto.ptr<i32, ub>) {
     %zero = arith.constant 0 : index
@@ -717,7 +745,8 @@ module {
   }
 
 // CHECK-LABEL: func.func @compact_broadcast_i32_4_1(
-// CHECK: pto.vselr
+// FUSED: pto.vlds {{.*}} {dist = "BRC_B32"}
+// DIRECT: pto.vselr
 // CHECK-NOT: pto.vmi.
   func.func @compact_broadcast_i32_4_2(%src: !pto.ptr<i32, ub>, %dst: !pto.ptr<i32, ub>) {
     %zero = arith.constant 0 : index
@@ -750,7 +779,8 @@ module {
   }
 
 // CHECK-LABEL: func.func @compact_broadcast_i32_8_1(
-// CHECK: pto.vselr
+// FUSED: pto.vlds {{.*}} {dist = "BRC_B32"}
+// DIRECT: pto.vselr
 // CHECK-NOT: pto.vmi.
   func.func @compact_broadcast_i32_8_2(%src: !pto.ptr<i32, ub>, %dst: !pto.ptr<i32, ub>) {
     %zero = arith.constant 0 : index
@@ -794,7 +824,8 @@ module {
   }
 
 // CHECK-LABEL: func.func @compact_broadcast_ui32_1_1(
-// CHECK: pto.vselr
+// FUSED: pto.vlds {{.*}} {dist = "BRC_B32"}
+// DIRECT: pto.vselr
 // CHECK-NOT: pto.vmi.
   func.func @compact_broadcast_ui32_2_1(%src: !pto.ptr<ui32, ub>, %dst: !pto.ptr<ui32, ub>) {
     %zero = arith.constant 0 : index
@@ -805,7 +836,8 @@ module {
   }
 
 // CHECK-LABEL: func.func @compact_broadcast_ui32_2_1(
-// CHECK: pto.vselr
+// FUSED: pto.vlds {{.*}} {dist = "BRC_B32"}
+// DIRECT: pto.vselr
 // CHECK-NOT: pto.vmi.
   func.func @compact_broadcast_ui32_2_2(%src: !pto.ptr<ui32, ub>, %dst: !pto.ptr<ui32, ub>) {
     %zero = arith.constant 0 : index
@@ -827,7 +859,8 @@ module {
   }
 
 // CHECK-LABEL: func.func @compact_broadcast_ui32_4_1(
-// CHECK: pto.vselr
+// FUSED: pto.vlds {{.*}} {dist = "BRC_B32"}
+// DIRECT: pto.vselr
 // CHECK-NOT: pto.vmi.
   func.func @compact_broadcast_ui32_4_2(%src: !pto.ptr<ui32, ub>, %dst: !pto.ptr<ui32, ub>) {
     %zero = arith.constant 0 : index
@@ -860,7 +893,8 @@ module {
   }
 
 // CHECK-LABEL: func.func @compact_broadcast_ui32_8_1(
-// CHECK: pto.vselr
+// FUSED: pto.vlds {{.*}} {dist = "BRC_B32"}
+// DIRECT: pto.vselr
 // CHECK-NOT: pto.vmi.
   func.func @compact_broadcast_ui32_8_2(%src: !pto.ptr<ui32, ub>, %dst: !pto.ptr<ui32, ub>) {
     %zero = arith.constant 0 : index
@@ -904,7 +938,8 @@ module {
   }
 
 // CHECK-LABEL: func.func @compact_broadcast_si32_1_1(
-// CHECK: pto.vselr
+// FUSED: pto.vlds {{.*}} {dist = "BRC_B32"}
+// DIRECT: pto.vselr
 // CHECK-NOT: pto.vmi.
   func.func @compact_broadcast_si32_2_1(%src: !pto.ptr<si32, ub>, %dst: !pto.ptr<si32, ub>) {
     %zero = arith.constant 0 : index
@@ -915,7 +950,8 @@ module {
   }
 
 // CHECK-LABEL: func.func @compact_broadcast_si32_2_1(
-// CHECK: pto.vselr
+// FUSED: pto.vlds {{.*}} {dist = "BRC_B32"}
+// DIRECT: pto.vselr
 // CHECK-NOT: pto.vmi.
   func.func @compact_broadcast_si32_2_2(%src: !pto.ptr<si32, ub>, %dst: !pto.ptr<si32, ub>) {
     %zero = arith.constant 0 : index
@@ -937,7 +973,8 @@ module {
   }
 
 // CHECK-LABEL: func.func @compact_broadcast_si32_4_1(
-// CHECK: pto.vselr
+// FUSED: pto.vlds {{.*}} {dist = "BRC_B32"}
+// DIRECT: pto.vselr
 // CHECK-NOT: pto.vmi.
   func.func @compact_broadcast_si32_4_2(%src: !pto.ptr<si32, ub>, %dst: !pto.ptr<si32, ub>) {
     %zero = arith.constant 0 : index
@@ -970,7 +1007,8 @@ module {
   }
 
 // CHECK-LABEL: func.func @compact_broadcast_si32_8_1(
-// CHECK: pto.vselr
+// FUSED: pto.vlds {{.*}} {dist = "BRC_B32"}
+// DIRECT: pto.vselr
 // CHECK-NOT: pto.vmi.
   func.func @compact_broadcast_si32_8_2(%src: !pto.ptr<si32, ub>, %dst: !pto.ptr<si32, ub>) {
     %zero = arith.constant 0 : index
@@ -1014,7 +1052,8 @@ module {
   }
 
 // CHECK-LABEL: func.func @compact_broadcast_f16_1_1(
-// CHECK: pto.vselr
+// FUSED: pto.vlds {{.*}} {dist = "BRC_B16"}
+// DIRECT: pto.vselr
 // CHECK-NOT: pto.vmi.
   func.func @compact_broadcast_f16_2_1(%src: !pto.ptr<f16, ub>, %dst: !pto.ptr<f16, ub>) {
     %zero = arith.constant 0 : index
@@ -1025,7 +1064,8 @@ module {
   }
 
 // CHECK-LABEL: func.func @compact_broadcast_f16_2_1(
-// CHECK: pto.vselr
+// FUSED: pto.vlds {{.*}} {dist = "BRC_B16"}
+// DIRECT: pto.vselr
 // CHECK-NOT: pto.vmi.
   func.func @compact_broadcast_f16_2_2(%src: !pto.ptr<f16, ub>, %dst: !pto.ptr<f16, ub>) {
     %zero = arith.constant 0 : index
@@ -1047,7 +1087,8 @@ module {
   }
 
 // CHECK-LABEL: func.func @compact_broadcast_f16_4_1(
-// CHECK: pto.vselr
+// FUSED: pto.vlds {{.*}} {dist = "BRC_B16"}
+// DIRECT: pto.vselr
 // CHECK-NOT: pto.vmi.
   func.func @compact_broadcast_f16_4_2(%src: !pto.ptr<f16, ub>, %dst: !pto.ptr<f16, ub>) {
     %zero = arith.constant 0 : index
@@ -1080,7 +1121,8 @@ module {
   }
 
 // CHECK-LABEL: func.func @compact_broadcast_f16_8_1(
-// CHECK: pto.vselr
+// FUSED: pto.vlds {{.*}} {dist = "BRC_B16"}
+// DIRECT: pto.vselr
 // CHECK-NOT: pto.vmi.
   func.func @compact_broadcast_f16_8_2(%src: !pto.ptr<f16, ub>, %dst: !pto.ptr<f16, ub>) {
     %zero = arith.constant 0 : index
@@ -1124,7 +1166,8 @@ module {
   }
 
 // CHECK-LABEL: func.func @compact_broadcast_bf16_1_1(
-// CHECK: pto.vselr
+// FUSED: pto.vlds {{.*}} {dist = "BRC_B16"}
+// DIRECT: pto.vselr
 // CHECK-NOT: pto.vmi.
   func.func @compact_broadcast_bf16_2_1(%src: !pto.ptr<bf16, ub>, %dst: !pto.ptr<bf16, ub>) {
     %zero = arith.constant 0 : index
@@ -1135,7 +1178,8 @@ module {
   }
 
 // CHECK-LABEL: func.func @compact_broadcast_bf16_2_1(
-// CHECK: pto.vselr
+// FUSED: pto.vlds {{.*}} {dist = "BRC_B16"}
+// DIRECT: pto.vselr
 // CHECK-NOT: pto.vmi.
   func.func @compact_broadcast_bf16_2_2(%src: !pto.ptr<bf16, ub>, %dst: !pto.ptr<bf16, ub>) {
     %zero = arith.constant 0 : index
@@ -1157,7 +1201,8 @@ module {
   }
 
 // CHECK-LABEL: func.func @compact_broadcast_bf16_4_1(
-// CHECK: pto.vselr
+// FUSED: pto.vlds {{.*}} {dist = "BRC_B16"}
+// DIRECT: pto.vselr
 // CHECK-NOT: pto.vmi.
   func.func @compact_broadcast_bf16_4_2(%src: !pto.ptr<bf16, ub>, %dst: !pto.ptr<bf16, ub>) {
     %zero = arith.constant 0 : index
@@ -1190,7 +1235,8 @@ module {
   }
 
 // CHECK-LABEL: func.func @compact_broadcast_bf16_8_1(
-// CHECK: pto.vselr
+// FUSED: pto.vlds {{.*}} {dist = "BRC_B16"}
+// DIRECT: pto.vselr
 // CHECK-NOT: pto.vmi.
   func.func @compact_broadcast_bf16_8_2(%src: !pto.ptr<bf16, ub>, %dst: !pto.ptr<bf16, ub>) {
     %zero = arith.constant 0 : index
@@ -1234,7 +1280,8 @@ module {
   }
 
 // CHECK-LABEL: func.func @compact_broadcast_f32_1_1(
-// CHECK: pto.vselr
+// FUSED: pto.vlds {{.*}} {dist = "BRC_B32"}
+// DIRECT: pto.vselr
 // CHECK-NOT: pto.vmi.
   func.func @compact_broadcast_f32_2_1(%src: !pto.ptr<f32, ub>, %dst: !pto.ptr<f32, ub>) {
     %zero = arith.constant 0 : index
@@ -1245,7 +1292,8 @@ module {
   }
 
 // CHECK-LABEL: func.func @compact_broadcast_f32_2_1(
-// CHECK: pto.vselr
+// FUSED: pto.vlds {{.*}} {dist = "BRC_B32"}
+// DIRECT: pto.vselr
 // CHECK-NOT: pto.vmi.
   func.func @compact_broadcast_f32_2_2(%src: !pto.ptr<f32, ub>, %dst: !pto.ptr<f32, ub>) {
     %zero = arith.constant 0 : index
@@ -1267,7 +1315,8 @@ module {
   }
 
 // CHECK-LABEL: func.func @compact_broadcast_f32_4_1(
-// CHECK: pto.vselr
+// FUSED: pto.vlds {{.*}} {dist = "BRC_B32"}
+// DIRECT: pto.vselr
 // CHECK-NOT: pto.vmi.
   func.func @compact_broadcast_f32_4_2(%src: !pto.ptr<f32, ub>, %dst: !pto.ptr<f32, ub>) {
     %zero = arith.constant 0 : index
@@ -1300,7 +1349,8 @@ module {
   }
 
 // CHECK-LABEL: func.func @compact_broadcast_f32_8_1(
-// CHECK: pto.vselr
+// FUSED: pto.vlds {{.*}} {dist = "BRC_B32"}
+// DIRECT: pto.vselr
 // CHECK-NOT: pto.vmi.
   func.func @compact_broadcast_f32_8_2(%src: !pto.ptr<f32, ub>, %dst: !pto.ptr<f32, ub>) {
     %zero = arith.constant 0 : index

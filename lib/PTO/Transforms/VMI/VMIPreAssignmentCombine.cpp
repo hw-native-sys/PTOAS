@@ -13,6 +13,7 @@
 #include "VMIInternal.h"
 #include "VMIIndexUtils.h"
 #include "PTO/Transforms/Passes.h"
+#include "PTO/Transforms/VMILayoutSupport.h"
 
 #include "mlir/Analysis/AliasAnalysis.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
@@ -153,49 +154,76 @@ static bool canMoveLoadPastInterveningOps(Operation *load,
   return true;
 }
 
-static LogicalResult fuseVMISingleLaneLoadBroadcasts(
+static std::optional<int64_t> getLoadBroadcastGroups(Operation *broadcast) {
+  int64_t numGroups = 1;
+  if (auto grouped = dyn_cast<VMIGroupBroadcastOp>(broadcast)) {
+    numGroups = grouped.getNumGroupsAttr().getInt();
+  } else if (!isa<VMIBroadcastOp>(broadcast)) {
+    return std::nullopt;
+  }
+  auto load = broadcast->getOperand(0).getDefiningOp<VMILoadOp>();
+  if (!load || !load.getResult().hasOneUse()) {
+    return std::nullopt;
+  }
+  auto loadType = cast<VMIVRegType>(load.getResult().getType());
+  int64_t laneCount = loadType.getElementCount();
+  if (laneCount != numGroups) {
+    return std::nullopt;
+  }
+  return numGroups;
+}
+
+static void fuseVMILoadBroadcast(Operation *broadcast, int64_t numGroups) {
+  auto load = broadcast->getOperand(0).getDefiningOp<VMILoadOp>();
+  OpBuilder builder(broadcast);
+  // Dense load lane g is the scalar for group g. Scalar broadcasts keep
+  // their existing zero-stride representation.
+  auto stride = builder.create<arith::ConstantOp>(
+      broadcast->getLoc(), builder.getIndexType(),
+      builder.getIndexAttr(numGroups == 1 ? 0 : 1));
+  auto fused = builder.create<VMIGroupBroadcastLoadOp>(
+      broadcast->getLoc(), broadcast->getResult(0).getType(), load.getSource(),
+      load.getOffset(), stride, builder.getI64IntegerAttr(numGroups));
+  VMILayoutSupport supports;
+  auto resultType = cast<VMIVRegType>(fused.getResult().getType());
+  // Require a dense fallback when the result has no assigned layout. A table
+  // row for a strided carrier alone does not guarantee legal consumer edges.
+  if (!resultType.getLayoutAttr()) {
+    resultType = VMIVRegType::get(
+        builder.getContext(), resultType.getElementCount(),
+        resultType.getElementType(),
+        VMILayoutAttr::getContiguous(builder.getContext()));
+  }
+  bool hasSupportedLayout = succeeded(supports.getGroupBroadcastLoadLayoutFact(
+      resultType, stride, numGroups));
+  if (!hasSupportedLayout) {
+    fused.erase();
+    stride.erase();
+    return;
+  }
+  broadcast->getResult(0).replaceAllUsesWith(fused.getResult());
+  broadcast->erase();
+  load.erase();
+}
+
+static LogicalResult fuseVMILoadBroadcasts(
     ModuleOp module, AliasAnalysis &aliasAnalysis) {
-  SmallVector<VMIBroadcastOp> broadcasts;
-  module.walk([&](VMIBroadcastOp broadcast) {
-    auto load = broadcast.getValue().getDefiningOp<VMILoadOp>();
-    if (!load) {
+  SmallVector<Operation *> broadcasts;
+  module.walk([&](Operation *broadcast) {
+    if (!getLoadBroadcastGroups(broadcast)) {
       return;
     }
-
-    bool loadHasSingleUse = load.getResult().hasOneUse();
+    auto load = broadcast->getOperand(0).getDefiningOp<VMILoadOp>();
     bool canReorderLoad = canMoveLoadPastInterveningOps(
         load, broadcast, load.getSource(), aliasAnalysis);
-    if (!loadHasSingleUse || !canReorderLoad) {
-      return;
+    if (canReorderLoad) {
+      broadcasts.push_back(broadcast);
     }
-
-    auto loadType = dyn_cast<VMIVRegType>(load.getResult().getType());
-    bool isSingleLaneLoad = loadType && loadType.getElementCount() == 1;
-    bool hasVectorResult =
-        isa<VMIVRegType>(broadcast.getResult().getType());
-    if (!isSingleLaneLoad || !hasVectorResult) {
-      return;
-    }
-    broadcasts.push_back(broadcast);
   });
 
-  OpBuilder builder(module.getContext());
-  for (VMIBroadcastOp broadcast : broadcasts) {
-    auto load = broadcast.getValue().getDefiningOp<VMILoadOp>();
-    if (!load) {
-      continue;
-    }
-
-    builder.setInsertionPoint(broadcast);
-    Value zeroStride = builder.create<arith::ConstantOp>(
-        broadcast.getLoc(), builder.getIndexType(), builder.getIndexAttr(0));
-    auto fused = builder.create<VMIGroupBroadcastLoadOp>(
-        broadcast.getLoc(), broadcast.getResult().getType(), load.getSource(),
-        load.getOffset(), zeroStride, builder.getI64IntegerAttr(1));
-    broadcast.getResult().replaceAllUsesWith(fused.getResult());
-    broadcast.erase();
-    if (load->use_empty()) {
-      load.erase();
+  for (Operation *broadcast : broadcasts) {
+    if (auto numGroups = getLoadBroadcastGroups(broadcast)) {
+      fuseVMILoadBroadcast(broadcast, *numGroups);
     }
   }
   return success();
@@ -275,7 +303,7 @@ struct VMIPreAssignmentCombinePass
     AliasAnalysis &aliasAnalysis = getAnalysis<AliasAnalysis>();
     if (failed(canonicalizeContiguousGroupLoads(getOperation())) ||
         failed(fuseGroupSlotBroadcastLoads(getOperation())) ||
-        failed(fuseVMISingleLaneLoadBroadcasts(getOperation(), aliasAnalysis)) ||
+        failed(fuseVMILoadBroadcasts(getOperation(), aliasAnalysis)) ||
         failed(fusePTOScalarUBLoadBroadcasts(getOperation(), aliasAnalysis))) {
       signalPassFailure();
     }

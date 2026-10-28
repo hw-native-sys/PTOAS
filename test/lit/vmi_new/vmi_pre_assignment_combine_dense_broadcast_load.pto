@@ -1,0 +1,127 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+
+// RUN: pto-test-opt %s -vmi-lower-unified-to-legacy -vmi-pre-assignment-combine | FileCheck %s
+// RUN: pto-test-opt %s -vmi-lower-unified-to-legacy -vmi-pre-assignment-combine -vmi-mask-granularity-assignment -vmi-layout-assignment -vmi-to-vpto | FileCheck %s --check-prefix=LOWER
+
+module {
+  func.func @bf16_e2b(%src: !pto.ptr<bf16, ub>, %off: index) -> !pto.vmi.vreg<256xbf16, #pto.vmi.layout<deinterleaved = 2>> {
+    %c32 = arith.constant 32 : index
+    %aligned = arith.muli %off, %c32 : index
+    %load = pto.vmi.vload %src[%aligned] : !pto.ptr<bf16, ub> -> !pto.vmi.vreg<8xbf16>
+    %out = pto.vmi.vbrc %load {group = 8} : !pto.vmi.vreg<8xbf16> -> !pto.vmi.vreg<256xbf16, #pto.vmi.layout<deinterleaved = 2>>
+    return %out : !pto.vmi.vreg<256xbf16, #pto.vmi.layout<deinterleaved = 2>>
+  }
+  func.func @f32_e2b(%src: !pto.ptr<f32, ub>, %off: index) -> !pto.vmi.vreg<256xf32, #pto.vmi.layout<deinterleaved = 4>> {
+    %c32 = arith.constant 32 : index
+    %aligned = arith.muli %off, %c32 : index
+    %load = pto.vmi.vload %src[%aligned] : !pto.ptr<f32, ub> -> !pto.vmi.vreg<8xf32>
+    %out = pto.vmi.vbrc %load {group = 8} : !pto.vmi.vreg<8xf32> -> !pto.vmi.vreg<256xf32, #pto.vmi.layout<deinterleaved = 4>>
+    return %out : !pto.vmi.vreg<256xf32, #pto.vmi.layout<deinterleaved = 4>>
+  }
+  func.func @four_groups(%src: !pto.ptr<f16, ub>, %off: index) -> !pto.vmi.vreg<64xf16, #pto.vmi.layout<contiguous>> {
+    %c32 = arith.constant 32 : index
+    %aligned = arith.muli %off, %c32 : index
+    %load = pto.vmi.vload %src[%aligned] : !pto.ptr<f16, ub> -> !pto.vmi.vreg<4xf16>
+    %out = pto.vmi.vbrc %load {group = 4} : !pto.vmi.vreg<4xf16> -> !pto.vmi.vreg<64xf16, #pto.vmi.layout<contiguous>>
+    return %out : !pto.vmi.vreg<64xf16, #pto.vmi.layout<contiguous>>
+  }
+  func.func @two_groups(%src: !pto.ptr<f32, ub>, %off: index) -> !pto.vmi.vreg<128xf32, #pto.vmi.layout<contiguous>> {
+    %c32 = arith.constant 32 : index
+    %aligned = arith.muli %off, %c32 : index
+    %load = pto.vmi.vload %src[%aligned] : !pto.ptr<f32, ub> -> !pto.vmi.vreg<2xf32>
+    %out = pto.vmi.vbrc %load {group = 2} : !pto.vmi.vreg<2xf32> -> !pto.vmi.vreg<128xf32, #pto.vmi.layout<contiguous>>
+    return %out : !pto.vmi.vreg<128xf32, #pto.vmi.layout<contiguous>>
+  }
+  func.func @one_group(%src: !pto.ptr<bf16, ub>, %off: index) -> !pto.vmi.vreg<128xbf16, #pto.vmi.layout<contiguous>> {
+    %c32 = arith.constant 32 : index
+    %aligned = arith.muli %off, %c32 : index
+    %load = pto.vmi.vload %src[%aligned] : !pto.ptr<bf16, ub> -> !pto.vmi.vreg<1xbf16>
+    %out = pto.vmi.vbrc %load {group = 1} : !pto.vmi.vreg<1xbf16> -> !pto.vmi.vreg<128xbf16, #pto.vmi.layout<contiguous>>
+    return %out : !pto.vmi.vreg<128xbf16, #pto.vmi.layout<contiguous>>
+  }
+  func.func @byte_groups(%src: !pto.ptr<i8, ub>, %off: index) -> !pto.vmi.vreg<256xi8, #pto.vmi.layout<contiguous>> {
+    %c32 = arith.constant 32 : index
+    %aligned = arith.muli %off, %c32 : index
+    %load = pto.vmi.vload %src[%aligned] : !pto.ptr<i8, ub> -> !pto.vmi.vreg<8xi8>
+    %out = pto.vmi.vbrc %load {group = 8} : !pto.vmi.vreg<8xi8> -> !pto.vmi.vreg<256xi8, #pto.vmi.layout<contiguous>>
+    return %out : !pto.vmi.vreg<256xi8, #pto.vmi.layout<contiguous>>
+  }
+}
+
+// CHECK-LABEL: func.func @bf16_e2b
+// CHECK-NOT: pto.vmi.load
+// CHECK: %[[STRIDE_bf16_e2b:.*]] = arith.constant 1 : index
+// CHECK: pto.vmi.group_broadcast_load %{{.*}}[%{{.*}}], %[[STRIDE_bf16_e2b]] {num_groups = 8 : i64}
+// CHECK-NOT: pto.vmi.group_broadcast %{{.*}}
+// CHECK: return
+// LOWER-LABEL: func.func @bf16_e2b
+// LOWER: pto.vlds {{.*}} {dist = "E2B_B16"}
+// LOWER-NOT: pto.vbrc
+// LOWER-NOT: pto.vmi.
+// LOWER: return
+
+// CHECK-LABEL: func.func @f32_e2b
+// CHECK-NOT: pto.vmi.load
+// CHECK: %[[STRIDE_f32_e2b:.*]] = arith.constant 1 : index
+// CHECK: pto.vmi.group_broadcast_load %{{.*}}[%{{.*}}], %[[STRIDE_f32_e2b]] {num_groups = 8 : i64}
+// CHECK-NOT: pto.vmi.group_broadcast %{{.*}}
+// CHECK: return
+// LOWER-LABEL: func.func @f32_e2b
+// LOWER: pto.vlds {{.*}} {dist = "E2B_B32"}
+// LOWER-NOT: pto.vbrc
+// LOWER-NOT: pto.vmi.
+// LOWER: return
+
+// CHECK-LABEL: func.func @four_groups
+// CHECK-NOT: pto.vmi.load
+// CHECK: %[[STRIDE_four_groups:.*]] = arith.constant 1 : index
+// CHECK: pto.vmi.group_broadcast_load %{{.*}}[%{{.*}}], %[[STRIDE_four_groups]] {num_groups = 4 : i64}
+// CHECK-NOT: pto.vmi.group_broadcast %{{.*}}
+// CHECK: return
+// LOWER-LABEL: func.func @four_groups
+// LOWER: pto.vlds {{.*}} {dist = "E2B_B16"}
+// LOWER-NOT: pto.vbrc
+// LOWER-NOT: pto.vmi.
+// LOWER: return
+
+// CHECK-LABEL: func.func @two_groups
+// CHECK-NOT: pto.vmi.load
+// CHECK: %[[STRIDE_two_groups:.*]] = arith.constant 1 : index
+// CHECK: pto.vmi.group_broadcast_load %{{.*}}[%{{.*}}], %[[STRIDE_two_groups]] {num_groups = 2 : i64}
+// CHECK-NOT: pto.vmi.group_broadcast %{{.*}}
+// CHECK: return
+// LOWER-LABEL: func.func @two_groups
+// LOWER: pto.vlds {{.*}} {dist = "BRC_B32"}
+// LOWER-NOT: pto.vbrc
+// LOWER-NOT: pto.vmi.
+// LOWER: return
+
+// CHECK-LABEL: func.func @one_group
+// CHECK-NOT: pto.vmi.load
+// CHECK: %[[STRIDE_one_group:.*]] = arith.constant 0 : index
+// CHECK: pto.vmi.group_broadcast_load %{{.*}}[%{{.*}}], %[[STRIDE_one_group]] {num_groups = 1 : i64}
+// CHECK-NOT: pto.vmi.group_broadcast %{{.*}}
+// CHECK: return
+// LOWER-LABEL: func.func @one_group
+// LOWER: pto.vlds {{.*}} {dist = "BRC_B16"}
+// LOWER-NOT: pto.vbrc
+// LOWER-NOT: pto.vmi.
+// LOWER: return
+
+// CHECK-LABEL: func.func @byte_groups
+// CHECK-NOT: pto.vmi.load
+// CHECK: %[[STRIDE_byte_groups:.*]] = arith.constant 1 : index
+// CHECK: pto.vmi.group_broadcast_load %{{.*}}[%{{.*}}], %[[STRIDE_byte_groups]] {num_groups = 8 : i64}
+// CHECK-NOT: pto.vmi.group_broadcast %{{.*}}
+// CHECK: return
+// LOWER-LABEL: func.func @byte_groups
+// LOWER: pto.vlds {{.*}} {dist = "BRC_B8"}
+// LOWER-NOT: pto.vbrc
+// LOWER-NOT: pto.vmi.
+// LOWER: return

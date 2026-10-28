@@ -1,0 +1,49 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software; you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+
+// RUN: pto-test-opt %s -vmi-lower-unified-to-legacy -vmi-pre-assignment-combine | FileCheck %s
+// RUN: pto-test-opt %s -vmi-lower-unified-to-legacy -vmi-pre-assignment-combine -vmi-mask-granularity-assignment -vmi-layout-assignment -vmi-to-vpto | FileCheck %s --check-prefix=LOWER
+
+module {
+  func.func @single_group(%src: !pto.ptr<f32, ub>, %dst: !pto.ptr<f32, ub>, %off: index) {
+    %lane = pto.vmi.vload %src[%off] : !pto.ptr<f32, ub> -> !pto.vmi.vreg<1xf32>
+    %r = pto.vmi.vbrc %lane {group = 1 : i64} : !pto.vmi.vreg<1xf32> -> !pto.vmi.vreg<128xf32>
+    pto.vmi.vstore %r, %dst[%off] : !pto.vmi.vreg<128xf32>, !pto.ptr<f32, ub>
+    return
+  }
+  func.func @intervening_write(%src: !pto.ptr<f32, ub>, %off: index) -> !pto.vmi.vreg<128xf32> {
+    %lane = pto.vmi.vload %src[%off] : !pto.ptr<f32, ub> -> !pto.vmi.vreg<1xf32>
+    %zero = arith.constant 0.0 : f32
+    pto.store %zero, %src[%off] : !pto.ptr<f32, ub>, f32
+    %r = pto.vmi.vbrc %lane {group = 1 : i64} : !pto.vmi.vreg<1xf32> -> !pto.vmi.vreg<128xf32>
+    return %r : !pto.vmi.vreg<128xf32>
+  }
+  func.func @multiple_uses(%src: !pto.ptr<f32, ub>, %off: index) -> (!pto.vmi.vreg<128xf32>, !pto.vmi.vreg<1xf32>) {
+    %lane = pto.vmi.vload %src[%off] : !pto.ptr<f32, ub> -> !pto.vmi.vreg<1xf32>
+    %r = pto.vmi.vbrc %lane {group = 1 : i64} : !pto.vmi.vreg<1xf32> -> !pto.vmi.vreg<128xf32>
+    return %r, %lane : !pto.vmi.vreg<128xf32>, !pto.vmi.vreg<1xf32>
+  }
+}
+
+// CHECK-LABEL: func.func @single_group
+// CHECK-NOT: pto.vmi.load
+// CHECK: pto.vmi.group_broadcast_load
+// CHECK-NOT: pto.vmi.group_broadcast
+// CHECK-LABEL: func.func @intervening_write
+// CHECK: pto.vmi.load
+// CHECK: pto.store
+// CHECK: pto.vmi.group_broadcast
+// CHECK-LABEL: func.func @multiple_uses
+// CHECK: pto.vmi.load
+// CHECK: pto.vmi.group_broadcast
+
+// LOWER-LABEL: func.func @single_group
+// LOWER: pto.vlds {{.*}} {dist = "BRC_B32"}
+// LOWER-NOT: pto.vselr
+// LOWER-NOT: pto.vdup
+// LOWER: return

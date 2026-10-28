@@ -48,18 +48,16 @@ module {
 // CHECK-NOT: pto.vmi.
 
 // CHECK-LABEL: func.func @partial_group_slots_2(
-// The vsldb mask selects 32B blocks, not lanes, and block_stride = 0 aims
-// every block at the base: PAT_VL1 reads exactly the one block that holds the
-// two slot values and zeroes the rest.
-// CHECK: pto.pset_b32 "PAT_VL1"
+// Two-group broadcast-load fallback materializes four group-slot carriers.
+// CHECK: pto.pset_b32 "PAT_VL2"
 // CHECK: pto.vsldb
 // CHECK: pto.vshrs
-// CHECK: pto.vselr
+// CHECK-COUNT-4: pto.vselr
 // CHECK-NOT: pto.vmi.
 
 // CHECK-LABEL: func.func @partial_group_slots_4(
-// CHECK: pto.pset_b32 "PAT_VL1"
-// CHECK: pto.vsldb
-// CHECK: pto.vshrs
-// CHECK: pto.vselr
+// CHECK-NOT: pto.vsldb
+// CHECK: %[[E2B:.*]] = pto.vlds {{.*}} {dist = "E2B_B32"}
+// CHECK-NOT: pto.vselr
+// CHECK: return %[[E2B]], %[[E2B]]
 // CHECK-NOT: pto.vmi.
