@@ -179,4 +179,11 @@ CASES = [
     _case("store_acc2gm_f32_nz2nz_case7", 32, 64, 25, 32, 32, 64, "nz2nz"),
 ]
 
+# NOTE: an end-to-end padded-ACC nz2nz kernel (ACC physical 64 rows / valid
+# 32, destination view 2 row tiles) still produces wrong values with the
+# corrected destination pitch — the store reads misplaced L0C rows on the
+# source side. That is a separate defect from the destination-pitch fix in
+# this change; the unit test pins the pitch parameter (256, not 512) until
+# it is tracked down.
+
 auto_main(globals())

@@ -61,18 +61,16 @@ class Acc2gmNzStrideTest(unittest.TestCase):
         self.assertIn("pto.constant 32 : i64", text)
         self.assertNotIn("pto.constant 31 : i64", text)
 
-    def test_nz2nz_dst_stride_is_aligned_rows_times_c0(self):
-        # 32x64 f32 store into a C0=8 NZ view: 16-row aligned rows (32)
-        # times C0 (8) pitch the column blocks at 256, not n = 64.
-        n_tiles, k_tiles = 32 // 16, 64 // 8
+    def _nz2nz_specs(self, acc_rows, valid_rows, n_cols=64):
+        n_tiles, k_tiles = valid_rows // 16, n_cols // 8
         stride2 = 16 * 8
         stride1 = n_tiles * stride2
-        specs = {
+        return {
             "src": TileSpec(
-                shape=(32, 64),
+                shape=(acc_rows, n_cols),
                 dtype=ScalarType("f32"),
                 memory_space="acc",
-                valid_shape=(32, 64),
+                valid_shape=(valid_rows, n_cols),
                 b_layout="col_major",
                 s_layout="row_major",
             ),
@@ -83,9 +81,28 @@ class Acc2gmNzStrideTest(unittest.TestCase):
                 layout="nz",
             ),
         }
+
+    def _tstore_text(self, specs):
         selected = select("pto.tstore", "a5", specs)
-        text = selected.specialize(**specs).mlir_text()
-        self.assertIn("256", text)
+        return selected.specialize(**specs).mlir_text()
+
+    def test_nz2nz_dst_stride_is_view_rows_times_c0(self):
+        # 32x64 f32 store into a C0=8 NZ view: the view's 2 row tiles (32
+        # rows) times C0 (8) pitch the column blocks at 256, not n = 64.
+        # The specialization emits exactly these i64 constants: 32 (source
+        # stride), 256 (destination stride), 0, 0, 1 — so both directions of
+        # the assertion are unambiguous.
+        text = self._tstore_text(self._nz2nz_specs(32, 32))
+        self.assertIn("pto.constant 256 : i64", text)
+        self.assertNotIn("pto.constant 64 : i64", text)
+
+    def test_nz2nz_dst_stride_ignores_padded_acc_rows(self):
+        # Padded ACC tile: 64 physical rows, 32 valid. PTO-ISA TStoreAccNZ
+        # pitches at align16(validRow) * C0 = 32 * 8 = 256 (the destination
+        # view's row count), never at the physical 64 * 8 = 512.
+        text = self._tstore_text(self._nz2nz_specs(64, 32))
+        self.assertIn("pto.constant 256 : i64", text)
+        self.assertNotIn("pto.constant 512 : i64", text)
 
 
 if __name__ == "__main__":
