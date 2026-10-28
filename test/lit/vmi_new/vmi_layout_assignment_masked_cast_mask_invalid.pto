@@ -1,0 +1,33 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under
+// the terms and conditions of CANN Open Software License Agreement Version 2.0
+// (the "License"). Please refer to the License for details. You may not use this
+// file except in compliance with the License. THIS SOFTWARE IS PROVIDED ON AN
+// "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS
+// FOR A PARTICULAR PURPOSE. See LICENSE in the root of the software repository
+// for the full text of the License.
+
+// RUN: not pto-test-opt %s -vmi-lower-unified-to-legacy -vmi-mask-granularity-assignment -vmi-layout-assignment 2>&1 | FileCheck %s
+
+// A masked widening whose dense f32 result leaves exactly one legal relation
+// row: the lane-strided f16 source.  The predicate would have to follow the
+// source into that carrier, but a 128-lane b16 predicate has no
+// ensure_mask_layout row to a lane-strided layout, so the mask endpoint makes
+// the component unsatisfiable.  The same cast without a predicate solves: the
+// unmasked planner inserts the dense-to-lane-strided ensure_layout on the
+// source instead.  Layout assignment must report the contraction rather than
+// silently drop or ignore the predicate.
+//
+// CHECK: error: VMI-LAYOUT-CONTRACT: no complete legal VMI layout plan exists for this component
+// CHECK-NEXT: %{{.*}} = pto.vmi.extf %{{.*}}, %{{.*}}
+module {
+  func.func @masked_extf_pinned_dense(
+      %src: !pto.vmi.vreg<128xf16>, %mask: !pto.vmi.mask<128xb16>)
+      -> !pto.vmi.vreg<128xf32, #pto.vmi.layout<contiguous>> {
+    %0 = pto.vmi.extf %src, %mask
+        : !pto.vmi.vreg<128xf16>, !pto.vmi.mask<128xb16>
+        -> !pto.vmi.vreg<128xf32, #pto.vmi.layout<contiguous>>
+    return %0 : !pto.vmi.vreg<128xf32, #pto.vmi.layout<contiguous>>
+  }
+}

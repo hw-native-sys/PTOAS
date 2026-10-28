@@ -57,14 +57,6 @@ def _missing_vmi_support_error(op_name: str) -> NotImplementedError:
     )
 
 
-def _unsupported_vmi_feature_error(op_name: str, feature: str) -> NotImplementedError:
-    return NotImplementedError(
-        f"{op_name} {feature} is not available in the current generated VMI "
-        "binding/backend support; update the PTO bindings or use an explicit "
-        "supported VMI form."
-    )
-
-
 def _generated(op_name: str):
     fn = getattr(_pto, f"vmi_{op_name}", None)
     if fn is None:
@@ -1190,8 +1182,6 @@ class _VMINamespace:
         loc=None,
         ip=None,
     ):
-        if mask is not None:
-            raise _unsupported_vmi_feature_error("pto.vmi.vcvt", "masked form")
         result_type = _derive_vcvt_result_type(source, to_dtype, context="pto.vmi.vcvt(...)")
         source_type = _as_vmi_vreg_type(
             _type_of(source),
@@ -1223,6 +1213,7 @@ class _VMINamespace:
             "vcvt",
             result_type,
             _raw(source),
+            mask=None if mask is None else _raw(mask),
             rounding=rounding,
             saturate=saturate,
             pmode=pmode,

@@ -300,9 +300,14 @@ private:
 
     LogicalResult buildSameLayoutResult(
         Operation* op, OpResult result, VMILayoutAttr layout, int64_t arity, const PhysicalInputs& inputs);
+    // predicate is the physical conversion predicate of a masked cast and empty
+    // for an unmasked one; it is charged as an input of every conversion part so
+    // the graph keeps the predicate dependency the lowering also emits.
     FailureOr<PhysicalValues> buildWideningCast(
-        ArrayRef<PhysicalValue> source, int64_t resultArity, Region* scope, PhysicalActionKind conversionKind);
-    FailureOr<PhysicalValues> buildNarrowingCast(ArrayRef<PhysicalValue> source, int64_t resultArity, Region* scope);
+        ArrayRef<PhysicalValue> source, int64_t resultArity, Region* scope, PhysicalActionKind conversionKind,
+        ArrayRef<PhysicalValue> predicate = {});
+    FailureOr<PhysicalValues> buildNarrowingCast(
+        ArrayRef<PhysicalValue> source, int64_t resultArity, Region* scope, ArrayRef<PhysicalValue> predicate = {});
     PhysicalValues buildDenseDeinterleavedLoad(int64_t arity, int64_t factor, Region* scope);
     PhysicalValues buildBroadcastLoadActions(
         VMIGroupBroadcastLoadOp load, const VMILayoutOpRelation& relation, const BroadcastLoadState& state);
@@ -391,7 +396,27 @@ private:
 
     LogicalResult buildSameLayoutOp(Operation* op, const VMILayoutOpRelation& relation);
 
+    // Layouts the cast's source, optional conversion predicate and result ports
+    // carry.  A masked cast gives its predicate operand the source layout: the
+    // verifier pairs one predicate lane with each source lane in one layout, so
+    // the predicate travels with the source and is charged through the same
+    // buildOperand query as every other mask operand of the cost graph.
+    struct CastPortLayouts {
+        VMILayoutAttr source;
+        std::optional<VMILayoutAttr> predicate;
+        VMILayoutAttr result;
+    };
+
+    static std::optional<CastPortLayouts> resolveCastPortLayouts(Operation* op, const VMILayoutOpRelation& relation);
+
     LogicalResult buildCast(Operation* op, const VMILayoutOpRelation& relation);
+
+    // Emit the conversion actions of one cast relation: a width change goes
+    // through the widening or narrowing recipe, a same-width cast is one semantic
+    // action per carrier.  predicate is empty for an unmasked cast.
+    FailureOr<SmallVector<PhysicalValue, mlir::pto::kValue4>> buildCastConversion(
+        Operation* op, ArrayRef<PhysicalValue> source, int64_t resultArity, VMIVRegType sourceType,
+        VMIVRegType resultType, const VMILayoutOpRelation& relation, ArrayRef<PhysicalValue> predicate);
 
     FailureOr<SmallVector<PhysicalValue, mlir::pto::kValue4>> addMaskActions(
         PhysicalValue source, PhysicalActionKind kind, int64_t count, Region* scope, StringRef tag);

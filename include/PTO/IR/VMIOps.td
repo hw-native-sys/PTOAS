@@ -360,73 +360,86 @@ def VMIVchistOp : VMIHistogramOp<"vchist",
 
 def VMIExtFOp : VMI_Op<"extf", [Pure]> {
   let summary = "VMI floating-point elementwise extension";
-  let arguments = (ins VMI_VRegTypeConstraint:$source);
+  let description = [{
+    Widens a floating-point vector.  The optional `mask` operand carries the
+    conversion predicate (a VMI logical mask), so a partially predicated
+    widening does not need to be split into a full conversion plus a select.
+  }];
+  let arguments = (ins VMI_VRegTypeConstraint:$source,
+                   Optional<VMIMaskType>:$mask);
   let results = (outs VMI_VRegTypeConstraint:$result);
   let hasVerifier = 1;
-  let assemblyFormat = "$source attr-dict `:` type($source) `->` type($result)";
+  let assemblyFormat = "$source (`,` $mask^)? attr-dict `:` type($source) (`,` type($mask)^)? `->` type($result)";
 }
 
 def VMITruncFOp : VMI_Op<"truncf", [Pure]> {
   let summary = "VMI floating-point elementwise truncation";
   let arguments = (ins VMI_VRegTypeConstraint:$source,
+                   Optional<VMIMaskType>:$mask,
                    OptionalAttr<StrAttr>:$rounding,
                    OptionalAttr<StrAttr>:$saturate);
   let results = (outs VMI_VRegTypeConstraint:$result);
   let hasVerifier = 1;
-  let assemblyFormat = "$source attr-dict `:` type($source) `->` type($result)";
+  let assemblyFormat = "$source (`,` $mask^)? attr-dict `:` type($source) (`,` type($mask)^)? `->` type($result)";
 }
 
 def VMIFPToSIOp : VMI_Op<"fptosi", [Pure]> {
   let summary = "VMI floating-point to signed integer elementwise conversion";
   let arguments = (ins VMI_VRegTypeConstraint:$source,
+                   Optional<VMIMaskType>:$mask,
                    OptionalAttr<StrAttr>:$rounding,
                    OptionalAttr<StrAttr>:$saturate);
   let results = (outs VMI_VRegTypeConstraint:$result);
   let hasVerifier = 1;
-  let assemblyFormat = "$source attr-dict `:` type($source) `->` type($result)";
+  let assemblyFormat = "$source (`,` $mask^)? attr-dict `:` type($source) (`,` type($mask)^)? `->` type($result)";
 }
 
 def VMIFPToUIOp : VMI_Op<"fptoui", [Pure]> {
   let summary = "VMI floating-point to unsigned integer elementwise conversion";
   let arguments = (ins VMI_VRegTypeConstraint:$source,
+                   Optional<VMIMaskType>:$mask,
                    OptionalAttr<StrAttr>:$rounding,
                    OptionalAttr<StrAttr>:$saturate);
   let results = (outs VMI_VRegTypeConstraint:$result);
   let hasVerifier = 1;
-  let assemblyFormat = "$source attr-dict `:` type($source) `->` type($result)";
+  let assemblyFormat = "$source (`,` $mask^)? attr-dict `:` type($source) (`,` type($mask)^)? `->` type($result)";
 }
 
 def VMISIToFPOp : VMI_Op<"sitofp", [Pure]> {
   let summary = "VMI signed integer to floating-point elementwise conversion";
-  let arguments = (ins VMI_VRegTypeConstraint:$source);
+  let arguments = (ins VMI_VRegTypeConstraint:$source,
+                   Optional<VMIMaskType>:$mask);
   let results = (outs VMI_VRegTypeConstraint:$result);
   let hasVerifier = 1;
-  let assemblyFormat = "$source attr-dict `:` type($source) `->` type($result)";
+  let assemblyFormat = "$source (`,` $mask^)? attr-dict `:` type($source) (`,` type($mask)^)? `->` type($result)";
 }
 
 def VMIExtSIOp : VMI_Op<"extsi", [Pure]> {
   let summary = "VMI signed integer elementwise extension";
-  let arguments = (ins VMI_VRegTypeConstraint:$source);
+  let arguments = (ins VMI_VRegTypeConstraint:$source,
+                   Optional<VMIMaskType>:$mask);
   let results = (outs VMI_VRegTypeConstraint:$result);
   let hasVerifier = 1;
-  let assemblyFormat = "$source attr-dict `:` type($source) `->` type($result)";
+  let assemblyFormat = "$source (`,` $mask^)? attr-dict `:` type($source) (`,` type($mask)^)? `->` type($result)";
 }
 
 def VMIExtUIOp : VMI_Op<"extui", [Pure]> {
   let summary = "VMI unsigned integer elementwise extension";
-  let arguments = (ins VMI_VRegTypeConstraint:$source);
+  let arguments = (ins VMI_VRegTypeConstraint:$source,
+                   Optional<VMIMaskType>:$mask);
   let results = (outs VMI_VRegTypeConstraint:$result);
   let hasVerifier = 1;
-  let assemblyFormat = "$source attr-dict `:` type($source) `->` type($result)";
+  let assemblyFormat = "$source (`,` $mask^)? attr-dict `:` type($source) (`,` type($mask)^)? `->` type($result)";
 }
 
 def VMITruncIOp : VMI_Op<"trunci", [Pure]> {
   let summary = "VMI saturating integer elementwise truncation";
   let arguments = (ins VMI_VRegTypeConstraint:$source,
+                   Optional<VMIMaskType>:$mask,
                    OptionalAttr<StrAttr>:$saturate);
   let results = (outs VMI_VRegTypeConstraint:$result);
   let hasVerifier = 1;
-  let assemblyFormat = "$source attr-dict `:` type($source) `->` type($result)";
+  let assemblyFormat = "$source (`,` $mask^)? attr-dict `:` type($source) (`,` type($mask)^)? `->` type($result)";
 }
 
 def VMIBitcastOp : VMI_Op<"bitcast", [Pure]> {
@@ -1418,12 +1431,13 @@ def VMICvtOp : VMI_Op<"vcvt", [Pure]> {
     ```
   }];
   let arguments = (ins VMI_VRegTypeConstraint:$source,
+                   Optional<VMIMaskType>:$mask,
                    OptionalAttr<StrAttr>:$rounding,
                    OptionalAttr<StrAttr>:$saturate,
                    OptionalAttr<StrAttr>:$pmode);
   let results = (outs VMI_VRegTypeConstraint:$result);
   let hasVerifier = 1;
-  let assemblyFormat = "$source attr-dict `:` type($source) `->` type($result)";
+  let assemblyFormat = "$source (`,` $mask^)? attr-dict `:` type($source) (`,` type($mask)^)? `->` type($result)";
 }
 
 def VMIvLoadOp : VMI_Op<"vload",

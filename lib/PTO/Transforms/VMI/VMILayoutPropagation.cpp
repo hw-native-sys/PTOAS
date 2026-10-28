@@ -270,6 +270,22 @@ public:
   }
 };
 
+// Facts of one cast relation.  A masked cast carries the conversion predicate
+// on operand 1 and the predicate's layout is the source data layout (one
+// predicate lane per source lane in the same layout), so the predicate rides
+// along with the source side of every fact row.
+static SmallVector<VMILayoutFact, mlir::pto::kValue4> makeCastRelationFacts(
+    Operation* op, bool masked, const VMICastLayoutFact& fact)
+{
+    SmallVector<VMILayoutFact, mlir::pto::kValue4> facts;
+    facts.push_back(operandFact(op->getOpOperand(0), fact.sourceLayout));
+    if (masked) {
+        facts.push_back(operandFact(op->getOpOperand(1), fact.sourceLayout));
+    }
+    facts.push_back(valueFact(op->getResult(0), fact.resultLayout));
+    return facts;
+}
+
 class VMICastTransfer final : public VMILayoutTransfer {
   // A cast op that the direction-spine peephole marked as part of a matched
   // chain is reconciled against the spine-scoped table; every other cast op
@@ -292,8 +308,10 @@ public:
   query(const VMILayoutTransferQuery &request) const override {
     [[maybe_unused]] auto [op, changedValue, changedLayout, propagator,
                            changedOperand] = request;
-    if (op->getNumOperands() != 1 || op->getNumResults() != 1) {
-      return failure();
+    unsigned numOperands = op->getNumOperands();
+    bool castShape = numOperands >= 1 && numOperands <= 2 && op->getNumResults() == 1;
+    if (!castShape) {
+        return failure();
     }
 
     auto sourceType = dyn_cast<VMIVRegType>(op->getOperand(0).getType());
@@ -302,21 +320,28 @@ public:
       return failure();
     }
 
-    if (changedValue == op->getOperand(0)) {
-      FailureOr<SmallVector<VMICastLayoutFact, mlir::pto::kValue4>> facts =
-          queryCastFacts(propagator, op, sourceType, resultType,
-                         VMICastLayoutPort::Source, changedLayout);
-      if (failed(facts) || facts->empty()) {
-        return failure();
-      }
-      SmallVector<VMILayoutRelation, mlir::pto::kValue4> relations;
-      for (const VMICastLayoutFact &fact : *facts) {
-        relations.push_back(
-            makeRelation(SmallVector<VMILayoutFact, mlir::pto::kValue4>{
-            operandFact(op->getOpOperand(0), fact.sourceLayout),
-            valueFact(op->getResult(0), fact.resultLayout)}));
-      }
-      return relations;
+    // A masked cast carries the conversion predicate on operand 1, and the
+    // predicate's layout is the source data layout (one predicate lane per
+    // source lane in the same layout), so a request on either value is a
+    // request on the shared source layout.
+    bool masked = numOperands == 2 && isa<VMIMaskType>(op->getOperand(1).getType());
+    bool sourceChanged = changedValue == op->getOperand(0);
+    if (masked) {
+        sourceChanged = sourceChanged || changedValue == op->getOperand(1);
+    }
+
+    if (sourceChanged) {
+        FailureOr<SmallVector<VMICastLayoutFact, mlir::pto::kValue4>> facts =
+            queryCastFacts(propagator, op, sourceType, resultType, VMICastLayoutPort::Source, changedLayout);
+        bool sourceFactsUnavailable = failed(facts) || facts->empty();
+        if (sourceFactsUnavailable) {
+            return failure();
+        }
+        SmallVector<VMILayoutRelation, mlir::pto::kValue4> relations;
+        for (const VMICastLayoutFact& fact : *facts) {
+            relations.push_back(makeRelation(makeCastRelationFacts(op, masked, fact)));
+        }
+        return relations;
     }
 
     if (changedValue == op->getResult(0)) {
@@ -328,10 +353,7 @@ public:
       }
       SmallVector<VMILayoutRelation, mlir::pto::kValue4> relations;
       for (const VMICastLayoutFact &fact : *facts) {
-        relations.push_back(
-            makeRelation(SmallVector<VMILayoutFact, mlir::pto::kValue4>{
-            operandFact(op->getOpOperand(0), fact.sourceLayout),
-            valueFact(op->getResult(0), fact.resultLayout)}));
+          relations.push_back(makeRelation(makeCastRelationFacts(op, masked, fact)));
       }
       return relations;
     }

@@ -10,6 +10,21 @@
 //===- VMIToVPTOPatternInternals6.inc - VMIToVPTO internals -*- C++ -*-===//
 //===----------------------------------------------------------------------===//
 
+/// Report a masked cast sub-path that has no conversion instruction to carry
+/// the predicate (issue #1671).  The one-to-N driver runs the patterns with
+/// `applyPatternsAndFoldGreedily`, so a failing pattern is retried after every
+/// other rewrite; remember the rejected operation so the diagnostic stays
+/// single-shot instead of repeating once per retry.
+static LogicalResult emitMaskedCastPathError(Operation* op, const Twine& message)
+{
+    constexpr StringLiteral kReportedAttr = "pto.vmi.masked_cast_rejected";
+    if (op->hasAttr(kReportedAttr)) {
+        return failure();
+    }
+    op->setAttr(kReportedAttr, UnitAttr::get(op->getContext()));
+    return op->emitError() << kVMIDiagUnsupportedPrefix << message;
+}
+
 template <typename OpT>
 struct OneToNVMIExtIOpPattern : OneToNOpConversionPattern<OpT> {
     using OneToNOpConversionPattern<OpT>::OneToNOpConversionPattern;
@@ -80,15 +95,21 @@ private:
 
     LogicalResult emitFactorExtension(
         OpT op, ValueRange sourceParts, ArrayRef<VRegType> resultVRegTypes, ArrayRef<StringRef> parts,
-        int64_t liveParts, int64_t partStride, Value mask, OneToNPatternRewriter& rewriter) const
+        int64_t liveParts, int64_t partStride, Value mask, ValueRange masks, OneToNPatternRewriter& rewriter) const
     {
         SmallVector<Value> results;
         results.reserve(resultVRegTypes.size());
         for (int64_t partIndex = 0; partIndex < liveParts; ++partIndex) {
             for (auto [chunkIndex, sourcePart] : llvm::enumerate(sourceParts)) {
                 VRegType resultType = resultVRegTypes[partIndex * sourceParts.size() + chunkIndex];
+                // Every conversion part of a chunk reads that chunk's authored
+                // predicate; the unmasked path keeps its shared all-true seed.
+                FailureOr<Value> partMask = getConversionMaskForChunk(masks, chunkIndex, mask);
+                if (failed(partMask)) {
+                    return rewriter.notifyMatchFailure(op, "failed to build integer extension predicate");
+                }
                 FailureOr<Value> result = buildFactorExtensionResult(
-                    op, sourcePart, resultType, mask, parts[partIndex * partStride], rewriter);
+                    op, sourcePart, resultType, *partMask, parts[partIndex * partStride], rewriter);
                 if (failed(result)) {
                     return failure();
                 }
@@ -108,15 +129,24 @@ private:
 
     LogicalResult emitDenseLaneExtension(
         OpT op, ValueRange sourceParts, ArrayRef<VRegType> resultTypes, VRegType sourceType, StringRef part,
-        OneToNPatternRewriter& rewriter) const
+        ValueRange masks, OneToNPatternRewriter& rewriter) const
     {
-        FailureOr<Value> mask = createAllTrueMaskForVReg(op.getLoc(), sourceType, rewriter);
-        if (failed(mask)) {
-            return rewriter.notifyMatchFailure(op, "failed to build integer extension seed mask");
+        Value unmaskedSeed;
+        if (masks.empty()) {
+            FailureOr<Value> mask = createAllTrueMaskForVReg(op.getLoc(), sourceType, rewriter);
+            if (failed(mask)) {
+                return rewriter.notifyMatchFailure(op, "failed to build integer extension seed mask");
+            }
+            unmaskedSeed = *mask;
         }
         SmallVector<Value> results;
         results.reserve(resultTypes.size());
-        for (auto [sourcePart, resultType] : llvm::zip_equal(sourceParts, resultTypes)) {
+        for (auto [index, sourceAndResult] : llvm::enumerate(llvm::zip_equal(sourceParts, resultTypes))) {
+            auto [sourcePart, resultType] = sourceAndResult;
+            FailureOr<Value> mask = getConversionMaskForChunk(masks, index, unmaskedSeed);
+            if (failed(mask)) {
+                return rewriter.notifyMatchFailure(op, "failed to build integer extension predicate");
+            }
             FailureOr<Value> result = buildDenseLaneExtensionResult(op, sourcePart, resultType, *mask, part, rewriter);
             if (failed(result)) {
                 return failure();
@@ -244,8 +274,17 @@ private:
     LogicalResult lowerDenseGroupSlotExtension(
         OpT op, ValueRange sourceParts, ArrayRef<Type> resultTypes, VMIVRegType sourceVMIType,
         VMIVRegType resultVMIType, IntegerType resultIntegerType, unsigned sourceBits, unsigned resultBits,
-        OneToNPatternRewriter& rewriter) const
+        ValueRange masks, OneToNPatternRewriter& rewriter) const
     {
+        // This path widens with vsunpack/vzunpack only: there is no
+        // zero-inactive conversion instruction to carry the predicate, so a
+        // masked cast must fail loudly instead of dropping it (issue #1671).
+        if (!masks.empty()) {
+            return emitMaskedCastPathError(
+                op, Twine("masked ") + OpT::getOperationName() +
+                        " cannot carry its predicate on the dense group-slot unpack path: the widening is "
+                        "vsunpack/vzunpack with no conversion instruction (issue #1671)");
+        }
         SmallVector<Value> results;
         results.reserve(resultTypes.size());
         for (auto [sourcePart, resultType] : llvm::zip_equal(sourceParts, resultTypes)) {
@@ -314,7 +353,7 @@ private:
     LogicalResult lowerLegacyGroupSlotExtension(
         OpT op, ValueRange sourceParts, ArrayRef<Type> resultTypes, VMIVRegType sourceVMIType,
         VMILayoutAttr sourceLayout, VMILayoutAttr resultLayout, unsigned sourceBits, unsigned resultBits,
-        OneToNPatternRewriter& rewriter) const
+        ValueRange masks, OneToNPatternRewriter& rewriter) const
     {
         FailureOr<std::tuple<int64_t, VRegType, Value>> preparation = prepareLegacyGroupSlotExtension(
             op, sourceParts, resultTypes, sourceVMIType, sourceLayout, resultLayout, sourceBits, resultBits, rewriter);
@@ -325,11 +364,38 @@ private:
         VRegType conversionSourceType = std::get<1>(*preparation);
         Value slotMask = std::get<2>(*preparation);
         StringAttr part = rewriter.getStringAttr(widenFactor == 2 ? "EVEN" : "P0");
+        // A group-slot part carries padding plus the active slots, and the
+        // authored predicate describes only the active slots.  Combine the two
+        // so the conversion still never converts a padding slot while the
+        // inactive active slots are zeroed by the conversion contract.
+        SmallVector<Value> partMasks;
+        if (!masks.empty()) {
+            auto slotMaskType = dyn_cast<MaskType>(slotMask.getType());
+            if (!slotMaskType) {
+                return rewriter.notifyMatchFailure(op, "unsupported group-slot integer extension mask type");
+            }
+            partMasks.reserve(sourceParts.size());
+            for (auto [index, sourcePart] : llvm::enumerate(sourceParts)) {
+                FailureOr<Value> userMask = getConversionMaskForChunk(masks, index, Value());
+                if (failed(userMask)) {
+                    return rewriter.notifyMatchFailure(op, "failed to build a group-slot integer extension predicate");
+                }
+                FailureOr<Value> allTrue = createAllTrueMaskForVReg(op.getLoc(), conversionSourceType, rewriter);
+                if (failed(allTrue)) {
+                    return rewriter.notifyMatchFailure(
+                        op, "failed to build the group-slot integer extension all-true mask");
+                }
+                partMasks.push_back(
+                    rewriter.create<PandOp>(op.getLoc(), slotMaskType, *userMask, slotMask, *allTrue).getResult());
+            }
+        }
         SmallVector<Value> results;
         results.reserve(resultTypes.size());
-        for (auto [sourcePart, resultType] : llvm::zip_equal(sourceParts, resultTypes)) {
+        for (auto [index, sourceAndResult] : llvm::enumerate(llvm::zip_equal(sourceParts, resultTypes))) {
+            auto [sourcePart, resultType] = sourceAndResult;
+            Value conversionMask = partMasks.empty() ? slotMask : partMasks[index];
             FailureOr<Value> result = buildLegacyGroupSlotExtensionResult(
-                op, sourcePart, resultType, conversionSourceType, slotMask, part, resultBits, rewriter);
+                op, sourcePart, resultType, conversionSourceType, conversionMask, part, resultBits, rewriter);
             if (failed(result)) {
                 return failure();
             }
@@ -342,7 +408,7 @@ private:
     LogicalResult lowerPhysicalExtension(
         OpT op, ValueRange sourceParts, ArrayRef<VRegType> resultVRegTypes, ArrayRef<Type> resultTypes,
         VRegType sourceType, unsigned sourceBits, unsigned resultBits, VMILayoutAttr sourceLayout,
-        VMILayoutAttr resultLayout, OneToNPatternRewriter& rewriter) const
+        VMILayoutAttr resultLayout, ValueRange masks, OneToNPatternRewriter& rewriter) const
     {
         // The carrier view of each declared layout drives the plan, exactly as in
         // pto.vmi.extf: a single-carrier group-slot packet whose stride is the
@@ -365,7 +431,7 @@ private:
                                   resultTypes.size() == sourceParts.size();
         if (denseLaneExtension) {
             StringRef part = resultBits == sourceBits * 2 ? StringRef("EVEN") : StringRef("P0");
-            return emitDenseLaneExtension(op, sourceParts, resultVRegTypes, sourceType, part, rewriter);
+            return emitDenseLaneExtension(op, sourceParts, resultVRegTypes, sourceType, part, masks, rewriter);
         }
 
         int64_t sourceStride = sourceView && sourceView.isContiguous() ? sourceView.getLaneStride() : 1;
@@ -375,13 +441,18 @@ private:
             return failure();
         }
 
-        FailureOr<Value> mask = createAllTrueMaskForVReg(op.getLoc(), sourceType, rewriter);
-        if (failed(mask)) {
-            return rewriter.notifyMatchFailure(op, "failed to build integer extension seed mask");
+        Value unmaskedSeed;
+        if (masks.empty()) {
+            FailureOr<Value> mask = createAllTrueMaskForVReg(op.getLoc(), sourceType, rewriter);
+            if (failed(mask)) {
+                return rewriter.notifyMatchFailure(op, "failed to build integer extension seed mask");
+            }
+            unmaskedSeed = *mask;
         }
 
         return emitFactorExtension(
-            op, sourceParts, resultVRegTypes, partPlan->first, partPlan->second, sourceStride, *mask, rewriter);
+            op, sourceParts, resultVRegTypes, partPlan->first, partPlan->second, sourceStride, unmaskedSeed, masks,
+            rewriter);
     }
 
     FailureOr<SmallVector<VRegType>> collectExtensionResultTypes(
@@ -457,7 +528,7 @@ private:
     }
 
     LogicalResult lowerGroupSlotByLayout(
-        OpT op, const ExtensionLoweringInput& input, OneToNPatternRewriter& rewriter) const
+        OpT op, const ExtensionLoweringInput& input, ValueRange masks, OneToNPatternRewriter& rewriter) const
     {
         unsigned sourceBits = pto::getPTOStorageElemBitWidth(input.sourceVMIType.getElementType());
         unsigned resultBits = pto::getPTOStorageElemBitWidth(input.resultVMIType.getElementType());
@@ -475,15 +546,15 @@ private:
         if (denseGroupSlotExtension) {
             return lowerDenseGroupSlotExtension(
                 op, input.sourceParts, input.resultTypes, input.sourceVMIType, input.resultVMIType, resultIntegerType,
-                sourceBits, resultBits, rewriter);
+                sourceBits, resultBits, masks, rewriter);
         }
         return lowerLegacyGroupSlotExtension(
             op, input.sourceParts, input.resultTypes, input.sourceVMIType, input.sourceLayout, input.resultLayout,
-            sourceBits, resultBits, rewriter);
+            sourceBits, resultBits, masks, rewriter);
     }
 
     LogicalResult lowerNonGroupSlotByLayout(
-        OpT op, const ExtensionLoweringInput& input, OneToNPatternRewriter& rewriter) const
+        OpT op, const ExtensionLoweringInput& input, ValueRange masks, OneToNPatternRewriter& rewriter) const
     {
         FailureOr<SmallVector<VRegType>> resultVRegTypes = collectExtensionResultTypes(op, input.resultTypes, rewriter);
         if (failed(resultVRegTypes)) {
@@ -493,7 +564,7 @@ private:
         unsigned resultBits = pto::getPTOStorageElemBitWidth(resultVRegTypes->front().getElementType());
         return lowerPhysicalExtension(
             op, input.sourceParts, *resultVRegTypes, input.resultTypes, input.sourceType, sourceBits, resultBits,
-            input.sourceLayout, input.resultLayout, rewriter);
+            input.sourceLayout, input.resultLayout, masks, rewriter);
     }
 
 public:
@@ -505,12 +576,18 @@ public:
         if (failed(input)) {
             return failure();
         }
+        unsigned sourceElementBits = pto::getPTOStorageElemBitWidth(input->sourceVMIType.getElementType());
+        FailureOr<SmallVector<Value>> masks =
+            applyConversionPredicate(op, input->sourceParts, adaptor.getMask(), sourceElementBits, rewriter);
+        if (failed(masks)) {
+            return failure();
+        }
         bool groupSlotLayouts = input->sourceLayout && input->resultLayout && input->sourceLayout.isGroupSlots() &&
                                 input->resultLayout.isGroupSlots();
         if (groupSlotLayouts) {
-            return lowerGroupSlotByLayout(op, *input, rewriter);
+            return lowerGroupSlotByLayout(op, *input, *masks, rewriter);
         }
-        return lowerNonGroupSlotByLayout(op, *input, rewriter);
+        return lowerNonGroupSlotByLayout(op, *input, *masks, rewriter);
     }
 };
 
@@ -595,13 +672,23 @@ private:
 
     FailureOr<Value> lowerGroupSlotTruncPart(
         VMITruncIOp op, Value sourcePart, VRegType resultType, VMIVRegType resultVMIType, VMILayoutAttr resultLayout,
-        unsigned sourceLogicalBits, unsigned resultLogicalBits, Value activeSlotMask, StringAttr sat,
+        unsigned sourceLogicalBits, unsigned resultLogicalBits, Value activeSlotMask, bool masked, StringAttr sat,
         OneToNPatternRewriter& rewriter) const
     {
         unsigned physicalResultBits = pto::getPTOStorageElemBitWidth(resultType.getElementType());
         bool directCarrier = resultLayout.hasLaneStride() && resultLayout.getLaneStride() == 4 &&
                              resultLogicalBits == 8 && physicalResultBits == 32;
         if (directCarrier) {
+            // The 8-bit group-slot result is forwarded as a 32-bit carrier and
+            // narrowed by the consuming store: no conversion instruction exists
+            // here to carry the predicate, so a masked cast must fail loudly
+            // instead of dropping it (issue #1671).
+            if (masked) {
+                return emitMaskedCastPathError(
+                    op, "masked pto.vmi.trunci cannot carry its predicate on the group-slot direct-carrier "
+                        "path: the 8-bit result is forwarded as a 32-bit carrier with no conversion "
+                        "instruction (issue #1671)");
+            }
             return lowerGroupSlotDirectCarrier(op, sourcePart, resultType, rewriter);
         }
         bool wideCarrier = resultLayout.hasLaneStride() && resultLayout.getLaneStride() == 2 &&
@@ -673,11 +760,12 @@ private:
     FailureOr<SmallVector<Value>> lowerGroupSlotTruncParts(
         VMITruncIOp op, ValueRange sourceParts, ArrayRef<Type> resultTypes, VMIVRegType resultVMIType,
         VMILayoutAttr resultLayout, unsigned sourceBits, unsigned resultBits, bool supportsPacked, Value activeSlotMask,
-        StringAttr sat, OneToNPatternRewriter& rewriter) const
+        ValueRange partMasks, StringAttr sat, OneToNPatternRewriter& rewriter) const
     {
         SmallVector<Value> results;
         results.reserve(resultTypes.size());
-        for (auto [sourcePart, physicalResultType] : llvm::zip_equal(sourceParts, resultTypes)) {
+        for (auto [index, sourceAndResult] : llvm::enumerate(llvm::zip_equal(sourceParts, resultTypes))) {
+            auto [sourcePart, physicalResultType] = sourceAndResult;
             auto sourceType = dyn_cast<VRegType>(sourcePart.getType());
             auto resultType = dyn_cast<VRegType>(physicalResultType);
             bool validPhysicalTypes =
@@ -686,17 +774,18 @@ private:
                 (void)rewriter.notifyMatchFailure(op, "unsupported group-slot trunci physical type");
                 return failure();
             }
+            Value conversionMask = partMasks.empty() ? activeSlotMask : partMasks[index];
             if (supportsPacked) {
                 results.push_back(rewriter
                                       .create<VcvtOp>(
-                                          op.getLoc(), resultType, sourcePart, activeSlotMask, nullptr, sat,
+                                          op.getLoc(), resultType, sourcePart, conversionMask, nullptr, sat,
                                           rewriter.getStringAttr("EVEN"))
                                       .getResult());
                 continue;
             }
             FailureOr<Value> lowered = lowerGroupSlotTruncPart(
-                op, sourcePart, resultType, resultVMIType, resultLayout, sourceBits, resultBits, activeSlotMask, sat,
-                rewriter);
+                op, sourcePart, resultType, resultVMIType, resultLayout, sourceBits, resultBits, conversionMask,
+                !partMasks.empty(), sat, rewriter);
             if (failed(lowered)) {
                 return failure();
             }
@@ -707,8 +796,8 @@ private:
 
     LogicalResult lowerGroupSlotTrunc(
         VMITruncIOp op, OpAdaptor adaptor, OneToNPatternRewriter& rewriter, VMIVRegType sourceVMIType,
-        VMIVRegType resultVMIType, VMILayoutAttr sourceLayout, VMILayoutAttr resultLayout,
-        ArrayRef<Type> resultTypes) const
+        VMIVRegType resultVMIType, VMILayoutAttr sourceLayout, VMILayoutAttr resultLayout, ArrayRef<Type> resultTypes,
+        ValueRange masks) const
     {
         ValueRange sourceParts = adaptor.getSource();
         FailureOr<std::pair<bool, bool>> modes = getGroupSlotTruncModes(
@@ -721,20 +810,9 @@ private:
         bool supportsPacked = modes->second;
 
         StringAttr sat = op->getAttrOfType<StringAttr>("saturate");
-        if (sourceLogicalBits == 16 && resultLogicalBits == 8 && sat && sat.getValue() == "NOSAT") {
-            // slots=8 doubles the source lane stride for low bytes; slots=1 has
-            // only lane zero live. Neither view needs a conversion instruction.
-            // In particular, A5 has no signed 16-to-signed-8 vcvt instruction.
-            SmallVector<Value> results;
-            for (auto [source, type] : llvm::zip_equal(sourceParts, resultTypes)) {
-                auto result = bitcastVReg(op.getLoc(), source, cast<VRegType>(type), rewriter);
-                if (failed(result)) {
-                    return failure();
-                }
-                results.push_back(*result);
-            }
-            finalizeResults(op, results, false, resultTypes, rewriter);
-            return success();
+        bool forwarding = sourceLogicalBits == 16 && resultLogicalBits == 8 && sat && sat.getValue() == "NOSAT";
+        if (forwarding) {
+            return lowerGroupSlotTruncForwarding(op, sourceParts, resultTypes, masks, rewriter);
         }
         // Native 16-bit sums occupy the even halfword lanes. Include the whole
         // strided packet so all eight low halves reach the narrowing conversion.
@@ -745,9 +823,14 @@ private:
         if (failed(activeSlotMask)) {
             return rewriter.notifyMatchFailure(op, "failed to build group-slot trunci active slot mask");
         }
+        FailureOr<SmallVector<Value>> partMasks =
+            buildGroupSlotTruncPartMasks(op, sourceParts, masks, *activeSlotMask, rewriter);
+        if (failed(partMasks)) {
+            return failure();
+        }
         FailureOr<SmallVector<Value>> results = lowerGroupSlotTruncParts(
             op, sourceParts, resultTypes, resultVMIType, resultLayout, sourceLogicalBits, resultLogicalBits,
-            supportsPacked, *activeSlotMask, sat, rewriter);
+            supportsPacked, *activeSlotMask, *partMasks, sat, rewriter);
         if (failed(results)) {
             return failure();
         }
@@ -755,28 +838,103 @@ private:
         return success();
     }
 
+    /// The saturate = "NOSAT" 16-bit to 8-bit group-slot view forwards the bytes:
+    /// slots = 8 doubles the source lane stride for low bytes and slots = 1 has
+    /// only lane zero live, so neither view needs a conversion instruction.  In
+    /// particular A5 has no signed 16-to-signed-8 vcvt instruction, so a masked
+    /// cast has no instruction to carry its predicate (issue #1671).
+    LogicalResult lowerGroupSlotTruncForwarding(
+        VMITruncIOp op, ValueRange sourceParts, ArrayRef<Type> resultTypes, ValueRange masks,
+        OneToNPatternRewriter& rewriter) const
+    {
+        if (!masks.empty()) {
+            return emitMaskedCastPathError(
+                op, "masked pto.vmi.trunci cannot carry its predicate on the saturate = \"NOSAT\" "
+                    "16-bit to 8-bit group-slot path: the bytes are forwarded with a bitcast and no "
+                    "conversion instruction (issue #1671)");
+        }
+        SmallVector<Value> results;
+        for (auto [source, type] : llvm::zip_equal(sourceParts, resultTypes)) {
+            auto result = bitcastVReg(op.getLoc(), source, cast<VRegType>(type), rewriter);
+            if (failed(result)) {
+                return failure();
+            }
+            results.push_back(*result);
+        }
+        finalizeResults(op, results, false, resultTypes, rewriter);
+        return success();
+    }
+
+    /// Combine the authored conversion predicate of every physical source part
+    /// with the active-slot prefix mask.  A group-slot part carries padding plus
+    /// the active slots, and the authored predicate describes only the active
+    /// slots, so the two are ANDed: the conversion still never converts a padding
+    /// slot while the conversion contract zeroes the inactive active slots.
+    FailureOr<SmallVector<Value>> buildGroupSlotTruncPartMasks(
+        VMITruncIOp op, ValueRange sourceParts, ValueRange masks, Value activeSlotMask,
+        OneToNPatternRewriter& rewriter) const
+    {
+        SmallVector<Value> partMasks;
+        if (masks.empty()) {
+            return partMasks;
+        }
+        auto activeSlotMaskType = dyn_cast<MaskType>(activeSlotMask.getType());
+        if (!activeSlotMaskType) {
+            return rewriter.notifyMatchFailure(op, "unsupported group-slot trunci active slot mask type");
+        }
+        partMasks.reserve(sourceParts.size());
+        for (auto [index, sourcePart] : llvm::enumerate(sourceParts)) {
+            auto sourceType = dyn_cast<VRegType>(sourcePart.getType());
+            if (!sourceType) {
+                return rewriter.notifyMatchFailure(op, "unsupported group-slot trunci physical type");
+            }
+            FailureOr<Value> userMask = getConversionMaskForChunk(masks, index, Value());
+            if (failed(userMask)) {
+                return rewriter.notifyMatchFailure(op, "failed to build a group-slot trunci predicate");
+            }
+            FailureOr<Value> allTrue = createAllTrueMaskForVReg(op.getLoc(), sourceType, rewriter);
+            if (failed(allTrue)) {
+                return rewriter.notifyMatchFailure(op, "failed to build the group-slot trunci all-true mask");
+            }
+            partMasks.push_back(
+                rewriter.create<PandOp>(op.getLoc(), activeSlotMaskType, *userMask, activeSlotMask, *allTrue)
+                    .getResult());
+        }
+        return partMasks;
+    }
+
     LogicalResult lowerDenseLaneStrideTrunc(
         VMITruncIOp op, ValueRange sourceParts, ArrayRef<Type> resultTypes, int64_t factor, StringAttr sat,
-        bool requiresResultBitcast, ArrayRef<Type> originalResultTypes, OneToNPatternRewriter& rewriter) const
+        bool requiresResultBitcast, ArrayRef<Type> originalResultTypes, ValueRange masks,
+        OneToNPatternRewriter& rewriter) const
     {
         StringAttr part = rewriter.getStringAttr(factor == 2 ? "EVEN" : "P0");
         auto sourceType = dyn_cast<VRegType>(sourceParts.front().getType());
         if (!sourceType) {
             return rewriter.notifyMatchFailure(op, "unsupported dense trunci source type");
         }
-        FailureOr<Value> sourceMask = createAllTrueMaskForVReg(op.getLoc(), sourceType, rewriter);
-        if (failed(sourceMask)) {
-            return rewriter.notifyMatchFailure(op, "failed to build trunci masks");
+        Value unmaskedSeed;
+        if (masks.empty()) {
+            FailureOr<Value> sourceMask = createAllTrueMaskForVReg(op.getLoc(), sourceType, rewriter);
+            if (failed(sourceMask)) {
+                return rewriter.notifyMatchFailure(op, "failed to build trunci masks");
+            }
+            unmaskedSeed = *sourceMask;
         }
         SmallVector<Value> results;
         results.reserve(resultTypes.size());
-        for (auto [sourcePart, resultType] : llvm::zip_equal(sourceParts, resultTypes)) {
+        for (auto [index, sourceAndResult] : llvm::enumerate(llvm::zip_equal(sourceParts, resultTypes))) {
+            auto [sourcePart, resultType] = sourceAndResult;
             auto resultVRegType = dyn_cast<VRegType>(resultType);
             if (!resultVRegType) {
                 return rewriter.notifyMatchFailure(op, "unsupported dense trunci result type");
             }
+            FailureOr<Value> mask = getConversionMaskForChunk(masks, index, unmaskedSeed);
+            if (failed(mask)) {
+                return rewriter.notifyMatchFailure(op, "failed to build trunci predicate");
+            }
             results.push_back(
-                rewriter.create<VcvtOp>(op.getLoc(), resultVRegType, sourcePart, *sourceMask, nullptr, sat, part)
+                rewriter.create<VcvtOp>(op.getLoc(), resultVRegType, sourcePart, *mask, nullptr, sat, part)
                     .getResult());
         }
         finalizeResults(op, results, requiresResultBitcast, originalResultTypes, rewriter);
@@ -784,8 +942,19 @@ private:
     }
 
     LogicalResult lowerNoSatDenseCarrier(
-        VMITruncIOp op, ValueRange sourceParts, ArrayRef<Type> resultTypes, OneToNPatternRewriter& rewriter) const
+        VMITruncIOp op, ValueRange sourceParts, ArrayRef<Type> resultTypes, ValueRange masks,
+        OneToNPatternRewriter& rewriter) const
     {
+        // NOSAT dense narrowing forwards the wide carrier and lets the consumer
+        // read the low bytes: no conversion instruction exists here to carry the
+        // predicate, so a masked cast must fail loudly instead of dropping it
+        // (issue #1671).
+        if (!masks.empty()) {
+            return emitMaskedCastPathError(
+                op, "masked pto.vmi.trunci cannot carry its predicate on the saturate = \"NOSAT\" dense "
+                    "lane-stride path: the carrier is forwarded with a bitcast and no conversion "
+                    "instruction (issue #1671)");
+        }
         SmallVector<Value> results;
         results.reserve(resultTypes.size());
         for (auto [sourcePart, resultType] : llvm::zip_equal(sourceParts, resultTypes)) {
@@ -823,7 +992,7 @@ private:
 
     FailureOr<Value> buildFactorTruncResult(
         VMITruncIOp op, ValueRange sourceParts, Type resultType, int64_t resultIndex, const TruncINarrowingPlan& plan,
-        StringAttr sat, Value sourceMask, Value resultMask, OneToNPatternRewriter& rewriter) const
+        StringAttr sat, Value sourceMask, ValueRange masks, Value resultMask, OneToNPatternRewriter& rewriter) const
     {
         bool invalidPlan = plan.factor <= 0 || plan.sourceFactor <= 0 || plan.resultLaneStride <= 0 ||
                            static_cast<size_t>(plan.factor) > plan.parts.size();
@@ -850,9 +1019,16 @@ private:
             if (partNameIndex < 0 || partNameIndex >= static_cast<int64_t>(plan.parts.size())) {
                 return rewriter.notifyMatchFailure(op, "trunci part index exceeds the conversion factor");
             }
+            // Every partial converts its own source chunk, so a masked cast
+            // carries that chunk's predicate; the vor merge below is a pure
+            // lane combine over already-zeroed inactive lanes.
+            FailureOr<Value> mask = getConversionMaskForChunk(masks, sourceIndex, sourceMask);
+            if (failed(mask)) {
+                return rewriter.notifyMatchFailure(op, "failed to build a trunci predicate");
+            }
             partials.push_back(rewriter
                                    .create<VcvtOp>(
-                                       op.getLoc(), resultVRegType, sourceParts[sourceIndex], sourceMask, nullptr, sat,
+                                       op.getLoc(), resultVRegType, sourceParts[sourceIndex], *mask, nullptr, sat,
                                        rewriter.getStringAttr(plan.parts[partNameIndex]))
                                    .getResult());
         }
@@ -866,7 +1042,7 @@ private:
 
     LogicalResult lowerFactorTrunc(
         VMITruncIOp op, ValueRange sourceParts, ArrayRef<Type> resultTypes, const TruncINarrowingPlan& plan,
-        StringAttr sat, bool requiresResultBitcast, ArrayRef<Type> originalResultTypes,
+        StringAttr sat, bool requiresResultBitcast, ArrayRef<Type> originalResultTypes, ValueRange masks,
         OneToNPatternRewriter& rewriter) const
     {
         auto sourceType = dyn_cast<VRegType>(sourceParts.front().getType());
@@ -874,17 +1050,24 @@ private:
         if (!sourceType || !resultType) {
             return rewriter.notifyMatchFailure(op, "unsupported physical trunci source/result type");
         }
-        FailureOr<Value> sourceMask = createAllTrueMaskForVReg(op.getLoc(), sourceType, rewriter);
+        Value sourceMask;
+        if (masks.empty()) {
+            FailureOr<Value> seed = createAllTrueMaskForVReg(op.getLoc(), sourceType, rewriter);
+            if (failed(seed)) {
+                return rewriter.notifyMatchFailure(op, "failed to build trunci masks");
+            }
+            sourceMask = *seed;
+        }
         FailureOr<Value> resultMask = createAllTrueMaskForVReg(op.getLoc(), resultType, rewriter);
-        bool failedMasks = failed(sourceMask) || failed(resultMask);
-        if (failedMasks) {
+        if (failed(resultMask)) {
             return rewriter.notifyMatchFailure(op, "failed to build trunci masks");
         }
         SmallVector<Value> results;
         results.reserve(resultTypes.size());
         for (int64_t resultIndex = 0; resultIndex < static_cast<int64_t>(resultTypes.size()); ++resultIndex) {
             FailureOr<Value> result = buildFactorTruncResult(
-                op, sourceParts, resultTypes[resultIndex], resultIndex, plan, sat, *sourceMask, *resultMask, rewriter);
+                op, sourceParts, resultTypes[resultIndex], resultIndex, plan, sat, sourceMask, masks, *resultMask,
+                rewriter);
             if (failed(result)) {
                 return failure();
             }
@@ -1021,7 +1204,7 @@ private:
 
     LogicalResult lowerNonGroupSlotTrunc(
         VMITruncIOp op, ValueRange sourceParts, SmallVector<Type> resultTypes, VMILayoutAttr sourceLayout,
-        VMILayoutAttr resultLayout, OneToNPatternRewriter& rewriter) const
+        VMILayoutAttr resultLayout, ValueRange masks, OneToNPatternRewriter& rewriter) const
     {
         FailureOr<TruncIPhysicalPlan> physicalPlan =
             buildPhysicalPlan(op, sourceParts, resultTypes, sourceLayout, resultLayout, rewriter);
@@ -1031,14 +1214,14 @@ private:
         bool useNoSatCarrier =
             physicalPlan->denseLaneStride && physicalPlan->saturate && physicalPlan->saturate.getValue() == "NOSAT";
         if (useNoSatCarrier) {
-            return lowerNoSatDenseCarrier(op, sourceParts, resultTypes, rewriter);
+            return lowerNoSatDenseCarrier(op, sourceParts, resultTypes, masks, rewriter);
         }
         TruncIAliasPlan aliasPlan =
             materializeSignedNarrowingAlias(op, sourceParts, resultTypes, *physicalPlan, rewriter);
         if (physicalPlan->denseLaneStride) {
             return lowerDenseLaneStrideTrunc(
                 op, aliasPlan.sourceParts, aliasPlan.resultTypes, physicalPlan->factor, physicalPlan->saturate,
-                aliasPlan.requiresResultBitcast, aliasPlan.originalResultTypes, rewriter);
+                aliasPlan.requiresResultBitcast, aliasPlan.originalResultTypes, masks, rewriter);
         }
         FailureOr<TruncINarrowingPlan> narrowingPlan = buildTruncINarrowingPlan(
             op, *physicalPlan, cast<VMIVRegType>(op.getResult().getType()), sourceLayout, aliasPlan.sourceParts.size(),
@@ -1048,7 +1231,7 @@ private:
         }
         return lowerFactorTrunc(
             op, aliasPlan.sourceParts, aliasPlan.resultTypes, *narrowingPlan, physicalPlan->saturate,
-            aliasPlan.requiresResultBitcast, aliasPlan.originalResultTypes, rewriter);
+            aliasPlan.requiresResultBitcast, aliasPlan.originalResultTypes, masks, rewriter);
     }
 
 public:
@@ -1061,15 +1244,21 @@ public:
         }
         VMILayoutAttr sourceLayout = input->sourceVMIType.getLayoutAttr();
         VMILayoutAttr resultLayout = input->resultVMIType.getLayoutAttr();
+        unsigned sourceElementBits = pto::getPTOStorageElemBitWidth(input->sourceVMIType.getElementType());
+        FailureOr<SmallVector<Value>> masks =
+            applyConversionPredicate(op, input->sourceParts, adaptor.getMask(), sourceElementBits, rewriter);
+        if (failed(masks)) {
+            return failure();
+        }
         bool groupSlotLayouts =
             sourceLayout && resultLayout && sourceLayout.isGroupSlots() && resultLayout.isGroupSlots();
         if (groupSlotLayouts) {
             return lowerGroupSlotTrunc(
                 op, adaptor, rewriter, input->sourceVMIType, input->resultVMIType, sourceLayout, resultLayout,
-                input->resultTypes);
+                input->resultTypes, *masks);
         }
 
         return lowerNonGroupSlotTrunc(
-            op, input->sourceParts, std::move(input->resultTypes), sourceLayout, resultLayout, rewriter);
+            op, input->sourceParts, std::move(input->resultTypes), sourceLayout, resultLayout, *masks, rewriter);
     }
 };

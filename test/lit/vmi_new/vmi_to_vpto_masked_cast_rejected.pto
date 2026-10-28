@@ -1,0 +1,85 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under
+// the terms and conditions of CANN Open Software License Agreement Version 2.0
+// (the "License"). Please refer to the License for details. You may not use
+// this file except in compliance with the License. THIS SOFTWARE IS PROVIDED ON
+// AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS
+// FOR A PARTICULAR PURPOSE. See LICENSE in the root of the software repository
+// for the full text of the License.
+
+// RUN: not pto-test-opt %s -split-input-file -vmi-to-vpto 2>&1 | FileCheck %s
+
+// Every masked VMI cast forwards its predicate to the conversion instruction it
+// emits (issue #1671).  A handful of sub-paths do not emit any conversion
+// instruction at all -- they forward or unpack the carrier and let the consumer
+// narrow it -- so there is nowhere to attach the predicate.  Those paths keep a
+// precise diagnostic instead of silently dropping the mask.  The unified
+// pto.vmi.vcvt has a similar hard stop: it must be expanded into the legacy
+// casts before its predicate can be lowered.
+
+// Dense group-slot extension widens with vsunpack/vzunpack only.
+module {
+  func.func @masked_extui_dense_group_slot(
+      %src: !pto.vmi.vreg<8xui8, #pto.vmi.layout<num_groups = 8, slots = 8>>,
+      %mask: !pto.vmi.mask<8xb8, #pto.vmi.layout<num_groups = 8, slots = 8>>)
+      -> !pto.vmi.vreg<8xui16, #pto.vmi.layout<num_groups = 8, slots = 8>> {
+    %0 = pto.vmi.extui %src, %mask : !pto.vmi.vreg<8xui8, #pto.vmi.layout<num_groups = 8, slots = 8>>, !pto.vmi.mask<8xb8, #pto.vmi.layout<num_groups = 8, slots = 8>> -> !pto.vmi.vreg<8xui16, #pto.vmi.layout<num_groups = 8, slots = 8>>
+    return %0 : !pto.vmi.vreg<8xui16, #pto.vmi.layout<num_groups = 8, slots = 8>>
+  }
+}
+
+// The diagnostic is split across two checks; FileCheck still requires the
+// whole single-line message to match.
+// CHECK: error: VMI-UNSUPPORTED
+// CHECK-SAME: masked pto.vmi.extui cannot carry its predicate on the dense group-slot unpack path: the widening is vsunpack/vzunpack with no conversion instruction (issue #1671)
+
+// -----
+
+// The saturate = "NOSAT" 16-bit to 8-bit group-slot path forwards the bytes
+// with a bitcast.
+module {
+  func.func @masked_trunci_group_slot_nosat(
+      %src: !pto.vmi.vreg<8xui16, #pto.vmi.layout<num_groups = 8, slots = 1>>,
+      %mask: !pto.vmi.mask<8xb16, #pto.vmi.layout<num_groups = 8, slots = 1>>)
+      -> !pto.vmi.vreg<8xui8, #pto.vmi.layout<num_groups = 8, slots = 1>> {
+    %0 = pto.vmi.trunci %src, %mask {saturate = "NOSAT"} : !pto.vmi.vreg<8xui16, #pto.vmi.layout<num_groups = 8, slots = 1>>, !pto.vmi.mask<8xb16, #pto.vmi.layout<num_groups = 8, slots = 1>> -> !pto.vmi.vreg<8xui8, #pto.vmi.layout<num_groups = 8, slots = 1>>
+    return %0 : !pto.vmi.vreg<8xui8, #pto.vmi.layout<num_groups = 8, slots = 1>>
+  }
+}
+
+// CHECK: error: VMI-UNSUPPORTED
+// CHECK-SAME: masked pto.vmi.trunci cannot carry its predicate on the saturate = "NOSAT" 16-bit to 8-bit group-slot path: the bytes are forwarded with a bitcast and no conversion instruction (issue #1671)
+
+// -----
+
+// The saturate = "NOSAT" dense lane-stride path forwards the wide carrier and
+// lets the consumer read the low bytes.
+module {
+  func.func @masked_trunci_dense_nosat(
+      %src: !pto.vmi.vreg<128xsi32, #pto.vmi.layout<contiguous>>,
+      %mask: !pto.vmi.mask<128xb32, #pto.vmi.layout<contiguous>>)
+      -> !pto.vmi.vreg<128xsi16, #pto.vmi.layout<contiguous, lane_stride = 2>> {
+    %0 = pto.vmi.trunci %src, %mask {saturate = "NOSAT"} : !pto.vmi.vreg<128xsi32, #pto.vmi.layout<contiguous>>, !pto.vmi.mask<128xb32, #pto.vmi.layout<contiguous>> -> !pto.vmi.vreg<128xsi16, #pto.vmi.layout<contiguous, lane_stride = 2>>
+    return %0 : !pto.vmi.vreg<128xsi16, #pto.vmi.layout<contiguous, lane_stride = 2>>
+  }
+}
+
+// CHECK: error: VMI-UNSUPPORTED
+// CHECK-SAME: masked pto.vmi.trunci cannot carry its predicate on the saturate = "NOSAT" dense lane-stride path: the carrier is forwarded with a bitcast and no conversion instruction (issue #1671)
+// -----
+
+// The unified conversion must be expanded into a legacy cast before this pass
+// can lower its predicate, so an unexpanded one keeps its own precise message.
+module {
+  func.func @masked_unexpanded_vcvt(
+      %src: !pto.vmi.vreg<128xf32, #pto.vmi.layout<contiguous>>,
+      %mask: !pto.vmi.mask<128xb32, #pto.vmi.layout<contiguous>>)
+      -> !pto.vmi.vreg<128xf16, #pto.vmi.layout<contiguous>> {
+    %0 = pto.vmi.vcvt %src, %mask {rounding = "R", saturate = "SAT"} : !pto.vmi.vreg<128xf32, #pto.vmi.layout<contiguous>>, !pto.vmi.mask<128xb32, #pto.vmi.layout<contiguous>> -> !pto.vmi.vreg<128xf16, #pto.vmi.layout<contiguous>>
+    return %0 : !pto.vmi.vreg<128xf16, #pto.vmi.layout<contiguous>>
+  }
+}
+
+// CHECK: error: masked pto.vmi.vcvt must be expanded by -vmi-lower-unified-to-legacy before VMI-to-VPTO conversion (issue #1671)
+

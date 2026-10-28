@@ -24,6 +24,30 @@ static FailureOr<VMILoadSafetyPolicy> parseLoadSafetyPolicy(StringRef value) {
   return failure();
 }
 
+/// Rejects a masked unified pto.vmi.vcvt that reached VMI-to-VPTO conversion
+/// without first being expanded into the legacy casts.  The other cast forms
+/// carry the predicate through their own lowering, so only the unified form is
+/// checked here; the walk stops at the first offender to keep one diagnostic.
+static LogicalResult verifyNoUnexpandedMaskedCvt(ModuleOp module)
+{
+    Operation* unexpandedMaskedCvt = nullptr;
+    module.walk([&](Operation* op) {
+        bool maskedUnifiedCvt = isa<VMICvtOp>(op) && op->getNumOperands() == 2;
+        if (maskedUnifiedCvt) {
+            unexpandedMaskedCvt = op;
+            return WalkResult::interrupt();
+        }
+        return WalkResult::advance();
+    });
+    if (!unexpandedMaskedCvt) {
+        return success();
+    }
+    unexpandedMaskedCvt->emitError() << "masked pto.vmi.vcvt must be expanded by "
+                                        "-vmi-lower-unified-to-legacy before VMI-to-VPTO conversion "
+                                        "(issue #1671)";
+    return failure();
+}
+
 struct VMIToVPTOPass : public mlir::pto::impl::VMIToVPTOBase<VMIToVPTOPass> {
   MLIR_DEFINE_EXPLICIT_INTERNAL_INLINE_TYPE_ID(VMIToVPTOPass)
 
@@ -49,8 +73,7 @@ struct VMIToVPTOPass : public mlir::pto::impl::VMIToVPTOBase<VMIToVPTOPass> {
     // The VMI conversion state is the module attribute the driver recorded, not
     // a pass option, so this pass and vmi-layout-assignment read one value.
     bool enableVmiFastmath = getVMIFastmathState(module);
-    FailureOr<VMILoadSafetyPolicy> loadSafetyPolicy =
-        parseLoadSafetyPolicy(loadSafety);
+    FailureOr<VMILoadSafetyPolicy> loadSafetyPolicy = parseLoadSafetyPolicy(loadSafety);
     if (failed(loadSafetyPolicy)) {
       module.emitError() << "invalid load-safety value \"" << loadSafety
                          << "\"; expected \"policy\", \"warn\" or \"error\"";
@@ -60,6 +83,18 @@ struct VMIToVPTOPass : public mlir::pto::impl::VMIToVPTOBase<VMIToVPTOPass> {
     if (failed(verifyVMIToVPTOInputIR(module))) {
       signalPassFailure();
       return;
+    }
+    // Every legacy VMI cast forwards its conversion predicate as the mask
+    // operand of the pto.vcvt it emits (or ANDs it into the active-slot gate of
+    // a group-slot conversion), so pto.vcvt's zero-inactive contract carries the
+    // VMI contract.  Sub-paths that have no conversion instruction at all fail
+    // loudly inside their own pattern instead of dropping the predicate.
+    //
+    // The unified pto.vmi.vcvt is the exception: it must be expanded into those
+    // legacy casts before this pass can lower its predicate.
+    if (failed(verifyNoUnexpandedMaskedCvt(module))) {
+        signalPassFailure();
+        return;
     }
     if (failed(verifySupportedVMIToVPTOOps(
         module, enableStableGatherMaskedLoad, *loadSafetyPolicy,

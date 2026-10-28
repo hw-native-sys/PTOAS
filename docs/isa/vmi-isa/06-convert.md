@@ -41,12 +41,14 @@
 - **syntax:**
   ```mlir
   %r = pto.vmi.vcvt %src {rounding = "H", saturate = "SAT"} : !pto.vmi.vreg<L×T_src> -> !pto.vmi.vreg<L×T_dst>
+  %r = pto.vmi.vcvt %src, %mask {rounding = "H", saturate = "SAT"} : !pto.vmi.vreg<L×T_src>, !pto.vmi.mask<L×Pg> -> !pto.vmi.vreg<L×T_dst>
   ```
 - **operands:**
 
   | Operand | Type | Description |
   |---|---|---|
   | `src` | `!pto.vmi.vreg<L×T_src>` | Source vector |
+  | `mask` (optional) | `!pto.vmi.mask<L×Pg>` | Conversion predicate over the same `L` source lanes; its granularity is the source element width (or `pred`), and it carries the **same layout as `src`** because one predicate lane describes one source lane. A cleared bit writes zero, so a masked conversion is not a merge with the previous destination value. |
 
 - **results:**
 

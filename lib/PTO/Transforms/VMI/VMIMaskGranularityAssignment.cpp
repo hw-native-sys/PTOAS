@@ -284,7 +284,29 @@ struct MaskGranularitySolver {
         constrainDirectMaskedElementwise(op, 0, maskIndex));
   }
 
+  /// Constrains the optional conversion predicate of a VMI cast.  The predicate
+  /// is expressed in source-element granularity (issue #1671); the operand is
+  /// optional, so a plain cast has no constraint at all.
+  std::optional<WalkResult> constrainConversionMask(Operation* op)
+  {
+      return llvm::TypeSwitch<Operation*, std::optional<WalkResult>>(op)
+          .Case<
+              VMIExtFOp, VMITruncFOp, VMIFPToSIOp, VMIFPToUIOp, VMISIToFPOp, VMIExtSIOp, VMIExtUIOp, VMITruncIOp,
+              VMICvtOp>([this, op](auto maskOp) {
+              MutableOperandRange masks = maskOp.getMaskMutable();
+              if (masks.empty()) {
+                  return constraintResult(success());
+              }
+              return constraintResult(requestMaskUseForSource(*masks.begin(), maskOp.getSource(), op));
+          })
+          .Default([](Operation*) { return std::nullopt; });
+  }
+
   std::optional<WalkResult> addUnifiedSourceMaskUseConstraint(Operation *op) {
+      // A conversion predicate is a source-mask use in the unified cast family too.
+      if (std::optional<WalkResult> conversion = constrainConversionMask(op)) {
+          return conversion;
+      }
     return llvm::TypeSwitch<Operation *, std::optional<WalkResult>>(op)
         .Case<VMIVabsOp>([this, op](auto unaryOp) {
           MutableOperandRange maskOperands = unaryOp.getMaskMutable();
@@ -319,6 +341,10 @@ struct MaskGranularitySolver {
   }
 
   std::optional<WalkResult> addLegacySourceMaskUseConstraint(Operation *op) {
+      // A conversion predicate is a source-mask use in the legacy cast family too.
+      if (std::optional<WalkResult> conversion = constrainConversionMask(op)) {
+          return conversion;
+      }
     return llvm::TypeSwitch<Operation *, std::optional<WalkResult>>(op)
         .Case<VMIAddSOp, VMIMulSOp, VMIMaxSOp, VMIMinSOp, VMIShlSOp,
               VMIShrSOp>([this, op](auto maskOp) {

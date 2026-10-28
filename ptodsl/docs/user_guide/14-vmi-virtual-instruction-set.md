@@ -867,11 +867,14 @@ group_max = pto.vmi.vcmax(
 
 ## 14.7 Conversion and reinterpretation
 
-### `pto.vmi.vcvt(source, to_dtype, *, rounding=None, saturate=None, pmode=None) -> VRegType`
+### `pto.vmi.vcvt(source, to_dtype, mask=None, *, rounding=None, saturate=None, pmode=None) -> VRegType`
 
 **Description**: Numeric type conversion between VMI vector element types.
 Converts the element type of `source` to the target element type. PTODSL
 infers the result vector type from the source lane count/layout and `to_dtype`.
+An optional `mask` restricts the conversion to the active source lanes; the
+mask is carried as the predicate of the emitted `pto.vmi.vcvt` and reaches
+`pto.vcvt` during lowering.
 
 For `vcvt`, signless integer types (`i8`/`i16`/`i32`) are treated as
 unsigned. Use `siN` types for signed conversion semantics.
@@ -882,6 +885,7 @@ unsigned. Use `siN` types for signed conversion semantics.
 |-----------|------|-------------|
 | `source` | `VRegType` | Input vector (source element type) |
 | `to_dtype` | `DType` | Target element type. PTODSL derives the result vector type from the source lane count/layout and this dtype |
+| `mask` | VMI mask or `None` | Optional predicate over the source lanes. Omitted means all lanes are converted. Its lane count, granularity and layout follow `source` |
 | `rounding` | rounding mode or `None` | Optional rounding mode token |
 | `saturate` | `"SAT"`, `"NOSAT"`, or `None` | Saturation mode. For fp-narrow, int-narrow, and fp-to-int, `None` defaults to `"SAT"` |
 | `pmode` | `str` or `None` | Optional predicate mode: `"zero"` writes 0 to predicate-inactive lanes |
@@ -897,11 +901,19 @@ unsigned. Use `siN` types for signed conversion semantics.
 ```python
 wide = pto.vmi.vcvt(src_f16, pto.f32)
 narrow = pto.vmi.vcvt(src_f32, pto.f16)
+partial = pto.vmi.create_mask(active_lanes, size=64)
+masked = pto.vmi.vcvt(src_f32, pto.f16, partial)
 ```
 
 **Constraints**:
-- The masked form of `vcvt` is not yet supported by the current PTODSL/IR
-  implementation. It remains part of the VMI ISA contract for future support.
+- The optional `mask` gates lane conversion: a lane whose predicate bit is
+  cleared produces `0` in the result. A masked conversion is therefore not a
+  merge with the previous destination value, and it follows the same
+  zero-inactive-lane contract as `pto.vcvt`.
+- The mask's granularity is the source element width, and its lane count and
+  layout must follow `source` because one predicate lane describes one source
+  lane. The IR verifier rejects a mask that does not follow `source`, so
+  PTODSL passes the mask through without re-deriving its type.
 - Authored VMI IR requires explicit `"SAT"` or `"NOSAT"` for fp-narrow,
   int-narrow, and fp-to-int. PTODSL uses `"SAT"` when `saturate` is omitted
   for these directions.

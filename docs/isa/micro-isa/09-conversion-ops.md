@@ -58,11 +58,16 @@ Cycle-accurate simulator **popped→retire** latency (cycles). Only representati
 
 - **syntax:** `%result = pto.vcvt %input, %mask {rnd = "RND", sat = "SAT", part = "PART"} : !pto.vreg<NxT0>, !pto.mask<G> -> !pto.vreg<MxT1>`
 - **semantics:** Type conversion between float/int types with rounding control.
+  The predicate is zero-inactive: every lane with a cleared predicate bit is
+  written with zero, not left untouched.
 
 ```c
-for (int i = 0; i < min(N, M); i++)
+for (int i = 0; i < min(N, M); i++) {
     if (mask[i])
         dst[i] = convert(src[i], T0, T1, rnd);
+    else
+        dst[i] = 0;
+}
 ```
 
 - **inputs:**
@@ -77,6 +82,10 @@ for (int i = 0; i < min(N, M); i++)
   to the selected conversion kind should be provided. The execution mask must
   use the typed-mask granularity that matches the source vector family on the
   current surface; there is no `!pto.mask<b64>` form in VPTO.
+  The inactive-lane rule is why a masked VMI conversion needs no explicit
+  source clearing or result merge: the VMI cast family has the same
+  zero-inactive contract, so the predicate is forwarded straight to the
+  `pto.vcvt` that implements it.
 
 ---
 
@@ -137,7 +146,10 @@ destination lane group.
 - `mask`
   - Use to select which source lanes participate in the conversion. In
     width-changing conversions, `mask` works together with `part` / `pp` to
-    determine which logical lane positions are produced.
+    determine which logical lane positions are produced. A cleared bit writes
+    zero to the corresponding destination lane; it does not preserve the
+    previous destination value, so a masked conversion cannot be turned into a
+    merge by dropping the predicate.
 - `sat`
   - Use when the conversion may overflow the destination range and hardware
     exposes a saturating form.

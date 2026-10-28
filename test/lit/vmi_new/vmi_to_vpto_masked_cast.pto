@@ -1,0 +1,410 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under
+// the terms and conditions of CANN Open Software License Agreement Version 2.0
+// (the "License"). Please refer to the License for details. You may not use
+// this file except in compliance with the License. THIS SOFTWARE IS PROVIDED ON
+// AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS
+// FOR A PARTICULAR PURPOSE. See LICENSE in the root of the software repository
+// for the full text of the License.
+
+// RUN: pto-test-opt %s -split-input-file -vmi-lower-unified-to-legacy -vmi-to-vpto | FileCheck %s --implicit-check-not=pto.vmi. --implicit-check-not='!pto.vmi.' --implicit-check-not=unrealized_conversion_cast --implicit-check-not=pto.vsel
+
+// Masked conversions carry the authored predicate on the conversion itself
+// (issue #1671).  pto.vcvt has the same zero-inactive-lane contract as the VMI
+// cast family, so no source clearing and no result merge is needed: the
+// predicate is the pto.vcvt mask operand and inactive lanes are zero.  These
+// checks assert exactly that for every cast of the family -- pto.vmi.extf,
+// truncf, fptosi, fptoui, sitofp, extsi, extui and trunci -- and that no
+// vsel/vdup zero scaffolding appears.
+
+module {
+  func.func @masked_extf_to_vpto(
+      %src: !pto.vmi.vreg<128xf16, #pto.vmi.layout<contiguous>>,
+      %mask: !pto.vmi.mask<128xb16, #pto.vmi.layout<contiguous>>)
+      -> !pto.vmi.vreg<128xf32, #pto.vmi.layout<deinterleaved = 2>> {
+    %0 = pto.vmi.extf %src, %mask : !pto.vmi.vreg<128xf16, #pto.vmi.layout<contiguous>>, !pto.vmi.mask<128xb16, #pto.vmi.layout<contiguous>> -> !pto.vmi.vreg<128xf32, #pto.vmi.layout<deinterleaved = 2>>
+    return %0 : !pto.vmi.vreg<128xf32, #pto.vmi.layout<deinterleaved = 2>>
+  }
+}
+
+// The predicate lands on each width-changing conversion part; the source is
+// forwarded unchanged and no all-true seed replaces the authored mask.
+// CHECK-LABEL: func.func @masked_extf_to_vpto(
+// CHECK-SAME: %[[SRC:[^:]+]]: !pto.vreg<128xf16>, %[[PRED:[^:]+]]: !pto.mask<b16>
+// CHECK-NOT: pto.vdup
+// CHECK: pto.vcvt %[[SRC]], %[[PRED]] {part = "EVEN"} : !pto.vreg<128xf16>, !pto.mask<b16> -> !pto.vreg<64xf32>
+// CHECK: pto.vcvt %[[SRC]], %[[PRED]] {part = "ODD"} : !pto.vreg<128xf16>, !pto.mask<b16> -> !pto.vreg<64xf32>
+
+// -----
+
+// The same conversion reached through the unified pto.vmi.vcvt surface keeps
+// the authored predicate across the legacy expansion.
+module {
+  func.func @masked_vcvt_to_vpto(
+      %src: !pto.vmi.vreg<128xf16, #pto.vmi.layout<contiguous>>,
+      %mask: !pto.vmi.mask<128xb16, #pto.vmi.layout<contiguous>>)
+      -> !pto.vmi.vreg<128xf32, #pto.vmi.layout<deinterleaved = 2>> {
+    %0 = pto.vmi.vcvt %src, %mask : !pto.vmi.vreg<128xf16, #pto.vmi.layout<contiguous>>, !pto.vmi.mask<128xb16, #pto.vmi.layout<contiguous>> -> !pto.vmi.vreg<128xf32, #pto.vmi.layout<deinterleaved = 2>>
+    return %0 : !pto.vmi.vreg<128xf32, #pto.vmi.layout<deinterleaved = 2>>
+  }
+}
+
+// CHECK-LABEL: func.func @masked_vcvt_to_vpto(
+// CHECK-SAME: %[[VSRC:[^:]+]]: !pto.vreg<128xf16>, %[[VPRED:[^:]+]]: !pto.mask<b16>
+// CHECK: pto.vcvt %[[VSRC]], %[[VPRED]] {part = "EVEN"} : !pto.vreg<128xf16>, !pto.mask<b16> -> !pto.vreg<64xf32>
+// CHECK: pto.vcvt %[[VSRC]], %[[VPRED]] {part = "ODD"} : !pto.vreg<128xf16>, !pto.mask<b16> -> !pto.vreg<64xf32>
+
+// -----
+
+// Narrowing mirrors the widening plan: one source part per physical mask part,
+// and the pto.vor that combines the EVEN/ODD partials is a pure lane merge over
+// already-converted (and already zeroed) lanes.
+module {
+  func.func @masked_truncf_to_vpto(
+      %src: !pto.vmi.vreg<128xf32, #pto.vmi.layout<deinterleaved = 2>>,
+      %mask: !pto.vmi.mask<128xb32, #pto.vmi.layout<deinterleaved = 2>>)
+      -> !pto.vmi.vreg<128xf16, #pto.vmi.layout<contiguous>> {
+    %0 = pto.vmi.truncf %src, %mask {rounding = "R", saturate = "SAT"} : !pto.vmi.vreg<128xf32, #pto.vmi.layout<deinterleaved = 2>>, !pto.vmi.mask<128xb32, #pto.vmi.layout<deinterleaved = 2>> -> !pto.vmi.vreg<128xf16, #pto.vmi.layout<contiguous>>
+    return %0 : !pto.vmi.vreg<128xf16, #pto.vmi.layout<contiguous>>
+  }
+}
+
+// CHECK-LABEL: func.func @masked_truncf_to_vpto(
+// CHECK-SAME: %[[LANE0:[^:]+]]: !pto.vreg<64xf32>, %[[LANE1:[^:]+]]: !pto.vreg<64xf32>, %[[MASK0:[^:]+]]: !pto.mask<b32>, %[[MASK1:[^:]+]]: !pto.mask<b32>
+// CHECK: pto.vcvt %[[LANE0]], %[[MASK0]] {part = "EVEN", rnd = "R", sat = "SAT"} : !pto.vreg<64xf32>, !pto.mask<b32> -> !pto.vreg<128xf16>
+// CHECK: pto.vcvt %[[LANE1]], %[[MASK1]] {part = "ODD", rnd = "R", sat = "SAT"} : !pto.vreg<64xf32>, !pto.mask<b32> -> !pto.vreg<128xf16>
+// CHECK: pto.vor %{{.*}}, %{{.*}}, %{{.*}} : !pto.vreg<128xf16>, !pto.vreg<128xf16>, !pto.mask<b16> -> !pto.vreg<128xf16>
+
+// -----
+
+// A lane-strided source lowers its mask with one predicate bit per carrier
+// group.  The mask granularity is chosen as element_bits * lane_stride, so the
+// carrier-group bit already coincides with the element-granularity bit of the
+// strided lane pto.vcvt reads; the pbitcast is the whole mapping and no
+// predicate interleave is needed (an interleave would shift every lane one
+// more time and leave alternating carrier lanes inactive).
+module {
+  func.func @masked_extf_fp8_to_vpto(
+      %src: !pto.vmi.vreg<256xf8E4M3FN, #pto.vmi.layout<contiguous, lane_stride = 4>>,
+      %mask: !pto.vmi.mask<256xb8, #pto.vmi.layout<contiguous, lane_stride = 4>>)
+      -> !pto.vmi.vreg<256xf32, #pto.vmi.layout<contiguous>> {
+    %0 = pto.vmi.extf %src, %mask : !pto.vmi.vreg<256xf8E4M3FN, #pto.vmi.layout<contiguous, lane_stride = 4>>, !pto.vmi.mask<256xb8, #pto.vmi.layout<contiguous, lane_stride = 4>> -> !pto.vmi.vreg<256xf32, #pto.vmi.layout<contiguous>>
+    return %0 : !pto.vmi.vreg<256xf32, #pto.vmi.layout<contiguous>>
+  }
+}
+
+// CHECK-LABEL: func.func @masked_extf_fp8_to_vpto(
+// CHECK-SAME: %[[F0:[^:]+]]: !pto.vreg<256xf8E4M3FN>, %[[F1:[^:]+]]: !pto.vreg<256xf8E4M3FN>, %[[F2:[^:]+]]: !pto.vreg<256xf8E4M3FN>, %[[F3:[^:]+]]: !pto.vreg<256xf8E4M3FN>, %[[PM0:[^:]+]]: !pto.mask<b32>, %[[PM1:[^:]+]]: !pto.mask<b32>, %[[PM2:[^:]+]]: !pto.mask<b32>, %[[PM3:[^:]+]]: !pto.mask<b32>
+// CHECK: %[[B0:.*]] = pto.pbitcast %[[PM0]] : !pto.mask<b32> -> !pto.mask<b8>
+// CHECK: %[[B1:.*]] = pto.pbitcast %[[PM1]] : !pto.mask<b32> -> !pto.mask<b8>
+// CHECK: %[[B2:.*]] = pto.pbitcast %[[PM2]] : !pto.mask<b32> -> !pto.mask<b8>
+// CHECK: %[[B3:.*]] = pto.pbitcast %[[PM3]] : !pto.mask<b32> -> !pto.mask<b8>
+// CHECK: pto.vcvt %[[F0]], %[[B0]] {part = "P0"} : !pto.vreg<256xf8E4M3FN>, !pto.mask<b8> -> !pto.vreg<64xf32>
+// CHECK: pto.vcvt %[[F1]], %[[B1]] {part = "P0"} : !pto.vreg<256xf8E4M3FN>, !pto.mask<b8> -> !pto.vreg<64xf32>
+// CHECK: pto.vcvt %[[F2]], %[[B2]] {part = "P0"} : !pto.vreg<256xf8E4M3FN>, !pto.mask<b8> -> !pto.vreg<64xf32>
+// CHECK: pto.vcvt %[[F3]], %[[B3]] {part = "P0"} : !pto.vreg<256xf8E4M3FN>, !pto.mask<b8> -> !pto.vreg<64xf32>
+
+// -----
+
+// A LOGICAL 64-lane f16 widening is carried by a 128-lane physical f16 vector
+// whose lanes are lane-strided, so the authored 64-lane predicate is lowered
+// to a b32 carrier-group mask (one bit per 32-bit group, i.e. one bit per
+// authored lane).  The single EVEN conversion already covers every logical
+// lane; the only thing it needs is the mask expressed at the source-element
+// granularity.  The pbitcast does exactly that: a second predicate interleave
+// would move the authored lane i to bit 2*i and leave every odd logical lane
+// inactive (the regression this case pins).  There is no ODD conversion here
+// because EVEN already reads every lane the strided carrier holds.
+module {
+  func.func @masked_extf_l64_lane_stride_to_vpto(
+      %src: !pto.vmi.vreg<64xf16, #pto.vmi.layout<contiguous, lane_stride = 2>>,
+      %mask: !pto.vmi.mask<64xb16, #pto.vmi.layout<contiguous, lane_stride = 2>>)
+      -> !pto.vmi.vreg<64xf32, #pto.vmi.layout<contiguous>> {
+    %0 = pto.vmi.extf %src, %mask : !pto.vmi.vreg<64xf16, #pto.vmi.layout<contiguous, lane_stride = 2>>, !pto.vmi.mask<64xb16, #pto.vmi.layout<contiguous, lane_stride = 2>> -> !pto.vmi.vreg<64xf32, #pto.vmi.layout<contiguous>>
+    return %0 : !pto.vmi.vreg<64xf32, #pto.vmi.layout<contiguous>>
+  }
+}
+
+// CHECK-LABEL: func.func @masked_extf_l64_lane_stride_to_vpto(
+// CHECK-SAME: %[[LS64SRC:[^:]+]]: !pto.vreg<128xf16>, %[[LS64PRED:[^:]+]]: !pto.mask<b32>
+// CHECK: %[[LS64B16:.*]] = pto.pbitcast %[[LS64PRED]] : !pto.mask<b32> -> !pto.mask<b16>
+// CHECK-NOT: pto.pintlv
+// CHECK-NOT: pto.pset_b16 "PAT_ALLF"
+// CHECK: pto.vcvt %[[LS64SRC]], %[[LS64B16]] {part = "EVEN"} : !pto.vreg<128xf16>, !pto.mask<b16> -> !pto.vreg<64xf32>
+// CHECK: return
+
+// -----
+
+// A same-layout BF16 widening re-lays-out the source with vintlv before the
+// reinterpret.  The predicate is interleaved with false alongside it, so the
+// ODD-part conversion still consumes the authored mask.
+module {
+  func.func @masked_bf16_same_layout_to_vpto(
+      %src: !pto.vmi.vreg<64xbf16, #pto.vmi.layout<contiguous>>,
+      %mask: !pto.vmi.mask<64xb16, #pto.vmi.layout<contiguous>>)
+      -> !pto.vmi.vreg<64xf32, #pto.vmi.layout<contiguous>> {
+    %0 = pto.vmi.extf %src, %mask : !pto.vmi.vreg<64xbf16, #pto.vmi.layout<contiguous>>, !pto.vmi.mask<64xb16, #pto.vmi.layout<contiguous>> -> !pto.vmi.vreg<64xf32, #pto.vmi.layout<contiguous>>
+    return %0 : !pto.vmi.vreg<64xf32, #pto.vmi.layout<contiguous>>
+  }
+
+  func.func @plain_bf16_same_layout_to_vpto(
+      %src: !pto.vmi.vreg<64xbf16, #pto.vmi.layout<contiguous>>)
+      -> !pto.vmi.vreg<64xf32, #pto.vmi.layout<contiguous>> {
+    %0 = pto.vmi.extf %src : !pto.vmi.vreg<64xbf16, #pto.vmi.layout<contiguous>> -> !pto.vmi.vreg<64xf32, #pto.vmi.layout<contiguous>>
+    return %0 : !pto.vmi.vreg<64xf32, #pto.vmi.layout<contiguous>>
+  }
+}
+
+// CHECK-LABEL: func.func @masked_bf16_same_layout_to_vpto(
+// CHECK-SAME: %[[BSRC:[^:]+]]: !pto.vreg<128xbf16>, %[[BPRED:[^:]+]]: !pto.mask<b16>
+// CHECK: %[[ILV:.*]], %{{.*}} = pto.vintlv %{{.*}}, %[[BSRC]] : !pto.vreg<128xbf16>, !pto.vreg<128xbf16> -> !pto.vreg<128xbf16>, !pto.vreg<128xbf16>
+// CHECK: %[[ALLF:.*]] = pto.pset_b16 "PAT_ALLF"
+// CHECK: %[[ILV_PRED:.*]], %{{.*}} = pto.pintlv_b16 %[[ALLF]], %[[BPRED]] : !pto.mask<b16>, !pto.mask<b16> -> !pto.mask<b16>, !pto.mask<b16>
+// CHECK: pto.vcvt %[[ILV]], %[[ILV_PRED]] {part = "ODD"} : !pto.vreg<128xbf16>, !pto.mask<b16> -> !pto.vreg<64xf32>
+
+// The unmasked same-layout widening is unchanged: it is still a bitcast of the
+// interleaved carrier, with no conversion and no predicate companion.
+// CHECK-LABEL: func.func @plain_bf16_same_layout_to_vpto(
+// CHECK: %[[PILV:.*]], %{{.*}} = pto.vintlv
+// CHECK-NEXT: pto.vbitcast %[[PILV]] : !pto.vreg<128xbf16> -> !pto.vreg<64xf32>
+// CHECK-NOT: pto.vcvt
+
+// -----
+
+// Group-slot narrowing keeps the active-slot prefix as an additional predicate
+// gate; the authored mask is ANDed with it and that combined predicate is the
+// conversion mask, so the padding slots are never converted and the inactive
+// active slots are zeroed by the zero-inactive conversion contract.
+module {
+  func.func @masked_group_slot_truncf_to_vpto(
+      %src: !pto.vmi.vreg<8xf32, #pto.vmi.layout<num_groups = 8, slots = 1>>,
+      %mask: !pto.vmi.mask<8xb32, #pto.vmi.layout<num_groups = 8, slots = 1>>)
+      -> !pto.vmi.vreg<8xf16, #pto.vmi.layout<num_groups = 8, slots = 1>> {
+    %0 = pto.vmi.truncf %src, %mask {rounding = "R", saturate = "SAT"} : !pto.vmi.vreg<8xf32, #pto.vmi.layout<num_groups = 8, slots = 1>>, !pto.vmi.mask<8xb32, #pto.vmi.layout<num_groups = 8, slots = 1>> -> !pto.vmi.vreg<8xf16, #pto.vmi.layout<num_groups = 8, slots = 1>>
+    return %0 : !pto.vmi.vreg<8xf16, #pto.vmi.layout<num_groups = 8, slots = 1>>
+  }
+}
+
+// CHECK-LABEL: func.func @masked_group_slot_truncf_to_vpto(
+// CHECK-SAME: %{{.*}}: !pto.vreg<64xf32>, %{{.*}}: !pto.vreg<64xf32>, %{{.*}}: !pto.vreg<64xf32>, %{{.*}}: !pto.vreg<64xf32>, %{{.*}}: !pto.vreg<64xf32>, %{{.*}}: !pto.vreg<64xf32>, %{{.*}}: !pto.vreg<64xf32>, %{{.*}}: !pto.vreg<64xf32>, %[[GM0:[^:]+]]: !pto.mask<b32>
+// CHECK: %[[SLOT:.*]] = pto.pset_b32 "PAT_VL1"
+// CHECK: %[[GATE:.*]] = pto.pset_b32 "PAT_ALL"
+// CHECK: %[[COMBINED:.*]] = pto.pand %[[GM0]], %[[SLOT]], %[[GATE]] : !pto.mask<b32>, !pto.mask<b32>, !pto.mask<b32> -> !pto.mask<b32>
+// CHECK: pto.vcvt %{{.*}}, %[[COMBINED]] {part = "EVEN", rnd = "R", sat = "SAT"} : !pto.vreg<64xf32>, !pto.mask<b32> -> !pto.vreg<128xf16>
+
+// -----
+
+// fptosi: the widening plan emits one conversion per part family, and both
+// parts of a chunk read the same authored predicate.  rnd stays as authored,
+// and no sat attribute is invented because the f16 -> s32 contract has none.
+module {
+  func.func @masked_fptosi_to_vpto(
+      %src: !pto.vmi.vreg<128xf16, #pto.vmi.layout<contiguous>>,
+      %mask: !pto.vmi.mask<128xb16, #pto.vmi.layout<contiguous>>)
+      -> !pto.vmi.vreg<128xsi32, #pto.vmi.layout<deinterleaved = 2>> {
+    %0 = pto.vmi.fptosi %src, %mask : !pto.vmi.vreg<128xf16, #pto.vmi.layout<contiguous>>, !pto.vmi.mask<128xb16, #pto.vmi.layout<contiguous>> -> !pto.vmi.vreg<128xsi32, #pto.vmi.layout<deinterleaved = 2>>
+    return %0 : !pto.vmi.vreg<128xsi32, #pto.vmi.layout<deinterleaved = 2>>
+  }
+}
+
+// CHECK-LABEL: func.func @masked_fptosi_to_vpto(
+// CHECK-SAME: %[[FPSRC:[^:]+]]: !pto.vreg<128xf16>, %[[FPPRED:[^:]+]]: !pto.mask<b16>
+// CHECK-NOT: pto.vdup
+// CHECK: pto.vcvt %[[FPSRC]], %[[FPPRED]] {part = "EVEN", rnd = "R"} : !pto.vreg<128xf16>, !pto.mask<b16> -> !pto.vreg<64xsi32>
+// CHECK: pto.vcvt %[[FPSRC]], %[[FPPRED]] {part = "ODD", rnd = "R"} : !pto.vreg<128xf16>, !pto.mask<b16> -> !pto.vreg<64xsi32>
+
+// -----
+
+// fptoui: the narrowing conversion consumes the authored predicate at the
+// source element granularity; the packed result carrier is the sub-lane the
+// EVEN part selects.
+module {
+  func.func @masked_fptoui_to_vpto(
+      %src: !pto.vmi.vreg<128xf16, #pto.vmi.layout<contiguous>>,
+      %mask: !pto.vmi.mask<128xb16, #pto.vmi.layout<contiguous>>)
+      -> !pto.vmi.vreg<128xui8, #pto.vmi.layout<contiguous, lane_stride = 2>> {
+    %0 = pto.vmi.fptoui %src, %mask {rounding = "R", saturate = "SAT"} : !pto.vmi.vreg<128xf16, #pto.vmi.layout<contiguous>>, !pto.vmi.mask<128xb16, #pto.vmi.layout<contiguous>> -> !pto.vmi.vreg<128xui8, #pto.vmi.layout<contiguous, lane_stride = 2>>
+    return %0 : !pto.vmi.vreg<128xui8, #pto.vmi.layout<contiguous, lane_stride = 2>>
+  }
+}
+
+// CHECK-LABEL: func.func @masked_fptoui_to_vpto(
+// CHECK-SAME: %[[FUSRC:[^:]+]]: !pto.vreg<128xf16>, %[[FUPRED:[^:]+]]: !pto.mask<b16>
+// CHECK-NOT: pto.vdup
+// CHECK: pto.vcvt %[[FUSRC]], %[[FUPRED]] {part = "EVEN", rnd = "R", sat = "SAT"} : !pto.vreg<128xf16>, !pto.mask<b16> -> !pto.vreg<256xui8>
+
+// -----
+
+// sitofp: the same-width form converts part for part, so each physical source
+// chunk keeps its own authored predicate part.
+module {
+  func.func @masked_sitofp_to_vpto(
+      %src: !pto.vmi.vreg<128xsi32, #pto.vmi.layout<contiguous>>,
+      %mask: !pto.vmi.mask<128xb32, #pto.vmi.layout<contiguous>>)
+      -> !pto.vmi.vreg<128xf32, #pto.vmi.layout<contiguous>> {
+    %0 = pto.vmi.sitofp %src, %mask : !pto.vmi.vreg<128xsi32, #pto.vmi.layout<contiguous>>, !pto.vmi.mask<128xb32, #pto.vmi.layout<contiguous>> -> !pto.vmi.vreg<128xf32, #pto.vmi.layout<contiguous>>
+    return %0 : !pto.vmi.vreg<128xf32, #pto.vmi.layout<contiguous>>
+  }
+}
+
+// CHECK-LABEL: func.func @masked_sitofp_to_vpto(
+// CHECK-SAME: %[[SI0:[^:]+]]: !pto.vreg<64xsi32>, %[[SI1:[^:]+]]: !pto.vreg<64xsi32>, %[[SP0:[^:]+]]: !pto.mask<b32>, %[[SP1:[^:]+]]: !pto.mask<b32>
+// CHECK-NOT: pto.vdup
+// CHECK: pto.vcvt %[[SI0]], %[[SP0]] {rnd = "R"} : !pto.vreg<64xsi32>, !pto.mask<b32> -> !pto.vreg<64xf32>
+// CHECK: pto.vcvt %[[SI1]], %[[SP1]] {rnd = "R"} : !pto.vreg<64xsi32>, !pto.mask<b32> -> !pto.vreg<64xf32>
+
+// -----
+
+// extsi: the EVEN/ODD widening parts share the single authored predicate part
+// of the source chunk, and the vcvt element signedness follows the extension
+// kind.
+module {
+  func.func @masked_extsi_to_vpto(
+      %src: !pto.vmi.vreg<128xsi16, #pto.vmi.layout<contiguous>>,
+      %mask: !pto.vmi.mask<128xb16, #pto.vmi.layout<contiguous>>)
+      -> !pto.vmi.vreg<128xsi32, #pto.vmi.layout<deinterleaved = 2>> {
+    %0 = pto.vmi.extsi %src, %mask : !pto.vmi.vreg<128xsi16, #pto.vmi.layout<contiguous>>, !pto.vmi.mask<128xb16, #pto.vmi.layout<contiguous>> -> !pto.vmi.vreg<128xsi32, #pto.vmi.layout<deinterleaved = 2>>
+    return %0 : !pto.vmi.vreg<128xsi32, #pto.vmi.layout<deinterleaved = 2>>
+  }
+}
+
+// CHECK-LABEL: func.func @masked_extsi_to_vpto(
+// CHECK-SAME: %[[EXSRC:[^:]+]]: !pto.vreg<128xsi16>, %[[EXPRED:[^:]+]]: !pto.mask<b16>
+// CHECK-NOT: pto.vdup
+// CHECK: pto.vcvt %[[EXSRC]], %[[EXPRED]] {part = "EVEN"} : !pto.vreg<128xsi16>, !pto.mask<b16> -> !pto.vreg<64xsi32>
+// CHECK: pto.vcvt %[[EXSRC]], %[[EXPRED]] {part = "ODD"} : !pto.vreg<128xsi16>, !pto.mask<b16> -> !pto.vreg<64xsi32>
+
+// -----
+
+// extui: the four packed-byte conversion parts all read the same authored
+// predicate, so the zero-inactive contract zeroes the result lanes of every
+// inactive source byte.
+module {
+  func.func @masked_extui_to_vpto(
+      %src: !pto.vmi.vreg<128xui8, #pto.vmi.layout<contiguous>>,
+      %mask: !pto.vmi.mask<128xb8, #pto.vmi.layout<contiguous>>)
+      -> !pto.vmi.vreg<128xui32, #pto.vmi.layout<deinterleaved = 4>> {
+    %0 = pto.vmi.extui %src, %mask : !pto.vmi.vreg<128xui8, #pto.vmi.layout<contiguous>>, !pto.vmi.mask<128xb8, #pto.vmi.layout<contiguous>> -> !pto.vmi.vreg<128xui32, #pto.vmi.layout<deinterleaved = 4>>
+    return %0 : !pto.vmi.vreg<128xui32, #pto.vmi.layout<deinterleaved = 4>>
+  }
+}
+
+// CHECK-LABEL: func.func @masked_extui_to_vpto(
+// CHECK-SAME: %[[UISRC:[^:]+]]: !pto.vreg<256xui8>, %[[UIPRED:[^:]+]]: !pto.mask<b8>
+// CHECK-NOT: pto.vdup
+// CHECK: pto.vcvt %[[UISRC]], %[[UIPRED]] {part = "P0"} : !pto.vreg<256xui8>, !pto.mask<b8> -> !pto.vreg<64xui32>
+// CHECK: pto.vcvt %[[UISRC]], %[[UIPRED]] {part = "P1"} : !pto.vreg<256xui8>, !pto.mask<b8> -> !pto.vreg<64xui32>
+// CHECK: pto.vcvt %[[UISRC]], %[[UIPRED]] {part = "P2"} : !pto.vreg<256xui8>, !pto.mask<b8> -> !pto.vreg<64xui32>
+// CHECK: pto.vcvt %[[UISRC]], %[[UIPRED]] {part = "P3"} : !pto.vreg<256xui8>, !pto.mask<b8> -> !pto.vreg<64xui32>
+
+// -----
+
+// trunci: a lane-strided result consumes one source chunk per physical result
+// chunk, so each conversion keeps its own authored predicate part and no vor
+// merge is needed.
+module {
+  func.func @masked_trunci_to_vpto(
+      %src: !pto.vmi.vreg<128xsi32, #pto.vmi.layout<contiguous>>,
+      %mask: !pto.vmi.mask<128xb32, #pto.vmi.layout<contiguous>>)
+      -> !pto.vmi.vreg<128xsi16, #pto.vmi.layout<contiguous, lane_stride = 2>> {
+    %0 = pto.vmi.trunci %src, %mask {saturate = "SAT"} : !pto.vmi.vreg<128xsi32, #pto.vmi.layout<contiguous>>, !pto.vmi.mask<128xb32, #pto.vmi.layout<contiguous>> -> !pto.vmi.vreg<128xsi16, #pto.vmi.layout<contiguous, lane_stride = 2>>
+    return %0 : !pto.vmi.vreg<128xsi16, #pto.vmi.layout<contiguous, lane_stride = 2>>
+  }
+}
+
+// CHECK-LABEL: func.func @masked_trunci_to_vpto(
+// CHECK-SAME: %[[TR0:[^:]+]]: !pto.vreg<64xsi32>, %[[TR1:[^:]+]]: !pto.vreg<64xsi32>, %[[TP0:[^:]+]]: !pto.mask<b32>, %[[TP1:[^:]+]]: !pto.mask<b32>
+// CHECK-NOT: pto.vdup
+// CHECK: pto.vcvt %[[TR0]], %[[TP0]] {part = "EVEN", sat = "SAT"} : !pto.vreg<64xsi32>, !pto.mask<b32> -> !pto.vreg<128xsi16>
+// CHECK: pto.vcvt %[[TR1]], %[[TP1]] {part = "EVEN", sat = "SAT"} : !pto.vreg<64xsi32>, !pto.mask<b32> -> !pto.vreg<128xsi16>
+
+// -----
+
+// A lane-strided source lowers its mask with one predicate bit per carrier
+// group.  That granularity already lands the carrier-group bit on the
+// element-granularity bit of the strided lane pto.vcvt reads, so the pbitcast
+// is the whole mapping and the conversion reads the authored predicate rather
+// than an all-true seed.  No interleave is emitted: it would shift the mask a
+// second time.
+module {
+  func.func @masked_extui_lane_stride_to_vpto(
+      %src: !pto.vmi.vreg<128xui8, #pto.vmi.layout<contiguous, lane_stride = 2>>,
+      %mask: !pto.vmi.mask<128xb8, #pto.vmi.layout<contiguous, lane_stride = 2>>)
+      -> !pto.vmi.vreg<128xui16, #pto.vmi.layout<contiguous>> {
+    %0 = pto.vmi.extui %src, %mask : !pto.vmi.vreg<128xui8, #pto.vmi.layout<contiguous, lane_stride = 2>>, !pto.vmi.mask<128xb8, #pto.vmi.layout<contiguous, lane_stride = 2>> -> !pto.vmi.vreg<128xui16, #pto.vmi.layout<contiguous>>
+    return %0 : !pto.vmi.vreg<128xui16, #pto.vmi.layout<contiguous>>
+  }
+}
+
+// CHECK-LABEL: func.func @masked_extui_lane_stride_to_vpto(
+// CHECK-SAME: %[[LSSRC:[^:]+]]: !pto.vreg<256xui8>, %[[LSPRED:[^:]+]]: !pto.mask<b16>
+// CHECK: %[[B8:.*]] = pto.pbitcast %[[LSPRED]] : !pto.mask<b16> -> !pto.mask<b8>
+// CHECK: pto.vcvt %[[LSSRC]], %[[B8]] {part = "EVEN"} : !pto.vreg<256xui8>, !pto.mask<b8> -> !pto.vreg<128xui16>
+
+// -----
+
+// The two mask rewrites compose: a group-slot packet whose source lane stride
+// is the widening ratio carries one predicate bit per carrier group, the
+// pbitcast re-expresses that bit at the source-element granularity, and the
+// active-slot prefix is ANDed on top of it.
+module {
+  func.func @masked_extui_group_slot_lane_stride_to_vpto(
+      %src: !pto.vmi.vreg<8xui8, #pto.vmi.layout<num_groups = 8, slots = 8, lane_stride = 2>>,
+      %mask: !pto.vmi.mask<8xb8, #pto.vmi.layout<num_groups = 8, slots = 8, lane_stride = 2>>)
+      -> !pto.vmi.vreg<8xui16, #pto.vmi.layout<num_groups = 8, slots = 8>> {
+    %0 = pto.vmi.extui %src, %mask : !pto.vmi.vreg<8xui8, #pto.vmi.layout<num_groups = 8, slots = 8, lane_stride = 2>>, !pto.vmi.mask<8xb8, #pto.vmi.layout<num_groups = 8, slots = 8, lane_stride = 2>> -> !pto.vmi.vreg<8xui16, #pto.vmi.layout<num_groups = 8, slots = 8>>
+    return %0 : !pto.vmi.vreg<8xui16, #pto.vmi.layout<num_groups = 8, slots = 8>>
+  }
+}
+
+// CHECK-LABEL: func.func @masked_extui_group_slot_lane_stride_to_vpto(
+// CHECK-SAME: %[[GLSRC:[^:]+]]: !pto.vreg<256xui8>, %[[GLPRED:[^:]+]]: !pto.mask<b16>
+// CHECK: %[[GLB8:.*]] = pto.pbitcast %[[GLPRED]] : !pto.mask<b16> -> !pto.mask<b8>
+// CHECK: %[[GLSLOT:.*]] = pto.pset_b8 "PAT_VL16"
+// CHECK: %[[GLGATE:.*]] = pto.pset_b8 "PAT_ALL"
+// CHECK: %[[GLCOMBINED:.*]] = pto.pand %[[GLB8]], %[[GLSLOT]], %[[GLGATE]] : !pto.mask<b8>, !pto.mask<b8>, !pto.mask<b8> -> !pto.mask<b8>
+// CHECK: pto.vcvt %[[GLSRC]], %[[GLCOMBINED]] {part = "EVEN"} : !pto.vreg<256xui8>, !pto.mask<b8> -> !pto.vreg<128xui16>
+
+// -----
+
+// A group-slot extension carries padding plus the active slots, so the
+// authored predicate is ANDed with the active-slot prefix.  The combined
+// predicate is the conversion mask: padding slots are never converted and the
+// inactive active slots are zeroed by the zero-inactive contract.
+module {
+  func.func @masked_extui_group_slot_to_vpto(
+      %src: !pto.vmi.vreg<8xui8, #pto.vmi.layout<num_groups = 8, slots = 1>>,
+      %mask: !pto.vmi.mask<8xb8, #pto.vmi.layout<num_groups = 8, slots = 1>>)
+      -> !pto.vmi.vreg<8xui16, #pto.vmi.layout<num_groups = 8, slots = 1>> {
+    %0 = pto.vmi.extui %src, %mask : !pto.vmi.vreg<8xui8, #pto.vmi.layout<num_groups = 8, slots = 1>>, !pto.vmi.mask<8xb8, #pto.vmi.layout<num_groups = 8, slots = 1>> -> !pto.vmi.vreg<8xui16, #pto.vmi.layout<num_groups = 8, slots = 1>>
+    return %0 : !pto.vmi.vreg<8xui16, #pto.vmi.layout<num_groups = 8, slots = 1>>
+  }
+}
+
+// CHECK-LABEL: func.func @masked_extui_group_slot_to_vpto(
+// CHECK-SAME: %[[GSM0:[^:]+]]: !pto.mask<b8>
+// CHECK: %[[GSLOT:.*]] = pto.pset_b8 "PAT_VL1"
+// CHECK: %[[GSGATE:.*]] = pto.pset_b8 "PAT_ALL"
+// CHECK: %[[GSCOMBINED:.*]] = pto.pand %[[GSM0]], %[[GSLOT]], %[[GSGATE]] : !pto.mask<b8>, !pto.mask<b8>, !pto.mask<b8> -> !pto.mask<b8>
+// CHECK: pto.vcvt %{{.*}}, %[[GSCOMBINED]] {part = "EVEN"} : !pto.vreg<256xui8>, !pto.mask<b8> -> !pto.vreg<128xui16>
+
+// -----
+
+// The same active-slot gate applies to a masked group-slot narrowing.
+module {
+  func.func @masked_trunci_group_slot_to_vpto(
+      %src: !pto.vmi.vreg<8xui16, #pto.vmi.layout<num_groups = 8, slots = 1>>,
+      %mask: !pto.vmi.mask<8xb16, #pto.vmi.layout<num_groups = 8, slots = 1>>)
+      -> !pto.vmi.vreg<8xui8, #pto.vmi.layout<num_groups = 8, slots = 1>> {
+    %0 = pto.vmi.trunci %src, %mask {saturate = "SAT"} : !pto.vmi.vreg<8xui16, #pto.vmi.layout<num_groups = 8, slots = 1>>, !pto.vmi.mask<8xb16, #pto.vmi.layout<num_groups = 8, slots = 1>> -> !pto.vmi.vreg<8xui8, #pto.vmi.layout<num_groups = 8, slots = 1>>
+    return %0 : !pto.vmi.vreg<8xui8, #pto.vmi.layout<num_groups = 8, slots = 1>>
+  }
+}
+
+// CHECK-LABEL: func.func @masked_trunci_group_slot_to_vpto(
+// CHECK-SAME: %[[TGSM0:[^:]+]]: !pto.mask<b16>
+// CHECK: %[[TGSLOT:.*]] = pto.pset_b16 "PAT_VL1"
+// CHECK: %[[TGSGATE:.*]] = pto.pset_b16 "PAT_ALL"
+// CHECK: %[[TGSCOMBINED:.*]] = pto.pand %[[TGSM0]], %[[TGSLOT]], %[[TGSGATE]] : !pto.mask<b16>, !pto.mask<b16>, !pto.mask<b16> -> !pto.mask<b16>
+// CHECK: pto.vcvt %{{.*}}, %[[TGSCOMBINED]] {part = "EVEN", sat = "SAT"} : !pto.vreg<128xui16>, !pto.mask<b16> -> !pto.vreg<256xui8>

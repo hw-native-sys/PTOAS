@@ -303,6 +303,7 @@ private:
     void appendAnnotatedCastFacts(const CastRelationState& state);
     void appendResultCastFacts(const CastRelationState& state);
     void appendSameWidthCastFacts(const CastRelationState& state);
+    void appendGroupSlotSourceCastFacts(const CastRelationState& state, VMIVRegType sourceType);
     SmallVector<VMILayoutAttr, kValue4> getProducerLayouts();
     SmallVector<VMILayoutAttr, kValue4> getGroupBroadcastCandidates(
         VMIVRegType sourceType, VMIVRegType resultType, int64_t groups);
@@ -322,6 +323,13 @@ private:
     /// layout rows, the contiguous fallback, and one row set per instantiated
     /// group-slot candidate.
     void appendSourceCandidateFacts(const CastRelationState& state, VMIVRegType sourceType);
+    // Ports of one cast relation.  A masked cast gives its predicate operand the
+    // same layout as the source data value: the verifier pairs one predicate
+    // lane with each source lane in one layout (verifyMaskMatchesData), so the
+    // predicate travels with the source through the same layout conversion and
+    // is reconciled through vmi.ensure_mask_layout when its producer disagrees.
+    SmallVector<VMILayoutPortAssignment, mlir::pto::kValue4> makeCastPorts(
+        VMILayoutAttr sourceLayout, VMILayoutAttr resultLayout) const;
     RelationResult buildCast();
     RelationResult buildEnsure();
     RelationResult buildMaskGranularity(VMIEnsureMaskGranularityOp ensure);
@@ -365,6 +373,10 @@ private:
     std::string* reason;
     VMILayoutSupport supports;
     Relations relations;
+    // Operand index of the optional conversion predicate of the cast currently
+    // being enumerated; unset for every other operation and for an unmasked
+    // cast.  Only buildCast() and the cast helpers read it.
+    std::optional<unsigned> castMaskOperand;
 };
 } // namespace mlir::pto::layout_relations
 #endif // PTO_TRANSFORMS_VMI_VMILAYOUTRELATIONS_H

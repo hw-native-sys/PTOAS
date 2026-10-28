@@ -7,6 +7,16 @@
 // See LICENSE in the root of the software repository for the full text of the License.
 
 // Layout relation enumeration: casts.
+//
+// A cast relates the source data layout and the result layout.  The cast family
+// also accepts an optional conversion predicate (issue #1671), which is a third
+// endpoint: the predicate operand carries the source data layout, because the
+// VMI verifier requires exactly one predicate lane per source lane in the same
+// layout (verifyMaskMatchesData).  buildCast() therefore models the predicate as
+// one more port whose layout follows the source layout, and any producer that
+// disagrees is reconciled by the existing mask-layout machinery
+// (vmi.ensure_mask_layout), priced here through the mask port's own
+// buildOperand() query in the cost graph.
 #include "VMILayoutRelations.h"
 #include "PTO/Transforms/VMIFastmathState.h"
 #include "PTO/Transforms/VMILayoutPropagation.h"
@@ -25,19 +35,44 @@ namespace mlir::pto::layout_relations {
 // The gate is deliberately arity-qualified: with twice as many source parts as
 // result parts the paired vcvt form is honest in *any* state, so those rows stay
 // candidates unconditionally (requiresBF16NaNRelaxedLowering is false).
+// A masked cast (issue #1671) is a cast relation too - operands 1..2 are the data
+// and the optional predicate - so the same state gate applies to it.  The dense
+// pair, however, is never admissible *with* a predicate: its fastmath lowering
+// moves data through vdintlv without a conversion, so it cannot carry the
+// authored mask, and the per-part vcvt fallback writes lane_stride 2.
 bool VMILayoutRelations::isAdmissibleCastFact(const VMICastLayoutFact& fact) const
 {
-    if (!op || op->getNumOperands() != 1 || op->getNumResults() != 1) {
+    unsigned numOperands = op ? op->getNumOperands() : 0;
+    bool castShape = op && numOperands >= 1 && numOperands <= 2 && op->getNumResults() == 1;
+    if (!castShape) {
         return true;
     }
     auto sourceType = dyn_cast<VMIVRegType>(op->getOperand(0).getType());
     auto resultType = dyn_cast<VMIVRegType>(op->getResult(0).getType());
+    if (!sourceType || !resultType) {
+        return true;
+    }
     if (!requiresBF16NaNRelaxedLowering(sourceType, resultType, fact.sourceLayout, fact.resultLayout)) {
         return true;
+    }
+    if (castMaskOperand) {
+        return false;
     }
     // The state comes from the one module attribute every VMI pass shares, so a
     // candidate decision and the lowering that consumes it cannot disagree.
     return hasBF16NaNRelaxedFastmathState(op, getVMIFastmathState(op));
+}
+
+SmallVector<VMILayoutPortAssignment, mlir::pto::kValue4> VMILayoutRelations::makeCastPorts(
+    VMILayoutAttr sourceLayout, VMILayoutAttr resultLayout) const
+{
+    SmallVector<VMILayoutPortAssignment, mlir::pto::kValue4> ports;
+    ports.push_back(operandPort(0, sourceLayout));
+    if (castMaskOperand) {
+        ports.push_back(operandPort(*castMaskOperand, sourceLayout));
+    }
+    ports.push_back(resultPort(0, resultLayout));
+    return ports;
 }
 
 void VMILayoutRelations::appendCastFact(const VMICastLayoutFact& fact, const FailureOr<VMICastLayoutFact>& preferred)
@@ -48,10 +83,7 @@ void VMILayoutRelations::appendCastFact(const VMICastLayoutFact& fact, const Fai
     appendReachableUniqueRelation(
         relations,
         VMILayoutOpRelation{
-            op,
-            {operandPort(0, fact.sourceLayout), resultPort(0, fact.resultLayout)},
-            false,
-            fact.intrinsicRearrangementCost,
+            op, makeCastPorts(fact.sourceLayout, fact.resultLayout), false, fact.intrinsicRearrangementCost,
             getPairPreferencePenalty(fact, preferred)},
         supports);
 }
@@ -71,8 +103,7 @@ void VMILayoutRelations::appendSourceCastFacts(const CastRelationState& state, V
         auto fact = supports.getSameWidthCastLayoutFact(concreteSourceType, concreteResultType);
         if (succeeded(fact)) {
             appendReachableUniqueRelation(
-                relations,
-                VMILayoutOpRelation{op, {operandPort(0, fact->sourceLayout), resultPort(0, fact->resultLayout)}, false},
+                relations, VMILayoutOpRelation{op, makeCastPorts(fact->sourceLayout, fact->resultLayout), false},
                 supports);
         }
         return;
@@ -140,11 +171,7 @@ void VMILayoutRelations::appendAnnotatedCastFacts(const CastRelationState& state
         appendReachableUniqueRelation(
             relations,
             VMILayoutOpRelation{
-                op,
-                {operandPort(0, annotatedSource), resultPort(0, annotatedResult)},
-                false,
-                fact.intrinsicRearrangementCost,
-                0},
+                op, makeCastPorts(annotatedSource, annotatedResult), false, fact.intrinsicRearrangementCost, 0},
             supports);
     }
 }
@@ -230,10 +257,19 @@ void VMILayoutRelations::appendSourceCandidateFacts(const CastRelationState& sta
             VMILayoutAttr::getContiguous(op->getContext()));
         appendSourceCastFacts(state, contiguousSourceType);
     }
+    appendGroupSlotSourceCastFacts(state, sourceType);
+}
+
+void VMILayoutRelations::appendGroupSlotSourceCastFacts(const CastRelationState& state, VMIVRegType sourceType)
+{
+    // A group-slot source is enumerated once per group count: rows that share a
+    // count describe the same physical grouping, so one of them seeds the facts.
     SmallVector<int64_t, mlir::pto::kValue2> instantiatedGroups;
     for (VMILayoutAttr layout : polymorphicLayouts) {
-        if (!layout || !layout.isGroupSlots() || !isLegalLayoutForType(sourceType, layout) ||
-            llvm::is_contained(instantiatedGroups, layout.getNumGroups())) {
+        bool usableGroupSlotLayout = layout && layout.isGroupSlots() && isLegalLayoutForType(sourceType, layout);
+        bool instantiatedLayout =
+            usableGroupSlotLayout && llvm::is_contained(instantiatedGroups, layout.getNumGroups());
+        if (!usableGroupSlotLayout || instantiatedLayout) {
             continue;
         }
         instantiatedGroups.push_back(layout.getNumGroups());
@@ -245,13 +281,26 @@ void VMILayoutRelations::appendSourceCandidateFacts(const CastRelationState& sta
 
 RelationResult VMILayoutRelations::buildCast()
 {
-    if (op->getNumOperands() != 1 || op->getNumResults() != 1) {
+    // Operand 0 is always the data operand; operand 1, when present, is the
+    // optional conversion predicate.  Nothing else is a cast relation.
+    castMaskOperand = std::nullopt;
+    unsigned numOperands = op->getNumOperands();
+    bool castShape = numOperands >= 1 && numOperands <= 2 && op->getNumResults() == 1;
+    if (!castShape) {
         return failure();
     }
     auto sourceType = dyn_cast<VMIVRegType>(op->getOperand(0).getType());
     auto resultType = dyn_cast<VMIVRegType>(op->getResult(0).getType());
     if (!sourceType || !resultType) {
         return failure();
+    }
+    bool hasMaskOperand = numOperands == 2;
+    if (hasMaskOperand) {
+        bool maskOperand = isa<VMIMaskType>(op->getOperand(1).getType());
+        if (!maskOperand) {
+            return failure();
+        }
+        castMaskOperand = 1;
     }
     CastRelationState state = makeCastRelationState(sourceType, resultType);
     appendSourceCandidateFacts(state, sourceType);

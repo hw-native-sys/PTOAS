@@ -3982,7 +3982,7 @@ def vmi_masked_vcvt_probe():
     src_tile = pto.alloc_tile(shape=[1, 64], dtype=pto.f32)
     src_ptr = src_tile.as_ptr()
     offset = pto.const(0, dtype=pto.index)
-    active_lanes = pto.const(64, dtype=pto.index)
+    active_lanes = pto.const(32, dtype=pto.index)
 
     src = pto.vmi.vload(src_ptr, offset, size=64)
     mask = pto.vmi.create_mask(
@@ -8865,14 +8865,30 @@ def main() -> None:
         "Rebuild PTO Python bindings" in str(missing_vmi_binding),
         "missing generated VMI bindings should diagnose rebuild guidance",
     )
-    masked_vcvt_error = expect_raises(
-        NotImplementedError,
-        vmi_masked_vcvt_probe.compile,
-        "pto.vmi.vcvt",
+    vmi_masked_vcvt_text = vmi_masked_vcvt_probe.compile().mlir_text()
+    expect_parse_roundtrip_and_verify(
+        vmi_masked_vcvt_text, "public VMI masked vcvt"
     )
     expect(
-        "masked form" in str(masked_vcvt_error),
-        "unsupported VMI backend/binding forms should diagnose the unavailable feature",
+        re.search(
+            r"(?P<lanes>%[A-Za-z0-9_]+) = pto\.constant 32 : index[\s\S]*?"
+            r"pto\.vmi\.create_mask (?P=lanes) :",
+            vmi_masked_vcvt_text,
+        )
+        is not None,
+        "masked vcvt probe should build a partial (32 of 64 active lanes) VMI mask",
+    )
+    expect(
+        re.search(
+            r"(?P<mask>%[A-Za-z0-9_]+) = pto\.vmi\.create_mask [\s\S]*?"
+            r"pto\.vmi\.vcvt %[A-Za-z0-9_]+, (?P=mask) \{saturate = \"SAT\"\} : "
+            r"!pto\.vmi\.vreg<64xf32>, !pto\.vmi\.mask<64xpred> -> "
+            r"!pto\.vmi\.vreg<64xf16>",
+            vmi_masked_vcvt_text,
+        )
+        is not None,
+        "masked vcvt should pass the created VMI mask as the operation's second "
+        "operand with a source-following mask type",
     )
     invalid_rounding_vcvt_error = expect_raises(
         ValueError,

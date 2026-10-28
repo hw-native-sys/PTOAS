@@ -1350,7 +1350,8 @@ LogicalResult PlanGraphBuilder::buildSameLayoutOp(Operation* op, const VMILayout
 }
 
 FailureOr<PhysicalValues> PlanGraphBuilder::buildWideningCast(
-    ArrayRef<PhysicalValue> source, int64_t resultArity, Region* scope, PhysicalActionKind conversionKind)
+    ArrayRef<PhysicalValue> source, int64_t resultArity, Region* scope, PhysicalActionKind conversionKind,
+    ArrayRef<PhysicalValue> predicate)
 {
     PhysicalValues results;
 
@@ -1361,14 +1362,16 @@ FailureOr<PhysicalValues> PlanGraphBuilder::buildWideningCast(
     for (size_t output = 0; output < outputsPerSource; ++output) {
         for (PhysicalValue input : source) {
             std::string tag = (Twine("ext:") + Twine(output)).str();
-            auto converted = graph.addAction(conversionKind, scope, {input}, tag, 1);
+            SmallVector<PhysicalValue, mlir::pto::kValue4> inputs{input};
+            inputs.append(predicate.begin(), predicate.end());
+            auto converted = graph.addAction(conversionKind, scope, inputs, tag, 1);
             results.push_back(converted[0]);
         }
     }
     return results;
 }
 FailureOr<PhysicalValues> PlanGraphBuilder::buildNarrowingCast(
-    ArrayRef<PhysicalValue> source, int64_t resultArity, Region* scope)
+    ArrayRef<PhysicalValue> source, int64_t resultArity, Region* scope, ArrayRef<PhysicalValue> predicate)
 {
     PhysicalValues results;
 
@@ -1387,7 +1390,12 @@ FailureOr<PhysicalValues> PlanGraphBuilder::buildNarrowingCast(
         SmallVector<PhysicalValue, mlir::pto::kValue4> partials;
         for (size_t sourceIndex = begin; sourceIndex < end; ++sourceIndex) {
             std::string tag = (Twine("trunc:") + Twine(sourceIndex - begin)).str();
-            partials.push_back(graph.addAction(PhysicalActionKind::Semantic, scope, {(source)[sourceIndex]}, tag)[0]);
+            SmallVector<PhysicalValue, mlir::pto::kValue4> inputs{(source)[sourceIndex]};
+            inputs.append(predicate.begin(), predicate.end());
+            partials.push_back(graph.addAction(PhysicalActionKind::Semantic, scope, inputs, tag)[0]);
+        }
+        if (partials.empty()) {
+            return failure();
         }
         // The begin == end guard above already keeps this range non-empty, but
         // state it explicitly: SmallVector inline storage is unconstructed, so
@@ -1403,24 +1411,66 @@ FailureOr<PhysicalValues> PlanGraphBuilder::buildNarrowingCast(
     }
     return results;
 }
+std::optional<PlanGraphBuilder::CastPortLayouts> PlanGraphBuilder::resolveCastPortLayouts(
+    Operation* op, const VMILayoutOpRelation& relation)
+{
+    // An unmasked cast relates source and result only.  A masked cast adds the
+    // conversion predicate between them, so its relation has three ports and the
+    // middle one is the predicate.
+    bool masked = op->getNumOperands() == 2 && isa<VMIMaskType>(op->getOperand(1).getType());
+    size_t expectedPorts = masked ? 3 : 2;
+    bool portShape = relation.ports.size() == expectedPorts && relation.ports[0].kind == VMILayoutPortKind::Operand &&
+                     relation.ports[expectedPorts - 1].kind == VMILayoutPortKind::Result;
+    if (masked) {
+        portShape = portShape && relation.ports[1].kind == VMILayoutPortKind::Operand;
+    }
+    if (!portShape) {
+        return std::nullopt;
+    }
+    CastPortLayouts layouts{relation.ports[0].layout, std::nullopt, relation.ports[expectedPorts - 1].layout};
+    if (masked) {
+        layouts.predicate = relation.ports[1].layout;
+    }
+    return layouts;
+}
+
 LogicalResult PlanGraphBuilder::buildCast(Operation* op, const VMILayoutOpRelation& relation)
 {
-    if (relation.ports.size() != 2 || relation.ports[0].kind != VMILayoutPortKind::Operand ||
-        relation.ports[1].kind != VMILayoutPortKind::Result) {
+    std::optional<CastPortLayouts> ports = resolveCastPortLayouts(op, relation);
+    if (!ports) {
         return failure();
     }
-    VMILayoutAttr sourceLayout = relation.ports[0].layout;
-    VMILayoutAttr resultLayout = relation.ports[1].layout;
-    auto source = buildOperand(op->getOpOperand(0), sourceLayout);
+    auto source = buildOperand(op->getOpOperand(0), ports->source);
     auto sourceType = cast<VMIVRegType>(op->getOperand(0).getType());
     auto resultType = cast<VMIVRegType>(op->getResult(0).getType());
-    auto resultArity = getArity(resultType, resultLayout);
+    auto resultArity = getArity(resultType, ports->result);
     if (failed(source) || failed(resultArity) || source->empty() || *resultArity <= 0) {
         return failure();
     }
+    SmallVector<PhysicalValue, mlir::pto::kValue4> predicate;
+    if (ports->predicate) {
+        auto mask = buildOperand(op->getOpOperand(1), *ports->predicate);
+        bool maskUsable = succeeded(mask) && !mask->empty();
+        if (!maskUsable) {
+            return failure();
+        }
+        predicate.push_back(mask->front());
+    }
+    FailureOr<SmallVector<PhysicalValue, mlir::pto::kValue4>> results =
+        buildCastConversion(op, *source, *resultArity, sourceType, resultType, relation, predicate);
+    if (failed(results)) {
+        return failure();
+    }
+    values[op->getResult(0)] = std::move(*results);
+    return success();
+}
+
+FailureOr<SmallVector<PhysicalValue, mlir::pto::kValue4>> PlanGraphBuilder::buildCastConversion(
+    Operation* op, ArrayRef<PhysicalValue> source, int64_t resultArity, VMIVRegType sourceType, VMIVRegType resultType,
+    const VMILayoutOpRelation& relation, ArrayRef<PhysicalValue> predicate)
+{
     unsigned sourceBits = pto::getPTOStorageElemBitWidth(sourceType.getElementType());
     unsigned resultBits = pto::getPTOStorageElemBitWidth(resultType.getElementType());
-    SmallVector<PhysicalValue, mlir::pto::kValue4> results;
     Region* scope = getDynamicScope(op);
     // Native widening emits one VCVT per result carrier, for both integer and
     // floating types. A replacement recipe (integer unpack or BF16 interleave)
@@ -1428,22 +1478,20 @@ LogicalResult PlanGraphBuilder::buildCast(Operation* op, const VMILayoutOpRelati
     bool nativeExtension = isa<VMIExtFOp, VMIExtUIOp, VMIExtSIOp>(op) && relation.intrinsicRearrangementCost == 0;
     PhysicalActionKind conversionKind = nativeExtension ? PhysicalActionKind::Compute : PhysicalActionKind::Semantic;
     if (sourceBits != resultBits) {
-        auto converted = sourceBits < resultBits ? buildWideningCast(*source, *resultArity, scope, conversionKind) :
-                                                   buildNarrowingCast(*source, *resultArity, scope);
-        if (failed(converted)) {
-            return failure();
-        }
-        results = std::move(*converted);
-    } else {
-        if (source->size() != static_cast<size_t>(*resultArity)) {
-            return failure();
-        }
-        for (PhysicalValue input : *source) {
-            results.push_back(graph.addAction(PhysicalActionKind::Semantic, scope, {input}, "cast")[0]);
-        }
+        return sourceBits < resultBits ? buildWideningCast(source, resultArity, scope, conversionKind, predicate) :
+                                         buildNarrowingCast(source, resultArity, scope, predicate);
     }
-    values[op->getResult(0)] = std::move(results);
-    return success();
+    bool arityMismatch = source.size() != static_cast<size_t>(resultArity);
+    if (arityMismatch) {
+        return failure();
+    }
+    SmallVector<PhysicalValue, mlir::pto::kValue4> results;
+    for (PhysicalValue input : source) {
+        SmallVector<PhysicalValue, mlir::pto::kValue4> inputs{input};
+        inputs.append(predicate.begin(), predicate.end());
+        results.push_back(graph.addAction(PhysicalActionKind::Semantic, scope, inputs, "cast")[0]);
+    }
+    return results;
 }
 
 } // namespace mlir::pto::layout_cost

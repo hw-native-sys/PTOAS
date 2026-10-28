@@ -10,111 +10,126 @@
 //===- VMIToVPTOPatternInternals6b.inc - VMIToVPTO internals -*- C++ -*-===//
 //===----------------------------------------------------------------------===//
 static LogicalResult lowerSameWidthFpToInt(
-    Operation *op, ValueRange sourceParts, ArrayRef<VRegType> resultTypes,
-    StringAttr rnd, StringAttr sat, StringRef arityDiagnostic,
-    StringRef maskDiagnostic, TypeConverter *typeConverter,
-    OneToNPatternRewriter &rewriter) {
-  bool invalidArity = sourceParts.size() != resultTypes.size();
-  if (invalidArity) {
-    return rewriter.notifyMatchFailure(op, arityDiagnostic);
-  }
-  SmallVector<Value> results;
-  results.reserve(resultTypes.size());
-  for (auto [sourcePart, resultType] :
-       llvm::zip_equal(sourceParts, resultTypes)) {
-    FailureOr<Value> mask = createAllTrueMaskForVReg(
-        op->getLoc(), cast<VRegType>(sourcePart.getType()), rewriter);
-    if (failed(mask)) {
-      return rewriter.notifyMatchFailure(op, maskDiagnostic);
+    Operation* op, ValueRange sourceParts, ArrayRef<VRegType> resultTypes, ValueRange masks, StringAttr rnd,
+    StringAttr sat, StringRef arityDiagnostic, StringRef maskDiagnostic, TypeConverter* typeConverter,
+    OneToNPatternRewriter& rewriter)
+{
+    bool invalidArity = sourceParts.size() != resultTypes.size();
+    if (invalidArity) {
+        return rewriter.notifyMatchFailure(op, arityDiagnostic);
     }
-    results.push_back(
-        rewriter
-            .create<VcvtOp>(op->getLoc(), resultType, sourcePart, *mask, rnd,
-                            sat, /*part=*/nullptr)
-            .getResult());
-  }
-  replaceOpWithFlatConvertedValues(rewriter, op, results, *typeConverter);
-  return success();
+    SmallVector<Value> results;
+    results.reserve(resultTypes.size());
+    for (auto [index, sourceAndResult] : llvm::enumerate(llvm::zip_equal(sourceParts, resultTypes))) {
+        auto [sourcePart, resultType] = sourceAndResult;
+        // The unmasked sub-path keeps its all-true seed; a masked cast reads the
+        // authored predicate of this source chunk instead (issue #1671).
+        Value partMask;
+        if (masks.empty()) {
+            FailureOr<Value> mask =
+                createAllTrueMaskForVReg(op->getLoc(), cast<VRegType>(sourcePart.getType()), rewriter);
+            if (failed(mask)) {
+                return rewriter.notifyMatchFailure(op, maskDiagnostic);
+            }
+            partMask = *mask;
+        } else {
+            FailureOr<Value> mask = getConversionMaskForChunk(masks, index, Value());
+            if (failed(mask)) {
+                return rewriter.notifyMatchFailure(op, maskDiagnostic);
+            }
+            partMask = *mask;
+        }
+        results.push_back(
+            rewriter.create<VcvtOp>(op->getLoc(), resultType, sourcePart, partMask, rnd, sat, /*part=*/nullptr)
+                .getResult());
+    }
+    replaceOpWithFlatConvertedValues(rewriter, op, results, *typeConverter);
+    return success();
 }
 
 static FailureOr<Value> buildNarrowFpToIntResult(
-    Operation *op, ValueRange sourceParts, VRegType resultType,
-    int64_t chunkIndex, int64_t sourceFactor, int64_t partStride,
-    ArrayRef<StringRef> parts, StringAttr rnd, StringAttr sat,
-    Value sourceMask, OneToNPatternRewriter &rewriter) {
-  if (sourceFactor <= 0) {
-    return rewriter.notifyMatchFailure(
-        op, "narrow fp-to-int requires a positive source factor");
-  }
-  int64_t safeSourceFactor = sourceFactor;
-  FailureOr<Value> resultMask =
-      createAllTrueMaskForVReg(op->getLoc(), resultType, rewriter);
-  if (failed(resultMask)) {
-    return failure();
-  }
+    Operation* op, ValueRange sourceParts, VRegType resultType, int64_t chunkIndex, int64_t sourceFactor,
+    int64_t partStride, ArrayRef<StringRef> parts, StringAttr rnd, StringAttr sat, Value sourceMask, ValueRange masks,
+    OneToNPatternRewriter& rewriter)
+{
+    if (sourceFactor <= 0) {
+        return rewriter.notifyMatchFailure(op, "narrow fp-to-int requires a positive source factor");
+    }
+    int64_t safeSourceFactor = sourceFactor;
+    FailureOr<Value> resultMask = createAllTrueMaskForVReg(op->getLoc(), resultType, rewriter);
+    if (failed(resultMask)) {
+        return failure();
+    }
 
-  SmallVector<Value> partials;
-  partials.reserve(safeSourceFactor);
-  int64_t resultCount = sourceParts.size() / safeSourceFactor;
-  for (int64_t partIndex = 0; partIndex < safeSourceFactor; ++partIndex) {
-    Value sourcePart = sourceParts[partIndex * resultCount + chunkIndex];
-    partials.push_back(
-        rewriter
-            .create<VcvtOp>(op->getLoc(), resultType, sourcePart, sourceMask,
-                            rnd, sat, rewriter.getStringAttr(
-                                          parts[partIndex * partStride]))
-            .getResult());
-  }
+    SmallVector<Value> partials;
+    partials.reserve(safeSourceFactor);
+    int64_t resultCount = sourceParts.size() / safeSourceFactor;
+    for (int64_t partIndex = 0; partIndex < safeSourceFactor; ++partIndex) {
+        int64_t sourceIndex = partIndex * resultCount + chunkIndex;
+        Value sourcePart = sourceParts[sourceIndex];
+        // Each partial converts its own source chunk, so a masked cast carries that
+        // chunk's predicate (issue #1671).
+        Value partMask = sourceMask;
+        if (!masks.empty()) {
+            FailureOr<Value> mask = getConversionMaskForChunk(masks, sourceIndex, Value());
+            if (failed(mask)) {
+                return failure();
+            }
+            partMask = *mask;
+        }
+        partials.push_back(rewriter
+                               .create<VcvtOp>(
+                                   op->getLoc(), resultType, sourcePart, partMask, rnd, sat,
+                                   rewriter.getStringAttr(parts[partIndex * partStride]))
+                               .getResult());
+    }
 
-  Value merged = partials.front();
-  for (Value partial : llvm::drop_begin(partials)) {
-    merged = rewriter
-                 .create<VorOp>(op->getLoc(), resultType, merged, partial,
-                                *resultMask)
-                 .getResult();
-  }
-  return merged;
+    Value merged = partials.front();
+    for (Value partial : llvm::drop_begin(partials)) {
+        merged = rewriter.create<VorOp>(op->getLoc(), resultType, merged, partial, *resultMask).getResult();
+    }
+    return merged;
 }
 
 static LogicalResult lowerNarrowFpToInt(
-    Operation *op, ValueRange sourceParts, ArrayRef<VRegType> resultTypes,
-    int64_t sourceFactor, int64_t partStride, ArrayRef<StringRef> parts,
-    StringAttr rnd, StringAttr sat,
-    StringRef sourceMaskDiagnostic, StringRef resultMaskDiagnostic,
-    TypeConverter *typeConverter, OneToNPatternRewriter &rewriter) {
-  if (sourceFactor <= 0 || partStride <= 0 ||
-      (sourceFactor - 1) * partStride >= static_cast<int64_t>(parts.size()) ||
-      sourceParts.size() !=
-                              static_cast<size_t>(sourceFactor) *
-                                  resultTypes.size()) {
-    return rewriter.notifyMatchFailure(
-        op, "narrow fp-to-int source arity does not match conversion factor");
-  }
-
-  auto sourceType = dyn_cast<VRegType>(sourceParts.front().getType());
-  if (!sourceType) {
-    return rewriter.notifyMatchFailure(op, "expected physical fp source type");
-  }
-  FailureOr<Value> sourceMask =
-      createAllTrueMaskForVReg(op->getLoc(), sourceType, rewriter);
-  if (failed(sourceMask)) {
-    return rewriter.notifyMatchFailure(op, sourceMaskDiagnostic);
-  }
-
-  SmallVector<Value> results;
-  results.reserve(resultTypes.size());
-  for (auto [chunkIndex, resultType] : llvm::enumerate(resultTypes)) {
-    FailureOr<Value> result = buildNarrowFpToIntResult(
-        op, sourceParts, resultType, chunkIndex, sourceFactor, partStride,
-        parts, rnd, sat, *sourceMask, rewriter);
-    if (failed(result)) {
-      return rewriter.notifyMatchFailure(op, resultMaskDiagnostic);
+    Operation* op, ValueRange sourceParts, ArrayRef<VRegType> resultTypes, ValueRange masks, int64_t sourceFactor,
+    int64_t partStride, ArrayRef<StringRef> parts, StringAttr rnd, StringAttr sat, StringRef sourceMaskDiagnostic,
+    StringRef resultMaskDiagnostic, TypeConverter* typeConverter, OneToNPatternRewriter& rewriter)
+{
+    bool nonPositiveFactor = sourceFactor <= 0 || partStride <= 0;
+    bool strideOutOfRange = !nonPositiveFactor && (sourceFactor - 1) * partStride >= static_cast<int64_t>(parts.size());
+    bool arityMismatch = sourceParts.size() != static_cast<size_t>(sourceFactor) * resultTypes.size();
+    if (nonPositiveFactor || strideOutOfRange || arityMismatch) {
+        return rewriter.notifyMatchFailure(op, "narrow fp-to-int source arity does not match conversion factor");
     }
-    results.push_back(*result);
-  }
 
-  replaceOpWithFlatConvertedValues(rewriter, op, results, *typeConverter);
-  return success();
+    auto sourceType = dyn_cast<VRegType>(sourceParts.front().getType());
+    if (!sourceType) {
+        return rewriter.notifyMatchFailure(op, "expected physical fp source type");
+    }
+    Value sourceMask;
+    if (masks.empty()) {
+        FailureOr<Value> seed = createAllTrueMaskForVReg(op->getLoc(), sourceType, rewriter);
+        if (failed(seed)) {
+            return rewriter.notifyMatchFailure(op, sourceMaskDiagnostic);
+        }
+        sourceMask = *seed;
+    }
+
+    SmallVector<Value> results;
+    results.reserve(resultTypes.size());
+    for (auto [chunkIndex, resultType] : llvm::enumerate(resultTypes)) {
+        FailureOr<Value> result = buildNarrowFpToIntResult(
+            op, sourceParts, resultType, chunkIndex, sourceFactor, partStride, parts, rnd, sat, sourceMask, masks,
+            rewriter);
+        if (failed(result)) {
+            return rewriter.notifyMatchFailure(op, resultMaskDiagnostic);
+        }
+        results.push_back(*result);
+    }
+
+    replaceOpWithFlatConvertedValues(rewriter, op, results, *typeConverter);
+    return success();
 }
 
 static int64_t getElementDeinterleaveFactor(VMILayoutAttr layout) {
@@ -131,39 +146,45 @@ static int64_t getElementDeinterleaveFactor(VMILayoutAttr layout) {
 }
 
 static LogicalResult lowerWidenFpToInt(
-    Operation *op, ValueRange sourceParts, ArrayRef<VRegType> resultTypes,
-    ArrayRef<StringRef> parts, StringAttr rnd, StringAttr sat,
-    StringRef arityDiagnostic, StringRef maskDiagnostic,
-    TypeConverter *typeConverter, OneToNPatternRewriter &rewriter) {
-  bool invalidArity =
-      parts.empty() || resultTypes.size() != parts.size() * sourceParts.size();
-  if (invalidArity) {
-    return rewriter.notifyMatchFailure(op, arityDiagnostic);
-  }
-  auto sourceType = dyn_cast<VRegType>(sourceParts.front().getType());
-  if (!sourceType) {
-    return rewriter.notifyMatchFailure(op, maskDiagnostic);
-  }
-  FailureOr<Value> mask =
-      createAllTrueMaskForVReg(op->getLoc(), sourceType, rewriter);
-  if (failed(mask)) {
-    return rewriter.notifyMatchFailure(op, maskDiagnostic);
-  }
-  SmallVector<Value> results;
-  results.reserve(resultTypes.size());
-  for (size_t partIndex = 0; partIndex < parts.size(); ++partIndex) {
-    for (auto [chunkIndex, sourcePart] : llvm::enumerate(sourceParts)) {
-      VRegType resultType =
-          resultTypes[partIndex * sourceParts.size() + chunkIndex];
-      results.push_back(
-          rewriter
-              .create<VcvtOp>(op->getLoc(), resultType, sourcePart, *mask, rnd,
-                              sat, rewriter.getStringAttr(parts[partIndex]))
-              .getResult());
+    Operation* op, ValueRange sourceParts, ArrayRef<VRegType> resultTypes, ValueRange masks, ArrayRef<StringRef> parts,
+    StringAttr rnd, StringAttr sat, StringRef arityDiagnostic, StringRef maskDiagnostic, TypeConverter* typeConverter,
+    OneToNPatternRewriter& rewriter)
+{
+    bool invalidArity = parts.empty() || resultTypes.size() != parts.size() * sourceParts.size();
+    if (invalidArity) {
+        return rewriter.notifyMatchFailure(op, arityDiagnostic);
     }
-  }
-  replaceOpWithFlatConvertedValues(rewriter, op, results, *typeConverter);
-  return success();
+    auto sourceType = dyn_cast<VRegType>(sourceParts.front().getType());
+    if (!sourceType) {
+        return rewriter.notifyMatchFailure(op, maskDiagnostic);
+    }
+    Value unmaskedSeed;
+    if (masks.empty()) {
+        FailureOr<Value> mask = createAllTrueMaskForVReg(op->getLoc(), sourceType, rewriter);
+        if (failed(mask)) {
+            return rewriter.notifyMatchFailure(op, maskDiagnostic);
+        }
+        unmaskedSeed = *mask;
+    }
+    SmallVector<Value> results;
+    results.reserve(resultTypes.size());
+    for (size_t partIndex = 0; partIndex < parts.size(); ++partIndex) {
+        for (auto [chunkIndex, sourcePart] : llvm::enumerate(sourceParts)) {
+            VRegType resultType = resultTypes[partIndex * sourceParts.size() + chunkIndex];
+            // Both parts of a widened chunk read the same authored source predicate.
+            FailureOr<Value> mask = getConversionMaskForChunk(masks, chunkIndex, unmaskedSeed);
+            if (failed(mask)) {
+                return rewriter.notifyMatchFailure(op, maskDiagnostic);
+            }
+            results.push_back(
+                rewriter
+                    .create<VcvtOp>(
+                        op->getLoc(), resultType, sourcePart, *mask, rnd, sat, rewriter.getStringAttr(parts[partIndex]))
+                    .getResult());
+        }
+    }
+    replaceOpWithFlatConvertedValues(rewriter, op, results, *typeConverter);
+    return success();
 }
 
 template <typename OpTy>
@@ -287,164 +308,140 @@ struct OneToNVMIFPToSIOpPattern : OneToNOpConversionPattern<VMIFPToSIOp> {
   using OneToNOpConversionPattern<VMIFPToSIOp>::OneToNOpConversionPattern;
 
 private:
-  LogicalResult lowerDenseWiden(
-      VMIFPToSIOp op, ValueRange sourceParts,
-      ArrayRef<VRegType> resultTypes, VRegType sourceType, unsigned sourceBits,
-      StringAttr rnd, StringAttr sat, OneToNPatternRewriter &rewriter) const {
-    StringRef part = sourceBits == 16 ? StringRef("EVEN") : StringRef("P0");
-    FailureOr<Value> mask =
-        createAllTrueMaskForVReg(op.getLoc(), sourceType, rewriter);
-    if (failed(mask)) {
-      return rewriter.notifyMatchFailure(
-          op, "failed to build fptosi widen 1:1 mask");
-    }
-    SmallVector<Value> results;
-    results.reserve(resultTypes.size());
-    for (auto [sourcePart, resultType] :
-         llvm::zip_equal(sourceParts, resultTypes)) {
-      results.push_back(
-          rewriter
-              .create<VcvtOp>(op.getLoc(), resultType, sourcePart, *mask, rnd,
-                              sat, rewriter.getStringAttr(part))
-              .getResult());
-    }
-    replaceOpWithFlatConvertedValues(rewriter, op, results,
-                                     *this->getTypeConverter());
-    return success();
-  }
-
-  LogicalResult lowerWiden(
-      VMIFPToSIOp op, ValueRange sourceParts,
-      ArrayRef<Type> physicalResultTypes, ArrayRef<VRegType> resultTypes,
-      VMIVRegType sourceVMIType, VMIVRegType resultVMIType,
-      VRegType sourceType, unsigned sourceBits, StringAttr rnd, StringAttr sat,
-      OneToNPatternRewriter &rewriter) const {
-    VMILayoutAttr sourceLayout = sourceVMIType.getLayoutAttr();
-    VMILayoutAttr resultLayout = resultVMIType.getLayoutAttr();
-    // Same carrier-view plan as pto.vmi.extf: a single-carrier group-slot
-    // packet with the widening factor as its lane stride, or a packet with one
-    // group per part, is the dense lane-strided carrier in every respect the
-    // part selection depends on.
-    VMILayoutAttr sourceView =
-        getVMICastDenseCarrierView(sourceLayout, sourceType.getElementType());
-    VMILayoutAttr resultView =
-        resultTypes.empty()
-            ? VMILayoutAttr()
-            : getVMICastDenseCarrierView(resultLayout,
-                                         resultTypes.front().getElementType());
-    bool packedRadix = sourceBits == kElementBits16 &&
-                       sourceView.getLaneStride() == kPairWidth;
-    bool quadRadix = sourceBits == kElementBits8 &&
-                     sourceView.getLaneStride() == kQuadWidth;
-    bool sourceSelectsPartLanes =
-        sourceView &&
-        (packedRadix || quadRadix ||
-         isVMISingleGroupPerPartPacket(sourceLayout));
-    bool denseOneToOne =
-        sourceView && resultView && sourceView.isContiguous() &&
-        resultView.isContiguous() && resultView.getLaneStride() == 1 &&
-        sourceSelectsPartLanes &&
-        physicalResultTypes.size() == sourceParts.size();
-    if (denseOneToOne) {
-      return lowerDenseWiden(op, sourceParts, resultTypes, sourceType,
-                             sourceBits, rnd, sat, rewriter);
-    }
-    static constexpr StringRef kEvenOddParts[] = {"EVEN", "ODD"};
-    return lowerWidenFpToInt(
-        op, sourceParts, resultTypes, kEvenOddParts, rnd, sat,
-        "widen fptosi requires result arity = 2 × source arity",
-        "failed to build fptosi widen mask", this->getTypeConverter(),
-        rewriter);
-  }
-
-  LogicalResult lowerNarrow(
-      VMIFPToSIOp op, ValueRange sourceParts,
-      ArrayRef<Type> physicalResultTypes, ArrayRef<VRegType> resultTypes,
-      VMIVRegType resultVMIType, unsigned sourceBits, unsigned resultBits,
-      StringAttr rnd, StringAttr sat, OneToNPatternRewriter &rewriter) const {
-    FailureOr<NarrowFpToIntPlan> plan = buildNarrowFpToIntPlan(
-        op, sourceParts, physicalResultTypes, resultVMIType, sourceBits,
-        resultBits, rewriter, "narrow fptosi requires positive result bit width",
-        "narrow fptosi: unsupported result lane stride",
-        "narrow fptosi: source arity != sourceFactor × result arity");
-    if (failed(plan)) {
-      return failure();
-    }
-    static constexpr StringRef kEvenOddParts[] = {"EVEN", "ODD"};
-    static constexpr StringRef kPacked4Parts[] = {"P0", "P1", "P2", "P3"};
-    ArrayRef<StringRef> parts =
-        plan->factor == mlir::pto::kValue2
-                                    ? ArrayRef<StringRef>(kEvenOddParts)
-                                    : ArrayRef<StringRef>(kPacked4Parts);
-    return lowerNarrowFpToInt(
-        op, sourceParts, resultTypes, plan->sourceFactor,
-        plan->resultLaneStride, parts, rnd, sat,
-        "failed to build fptosi source mask",
-        "failed to build narrow fptosi result mask", this->getTypeConverter(),
-        rewriter);
-  }
-
-  LogicalResult lowerConversion(
-      VMIFPToSIOp op, ValueRange sourceParts, ArrayRef<Type> resultTypes,
-      VMIVRegType sourceVMIType, VMIVRegType resultVMIType,
-      OneToNPatternRewriter &rewriter) const {
-    Type sourceElementType = sourceVMIType.getElementType();
-    Type resultElementType = resultVMIType.getElementType();
-    auto contract =
-        lookupVMIFpToSiContract(sourceElementType, resultElementType);
-    if (!contract) {
-      return rewriter.notifyMatchFailure(
-          op, "unsupported fp-to-si conversion element type pair");
-    }
-    FailureOr<FpToIntPartValidation> validation =
-        validateFpToIntConversionParts(
-            op, sourceParts, resultTypes, rewriter,
-            "fptosi requires at least one physical source chunk",
-            "expected physical fptosi source type",
-            "fptosi source physical parts must have matching type",
-            "fptosi requires at least one physical result chunk",
-            "unsupported physical fptosi result type");
-    if (failed(validation)) {
-      return failure();
+    LogicalResult lowerDenseWiden(
+        VMIFPToSIOp op, ValueRange sourceParts, ArrayRef<VRegType> resultTypes, ValueRange masks, VRegType sourceType,
+        unsigned sourceBits, StringAttr rnd, StringAttr sat, OneToNPatternRewriter& rewriter) const
+    {
+        StringRef part = sourceBits == 16 ? StringRef("EVEN") : StringRef("P0");
+        Value unmaskedSeed;
+        if (masks.empty()) {
+            FailureOr<Value> mask = createAllTrueMaskForVReg(op.getLoc(), sourceType, rewriter);
+            if (failed(mask)) {
+                return rewriter.notifyMatchFailure(op, "failed to build fptosi widen 1:1 mask");
+            }
+            unmaskedSeed = *mask;
+        }
+        SmallVector<Value> results;
+        results.reserve(resultTypes.size());
+        for (auto [index, sourceAndResult] : llvm::enumerate(llvm::zip_equal(sourceParts, resultTypes))) {
+            auto [sourcePart, resultType] = sourceAndResult;
+            FailureOr<Value> mask = getConversionMaskForChunk(masks, index, unmaskedSeed);
+            if (failed(mask)) {
+                return rewriter.notifyMatchFailure(op, "failed to build fptosi widen 1:1 mask");
+            }
+            results.push_back(
+                rewriter
+                    .create<VcvtOp>(op.getLoc(), resultType, sourcePart, *mask, rnd, sat, rewriter.getStringAttr(part))
+                    .getResult());
+        }
+        replaceOpWithFlatConvertedValues(rewriter, op, results, *this->getTypeConverter());
+        return success();
     }
 
-    StringAttr rnd = op->getAttrOfType<StringAttr>("rounding");
-    if (!rnd) {
-      rnd = rewriter.getStringAttr("R");
-    }
-    StringAttr sat = contract->requiresSat
-                         ? op->getAttrOfType<StringAttr>("saturate")
-                         : nullptr;
-    if (!contract->requiresPart) {
-      return lowerSameWidthFpToInt(
-          op, sourceParts, validation->resultVRegTypes, rnd, sat,
-          "same-width fptosi requires matching physical arity",
-          "failed to build fptosi mask", this->getTypeConverter(), rewriter);
+    LogicalResult lowerWiden(
+        VMIFPToSIOp op, ValueRange sourceParts, ArrayRef<Type> physicalResultTypes, ArrayRef<VRegType> resultTypes,
+        ValueRange masks, VMIVRegType sourceVMIType, VMIVRegType resultVMIType, VRegType sourceType,
+        unsigned sourceBits, StringAttr rnd, StringAttr sat, OneToNPatternRewriter& rewriter) const
+    {
+        VMILayoutAttr sourceLayout = sourceVMIType.getLayoutAttr();
+        VMILayoutAttr resultLayout = resultVMIType.getLayoutAttr();
+        // Same carrier-view plan as pto.vmi.extf: a single-carrier group-slot
+        // packet with the widening factor as its lane stride, or a packet with one
+        // group per part, is the dense lane-strided carrier in every respect the
+        // part selection depends on.
+        VMILayoutAttr sourceView = getVMICastDenseCarrierView(sourceLayout, sourceType.getElementType());
+        VMILayoutAttr resultView = resultTypes.empty() ?
+                                       VMILayoutAttr() :
+                                       getVMICastDenseCarrierView(resultLayout, resultTypes.front().getElementType());
+        bool packedRadix = sourceBits == kElementBits16 && sourceView.getLaneStride() == kPairWidth;
+        bool quadRadix = sourceBits == kElementBits8 && sourceView.getLaneStride() == kQuadWidth;
+        bool sourceSelectsPartLanes =
+            sourceView && (packedRadix || quadRadix || isVMISingleGroupPerPartPacket(sourceLayout));
+        bool denseOneToOne = sourceView && resultView && sourceView.isContiguous() && resultView.isContiguous() &&
+                             resultView.getLaneStride() == 1 && sourceSelectsPartLanes &&
+                             physicalResultTypes.size() == sourceParts.size();
+        if (denseOneToOne) {
+            return lowerDenseWiden(op, sourceParts, resultTypes, masks, sourceType, sourceBits, rnd, sat, rewriter);
+        }
+        static constexpr StringRef kEvenOddParts[] = {"EVEN", "ODD"};
+        return lowerWidenFpToInt(
+            op, sourceParts, resultTypes, masks, kEvenOddParts, rnd, sat,
+            "widen fptosi requires result arity = 2 × source arity", "failed to build fptosi widen mask",
+            this->getTypeConverter(), rewriter);
     }
 
-    unsigned sourceBits =
-        pto::getPTOStorageElemBitWidth(sourceElementType);
-    unsigned resultBits =
-        pto::getPTOStorageElemBitWidth(resultElementType);
-    if (resultBits > sourceBits) {
-      return lowerWiden(op, sourceParts, resultTypes,
-                        validation->resultVRegTypes, sourceVMIType,
-                        resultVMIType, validation->sourceType, sourceBits, rnd,
-                        sat, rewriter);
+    LogicalResult lowerNarrow(
+        VMIFPToSIOp op, ValueRange sourceParts, ArrayRef<Type> physicalResultTypes, ArrayRef<VRegType> resultTypes,
+        ValueRange masks, VMIVRegType resultVMIType, unsigned sourceBits, unsigned resultBits, StringAttr rnd,
+        StringAttr sat, OneToNPatternRewriter& rewriter) const
+    {
+        FailureOr<NarrowFpToIntPlan> plan = buildNarrowFpToIntPlan(
+            op, sourceParts, physicalResultTypes, resultVMIType, sourceBits, resultBits, rewriter,
+            "narrow fptosi requires positive result bit width", "narrow fptosi: unsupported result lane stride",
+            "narrow fptosi: source arity != sourceFactor × result arity");
+        if (failed(plan)) {
+            return failure();
+        }
+        static constexpr StringRef kEvenOddParts[] = {"EVEN", "ODD"};
+        static constexpr StringRef kPacked4Parts[] = {"P0", "P1", "P2", "P3"};
+        ArrayRef<StringRef> parts = plan->factor == mlir::pto::kValue2 ? ArrayRef<StringRef>(kEvenOddParts) :
+                                                                         ArrayRef<StringRef>(kPacked4Parts);
+        return lowerNarrowFpToInt(
+            op, sourceParts, resultTypes, masks, plan->sourceFactor, plan->resultLaneStride, parts, rnd, sat,
+            "failed to build fptosi source mask", "failed to build narrow fptosi result mask", this->getTypeConverter(),
+            rewriter);
     }
-    return lowerNarrow(op, sourceParts, resultTypes,
-                       validation->resultVRegTypes, resultVMIType, sourceBits,
-                       resultBits, rnd, sat, rewriter);
-  }
 
-  LogicalResult lowerWithResultTypes(
-      VMIFPToSIOp op, ValueRange sourceParts, ArrayRef<Type> resultTypes,
-      OneToNPatternRewriter &rewriter) const {
-    auto sourceVMIType = cast<VMIVRegType>(op.getSource().getType());
-    auto resultVMIType = cast<VMIVRegType>(op.getResult().getType());
-    return lowerConversion(op, sourceParts, resultTypes, sourceVMIType,
-                           resultVMIType, rewriter);
-  }
+    LogicalResult lowerConversion(
+        VMIFPToSIOp op, ValueRange sourceParts, ArrayRef<Type> resultTypes, ValueRange masks, VMIVRegType sourceVMIType,
+        VMIVRegType resultVMIType, OneToNPatternRewriter& rewriter) const
+    {
+        Type sourceElementType = sourceVMIType.getElementType();
+        Type resultElementType = resultVMIType.getElementType();
+        auto contract = lookupVMIFpToSiContract(sourceElementType, resultElementType);
+        if (!contract) {
+            return rewriter.notifyMatchFailure(op, "unsupported fp-to-si conversion element type pair");
+        }
+        FailureOr<FpToIntPartValidation> validation = validateFpToIntConversionParts(
+            op, sourceParts, resultTypes, rewriter, "fptosi requires at least one physical source chunk",
+            "expected physical fptosi source type", "fptosi source physical parts must have matching type",
+            "fptosi requires at least one physical result chunk", "unsupported physical fptosi result type");
+        if (failed(validation)) {
+            return failure();
+        }
+
+        StringAttr rnd = op->getAttrOfType<StringAttr>("rounding");
+        if (!rnd) {
+            rnd = rewriter.getStringAttr("R");
+        }
+        StringAttr sat = contract->requiresSat ? op->getAttrOfType<StringAttr>("saturate") : nullptr;
+        if (!contract->requiresPart) {
+            return lowerSameWidthFpToInt(
+                op, sourceParts, validation->resultVRegTypes, masks, rnd, sat,
+                "same-width fptosi requires matching physical arity", "failed to build fptosi mask",
+                this->getTypeConverter(), rewriter);
+        }
+
+        unsigned sourceBits = pto::getPTOStorageElemBitWidth(sourceElementType);
+        unsigned resultBits = pto::getPTOStorageElemBitWidth(resultElementType);
+        if (resultBits > sourceBits) {
+            return lowerWiden(
+                op, sourceParts, resultTypes, validation->resultVRegTypes, masks, sourceVMIType, resultVMIType,
+                validation->sourceType, sourceBits, rnd, sat, rewriter);
+        }
+        return lowerNarrow(
+            op, sourceParts, resultTypes, validation->resultVRegTypes, masks, resultVMIType, sourceBits, resultBits,
+            rnd, sat, rewriter);
+    }
+
+    LogicalResult lowerWithResultTypes(
+        VMIFPToSIOp op, ValueRange sourceParts, ArrayRef<Type> resultTypes, ValueRange masks,
+        OneToNPatternRewriter& rewriter) const
+    {
+        auto sourceVMIType = cast<VMIVRegType>(op.getSource().getType());
+        auto resultVMIType = cast<VMIVRegType>(op.getResult().getType());
+        return lowerConversion(op, sourceParts, resultTypes, masks, sourceVMIType, resultVMIType, rewriter);
+    }
 
 public:
 
@@ -452,9 +449,10 @@ public:
   matchAndRewrite(VMIFPToSIOp op, OpAdaptor adaptor,
                   OneToNPatternRewriter &rewriter) const override {
     ValueRange sourceParts = adaptor.getSource();
-    return lowerWithConvertedResultTypes(
-        op, 0, *this->getTypeConverter(), [&](ArrayRef<Type> resultTypes) {
-          return lowerWithResultTypes(op, sourceParts, resultTypes, rewriter);
+    return lowerCastWithConversionPredicate(
+        op, sourceParts, adaptor.getMask(), *this->getTypeConverter(), rewriter,
+        [&](ArrayRef<Type> resultTypes, ValueRange masks) {
+            return lowerWithResultTypes(op, sourceParts, resultTypes, masks, rewriter);
         });
   }
 };
@@ -477,43 +475,37 @@ private:
   };
 
   LogicalResult lowerWiden(
-      VMIFPToUIOp op, ValueRange sourceParts, ArrayRef<Type> physicalResultTypes,
-      ArrayRef<VRegType> resultTypes, StringAttr rnd, StringAttr sat,
-      OneToNPatternRewriter &rewriter) const {
-    bool invalidWidenArity =
-        physicalResultTypes.size() != 2 * sourceParts.size();
-    if (invalidWidenArity) {
-      return rewriter.notifyMatchFailure(
-          op, "widen fptoui requires result arity = 2 × source arity");
-    }
-    static constexpr StringRef kEvenOddParts[] = {"EVEN", "ODD"};
-    return lowerWidenFpToInt(
-        op, sourceParts, resultTypes, kEvenOddParts, rnd, sat,
-        "widen fptoui requires result arity = 2 × source arity",
-        "failed to build fptoui widen mask", this->getTypeConverter(),
-        rewriter);
+      VMIFPToUIOp op, ValueRange sourceParts, ArrayRef<Type> physicalResultTypes, ArrayRef<VRegType> resultTypes,
+      ValueRange masks, StringAttr rnd, StringAttr sat, OneToNPatternRewriter& rewriter) const
+  {
+      bool invalidWidenArity = physicalResultTypes.size() != 2 * sourceParts.size();
+      if (invalidWidenArity) {
+          return rewriter.notifyMatchFailure(op, "widen fptoui requires result arity = 2 × source arity");
+      }
+      static constexpr StringRef kEvenOddParts[] = {"EVEN", "ODD"};
+      return lowerWidenFpToInt(
+          op, sourceParts, resultTypes, masks, kEvenOddParts, rnd, sat,
+          "widen fptoui requires result arity = 2 × source arity", "failed to build fptoui widen mask",
+          this->getTypeConverter(), rewriter);
   }
 
   LogicalResult lowerNarrow(
-      VMIFPToUIOp op, ValueRange sourceParts, ArrayRef<Type> physicalResultTypes,
-      ArrayRef<VRegType> resultTypes, VMIVRegType resultVMIType,
-      unsigned sourceBits, unsigned resultBits, StringAttr rnd, StringAttr sat,
-      OneToNPatternRewriter &rewriter) const {
-    FailureOr<NarrowFpToIntPlan> plan = buildNarrowFpToIntPlan(
-        op, sourceParts, physicalResultTypes, resultVMIType, sourceBits,
-        resultBits, rewriter, "narrow fptoui requires positive result bit width",
-        "narrow fptoui: unsupported result lane stride",
-        "narrow fptoui: source arity != sourceFactor × result arity");
-    if (failed(plan)) {
-      return failure();
-    }
-    static constexpr StringRef kEvenOddParts[] = {"EVEN", "ODD"};
-    return lowerNarrowFpToInt(
-        op, sourceParts, resultTypes, plan->sourceFactor,
-        plan->resultLaneStride, kEvenOddParts, rnd, sat,
-        "failed to build fptoui source mask",
-        "failed to build narrow fptoui result mask", this->getTypeConverter(),
-        rewriter);
+      VMIFPToUIOp op, ValueRange sourceParts, ArrayRef<Type> physicalResultTypes, ArrayRef<VRegType> resultTypes,
+      ValueRange masks, VMIVRegType resultVMIType, unsigned sourceBits, unsigned resultBits, StringAttr rnd,
+      StringAttr sat, OneToNPatternRewriter& rewriter) const
+  {
+      FailureOr<NarrowFpToIntPlan> plan = buildNarrowFpToIntPlan(
+          op, sourceParts, physicalResultTypes, resultVMIType, sourceBits, resultBits, rewriter,
+          "narrow fptoui requires positive result bit width", "narrow fptoui: unsupported result lane stride",
+          "narrow fptoui: source arity != sourceFactor × result arity");
+      if (failed(plan)) {
+          return failure();
+      }
+      static constexpr StringRef kEvenOddParts[] = {"EVEN", "ODD"};
+      return lowerNarrowFpToInt(
+          op, sourceParts, resultTypes, masks, plan->sourceFactor, plan->resultLaneStride, kEvenOddParts, rnd, sat,
+          "failed to build fptoui source mask", "failed to build narrow fptoui result mask", this->getTypeConverter(),
+          rewriter);
   }
 
   FailureOr<FPToUILoweringInput> getLoweringInput(
@@ -551,52 +543,49 @@ private:
   }
 
   LogicalResult lowerConversion(
-      VMIFPToUIOp op, ValueRange sourceParts, ArrayRef<Type> resultTypes,
-      VMIVRegType sourceVMIType, VMIVRegType resultVMIType,
-      OneToNPatternRewriter &rewriter) const {
-    FailureOr<FPToUILoweringInput> input = getLoweringInput(
-        op, sourceParts, resultTypes, sourceVMIType, resultVMIType, rewriter);
-    if (failed(input)) {
+      VMIFPToUIOp op, ValueRange sourceParts, ArrayRef<Type> resultTypes, ValueRange masks, VMIVRegType sourceVMIType,
+      VMIVRegType resultVMIType, OneToNPatternRewriter& rewriter) const
+  {
+      FailureOr<FPToUILoweringInput> input =
+          getLoweringInput(op, sourceParts, resultTypes, sourceVMIType, resultVMIType, rewriter);
+      if (failed(input)) {
+          return failure();
+      }
+      if (!input->contract.requiresPart) {
+          return lowerSameWidthFpToInt(
+              op, input->sourceParts, input->resultVRegTypes, masks, input->rounding, input->saturate,
+              "same-width fptoui requires matching physical arity", "failed to build fptoui mask",
+              this->getTypeConverter(), rewriter);
+      }
+      unsigned sourceBits = pto::getPTOStorageElemBitWidth(input->sourceVMIType.getElementType());
+      unsigned resultBits = pto::getPTOStorageElemBitWidth(input->resultVMIType.getElementType());
+      if (resultBits > sourceBits) {
+          return lowerWiden(
+              op, input->sourceParts, input->resultTypes, input->resultVRegTypes, masks, input->rounding,
+              input->saturate, rewriter);
+      }
+      if (resultBits < sourceBits) {
+          return lowerNarrow(
+              op, input->sourceParts, input->resultTypes, input->resultVRegTypes, masks, input->resultVMIType,
+              sourceBits, resultBits, input->rounding, input->saturate, rewriter);
+      }
       return failure();
-    }
-    if (!input->contract.requiresPart) {
-      return lowerSameWidthFpToInt(
-          op, input->sourceParts, input->resultVRegTypes, input->rounding,
-          input->saturate,
-          "same-width fptoui requires matching physical arity",
-          "failed to build fptoui mask", this->getTypeConverter(), rewriter);
-    }
-    unsigned sourceBits =
-        pto::getPTOStorageElemBitWidth(input->sourceVMIType.getElementType());
-    unsigned resultBits =
-        pto::getPTOStorageElemBitWidth(input->resultVMIType.getElementType());
-    if (resultBits > sourceBits) {
-      return lowerWiden(op, input->sourceParts, input->resultTypes,
-                        input->resultVRegTypes, input->rounding,
-                        input->saturate, rewriter);
-    }
-    if (resultBits < sourceBits) {
-      return lowerNarrow(op, input->sourceParts, input->resultTypes,
-                         input->resultVRegTypes, input->resultVMIType,
-                         sourceBits, resultBits, input->rounding,
-                         input->saturate, rewriter);
-    }
-    return failure();
   }
 
   LogicalResult lowerWithResultTypes(
-      VMIFPToUIOp op, ValueRange sourceParts, ArrayRef<Type> resultTypes,
-      OneToNPatternRewriter &rewriter) const {
-    auto sourceVMIType = cast<VMIVRegType>(op.getSource().getType());
-    auto resultVMIType = cast<VMIVRegType>(op.getResult().getType());
-    return lowerConversion(op, sourceParts, resultTypes, sourceVMIType,
-                           resultVMIType, rewriter);
+      VMIFPToUIOp op, ValueRange sourceParts, ArrayRef<Type> resultTypes, ValueRange masks,
+      OneToNPatternRewriter& rewriter) const
+  {
+      auto sourceVMIType = cast<VMIVRegType>(op.getSource().getType());
+      auto resultVMIType = cast<VMIVRegType>(op.getResult().getType());
+      return lowerConversion(op, sourceParts, resultTypes, masks, sourceVMIType, resultVMIType, rewriter);
   }
 
   LogicalResult lowerConversionWithResolvedTypes(
-      VMIFPToUIOp op, ValueRange sourceParts, ArrayRef<Type> resultTypes,
-      OneToNPatternRewriter &rewriter) const {
-    return lowerWithResultTypes(op, sourceParts, resultTypes, rewriter);
+      VMIFPToUIOp op, ValueRange sourceParts, ArrayRef<Type> resultTypes, ValueRange masks,
+      OneToNPatternRewriter& rewriter) const
+  {
+      return lowerWithResultTypes(op, sourceParts, resultTypes, masks, rewriter);
   }
 
 public:
@@ -605,10 +594,10 @@ public:
   matchAndRewrite(VMIFPToUIOp op, OpAdaptor adaptor,
                   OneToNPatternRewriter &rewriter) const override {
     ValueRange sourceParts = adaptor.getSource();
-    return lowerWithConvertedResultTypes(
-        op, 0, *this->getTypeConverter(), [&](ArrayRef<Type> resultTypes) {
-          return lowerConversionWithResolvedTypes(op, sourceParts, resultTypes,
-                                                  rewriter);
+    return lowerCastWithConversionPredicate(
+        op, sourceParts, adaptor.getMask(), *this->getTypeConverter(), rewriter,
+        [&](ArrayRef<Type> resultTypes, ValueRange masks) {
+            return lowerConversionWithResolvedTypes(op, sourceParts, resultTypes, masks, rewriter);
         });
   }
 };
@@ -617,106 +606,104 @@ struct OneToNVMISIToFPOpPattern : OneToNOpConversionPattern<VMISIToFPOp> {
   using OneToNOpConversionPattern<VMISIToFPOp>::OneToNOpConversionPattern;
 
 private:
-  LogicalResult lowerSameWidth(
-      VMISIToFPOp op, ValueRange sourceParts, ArrayRef<VRegType> resultTypes,
-      Value mask, OneToNPatternRewriter &rewriter) const {
-    bool invalidArity = sourceParts.size() != resultTypes.size();
-    if (invalidArity) {
-      return rewriter.notifyMatchFailure(
-          op, "si32->f32 requires matching physical arity");
+    LogicalResult lowerSameWidth(
+        VMISIToFPOp op, ValueRange sourceParts, ArrayRef<VRegType> resultTypes, Value mask, ValueRange masks,
+        OneToNPatternRewriter& rewriter) const
+    {
+        bool invalidArity = sourceParts.size() != resultTypes.size();
+        if (invalidArity) {
+            return rewriter.notifyMatchFailure(op, "si32->f32 requires matching physical arity");
+        }
+        StringAttr rnd = rewriter.getStringAttr("R");
+        SmallVector<Value> results;
+        results.reserve(resultTypes.size());
+        for (auto [index, sourceAndResult] : llvm::enumerate(llvm::zip_equal(sourceParts, resultTypes))) {
+            auto [sourcePart, resultType] = sourceAndResult;
+            FailureOr<Value> partMask = getConversionMaskForChunk(masks, index, mask);
+            if (failed(partMask)) {
+                return rewriter.notifyMatchFailure(op, "failed to build sitofp mask");
+            }
+            results.push_back(
+                rewriter.create<VcvtOp>(op.getLoc(), resultType, sourcePart, *partMask, rnd, nullptr, nullptr)
+                    .getResult());
+        }
+        replaceOpWithFlatConvertedValues(rewriter, op, results, *this->getTypeConverter());
+        return success();
     }
-    StringAttr rnd = rewriter.getStringAttr("R");
-    SmallVector<Value> results;
-    results.reserve(resultTypes.size());
-    for (auto [sourcePart, resultType] :
-         llvm::zip_equal(sourceParts, resultTypes)) {
-      results.push_back(
-          rewriter
-              .create<VcvtOp>(op.getLoc(), resultType, sourcePart, mask, rnd,
-                              nullptr, nullptr)
-              .getResult());
-    }
-    replaceOpWithFlatConvertedValues(rewriter, op, results,
-                                     *this->getTypeConverter());
-    return success();
-  }
 
-  LogicalResult lowerWiden(
-      VMISIToFPOp op, ValueRange sourceParts, ArrayRef<VRegType> resultTypes,
-      Value mask, OneToNPatternRewriter &rewriter) const {
-    // The physical arity is not the widening ratio: a 256-byte part holds both
-    // 256 si8 lanes and the 128 f16 lanes they widen to, so a small logical
-    // shape converts part-for-part.  The radix-2 relation then selects the even
-    // source lanes with one EVEN vcvt per part, exactly like f16->f32.
-    if (resultTypes.size() == sourceParts.size()) {
-      // EVEN selects the second byte of each 16-bit carrier, which is the source
-      // value only after layout assignment unpacked the bytes to lane_stride 2.
-      // Any other carrier form would convert the wrong lanes silently, so fail
-      // the match instead of emitting it.
-      VMILayoutAttr sourceLayout =
-          cast<VMIVRegType>(op.getSource().getType()).getLayoutAttr();
-      if (!sourceLayout || sourceLayout.getLaneStride() != 2) {
-        return rewriter.notifyMatchFailure(
-            op, "si8->f16 1:1 widening requires the unpacked lane_stride = 2 "
-                "source");
-      }
-      SmallVector<Value> results;
-      results.reserve(resultTypes.size());
-      for (auto [sourcePart, resultType] :
-           llvm::zip_equal(sourceParts, resultTypes)) {
-        results.push_back(
-            rewriter
-                .create<VcvtOp>(op.getLoc(), resultType, sourcePart, mask,
-                                nullptr, nullptr,
-                                rewriter.getStringAttr("EVEN"))
-                .getResult());
-      }
-      replaceOpWithFlatConvertedValues(rewriter, op, results,
-                                       *this->getTypeConverter());
-      return success();
+    LogicalResult lowerWiden(
+        VMISIToFPOp op, ValueRange sourceParts, ArrayRef<VRegType> resultTypes, Value mask, ValueRange masks,
+        OneToNPatternRewriter& rewriter) const
+    {
+        // The physical arity is not the widening ratio: a 256-byte part holds both
+        // 256 si8 lanes and the 128 f16 lanes they widen to, so a small logical
+        // shape converts part-for-part.  The radix-2 relation then selects the even
+        // source lanes with one EVEN vcvt per part, exactly like f16->f32.
+        bool partForPart = resultTypes.size() == sourceParts.size();
+        SmallVector<Value> results;
+        results.reserve(resultTypes.size());
+        if (partForPart) {
+            // EVEN selects the second byte of each 16-bit carrier, which is the source
+            // value only after layout assignment unpacked the bytes to lane_stride 2.
+            // Any other carrier form would convert the wrong lanes silently, so fail
+            // the match instead of emitting it.
+            VMILayoutAttr sourceLayout = cast<VMIVRegType>(op.getSource().getType()).getLayoutAttr();
+            bool unpackedLaneStride = sourceLayout && sourceLayout.getLaneStride() == 2;
+            if (!unpackedLaneStride) {
+                return rewriter.notifyMatchFailure(
+                    op, "si8->f16 1:1 widening requires the unpacked lane_stride = 2 "
+                        "source");
+            }
+            for (auto [index, sourceAndResult] : llvm::enumerate(llvm::zip_equal(sourceParts, resultTypes))) {
+                auto [sourcePart, resultType] = sourceAndResult;
+                FailureOr<Value> partMask = getConversionMaskForChunk(masks, index, mask);
+                if (failed(partMask)) {
+                    return rewriter.notifyMatchFailure(op, "failed to build sitofp mask");
+                }
+                results.push_back(rewriter
+                                      .create<VcvtOp>(
+                                          op.getLoc(), resultType, sourcePart, *partMask, nullptr, nullptr,
+                                          rewriter.getStringAttr("EVEN"))
+                                      .getResult());
+            }
+            replaceOpWithFlatConvertedValues(rewriter, op, results, *this->getTypeConverter());
+            return success();
+        }
+        bool invalidArity = resultTypes.size() != 2 * sourceParts.size();
+        if (invalidArity) {
+            return rewriter.notifyMatchFailure(op, "si8->f16 requires result arity = 1 x or 2 x source arity");
+        }
+        static constexpr StringRef kEvenOddParts[] = {"EVEN", "ODD"};
+        for (size_t partIndex = 0; partIndex < std::size(kEvenOddParts); ++partIndex) {
+            for (auto [chunkIndex, sourcePart] : llvm::enumerate(sourceParts)) {
+                VRegType resultType = resultTypes[partIndex * sourceParts.size() + chunkIndex];
+                FailureOr<Value> partMask = getConversionMaskForChunk(masks, chunkIndex, mask);
+                if (failed(partMask)) {
+                    return rewriter.notifyMatchFailure(op, "failed to build sitofp mask");
+                }
+                results.push_back(rewriter
+                                      .create<VcvtOp>(
+                                          op.getLoc(), resultType, sourcePart, *partMask, nullptr, nullptr,
+                                          rewriter.getStringAttr(kEvenOddParts[partIndex]))
+                                      .getResult());
+            }
+        }
+        replaceOpWithFlatConvertedValues(rewriter, op, results, *this->getTypeConverter());
+        return success();
     }
-    bool invalidArity = resultTypes.size() != 2 * sourceParts.size();
-    if (invalidArity) {
-      return rewriter.notifyMatchFailure(
-          op, "si8->f16 requires result arity = 1 x or 2 x source arity");
-    }
-    static constexpr StringRef kEvenOddParts[] = {"EVEN", "ODD"};
-    SmallVector<Value> results;
-    results.reserve(resultTypes.size());
-    for (size_t partIndex = 0; partIndex < std::size(kEvenOddParts);
-         ++partIndex) {
-      for (auto [chunkIndex, sourcePart] :
-           llvm::enumerate(sourceParts)) {
-        VRegType resultType =
-            resultTypes[partIndex * sourceParts.size() + chunkIndex];
-        results.push_back(
-            rewriter
-                .create<VcvtOp>(op.getLoc(), resultType, sourcePart, mask,
-                                nullptr, nullptr,
-                                rewriter.getStringAttr(kEvenOddParts[partIndex]))
-                .getResult());
-      }
-    }
-    replaceOpWithFlatConvertedValues(rewriter, op, results,
-                                     *this->getTypeConverter());
-    return success();
-  }
 
-  LogicalResult lowerConversion(
-      VMISIToFPOp op, ValueRange sourceParts,
-      ArrayRef<VRegType> resultTypes, Value mask, unsigned sourceBits,
-      unsigned resultBits, OneToNPatternRewriter &rewriter) const {
-    if (sourceBits == mlir::pto::kValue32 &&
-        resultBits == mlir::pto::kValue32) {
-      return lowerSameWidth(op, sourceParts, resultTypes, mask, rewriter);
-    } else if (sourceBits == mlir::pto::kValue8 &&
-               resultBits == mlir::pto::kValue16) {
-      return lowerWiden(op, sourceParts, resultTypes, mask, rewriter);
-    } else {
-      return rewriter.notifyMatchFailure(
-          op, "unsupported sitofp source/result width relation");
+    LogicalResult lowerConversion(
+        VMISIToFPOp op, ValueRange sourceParts, ArrayRef<VRegType> resultTypes, Value mask, ValueRange masks,
+        unsigned sourceBits, unsigned resultBits, OneToNPatternRewriter& rewriter) const
+    {
+        if (sourceBits == mlir::pto::kValue32 && resultBits == mlir::pto::kValue32) {
+            return lowerSameWidth(op, sourceParts, resultTypes, mask, masks, rewriter);
+        } else if (sourceBits == mlir::pto::kValue8 && resultBits == mlir::pto::kValue16) {
+            return lowerWiden(op, sourceParts, resultTypes, mask, masks, rewriter);
+        } else {
+            return rewriter.notifyMatchFailure(op, "unsupported sitofp source/result width relation");
+        }
     }
-  }
 
   FailureOr<SmallVector<VRegType>> collectResultTypes(
       VMISIToFPOp op, TypeRange resultTypes,
@@ -768,29 +755,28 @@ private:
   }
 
   LogicalResult lowerPhysicalConversion(
-      VMISIToFPOp op, ValueRange sourceParts, TypeRange resultTypes,
-      OneToNPatternRewriter &rewriter) const {
-    FailureOr<VRegType> sourceType =
-        collectSourceType(op, sourceParts, rewriter);
-    if (failed(sourceType)) {
-      return failure();
-    }
-    FailureOr<SmallVector<VRegType>> resultVRegTypes =
-        collectResultTypes(op, resultTypes, rewriter);
-    if (failed(resultVRegTypes)) {
-      return failure();
-    }
-    unsigned sourceBits =
-        pto::getPTOStorageElemBitWidth(sourceType->getElementType());
-    unsigned resultBits = pto::getPTOStorageElemBitWidth(
-        resultVRegTypes->front().getElementType());
-    FailureOr<Value> mask =
-        createAllTrueMaskForVReg(op.getLoc(), *sourceType, rewriter);
-    if (failed(mask)) {
-      return rewriter.notifyMatchFailure(op, "failed to build sitofp mask");
-    }
-    return lowerConversion(op, sourceParts, *resultVRegTypes, *mask,
-                           sourceBits, resultBits, rewriter);
+      VMISIToFPOp op, ValueRange sourceParts, TypeRange resultTypes, ValueRange masks,
+      OneToNPatternRewriter& rewriter) const
+  {
+      FailureOr<VRegType> sourceType = collectSourceType(op, sourceParts, rewriter);
+      if (failed(sourceType)) {
+          return failure();
+      }
+      FailureOr<SmallVector<VRegType>> resultVRegTypes = collectResultTypes(op, resultTypes, rewriter);
+      if (failed(resultVRegTypes)) {
+          return failure();
+      }
+      unsigned sourceBits = pto::getPTOStorageElemBitWidth(sourceType->getElementType());
+      unsigned resultBits = pto::getPTOStorageElemBitWidth(resultVRegTypes->front().getElementType());
+      Value unmaskedSeed;
+      if (masks.empty()) {
+          FailureOr<Value> mask = createAllTrueMaskForVReg(op.getLoc(), *sourceType, rewriter);
+          if (failed(mask)) {
+              return rewriter.notifyMatchFailure(op, "failed to build sitofp mask");
+          }
+          unmaskedSeed = *mask;
+      }
+      return lowerConversion(op, sourceParts, *resultVRegTypes, unmaskedSeed, masks, sourceBits, resultBits, rewriter);
   }
 
 public:
@@ -799,14 +785,11 @@ public:
   matchAndRewrite(VMISIToFPOp op, OpAdaptor adaptor,
                   OneToNPatternRewriter &rewriter) const override {
     ValueRange sourceParts = adaptor.getSource();
-    FailureOr<SmallVector<Type>> maybe_resultTypes =
-        getConvertedResultTypes(op, 0, *this->getTypeConverter());
-    if (failed(maybe_resultTypes)) {
-      return failure();
-    }
-    SmallVector<Type> resultTypes = std::move(*maybe_resultTypes);
-
-    return lowerPhysicalConversion(op, sourceParts, resultTypes, rewriter);
+    return lowerCastWithConversionPredicate(
+        op, sourceParts, adaptor.getMask(), *this->getTypeConverter(), rewriter,
+        [&](ArrayRef<Type> resultTypes, ValueRange masks) {
+            return lowerPhysicalConversion(op, sourceParts, resultTypes, masks, rewriter);
+        });
   }
 };
 

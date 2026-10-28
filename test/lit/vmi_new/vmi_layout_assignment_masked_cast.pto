@@ -1,0 +1,147 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under
+// the terms and conditions of CANN Open Software License Agreement Version 2.0
+// (the "License"). Please refer to the License for details. You may not use
+// this file except in compliance with the License. THIS SOFTWARE IS PROVIDED ON
+// AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS
+// FOR A PARTICULAR PURPOSE. See LICENSE in the root of the software repository
+// for the full text of the License.
+
+// RUN: pto-test-opt %s -vmi-lower-unified-to-legacy -vmi-mask-granularity-assignment -vmi-layout-assignment | FileCheck %s --check-prefix=ASSIGN
+// RUN: pto-test-opt %s -vmi-lower-unified-to-legacy -vmi-mask-granularity-assignment -vmi-layout-assignment -vmi-to-vpto | FileCheck %s --check-prefix=LOWER
+
+// The cast relation has three endpoints when the conversion carries a
+// predicate (issue #1671): the source data layout, the predicate layout, and
+// the result layout.  The predicate's layout is the source data layout, because
+// pto.vmi casts pair one predicate lane with each source lane
+// (verifyMaskMatchesData).  These checks pin that shape: an unannotated masked
+// cast is planned end to end, a predicate whose producer disagrees is re-laid
+// out through vmi.ensure_mask_layout, and the predicate it produces is the mask
+// operand of every pto.vcvt the conversion lowers to.
+
+module {
+  // A fully unannotated masked widening.  The planner is free to choose, so it
+  // keeps the dense predicate next to the dense source and widens into the
+  // native deinterleaved pair.
+  func.func @masked_extf_unannotated(
+      %src: !pto.vmi.vreg<128xf16>, %mask: !pto.vmi.mask<128xb16>)
+      -> !pto.vmi.vreg<128xf32> {
+    %0 = pto.vmi.extf %src, %mask
+        : !pto.vmi.vreg<128xf16>, !pto.vmi.mask<128xb16>
+        -> !pto.vmi.vreg<128xf32>
+    return %0 : !pto.vmi.vreg<128xf32>
+  }
+
+  // A fully unannotated masked narrowing.  The predicate follows the f32 source
+  // and the f16 result keeps the compact lane-stride carrier.
+  func.func @masked_truncf_unannotated(
+      %src: !pto.vmi.vreg<128xf32>, %mask: !pto.vmi.mask<128xb32>)
+      -> !pto.vmi.vreg<128xf16> {
+    %0 = pto.vmi.truncf %src, %mask {rounding = "R", saturate = "SAT"}
+        : !pto.vmi.vreg<128xf32>, !pto.vmi.mask<128xb32>
+        -> !pto.vmi.vreg<128xf16>
+    return %0 : !pto.vmi.vreg<128xf16>
+  }
+
+  // A result whose layout is stated by the IR filters the relation set down to
+  // the deinterleaved source row, so the predicate producer disagrees: the
+  // planner pays for a mask layout conversion instead of dropping the
+  // predicate.
+  func.func @masked_extf_result_d4(
+      %src: !pto.vmi.vreg<128xf16>, %mask: !pto.vmi.mask<128xb16>)
+      -> !pto.vmi.vreg<128xf32, #pto.vmi.layout<deinterleaved = 4>> {
+    %0 = pto.vmi.extf %src, %mask
+        : !pto.vmi.vreg<128xf16>, !pto.vmi.mask<128xb16>
+        -> !pto.vmi.vreg<128xf32, #pto.vmi.layout<deinterleaved = 4>>
+    return %0 : !pto.vmi.vreg<128xf32, #pto.vmi.layout<deinterleaved = 4>>
+  }
+
+  // The predicate pins the widening to the dense source layout: a 128-lane b16
+  // predicate has no ensure_mask_layout row to the lane-strided carrier, so the
+  // narrowing that feeds it keeps its result dense as well.
+  func.func @masked_extf_of_truncf(
+      %src: !pto.vmi.vreg<128xf32>, %mask: !pto.vmi.mask<128xb16>)
+      -> !pto.vmi.vreg<128xf32> {
+    %narrow = pto.vmi.truncf %src {rounding = "R", saturate = "SAT"}
+        : !pto.vmi.vreg<128xf32> -> !pto.vmi.vreg<128xf16>
+    %wide = pto.vmi.extf %narrow, %mask
+        : !pto.vmi.vreg<128xf16>, !pto.vmi.mask<128xb16>
+        -> !pto.vmi.vreg<128xf32>
+    return %wide : !pto.vmi.vreg<128xf32>
+  }
+}
+
+// The unannotated widening keeps the predicate dense and next to the dense
+// source; each half of the widening conversion consumes it.
+// ASSIGN-LABEL: func.func @masked_extf_unannotated(
+// ASSIGN-SAME: %[[EXTF_SRC:[a-zA-Z0-9_.$-]+]]: !pto.vmi.vreg<128xf16, #pto.vmi.layout<contiguous>>,
+// ASSIGN-SAME: %[[EXTF_MASK:[a-zA-Z0-9_.$-]+]]: !pto.vmi.mask<128xb16, #pto.vmi.layout<contiguous>>)
+// ASSIGN-SAME: -> !pto.vmi.vreg<128xf32, #pto.vmi.layout<deinterleaved = 2>> {
+// ASSIGN-NEXT: %[[EXTF:[a-zA-Z0-9_.$-]+]] = pto.vmi.extf %[[EXTF_SRC]], %[[EXTF_MASK]] : !pto.vmi.vreg<128xf16, #pto.vmi.layout<contiguous>>, !pto.vmi.mask<128xb16, #pto.vmi.layout<contiguous>> -> !pto.vmi.vreg<128xf32, #pto.vmi.layout<deinterleaved = 2>>
+// ASSIGN-NEXT: return
+// ASSIGN-NEXT: }
+
+// LOWER-LABEL: func.func @masked_extf_unannotated(
+// LOWER-SAME: %[[L_EXTF_SRC:[a-zA-Z0-9_.$-]+]]: !pto.vreg<128xf16>, %[[L_EXTF_MASK:[a-zA-Z0-9_.$-]+]]: !pto.mask<b16>)
+// LOWER-NEXT: %{{.*}} = pto.vcvt %[[L_EXTF_SRC]], %[[L_EXTF_MASK]] {part = "EVEN"} : !pto.vreg<128xf16>, !pto.mask<b16> -> !pto.vreg<64xf32>
+// LOWER-NEXT: %{{.*}} = pto.vcvt %[[L_EXTF_SRC]], %[[L_EXTF_MASK]] {part = "ODD"} : !pto.vreg<128xf16>, !pto.mask<b16> -> !pto.vreg<64xf32>
+// LOWER-NEXT: return
+
+// The unannotated narrowing pins the predicate to the dense f32 source.
+// ASSIGN-LABEL: func.func @masked_truncf_unannotated(
+// ASSIGN-SAME: %[[NARROW_SRC:[a-zA-Z0-9_.$-]+]]: !pto.vmi.vreg<128xf32, #pto.vmi.layout<contiguous>>,
+// ASSIGN-SAME: %[[NARROW_MASK:[a-zA-Z0-9_.$-]+]]: !pto.vmi.mask<128xb32, #pto.vmi.layout<contiguous>>)
+// ASSIGN-SAME: -> !pto.vmi.vreg<128xf16, #pto.vmi.layout<contiguous, lane_stride = 2>> {
+// ASSIGN-NEXT: %[[NARROW:[a-zA-Z0-9_.$-]+]] = pto.vmi.truncf %[[NARROW_SRC]], %[[NARROW_MASK]] {rounding = "R", saturate = "SAT"} : !pto.vmi.vreg<128xf32, #pto.vmi.layout<contiguous>>, !pto.vmi.mask<128xb32, #pto.vmi.layout<contiguous>> -> !pto.vmi.vreg<128xf16, #pto.vmi.layout<contiguous, lane_stride = 2>>
+// ASSIGN-NEXT: return
+// ASSIGN-NEXT: }
+
+// LOWER-LABEL: func.func @masked_truncf_unannotated(
+// LOWER-SAME: %[[L_NARROW_LO:[a-zA-Z0-9_.$-]+]]: !pto.vreg<64xf32>, %[[L_NARROW_HI:[a-zA-Z0-9_.$-]+]]: !pto.vreg<64xf32>,
+// LOWER-SAME: %[[L_NARROW_MLO:[a-zA-Z0-9_.$-]+]]: !pto.mask<b32>, %[[L_NARROW_MHI:[a-zA-Z0-9_.$-]+]]: !pto.mask<b32>)
+// LOWER-NEXT: %{{.*}} = pto.vcvt %[[L_NARROW_LO]], %[[L_NARROW_MLO]] {part = "EVEN", rnd = "R", sat = "SAT"} : !pto.vreg<64xf32>, !pto.mask<b32> -> !pto.vreg<128xf16>
+// LOWER-NEXT: %{{.*}} = pto.vcvt %[[L_NARROW_HI]], %[[L_NARROW_MHI]] {part = "EVEN", rnd = "R", sat = "SAT"} : !pto.vreg<64xf32>, !pto.mask<b32> -> !pto.vreg<128xf16>
+// LOWER-NEXT: return
+
+// A stated deinterleaved=4 result rejects the dense source row, so the planner
+// moves both the source and its predicate into the deinterleaved=2 carrier and
+// records the predicate conversion explicitly.
+// ASSIGN-LABEL: func.func @masked_extf_result_d4(
+// ASSIGN: %[[D4_SRC:[a-zA-Z0-9_.$-]+]] = pto.vmi.ensure_layout %{{.*}} : !pto.vmi.vreg<128xf16, #pto.vmi.layout<contiguous>> -> !pto.vmi.vreg<128xf16, #pto.vmi.layout<deinterleaved = 2>>
+// ASSIGN-NEXT: %[[D4_MASK:[a-zA-Z0-9_.$-]+]] = pto.vmi.ensure_mask_layout %{{.*}} : !pto.vmi.mask<128xb16, #pto.vmi.layout<contiguous>> -> !pto.vmi.mask<128xb16, #pto.vmi.layout<deinterleaved = 2>>
+// ASSIGN-NEXT: %[[D4:[a-zA-Z0-9_.$-]+]] = pto.vmi.extf %[[D4_SRC]], %[[D4_MASK]] : !pto.vmi.vreg<128xf16, #pto.vmi.layout<deinterleaved = 2>>, !pto.vmi.mask<128xb16, #pto.vmi.layout<deinterleaved = 2>> -> !pto.vmi.vreg<128xf32, #pto.vmi.layout<deinterleaved = 4>>
+// ASSIGN-NEXT: return
+// ASSIGN-NEXT: }
+
+// The re-laid-out predicate is spread over the conversion parts instead of
+// being replaced by an all-true seed.
+// LOWER-LABEL: func.func @masked_extf_result_d4(
+// LOWER-SAME: %[[L_D4_SRC:[a-zA-Z0-9_.$-]+]]: !pto.vreg<128xf16>, %[[L_D4_MASK:[a-zA-Z0-9_.$-]+]]: !pto.mask<b16>)
+// LOWER-NEXT: %{{.*}}, %{{.*}} = pto.vdintlv %[[L_D4_SRC]], %[[L_D4_SRC]] : !pto.vreg<128xf16>, !pto.vreg<128xf16> -> !pto.vreg<128xf16>, !pto.vreg<128xf16>
+// LOWER-NEXT: %{{.*}} = pto.pset_b16 "PAT_ALLF" : !pto.mask<b16>
+// LOWER-NEXT: %[[L_D4_MLO:[a-zA-Z0-9_.$-]+]], %[[L_D4_MHI:[a-zA-Z0-9_.$-]+]] = pto.pdintlv_b16 %[[L_D4_MASK]], %{{.*}} : !pto.mask<b16>, !pto.mask<b16> -> !pto.mask<b16>, !pto.mask<b16>
+// LOWER-NEXT: %{{.*}} = pto.vcvt %{{.*}}, %[[L_D4_MLO]] {part = "EVEN"} : !pto.vreg<128xf16>, !pto.mask<b16> -> !pto.vreg<64xf32>
+// LOWER-NEXT: %{{.*}} = pto.vcvt %{{.*}}, %[[L_D4_MHI]] {part = "EVEN"} : !pto.vreg<128xf16>, !pto.mask<b16> -> !pto.vreg<64xf32>
+// LOWER-NEXT: %{{.*}} = pto.vcvt %{{.*}}, %[[L_D4_MLO]] {part = "ODD"} : !pto.vreg<128xf16>, !pto.mask<b16> -> !pto.vreg<64xf32>
+// LOWER-NEXT: %{{.*}} = pto.vcvt %{{.*}}, %[[L_D4_MHI]] {part = "ODD"} : !pto.vreg<128xf16>, !pto.mask<b16> -> !pto.vreg<64xf32>
+// LOWER-NEXT: return
+
+// The predicate cannot follow a 128-lane b16 value into the lane-strided
+// carrier (no ensure_mask_layout row exists), so the masked widening keeps the
+// dense f16 hand-off, while only the unmasked narrowing consumes the all-true
+// seed.
+// ASSIGN-LABEL: func.func @masked_extf_of_truncf(
+// ASSIGN: %[[ROUND_SRC:[a-zA-Z0-9_.$-]+]] = pto.vmi.ensure_layout %{{.*}} : !pto.vmi.vreg<128xf32, #pto.vmi.layout<contiguous>> -> !pto.vmi.vreg<128xf32, #pto.vmi.layout<deinterleaved = 2>>
+// ASSIGN-NEXT: %[[ROUND_NARROW:[a-zA-Z0-9_.$-]+]] = pto.vmi.truncf %[[ROUND_SRC]] {rounding = "R", saturate = "SAT"} : !pto.vmi.vreg<128xf32, #pto.vmi.layout<deinterleaved = 2>> -> !pto.vmi.vreg<128xf16, #pto.vmi.layout<contiguous>>
+// ASSIGN-NEXT: %[[ROUND:[a-zA-Z0-9_.$-]+]] = pto.vmi.extf %[[ROUND_NARROW]], %{{.*}} : !pto.vmi.vreg<128xf16, #pto.vmi.layout<contiguous>>, !pto.vmi.mask<128xb16, #pto.vmi.layout<contiguous>> -> !pto.vmi.vreg<128xf32, #pto.vmi.layout<deinterleaved = 2>>
+// ASSIGN-NEXT: return
+// ASSIGN-NEXT: }
+
+// LOWER-LABEL: func.func @masked_extf_of_truncf(
+// LOWER-SAME: %{{.*}}: !pto.vreg<64xf32>, %{{.*}}: !pto.vreg<64xf32>, %[[L_ROUND_MASK:[a-zA-Z0-9_.$-]+]]: !pto.mask<b16>)
+// LOWER: pto.pset_b32 "PAT_ALL" : !pto.mask<b32>
+// LOWER: %{{.*}} = pto.vor
+// LOWER-NEXT: %{{.*}} = pto.vcvt %{{.*}}, %[[L_ROUND_MASK]] {part = "EVEN"} : !pto.vreg<128xf16>, !pto.mask<b16> -> !pto.vreg<64xf32>
+// LOWER-NEXT: %{{.*}} = pto.vcvt %{{.*}}, %[[L_ROUND_MASK]] {part = "ODD"} : !pto.vreg<128xf16>, !pto.mask<b16> -> !pto.vreg<64xf32>
+// LOWER-NEXT: return

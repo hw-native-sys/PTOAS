@@ -1,0 +1,27 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under
+// the terms and conditions of CANN Open Software License Agreement Version 2.0
+// (the "License"). Please refer to the License for details. You may not use
+// this file except in compliance with the License. THIS SOFTWARE IS PROVIDED ON
+// AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS
+// FOR A PARTICULAR PURPOSE. See LICENSE in the root of the software repository
+// for the full text of the License.
+
+// RUN: pto-test-opt %s -vmi-lower-unified-to-legacy -vmi-mask-granularity-assignment | FileCheck %s
+
+// A masked fp8->f16 vcvt expands into extf(f8->f32) + truncf(f32->f16).  The
+// authored predicate is expressed in f8 source granularity, so it stays on the
+// extf; the extf zeroes the inactive f8 lanes before widening, which leaves the
+// intermediate f32 inactive lanes zero, so the truncf needs no predicate and no
+// granularity bridge is required (issue #1671).
+
+// CHECK-LABEL: func.func @masked_vcvt_f8_to_f16
+// CHECK: pto.vmi.extf %{{.*}}, %{{.*}} : !pto.vmi.vreg<256xf8E4M3>, !pto.vmi.mask<256xb8> -> !pto.vmi.vreg<256xf32>
+// CHECK: pto.vmi.truncf %{{.*}} {rounding = "R", saturate = "SAT"} : !pto.vmi.vreg<256xf32> -> !pto.vmi.vreg<256xf16>
+module attributes {pto.target_arch = "a5"} {
+  func.func @masked_vcvt_f8_to_f16(%src: !pto.vmi.vreg<256xf8E4M3>, %mask: !pto.vmi.mask<256xb8>) -> !pto.vmi.vreg<256xf16> {
+    %0 = pto.vmi.vcvt %src, %mask : !pto.vmi.vreg<256xf8E4M3>, !pto.vmi.mask<256xb8> -> !pto.vmi.vreg<256xf16>
+    return %0 : !pto.vmi.vreg<256xf16>
+  }
+}

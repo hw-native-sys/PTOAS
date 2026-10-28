@@ -46,17 +46,45 @@ static bool isSupportedVMIWideningPair(Type srcElem, Type dstElem) {
   return false;
 }
 
+/// Every VMI conversion carries the same optional conversion predicate: an
+/// authored mask must describe the source data layout, because a predicate lane
+/// and a source lane are one lane (verifyMaskMatchesData).  The operand is
+/// optional, so an unmasked cast has nothing to verify.
+template <typename OpTy>
+static LogicalResult verifyConversionMask(OpTy op, VMIVRegType sourceType)
+{
+    Value mask = op.getMask();
+    if (!mask) {
+        return success();
+    }
+    return verifyMaskMatchesData(op.getOperation(), cast<VMIMaskType>(mask.getType()), sourceType);
+}
+
+/// The prologue every VMI cast verifier shares: type the operands, verify an
+/// optional conversion mask against the source layout, and require matching
+/// logical lane counts.
+template <typename OpTy>
+static LogicalResult verifyCastOperands(OpTy op, VMIVRegType& sourceType, VMIVRegType& resultType)
+{
+    sourceType = cast<VMIVRegType>(op.getSource().getType());
+    if (failed(verifyConversionMask(op, sourceType))) {
+        return failure();
+    }
+    resultType = cast<VMIVRegType>(op.getResult().getType());
+    bool hasMatchingLaneCount = sourceType.getElementCount() == resultType.getElementCount();
+    if (!hasMatchingLaneCount) {
+        return op.emitOpError("requires source and result logical lane counts to match");
+    }
+    return success();
+}
+
 LogicalResult VMIExtFOp::verify() {
-  auto sourceType = cast<VMIVRegType>(getSource().getType());
-  auto resultType = cast<VMIVRegType>(getResult().getType());
+    VMIVRegType sourceType, resultType;
+    if (failed(verifyCastOperands(*this, sourceType, resultType))) {
+        return failure();
+    }
   Type sourceElementType = sourceType.getElementType();
   Type resultElementType = resultType.getElementType();
-  bool hasMatchingLaneCount =
-      sourceType.getElementCount() == resultType.getElementCount();
-  if (!hasMatchingLaneCount) {
-    return emitOpError(
-        "requires source and result logical lane counts to match");
-  }
   if (!isVMIFloatLikeType(sourceElementType) ||
       !isVMIFloatLikeType(resultElementType)) {
     return emitOpError(
@@ -121,16 +149,13 @@ static LogicalResult verifyFPToFPRoundingAndSaturate(
 }
 
 LogicalResult VMITruncFOp::verify() {
-  auto sourceType = cast<VMIVRegType>(getSource().getType());
-  auto resultType = cast<VMIVRegType>(getResult().getType());
+    VMIVRegType sourceType, resultType;
+    if (failed(verifyCastOperands(*this, sourceType, resultType))) {
+        return failure();
+    }
   Type sourceElementType = sourceType.getElementType();
   Type resultElementType = resultType.getElementType();
-  auto fpContract =
-      lookupVMIFpToFpContract(sourceElementType, resultElementType);
-  if (sourceType.getElementCount() != resultType.getElementCount()) {
-    return emitOpError(
-        "requires source and result logical lane counts to match");
-  }
+  auto fpContract = lookupVMIFpToFpContract(sourceElementType, resultElementType);
   if (!isVMIFloatLikeType(sourceElementType) ||
       !isVMIFloatLikeType(resultElementType)) {
     return emitOpError(
@@ -190,12 +215,10 @@ static LogicalResult verifyCvtRoundingSat(OpTy op, bool requiresSat,
 }
 
 LogicalResult VMIFPToSIOp::verify() {
-  auto sourceType = cast<VMIVRegType>(getSource().getType());
-  auto resultType = cast<VMIVRegType>(getResult().getType());
-  if (sourceType.getElementCount() != resultType.getElementCount()) {
-    return emitOpError(
-        "requires source and result logical lane counts to match");
-  }
+    VMIVRegType sourceType, resultType;
+    if (failed(verifyCastOperands(*this, sourceType, resultType))) {
+        return failure();
+    }
   if (!isVMIFloatLikeType(sourceType.getElementType())) {
     return emitOpError("requires floating-point-like source element type");
   }
@@ -212,12 +235,10 @@ LogicalResult VMIFPToSIOp::verify() {
 }
 
 LogicalResult VMIFPToUIOp::verify() {
-  auto sourceType = cast<VMIVRegType>(getSource().getType());
-  auto resultType = cast<VMIVRegType>(getResult().getType());
-  if (sourceType.getElementCount() != resultType.getElementCount()) {
-    return emitOpError(
-        "requires source and result logical lane counts to match");
-  }
+    VMIVRegType sourceType, resultType;
+    if (failed(verifyCastOperands(*this, sourceType, resultType))) {
+        return failure();
+    }
   if (!isVMIFloatLikeType(sourceType.getElementType())) {
     return emitOpError("requires floating-point-like source element type");
   }
@@ -235,12 +256,10 @@ LogicalResult VMIFPToUIOp::verify() {
 }
 
 LogicalResult VMISIToFPOp::verify() {
-  auto sourceType = cast<VMIVRegType>(getSource().getType());
-  auto resultType = cast<VMIVRegType>(getResult().getType());
-  if (sourceType.getElementCount() != resultType.getElementCount()) {
-    return emitOpError(
-        "requires source and result logical lane counts to match");
-  }
+    VMIVRegType sourceType, resultType;
+    if (failed(verifyCastOperands(*this, sourceType, resultType))) {
+        return failure();
+    }
   if (!isVMISignedIntegerType(sourceType.getElementType())) {
     return emitOpError("requires signed integer source element type");
   }
@@ -265,14 +284,10 @@ LogicalResult VMISIToFPOp::verify() {
 }
 
 LogicalResult VMIExtSIOp::verify() {
-  auto sourceType = cast<VMIVRegType>(getSource().getType());
-  auto resultType = cast<VMIVRegType>(getResult().getType());
-  bool hasMatchingLaneCount =
-      sourceType.getElementCount() == resultType.getElementCount();
-  if (!hasMatchingLaneCount) {
-    return emitOpError(
-        "requires source and result logical lane counts to match");
-  }
+    VMIVRegType sourceType, resultType;
+    if (failed(verifyCastOperands(*this, sourceType, resultType))) {
+        return failure();
+    }
   bool hasSignedTypes =
       isVMISignedIntegerType(sourceType.getElementType()) &&
       isVMISignedIntegerType(resultType.getElementType());
@@ -289,14 +304,10 @@ LogicalResult VMIExtSIOp::verify() {
 }
 
 LogicalResult VMIExtUIOp::verify() {
-  auto sourceType = cast<VMIVRegType>(getSource().getType());
-  auto resultType = cast<VMIVRegType>(getResult().getType());
-  bool hasMatchingLaneCount =
-      sourceType.getElementCount() == resultType.getElementCount();
-  if (!hasMatchingLaneCount) {
-    return emitOpError(
-        "requires source and result logical lane counts to match");
-  }
+    VMIVRegType sourceType, resultType;
+    if (failed(verifyCastOperands(*this, sourceType, resultType))) {
+        return failure();
+    }
   bool hasUnsignedTypes =
       isVMIUnsignedOrSignlessIntegerType(sourceType.getElementType()) &&
       isVMIUnsignedOrSignlessIntegerType(resultType.getElementType());
@@ -314,12 +325,10 @@ LogicalResult VMIExtUIOp::verify() {
 }
 
 LogicalResult VMITruncIOp::verify() {
-  auto sourceType = cast<VMIVRegType>(getSource().getType());
-  auto resultType = cast<VMIVRegType>(getResult().getType());
-  if (sourceType.getElementCount() != resultType.getElementCount()) {
-    return emitOpError(
-        "requires source and result logical lane counts to match");
-  }
+    VMIVRegType sourceType, resultType;
+    if (failed(verifyCastOperands(*this, sourceType, resultType))) {
+        return failure();
+    }
   if (!isVMIIntegerLikeType(sourceType.getElementType()) ||
       !isVMIIntegerLikeType(resultType.getElementType())) {
     return emitOpError("requires integer source and result element types");
@@ -578,12 +587,10 @@ static LogicalResult verifyCvtSaturate(VMICvtOp op, CvtDirection dir,
 }
 
 LogicalResult VMICvtOp::verify() {
-  auto sourceType = cast<VMIVRegType>(getSource().getType());
-  auto resultType = cast<VMIVRegType>(getResult().getType());
-  if (sourceType.getElementCount() != resultType.getElementCount()) {
-    return emitOpError(
-        "requires source and result logical lane counts to match");
-  }
+    VMIVRegType sourceType, resultType;
+    if (failed(verifyCastOperands(*this, sourceType, resultType))) {
+        return failure();
+    }
   Type srcElem = sourceType.getElementType();
   Type dstElem = resultType.getElementType();
 unsigned srcBits = getVMIElementBitWidth(srcElem), dstBits = getVMIElementBitWidth(dstElem);

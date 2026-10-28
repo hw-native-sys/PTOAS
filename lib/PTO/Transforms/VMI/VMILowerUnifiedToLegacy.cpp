@@ -411,15 +411,26 @@ static LogicalResult lowerVCvt(VMICvtOp op, OpBuilder &builder) {
       auto wideType = VMIVRegType::get(
           builder.getContext(), resultVRegType.getElementCount(),
           builder.getF32Type(), resultVRegType.getLayout());
-      Value wide = builder.create<VMIExtFOp>(loc, wideType, source).getResult();
-      result =
-          builder
-              .create<VMITruncFOp>(loc, resultType, wide,
-                                   builder.getStringAttr("R"),
-                                   builder.getStringAttr("SAT"))
-              .getResult();
+      Value wide = builder
+                       .create<VMIExtFOp>(
+                           loc, wideType, source,
+                           /*mask=*/op.getMask())
+                       .getResult();
+      result = builder
+                   // The extf half already zeroed the inactive f8 lanes, so the
+                   // intermediate f32 lanes are zero there and the f32->f16
+                   // truncf needs no predicate; forwarding the b8 source mask here
+                   // would violate the truncf mask granularity (issue #1671).
+                   .create<VMITruncFOp>(
+                       loc, resultType, wide,
+                       /*mask=*/Value(), builder.getStringAttr("R"), builder.getStringAttr("SAT"))
+                   .getResult();
     } else {
-      result = builder.create<VMIExtFOp>(loc, resultType, source).getResult();
+        result = builder
+                     .create<VMIExtFOp>(
+                         loc, resultType, source,
+                         /*mask=*/op.getMask())
+                     .getResult();
     }
   } else if (direction == "narrow_fp") {
     StringAttr roundingAttr = op.getRoundingAttr();
@@ -437,30 +448,35 @@ static LogicalResult lowerVCvt(VMICvtOp op, OpBuilder &builder) {
                                    srcVReg.getElementCount(),
                                    builder.getF32Type(), f32Layout);
       }
-      Value widened =
-          builder.create<VMIExtFOp>(loc, f32VReg, source).getResult();
+      // The authored predicate is expressed in source-element granularity, so
+      // it rides the widening leg; the intermediate f32 inactive lanes are
+      // zero by the conversion's zero-inactive semantics, so the narrowing leg
+      // needs no predicate (issue #1671).
+      Value widened = builder
+                          .create<VMIExtFOp>(
+                              loc, f32VReg, source,
+                              /*mask=*/op.getMask())
+                          .getResult();
       result = builder
-                   .create<VMITruncFOp>(loc, resultType, widened, roundingAttr,
-                                       saturateAttr)
+                   .create<VMITruncFOp>(
+                       loc, resultType, widened,
+                       /*mask=*/Value(), roundingAttr, saturateAttr)
                    .getResult();
     } else {
-      result = builder
-                   .create<VMITruncFOp>(loc, resultType, source, roundingAttr,
-                                       saturateAttr)
-                   .getResult();
+        result = builder
+                     .create<VMITruncFOp>(
+                         loc, resultType, source,
+                         /*mask=*/op.getMask(), roundingAttr, saturateAttr)
+                     .getResult();
     }
   } else if (direction == "fptosi") {
-    result = builder
-            .create<VMIFPToSIOp>(loc, resultType, source,
-                                 op.getRoundingAttr(), saturateAttr)
-            .getResult();
+      result = builder.create<VMIFPToSIOp>(loc, resultType, source, op.getMask(), op.getRoundingAttr(), saturateAttr)
+                   .getResult();
   } else if (direction == "fptoui") {
-    result = builder
-            .create<VMIFPToUIOp>(loc, resultType, source,
-                                 op.getRoundingAttr(), saturateAttr)
-            .getResult();
+      result = builder.create<VMIFPToUIOp>(loc, resultType, source, op.getMask(), op.getRoundingAttr(), saturateAttr)
+                   .getResult();
   } else if (direction == "sitofp") {
-    result = builder.create<VMISIToFPOp>(loc, resultType, source).getResult();
+      result = builder.create<VMISIToFPOp>(loc, resultType, source, op.getMask()).getResult();
   } else if (direction == "widen_int") {
     // Use source type signedness to decide signed vs unsigned extension.
     bool useSigned = true;
@@ -468,16 +484,12 @@ static LogicalResult lowerVCvt(VMICvtOp op, OpBuilder &builder) {
       useSigned = intTy.isSigned();
     }
     if (useSigned) {
-      result =
-          builder.create<VMIExtSIOp>(loc, resultType, source).getResult();
+        result = builder.create<VMIExtSIOp>(loc, resultType, source, op.getMask()).getResult();
     } else {
-      result =
-          builder.create<VMIExtUIOp>(loc, resultType, source).getResult();
+        result = builder.create<VMIExtUIOp>(loc, resultType, source, op.getMask()).getResult();
 }
   } else if (direction == "narrow_int") {
-    result =
-        builder.create<VMITruncIOp>(loc, resultType, source, saturateAttr)
-            .getResult();
+      result = builder.create<VMITruncIOp>(loc, resultType, source, op.getMask(), saturateAttr).getResult();
   } else {
     return failure();
   }

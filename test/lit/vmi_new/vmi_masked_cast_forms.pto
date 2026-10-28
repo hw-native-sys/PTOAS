@@ -1,0 +1,45 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under
+// the terms and conditions of CANN Open Software License Agreement Version 2.0
+// (the "License"). Please refer to the License for details. You may not use
+// this file except in compliance with the License. THIS SOFTWARE IS PROVIDED ON
+// AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS
+// FOR A PARTICULAR PURPOSE. See LICENSE in the root of the software repository
+// for the full text of the License.
+
+// RUN: pto-test-opt %s | FileCheck %s
+
+// The conversion mask is an optional operand: masked and unmasked forms both
+// print and parse, and the unmasked form is unchanged (issue #1671).
+
+// CHECK-LABEL: func.func @masked_extf
+// CHECK-SAME: %{{.*}}: !pto.vmi.vreg<128xf16>, %{{.*}}: !pto.vmi.mask<128xb16>
+// CHECK: pto.vmi.extf %{{.*}}, %{{.*}} : !pto.vmi.vreg<128xf16>, !pto.vmi.mask<128xb16> -> !pto.vmi.vreg<128xf32>
+module {
+  func.func @masked_extf(%src: !pto.vmi.vreg<128xf16>, %mask: !pto.vmi.mask<128xb16>) -> !pto.vmi.vreg<128xf32> {
+    %0 = pto.vmi.extf %src, %mask : !pto.vmi.vreg<128xf16>, !pto.vmi.mask<128xb16> -> !pto.vmi.vreg<128xf32>
+    return %0 : !pto.vmi.vreg<128xf32>
+  }
+
+// CHECK-LABEL: func.func @plain_extf
+// CHECK: pto.vmi.extf %{{.*}} : !pto.vmi.vreg<128xf16> -> !pto.vmi.vreg<128xf32>
+  func.func @plain_extf(%src: !pto.vmi.vreg<128xf16>) -> !pto.vmi.vreg<128xf32> {
+    %0 = pto.vmi.extf %src : !pto.vmi.vreg<128xf16> -> !pto.vmi.vreg<128xf32>
+    return %0 : !pto.vmi.vreg<128xf32>
+  }
+
+// CHECK-LABEL: func.func @masked_vcvt
+// CHECK: pto.vmi.vcvt %{{.*}}, %{{.*}} {rounding = "R", saturate = "SAT"} : !pto.vmi.vreg<128xf32>, !pto.vmi.mask<128xb32> -> !pto.vmi.vreg<128xf16>
+  func.func @masked_vcvt(%src: !pto.vmi.vreg<128xf32>, %mask: !pto.vmi.mask<128xb32>) -> !pto.vmi.vreg<128xf16> {
+    %0 = pto.vmi.vcvt %src, %mask {rounding = "R", saturate = "SAT"} : !pto.vmi.vreg<128xf32>, !pto.vmi.mask<128xb32> -> !pto.vmi.vreg<128xf16>
+    return %0 : !pto.vmi.vreg<128xf16>
+  }
+
+// CHECK-LABEL: func.func @plain_vcvt
+// CHECK: pto.vmi.vcvt %{{.*}} : !pto.vmi.vreg<128xf16> -> !pto.vmi.vreg<128xf32>
+  func.func @plain_vcvt(%src: !pto.vmi.vreg<128xf16>) -> !pto.vmi.vreg<128xf32> {
+    %0 = pto.vmi.vcvt %src : !pto.vmi.vreg<128xf16> -> !pto.vmi.vreg<128xf32>
+    return %0 : !pto.vmi.vreg<128xf32>
+  }
+}

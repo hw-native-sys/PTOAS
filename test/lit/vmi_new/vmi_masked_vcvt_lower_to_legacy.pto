@@ -1,0 +1,40 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under
+// the terms and conditions of CANN Open Software License Agreement Version 2.0
+// (the "License"). Please refer to the License for details. You may not use
+// this file except in compliance with the License. THIS SOFTWARE IS PROVIDED ON
+// AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS
+// FOR A PARTICULAR PURPOSE. See LICENSE in the root of the software repository
+// for the full text of the License.
+
+// RUN: pto-test-opt %s -vmi-lower-unified-to-legacy | FileCheck %s
+// RUN: pto-test-opt %s -vmi-lower-unified-to-legacy -vmi-mask-granularity-assignment -vmi-layout-assignment -vmi-to-vpto | FileCheck %s --check-prefix=VPTO --implicit-check-not=pto.vmi.
+
+// vcvt expansion forwards the mask to the legacy cast it produces (issue #1671).
+
+// CHECK-LABEL: func.func @masked_vcvt_f32_to_f16
+// CHECK: pto.vmi.truncf %{{.*}}, %{{.*}} {rounding = "R", saturate = "SAT"} : {{.*}} !pto.vmi.mask<128xb32>
+module {
+  func.func @masked_vcvt_f32_to_f16(%src: !pto.vmi.vreg<128xf32>, %mask: !pto.vmi.mask<128xb32>) -> !pto.vmi.vreg<128xf16> {
+    %0 = pto.vmi.vcvt %src, %mask {rounding = "R", saturate = "SAT"} : !pto.vmi.vreg<128xf32>, !pto.vmi.mask<128xb32> -> !pto.vmi.vreg<128xf16>
+    return %0 : !pto.vmi.vreg<128xf16>
+  }
+
+  // The same expansion covers the integer casts: the unified conversion becomes
+  // pto.vmi.fptosi and then lowers to a masked pto.vcvt (issue #1671).
+  func.func @masked_vcvt_f32_to_si32(
+      %src: !pto.vmi.vreg<128xf32, #pto.vmi.layout<contiguous>>,
+      %mask: !pto.vmi.mask<128xb32, #pto.vmi.layout<contiguous>>)
+      -> !pto.vmi.vreg<128xsi32, #pto.vmi.layout<contiguous>> {
+    %0 = pto.vmi.vcvt %src, %mask {saturate = "SAT"} : !pto.vmi.vreg<128xf32, #pto.vmi.layout<contiguous>>, !pto.vmi.mask<128xb32, #pto.vmi.layout<contiguous>> -> !pto.vmi.vreg<128xsi32, #pto.vmi.layout<contiguous>>
+    return %0 : !pto.vmi.vreg<128xsi32, #pto.vmi.layout<contiguous>>
+  }
+}
+
+// CHECK-LABEL: func.func @masked_vcvt_f32_to_si32
+// CHECK: pto.vmi.fptosi %{{.*}}, %{{.*}} {saturate = "SAT"} : {{.*}} !pto.vmi.mask<128xb32,
+// VPTO-LABEL: func.func @masked_vcvt_f32_to_si32(
+// VPTO-SAME: %{{.*}}: !pto.vreg<64xf32>, %{{.*}}: !pto.vreg<64xf32>, %[[UP0:[^:]+]]: !pto.mask<b32>, %[[UP1:[^:]+]]: !pto.mask<b32>
+// VPTO: pto.vcvt %{{.*}}, %[[UP0]] {rnd = "R", sat = "SAT"} : !pto.vreg<64xf32>, !pto.mask<b32> -> !pto.vreg<64xsi32>
+// VPTO: pto.vcvt %{{.*}}, %[[UP1]] {rnd = "R", sat = "SAT"} : !pto.vreg<64xf32>, !pto.mask<b32> -> !pto.vreg<64xsi32>

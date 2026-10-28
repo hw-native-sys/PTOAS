@@ -61,6 +61,13 @@ rematerializeWidenExt(ExtOp op, VMIVRegType resultType, Location loc,
   if (!sourceType || !hasConcreteLayout(resultType)) {
     return std::nullopt;
   }
+  // A masked conversion cannot be rebuilt here: the copy below would drop its
+  // predicate, silently turning a partially predicated widening into a full
+  // one.  Keep it where it was produced and let the caller materialize the
+  // layout instead.
+  if (op.getMask()) {
+      return std::nullopt;
+  }
 
   VMILayoutSupport supports;
   FailureOr<VMILayoutAttr> sourceLayout =
@@ -247,6 +254,12 @@ static bool tryReplaceDataEnsure(VMIEnsureLayoutOp ensure) {
 }
 
 static bool tryRematerializeTruncIThroughSourceEnsure(VMITruncIOp trunc) {
+    // A masked narrowing can only be rebuilt if the predicate can be re-typed to
+    // the original source layout; skip the rematerialization instead of emitting
+    // an op whose mask layout no longer matches its data (issue #1671).
+    if (trunc.getMask()) {
+        return false;
+    }
   auto resultType = dyn_cast<VMIVRegType>(trunc.getResult().getType());
   if (!resultType || !hasConcreteLayout(resultType)) {
     return false;
@@ -290,9 +303,8 @@ static bool tryRematerializeTruncIThroughSourceEnsure(VMITruncIOp trunc) {
 
   OpBuilder builder(trunc);
   Value remat = builder
-                    .create<VMITruncIOp>(trunc->getLoc(), rematResultType,
-                                         ensure.getSource(),
-                                         trunc.getSaturateAttr())
+                    .create<VMITruncIOp>(
+                        trunc->getLoc(), rematResultType, ensure.getSource(), trunc.getMask(), trunc.getSaturateAttr())
                     .getResult();
   Value replacement =
       materializeDataLayout(remat, resultType, trunc->getLoc(), builder);
