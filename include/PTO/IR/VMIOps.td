@@ -593,6 +593,11 @@ def VMIStrideStoreOp : VMI_Op<"stride_store", [DeclareOpInterfaceMethods<MemoryE
 
 def VMIScatterOp : VMI_Op<"scatter", [DeclareOpInterfaceMethods<MemoryEffectsOpInterface>]> {
   let summary = "VMI logical masked indexed scatter";
+  let description = [{
+    Indices must be signless or unsigned integers: 16-bit for 8/16-bit
+    values, and 32-bit for 32-bit values. The verifier checks this pairing
+    before layout assignment and lowering, as for `pto.vmi.vscatter`.
+  }];
   let arguments = (ins VMI_VRegTypeConstraint:$value,
                        PtrOrMemRef:$destination,
                        VMI_VRegTypeConstraint:$indices,
@@ -1652,6 +1657,9 @@ def VMIVscatterOp : VMI_Op<"vscatter", [DeclareOpInterfaceMethods<MemoryEffectsO
   let summary = "VMI logical masked indexed scatter";
   let description = [{
     Scatters elements to UB memory using an index vector.
+    Offsets must be signless or unsigned integers: 16-bit for 8/16-bit
+    values, and 32-bit for 32-bit values. Mismatched widths are rejected
+    by the verifier before layout assignment and lowering.
     Inactive and padding lanes do not write memory. The direct path supports
     partial contiguous B32/B16 chunks. B8 values and logical b8 masks are
     expanded together to B16 hardware request slots (128 requests per chunk).

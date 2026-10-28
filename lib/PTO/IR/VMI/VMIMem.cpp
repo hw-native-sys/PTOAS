@@ -403,6 +403,20 @@ void VMIStrideStoreOp::getEffects(
 
 //===----------------------------------------------------------------------===//
 
+static LogicalResult verifyScatterElementWidths(Operation *op,
+                                                VMIVRegType valueType,
+                                                IntegerType indexElementType)
+{
+    unsigned valueBits = getPTOStorageElemBitWidth(valueType.getElementType());
+    unsigned expectedIndexBits = valueBits == kValue32 ? kValue32 : kValue16;
+    if (indexElementType.getWidth() != expectedIndexBits) {
+        return op->emitOpError()
+               << "requires " << expectedIndexBits
+               << "-bit offset vector elements for " << valueBits << "-bit values";
+    }
+    return success();
+}
+
 LogicalResult VMIScatterOp::verify() {
   VMIVRegType valueType;
   VMIMaskType maskType;
@@ -418,6 +432,9 @@ LogicalResult VMIScatterOp::verify() {
     return emitOpError(
         "requires signless or unsigned 16-bit or 32-bit integer indices");
   }
+    if (failed(verifyScatterElementWidths(getOperation(), valueType, indexElementType))) {
+        return failure();
+    }
 
   if (failed(verifyAllSameVRegShapeAndLayout(getOperation(),
                                              {valueType, indicesType},
@@ -544,6 +561,9 @@ LogicalResult VMIVscatterOp::verify() {
     return emitOpError(
         "requires signless or unsigned 16-bit or 32-bit integer offsets");
   }
+    if (failed(verifyScatterElementWidths(getOperation(), valueType, indexElementType))) {
+        return failure();
+    }
 
   if (failed(verifyAllSameVRegShapeAndLayout(getOperation(),
                                              {valueType, offsetsType},

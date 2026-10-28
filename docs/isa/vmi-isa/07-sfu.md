@@ -502,7 +502,7 @@ loads at 64/128 lanes use bounded 2/4-block reads at aligned addresses.
 
 - **syntax:**
   ```mlir
-  pto.vmi.vscatter %value, %dest, %offsets, %mask : !pto.vmi.vreg<L×T>, !pto.ptr<T, ub>, !pto.vmi.vreg<L×i32>, !pto.vmi.mask<L>
+  pto.vmi.vscatter %value, %dest, %offsets, %mask : !pto.vmi.vreg<L×T>, !pto.ptr<T, ub>, !pto.vmi.vreg<L×I>, !pto.vmi.mask<L>
   ```
 - **operands:**
 
@@ -510,12 +510,19 @@ loads at 64/128 lanes use bounded 2/4-block reads at aligned addresses.
   |---|---|---|
   | `value` | `!pto.vmi.vreg<L×T>` | Values to scatter |
   | `dest` | `!pto.ptr<T, ub>` | UB destination base pointer |
-  | `offsets` | `!pto.vmi.vreg<L×i32>` or `!pto.vmi.vreg<L×ui16>` | Per-lane element offset |
+  | `offsets` | `!pto.vmi.vreg<L×I>`, `I` = `i16`/`ui16`/`i32`/`ui32` | Per-lane element offset; width must match the rule below |
   | `mask` | `!pto.vmi.mask<L>` | Governing predicate |
 
 - **results:** *(none)*
 - **attributes:** `pmode`
 - **datatypes:** `i8`–`i32`, `f16`, `bf16`, `f32`
+- **element-width constraints:** 8-bit and 16-bit values require 16-bit
+  offsets (`i16` or `ui16`); 32-bit values require 32-bit offsets (`i32` or
+  `ui32`). Signless offsets have unsigned index semantics. Both
+  `pto.vmi.vscatter` and legacy `pto.vmi.scatter` verify this pairing before
+  layout assignment and level3 lowering, including when the mask still uses
+  logical `pred` granularity. For example, `i8`/`i16`/`f16`/`bf16` with `i32`
+  offsets is rejected at IR verification instead of failing in VPTO lowering.
 - **lowering to `pto.mi`:**
   ```
   K × pto.vscatter
