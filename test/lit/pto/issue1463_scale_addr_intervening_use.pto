@@ -1,4 +1,37 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+
+
 // RUN: pto-test-opt --split-input-file --verify-diagnostics --pto-a5-normalize-tmov %s
+
+// An established binding to a different source must not authorize hoisting.
+!mat = !pto.tile_buf<mat, 1x4x!pto.f8E8M0, slayout=row_major, fractal=32>
+!scale = !pto.tile_buf<scaling, 1x4x!pto.f8E8M0, slayout=row_major, fractal=32>
+!left = !pto.tile_buf<left, 1x512xf8E4M3FN, valid=1x128, blayout=col_major, slayout=row_major>
+module attributes {pto.target_arch = "a5"} {
+  func.func private @consume(!scale)
+  func.func @different_binding() {
+    %mat = pto.alloc_tile : !mat
+    %old_src = pto.alloc_tile : !left
+    %new_src = pto.alloc_tile : !left
+    %dst = pto.alloc_tile : !scale
+    pto.tget_scale_addr ins(%old_src : !left) outs(%dst : !scale)
+    // expected-note@+1 {{matching TMOV is here}}
+    pto.tmov ins(%mat : !mat) outs(%dst : !scale)
+    // expected-note@+1 {{intervening destination use: func.call}}
+    func.call @consume(%dst) : (!scale) -> ()
+    // expected-error@+1 {{cannot safely establish scaling address before matching TMOV: intervening destination use}}
+    pto.tget_scale_addr ins(%new_src : !left) outs(%dst : !scale)
+    return
+  }
+}
+
+// -----
 
 // Destination binding is observable inside nested regions as well as at top level.
 !mat = !pto.tile_buf<mat, 1x4x!pto.f8E8M0, slayout=row_major, fractal=32>

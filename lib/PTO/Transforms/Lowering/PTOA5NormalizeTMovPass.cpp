@@ -166,6 +166,18 @@ static LogicalResult collectScaleAddrDependencies(
 static LogicalResult hoistScaleAddr(pto::TGetScaleAddrOp op,
                                    pto::TMovOp matchingTMov,
                                    DominanceInfo &dominance) {
+  // A previous consumer's binding may already have been normalized directly
+  // before this fill. The copy therefore used the requested address. Keep a
+  // later identical binding at its original consumer: moving it back across
+  // earlier uses is unnecessary, and deleting it could lose a required rebind
+  // after another handle has reused the physical scaling buffer.
+  if (auto established =
+          dyn_cast_or_null<pto::TGetScaleAddrOp>(matchingTMov->getPrevNode())) {
+    if (established.getSrc() == op.getSrc() &&
+        established.getDst() == op.getDst()) {
+      return success();
+    }
+  }
   // The binding changes the destination address, including for uses captured
   // by nested regions. Neither crossing those uses nor silently keeping the
   // binding after the copy establishes safe backend semantics.

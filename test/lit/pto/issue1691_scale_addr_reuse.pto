@@ -1,0 +1,39 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+
+
+// RUN: pto-test-opt --pto-a5-normalize-tmov %s | FileCheck %s
+// RUN: pto-test-opt --pto-a5-normalize-tmov %s | pto-test-opt --pto-a5-normalize-tmov | FileCheck %s
+
+!mat = !pto.tile_buf<mat, 1x4x!pto.f8E8M0, slayout=row_major, fractal=32>
+!scale = !pto.tile_buf<scaling, 1x4x!pto.f8E8M0, slayout=row_major, fractal=32>
+!left = !pto.tile_buf<left, 1x512xf8E4M3FN, valid=1x128, blayout=col_major, slayout=row_major>
+
+module attributes {pto.target_arch = "a5"} {
+  func.func private @consume(!scale)
+
+  // Reusing one scale fill for two consumers must not hoist the second binding
+  // across the first consumer or remove the per-consumer rebinding operation.
+  // CHECK-LABEL: func.func @repeated_binding
+  // CHECK: pto.tget_scale_addr ins(%[[SRC:[^ ]+]] {{.*}}outs(%[[DST:[^ ]+]]
+  // CHECK-NEXT: pto.tmov
+  // CHECK-NEXT: call @consume(%[[DST]])
+  // CHECK-NEXT: pto.tget_scale_addr ins(%[[SRC]] {{.*}}outs(%[[DST]]
+  // CHECK-NEXT: call @consume(%[[DST]])
+  func.func @repeated_binding() {
+    %mat = pto.alloc_tile : !mat
+    %src = pto.alloc_tile : !left
+    %dst = pto.alloc_tile : !scale
+    pto.tmov ins(%mat : !mat) outs(%dst : !scale)
+    pto.tget_scale_addr ins(%src : !left) outs(%dst : !scale)
+    func.call @consume(%dst) : (!scale) -> ()
+    pto.tget_scale_addr ins(%src : !left) outs(%dst : !scale)
+    func.call @consume(%dst) : (!scale) -> ()
+    return
+  }
+}

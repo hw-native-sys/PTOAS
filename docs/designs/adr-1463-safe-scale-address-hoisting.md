@@ -36,6 +36,14 @@ to direct destination uses that previously prevented matching silently. Inputs
 must establish the intended address before the copy or use a separate
 destination when rebinding is required.
 
+Repeated consumers may reuse the same scale fill (issue #1691). If an identical
+source/destination binding immediately precedes the matched copy, that copy
+already used the required address. Keep the later binding at its original
+consumer instead of hoisting it across earlier uses. Retaining that binding
+also preserves rebinding after physical scaling-buffer reuse. This exception
+requires both SSA handles to match; a different established source does not
+justify skipping the safety checks. It performs no motion or alias analysis.
+
 Unmatched bindings are unchanged. No dialect syntax, public API, or command-line
 option changes. Existing safe normalization and non-scaling TMOV normalization
 retain their behavior.
@@ -55,3 +63,7 @@ inside an else region, including unchanged IR after rejection and the final
 EmitC pipeline's diagnostic. Regions without destination captures still allow
 normalization. These compiler checks do not establish hardware numerical
 correctness.
+
+Repeated-consumer regressions verify the initial binding/copy order, retention
+of the later binding, repeat-pass stability, and rejection of a conflicting
+established binding.
