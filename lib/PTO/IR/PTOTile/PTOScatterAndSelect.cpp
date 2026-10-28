@@ -280,3 +280,84 @@ mlir::LogicalResult mlir::pto::TSelSOp::verify() {
   auto verifyA5 = [this]() -> LogicalResult { return verifyTSelSA5(*this); };
   return dispatchVerifierByArch(getOperation(), verifyA2A3, verifyA5);
 }
+
+// pto.tpartsel: mask select; dst/src0/src1 may use different physical tile views.
+
+static FailureOr<Type> verifyTPartSelCommon(TPartSelOp op)
+{
+    Type t0 = op.getSrc0().getType();
+    Type t1 = op.getSrc1().getType();
+    Type td = op.getDst().getType();
+    Type tmpTy = op.getTmp() ? op.getTmp().getType() : Type{};
+    FailureOr<Type> elem = verifyThreeMatchingTiles(op, t0, t1, td, tmpTy);
+    if (failed(elem))
+        return failure();
+
+    if (!isRowMajorTileBuf(t0) || !isRowMajorTileBuf(t1) || !isRowMajorTileBuf(td)) {
+        op.emitOpError("expects src0, src1, and dst to use row-major layout");
+        return failure();
+    }
+    return *elem;
+}
+
+// Verifies the element-type allow-list shared by the select family (f16/bf16/f32
+// plus the given integer widths) and returns the element type on success.
+static FailureOr<Type> verifySelectElementType(
+    FailureOr<Type> elemOr, TPartSelOp op, ArrayRef<int> intWidths, StringRef errMsg)
+{
+    if (failed(elemOr))
+        return failure();
+    Type elem = *elemOr;
+    bool ok = elem.isF16() || elem.isBF16() || elem.isF32();
+    if (auto it = dyn_cast<IntegerType>(elem)) {
+        ok = llvm::is_contained(intWidths, static_cast<int>(it.getWidth()));
+    }
+    if (!ok) {
+        op.emitOpError(errMsg);
+        return failure();
+    }
+    return elem;
+}
+
+// pto.tpartsel A2/A3 constraints: same element type; tmp is the cmp-mask
+// scratch (16-bit data needs 4 uint32, 32-bit needs 2 uint32).
+static LogicalResult verifyTPartSelA2A3(TPartSelOp op)
+{
+    FailureOr<Type> elem = verifySelectElementType(
+        verifyTPartSelCommon(op), op, {mlir::pto::kValue16, mlir::pto::kValue32},
+        "expects A2/A3 tpartsel src0, src1, and dst element type to be i16/i32/f16/bf16/f32");
+    if (failed(elem))
+        return failure();
+    if (op.getTmp()) {
+        Type tmpTy = op.getTmp().getType();
+        if (getElemByteSize(getElemTy(tmpTy)) != mlir::pto::kValue4) {
+            return op.emitOpError("expects A2/A3 tpartsel tmp element type to be 4 bytes wide");
+        }
+        unsigned elemBits = getPTOStorageElemBitWidth(*elem);
+        if (elemBits != mlir::pto::kValue16 && elemBits != mlir::pto::kValue32) {
+            return op.emitOpError("expects A2/A3 tpartsel data element type to be 16 or 32 bits");
+        }
+        uint64_t minBytes = elemBits == 16 ? 16 : 8;
+        if (failed(verifyTmpCapacityAtLeast(op, tmpTy, minBytes))) {
+            return failure();
+        }
+    }
+    return success();
+}
+
+static LogicalResult verifyTPartSelA5(TPartSelOp op)
+{
+    FailureOr<Type> elem = verifySelectElementType(
+        verifyTPartSelCommon(op), op, {mlir::pto::kValue8, mlir::pto::kValue16, mlir::pto::kValue32},
+        "expects A5 tpartsel src0, src1, and dst element type to be i8/i16/i32/f16/bf16/f32");
+    if (failed(elem))
+        return failure();
+    return success();
+}
+
+mlir::LogicalResult mlir::pto::TPartSelOp::verify()
+{
+    auto verifyA2A3 = [this]() -> LogicalResult { return verifyTPartSelA2A3(*this); };
+    auto verifyA5 = [this]() -> LogicalResult { return verifyTPartSelA5(*this); };
+    return dispatchVerifierByArch(getOperation(), verifyA2A3, verifyA5);
+}

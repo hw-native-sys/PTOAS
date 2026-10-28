@@ -110,6 +110,20 @@ void mlir::pto::TSelOp::print(OpAsmPrinter &p) {
   printOptionalTmpFixedDpsOp(p, getOperation(), inputs, getDst());
 }
 
+ParseResult mlir::pto::TPartSelOp::parse(OpAsmParser& parser, OperationState& result)
+{
+    return parseOptionalTmpFixedDpsOp(
+        parser, result, mlir::pto::kValue3, mlir::pto::kValue4, {1, 1, 1, 0, 1}, {1, 1, 1, 1, 1});
+}
+void mlir::pto::TPartSelOp::print(OpAsmPrinter& p)
+{
+    SmallVector<Value> inputs{getMask(), getSrc0(), getSrc1()};
+    if (getTmp()) {
+        inputs.push_back(getTmp());
+    }
+    printOptionalTmpFixedDpsOp(p, getOperation(), inputs, getDst());
+}
+
 ParseResult mlir::pto::TSelSOp::parse(OpAsmParser &parser,
                                       OperationState &result) {
     return parseOptionalTmpFixedDpsOp(

@@ -6657,6 +6657,49 @@ def TSelSOp: PTO_TOp<"tsels", [
   }];
 }
 //===----------------------------------------------------------------------===//
+// PTOOps.td  (add TPARTSEL TBDPS/tile buffer op)
+//===----------------------------------------------------------------------===//
+
+def TPartSelOp: PTO_TOp<"tpartsel", [
+  PTO_DpsInitOpInterface,
+  OpPipeInterface,
+  DeclareOpInterfaceMethods<MemoryEffectsOpInterface>
+]> {
+  let summary =
+    "TPARTSEL: Select between two tiles with differing physical views using a mask tile.";
+  let description = [{
+    DPS form (pto-isa TPARTSEL requires tmp):
+      ins(%mask, %src0, %src1, %tmp) outs(%dst)
+
+    dst[i,j] = mask[i,j] ? src0[i,j] : src1[i,j]
+
+    Unlike pto.tsel, dst/src0/src1 may use different physical tile types
+    (backing width / row stride / offset). They must share the element type,
+    use row-major layout, and cover the destination valid region. The selection
+    domain is the destination valid region; source valid shapes are not checked
+    for equality. No broadcasting, dtype conversion, or implicit copy.
+  }];
+
+  let arguments = (ins
+    PTODpsType:$mask,
+    PTODpsType:$src0,
+    PTODpsType:$src1,
+    Optional<PTODpsType>:$tmp,
+    PTODpsType:$dst
+  );
+
+  let results = (outs);
+
+  let hasVerifier = 1;
+
+  let hasCustomAssemblyFormat = 1;
+
+  let extraClassDeclaration = [{
+    ::mlir::pto::PIPE getPipe() { return ::mlir::pto::PIPE::PIPE_V; }
+    ::mlir::MutableOperandRange getDpsInitsMutable() { return getDstMutable(); }
+  }];
+}
+//===----------------------------------------------------------------------===//
 // PTOOps.td  (add TSHL TBDPS/tile buffer op)
 //===----------------------------------------------------------------------===//
 

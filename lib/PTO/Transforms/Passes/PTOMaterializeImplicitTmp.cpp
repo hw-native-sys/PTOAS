@@ -1072,6 +1072,20 @@ static LogicalResult materializeTSelTmpOp(pto::TSelOp typedOp,
       *type, {1, 1, 1, 1, 1}, isA5 ? false : requireExplicitTmp, "tsel");
 }
 
+static LogicalResult materializeTPartSelTmpOp(pto::TPartSelOp typedOp, bool requireExplicitTmp, MLIRContext* ctx)
+{
+    Operation* op = typedOp.getOperation();
+    bool isA5 = pto::getTargetArch(op) == pto::PTOArch::A5;
+    auto type = isA5 ? makeA5PlaceholderTmpType(ctx, typedOp.getDst(), IntegerType::get(ctx, 32)) :
+        makeVecTmpType(ctx, {1, 16}, IntegerType::get(ctx, 32), {1, 16});
+    if (failed(type)) {
+        return typedOp.emitOpError("requires static tile_buf dst to materialize implicit tpartsel tmp");
+    }
+    return replaceFixedDpsOpWithTmp(
+        op, {typedOp.getMask(), typedOp.getSrc0(), typedOp.getSrc1(), Value(), typedOp.getDst()}, *type,
+        {1, 1, 1, 1, 1}, isA5 ? false : requireExplicitTmp, "tpartsel");
+}
+
 static LogicalResult materializeTSelSTmpOp(pto::TSelSOp typedOp,
                                            bool requireExplicitTmp,
                                            MLIRContext *ctx) {
@@ -1163,6 +1177,12 @@ static LogicalResult materializeFixedMandatoryTmp(Operation *op,
         }
         return materializeTSelTmpOp(typedOp, requireExplicitTmp, ctx);
       })
+        .Case<pto::TPartSelOp>([requireExplicitTmp, ctx](auto typedOp) -> LogicalResult {
+            if (typedOp.getTmp()) {
+                return success();
+            }
+            return materializeTPartSelTmpOp(typedOp, requireExplicitTmp, ctx);
+        })
       .Case<pto::TSelSOp>([requireExplicitTmp, ctx](auto typedOp) -> LogicalResult {
         if (typedOp.getTmp()) {
           return success();
@@ -1510,7 +1530,7 @@ struct PTOMaterializeImplicitTmpPass
     SmallVector<Operation *> mandatoryTmpOps;
     func.walk([&mandatoryTmpOps](Operation *op) {
       if (isa<pto::TPReluOp, pto::TRemOp, pto::TRemSOp, pto::TSelOp,
-              pto::TSelSOp, pto::TTransOp>(op)) {
+            pto::TPartSelOp, pto::TSelSOp, pto::TTransOp>(op)) {
         mandatoryTmpOps.push_back(op);
       }
     });

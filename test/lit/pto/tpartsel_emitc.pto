@@ -1,0 +1,33 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+
+// RUN: ptoas --pto-arch=a3 %s -o - 2>&1 | FileCheck %s --check-prefix=A3
+// RUN: ptoas --pto-arch=a5 %s -o - 2>&1 | FileCheck %s --check-prefix=A5
+
+// tpartsel 的核心用例：src0 是 256 宽 tile 的 128 切片（物理 cols=256、valid 128），
+// src1 与 dst 是紧凑的 128 宽 tile。这与 pto.tsel 不同——后者要求 dst/src0/src1 物理
+// 类型一致，编译期会因单模板参数冲突失败；tpartsel 直接发射 TPARTSEL，三模板参数独立。
+module {
+  func.func @tpartsel_f32() {
+    %mask = pto.alloc_tile : !pto.tile_buf<loc=vec, dtype=i8, rows=2, cols=128, v_row=2, v_col=128, blayout=row_major, slayout=none_box, fractal=512, pad=0>
+    %src0 = pto.alloc_tile : !pto.tile_buf<loc=vec, dtype=f32, rows=2, cols=256, v_row=2, v_col=128, blayout=row_major, slayout=none_box, fractal=512, pad=0>
+    %src1 = pto.alloc_tile : !pto.tile_buf<loc=vec, dtype=f32, rows=2, cols=128, v_row=2, v_col=128, blayout=row_major, slayout=none_box, fractal=512, pad=0>
+    %tmp  = pto.alloc_tile : !pto.tile_buf<loc=vec, dtype=i32, rows=1, cols=16, v_row=1, v_col=16, blayout=row_major, slayout=none_box, fractal=512, pad=0>
+    %dst  = pto.alloc_tile : !pto.tile_buf<loc=vec, dtype=f32, rows=2, cols=128, v_row=2, v_col=128, blayout=row_major, slayout=none_box, fractal=512, pad=0>
+
+    pto.tpartsel ins(%mask, %src0, %src1, %tmp : !pto.tile_buf<loc=vec, dtype=i8, rows=2, cols=128, v_row=2, v_col=128, blayout=row_major, slayout=none_box, fractal=512, pad=0>, !pto.tile_buf<loc=vec, dtype=f32, rows=2, cols=256, v_row=2, v_col=128, blayout=row_major, slayout=none_box, fractal=512, pad=0>, !pto.tile_buf<loc=vec, dtype=f32, rows=2, cols=128, v_row=2, v_col=128, blayout=row_major, slayout=none_box, fractal=512, pad=0>, !pto.tile_buf<loc=vec, dtype=i32, rows=1, cols=16, v_row=1, v_col=16, blayout=row_major, slayout=none_box, fractal=512, pad=0>)
+                 outs(%dst : !pto.tile_buf<loc=vec, dtype=f32, rows=2, cols=128, v_row=2, v_col=128, blayout=row_major, slayout=none_box, fractal=512, pad=0>)
+    return
+  }
+}
+
+// A3-LABEL: AICORE void tpartsel_f32(
+// A3:       TPARTSEL(
+
+// A5-LABEL: AICORE void tpartsel_f32(
+// A5:       TPARTSEL(

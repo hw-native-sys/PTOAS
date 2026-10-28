@@ -152,6 +152,26 @@ struct PTOPartMulToEmitC : public OpConversionPattern<pto::TPartMulOp> {
   }
 };
 
+struct PTOTPartSelToEmitC : public OpConversionPattern<pto::TPartSelOp> {
+    using OpConversionPattern<pto::TPartSelOp>::OpConversionPattern;
+
+    LogicalResult matchAndRewrite(
+        pto::TPartSelOp op, OpAdaptor adaptor, ConversionPatternRewriter& rewriter) const override
+    {
+        auto loc = op.getLoc();
+
+        // TPARTSEL(dst, mask, src0, src1, tmp) — order fixed by the pto-isa signature.
+        SmallVector<Value, mlir::pto::kValue5> operands{
+            adaptor.getDst(), adaptor.getMask(), adaptor.getSrc0(), adaptor.getSrc1(), adaptor.getTmp()};
+
+        rewriter.create<emitc::CallOpaqueOp>(
+            loc, TypeRange{}, "TPARTSEL", ArrayAttr{}, ArrayAttr{}, operands);
+
+        rewriter.eraseOp(op);
+        return success();
+    }
+};
+
 void populateReduceTPartPatterns(RewritePatternSet &patterns,
                         TypeConverter &typeConverter, MLIRContext *ctx) {
   patterns.add<PTOPartMaxToEmitC>(typeConverter, ctx);
@@ -159,6 +179,7 @@ void populateReduceTPartPatterns(RewritePatternSet &patterns,
   patterns.add<PTOPartArgMaxToEmitC, PTOPartArgMinToEmitC>(typeConverter, ctx);
   patterns.add<PTOPartMulToEmitC>(typeConverter, ctx);
   patterns.add<PTOPartAddToEmitC>(typeConverter, ctx);
+    patterns.add<PTOTPartSelToEmitC>(typeConverter, ctx);
 }
 
 } // namespace pto

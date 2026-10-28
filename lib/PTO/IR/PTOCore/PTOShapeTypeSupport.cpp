@@ -25,6 +25,7 @@ using pto::TPartArgMinOp;
 using pto::TPartMaxOp;
 using pto::TPartMinOp;
 using pto::TPartMulOp;
+using pto::TPartSelOp;
 using pto::TPopFromAicOp;
 using pto::TPopFromAivOp;
 using pto::TPopOp;

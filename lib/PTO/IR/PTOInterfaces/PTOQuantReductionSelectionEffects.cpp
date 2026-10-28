@@ -140,6 +140,18 @@ void TSelOp::getEffects(
   PTO_ADD_WRITE(effects, getDstMutable());
 }
 
+// TPARTSEL: Read(mask, src0, src1) -> Write(tmp on A2/A3, dst). Mirrors TSEL:
+// A5 does not consume tmp, so modeling it as scratch inflates local-memory
+// planning and can trigger false vec-overflow diagnostics.
+void TPartSelOp::getEffects(SmallVectorImpl<SideEffects::EffectInstance<MemoryEffects::Effect>>& effects)
+{
+    PTO_ADD_READ(effects, getMaskMutable());
+    PTO_ADD_READ(effects, getSrc0Mutable());
+    PTO_ADD_READ(effects, getSrc1Mutable());
+    addA2A3ScratchEffects(effects, getOperation(), getTmpMutable());
+    PTO_ADD_WRITE(effects, getDstMutable());
+}
+
 // TSELS: Read(mask, src) -> Write(tmp on A2/A3, dst)
 void TSelSOp::getEffects(
     SmallVectorImpl<SideEffects::EffectInstance<MemoryEffects::Effect>> &effects) {
