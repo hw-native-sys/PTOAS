@@ -312,6 +312,68 @@ static pto::TileBufType getSubviewPhysicalType(pto::SubViewOp op) {
       resultType.getConfigAttr());
 }
 
+static std::optional<pto::AddressSpace>
+getTileAddressSpace(pto::TileBufType type) {
+  auto attr = dyn_cast_or_null<pto::AddressSpaceAttr>(type.getMemorySpace());
+  if (!attr) {
+    return std::nullopt;
+  }
+  return attr.getAddressSpace();
+}
+
+static LogicalResult verifyResolvedSubviewTInsertUsers(
+    pto::SubViewOp op, pto::TileBufType physicalType) {
+  const bool isA5 = pto::getTargetArch(op.getOperation()) == pto::PTOArch::A5;
+  if (!isA5) {
+    return success();
+  }
+  auto srcSpace = getTileAddressSpace(physicalType);
+  if (!srcSpace || *srcSpace != pto::AddressSpace::VEC) {
+    return success();
+  }
+
+  for (Operation *user : op.getResult().getUsers()) {
+    auto tinsert = dyn_cast<pto::TInsertOp>(user);
+    if (!tinsert) {
+      continue;
+    }
+    auto dstType = dyn_cast<pto::TileBufType>(tinsert.getDst().getType());
+    if (!dstType) {
+      continue;
+    }
+    auto dstSpace = getTileAddressSpace(dstType);
+    if (!dstSpace || *dstSpace != pto::AddressSpace::VEC) {
+      continue;
+    }
+
+    ArrayRef<int64_t> srcShape = physicalType.getShape();
+    ArrayRef<int64_t> dstShape = dstType.getShape();
+    const bool hasDynamicShape =
+        srcShape.size() < 2 || dstShape.size() < 2 ||
+        ShapedType::isDynamic(srcShape[kDim0]) ||
+        ShapedType::isDynamic(srcShape[kDim1]) ||
+        ShapedType::isDynamic(dstShape[kDim0]) ||
+        ShapedType::isDynamic(dstShape[kDim1]);
+    if (hasDynamicShape) {
+      continue;
+    }
+    if (srcShape[kDim0] <= dstShape[kDim0] &&
+        srcShape[kDim1] <= dstShape[kDim1]) {
+      continue;
+    }
+
+    return tinsert.emitOpError()
+           << "cannot lower A5 vec-to-vec tinsert: resolved subview source "
+              "physical shape is "
+           << srcShape[kDim0] << "x" << srcShape[kDim1]
+           << ", but destination physical shape is " << dstShape[kDim0]
+           << "x" << dstShape[kDim1]
+           << "; source physical rows and columns must not exceed the "
+              "destination";
+  }
+  return success();
+}
+
 static Value getSubviewValidOperand(pto::SubViewOp op,
                                     pto::TileBufType physicalType,
                                     unsigned dim, IRRewriter &rewriter) {
@@ -345,6 +407,9 @@ static LogicalResult resolveTileNativeSubviews(ModuleOp module,
       continue;
     }
     pto::TileBufType physicalType = getSubviewPhysicalType(op);
+    if (failed(verifyResolvedSubviewTInsertUsers(op, physicalType))) {
+      return failure();
+    }
     auto alloc = rewriter.create<pto::AllocTileOp>(
         op.getLoc(), physicalType, addr,
         getSubviewValidOperand(op, physicalType, kDim0, rewriter),
