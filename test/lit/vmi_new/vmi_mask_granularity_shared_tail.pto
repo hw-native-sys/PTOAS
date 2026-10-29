@@ -1,0 +1,38 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+
+// RUN: pto-test-opt %s -vmi-lower-unified-to-legacy -vmi-mask-granularity-assignment | FileCheck %s
+// RUN: pto-test-opt %s -vmi-lower-unified-to-legacy -vmi-mask-granularity-assignment -vmi-mask-granularity-assignment | FileCheck %s
+
+// The same partial seed can govern comparisons with different element widths.
+// In particular, CSE merges equal create_mask operations from separate loops.
+func.func @shared_tail(%a: !pto.vmi.vreg<128xsi32>, %b: !pto.vmi.vreg<128xsi32>,
+                       %c: !pto.vmi.vreg<128xui16>, %d: !pto.vmi.vreg<128xui16>)
+    -> (!pto.vmi.vreg<128xsi32>, !pto.vmi.vreg<128xui16>) {
+  %n = arith.constant 16 : index
+  %seed = pto.vmi.create_mask %n : index -> !pto.vmi.mask<128xpred>
+  %cmp32 = pto.vmi.vcmp %a, %b, %seed {cmp = "gt"}
+      : !pto.vmi.vreg<128xsi32>, !pto.vmi.vreg<128xsi32>, !pto.vmi.mask<128xpred> -> !pto.vmi.mask<128xpred>
+  %sel32 = pto.vmi.vsel %cmp32, %a, %b
+      : !pto.vmi.mask<128xpred>, !pto.vmi.vreg<128xsi32>, !pto.vmi.vreg<128xsi32> -> !pto.vmi.vreg<128xsi32>
+  %cmp16 = pto.vmi.vcmp %c, %d, %seed {cmp = "gt"}
+      : !pto.vmi.vreg<128xui16>, !pto.vmi.vreg<128xui16>, !pto.vmi.mask<128xpred> -> !pto.vmi.mask<128xpred>
+  %sel16 = pto.vmi.vsel %cmp16, %c, %d
+      : !pto.vmi.mask<128xpred>, !pto.vmi.vreg<128xui16>, !pto.vmi.vreg<128xui16> -> !pto.vmi.vreg<128xui16>
+  return %sel32, %sel16 : !pto.vmi.vreg<128xsi32>, !pto.vmi.vreg<128xui16>
+}
+// CHECK-LABEL: func.func @shared_tail
+// CHECK: pto.vmi.cmpi "sgt"
+// CHECK-SAME: -> !pto.vmi.mask<128xb32>
+// CHECK: pto.vmi.mask_and
+// CHECK-SAME: !pto.vmi.mask<128xb32>
+// CHECK: pto.vmi.cmpi "ugt"
+// CHECK-SAME: -> !pto.vmi.mask<128xb16>
+// CHECK: pto.vmi.create_mask %c16 : index -> !pto.vmi.mask<128xb16>
+// CHECK: pto.vmi.mask_and
+// CHECK-SAME: !pto.vmi.mask<128xb16>

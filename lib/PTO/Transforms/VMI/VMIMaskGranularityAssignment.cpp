@@ -226,10 +226,21 @@ struct MaskGranularitySolver {
   std::optional<WalkResult> addMaskValueConstraint(Operation *op) {
     return llvm::TypeSwitch<Operation *, std::optional<WalkResult>>(op)
         .Case<VMIMaskAndOp, VMIMaskOrOp, VMIMaskXOrOp>([this, op](auto maskOp) {
-          bool failedToUnite =
-              failed(uniteMask(maskOp.getLhs(), maskOp.getRhs(), op)) ||
-              failed(uniteMask(maskOp.getLhs(), maskOp.getResult(), op));
-          return constraintResult(failure(failedToUnite));
+          // Boolean operations require equal physical granularities at this
+          // use, not equality of all producer granularities. In particular a
+          // shared prefix seed may govern both i16 and i32 comparisons.
+          unsigned lhs = findMask(addMaskValue(maskOp.getLhs()));
+          unsigned rhs = findMask(addMaskValue(maskOp.getRhs()));
+          std::string granularity = maskNodes[lhs].granularity;
+          if (granularity.empty())
+            granularity = maskNodes[rhs].granularity;
+          if (granularity.empty())
+            granularity = "b32";
+          bool failedToConstrain =
+              failed(requestMask(maskOp.getResult(), granularity, op)) ||
+              failed(requestMaskUse(op->getOpOperand(0), granularity, op)) ||
+              failed(requestMaskUse(op->getOpOperand(1), granularity, op));
+          return constraintResult(failure(failedToConstrain));
         })
         .Case<VMIMaskNotOp, VMIEnsureMaskLayoutOp>([this, op](auto maskOp) {
           return constraintResult(

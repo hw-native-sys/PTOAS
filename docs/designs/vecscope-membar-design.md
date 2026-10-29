@@ -74,8 +74,9 @@ footprint 将访问归一化为：
 
 常量地址使用精确区间重叠。带循环 induction variable 的地址使用 Presburger 关系分析；动态
 或不支持的表达式不能直接当作无依赖。需要区分别名结果 `MayAlias` 和依赖结果 `Unknown`：
-前者表示可能别名，后者表示关系无法建模。当前 `Unknown` 只被记录，不直接驱动 placement；
-因此不能声称任意未知地址都已有自动同步兜底。动态循环边界有单独的保守分支，详见 5.4。
+前者表示可能别名，后者表示关系无法建模。`Unknown` 保留诊断记录，同时按访问的
+load/store 与 scalar/vector family 保守生成 hazard；只有证明无依赖才能跳过 placement。
+同一迭代使用消费者 anchor，循环携带依赖覆盖共享循环的 latch，详见 5.4。
 
 ## 4. Hazard 分类
 
@@ -154,7 +155,7 @@ scalar consumer；`VS_ALL`、`SV_ALL` 和 `SS_ALL` 也只覆盖各自 family。
 
 - 空关系：没有循环携带 hazard；
 - 非空关系：记录 `InnerLoopCarried` 或 `OuterLoopCarried` hazard；
-- 无法建模：记录 `Unknown`，不放置无法证明 anchor 的 barrier。
+- 无法建模：记录 `Unknown`，并在共享 carrying loops 的 latch 保守放置相应 family 的 barrier。
 
 循环携带 barrier 的 anchor 是 carrying loop 的 terminator，语义是约束下一次迭代的回边。
 
@@ -276,8 +277,7 @@ Store footprint 应描述实际写入的内存范围，而不是简单使用输�
 Pack distribution 根据打包比例计算写入元素数并向上取整；broadcast load 按其实际读取
 字节宽度计算，不能把广播后的整个寄存器宽度视为 UB 读取长度。
 Gather/scatter 等不能用单个精确连续区间描述的访问使用 `forcesMayAlias` 等标记。
-这些标记使分析失去部分精确排除能力；它们不保证后续每条分析路径都会插入 barrier，
-还需检查该 pair 最终是 ProvenDependence 还是 Unknown。
+这些标记使分析失去部分精确排除能力；无法证明独立时，后续依赖分析必须保守保留 hazard。
 
 ## 10. 顺序图为什么能消除 WAR/WAW
 
@@ -400,8 +400,9 @@ outer carried: consumer_outer > producer_outer
 重叠的合法动态实例，不表示每次迭代都会冲突。
 
 当前精确关系建模支持最多两层循环。更深 nest、非精确 offset、未知 root 或未支持的访问
-形状可能生成 Unknown。非常量循环 domain 则有单独分支：同一迭代可能别名 pair 保守保留，
-循环携带 pair 在共享 carrying loops 上生成 hazard。两者不能统称为任意 Unknown 的兜底。
+形状可能生成 Unknown。它们与非常量循环 domain 一样采用保守策略：同一迭代可能别名
+pair 保留消费者 anchor，循环携带 pair 在共享 carrying loops 上生成 hazard。
+兜底使用原始访问对应的精确 barrier family，不使用覆盖不相关 pipeline 的通用屏障。
 
 ### 11.3 为什么循环外消费者取 loop anchor
 

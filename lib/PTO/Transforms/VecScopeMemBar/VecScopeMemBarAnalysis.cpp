@@ -336,7 +336,7 @@ static void recordUnknown(
 
 // Dynamic loop bounds cannot currently be represented by the constant-domain
 // model below. Preserve correctness by covering every shared carrying loop;
-// other modelling failures remain Unknown and do not drive placement.
+// other modelling failures use the same conservative carrying-loop coverage.
 static void emitDynamicBoundsHazards(
     VecScopeMemBarAnalysisResult& result, unsigned i, unsigned j, MemBarKind kind, ArrayRef<unsigned> loopIds)
 {
@@ -838,7 +838,7 @@ static void enumerateSequentialHazards(
             }
 
             bool dynamicDomain = hasDynamicLoopDomain(A[i].op, scope) || hasDynamicLoopDomain(A[j].op, scope);
-            if (dynamicDomain && aliasSameIteration(A[i].footprint, A[j].footprint) == VecScopeAliasResult::NoAlias) {
+            if (aliasSameIteration(A[i].footprint, A[j].footprint) == VecScopeAliasResult::NoAlias) {
                 continue;
             }
             DependenceStatus status =
@@ -848,7 +848,9 @@ static void enumerateSequentialHazards(
             }
             if (status == DependenceStatus::Unknown) {
                 recordUnknown(result, i, j, *kind, DependenceReason::DynamicUnmodelledExpression);
-                continue;
+                // Missing footprint information is not a proof of independence.
+                // In particular, gather and unaligned loads must observe earlier
+                // UB stores even when their exact byte range cannot be modelled.
             }
             // Delay load-to-store materialization until all RAW barriers are known. A WAR
             // chain may be indirect:
@@ -1240,9 +1242,7 @@ static void recordCarriedQuery(
 {
     if (!addCarriedIntersection(poly, m)) {
         recordUnknown(result, i, j, kind, DependenceReason::DynamicUnmodelledExpression);
-        return;
-    }
-    if (poly.isIntegerEmpty()) {
+    } else if (poly.isIntegerEmpty()) {
         return;
     }
     MemoryHazard h;
@@ -1317,7 +1317,7 @@ static void queryOuterCarriedRelation(
 
 // Loop-carried RAW/WAW relations for one ordered pair (i, j) (including
 // self pairs). A relation is "empty" => no carried hazard; satisfiable =>
-// proven carried hazard; unmodelable => Unknown and no placement.
+// proven carried hazard; unmodelable => conservative carrying-loop placement.
 static void analyzeLoopCarriedPair(VecScopeMemBarAnalysisResult& result, unsigned i, unsigned j, Operation* scope)
 {
     const auto& A = result.accesses;
@@ -1356,9 +1356,14 @@ static void analyzeLoopCarriedPair(VecScopeMemBarAnalysisResult& result, unsigne
     }
     if (model.depthP > 2 || model.depthC > 2) {
         recordUnknown(result, i, j, *kind, DependenceReason::UnsupportedAccessShape);
+        emitDynamicBoundsHazards(result, i, j, *kind, commonLoops);
         return;
     }
+    size_t unknownBefore = result.unknownDependences.size();
     if (!modelCarriedPairRoots(result, i, j, *kind, pi, pj, model)) {
+        if (result.unknownDependences.size() != unknownBefore) {
+            emitDynamicBoundsHazards(result, i, j, *kind, commonLoops);
+        }
         return;
     }
 
