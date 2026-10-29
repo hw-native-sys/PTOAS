@@ -1,0 +1,89 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+
+// RUN: ptoas --pto-arch=a5 --pto-level=level3 --pto-backend=vpto --emit-vpto %s -o - | FileCheck %s
+// RUN: ptoas --pto-arch=a5 --pto-level=level3 --pto-backend=vpto --emit-vpto-llvm-ir %s -o - | FileCheck %s --check-prefix=LLVM
+
+// Issue #1653: signless scalar/vector min/max for multiple integer widths.
+module attributes {pto.target_arch = "a5", pto.kernel_kind = #pto.kernel_kind<vector>} {
+
+  func.func @minmax_i8(%src: !pto.ptr<i8, ub>, %dst: !pto.ptr<i8, ub>,
+      %scalar: i8) attributes {pto.kernel} {
+    %c0 = arith.constant 0 : index
+    %count = arith.constant 256 : index
+    %all_bits = arith.constant -1 : i8
+    %vec = pto.vmi.vload %src[%c0] : !pto.ptr<i8, ub> -> !pto.vmi.vreg<256xi8>
+    %mask = pto.vmi.create_mask %count : index -> !pto.vmi.mask<256xpred>
+    %max = pto.vmi.vmaxs %vec, %scalar, %mask
+        : !pto.vmi.vreg<256xi8>, i8, !pto.vmi.mask<256xpred> -> !pto.vmi.vreg<256xi8>
+    %min = pto.vmi.vmins %max, %all_bits, %mask
+        : !pto.vmi.vreg<256xi8>, i8, !pto.vmi.mask<256xpred> -> !pto.vmi.vreg<256xi8>
+    pto.vmi.vstore %min, %dst[%c0] : !pto.vmi.vreg<256xi8>, !pto.ptr<i8, ub>
+    return
+  }
+
+  func.func @minmax_i16(%src: !pto.ptr<i16, ub>, %dst: !pto.ptr<i16, ub>,
+      %scalar: i16) attributes {pto.kernel} {
+    %c0 = arith.constant 0 : index
+    %count = arith.constant 128 : index
+    %all_bits = arith.constant -1 : i16
+    %vec = pto.vmi.vload %src[%c0] : !pto.ptr<i16, ub> -> !pto.vmi.vreg<128xi16>
+    %mask = pto.vmi.create_mask %count : index -> !pto.vmi.mask<128xpred>
+    %max = pto.vmi.vmaxs %vec, %scalar, %mask
+        : !pto.vmi.vreg<128xi16>, i16, !pto.vmi.mask<128xpred> -> !pto.vmi.vreg<128xi16>
+    %min = pto.vmi.vmins %max, %all_bits, %mask
+        : !pto.vmi.vreg<128xi16>, i16, !pto.vmi.mask<128xpred> -> !pto.vmi.vreg<128xi16>
+    pto.vmi.vstore %min, %dst[%c0] : !pto.vmi.vreg<128xi16>, !pto.ptr<i16, ub>
+    return
+  }
+
+  func.func @minmax_i32(%src: !pto.ptr<i32, ub>, %dst: !pto.ptr<i32, ub>,
+      %scalar: i32) attributes {pto.kernel} {
+    %c0 = arith.constant 0 : index
+    %count = arith.constant 64 : index
+    %all_bits = arith.constant -1 : i32
+    %vec = pto.vmi.vload %src[%c0] : !pto.ptr<i32, ub> -> !pto.vmi.vreg<64xi32>
+    %mask = pto.vmi.create_mask %count : index -> !pto.vmi.mask<64xpred>
+    %max = pto.vmi.vmaxs %vec, %scalar, %mask
+        : !pto.vmi.vreg<64xi32>, i32, !pto.vmi.mask<64xpred> -> !pto.vmi.vreg<64xi32>
+    %min = pto.vmi.vmins %max, %all_bits, %mask
+        : !pto.vmi.vreg<64xi32>, i32, !pto.vmi.mask<64xpred> -> !pto.vmi.vreg<64xi32>
+    pto.vmi.vstore %min, %dst[%c0] : !pto.vmi.vreg<64xi32>, !pto.ptr<i32, ub>
+    return
+  }
+
+// CHECK-LABEL: func.func @minmax_i8(
+// CHECK: pto.vmaxs {{.*}} : !pto.vreg<256xui8>, ui8,
+// CHECK: pto.vmins {{.*}} : !pto.vreg<256xui8>, ui8,
+// CHECK-NOT: pto.vmi.
+// LLVM-LABEL: define void @minmax_i8_mix_aiv(
+// LLVM: call {{.*}} @llvm.hivm.vmaxs.u.
+// LLVM: call {{.*}} @llvm.hivm.vmins.u.
+// LLVM-SAME: i8 -1,
+// LLVM-NOT: unrealized_conversion_cast
+
+// CHECK-LABEL: func.func @minmax_i16(
+// CHECK: pto.vmaxs {{.*}} : !pto.vreg<128xui16>, ui16,
+// CHECK: pto.vmins {{.*}} : !pto.vreg<128xui16>, ui16,
+// CHECK-NOT: pto.vmi.
+// LLVM-LABEL: define void @minmax_i16_mix_aiv(
+// LLVM: call {{.*}} @llvm.hivm.vmaxs.u.
+// LLVM: call {{.*}} @llvm.hivm.vmins.u.
+// LLVM-SAME: i16 -1,
+// LLVM-NOT: unrealized_conversion_cast
+
+// CHECK-LABEL: func.func @minmax_i32(
+// CHECK: pto.vmaxs {{.*}} : !pto.vreg<64xui32>, ui32,
+// CHECK: pto.vmins {{.*}} : !pto.vreg<64xui32>, ui32,
+// CHECK-NOT: pto.vmi.
+// LLVM-LABEL: define void @minmax_i32_mix_aiv(
+// LLVM: call {{.*}} @llvm.hivm.vmaxs.u.
+// LLVM: call {{.*}} @llvm.hivm.vmins.u.
+// LLVM-SAME: i32 -1,
+// LLVM-NOT: unrealized_conversion_cast
+}

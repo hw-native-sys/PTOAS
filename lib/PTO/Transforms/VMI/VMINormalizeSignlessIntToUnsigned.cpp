@@ -100,6 +100,35 @@ static void insertNormalizeCastAfter(Operation *op, OpResult result,
   result.replaceAllUsesExcept(bitcast, bitcast.getDefiningOp());
 }
 
+/// Only max/min scalars track vector element signedness; shift amounts do not.
+static bool isVecScalarWithTrackedScalar(Operation *op) {
+  return isa<pto::VMIMaxSOp, pto::VMIMinSOp>(op);
+}
+
+/// Preserve scalar bits with a boundary cast, removed during LLVM lowering.
+static bool normalizeTrackedScalarOperand(Operation *op,
+                                          PatternRewriter &rewriter) {
+  if (!isVecScalarWithTrackedScalar(op)) {
+    return false;
+  }
+  // VMI_VecScalarOp operand order is (src, scalar, mask).
+  OpOperand &scalarOperand = op->getOpOperand(1);
+  Value scalar = scalarOperand.get();
+  auto intTy = dyn_cast<IntegerType>(scalar.getType());
+  if (!intTy || !intTy.isSignless()) {
+    return false;
+  }
+  auto unsignedTy = IntegerType::get(rewriter.getContext(), intTy.getWidth(),
+                                     IntegerType::Unsigned);
+  rewriter.setInsertionPoint(op);
+  Value cast =
+      rewriter
+          .create<UnrealizedConversionCastOp>(op->getLoc(), unsignedTy, scalar)
+          .getResult(0);
+  scalarOperand.set(cast);
+  return true;
+}
+
 // ---------------------------------------------------------------------------
 // Normalization pattern — applied to each whitelisted op
 // ---------------------------------------------------------------------------
@@ -124,6 +153,11 @@ struct NormalizeSignlessPattern : public RewritePattern {
         continue;
       Value cast = insertNormalizeCastBefore(op, v, rewriter);
       use.set(cast);
+      changed = true;
+    }
+
+    // Keep max/min scalars consistent with the normalized vector elements.
+    if (normalizeTrackedScalarOperand(op, rewriter)) {
       changed = true;
     }
 

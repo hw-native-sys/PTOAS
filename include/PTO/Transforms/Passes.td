@@ -1391,11 +1391,14 @@ def VMINormalizeSignlessIntToUnsigned :
       "Normalize signless integer element types on whitelisted VMI ops to "
       "unsigned by wrapping their vreg operands/results in pto.vmi.bitcast";
   let description = [{
-    Walks whitelisted VMI ops (currently pto.vmi.vdhist / pto.vmi.vchist)
-    and rewrites any VMIVReg operand or result whose element type is a
-    signless integer into the equivalent unsigned integer at the op's
-    boundary, using pto.vmi.bitcast to preserve the surrounding IR's type
-    contract. Downstream verifiers and lowerings therefore see only
+    Walks whitelisted VMI ops (min/max, right shifts, selected conversions,
+    integer min/max reductions, and vdhist/vchist) and rewrites any VMIVReg
+    operand or result whose element type is a signless integer into the
+    equivalent unsigned integer at the op's boundary, using pto.vmi.bitcast
+    to preserve the surrounding IR's type contract. For pto.vmi.vmaxs/vmins,
+    matching signless integer scalar operands are also converted to the same-
+    width unsigned type with bit-preserving unrealized_conversion_cast
+    operations. Downstream verifiers and lowerings therefore see only
     unsigned-typed whitelisted ops, matching the "signless == unsigned"
     convention at the VMI layer while leaving non-whitelisted IR untouched.
   }];
