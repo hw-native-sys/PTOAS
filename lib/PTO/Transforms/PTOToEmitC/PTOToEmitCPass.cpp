@@ -936,7 +936,7 @@ static AICORE inline void PTOAS__DCCI_SINGLE_CACHE_LINE(Ptr ptr) {
       builder.create<emitc::VerbatimOp>(
           loc, builder.getStringAttr(R"cpp(
 template <typename To, typename From>
-static inline To ptoas_bitcast(From from) {
+static AICORE inline To ptoas_bitcast(From from) {
   static_assert(sizeof(To) == sizeof(From), "ptoas_bitcast: size mismatch");
   To to;
   __builtin_memcpy(&to, &from, sizeof(To));

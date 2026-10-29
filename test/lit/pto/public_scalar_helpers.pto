@@ -11,6 +11,9 @@
 
 // General GCC/Clang builtins are distinct from CCE-private backend entry points.
 // Keep remainder precision and bit-preserving conversion in the generated audit.
+// Scalar FP32 max/min lower NaN and signed-zero handling through the bitcast
+// helper, so both the AICORE caller and the helper itself must stay device
+// qualified for the AscendC device compiler.
 module {
   func.func @scalar_helpers(%lhs: f32, %rhs: f32) -> i32 {
     %rem = arith.remf %lhs, %rhs : f32
@@ -25,7 +28,18 @@ module {
     %rem = arith.remf %lhs, %rhs : f16
     return %rem : f16
   }
+  func.func @maximum_f32(%lhs: f32, %rhs: f32) -> f32 {
+    %max = arith.maximumf %lhs, %rhs : f32
+    return %max : f32
+  }
+  func.func @minimum_f32(%lhs: f32, %rhs: f32) -> f32 {
+    %min = arith.minimumf %lhs, %rhs : f32
+    return %min : f32
+  }
 }
+// CHECK: template <typename To, typename From>
+// CHECK-NOT: static inline To ptoas_bitcast
+// CHECK: static AICORE inline To ptoas_bitcast(From from) {
 // CHECK: __builtin_memcpy(&to, &from, sizeof(To));
 // CHECK-LABEL: scalar_helpers(
 // CHECK: __builtin_fmodf(
@@ -34,3 +48,7 @@ module {
 // CHECK: __builtin_fmod(
 // CHECK-LABEL: remainder_half(
 // CHECK: __builtin_fmodf(
+// CHECK-LABEL: AICORE float maximum_f32(
+// CHECK: ptoas_bitcast<uint32_t>(
+// CHECK-LABEL: AICORE float minimum_f32(
+// CHECK: ptoas_bitcast<uint32_t>(
