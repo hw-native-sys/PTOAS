@@ -18,6 +18,12 @@ from ._common import NUMERIC_DTYPES
 BLOCK_BYTE_SIZE = 32
 
 
+def _acc_to_mat_layout(dst):
+    if str(dst.dtype) == "f32" and dst.config.s_fractal_size == 512:
+        return ("nz2nz", 1)
+    return None
+
+
 def _acc_to_mat(src_kind, dst_kind, src_memory_space, dst_memory_space, src_config, dst_config, **_):
     return (
         src_kind == "tile"
@@ -289,6 +295,7 @@ def template_tinsert_acc_to_mat_basic(
         n_size,
         src.shape[0] * pto.bytewidth(src.dtype),
         dst.shape[0] * c0_size * elem_bytes,
+        layout=_acc_to_mat_layout(dst),
         pre_relu=_tinsert_pre_relu(),
     )
 
@@ -330,6 +337,7 @@ def template_tinsert_fp_acc_to_mat(
         n_size,
         src.shape[0] * pto.bytewidth(src.dtype),
         dst.shape[0] * c0_size * elem_bytes,
+        layout=_acc_to_mat_layout(dst),
         pre_quant=(fp.as_ptr(), _tinsert_fp_quant_mode(src.dtype, dst.dtype)),
         pre_relu=_tinsert_pre_relu(),
     )

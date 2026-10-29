@@ -1846,6 +1846,51 @@ class TileLibCatalogTest(unittest.TestCase):
                 self.assertEqual(selected.name, "template_tinsert_acc_to_mat_basic")
                 self.assertIn("pto.mte_l0c_l1", selected.specialize(**specs).mlir_text())
 
+    def test_tinsert_acc_to_mat_f32_fractal_512_uses_nz_channel_split(self):
+        common = {
+            "src": TileSpec(
+                shape=(16, 16), dtype=ScalarType("f32"), memory_space="acc",
+                b_layout="col_major", s_layout="row_major",
+            ),
+            "index_row": ScalarSpec(dtype=ScalarType("i32"), value=0),
+            "index_col": ScalarSpec(dtype=ScalarType("i32"), value=0),
+        }
+        for fractal in (512, 1024):
+            with self.subTest(fractal=fractal):
+                specs = {
+                    **common,
+                    "dst": TileSpec(
+                        shape=(16, 16), dtype=ScalarType("f32"), memory_space="mat",
+                        b_layout="col_major", s_layout="row_major", s_fractal_size=fractal,
+                    ),
+                }
+                rendered = select("pto.tinsert", "a5", specs).specialize(**specs).mlir_text()
+                self.assertIn("pto.mte_l0c_l1", rendered)
+                if fractal == 512:
+                    self.assertRegex(rendered, r"%([0-9]+) = pto.constant 1 : i64(?:.|\n)*nz2nz\(%\1\)")
+                else:
+                    self.assertNotIn("nz2nz(", rendered)
+
+    def test_tinsert_fp_acc_to_mat_f32_fractal_512_uses_nz_channel_split(self):
+        specs = {
+            "src": TileSpec(
+                shape=(16, 16), dtype=ScalarType("f32"), memory_space="acc",
+                b_layout="col_major", s_layout="row_major",
+            ),
+            "index_row": ScalarSpec(dtype=ScalarType("i32"), value=0),
+            "index_col": ScalarSpec(dtype=ScalarType("i32"), value=0),
+            "dst": TileSpec(
+                shape=(16, 16), dtype=ScalarType("f32"), memory_space="mat",
+                b_layout="col_major", s_layout="row_major", s_fractal_size=512,
+            ),
+            "fp": TileSpec(shape=(1, 16), dtype=ScalarType("f32"), memory_space="scaling"),
+        }
+        selected = select("pto.tinsert", "a5", specs)
+        self.assertEqual(selected.name, "template_tinsert_fp_acc_to_mat")
+        rendered = selected.specialize(**specs).mlir_text()
+        self.assertIn("pre_quant(", rendered)
+        self.assertRegex(rendered, r"%([0-9]+) = pto.constant 1 : i64(?:.|\n)*nz2nz\(%\1\)")
+
     def test_tinsert_acc_to_vec_nd_basic_renders(self):
         cases = (
             ("template_tinsert_acc_to_vec_nd_basic", "f16", "row_major", "none_box"),

@@ -48,6 +48,7 @@ from ptoas.mlir.ir import Attribute, InsertionPoint, Location, Module, StringAtt
 class _TemplateTileConfig:
     b_layout: str
     s_layout: str
+    s_fractal_size: int
 
 
 class _TemplateTile(TileValue):
@@ -76,6 +77,7 @@ class _TemplateTile(TileValue):
         self._template_config = _TemplateTileConfig(
             b_layout=spec.b_layout,
             s_layout=spec.s_layout,
+            s_fractal_size=spec.s_fractal_size,
         )
         self.pad_value = getattr(spec, "pad_value", "Null")
 
