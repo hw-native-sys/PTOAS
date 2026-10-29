@@ -519,6 +519,22 @@ enum class UNIT_FLAG {
   ENABLED_ONLY_LAST_ITER,
   ENABLED_ONLY_FIRST_AND_LAST_ITERS
 };
+
+// Unit-flag metadata carried by an operation's semantic phase.  This is kept
+// separate from the legacy UNIT_FLAG state, which describes event priming for
+// loop boundaries rather than PTO matmul/store phases.
+enum class UFRole {
+  None,
+  MatmulProducer,
+  AccStore,
+};
+
+struct UFInfo {
+  UFRole role{UFRole::None};
+  std::optional<pto::AccPhase> accPhase;
+  std::optional<pto::STPhase> stPhase;
+  SmallVector<const BaseMemInfo *, 4> accAccesses;
+};
  
 // 核心节点：代表一个计算或搬运指令
 class CompoundInstanceElement : public InstanceElement {
@@ -538,6 +554,7 @@ public:
   UNIT_FLAG unitFlagModeAsWait{UNIT_FLAG::DISABLED};
   CompoundInstanceElement *linkedUnitFlagCompAsSet{nullptr};
   CompoundInstanceElement *linkedUnitFlagCompAsWait{nullptr};
+  UFInfo ufInfo;
   // Macro-like operations may be represented by multiple SyncIR compounds that
   // point at the same source operation. The phase id distinguishes those
   // synthetic compounds without changing the source IR.

@@ -125,6 +125,15 @@ private:
   bool IsMemInfoHasDependency(CompoundInstanceElement *nowCompound,
                               CompoundInstanceElement *frontCompound,
                               DepBaseMemInfoPairVec &depBaseMemInfosVec);
+
+  /// Return true only when PTO unit-flag semantics cover this exact memory
+  /// dependency. Unknown aliases, branches, and loop-carried dependencies are
+  /// intentionally conservative.
+  bool IsUFCoveredDependency(
+      const CompoundInstanceElement *nowCompound,
+      const CompoundInstanceElement *frontCompound,
+      const std::pair<const BaseMemInfo *, const BaseMemInfo *> &dependency,
+      const std::optional<unsigned> &forEndIndex) const;
  
   /// 实际创建 SyncOperation 对象并插入列表
   void InsertSyncOperation(const CompoundInstanceElement *nowCompound,
@@ -156,6 +165,20 @@ private:
       const CompoundInstanceElement *frontCompound,
       const DepBaseMemInfoPairVec &depBaseMemInfosVec,
       const std::optional<unsigned> &forEndIndex) const;
+
+  /// Drop dependency pairs whose ACC portion is already ordered by a UF phase;
+  /// any remaining pair keeps the group's event synchronization.
+  void DropUFCoveredDeps(CompoundInstanceElement *nowCompound,
+                         CompoundInstanceElement *frontCompound,
+                         DepBaseMemInfoPairVec &depVec,
+                         const std::optional<unsigned> &forEndIndex) const;
+
+  /// True when any request event id (1..N-1) already has a recorded sync.
+  bool IsAlreadySyncedForAnyEventId(
+      CompoundInstanceElement *nowCompound,
+      CompoundInstanceElement *frontCompound,
+      const DepBaseMemInfoPairVec &depVec,
+      SyncRecordList &syncRecordList) const;
 
   /// 更新 SyncRecord (当插入新同步后)
   void UpdateAlreadySync(const SyncOps &syncVector,

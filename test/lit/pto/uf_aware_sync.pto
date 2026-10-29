@@ -1,0 +1,94 @@
+// RUN: ptoas --pto-arch=a5 --enable-insert-sync --emit-pto-ir %s 2>&1 | FileCheck %s
+
+!left = !pto.tile_buf<loc=left, dtype=f16, rows=32, cols=32, v_row=32, v_col=32, blayout=row_major, slayout=row_major, fractal=512, pad=0>
+!right = !pto.tile_buf<loc=right, dtype=f16, rows=32, cols=32, v_row=32, v_col=32, blayout=row_major, slayout=col_major, fractal=512, pad=0>
+!acc = !pto.tile_buf<loc=acc, dtype=f32, rows=32, cols=32, v_row=32, v_col=32, blayout=col_major, slayout=row_major, fractal=1024, pad=0>
+!out = !pto.partition_tensor_view<32x32xf32>
+
+module attributes {pto.target_arch = "a5"} {
+  func.func @uf_m_to_fix(%out: !out) {
+    %lhs = pto.alloc_tile : !left
+    %rhs = pto.alloc_tile : !right
+    %acc = pto.alloc_tile : !acc
+    pto.tmatmul ins(%lhs, %rhs : !left, !right) outs(%acc : !acc)
+      {accPhase = #pto<acc_phase final>}
+    pto.tstore ins(%acc : !acc) outs(%out : !out)
+      {stPhase = #pto<st_phase partial>}
+    return
+  }
+
+  func.func @uf_fix_to_m(%out: !out) {
+    %lhs = pto.alloc_tile : !left
+    %rhs = pto.alloc_tile : !right
+    %acc = pto.alloc_tile : !acc
+    pto.tstore ins(%acc : !acc) outs(%out : !out)
+      {stPhase = #pto<st_phase final>}
+    pto.tmatmul.acc ins(%acc, %lhs, %rhs : !acc, !left, !right) outs(%acc : !acc)
+      {accPhase = #pto<acc_phase partial>}
+    return
+  }
+
+  func.func @uf_unspecified(%out: !out) {
+    %lhs = pto.alloc_tile : !left
+    %rhs = pto.alloc_tile : !right
+    %acc = pto.alloc_tile : !acc
+    pto.tmatmul ins(%lhs, %rhs : !left, !right) outs(%acc : !acc)
+    pto.tstore ins(%acc : !acc) outs(%out : !out)
+    return
+  }
+
+  // Two Final producers publish the same core-wide unit-flag token. The store
+  // of the second accumulator must keep its explicit M->FIX event: the token
+  // check can be satisfied by the first publication while the second matmul is
+  // still writing its accumulator.
+  func.func @uf_two_producers(%out: !out) {
+    %lhs = pto.alloc_tile : !left
+    %rhs = pto.alloc_tile : !right
+    %acc0 = pto.alloc_tile : !acc
+    %acc1 = pto.alloc_tile : !acc
+    pto.tmatmul ins(%lhs, %rhs : !left, !right) outs(%acc0 : !acc)
+      {accPhase = #pto<acc_phase final>}
+    pto.tmatmul ins(%lhs, %rhs : !left, !right) outs(%acc1 : !acc)
+      {accPhase = #pto<acc_phase final>}
+    pto.tstore ins(%acc1 : !acc) outs(%out : !out)
+      {stPhase = #pto<st_phase final>}
+    return
+  }
+
+  // Inside a loop the back-edge event is needed anyway and the intra-iteration
+  // drop buys nothing, so the M->FIX event stays exactly as before.
+  func.func @uf_loop_pair(%out: !out) {
+    %c0 = arith.constant 0 : index
+    %c4 = arith.constant 4 : index
+    %c1 = arith.constant 1 : index
+    %lhs = pto.alloc_tile : !left
+    %rhs = pto.alloc_tile : !right
+    %acc = pto.alloc_tile : !acc
+    scf.for %i = %c0 to %c4 step %c1 {
+      pto.tmatmul ins(%lhs, %rhs : !left, !right) outs(%acc : !acc)
+        {accPhase = #pto<acc_phase final>}
+      pto.tstore ins(%acc : !acc) outs(%out : !out)
+        {stPhase = #pto<st_phase final>}
+    }
+    return
+  }
+}
+
+// The phase-aware pairs are covered by UF and therefore do not create M/FIX
+// events. The unspecified pair remains conservative.
+// CHECK-LABEL: func.func @uf_m_to_fix
+// CHECK-NOT: pto.set_flag[<PIPE_M>, <PIPE_FIX>
+// CHECK-NOT: pto.wait_flag[<PIPE_M>, <PIPE_FIX>
+// CHECK-LABEL: func.func @uf_fix_to_m
+// CHECK-NOT: pto.set_flag[<PIPE_FIX>, <PIPE_M>
+// CHECK-NOT: pto.wait_flag[<PIPE_FIX>, <PIPE_M>
+// CHECK-LABEL: func.func @uf_unspecified
+// CHECK: pto.set_flag[<PIPE_M>, <PIPE_FIX>
+// CHECK: pto.wait_flag[<PIPE_M>, <PIPE_FIX>
+// CHECK-LABEL: func.func @uf_two_producers
+// CHECK: pto.set_flag[<PIPE_M>, <PIPE_FIX>
+// CHECK: pto.wait_flag[<PIPE_M>, <PIPE_FIX>
+// CHECK-LABEL: func.func @uf_loop_pair
+// CHECK: pto.set_flag[<PIPE_M>, <PIPE_FIX>
+// CHECK: pto.wait_flag[<PIPE_M>, <PIPE_FIX>
+// CHECK-NOT: pto.barrier <PIPE_M>

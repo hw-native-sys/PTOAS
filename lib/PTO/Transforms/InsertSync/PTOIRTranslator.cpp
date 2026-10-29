@@ -177,6 +177,51 @@ static bool isLocalAddressSpace(pto::AddressSpace space) {
          space != pto::AddressSpace::Zero;
 }
 
+static bool isAccValue(Value value) {
+  auto tileType = dyn_cast<pto::TileBufType>(value.getType());
+  if (!tileType) {
+    return false;
+  }
+  auto addressSpace = dyn_cast_or_null<pto::AddressSpaceAttr>(
+      tileType.getMemorySpace());
+  return addressSpace && addressSpace.getAddressSpace() == pto::AddressSpace::ACC;
+}
+
+static void appendUniqueAccAccesses(
+    SmallVectorImpl<const BaseMemInfo *> &accAccesses,
+    ArrayRef<const BaseMemInfo *> accesses) {
+  for (const BaseMemInfo *access : accesses) {
+    if (access && access->scope == pto::AddressSpace::ACC &&
+        !llvm::is_contained(accAccesses, access)) {
+      accAccesses.push_back(access);
+    }
+  }
+}
+
+static void populateUFInfo(Operation *op, CompoundInstanceElement &compound) {
+  if (auto matmul = dyn_cast<pto::TMatmulOp>(op)) {
+    compound.ufInfo.role = UFRole::MatmulProducer;
+    compound.ufInfo.accPhase = matmul.getAccPhase();
+  } else if (auto matmul = dyn_cast<pto::TMatmulAccOp>(op)) {
+    compound.ufInfo.role = UFRole::MatmulProducer;
+    compound.ufInfo.accPhase = matmul.getAccPhase();
+  } else if (auto matmul = dyn_cast<pto::TMatmulBiasOp>(op)) {
+    compound.ufInfo.role = UFRole::MatmulProducer;
+    compound.ufInfo.accPhase = matmul.getAccPhase();
+  } else if (auto store = dyn_cast<pto::TStoreOp>(op)) {
+    if (isAccValue(store.getSrc())) {
+      compound.ufInfo.role = UFRole::AccStore;
+      compound.ufInfo.stPhase = store.getStPhase();
+    }
+  }
+
+  if (compound.ufInfo.role == UFRole::MatmulProducer ||
+      compound.ufInfo.role == UFRole::AccStore) {
+    appendUniqueAccAccesses(compound.ufInfo.accAccesses, compound.defVec);
+    appendUniqueAccAccesses(compound.ufInfo.accAccesses, compound.useVec);
+  }
+}
+
 static pto::AddressSpace getPointerLikeAddressSpace(Type type) {
   if (auto space = pto::getPTOAddressSpaceAttr(type)) {
     return space.getAddressSpace();
@@ -1093,6 +1138,7 @@ void PTOIRTranslator::UpdatePTOOpInfoWithPipeline(Operation *op,
   auto compoundElement = std::make_unique<CompoundInstanceElement>(
       index, defVec, useVec, pipe, op->getName());
   compoundElement->elementOp = op;
+  populateUFInfo(op, *compoundElement);
 
   // 4. 设置 Core Type (用于区分 Cube/Vector 资源)
   // Matmul (M) 和 L1->L0 搬运 (MTE1) 通常涉及 Cube 资源

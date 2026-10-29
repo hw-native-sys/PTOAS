@@ -341,6 +341,7 @@ void InsertSyncAnalysis::InsertBackForSync(
       nowCompound->kPipeValue, nowCompound->opName);
   backCompound->compoundCoreType = nowCompound->compoundCoreType;
   backCompound->elementOp = nowCompound->elementOp;
+  backCompound->ufInfo = nowCompound->ufInfo;
 
   auto *backCompoundPtr = backCompound.get();
   backSyncIr.emplace_back(std::move(backCompound));
@@ -893,6 +894,59 @@ static bool isForwardDepDroppableBySlotAffine(const BaseMemInfo *a,
          SlotRelation::kDisjoint;
 }
 
+// Drops *same-iteration* (forward) dependency pairs that the affine analysis
+// proves touch disjoint multi-buffer slots in every iteration of the loop.
+// Subviews still use a single conservative memory range on backedges, so
+// pruning their forward edges inside a loop would change event priming
+// without a slot-keyed event model; keep the existing loop behavior.
+static void dropForwardSlotDisjointDeps(
+    const CompoundInstanceElement *nowCompound,
+    const CompoundInstanceElement *frontCompound,
+    DepBaseMemInfoPairVec &depVec) {
+  const bool allowSubviewSlots = isOutsideLoops(nowCompound->elementOp) &&
+                                 isOutsideLoops(frontCompound->elementOp);
+  auto isDroppable = [allowSubviewSlots](
+                         const std::pair<const BaseMemInfo *, const BaseMemInfo *>
+                             &pair) {
+    return isForwardDepDroppableBySlotAffine(pair.first, pair.second,
+                                             allowSubviewSlots);
+  };
+  depVec.erase(std::remove_if(depVec.begin(), depVec.end(), isDroppable),
+               depVec.end());
+}
+
+// Drops carried dependency pairs whose two iterations provably touch disjoint
+// memory. This case only arrives on the back-edge pass, which the forward drop
+// deliberately does not look at.
+static void dropCarriedDisjointDeps(
+    const SyncIRs &syncIR, const CompoundInstanceElement *nowCompound,
+    const CompoundInstanceElement *frontCompound,
+    DepBaseMemInfoPairVec &depVec,
+    const std::optional<unsigned> &forEndIndex) {
+  scf::ForOp carryingFor = carryingForOf(syncIR, forEndIndex);
+  // InsertBackForSync first scans the copied slice with forEndIndex set, but
+  // those pairs are still in the same iteration. Only its second scan uses an
+  // original syncIR_ consumer to compare different iterations.
+  const bool isCarriedTraversal =
+      syncIR[nowCompound->GetIndex()].get() == nowCompound;
+  auto isDroppableCarried =
+      [&](const std::pair<const BaseMemInfo *, const BaseMemInfo *> &pair) {
+        // Unlike the self-only GM proof, disjoint UB rows may be accessed by
+        // different operations, including mutually exclusive branch writers.
+        // The row proof excludes reuse at every positive iteration distance.
+        if (isCarriedTraversal && pair.first && pair.second &&
+            areSubviewIterationsDisjoint(pair.first->baseBuffer,
+                                         pair.second->baseBuffer,
+                                         carryingFor)) {
+          return true;
+        }
+        return isCarriedSelfDepAffineDisjoint(nowCompound, frontCompound, pair,
+                                              carryingFor);
+      };
+  depVec.erase(std::remove_if(depVec.begin(), depVec.end(), isDroppableCarried),
+               depVec.end());
+}
+
 void InsertSyncAnalysis::MemAnalyze(
     CompoundInstanceElement *nowCompound, CompoundInstanceElement *frontCompound,
     SyncRecordList &syncRecordList,
@@ -913,15 +967,7 @@ void InsertSyncAnalysis::MemAnalyze(
     // per-slot syncing through the dyn-event-id pipeline, so a slot-disjointness
     // argument does not transfer to the back edge.
     if (!forEndIndex.has_value()) {
-        // Subviews still use a single conservative memory range on backedges.
-        // Pruning their forward edges inside a loop would change event priming
-        // without a slot-keyed event model. Keep the existing loop behavior.
-        bool allowSubviewSlots = isOutsideLoops(nowCompound->elementOp) &&
-                                 isOutsideLoops(frontCompound->elementOp);
-        auto isDroppable = [allowSubviewSlots](const std::pair<const BaseMemInfo *, const BaseMemInfo *> &pair) {
-            return isForwardDepDroppableBySlotAffine(pair.first, pair.second, allowSubviewSlots);
-        };
-        depVec.erase(std::remove_if(depVec.begin(), depVec.end(), isDroppable), depVec.end());
+        dropForwardSlotDisjointDeps(nowCompound, frontCompound, depVec);
         if (depVec.empty()) {
             return;
         }
@@ -931,42 +977,251 @@ void InsertSyncAnalysis::MemAnalyze(
     // from the forward drop above because this case only arrives on the back-edge pass,
     // which the forward drop deliberately does not look at.
     if (forEndIndex.has_value()) {
-        scf::ForOp carryingFor = carryingForOf(syncIR_, forEndIndex);
-        // InsertBackForSync first scans the copied slice with forEndIndex set,
-        // but those pairs are still in the same iteration. Only its second scan
-        // uses an original syncIR_ consumer to compare different iterations.
-        bool isCarriedTraversal = syncIR_[nowCompound->GetIndex()].get() == nowCompound;
-        auto isDroppableCarried = [&](const std::pair<const BaseMemInfo *, const BaseMemInfo *> &pair) {
-            // Unlike the self-only GM proof, disjoint UB rows may be accessed by
-            // different operations, including mutually exclusive branch writers.
-            // The row proof excludes reuse at every positive iteration distance.
-            if (isCarriedTraversal && pair.first && pair.second &&
-                areSubviewIterationsDisjoint(pair.first->baseBuffer, pair.second->baseBuffer, carryingFor)) {
-                return true;
-            }
-            return isCarriedSelfDepAffineDisjoint(nowCompound, frontCompound, pair, carryingFor);
-        };
-        depVec.erase(std::remove_if(depVec.begin(), depVec.end(), isDroppableCarried), depVec.end());
+        dropCarriedDisjointDeps(syncIR_, nowCompound, frontCompound, depVec,
+                                forEndIndex);
         if (depVec.empty()) {
             return;
         }
+    }
+
+    // A UF phase covers only the ACC portion of a dependency. Keep any other
+    // dependency pair in the group so a matmul with additional scratch/bias
+    // accesses still receives the required event synchronization.
+    DropUFCoveredDeps(nowCompound, frontCompound, depVec, forEndIndex);
+    if (depVec.empty()) {
+        return;
     }
 
     if (CanPrunePipeVBarrier(nowCompound, frontCompound, depVec, forEndIndex)) {
         return;
     }
 
-    if (forEndIndex.has_value()) {
-        int eventIdNum = GetEventIdNum(depVec);
-        for (int i = 1; i < eventIdNum; i++) {
-            if (isAlreadySync(nowCompound, frontCompound, syncRecordList, static_cast<unsigned>(i))) {
-                return;
-            }
-        }
+    // InsertBackForSync reuses the request event ids; stop once any of them is
+    // already recorded for this pair.
+    const bool alreadySynced =
+        forEndIndex.has_value() &&
+        IsAlreadySyncedForAnyEventId(nowCompound, frontCompound, depVec,
+                                     syncRecordList);
+    if (alreadySynced) {
+        return;
     }
 
     InsertSyncOperation(nowCompound, frontCompound, depVec, forEndIndex);
     UpdateSyncRecordInfo(frontCompound, syncRecordList);
+}
+
+void InsertSyncAnalysis::DropUFCoveredDeps(
+    CompoundInstanceElement *nowCompound,
+    CompoundInstanceElement *frontCompound,
+    DepBaseMemInfoPairVec &depVec,
+    const std::optional<unsigned> &forEndIndex) const {
+    depVec.erase(
+        std::remove_if(depVec.begin(), depVec.end(), [&](const auto &dependency) {
+          return IsUFCoveredDependency(nowCompound, frontCompound, dependency,
+                                       forEndIndex);
+        }),
+        depVec.end());
+}
+
+bool InsertSyncAnalysis::IsAlreadySyncedForAnyEventId(
+    CompoundInstanceElement *nowCompound,
+    CompoundInstanceElement *frontCompound,
+    const DepBaseMemInfoPairVec &depVec,
+    SyncRecordList &syncRecordList) const {
+    const int eventIdNum = GetEventIdNum(depVec);
+    for (int i = 1; i < eventIdNum; i++) {
+        if (isAlreadySync(nowCompound, frontCompound, syncRecordList,
+                          static_cast<unsigned>(i))) {
+            return true;
+        }
+    }
+    return false;
+}
+
+static bool hasUFAccAccess(const CompoundInstanceElement *compound,
+                           const BaseMemInfo *access) {
+  return compound && access &&
+         llvm::is_contained(compound->ufInfo.accAccesses, access);
+}
+
+static bool sameUFControlFlowContext(Operation *lhs, Operation *rhs) {
+  if (!lhs || !rhs) {
+    return false;
+  }
+  using ControlContext = std::pair<Operation *, Region *>;
+  SmallVector<ControlContext, 4> lhsContext;
+  SmallVector<ControlContext, 4> rhsContext;
+  auto collectContext = [](Operation *element,
+                            SmallVectorImpl<ControlContext> &context) {
+    Region *region = element->getParentRegion();
+    Operation *op = element->getParentOp();
+    for (; op; op = op->getParentOp()) {
+      if (isa<scf::IfOp, scf::ForOp, scf::WhileOp>(op)) {
+        context.emplace_back(op, region);
+      }
+      if (op->getParentRegion()) {
+        region = op->getParentRegion();
+      }
+    }
+  };
+  collectContext(lhs, lhsContext);
+  collectContext(rhs, rhsContext);
+  return lhsContext == rhsContext;
+}
+
+static bool sameUFAccRegion(const CompoundInstanceElement *nowCompound,
+                            const CompoundInstanceElement *frontCompound,
+                            const BaseMemInfo *nowAccess,
+                            const BaseMemInfo *frontAccess) {
+  if (!nowAccess || !frontAccess ||
+      nowAccess->scope != pto::AddressSpace::ACC ||
+      frontAccess->scope != pto::AddressSpace::ACC ||
+      nowAccess->aliasesUnknownRange || frontAccess->aliasesUnknownRange ||
+      nowAccess->rootBuffer != frontAccess->rootBuffer ||
+      nowAccess->baseAddresses.empty() || frontAccess->baseAddresses.empty() ||
+      nowAccess->allocateSize == 0 || frontAccess->allocateSize == 0 ||
+      !hasUFAccAccess(nowCompound, nowAccess) ||
+      !hasUFAccAccess(frontCompound, frontAccess)) {
+    return false;
+  }
+
+  // The dependency was already established by MemAlias. Requiring the exact
+  // root, a bounded range, and the same access records prevents UF from
+  // masking an imprecise or cross-allocation alias.
+  return true;
+}
+
+// A Final-phase matmul produces the accumulator that a subsequent ACC store
+// writes out: the unit flag orders exactly this PIPE_M -> PIPE_FIX hand-off.
+static bool isUFMatmulToAccStore(const CompoundInstanceElement *matmul,
+                                 const CompoundInstanceElement *store) {
+  return matmul && store &&
+         matmul->kPipeValue == PipelineType::PIPE_M &&
+         store->kPipeValue == PipelineType::PIPE_FIX &&
+         matmul->ufInfo.role == UFRole::MatmulProducer &&
+         store->ufInfo.role == UFRole::AccStore &&
+         matmul->ufInfo.accPhase &&
+         *matmul->ufInfo.accPhase == pto::AccPhase::Final &&
+         store->ufInfo.stPhase &&
+         *store->ufInfo.stPhase != pto::STPhase::Unspecified;
+}
+
+// The symmetric hand-off: a Final-phase ACC store publishes the accumulator
+// that the following matmul consumes.
+static bool isUFAccStoreToMatmul(const CompoundInstanceElement *store,
+                                 const CompoundInstanceElement *matmul) {
+  return store && matmul &&
+         store->kPipeValue == PipelineType::PIPE_FIX &&
+         matmul->kPipeValue == PipelineType::PIPE_M &&
+         store->ufInfo.role == UFRole::AccStore &&
+         matmul->ufInfo.role == UFRole::MatmulProducer &&
+         store->ufInfo.stPhase &&
+         *store->ufInfo.stPhase == pto::STPhase::Final &&
+         matmul->ufInfo.accPhase &&
+         *matmul->ufInfo.accPhase != pto::AccPhase::Unspecified;
+}
+
+// The A5 unit flag is one producer/consumer token per core, not a per-tile
+// state: a MAD with a Final accumulate phase publishes it (check_and_set) and a
+// fixpipe with a Final store phase consumes and clears it (check_and_clear).
+// The phases are only 2-bit control fields on those instructions, so a pairwise
+// role/phase match proves that both ends speak the protocol, not that
+// `frontCompound` is the publication `nowCompound` observes. Two Final matmuls
+// publish the same token, and a store that follows both can pass its check on
+// the first publication while the second producer is still writing.
+enum class UFTokenAction { None, Publish, Consume };
+
+static UFTokenAction getUFTokenAction(const CompoundInstanceElement &compound) {
+  const UFInfo &ufInfo = compound.ufInfo;
+  if (ufInfo.role == UFRole::MatmulProducer && ufInfo.accPhase &&
+      *ufInfo.accPhase == pto::AccPhase::Final) {
+    return UFTokenAction::Publish;
+  }
+  if (ufInfo.role == UFRole::AccStore && ufInfo.stPhase &&
+      *ufInfo.stPhase == pto::STPhase::Final) {
+    return UFTokenAction::Consume;
+  }
+  return UFTokenAction::None;
+}
+
+// True when the token state proves that `frontCompound` is the hand-off
+// counterpart of `nowCompound`: nothing may publish or consume between the
+// pair, and walking back from the producer the nearest publish/consume must be
+// the opposite action, i.e. the token is clean when the producer publishes (or,
+// for the reverse direction, published when the store consumes). Reaching the
+// start of the region means no stale token state can be pending. Phased
+// operations that only observe the token (Partial phases) leave the state
+// alone and do not break the hand-off.
+static bool isUFHandoffAdjacent(const SyncIRs &syncIR,
+                                const CompoundInstanceElement &frontCompound,
+                                const CompoundInstanceElement &nowCompound) {
+  const unsigned frontIndex = frontCompound.GetIndex();
+  const unsigned nowIndex = nowCompound.GetIndex();
+  if (frontIndex >= nowIndex || nowIndex >= syncIR.size()) {
+    return false;
+  }
+  const UFTokenAction frontAction = getUFTokenAction(frontCompound);
+  if (frontAction == UFTokenAction::None) {
+    return false;
+  }
+  for (unsigned index = frontIndex + 1; index < nowIndex; ++index) {
+    auto *compound =
+        dyn_cast_or_null<CompoundInstanceElement>(syncIR[index].get());
+    const bool mutatesToken =
+        compound && getUFTokenAction(*compound) != UFTokenAction::None;
+    if (mutatesToken) {
+      return false;
+    }
+  }
+  for (unsigned index = frontIndex; index > 0; --index) {
+    auto *compound =
+        dyn_cast_or_null<CompoundInstanceElement>(syncIR[index - 1].get());
+    if (!compound) {
+      continue;
+    }
+    const UFTokenAction action = getUFTokenAction(*compound);
+    if (action != UFTokenAction::None) {
+      return action != frontAction;
+    }
+  }
+  return true;
+}
+
+bool InsertSyncAnalysis::IsUFCoveredDependency(
+    const CompoundInstanceElement *nowCompound,
+    const CompoundInstanceElement *frontCompound,
+    const std::pair<const BaseMemInfo *, const BaseMemInfo *> &dependency,
+    const std::optional<unsigned> &forEndIndex) const {
+  if (!nowCompound || !frontCompound || forEndIndex.has_value()) {
+    return false;
+  }
+  if (nowCompound->kPipeValue == frontCompound->kPipeValue ||
+      !sameUFControlFlowContext(nowCompound->elementOp,
+                                frontCompound->elementOp)) {
+    return false;
+  }
+  // Inside a loop the forward pair is still joined by the back-edge event that
+  // the loop itself needs, and dropping the intra-iteration dependency changes
+  // the sync-record bookkeeping enough to add a PIPE_M barrier per iteration
+  // without saving any event. Keep the explicit sync there and take the UF
+  // proof on straight-line code only.
+  const bool outsideLoops = isOutsideLoops(frontCompound->elementOp) &&
+                            isOutsideLoops(nowCompound->elementOp);
+  if (!outsideLoops) {
+    return false;
+  }
+  const bool matmulThenStore =
+      isUFMatmulToAccStore(frontCompound, nowCompound);
+  const bool storeThenMatmul =
+      isUFAccStoreToMatmul(frontCompound, nowCompound);
+  if (!matmulThenStore && !storeThenMatmul) {
+    return false;
+  }
+  if (!isUFHandoffAdjacent(syncIR_, *frontCompound, *nowCompound)) {
+    return false;
+  }
+  return sameUFAccRegion(nowCompound, frontCompound, dependency.first,
+                         dependency.second);
 }
 
 
