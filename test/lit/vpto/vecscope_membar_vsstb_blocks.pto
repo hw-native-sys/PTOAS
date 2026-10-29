@@ -1,0 +1,133 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+
+// RUN: pto-test-opt --pto-insert-vecscope-membar %s -o %t
+// RUN: FileCheck %s < %t
+// RUN: pto-test-opt --pto-insert-vecscope-membar %t | FileCheck %s
+
+module {
+  func.func @gap(%v: !pto.vreg<64xf32>) {
+    %addr = arith.constant 0 : i64
+    %ub = pto.castptr %addr : i64 -> !pto.ptr<f32, ub>
+    %bs = arith.constant 2 : i16
+    %rs = arith.constant 0 : i16
+    %offset = arith.constant 8 : index
+    pto.vecscope {
+      %mask = pto.pset_b32 "PAT_ALL" : !pto.mask<b32>
+      pto.vsstb %v, %ub, %bs, %rs, %mask : !pto.vreg<64xf32>, !pto.ptr<f32, ub>, i16, i16, !pto.mask<b32>
+      %x = pto.vlds %ub[%offset] {dist = "BRC_B32"} : !pto.ptr<f32, ub> -> !pto.vreg<64xf32>
+    }
+    return
+  }
+// CHECK-LABEL: func.func @gap(
+// CHECK: pto.vsstb
+// CHECK-NOT: pto.mem_bar
+// CHECK: pto.vlds
+  func.func @overlap(%v: !pto.vreg<64xf32>) {
+    %addr = arith.constant 0 : i64
+    %ub = pto.castptr %addr : i64 -> !pto.ptr<f32, ub>
+    %bs = arith.constant 2 : i16
+    %rs = arith.constant 0 : i16
+    %offset = arith.constant 16 : index
+    pto.vecscope {
+      %mask = pto.pset_b32 "PAT_ALL" : !pto.mask<b32>
+      pto.vsstb %v, %ub, %bs, %rs, %mask : !pto.vreg<64xf32>, !pto.ptr<f32, ub>, i16, i16, !pto.mask<b32>
+      %x = pto.vlds %ub[%offset] {dist = "BRC_B32"} : !pto.ptr<f32, ub> -> !pto.vreg<64xf32>
+    }
+    return
+  }
+// CHECK-LABEL: func.func @overlap(
+// CHECK: pto.vsstb
+// CHECK: pto.mem_bar "VST_VLD"
+// CHECK: pto.vlds
+  func.func @repeat_offset(%v: !pto.vreg<64xf32>) {
+    %addr = arith.constant 0 : i64
+    %ub = pto.castptr %addr : i64 -> !pto.ptr<f32, ub>
+    %bs = arith.constant 2 : i16
+    %rs = arith.constant 2 : i16
+    %offset = arith.constant 0 : index
+    pto.vecscope {
+      %mask = pto.pset_b32 "PAT_ALL" : !pto.mask<b32>
+      pto.vsstb %v, %ub, %bs, %rs, %mask : !pto.vreg<64xf32>, !pto.ptr<f32, ub>, i16, i16, !pto.mask<b32>
+      %x = pto.vlds %ub[%offset] {dist = "BRC_B32"} : !pto.ptr<f32, ub> -> !pto.vreg<64xf32>
+    }
+    return
+  }
+// CHECK-LABEL: func.func @repeat_offset(
+// CHECK: pto.vsstb
+// CHECK-NOT: pto.mem_bar
+// CHECK: pto.vlds
+  func.func @repeat_overlap(%v: !pto.vreg<64xf32>) {
+    %addr = arith.constant 0 : i64
+    %ub = pto.castptr %addr : i64 -> !pto.ptr<f32, ub>
+    %bs = arith.constant 2 : i16
+    %rs = arith.constant 2 : i16
+    %offset = arith.constant 16 : index
+    pto.vecscope {
+      %mask = pto.pset_b32 "PAT_ALL" : !pto.mask<b32>
+      pto.vsstb %v, %ub, %bs, %rs, %mask : !pto.vreg<64xf32>, !pto.ptr<f32, ub>, i16, i16, !pto.mask<b32>
+      %x = pto.vlds %ub[%offset] {dist = "BRC_B32"} : !pto.ptr<f32, ub> -> !pto.vreg<64xf32>
+    }
+    return
+  }
+// CHECK-LABEL: func.func @repeat_overlap(
+// CHECK: pto.vsstb
+// CHECK: pto.mem_bar "VST_VLD"
+// CHECK: pto.vlds
+  func.func @post_current(%v: !pto.vreg<64xf32>) {
+    %addr = arith.constant 0 : i64
+    %ub = pto.castptr %addr : i64 -> !pto.ptr<f32, ub>
+    %bs = arith.constant 2 : i16
+    %rs = arith.constant 2 : i16
+    %offset = arith.constant 0 : index
+    pto.vecscope {
+      %mask = pto.pset_b32 "PAT_ALL" : !pto.mask<b32>
+      %next = pto.vsstb %v, %ub, %bs, %rs, %mask : !pto.vreg<64xf32>, !pto.ptr<f32, ub>, i16, i16, !pto.mask<b32> -> !pto.ptr<f32, ub>
+      %x = pto.vlds %ub[%offset] {dist = "BRC_B32"} : !pto.ptr<f32, ub> -> !pto.vreg<64xf32>
+    }
+    return
+  }
+// CHECK-LABEL: func.func @post_current(
+// CHECK: pto.vsstb
+// CHECK: pto.mem_bar "VST_VLD"
+// CHECK: pto.vlds
+  func.func @post_gap(%v: !pto.vreg<64xf32>) {
+    %addr = arith.constant 0 : i64
+    %ub = pto.castptr %addr : i64 -> !pto.ptr<f32, ub>
+    %bs = arith.constant 2 : i16
+    %rs = arith.constant 2 : i16
+    %offset = arith.constant 8 : index
+    pto.vecscope {
+      %mask = pto.pset_b32 "PAT_ALL" : !pto.mask<b32>
+      %next = pto.vsstb %v, %ub, %bs, %rs, %mask : !pto.vreg<64xf32>, !pto.ptr<f32, ub>, i16, i16, !pto.mask<b32> -> !pto.ptr<f32, ub>
+      %x = pto.vlds %ub[%offset] {dist = "BRC_B32"} : !pto.ptr<f32, ub> -> !pto.vreg<64xf32>
+    }
+    return
+  }
+// CHECK-LABEL: func.func @post_gap(
+// CHECK: pto.vsstb
+// CHECK-NOT: pto.mem_bar
+// CHECK: pto.vlds
+  func.func @updated_pointer(%v: !pto.vreg<64xf32>) {
+    %addr = arith.constant 0 : i64
+    %ub = pto.castptr %addr : i64 -> !pto.ptr<f32, ub>
+    %bs = arith.constant 2 : i16
+    %rs = arith.constant 2 : i16
+    %offset = arith.constant 0 : index
+    pto.vecscope {
+      %mask = pto.pset_b32 "PAT_ALL" : !pto.mask<b32>
+      %next = pto.vsstb %v, %ub, %bs, %rs, %mask : !pto.vreg<64xf32>, !pto.ptr<f32, ub>, i16, i16, !pto.mask<b32> -> !pto.ptr<f32, ub>
+      %x = pto.vlds %next[%offset] {dist = "BRC_B32"} : !pto.ptr<f32, ub> -> !pto.vreg<64xf32>
+    }
+    return
+  }
+// CHECK-LABEL: func.func @updated_pointer(
+// CHECK: pto.vsstb
+// CHECK: pto.mem_bar "VST_VLD"
+// CHECK: pto.vlds
+}

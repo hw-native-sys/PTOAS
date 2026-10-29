@@ -1,0 +1,82 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+
+// RUN: ptoas --pto-arch=a5 --pto-backend=vpto --emit-vpto --enable-vecscope-mem-bar %s -o - 2>/dev/null | FileCheck %s
+
+// Cancelled terms must merge with recurrence and initializer terms, even at nonzero lower bounds.
+module {
+  func.func @cancelled_iv_offset(%v: !pto.vreg<64xf32>) {
+    %z = arith.constant 0 : index
+    %one = arith.constant 1 : index
+    %two = arith.constant 2 : index
+    %three = arith.constant 3 : index
+    %c64 = arith.constant 64 : index
+    %addr = arith.constant 0 : i64
+    %p = pto.castptr %addr : i64 -> !pto.ptr<f32, ub>
+    %daddr = arith.constant 4096 : i64
+    %d = pto.castptr %daddr : i64 -> !pto.ptr<f32, ub>
+    pto.vecscope {
+      %m = pto.pset_b32 "PAT_ALL" : !pto.mask<b32>
+      %end = scf.for %i = %one to %three step %one iter_args(%q = %p) -> (!pto.ptr<f32, ub>) {
+        %t3 = arith.muli %i, %three : index
+        %t2 = arith.muli %i, %two : index
+        %t1 = arith.subi %t3, %t2 : index
+        %off = arith.subi %t1, %i : index
+        pto.vsts %v, %q[%off], %m : !pto.vreg<64xf32>, !pto.ptr<f32, ub>, !pto.mask<b32>
+        %read = pto.vlds %q[%z] : !pto.ptr<f32, ub> -> !pto.vreg<64xf32>
+        pto.vsts %read, %d[%z], %m : !pto.vreg<64xf32>, !pto.ptr<f32, ub>, !pto.mask<b32>
+        %next = pto.addptr %q, %c64 : <f32, ub> -> <f32, ub>
+        scf.yield %next : !pto.ptr<f32, ub>
+      }
+    }
+    return
+  }
+
+  func.func @cancelled_init_offset(%v: !pto.vreg<64xf32>) {
+    %z = arith.constant 0 : index
+    %one = arith.constant 1 : index
+    %two = arith.constant 2 : index
+    %three = arith.constant 3 : index
+    %c64 = arith.constant 64 : index
+    %addr = arith.constant 0 : i64
+    %p = pto.castptr %addr : i64 -> !pto.ptr<f32, ub>
+    %daddr = arith.constant 4096 : i64
+    %d = pto.castptr %daddr : i64 -> !pto.ptr<f32, ub>
+    pto.vecscope {
+      %m = pto.pset_b32 "PAT_ALL" : !pto.mask<b32>
+      scf.for %outer = %one to %three step %one {
+        %outer_offset = arith.muli %outer, %c64 : index
+        %base = pto.addptr %p, %outer_offset : <f32, ub> -> <f32, ub>
+        %end = scf.for %i = %one to %three step %one iter_args(%q = %base) -> (!pto.ptr<f32, ub>) {
+          %t3 = arith.muli %outer, %three : index
+          %t2 = arith.muli %outer, %two : index
+          %t1 = arith.subi %t3, %t2 : index
+          %off = arith.subi %t1, %outer : index
+          pto.vsts %v, %q[%off], %m : !pto.vreg<64xf32>, !pto.ptr<f32, ub>, !pto.mask<b32>
+          %read = pto.vlds %q[%z] : !pto.ptr<f32, ub> -> !pto.vreg<64xf32>
+          pto.vsts %read, %d[%z], %m : !pto.vreg<64xf32>, !pto.ptr<f32, ub>, !pto.mask<b32>
+          %next = pto.addptr %q, %c64 : <f32, ub> -> <f32, ub>
+          scf.yield %next : !pto.ptr<f32, ub>
+        }
+      }
+    }
+    return
+  }
+
+}
+
+
+// CHECK-LABEL: func.func @cancelled_iv_offset(
+// CHECK: pto.vsts
+// CHECK-NEXT: pto.mem_bar "VST_VLD"
+// CHECK-NEXT: {{.*}}pto.vlds
+
+// CHECK-LABEL: func.func @cancelled_init_offset(
+// CHECK: pto.vsts
+// CHECK-NEXT: pto.mem_bar "VST_VLD"
+// CHECK-NEXT: {{.*}}pto.vlds

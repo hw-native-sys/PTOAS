@@ -39,10 +39,9 @@ namespace {
 using llvm::StringRef;
 
 enum class BishengVFAutoSyncMode {
-  Unspecified,
-  Off,
-  Fused,
-  Global,
+    Off,
+    Fused,
+    Global,
 };
 
 static llvm::cl::opt<bool> enableSimtFastMath(
@@ -53,8 +52,8 @@ static llvm::cl::opt<bool> enableSimtFastMath(
 
 static llvm::cl::opt<BishengVFAutoSyncMode> bishengVFAutoSyncMode(
     "bisheng-vf-auto-sync",
-    llvm::cl::desc("Explicit Bisheng VF auto-sync mode for VPTO device "
-                   "compilation; omit to use the toolchain default"),
+    llvm::cl::desc("Bisheng VF auto-sync mode for VPTO device "
+                   "compilation (default: off)"),
     llvm::cl::value_desc("off|fused|global"),
     llvm::cl::values(clEnumValN(BishengVFAutoSyncMode::Off, "off",
                                 "Disable Bisheng VF auto-sync"),
@@ -62,7 +61,7 @@ static llvm::cl::opt<BishengVFAutoSyncMode> bishengVFAutoSyncMode(
                                 "Use Bisheng fused VF auto-sync"),
                      clEnumValN(BishengVFAutoSyncMode::Global, "global",
                                 "Use Bisheng global VF auto-sync")),
-    llvm::cl::init(BishengVFAutoSyncMode::Unspecified));
+    llvm::cl::init(BishengVFAutoSyncMode::Off));
 
 static bool runCommandWithStderr(llvm::StringRef program,
                                  llvm::ArrayRef<std::string> ownedArgs,
@@ -774,8 +773,6 @@ buildDeviceCompileArgs(llvm::StringRef targetCPU, llvm::StringRef bishengPath,
         "-cce-dyn-kernel-stack-size=true",
     };
     switch (bishengVFAutoSyncMode) {
-        case BishengVFAutoSyncMode::Unspecified:
-            break;
         case BishengVFAutoSyncMode::Off:
             args.append({"-mllvm", "-cce-vf-auto-sync=off"});
             break;

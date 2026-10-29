@@ -191,56 +191,6 @@ static std::optional<MemBarKind> hazardKind(const AccessOccurrence& producer, co
     return std::nullopt; // RAR
 }
 
-// Compare two operations in the lexical order of the vecscope, including
-// operations nested in loops. `Operation::isBeforeInBlock` only accepts
-// siblings, while the dependency graph also needs to reason about a barrier
-// in one region ordering an access in a nested or sibling region.
-static bool isLexicallyBefore(Operation* lhs, Operation* rhs, Operation* scope)
-{
-    if (!lhs || !rhs || lhs == rhs) {
-        return false;
-    }
-
-    SmallVector<Operation*, 8> lhsAncestors;
-    for (Operation* op = lhs; op; op = op->getParentOp()) {
-        lhsAncestors.push_back(op);
-        if (op == scope) {
-            break;
-        }
-    }
-    SmallVector<Operation*, 8> rhsAncestors;
-    for (Operation* op = rhs; op; op = op->getParentOp()) {
-        rhsAncestors.push_back(op);
-        if (op == scope) {
-            break;
-        }
-    }
-
-    Operation* common = nullptr;
-    for (Operation* op : lhsAncestors) {
-        if (llvm::is_contained(rhsAncestors, op)) {
-            common = op;
-            break;
-        }
-    }
-    if (!common) {
-        return false;
-    }
-
-    auto childUnder = [&](Operation* op) {
-        while (op && op->getParentOp() != common) {
-            op = op->getParentOp();
-        }
-        return op;
-    };
-    Operation* lhsChild = childUnder(lhs);
-    Operation* rhsChild = childUnder(rhs);
-    if (!lhsChild || !rhsChild || lhsChild->getBlock() != rhsChild->getBlock()) {
-        return false;
-    }
-    return lhsChild->isBeforeInBlock(rhsChild);
-}
-
 // Collect enclosing loop IVs (outermost first) within the vecscope boundary.
 // Memory-bar analysis is scoped to a single `pto.vecscope`: any loop outside
 // that scope is invisible to it, so the walk stops at `scope` (exclusive).
@@ -329,38 +279,52 @@ static std::optional<unsigned> loopIdForIV(const VecScopeMemBarAnalysisResult& r
 }
 
 static void recordUnknown(
-    VecScopeMemBarAnalysisResult& result, unsigned i, unsigned j, MemBarKind kind, DependenceReason reason)
+    VecScopeMemBarAnalysisResult& result, unsigned i, unsigned j, MemBarKind kind, DependenceReason reason,
+    VecScopeHazardScope scope = VecScopeHazardScope::SameIteration, std::optional<unsigned> carryingLoop = {})
 {
-    result.unknownDependences.push_back({i, j, kind, reason});
+    result.unknownDependences.push_back({i, j, kind, reason, scope, carryingLoop});
 }
 
-// Dynamic loop bounds cannot currently be represented by the constant-domain
-// model below. Preserve correctness by covering every shared carrying loop;
-// other modelling failures remain Unknown and do not drive placement.
-static void emitDynamicBoundsHazards(
-    VecScopeMemBarAnalysisResult& result, unsigned i, unsigned j, MemBarKind kind, ArrayRef<unsigned> loopIds)
+static VecScopeHazardScope carriedScopeAt(unsigned level, unsigned numCommonLoops)
 {
-    for (auto [index, loopId] : llvm::enumerate(loopIds)) {
-        MemoryHazard h;
-        h.id = result.hazards.size();
-        h.producer = i;
-        h.consumer = j;
-        h.kind = kind;
-        h.scope =
-            index + 1 == loopIds.size() ? VecScopeHazardScope::InnerLoopCarried : VecScopeHazardScope::OuterLoopCarried;
-        h.carryingLoop = loopId;
-        h.distance.positive = true;
-        result.hazards.push_back(h);
+    return level + 1 == numCommonLoops ? VecScopeHazardScope::InnerLoopCarried
+                                       : VecScopeHazardScope::OuterLoopCarried;
+}
+
+// Record an unknown carried dependence on every shared loop.
+static void recordUnknownOnLoops(
+    VecScopeMemBarAnalysisResult& result, unsigned i, unsigned j, MemBarKind kind, DependenceReason reason,
+    ArrayRef<unsigned> loopIds)
+{
+    for (auto [level, loopId] : llvm::enumerate(loopIds)) {
+        recordUnknown(result, i, j, kind, reason, carriedScopeAt(level, loopIds.size()), loopId);
     }
 }
 
-static std::optional<unsigned> innermostLoopId(const VecScopeMemBarAnalysisResult& r, Value iv)
+// An unknown dependence cannot justify omitting synchronization: turn every
+// entry recorded since `begin` into a conservative hazard.
+static void materializeUnknownDependences(VecScopeMemBarAnalysisResult& result, Operation* scope, unsigned begin)
 {
-    return loopIdForIV(r, iv);
-}
-static std::optional<unsigned> outermostLoopId(const VecScopeMemBarAnalysisResult& r, Value iv)
-{
-    return loopIdForIV(r, iv);
+    for (unsigned u = begin; u < result.unknownDependences.size(); ++u) {
+        const UnknownDependence& d = result.unknownDependences[u];
+        MemoryHazard h;
+        h.id = result.hazards.size();
+        h.producer = d.producer;
+        h.consumer = d.consumer;
+        h.kind = d.kind;
+        h.scope = d.scope;
+        if (d.scope == VecScopeHazardScope::SameIteration) {
+            Operation* consumerOp = result.accesses[d.consumer].op;
+            h.sameIterationAnchor = findSameIterationAnchor(result.accesses[d.producer].op, consumerOp, scope);
+            if (!h.sameIterationAnchor) {
+                h.sameIterationAnchor = consumerOp;
+            }
+        } else {
+            h.carryingLoop = d.carryingLoop;
+            h.distance.positive = true;
+        }
+        result.hazards.push_back(h);
+    }
 }
 
 // Build a flat schedule tree: root Sequence, with loops as children carrying
@@ -514,6 +478,15 @@ static bool sequentialRootsComparable(const VecScopeMemoryFootprint& P, const Ve
     return true;
 }
 
+// A relation currently has dimensions for IVs only. Never silently discard
+// opaque index terms that were retained for same-iteration cancellation.
+static bool hasOnlyIVTerms(const VecScopeMemoryFootprint& footprint, ArrayRef<Value> ivs)
+{
+    return llvm::all_of(footprint.byteOffset.coefficients, [&](const auto& term) {
+        return term.second == 0 || llvm::is_contained(ivs, term.first);
+    });
+}
+
 // Resolved loop-nest layout of a sequential-region access pair. Dual-set
 // dims are [p0.., c0..]; single-set dims are [v0..] with v shared.
 struct SequentialOverlapLayout {
@@ -536,16 +509,15 @@ struct SequentialOverlapLayout {
 //  (c) pi and pj share a common prefix but diverge (producer and consumer in
 //      sibling loops): dual IV sets [pi..., pj...], shared prefix constrained
 //      equal, non-shared IVs independent.
-// Returns false when a nest is too deep or a loop has a non-constant domain.
+// Returns false when a loop has a non-constant domain. Presburger relations
+// are not limited to two dimensions; the small-vector inline capacity only
+// avoids allocation for the common shallow-nest case.
 static bool resolveSequentialIVLayout(
     const VecScopeMemBarAnalysisResult& result, const AccessOccurrence& prod, const AccessOccurrence& cons,
     SequentialOverlapLayout& layout)
 {
     layout.pi = collectIVs(prod.op, result.scope);
     layout.pj = collectIVs(cons.op, result.scope);
-    if (layout.pi.size() > 2 || layout.pj.size() > 2) {
-        return false;
-    }
     layout.common = commonLoopPrefix(prod, cons);
     bool prefixP = layout.pi.size() <= layout.pj.size() && layout.common.size() == layout.pi.size();
     bool prefixC = layout.pj.size() <= layout.pi.size() && layout.common.size() == layout.pj.size();
@@ -699,6 +671,9 @@ static DependenceStatus analyzeSequentialOverlap(
     if (!resolveSequentialIVLayout(result, prod, cons, layout)) {
         return DependenceStatus::Unknown;
     }
+    if (!hasOnlyIVTerms(P, layout.pi) || !hasOnlyIVTerms(C, layout.pj)) {
+        return DependenceStatus::Unknown;
+    }
     auto poly = buildSequentialPolyhedron(result, layout);
     if (!poly) {
         return DependenceStatus::Unknown;
@@ -788,9 +763,20 @@ static bool collectAccessOccurrences(Operation* scope, VecScopeMemBarAnalysisRes
         }
         occ.kind = (*maybe).kind;
         occ.unit = (*maybe).unit;
-        occ.footprint = footprintFromDescriptor(*maybe, ivs);
         recordEnclosingLoopNest(result, ivs, occ);
-        result.accesses.push_back(occ);
+        if ((*maybe).blockByteOffsets.empty()) {
+            occ.footprint = footprintFromDescriptor(*maybe, ivs);
+            result.accesses.push_back(occ);
+        } else {
+            for (int64_t offset : (*maybe).blockByteOffsets) {
+                auto piece = *maybe;
+                AffineByteExpr displacement;
+                displacement.constant = offset;
+                piece.byteOffset.combine(displacement);
+                occ.footprint = footprintFromDescriptor(piece, ivs);
+                result.accesses.push_back(occ);
+            }
+        }
     });
     return !anyFailed;
 }
@@ -832,8 +818,21 @@ static void enumerateSequentialHazards(
     const unsigned N = A.size();
     for (unsigned i = 0; i < N; ++i) {
         for (unsigned j = i + 1; j < N; ++j) {
+            // Pieces of one block-strided instruction execute as one access.
+            if (A[i].op == A[j].op) {
+                continue;
+            }
             auto kind = hazardKind(A[i], A[j]);
             if (!kind) {
+                continue;
+            }
+
+            // A same-iteration proof of disjointness is sound regardless of
+            // whether the loop-carried model can represent the surrounding
+            // nest. In particular, distinct proven allocations must not be
+            // turned into conservative barriers merely because the sequential
+            // Presburger model has no shared root.
+            if (aliasSameIteration(A[i].footprint, A[j].footprint) == VecScopeAliasResult::NoAlias) {
                 continue;
             }
 
@@ -934,29 +933,31 @@ static void addSSADataEdges(const VecScopeMemBarAnalysisResult& result, Ordering
     }
 }
 
-// Every store of `storeUnit` before the cut is ordered before every load of
-// `loadUnit` after it: the barrier's producer unit selects which stores the
-// cut orders, and its consumer unit selects which loads.
+// A generated barrier executes immediately before its placement anchor.
+// Only use endpoints in that block: lexical order across a conditional or
+// zero-trip region does not prove that the barrier executes between them.
 static void addCutOrderingEdges(
-    ArrayRef<AccessOccurrence> A, unsigned cut, VecScopeAccessUnit storeUnit, VecScopeAccessUnit loadUnit,
+    ArrayRef<AccessOccurrence> A, Operation* anchor, VecScopeAccessUnit storeUnit, VecScopeAccessUnit loadUnit,
     OrderingEdges& edges)
 {
-    for (unsigned store = 0; store < cut; ++store) {
-        if (A[store].kind != VecScopeAccessKind::Store || A[store].unit != storeUnit) {
+    for (unsigned store = 0; store < A.size(); ++store) {
+        if (A[store].kind != VecScopeAccessKind::Store || A[store].unit != storeUnit ||
+            A[store].op->getBlock() != anchor->getBlock() || !A[store].op->isBeforeInBlock(anchor)) {
             continue;
         }
-        for (unsigned load = cut; load < A.size(); ++load) {
-            if (A[load].kind == VecScopeAccessKind::Load && A[load].unit == loadUnit) {
+        for (unsigned load = 0; load < A.size(); ++load) {
+            if (A[load].kind == VecScopeAccessKind::Load && A[load].unit == loadUnit &&
+                A[load].op->getBlock() == anchor->getBlock() &&
+                (A[load].op == anchor || anchor->isBeforeInBlock(A[load].op))) {
                 addOrderingEdge(edges, store, load);
             }
         }
     }
 }
 
-// A store-to-load barrier is placed before its consumer load. It orders
-// all stores of the producer's unit preceding that cut before later loads
-// of the consumer's unit, not merely the particular store/load pair that
-// caused the barrier.
+// Use the same anchor as placement, including enclosing consumer loops.
+// Its block and position, rather than the consumer access index, determine
+// which store/load pairs may use the generated barrier as an ordering proof.
 static void addHazardCutEdges(const VecScopeMemBarAnalysisResult& result, OrderingEdges& edges)
 {
     const auto& A = result.accesses;
@@ -974,29 +975,36 @@ static void addHazardCutEdges(const VecScopeMemBarAnalysisResult& result, Orderi
         VecScopeAccessUnit loadUnit = h.kind == MemBarKind::VST_VLD || h.kind == MemBarKind::ST_VLD ?
                                           VecScopeAccessUnit::Vector :
                                           VecScopeAccessUnit::Scalar;
-        addCutOrderingEdges(A, h.consumer, storeUnit, loadUnit, edges);
+        Operation* anchor = h.sameIterationAnchor ? h.sameIterationAnchor : A[h.consumer].op;
+        addCutOrderingEdges(A, anchor, storeUnit, loadUnit, edges);
     }
 }
 
-// Every store before the barrier is ordered before every load after it.
+// Only use an existing barrier as an ordering witness within its own block.
+// Lexical order across regions does not prove execution: an scf.if arm may
+// not run, and even an scf.for body can execute zero times. Restrict both
+// endpoints so a conditional fence cannot suppress an unconditional WAR cut.
+// Cross-region proofs require control-flow reasoning and remain conservative.
 // Both units are derived from the barrier kind's family: the family's
 // first letter is the store unit, its second letter the load unit.
 static void addBarrierSpanEdges(
-    ArrayRef<AccessOccurrence> A, Operation* scope, const ExistingBarrier& barrier, OrderingEdges& edges)
+    ArrayRef<AccessOccurrence> A, const ExistingBarrier& barrier, OrderingEdges& edges)
 {
     const unsigned N = A.size();
     for (unsigned store = 0; store < N; ++store) {
         if (A[store].kind != VecScopeAccessKind::Store ||
             A[store].unit != (static_cast<unsigned>(barrier.kind) / 4 < 2 ? VecScopeAccessUnit::Vector :
                                                                             VecScopeAccessUnit::Scalar) ||
-            !isLexicallyBefore(A[store].op, barrier.op, scope)) {
+            A[store].op->getBlock() != barrier.op->getBlock() ||
+            !A[store].op->isBeforeInBlock(barrier.op)) {
             continue;
         }
         for (unsigned load = 0; load < N; ++load) {
             if (A[load].kind != VecScopeAccessKind::Load ||
                 A[load].unit != (static_cast<unsigned>(barrier.kind) / 4 % 2 == 0 ? VecScopeAccessUnit::Vector :
                                                                                     VecScopeAccessUnit::Scalar) ||
-                !isLexicallyBefore(barrier.op, A[load].op, scope)) {
+                A[load].op->getBlock() != barrier.op->getBlock() ||
+                !barrier.op->isBeforeInBlock(A[load].op)) {
                 continue;
             }
             addOrderingEdge(edges, store, load);
@@ -1009,7 +1017,7 @@ static void addBarrierSpanEdges(
 // contains the first half of a chain: a later WAR pair must be recognized
 // as ordered even though no new RAW hazard was materialized for that
 // barrier in this run.
-static void addExistingBarrierEdges(const VecScopeMemBarAnalysisResult& result, Operation* scope, OrderingEdges& edges)
+static void addExistingBarrierEdges(const VecScopeMemBarAnalysisResult& result, OrderingEdges& edges)
 {
     const auto& A = result.accesses;
     for (const auto& barrier : result.existingBarriers) {
@@ -1019,7 +1027,7 @@ static void addExistingBarrierEdges(const VecScopeMemBarAnalysisResult& result, 
             barrier.kind != MemBarKind::SS_ALL && barrier.kind != MemBarKind::VV_ALL) {
             continue;
         }
-        addBarrierSpanEdges(A, scope, barrier, edges);
+        addBarrierSpanEdges(A, barrier, edges);
     }
 }
 
@@ -1038,7 +1046,7 @@ static void resolvePendingWARHazards(
     OrderingEdges edges(N);
     addSSADataEdges(result, edges);
     addHazardCutEdges(result, edges);
-    addExistingBarrierEdges(result, scope, edges);
+    addExistingBarrierEdges(result, edges);
 
     for (const auto& [load, store] : pendingWAR) {
         if (reachesViaEdges(edges, load, store)) {
@@ -1192,13 +1200,17 @@ static RootRelation classifyRootRelation(
     return rel;
 }
 
-// Model the roots, byte sizes, and IV coefficients of a carried pair. Every
-// modelling failure is recorded as Unknown before returning false.
+// Model the roots, byte sizes, and IV coefficients of a carried pair. On
+// failure, `failure` names the unmodelled part.
 static bool modelCarriedPairRoots(
-    VecScopeMemBarAnalysisResult& result, unsigned i, unsigned j, MemBarKind kind, ArrayRef<Value> pi,
-    ArrayRef<Value> pj, CarriedPairModel& m)
+    const VecScopeMemBarAnalysisResult& result, unsigned i, unsigned j, ArrayRef<Value> pi, ArrayRef<Value> pj,
+    CarriedPairModel& m, DependenceReason& failure)
 {
     const auto& A = result.accesses;
+    if (!hasOnlyIVTerms(A[i].footprint, pi) || !hasOnlyIVTerms(A[j].footprint, pj)) {
+        failure = DependenceReason::DynamicUnmodelledExpression;
+        return false;
+    }
     bool sizesAndRootsKnown = modelCarriedRoot(A[i].footprint, m.constP) &&
                               modelCarriedRoot(A[j].footprint, m.constC) && A[i].footprint.byteSize &&
                               A[j].footprint.byteSize;
@@ -1207,14 +1219,12 @@ static bool modelCarriedPairRoots(
         m.sizeC = static_cast<int64_t>(*A[j].footprint.byteSize);
     }
     RootRelation rel = classifyRootRelation(A[i].footprint, A[j].footprint);
-    if (rel.distinctProvenAllocations) {
+    if (!rel.sameRoot && !rel.bothAbsolute) {
+        failure = DependenceReason::UnknownRoot;
         return false;
     }
-    if ((!rel.sameRoot && !rel.bothAbsolute) || !sizesAndRootsKnown) {
-        recordUnknown(
-            result, i, j, kind,
-            !rel.sameRoot && !rel.bothAbsolute ? DependenceReason::UnknownRoot :
-                                                 DependenceReason::UnsupportedAccessShape);
+    if (!sizesAndRootsKnown) {
+        failure = DependenceReason::UnsupportedAccessShape;
         return false;
     }
     for (unsigned k = 0; k < m.depthP; ++k) {
@@ -1225,21 +1235,21 @@ static bool modelCarriedPairRoots(
     }
     if (!convertToIterationCounters(m.coeffP, m.boundsP, m.constP) ||
         !convertToIterationCounters(m.coeffC, m.boundsC, m.constC)) {
-        recordUnknown(result, i, j, kind, DependenceReason::DynamicUnmodelledExpression);
+        failure = DependenceReason::DynamicUnmodelledExpression;
         return false;
     }
     return true;
 }
 
 // Evaluate a fully-constrained carried relation: an unmodelable address
-// intersection stays Unknown; a satisfiable relation proves a carried hazard
-// on `carryingLoop`.
+// intersection is Unknown; a satisfiable relation proves a carried hazard on
+// `carryingLoop`.
 static void recordCarriedQuery(
     IntegerPolyhedron& poly, const CarriedPairModel& m, VecScopeMemBarAnalysisResult& result, unsigned i, unsigned j,
     MemBarKind kind, VecScopeHazardScope scope, std::optional<unsigned> carryingLoop)
 {
     if (!addCarriedIntersection(poly, m)) {
-        recordUnknown(result, i, j, kind, DependenceReason::DynamicUnmodelledExpression);
+        recordUnknown(result, i, j, kind, DependenceReason::DynamicUnmodelledExpression, scope, carryingLoop);
         return;
     }
     if (poly.isIntegerEmpty()) {
@@ -1256,68 +1266,35 @@ static void recordCarriedQuery(
     result.hazards.push_back(h);
 }
 
-// ic0 > ip0.
-static void addCommonOuterGreater(IntegerPolyhedron& poly, const CarriedPairModel& m)
-{
-    SmallVector<int64_t> gt(m.numDims + 1, 0);
-    gt[carriedDimPos(m, false, 0)] += 1;
-    gt[carriedDimPos(m, true, 0)] -= 1;
-    gt.back() = -1;
-    poly.addInequality(gt);
-}
-
-// ---- Same-nest Rinner ----
-// depth==2: ic0 == ip0 && ic1 > ip1 => (ic0-ip0 == 0) && (ic1-ip1 >= 1)
-// depth==1: ic0 > ip0 => (ic0 - ip0 >= 1)
-static void queryInnerCarriedRelation(
+// Query each shared carrying loop independently. Earlier coordinates must
+// match; the carrying coordinate advances and all later coordinates are free.
+static void queryCarriedRelation(
     const CarriedPairModel& m, VecScopeMemBarAnalysisResult& result, unsigned i, unsigned j, MemBarKind kind,
-    std::optional<unsigned> carryingLoop)
+    ArrayRef<unsigned> commonLoops, unsigned level)
 {
-    const unsigned depth = m.depthP;
+    auto scope = carriedScopeAt(level, commonLoops.size());
     auto poly = buildCarriedBase(m);
     if (!poly) {
+        recordUnknown(result, i, j, kind, DependenceReason::UnsupportedAccessShape, scope, commonLoops[level]);
         return;
     }
-    if (depth == 2) {
-        // ic0 == ip0
+    for (unsigned k = 0; k < level; ++k) {
         SmallVector<int64_t> eq(m.numDims + 1, 0);
-        eq[carriedDimPos(m, true, 0)] -= 1;
-        eq[carriedDimPos(m, false, 0)] += 1;
-        poly->addInequality(eq); // ==0 via >=0 and <=0
-        SmallVector<int64_t> eq2(m.numDims + 1, 0);
-        eq2[carriedDimPos(m, true, 0)] += 1;
-        eq2[carriedDimPos(m, false, 0)] -= 1;
-        poly->addInequality(eq2);
-        // ic1 > ip1
-        SmallVector<int64_t> gt(m.numDims + 1, 0);
-        gt[carriedDimPos(m, false, 1)] += 1;
-        gt[carriedDimPos(m, true, 1)] -= 1;
-        gt.back() = -1;
-        poly->addInequality(gt);
-    } else {
-        addCommonOuterGreater(*poly, m);
+        eq[carriedDimPos(m, true, k)] = -1;
+        eq[carriedDimPos(m, false, k)] = 1;
+        poly->addEquality(eq);
     }
-    recordCarriedQuery(*poly, m, result, i, j, kind, VecScopeHazardScope::InnerLoopCarried, carryingLoop);
-}
-
-// ---- Outer-carried relation (same-nest Router and cross-hierarchy) ----
-// ic0 > ip0: the consumer runs in a strictly later iteration of the common
-// outer loop.
-static void queryOuterCarriedRelation(
-    const CarriedPairModel& m, VecScopeMemBarAnalysisResult& result, unsigned i, unsigned j, MemBarKind kind,
-    std::optional<unsigned> carryingLoop)
-{
-    auto poly = buildCarriedBase(m);
-    if (!poly) {
-        return;
-    }
-    addCommonOuterGreater(*poly, m);
-    recordCarriedQuery(*poly, m, result, i, j, kind, VecScopeHazardScope::OuterLoopCarried, carryingLoop);
+    SmallVector<int64_t> gt(m.numDims + 1, 0);
+    gt[carriedDimPos(m, false, level)] = 1;
+    gt[carriedDimPos(m, true, level)] = -1;
+    gt.back() = -1;
+    poly->addInequality(gt);
+    recordCarriedQuery(*poly, m, result, i, j, kind, scope, commonLoops[level]);
 }
 
 // Loop-carried RAW/WAW relations for one ordered pair (i, j) (including
 // self pairs). A relation is "empty" => no carried hazard; satisfiable =>
-// proven carried hazard; unmodelable => Unknown and no placement.
+// proven carried hazard; unmodelable => Unknown, materialized conservatively.
 static void analyzeLoopCarriedPair(VecScopeMemBarAnalysisResult& result, unsigned i, unsigned j, Operation* scope)
 {
     const auto& A = result.accesses;
@@ -1351,32 +1328,20 @@ static void analyzeLoopCarriedPair(VecScopeMemBarAnalysisResult& result, unsigne
     bool allConst = gatherConstBounds(result, pi, model.boundsP);
     allConst = gatherConstBounds(result, pj, model.boundsC) && allConst;
     if (!allConst) {
-        emitDynamicBoundsHazards(result, i, j, *kind, commonLoops);
+        recordUnknownOnLoops(result, i, j, *kind, DependenceReason::DynamicLoopBounds, commonLoops);
         return;
     }
-    if (model.depthP > 2 || model.depthC > 2) {
-        recordUnknown(result, i, j, *kind, DependenceReason::UnsupportedAccessShape);
+    if (classifyRootRelation(A[i].footprint, A[j].footprint).distinctProvenAllocations) {
         return;
     }
-    if (!modelCarriedPairRoots(result, i, j, *kind, pi, pj, model)) {
+    DependenceReason failure = DependenceReason::UnsupportedAccessShape;
+    if (!modelCarriedPairRoots(result, i, j, pi, pj, model, failure)) {
+        recordUnknownOnLoops(result, i, j, *kind, failure, commonLoops);
         return;
     }
 
-    // ---- Same-nest Rinner/Router ----
-    if (pi == pj) {
-        queryInnerCarriedRelation(model, result, i, j, *kind, innermostLoopId(result, pi.back()));
-    }
-    // ---- Same-nest Router (only depth==2) ----
-    if (pi == pj && model.depthP == 2) {
-        queryOuterCarriedRelation(model, result, i, j, *kind, outermostLoopId(result, pi.front()));
-    }
-    // ---- Cross-hierarchy outer-carried relation ----
-    // The common outer loop is the execution-order carrier. Independent
-    // inner-loop coordinates remain free in their respective domains; a
-    // dependence exists when a consumer instance in a later common-outer
-    // iteration overlaps a producer instance from an earlier one.
-    if (pi != pj) {
-        queryOuterCarriedRelation(model, result, i, j, *kind, commonLoops.front());
+    for (unsigned level = 0; level < commonLoops.size(); ++level) {
+        queryCarriedRelation(model, result, i, j, *kind, commonLoops, level);
     }
 }
 
@@ -1426,7 +1391,12 @@ FailureOr<VecScopeMemBarAnalysisResult> vecscopemembar::runVecScopeMemBarAnalysi
 
     SmallVector<std::pair<unsigned, unsigned>, 16> pendingWAR;
     enumerateSequentialHazards(result, scope, pendingWAR);
+    // Sequential unknowns become hazard cuts before WAR resolution so that a
+    // conservative barrier can still discharge a pending WAR chain.
+    materializeUnknownDependences(result, scope, 0);
     resolvePendingWARHazards(result, scope, pendingWAR);
+    unsigned carriedUnknownBegin = result.unknownDependences.size();
     enumerateLoopCarriedHazards(result, scope);
+    materializeUnknownDependences(result, scope, carriedUnknownBegin);
     return result;
 }

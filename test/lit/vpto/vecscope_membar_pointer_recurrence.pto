@@ -1,0 +1,148 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+
+// RUN: ptoas --pto-arch=a5 --pto-backend=vpto --emit-vpto --enable-vecscope-mem-bar %s -o - 2>/dev/null | FileCheck %s
+
+module {
+  // A 32-byte pointer advance keeps stores in different iterations disjoint; no fence is needed.
+  func.func @separated(%v: !pto.vreg<128xbf16>) {
+    %a = arith.constant 0 : i64
+    %p = pto.castptr %a : i64 -> !pto.ptr<bf16, ub>
+    %lb = arith.constant 0 : index
+    %ub = arith.constant 16 : index
+    %step = arith.constant 1 : index
+    %bs = arith.constant 129 : i16
+    %rs = arith.constant 1 : i16
+
+    pto.vecscope {
+      %mask = pto.pset_b16 "PAT_ALL" : !pto.mask<b16>
+      %end = scf.for %i = %lb to %ub step %step iter_args(%ptr = %p) -> (!pto.ptr<bf16, ub>) {
+        %next = pto.vsstb %v, %ptr, %bs, %rs, %mask
+          : !pto.vreg<128xbf16>, !pto.ptr<bf16, ub>, i16, i16, !pto.mask<b16>
+          -> !pto.ptr<bf16, ub>
+        scf.yield %next : !pto.ptr<bf16, ub>
+      }
+    }
+    return
+  }
+
+  // Successive iterations write overlapping blocks despite advancing the pointer; retain a fence.
+  func.func @overlapping_blocks(%v: !pto.vreg<128xbf16>) {
+    %a = arith.constant 0 : i64
+    %p = pto.castptr %a : i64 -> !pto.ptr<bf16, ub>
+    %lb = arith.constant 0 : index
+    %ub = arith.constant 16 : index
+    %step = arith.constant 1 : index
+    %bs = arith.constant 1 : i16
+    %rs = arith.constant 1 : i16
+
+    pto.vecscope {
+      %mask = pto.pset_b16 "PAT_ALL" : !pto.mask<b16>
+      %end = scf.for %i = %lb to %ub step %step iter_args(%ptr = %p) -> (!pto.ptr<bf16, ub>) {
+        %next = pto.vsstb %v, %ptr, %bs, %rs, %mask
+          : !pto.vreg<128xbf16>, !pto.ptr<bf16, ub>, i16, i16, !pto.mask<b16>
+          -> !pto.ptr<bf16, ub>
+        scf.yield %next : !pto.ptr<bf16, ub>
+      }
+    }
+    return
+  }
+
+  // The runtime repeat stride prevents an exact recurrence proof; retain a conservative fence.
+  func.func @dynamic(%v: !pto.vreg<128xbf16>, %rs: i16) {
+    %a = arith.constant 0 : i64
+    %p = pto.castptr %a : i64 -> !pto.ptr<bf16, ub>
+    %lb = arith.constant 0 : index
+    %ub = arith.constant 16 : index
+    %step = arith.constant 1 : index
+    %bs = arith.constant 129 : i16
+
+    pto.vecscope {
+      %mask = pto.pset_b16 "PAT_ALL" : !pto.mask<b16>
+      %end = scf.for %i = %lb to %ub step %step iter_args(%ptr = %p) -> (!pto.ptr<bf16, ub>) {
+        %next = pto.vsstb %v, %ptr, %bs, %rs, %mask
+          : !pto.vreg<128xbf16>, !pto.ptr<bf16, ub>, i16, i16, !pto.mask<b16>
+          -> !pto.ptr<bf16, ub>
+        scf.yield %next : !pto.ptr<bf16, ub>
+      }
+    }
+    return
+  }
+
+  // Combine vsstb and bf16 addptr into a 64-byte advance with lower bound 4 and step 2.
+  // The writes remain disjoint; no fence is needed.
+  func.func @addptr_chain(%v: !pto.vreg<128xbf16>) {
+    %a = arith.constant 0 : i64
+    %p = pto.castptr %a : i64 -> !pto.ptr<bf16, ub>
+    %lb = arith.constant 4 : index
+    %ub = arith.constant 16 : index
+    %step = arith.constant 2 : index
+    %bs = arith.constant 129 : i16
+    %rs = arith.constant 1 : i16
+    %advance = arith.constant 16 : index
+
+    pto.vecscope {
+      %mask = pto.pset_b16 "PAT_ALL" : !pto.mask<b16>
+      %end = scf.for %i = %lb to %ub step %step iter_args(%ptr = %p) -> (!pto.ptr<bf16, ub>) {
+        %next = pto.vsstb %v, %ptr, %bs, %rs, %mask
+          : !pto.vreg<128xbf16>, !pto.ptr<bf16, ub>, i16, i16, !pto.mask<b16>
+          -> !pto.ptr<bf16, ub>
+        %next2 = pto.addptr %next, %advance : <bf16, ub> -> <bf16, ub>
+        scf.yield %next2 : !pto.ptr<bf16, ub>
+      }
+    }
+    return
+  }
+
+  // The 32-byte advance is not divisible by the loop step; retain a conservative fence.
+  func.func @nonintegral_step(%v: !pto.vreg<128xbf16>) {
+    %a = arith.constant 0 : i64
+    %p = pto.castptr %a : i64 -> !pto.ptr<bf16, ub>
+    %lb = arith.constant 0 : index
+    %ub = arith.constant 16 : index
+    %step = arith.constant 3 : index
+    %bs = arith.constant 129 : i16
+    %rs = arith.constant 1 : i16
+
+    pto.vecscope {
+      %mask = pto.pset_b16 "PAT_ALL" : !pto.mask<b16>
+      %end = scf.for %i = %lb to %ub step %step iter_args(%ptr = %p) -> (!pto.ptr<bf16, ub>) {
+        %next = pto.vsstb %v, %ptr, %bs, %rs, %mask
+          : !pto.vreg<128xbf16>, !pto.ptr<bf16, ub>, i16, i16, !pto.mask<b16>
+          -> !pto.ptr<bf16, ub>
+        scf.yield %next : !pto.ptr<bf16, ub>
+      }
+    }
+    return
+  }
+}
+
+// CHECK-LABEL: func.func @separated(
+// CHECK: pto.vsstb
+// CHECK-NOT: pto.mem_bar
+// CHECK: return
+
+// CHECK-LABEL: func.func @overlapping_blocks(
+// CHECK: pto.vsstb
+// CHECK: pto.mem_bar
+// CHECK: return
+
+// CHECK-LABEL: func.func @dynamic(
+// CHECK: pto.vsstb
+// CHECK: pto.mem_bar
+// CHECK: return
+
+// CHECK-LABEL: func.func @addptr_chain(
+// CHECK: pto.vsstb
+// CHECK-NOT: pto.mem_bar
+// CHECK: return
+
+// CHECK-LABEL: func.func @nonintegral_step(
+// CHECK: pto.vsstb
+// CHECK: pto.mem_bar
+// CHECK: return

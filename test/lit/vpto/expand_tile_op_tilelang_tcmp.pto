@@ -40,9 +40,12 @@
 // CHECK: pto.vcmp
 // CHECK: pto.pbitcast
 // CHECK: pto.psts
-// CHECK: pto.addptr %{{[a-z0-9]+}}, %c16 : <i8, ub> -> <i8, ub>
-// CHECK: pto.pset_b8 "PAT_ALLF"
-// CHECK: pto.psts
+// CHECK: [[TAIL_MASK:%[a-z0-9_]+]] = pto.pset_b8 "PAT_ALLF"
+// CHECK-NEXT: pto.mem_bar "VLD_VST"
+// CHECK-NEXT: [[TAIL_BASE:%[a-z0-9_]+]] = pto.addptr %{{[a-z0-9]+}}, %c16 : <i8, ub> -> <i8, ub>
+// CHECK-NEXT: {{.*}}scf.for {{.*}}iter_args([[TAIL_PTR:%[a-z0-9_]+]] = [[TAIL_BASE]])
+// CHECK-NEXT: {{.*}}pto.psts [[TAIL_MASK]], [[TAIL_PTR]][%c32], "PK"
+// CHECK-NEXT: scf.yield
 
 module attributes {pto.kernel_kind = #pto.kernel_kind<vector>} {
   func.func @TCMP() {

@@ -12,7 +12,7 @@
 // RUN: not ptoas --pto-arch=a5 --pto-backend=vpto --vpto-scheduler=off --vmi-layout-max-frontier-entries=1024 --emit-vpto %s 2>&1 | FileCheck %s --check-prefix=DEFAULT-TRANSITIONS
 // RUN: not ptoas --pto-arch=a5 --pto-backend=vpto --vmi-layout-max-frontier-entries=0 --emit-vpto %s 2>&1 | FileCheck %s --check-prefix=INVALID
 // RUN: not ptoas --pto-arch=a5 --pto-backend=vpto --vmi-layout-max-transitions=0 --emit-vpto %s 2>&1 | FileCheck %s --check-prefix=INVALID
-// RUN: ptoas --pto-arch=a5 --pto-backend=vpto --vpto-scheduler=off --vmi-layout-max-frontier-entries=1024 --vmi-layout-max-transitions=32768 --emit-vpto %s | FileCheck %s --check-prefix=VPTO --implicit-check-not=pto.vmi. --implicit-check-not='!pto.vmi' --implicit-check-not=pto.pge_ --implicit-check-not=pto.pintlv --implicit-check-not=pto.pdintlv --implicit-check-not=pto.mem_bar --implicit-check-not=E2B_B16 --implicit-check-not=pto.vor
+// RUN: ptoas --pto-arch=a5 --pto-backend=vpto --enable-vecscope-mem-bar=false --vpto-scheduler=off --vmi-layout-max-frontier-entries=1024 --vmi-layout-max-transitions=32768 --emit-vpto %s | FileCheck %s --check-prefix=VPTO --implicit-check-not=pto.vmi. --implicit-check-not='!pto.vmi' --implicit-check-not=pto.pge_ --implicit-check-not=pto.pintlv --implicit-check-not=pto.pdintlv --implicit-check-not=pto.mem_bar --implicit-check-not=E2B_B16 --implicit-check-not=pto.vor
 
 // DEFAULT-FRONTIER: VMI layout search frontier budget exhausted (limit=288)
 // DEFAULT-TRANSITIONS: VMI layout search transition budget exhausted (limit=16384)

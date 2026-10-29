@@ -9,8 +9,10 @@
 #include "PTO/Transforms/VecScopeMemBar/VecScopeMemoryFootprint.h"
 
 #include "PTO/IR/PTOTypeUtils.h"
+#include "PTO/IR/VPTOAddressSemantics.h"
 #include "mlir/Dialect/Affine/IR/AffineOps.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
+#include "mlir/Dialect/Func/IR/FuncOps.h"
 #include "mlir/Dialect/MemRef/IR/MemRef.h"
 #include "mlir/Dialect/SCF/IR/SCF.h"
 #include "mlir/IR/Block.h"
@@ -250,14 +252,24 @@ static AffineByteExpr extractAffineElement(Value value, ArrayRef<Value> ivs)
         return *arith;
     }
     if (auto cast = extractCastAffineElement(value, ivs)) {
+        // A width-changing cast of an unbounded symbol can wrap. Preserve
+        // only the existing bounded-IV model through these casts.
+        for (auto [term, coefficient] : cast->coefficients) {
+            if (coefficient != 0 && !llvm::is_contained(ivs, term)) {
+                return makeInexactExpr();
+            }
+        }
         return *cast;
     }
     if (auto applied = extractAffineApplyElement(value, ivs)) {
         return *applied;
     }
 
+    // Opaque index values can cancel within one execution. Dependence queries
+    // must reject remaining non-IV symbols rather than silently dropping them.
     expr.coefficients.push_back({value, 1});
-    expr.exact = false;
+    auto arg = dyn_cast<BlockArgument>(value);
+    expr.exact = value.getType().isIndex() && arg && isa<func::FuncOp>(arg.getOwner()->getParentOp());
     return expr;
 }
 
@@ -408,6 +420,140 @@ static std::optional<MemoryRootKind> tryResolveMemrefCasts(
     return std::nullopt;
 }
 
+// Predicate address units and post-update offsets follow the shared IR contract.
+static bool isPredicateMemory(Operation* op)
+{
+    return isa<pto::PldsOp, pto::PldiOp, pto::PstsOp, pto::PstiOp>(op);
+}
+
+static std::optional<std::pair<Value, int64_t>> predicatePointerAdvance(Value value)
+{
+    Operation* op = value.getDefiningOp();
+    if (!op || !isPredicateMemory(op)) {
+        return std::nullopt;
+    }
+    auto semantics = getDefaultVPTOAddressSemantics(op);
+    auto update = semantics.postUpdate;
+    APInt amount;
+    if (!update || update->updatedBase != value || !update->advanceOperand ||
+        !matchPattern(update->advanceOperand->get(), m_ConstantInt(&amount)) || amount.getBitWidth() > 64) {
+        return std::nullopt;
+    }
+    auto unit = getVPTOAddressUnitBytes(op, update->advanceUnit, update->elementTypeSource);
+    if (!unit) {
+        return std::nullopt;
+    }
+    __int128 bytes = static_cast<__int128>(amount.getSExtValue()) * *unit;
+    if (bytes < INT64_MIN || bytes > INT64_MAX) {
+        return std::nullopt;
+    }
+    return std::make_pair(update->baseOperand->get(), static_cast<int64_t>(bytes));
+}
+
+// Trace a straight-line pointer update back to its own iter argument. Do not
+// cross a region/conditional or another carried value. Bound the walk so even
+// malformed or exceptionally long chains retain conservative synchronization.
+static std::optional<int64_t> fixedPointerAdvance(Value value, Value initial)
+{
+    __int128 delta = 0;
+    for (unsigned depth = 0; depth < 32; ++depth) {
+        if (value == initial) {
+            return static_cast<int64_t>(delta);
+        }
+        APInt amount;
+        if (auto store = value.getDefiningOp<pto::VsstbOp>()) {
+            if (value != store.getUpdatedBase() ||
+                !matchPattern(store.getRepeatStride(), m_ConstantInt(&amount))) {
+                return std::nullopt;
+            }
+            delta += static_cast<__int128>(amount.getZExtValue()) * 32;
+            value = store.getDestination();
+        } else if (auto update = predicatePointerAdvance(value)) {
+            delta += update->second;
+            value = update->first;
+        } else if (auto add = value.getDefiningOp<pto::AddPtrOp>()) {
+            auto bytes = elementByteSize(add.getType());
+            if (!bytes || !matchPattern(add.getOffset(), m_ConstantInt(&amount)) ||
+                amount.getBitWidth() > 64) {
+                return std::nullopt;
+            }
+            delta += static_cast<__int128>(amount.getSExtValue()) * *bytes;
+            value = add.getPtr();
+        } else {
+            return std::nullopt;
+        }
+        if (delta < INT64_MIN || delta > INT64_MAX) {
+            return std::nullopt;
+        }
+    }
+    return std::nullopt;
+}
+
+// Express a fixed recurrence in the surrounding IV coordinate system. Requiring
+// divisibility avoids silently rounding (iv-lower)/step; other strides fall back.
+static std::optional<MemoryRootKind> resolveFixedIterArgRoot(
+    Value ptr, AffineByteExpr& byteOffset, Value& rootOut, std::optional<uint64_t>& absoluteBase,
+    ArrayRef<Value> ivs)
+{
+    auto arg = dyn_cast<BlockArgument>(ptr);
+    auto loop = arg ? dyn_cast_or_null<scf::ForOp>(arg.getOwner()->getParentOp()) : scf::ForOp();
+    if (!loop || arg.getArgNumber() == 0 || !llvm::is_contained(ivs, loop.getInductionVar())) {
+        return std::nullopt;
+    }
+    unsigned index = arg.getArgNumber() - 1;
+    auto yield = dyn_cast<scf::YieldOp>(loop.getBody()->getTerminator());
+    if (!yield || index >= yield.getNumOperands()) {
+        return std::nullopt;
+    }
+    auto delta = fixedPointerAdvance(yield.getOperand(index), ptr);
+    APInt lower;
+    APInt upper;
+    APInt step;
+    if (!delta || !matchPattern(loop.getLowerBound(), m_ConstantInt(&lower)) ||
+        !matchPattern(loop.getUpperBound(), m_ConstantInt(&upper)) ||
+        !matchPattern(loop.getStep(), m_ConstantInt(&step)) ||
+        lower.getBitWidth() > 64 || upper.getBitWidth() > 64 || step.getBitWidth() > 64) {
+        return std::nullopt;
+    }
+    int64_t lb = lower.getSExtValue();
+    int64_t ub = upper.getSExtValue();
+    int64_t stride = step.getSExtValue();
+    if (stride <= 0 || ub <= lb || *delta % stride != 0) {
+        return std::nullopt;
+    }
+    __int128 count = (static_cast<__int128>(ub) - lb + stride - 1) / stride;
+    __int128 extent = count * *delta;
+    int64_t coefficient = *delta / stride;
+    __int128 constant = -static_cast<__int128>(lb) * coefficient + byteOffset.constant;
+    if (extent < INT64_MIN || extent > INT64_MAX || constant < INT64_MIN || constant > INT64_MAX ||
+        byteOffset.getCoeff(loop.getInductionVar()) != 0) {
+        return std::nullopt;
+    }
+    // Resolve the init separately so adding its constant cannot overflow the
+    // recurrence adjustment. Nested/offset initializers retain their IV terms.
+    AffineByteExpr initOffset;
+    auto kind = resolveRoot(loop.getInits()[index], initOffset, rootOut, absoluteBase, ivs, false);
+    constant += initOffset.constant;
+    if (!initOffset.exact || constant < INT64_MIN || constant > INT64_MAX) {
+        return MemoryRootKind::Unknown;
+    }
+    // combine() can retain zero coefficients after cancellation. Merge by
+    // variable rather than appending duplicates that getCoeff() would hide.
+    AffineByteExpr recurrence;
+    recurrence.coefficients.push_back({loop.getInductionVar(), coefficient});
+    byteOffset.constant = static_cast<int64_t>(constant);
+    byteOffset.combine(recurrence);
+    for (auto [iv, coeff] : initOffset.coefficients) {
+        if (byteOffset.getCoeff(iv) != 0) {
+            return MemoryRootKind::Unknown;
+        }
+    }
+    // The initializer constant was already included in the checked sum above.
+    initOffset.constant = 0;
+    byteOffset.combine(initOffset);
+    return byteOffset.exact ? kind : MemoryRootKind::Unknown;
+}
+
 // scf.for region iter-argument: when allowed (post-update stores whose
 // destination base is carried through the loop), resolve the base from the
 // loop's init operand. The updated_base result advances the pointer only
@@ -442,6 +588,21 @@ static MemoryRootKind resolveRoot(
     Value ptr, AffineByteExpr& byteOffset, Value& rootOut, std::optional<uint64_t>& absoluteBase, ArrayRef<Value> ivs,
     bool allowIterArgInit)
 {
+    if (auto store = ptr.getDefiningOp<pto::VsstbOp>()) {
+        APInt repeat;
+        if (ptr == store.getUpdatedBase() && matchPattern(store.getRepeatStride(), m_ConstantInt(&repeat))) {
+            AffineByteExpr advance;
+            advance.constant = static_cast<int64_t>(repeat.getZExtValue() * 32);
+            byteOffset.combine(advance);
+            return resolveRoot(store.getDestination(), byteOffset, rootOut, absoluteBase, ivs, allowIterArgInit);
+        }
+    }
+    if (auto update = predicatePointerAdvance(ptr)) {
+        AffineByteExpr advance;
+        advance.constant = update->second;
+        byteOffset.combine(advance);
+        return resolveRoot(update->first, byteOffset, rootOut, absoluteBase, ivs, allowIterArgInit);
+    }
     if (auto castPtr = tryResolveCastPtr(ptr, byteOffset, rootOut, absoluteBase, ivs, allowIterArgInit)) {
         return *castPtr;
     }
@@ -461,6 +622,10 @@ static MemoryRootKind resolveRoot(
     if (isa_and_nonnull<memref::AllocOp, memref::AllocaOp>(ptr.getDefiningOp())) {
         rootOut = ptr;
         return MemoryRootKind::ProvenAllocation;
+    }
+
+    if (auto recurrence = resolveFixedIterArgRoot(ptr, byteOffset, rootOut, absoluteBase, ivs)) {
+        return *recurrence;
     }
 
     if (allowIterArgInit) {
@@ -490,21 +655,42 @@ int64_t AffineByteExpr::getCoeff(Value v) const
 
 AffineByteExpr& AffineByteExpr::scale(int64_t factor)
 {
-    constant *= factor;
+    __int128 scaled = static_cast<__int128>(constant) * factor;
+    if (scaled < INT64_MIN || scaled > INT64_MAX) {
+        exact = false;
+        return *this;
+    }
+    constant = static_cast<int64_t>(scaled);
     for (auto& [val, coeff] : coefficients) {
-        coeff *= factor;
+        scaled = static_cast<__int128>(coeff) * factor;
+        if (scaled < INT64_MIN || scaled > INT64_MAX) {
+            exact = false;
+            return *this;
+        }
+        coeff = static_cast<int64_t>(scaled);
     }
     return *this;
 }
 
 AffineByteExpr& AffineByteExpr::combine(const AffineByteExpr& other)
 {
-    constant += other.constant;
+    exact &= other.exact;
+    __int128 sum = static_cast<__int128>(constant) + other.constant;
+    if (sum < INT64_MIN || sum > INT64_MAX) {
+        exact = false;
+        return *this;
+    }
+    constant = static_cast<int64_t>(sum);
     for (auto [val, coeff] : other.coefficients) {
         bool found = false;
         for (auto& [v, c] : coefficients) {
             if (v == val) {
-                c += coeff;
+                sum = static_cast<__int128>(c) + coeff;
+                if (sum < INT64_MIN || sum > INT64_MAX) {
+                    exact = false;
+                    return *this;
+                }
+                c = static_cast<int64_t>(sum);
                 found = true;
                 break;
             }
@@ -719,6 +905,39 @@ static std::optional<VecMemoryAccessDescriptor> describeContiguousAccess(Operati
     return std::nullopt;
 }
 
+// A5 predicate payloads occupy 32 bytes (NORM), 16 bytes (US/PK),
+// or 64 bytes (DS). Alignment is not the payload size for DS.
+static std::optional<VecMemoryAccessDescriptor> describePredicateAccess(Operation* op, ArrayRef<Value> ivs)
+{
+    if (!isPredicateMemory(op) || getTargetArch(op) != PTOArch::A5) {
+        return std::nullopt;
+    }
+    VecMemoryAccessDescriptor desc;
+    desc.kind = isa<pto::PldsOp, pto::PldiOp>(op) ? VecScopeAccessKind::Load : VecScopeAccessKind::Store;
+    auto semantics = getDefaultVPTOAddressSemantics(op);
+    const auto& access = semantics.currentAccesses.front();
+    desc.base = access.baseOperand->get();
+    desc.addressSpace = getTypeAddressSpace(desc.base.getType());
+    if (access.offset) {
+        auto unit = getVPTOAddressUnitBytes(op, access.offset->unit, access.offset->elementTypeSource);
+        desc.byteOffset = extractAffineElement(access.offset->operand->get(), ivs);
+        if (unit) {
+            desc.byteOffset.scale(*unit);
+        } else {
+            desc.byteOffset.exact = false;
+        }
+    }
+    auto dist = op->getAttrOfType<StringAttr>("dist");
+    if (dist && dist.getValue() == "NORM") {
+        desc.conservativeByteSize = 32;
+    } else if (dist && (dist.getValue() == "US" || dist.getValue() == "PK")) {
+        desc.conservativeByteSize = 16;
+    } else if (dist && dist.getValue() == "DS") {
+        desc.conservativeByteSize = 64;
+    }
+    return desc;
+}
+
 // Describe the paired-vreg contiguous accesses: the vldsx2 load and the
 // vstsx2 store. Returns nullopt when `op` is neither.
 static std::optional<VecMemoryAccessDescriptor> describePairedContiguousAccess(Operation* op, ArrayRef<Value> ivs)
@@ -750,6 +969,53 @@ static std::optional<VecMemoryAccessDescriptor> describePairedContiguousAccess(O
         return desc;
     }
     return std::nullopt;
+}
+
+// Constant-stride vsstb writes a union of 32-byte blocks, not the enclosing
+// interval: gaps must remain available to independent accesses. Unknown masks
+// retain all blocks. Partial predicates deliberately do not shrink the range
+// until their block-selection semantics are proven.
+static std::optional<VecMemoryAccessDescriptor> describeBlockStore(Operation* op, ArrayRef<Value> ivs)
+{
+    auto store = dyn_cast<pto::VsstbOp>(op);
+    if (!store) {
+        return std::nullopt;
+    }
+    APInt stride;
+    if (!matchPattern(store.getBlockStride(), m_ConstantInt(&stride))) {
+        return std::nullopt;
+    }
+    VecMemoryAccessDescriptor desc;
+    desc.kind = VecScopeAccessKind::Store;
+    desc.base = store.getDestination();
+    desc.addressSpace = getTypeAddressSpace(desc.base.getType());
+    // In post-update form, repeat_stride advances updated_base after this
+    // access; this write's blocks start at destination. resolveRoot models
+    // the returned pointer separately. Only the non-post-update form adds
+    // repeat_stride to this access's byte offset.
+    //
+    // Handle both forms independently of pipeline ordering: post-update IR
+    // may already be present when this pass runs, including direct pass tests.
+    if (!store.getUpdatedBase()) {
+        desc.byteOffset = extractAffineElement(store.getRepeatStride(), ivs);
+        if (!desc.byteOffset.exact) {
+            return std::nullopt;
+        }
+        // The control field is unsigned, including i16 constants above 32767.
+        APInt repeat;
+        if (matchPattern(store.getRepeatStride(), m_ConstantInt(&repeat))) {
+            desc.byteOffset.constant = repeat.getZExtValue();
+        } else {
+            // Without an unsigned range proof, integer wrapping is not affine.
+            return std::nullopt;
+        }
+        desc.byteOffset.scale(32);
+    }
+    desc.conservativeByteSize = 32;
+    for (unsigned block = 0; block < 8; ++block) {
+        desc.blockByteOffsets.push_back(static_cast<int64_t>(block * stride.getZExtValue() * 32));
+    }
+    return desc;
 }
 
 // Describe the accesses whose footprint cannot be modelled exactly and must
@@ -835,6 +1101,12 @@ static void describeByMemoryEffects(Operation* op, VecMemoryAccessDescriptor& de
 
 FailureOr<VecMemoryAccessDescriptor> vecscopemembar::buildAccessDescriptor(Operation* op, ArrayRef<Value> ivs)
 {
+    if (auto predicate = describePredicateAccess(op, ivs)) {
+        return *predicate;
+    }
+    if (auto blocks = describeBlockStore(op, ivs)) {
+        return *blocks;
+    }
     if (auto contiguous = describeContiguousAccess(op, ivs)) {
         return *contiguous;
     }
@@ -998,7 +1270,20 @@ static VecScopeAliasResult aliasSameRootRelative(
         return VecScopeAliasResult::MayAlias;
     }
 
-    if (producer.byteOffset.isConstant() && consumer.byteOffset.isConstant()) {
+    // Equal symbolic terms cancel for same-iteration comparisons only. Use
+    // wide subtraction so extreme constant offsets cannot wrap into NoAlias.
+    bool equalTerms = true;
+    for (auto [value, coefficient] : producer.byteOffset.coefficients) {
+        // This helper is also used for sibling-loop comparisons. Their IVs
+        // describe independent executions and must stay in the relation model.
+        auto arg = dyn_cast<BlockArgument>(value);
+        bool loopArgument = arg && isa<scf::ForOp>(arg.getOwner()->getParentOp());
+        equalTerms &= !loopArgument && consumer.byteOffset.getCoeff(value) == coefficient;
+    }
+    for (auto [value, coefficient] : consumer.byteOffset.coefficients) {
+        equalTerms &= producer.byteOffset.getCoeff(value) == coefficient;
+    }
+    if (equalTerms) {
         WideInt pLo = static_cast<WideInt>(producer.byteOffset.constant);
         WideInt cLo = static_cast<WideInt>(consumer.byteOffset.constant);
         if (intervalsOverlap(pLo, *producer.byteSize, cLo, *consumer.byteSize)) {

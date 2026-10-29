@@ -15,6 +15,9 @@
 // RUN: cp %t.cann/bin/bisheng %t.cann/tools/bisheng_compiler/bin/bisheng
 // RUN: not env ASCEND_HOME_PATH=%t.cann ptoas --pto-arch=a5 --pto-backend=vpto %t/strided.pto -o %t.strided.o 2>&1 | FileCheck %s --check-prefix=STRIDED
 // RUN: not env ASCEND_HOME_PATH=%t.cann ptoas --pto-arch=a5 --pto-backend=vpto %t/dense.pto -o %t.dense.o 2>&1 | FileCheck %s --check-prefix=DENSE
+// RUN: not env ASCEND_HOME_PATH=%t.cann ptoas --pto-arch=a5 --pto-backend=vpto --bisheng-vf-auto-sync=off %t/dense.pto -o %t.off.o 2>&1 | FileCheck %s --check-prefix=DENSE
+// RUN: not env ASCEND_HOME_PATH=%t.cann ptoas --pto-arch=a5 --pto-backend=vpto --bisheng-vf-auto-sync=fused %t/dense.pto -o %t.fused.o 2>&1 | FileCheck %s --check-prefix=FUSED
+// RUN: not env ASCEND_HOME_PATH=%t.cann ptoas --pto-arch=a5 --pto-backend=vpto --bisheng-vf-auto-sync=global %t/dense.pto -o %t.global.o 2>&1 | FileCheck %s --check-prefix=GLOBAL
 
 // Only block-strided modules need protection against CANN's elimination of
 // loads with distinct strides from the same UB base. Check the real argv.
@@ -23,8 +26,11 @@
 // STRIDED-SAME: -mllvm --cce-vf-enable-vf-ldst-elimination=false
 // DENSE: Error: device LLVM compilation failed
 // DENSE: Command:
+// DENSE-SAME: -mllvm -cce-vf-auto-sync=off
 // DENSE-NOT: --cce-vf-enable-vf-ldst-elimination
 // DENSE: -x ir
+// FUSED: Command: {{.*}} -mllvm -cce-vf-auto-sync=fused {{.*}} -x ir
+// GLOBAL: Command: {{.*}} -mllvm -cce-vf-auto-sync=global {{.*}} -x ir
 
 //--- strided.pto
 module attributes {pto.target_arch = "a5", pto.kernel_kind = #pto.kernel_kind<vector>} {

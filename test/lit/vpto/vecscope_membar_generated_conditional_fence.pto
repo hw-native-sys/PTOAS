@@ -1,0 +1,112 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+
+// RUN: ptoas --pto-arch=a5 --pto-backend=vpto --emit-vpto --enable-vecscope-mem-bar %s -o - 2>/dev/null | FileCheck %s
+
+// Generated gather barriers must not discharge WAR outside a conditional region.
+module {
+  func.func @conditional_generated(%cond: i1, %n: index, %offsets: !pto.vreg<64xui32>) {
+    %zero = arith.constant 0 : index
+    %one = arith.constant 1 : index
+    %a0 = arith.constant 0 : i64
+    %b0 = arith.constant 4096 : i64
+    %c0 = arith.constant 8192 : i64
+    %d0 = arith.constant 12288 : i64
+    %a = pto.castptr %a0 : i64 -> !pto.ptr<f32, ub>
+    %b = pto.castptr %b0 : i64 -> !pto.ptr<f32, ub>
+    %c = pto.castptr %c0 : i64 -> !pto.ptr<f32, ub>
+    %d = pto.castptr %d0 : i64 -> !pto.ptr<f32, ub>
+    pto.vecscope {
+      %mask = pto.pset_b32 "PAT_ALL" : !pto.mask<b32>
+      %v = pto.vlds %a[%zero] : !pto.ptr<f32, ub> -> !pto.vreg<64xf32>
+      pto.vsts %v, %b[%zero], %mask : !pto.vreg<64xf32>, !pto.ptr<f32, ub>, !pto.mask<b32>
+      scf.if %cond {
+        pto.vsts %v, %d[%zero], %mask : !pto.vreg<64xf32>, !pto.ptr<f32, ub>, !pto.mask<b32>
+        %g = pto.vgather2 %d, %offsets, %mask : !pto.ptr<f32, ub>, !pto.vreg<64xui32>, !pto.mask<b32> -> !pto.vreg<64xf32>
+        pto.vsts %g, %d[%zero], %mask : !pto.vreg<64xf32>, !pto.ptr<f32, ub>, !pto.mask<b32>
+      }
+      %w = pto.vlds %c[%zero] : !pto.ptr<f32, ub> -> !pto.vreg<64xf32>
+      pto.vsts %w, %a[%zero], %mask : !pto.vreg<64xf32>, !pto.ptr<f32, ub>, !pto.mask<b32>
+    }
+    return
+  }
+
+  func.func @zero_trip_generated(%cond: i1, %n: index, %offsets: !pto.vreg<64xui32>) {
+    %zero = arith.constant 0 : index
+    %one = arith.constant 1 : index
+    %a0 = arith.constant 0 : i64
+    %b0 = arith.constant 4096 : i64
+    %c0 = arith.constant 8192 : i64
+    %d0 = arith.constant 12288 : i64
+    %a = pto.castptr %a0 : i64 -> !pto.ptr<f32, ub>
+    %b = pto.castptr %b0 : i64 -> !pto.ptr<f32, ub>
+    %c = pto.castptr %c0 : i64 -> !pto.ptr<f32, ub>
+    %d = pto.castptr %d0 : i64 -> !pto.ptr<f32, ub>
+    pto.vecscope {
+      %mask = pto.pset_b32 "PAT_ALL" : !pto.mask<b32>
+      %v = pto.vlds %a[%zero] : !pto.ptr<f32, ub> -> !pto.vreg<64xf32>
+      pto.vsts %v, %b[%zero], %mask : !pto.vreg<64xf32>, !pto.ptr<f32, ub>, !pto.mask<b32>
+      scf.for %iv = %zero to %n step %one {
+        pto.vsts %v, %d[%zero], %mask : !pto.vreg<64xf32>, !pto.ptr<f32, ub>, !pto.mask<b32>
+        %g = pto.vgather2 %d, %offsets, %mask : !pto.ptr<f32, ub>, !pto.vreg<64xui32>, !pto.mask<b32> -> !pto.vreg<64xf32>
+        pto.vsts %g, %d[%zero], %mask : !pto.vreg<64xf32>, !pto.ptr<f32, ub>, !pto.mask<b32>
+      }
+      %w = pto.vlds %c[%zero] : !pto.ptr<f32, ub> -> !pto.vreg<64xf32>
+      pto.vsts %w, %a[%zero], %mask : !pto.vreg<64xf32>, !pto.ptr<f32, ub>, !pto.mask<b32>
+    }
+    return
+  }
+
+  func.func @unconditional_generated(%cond: i1, %n: index, %offsets: !pto.vreg<64xui32>) {
+    %zero = arith.constant 0 : index
+    %one = arith.constant 1 : index
+    %a0 = arith.constant 0 : i64
+    %b0 = arith.constant 4096 : i64
+    %c0 = arith.constant 8192 : i64
+    %d0 = arith.constant 12288 : i64
+    %a = pto.castptr %a0 : i64 -> !pto.ptr<f32, ub>
+    %b = pto.castptr %b0 : i64 -> !pto.ptr<f32, ub>
+    %c = pto.castptr %c0 : i64 -> !pto.ptr<f32, ub>
+    %d = pto.castptr %d0 : i64 -> !pto.ptr<f32, ub>
+    pto.vecscope {
+      %mask = pto.pset_b32 "PAT_ALL" : !pto.mask<b32>
+      %v = pto.vlds %a[%zero] : !pto.ptr<f32, ub> -> !pto.vreg<64xf32>
+      pto.vsts %v, %b[%zero], %mask : !pto.vreg<64xf32>, !pto.ptr<f32, ub>, !pto.mask<b32>
+      pto.vsts %v, %d[%zero], %mask : !pto.vreg<64xf32>, !pto.ptr<f32, ub>, !pto.mask<b32>
+      %g = pto.vgather2 %d, %offsets, %mask : !pto.ptr<f32, ub>, !pto.vreg<64xui32>, !pto.mask<b32> -> !pto.vreg<64xf32>
+      pto.vsts %g, %d[%zero], %mask : !pto.vreg<64xf32>, !pto.ptr<f32, ub>, !pto.mask<b32>
+      %w = pto.vlds %c[%zero] : !pto.ptr<f32, ub> -> !pto.vreg<64xf32>
+      pto.vsts %w, %a[%zero], %mask : !pto.vreg<64xf32>, !pto.ptr<f32, ub>, !pto.mask<b32>
+    }
+    return
+  }
+
+}
+
+// CHECK-LABEL: func.func @conditional_generated(
+// CHECK: pto.mem_bar "VST_VLD"
+// CHECK-NEXT: {{.*}}pto.vgather2
+// CHECK: }
+// CHECK: [[W_conditional_generated:%[a-zA-Z0-9_]+]] = pto.vlds
+// CHECK-NEXT: pto.mem_bar "VLD_VST"
+// CHECK-NEXT: pto.vsts [[W_conditional_generated]]
+
+// CHECK-LABEL: func.func @zero_trip_generated(
+// CHECK: pto.mem_bar "VST_VLD"
+// CHECK-NEXT: {{.*}}pto.vgather2
+// CHECK: }
+// CHECK: [[W_zero_trip_generated:%[a-zA-Z0-9_]+]] = pto.vlds
+// CHECK-NEXT: pto.mem_bar "VLD_VST"
+// CHECK-NEXT: pto.vsts [[W_zero_trip_generated]]
+
+// CHECK-LABEL: func.func @unconditional_generated(
+// CHECK: pto.mem_bar "VST_VLD"
+// CHECK-NEXT: {{.*}}pto.vgather2
+// CHECK: [[W_unconditional_generated:%[a-zA-Z0-9_]+]] = pto.vlds
+// CHECK-NOT: pto.mem_bar
+// CHECK: pto.vsts [[W_unconditional_generated]]

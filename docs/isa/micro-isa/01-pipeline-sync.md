@@ -187,8 +187,8 @@ Barrier insertion modes:
 **Device-compiler automatic synchronization.** The device compiler (Bisheng) can also insert vector-pipeline synchronization on its own. Who owns that insertion depends on the compilation route:
 
 - When the kernel is compiled through the VMI tile-fusion pipeline (`--enable-vmi` with `--enable-op-fusion=true` on the A5 VPTO backend at `--pto-level=level2` or `level3`), the program PTOAS emits already carries its synchronization, so PTOAS disables the device compiler's automatic vector-pipeline synchronization and its own vector-fusion transformations for that device compilation.
-- On every other route, the device compiler's default behavior applies.
-- `--bisheng-vf-auto-sync=off|fused|global` requests a specific device-compiler synchronization mode. An explicit choice is honored on any route, including the VMI route.
+- On every other route, device-compiler automatic vector-pipeline synchronization also defaults to off. PTOAS barrier insertion remains controlled independently by the options above.
+- `--bisheng-vf-auto-sync=off|fused|global` selects the device-compiler synchronization mode (default: `off`). An explicit choice is honored on any route, including the VMI route.
 - `--bisheng-vec-misched=auto|on|off` selects the device compiler's vector-instruction scheduling policy: `off` disables the vector scheduler, `on` keeps the device compiler's default scheduling, and `auto` (the default) keeps default scheduling and retries with the scheduler disabled when compilation fails or the reported vector-stack usage is nonzero, preferring the smaller vector stack. On the VMI tile-fusion route the scheduler likewise defaults to off; an explicit choice is honored on any route.
 
 ---

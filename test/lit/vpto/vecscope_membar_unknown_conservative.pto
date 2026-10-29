@@ -1,0 +1,110 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+
+// RUN: pto-test-opt --pto-insert-vecscope-membar %s | FileCheck %s
+
+// Issue #1679: dependences the analysis cannot model must still be ordered.
+
+module {
+  // Three enclosing IVs at the access point: init->k, k->k and k->drain all
+  // need barriers.
+  func.func @three_iv_nest(%z: !pto.vreg<64xf32>) {
+    %c0 = arith.constant 0 : index
+    %c1 = arith.constant 1 : index
+    %c2 = arith.constant 2 : index
+    %c4 = arith.constant 4 : index
+    %c8 = arith.constant 8 : index
+    %c64 = arith.constant 64 : index
+    %c128 = arith.constant 128 : index
+    %a = arith.constant 0 : i64
+    %acc = pto.castptr %a : i64 -> !pto.ptr<f32, ub>
+    pto.vecscope {
+      %m = pto.pset_b32 "PAT_ALL" : !pto.mask<b32>
+      scf.for %i = %c0 to %c8 step %c1 {
+        scf.for %q = %c0 to %c2 step %c1 {
+          %o0 = arith.muli %i, %c128 : index
+          %o1 = arith.muli %q, %c64 : index
+          %o = arith.addi %o0, %o1 : index
+          pto.vsts %z, %acc[%o], %m : !pto.vreg<64xf32>, !pto.ptr<f32, ub>, !pto.mask<b32>
+        }
+      }
+      scf.for %k = %c0 to %c4 step %c1 {
+        scf.for %i = %c0 to %c8 step %c1 {
+          scf.for %q = %c0 to %c2 step %c1 {
+            %o0 = arith.muli %i, %c128 : index
+            %o1 = arith.muli %q, %c64 : index
+            %o = arith.addi %o0, %o1 : index
+            %v = pto.vlds %acc[%o] : !pto.ptr<f32, ub> -> !pto.vreg<64xf32>
+            pto.vsts %v, %acc[%o], %m : !pto.vreg<64xf32>, !pto.ptr<f32, ub>, !pto.mask<b32>
+          }
+        }
+      }
+      scf.for %i = %c0 to %c8 step %c1 {
+        scf.for %q = %c0 to %c2 step %c1 {
+          %o0 = arith.muli %i, %c128 : index
+          %o1 = arith.muli %q, %c64 : index
+          %o = arith.addi %o0, %o1 : index
+          %v = pto.vlds %acc[%o] : !pto.ptr<f32, ub> -> !pto.vreg<64xf32>
+          pto.vsts %v, %acc[%o], %m : !pto.vreg<64xf32>, !pto.ptr<f32, ub>, !pto.mask<b32>
+        }
+      }
+    }
+    return
+  }
+
+  // The offset depends on a value defined outside the vecscope, so the
+  // footprint is inexact and every overlap query is Unknown.
+  func.func @outer_value_offset(%z: !pto.vreg<64xf32>) {
+    %c0 = arith.constant 0 : index
+    %c1 = arith.constant 1 : index
+    %c2 = arith.constant 2 : index
+    %c8 = arith.constant 8 : index
+    %c64 = arith.constant 64 : index
+    %c2048 = arith.constant 2048 : index
+    %a = arith.constant 0 : i64
+    %acc = pto.castptr %a : i64 -> !pto.ptr<f32, ub>
+    scf.for %b = %c0 to %c2 step %c1 {
+      %ob = arith.muli %b, %c2048 : index
+      pto.vecscope {
+        %m = pto.pset_b32 "PAT_ALL" : !pto.mask<b32>
+        scf.for %i = %c0 to %c8 step %c1 {
+          %oi = arith.muli %i, %c64 : index
+          %o = arith.addi %ob, %oi : index
+          pto.vsts %z, %acc[%o], %m : !pto.vreg<64xf32>, !pto.ptr<f32, ub>, !pto.mask<b32>
+        }
+        scf.for %i = %c0 to %c8 step %c1 {
+          %oi = arith.muli %i, %c64 : index
+          %o = arith.addi %ob, %oi : index
+          %v = pto.vlds %acc[%o] : !pto.ptr<f32, ub> -> !pto.vreg<64xf32>
+          pto.vsts %v, %acc[%o], %m : !pto.vreg<64xf32>, !pto.ptr<f32, ub>, !pto.mask<b32>
+        }
+      }
+    }
+    return
+  }
+}
+
+// CHECK-LABEL: func.func @three_iv_nest(
+// CHECK:       pto.vsts
+// CHECK:       pto.mem_bar "VST_VLD"
+// CHECK-NEXT:  scf.for
+// CHECK:       pto.vlds
+// CHECK:       pto.vsts
+// CHECK:       pto.mem_bar "VV_ALL"
+// CHECK:       pto.mem_bar "VST_VLD"
+// CHECK-NEXT:  scf.for
+// CHECK:       pto.vlds
+
+// CHECK-LABEL: func.func @outer_value_offset(
+// CHECK:       pto.vsts
+// CHECK-NEXT:  pto.mem_bar "VST_VST"
+// CHECK:       pto.mem_bar "VST_VLD"
+// CHECK-NEXT:  scf.for
+// CHECK:       pto.vlds
+// CHECK:       pto.vsts
+// CHECK-NEXT:  pto.mem_bar "VV_ALL"

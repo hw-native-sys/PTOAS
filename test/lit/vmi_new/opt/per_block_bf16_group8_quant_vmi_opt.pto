@@ -138,6 +138,7 @@ module attributes {pto.target_arch = "a5", pto.kernel_kind = #pto.kernel_kind<ve
 // VPTO-NEXT: %[[VAL_76:[a-zA-Z0-9_.$-]+]] = pto.vcvt %[[VAL_70]], %[[VAL_10]] {part = "P0", rnd = "R", sat = "SAT"} : !pto.vreg<64xf32>, !pto.mask<b32> -> !pto.vreg<256xf8E4M3FN>
 // VPTO-NEXT: %[[VAL_77:[a-zA-Z0-9_.$-]+]] = pto.vcvt %[[VAL_73]], %[[VAL_10]] {part = "P0", rnd = "R", sat = "SAT"} : !pto.vreg<64xf32>, !pto.mask<b32> -> !pto.vreg<256xf8E4M3FN>
 // VPTO-NEXT: %[[VAL_78:[a-zA-Z0-9_.$-]+]] = pto.vcvt %[[VAL_74]], %[[VAL_10]] {part = "P0", rnd = "R", sat = "SAT"} : !pto.vreg<64xf32>, !pto.mask<b32> -> !pto.vreg<256xf8E4M3FN>
+// VPTO-NEXT: pto.mem_bar "VLD_VST"
 // VPTO-NEXT: pto.vsts %[[VAL_75]], %[[VAL_1]]{{\[}}%[[VAL_8]]], %[[VAL_10]] {dist = "PK4_B32"} : !pto.vreg<256xf8E4M3FN>, !pto.ptr<f8E4M3FN, ub>, !pto.mask<b32>
 // VPTO-NEXT: %[[VAL_79:[a-zA-Z0-9_.$-]+]] = arith.addi %[[VAL_8]], %[[VAL_3]] : index
 // VPTO-NEXT: pto.vsts %[[VAL_76]], %[[VAL_1]]{{\[}}%[[VAL_79]]], %[[VAL_10]] {dist = "PK4_B32"} : !pto.vreg<256xf8E4M3FN>, !pto.ptr<f8E4M3FN, ub>, !pto.mask<b32>

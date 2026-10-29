@@ -74,8 +74,10 @@ footprint 将访问归一化为：
 
 常量地址使用精确区间重叠。带循环 induction variable 的地址使用 Presburger 关系分析；动态
 或不支持的表达式不能直接当作无依赖。需要区分别名结果 `MayAlias` 和依赖结果 `Unknown`：
-前者表示可能别名，后者表示关系无法建模。当前 `Unknown` 只被记录，不直接驱动 placement；
-因此不能声称任意未知地址都已有自动同步兜底。动态循环边界有单独的保守分支，详见 5.4。
+前者表示可能别名，后者表示关系无法建模。记录的 `UnknownDependence` 会经
+`materializeUnknownDependences` 转成保守 hazard，并保留访问方向、family 和 carrying loop，
+交给统一 placement。该兜底覆盖已收集的顺序访问及共享 `scf.for` 的循环携带访问，
+不意味着已经支持任意 CFG 或 `scf.while` 回边。
 
 ## 4. Hazard 分类
 
@@ -144,6 +146,9 @@ store -> barrier -> load
 
 只有 barrier family 与 producer/consumer 单位匹配时才加入该边。`VV_ALL` 不会被解释为覆盖
 scalar consumer；`VS_ALL`、`SV_ALL` 和 `SS_ALL` 也只覆盖各自 family。
+对于输入中已有的 barrier，分析阶段还要求 store、barrier、load 位于同一个 block，
+且满足 `store < barrier < load`。条件分支内或可能零次执行的循环内的 barrier，
+不能为外部访问建立这条顺序边；尚未证明的跨 region 顺序保守保留。
 
 从 pending WAR load 出发做可达性搜索。如果最终 store 可达，则 load → store 的显式 WAR barrier
 是冗余的；否则记录对应单位和方向的 WAR kind。
@@ -154,7 +159,7 @@ scalar consumer；`VS_ALL`、`SV_ALL` 和 `SS_ALL` 也只覆盖各自 family。
 
 - 空关系：没有循环携带 hazard；
 - 非空关系：记录 `InnerLoopCarried` 或 `OuterLoopCarried` hazard；
-- 无法建模：记录 `Unknown`，不放置无法证明 anchor 的 barrier。
+- 无法建模：在相关共享循环上记录 `Unknown`，转成对应方向的保守循环携带 hazard。
 
 循环携带 barrier 的 anchor 是 carrying loop 的 terminator，语义是约束下一次迭代的回边。
 
@@ -276,8 +281,56 @@ Store footprint 应描述实际写入的内存范围，而不是简单使用输�
 Pack distribution 根据打包比例计算写入元素数并向上取整；broadcast load 按其实际读取
 字节宽度计算，不能把广播后的整个寄存器宽度视为 UB 读取长度。
 Gather/scatter 等不能用单个精确连续区间描述的访问使用 `forcesMayAlias` 等标记。
-这些标记使分析失去部分精确排除能力；它们不保证后续每条分析路径都会插入 barrier，
-还需检查该 pair 最终是 ProvenDependence 还是 Unknown。
+这些标记使分析失去部分精确排除能力。无法建立关系时记录 Unknown 并生成保守 hazard；
+最终是否需要独立 barrier，仍由顺序证明、placement 和冗余校验决定。
+
+### 9.4 `vsstb` 的分块访问
+
+常量 `block_stride` 的 `vsstb` 建模为八个 32 字节块的并集，而不是包含间隙的整段区间：
+
+```text
+block[k] = [access_base + k * block_stride * 32,
+            access_base + k * block_stride * 32 + 32),  k = 0..7
+```
+
+未知或部分 predicate 当前保留全部八个块，不根据未经证明的 predicate 语义缩小范围。
+不能精确解析 stride 或地址时退回保守 footprint。
+
+当前 PTO IR 地址模型区分本次访问与返回指针：非 post-update 形式将
+`repeat_stride * 32` 加到本次访问偏移；post-update 形式以 `destination` 为本次访问基址，
+返回的 `updated_base` 再前进 `repeat_stride * 32`。这里描述的是编译器当前使用的 IR
+地址模型，不以屏障测试代替 ISA 或硬件语义验证。两种形式都必须处理，不能依赖默认流水线
+中 pass 的先后顺序；手写 IR 和 `pto-test-opt` 可直接向本 pass 输入 post-update 形式。
+
+### 9.5 `scf.for` 携带指针的固定步长递推
+
+若循环通过 `iter_args` 和 `scf.yield` 传递指针，且每轮更新量可证明为常量 `delta`，
+则将循环体入口的指针归一化为：
+
+```text
+pointer(iv) = initial_pointer + (iv - lower_bound) * (delta / step)
+```
+
+所有偏移均以字节计。`delta` 从 yield 到对应 iter_arg 的更新链计算：`vsstb` 的
+`updated_base` 贡献无符号 `repeat_stride * 32`，常量 `pto.addptr` 贡献
+`element_offset * element_bytes`，组合更新累加。因此每轮增量不是固定的 32 字节；
+32 是 `vsstb` stride 的块单位，实际增量取决于代码中的 stride 和其他指针更新。
+
+当前精确分析要求：
+
+- 上下界和 step 为常量，step 为正且循环非空；
+- 更新链只包含已支持的常量更新，追踪深度上限为 32；
+- `delta` 可被 step 整除，以便用当前 IV 的整数仿射系数表示；
+- 初始指针偏移可精确解析，合并时没有重复的非零 IV 系数；
+- 累积增量、循环推进范围和合并常量均通过整数溢出检查。
+
+动态、条件更新、不整除或无法证明的表达式退回保守分析，不能把初始指针误当成所有
+迭代的固定地址。归一化后复用已有的分块 footprint 和 Presburger 相交判定，同时检查
+同一迭代和跨迭代重叠，而不是直接认定递增指针没有依赖。
+
+递推地址表达式必须保持每个变量只有一个系数项。抵消后保留的零系数项也需要与
+递推 IV 和初始指针偏移按变量合并，不能直接追加同名项，否则查询系数时可能丢失
+递推步长，错误地将同址 store/load 判为不重叠。非零循环下界仍需计入常量修正。
 
 ## 10. 顺序图为什么能消除 WAR/WAW
 
@@ -316,11 +369,17 @@ L0 --SSA--> S0 --store/load barrier--> L1 --SSA--> S1
 
 `VST_LD` 约束 cut 前的 vector store 和 cut 后的 scalar load，而不仅仅约束触发它的
 某一个 alias pair。生成 barrier 的顺序图利用这种类别覆盖建立边；已有 barrier 则结合
-operation 的词法位置和 family 过滤 producer/consumer。
+operation 在同一 block 中的位置和 family 过滤 producer/consumer。
 
 这种扩展必须受执行路径约束。词法上位于 barrier 前后，不自动意味着在任意条件分支下
-都经过该 barrier。当前实现没有 DT/PDT 的一般 CFG 证明，复杂条件路径下的图边与 anchor
-还需单独审计，不能把这套词法图描述为通用控制流同步证明。
+都经过该 barrier。因此已有和自动生成 barrier 的 store-to-load 边仅连接同 block 的访问。
+自动生成屏障使用 placement 的实际 `sameIterationAnchor`（缺省为 consumer），
+仅连接该 anchor 所在 block 内、插入位置两侧的访问；由于屏障插在 anchor 之前，
+anchor 本身为 load 时也属于被保护的消费者。不能按 consumer 的词法序号跨 region 加边。
+例如 `load A -> store B -> scf.if { barrier } -> load C -> store A`，即使两次
+store 的值分别依赖前面的 load，条件 barrier 也不能证明整条 relay 有序，末尾仍需
+`VLD_VST`。零次或动态次数循环内的 barrier 同理；换成同 block 的无条件 barrier
+则可以建立 relay。当前实现没有 DT/PDT 的一般 CFG 证明，不能将此规则推广到任意控制流。
 
 ### 10.4 WAW 的多跳 relay
 
@@ -399,9 +458,11 @@ outer carried: consumer_outer > producer_outer
 一层循环只需比较该层坐标。求解关系为空时才能排除该类依赖；非空表示至少存在一组
 重叠的合法动态实例，不表示每次迭代都会冲突。
 
-当前精确关系建模支持最多两层循环。更深 nest、非精确 offset、未知 root 或未支持的访问
-形状可能生成 Unknown。非常量循环 domain 则有单独分支：同一迭代可能别名 pair 保守保留，
-循环携带 pair 在共享 carrying loops 上生成 hazard。两者不能统称为任意 Unknown 的兜底。
+精确关系建模不再限制为两层循环。对每个共享 carrying level，约束更外层坐标相等、
+该层 consumer 坐标大于 producer 坐标，更内层坐标独立变化。上面的两层公式只是示例。
+非精确 offset、未知 root、动态 domain 或未支持的访问形状可能生成 Unknown；
+已记录的 Unknown 会转成保守 hazard，循环携带情形在相关共享循环的 latch 上保序。
+当前收集器只为 `scf.for` 建立这种循环模型，尚未处理 `scf.while` 的跨迭代依赖。
 
 ### 11.3 为什么循环外消费者取 loop anchor
 
@@ -412,6 +473,7 @@ body 内消费者前。
 
 循环携带 hazard 的 latch cut 每次迭代执行，约束下一次迭代。placement 将这种候选与普通
 操作前的候选区分，冗余消除不能用一次性的循环外 cut 随意替代回边 cut。
+当前 latch 候选保守保留，嵌套循环中内外层 latch 的进一步冗余消除尚未实现。
 
 该算法没有计算一般 CFG 的“所有路径上的公共 block”，也不承诺全局最少 barrier 数量。
 `scf.if` 内同 block 的直接访问已有测试；跨互斥分支、任意多 block CFG 和复杂路径最优
@@ -452,7 +514,8 @@ placement 不属于当前已完整证明的能力。
 
 placement 的已有 coverage 检查主要针对 anchor 的前一条操作，并检查 family、kind 和
 必要的 carrying-loop 身份。输入中存在别处的 barrier 不保证直接通过该检查；依赖图对已有
-barrier 有另外的词法顺序建模，按各 family 和方向连接 cut 两侧访问。
+barrier 有另外的顺序建模；分析阶段仅按各 family 和方向连接与 barrier 同 block 的
+store/load。嵌套条件或循环内的 barrier 不能凭词法位置覆盖外部访问。
 
 规范化为 ALL 时，codegen 只删除前一条同 family 的 directed barrier。它不是一个删除所有
 用户 barrier 的清理 pass，也没有完整实现参考文档中 Fused 模式的用户 barrier 必要性标记。
@@ -485,11 +548,71 @@ store/load 约束。单独改为 VS_ALL 只能覆盖前者，单独改为 VV_ALL
 
 本地实现与 LLVM VF 内部 AutoSync 的共同目标是解决 UB RAW/WAR/WAW，但二者的实现和配置彼此独立。
 本地算法基于 MLIR 结构化 region、footprint 和 Presburger 关系。`BishengVFAutoSyncMode`
-默认设置为 `Unspecified`；未指定 `--bisheng-vf-auto-sync` 时，PTOAS 不传递
-`-cce-vf-auto-sync`，沿用 Bisheng 工具链的默认行为。显式指定 `off`、`fused` 或 `global`
+默认设置为 `Off`；未指定 `--bisheng-vf-auto-sync` 时，PTOAS 传递
+`-cce-vf-auto-sync=off`，关闭 Bisheng VF 自动同步。这样可避免显式 membar 与动态地址
+谓词存储组合触发 Bisheng 自动同步编译崩溃。显式指定 `off`、`fused` 或 `global`
 时，分别向工具链传递对应模式。PTOAS 的 vecscope membar 选项不改变该配置。
 将多个阶段融合进同一个 VecScope 后，可以分析该 scope 内的访问；这不等同于处理尚未融合
 的 sibling VecScope 同步。
+
+### 14.1 Bisheng VF AutoSync 默认关闭的原因
+
+显式 membar 与 Bisheng VF AutoSync 同时启用时，部分谓词访存 kernel 会在设备 LLVM IR
+编译阶段触发 Bisheng 段错误（exit 139）。TileLang ST 的 `tcmps` 和 PTODSL ST 的
+`elementwise_1d_2d_equivalence` 暴露了这一问题；失败发生在目标文件生成阶段，尚未运行
+kernel，也未进行数值比对。切换 `--bisheng-vec-misched=on/off` 均不能消除崩溃，说明
+仅重试向量调度器不足以绕过该问题。
+
+本地使用 CANN 9.2.0、Bisheng clang 15.0.5（构建日期 2026-10-15）进行对照，
+`elementwise_tcmps_i8_aligned_1d_2d_equivalence` 和
+`elementwise_tsels_i8_aligned_1d_2d_equivalence` 在沿用 Bisheng 默认 VF AutoSync 时，
+开启 PTOAS membar 编译失败，关闭后成功。以下完整配置对照针对
+`elementwise_tcmps_i8_aligned_1d_2d_equivalence`，不将其结果推广到其他 case。
+
+表中的“工具链默认”指直接调用 Bisheng 时不传 `-cce-vf-auto-sync`，也是修改默认值前
+PTOAS 不指定 `--bisheng-vf-auto-sync` 的行为；修改后 PTOAS 不指定该选项等价于显式
+选择 `off`。不据此假定 Bisheng 的工具链默认等同于 `fused` 或 `global`。
+
+| PTOAS membar / 设备 IR | Bisheng VF AutoSync 配置 | 编译结果 |
+| --- | --- | --- |
+| 开启，保留生成的全部显式 membar | 工具链默认（不传参数） | Bisheng exit 139 |
+| 开启，保留生成的全部显式 membar | `fused` | Bisheng exit 139 |
+| 开启，保留生成的全部显式 membar | `global` | Bisheng exit 139 |
+| 开启，保留生成的全部显式 membar | `off` | 成功 |
+| 关闭，不自动插入 membar | 工具链默认（不传参数） | 成功 |
+| 关闭，不自动插入 membar | `fused` | 成功 |
+| 关闭，不自动插入 membar | `global` | Bisheng exit 139，scheduler on/off 均失败 |
+
+另外对 `tcmps` 设备 IR 做了定位实验。以下删改仅用于缩减触发条件，不能作为保持
+kernel 语义的修复方案：
+
+| IR 定位实验 | Bisheng VF AutoSync 配置 | 编译结果 |
+| --- | --- | --- |
+| 移除 GM 搬运和整个 2D 分支，保留 1D 循环、动态地址 `llvm.hivm.psts.b8` 和一处 `VLD_VST` | 工具链默认 | Bisheng exit 139 |
+| 在上述缩减 IR 中删除该屏障 | 工具链默认 | 成功 |
+| 保留上述缩减 IR 中的屏障 | `off` | 成功 |
+| 在原 kernel IR 中仅保留第一处 `VLD_VST`，并将对应 `psts.b8` 的地址偏移改为常量 0 | 工具链默认 | 成功 |
+
+这些结果表明，工具链默认及 `fused` 路径对本 case 的显式屏障组合敏感；`global`
+即使没有 PTOAS 自动插入的 membar 仍会崩溃。因此，“两个同步机制同时开启”不是所有
+失败的必要条件，也不能笼统地说“移除 membar 就能成功”。当前证据指向 Bisheng VF
+AutoSync 对该类谓词访存 IR 的处理问题，尚未定位其内部具体出错实现。
+缩减 IR 通过 LLVM verifier，但通用 verifier 不验证全部 CANN intrinsic 约束，
+因此不能仅据此断言所有目标指令用法均合法，也不能将崩溃直接归因为 PTOAS 插错屏障。
+这里的 exit 139 与某些 CANN 9.3.0 构建禁用文本 LLVM IR 输出所导致的目标属性探测
+exit 70 是两个独立问题。
+
+默认关闭 Bisheng VF AutoSync，可在保留 PTOAS 已插入屏障的同时避开上述编译崩溃，
+并使 PTOAS 屏障分析的验证不依赖 Bisheng 补充同步。该设置不关闭
+`--enable-vecscope-mem-bar`，也不证明 PTOAS 已覆盖所有同步需求；若用户同时关闭
+PTOAS membar 插入，则不会自动重新启用 Bisheng VF AutoSync，所需同步必须由程序或
+显式选择的其他同步机制提供。需要对照 Bisheng 行为时，仍可显式选择 `fused` 或 `global`。
+
+修改默认值后，不显式传入 `--bisheng-vf-auto-sync`，上述 PTODSL 单元的 7 个 case
+和 TileLang `tcmps` 均已编译成功。这是编译阶段的验证结果，尚不代表真机数值正确性
+或无流水线 hazard；后续仍需运行时比对与同步专项验证。
+
+### 14.2 PTOAS 插入模式与验证要求
 
 `--enable-vecscope-mem-bar` 默认开启，可用 `=false` 关闭。
 `--enable-vecscope-mem-bar-all` 默认关闭，开启后优先于普通模式，不叠加运行两种模式。
@@ -508,9 +631,18 @@ store/load 约束。单独改为 VS_ALL 只能覆盖前者，单独改为 VV_ALL
 | 已有同步 | 同 kind 或同族 ALL 可覆盖 | VV_ALL 不覆盖 VST_LD |
 | 循环 | 相邻迭代访问不重叠 | 固定地址的 self WAW 保留 latch |
 | Mask | 静态空 mask 缩小访问 | 动态 mask 不擅自假定为空 |
-| 未知关系 | 记录 Unknown 与原因 | 不将 Unknown 当作已证明 NoAlias |
+| 未知关系 | 记录 Unknown 与原因并生成保守 hazard | 不将 Unknown 当作已证明 NoAlias |
+| 指针递推 | 固定增量且分块不重叠时消除 barrier | 重叠、动态更新或不整除时保留同步 |
+| 执行路径 | 同 block 无条件 barrier 建立 relay | 条件或可能零次循环内 barrier 不覆盖外部访问 |
 
 现有测试集中在 `test/lit/vpto/vecscope_membar_*.pto` 和 issue1593 的相关用例。
+`vecscope_membar_pointer_recurrence.pto` 覆盖分离块、重叠块、动态更新、组合指针更新
+以及增量不能被循环 step 整除的情形；`vecscope_membar_conditional_fence.pto` 对照
+条件屏障、无屏障、无条件屏障、零次循环和动态循环。`vecscope_membar_vsstb_blocks.pto`
+还直接验证 post-update 本次访问、块间间隙和返回指针。
+`test/dsl-st/issue_1679_npu.py` 覆盖三层 IV、两层 IV 和 VecScope 外层变量三个运行时用例。
+验证 PTOAS 自动同步时应使用 `--enable-vecscope-mem-bar=true --bisheng-vf-auto-sync=off`，
+避免 Bisheng 自动插入的屏障掩盖本 pass 的遗漏。
 FileCheck 应同时检查 kind 和位置：仅统计 barrier 数量无法发现错误 family 合并。
 IR 测试验证编译器决策；在模拟器或硬件上验证时还应关注实际流水线 hazard，不能仅凭一次
 数值比对通过就证明不存在乱序风险。
@@ -535,6 +667,17 @@ VecScope，后续可考虑复用 SSA 图、缓存访问 pair 的 footprint/依�
 
 1. 新内存 op 先定义真实访问范围、单位和 payload，再加入收集器。
 2. 新控制流形状先给出路径和 anchor 的正确性证明，再放宽词法判断。
-3. Unknown 的新兜底必须说明覆盖的路径和 family，不能用 VV_ALL 假装全局同步。
+3. 扩展 Unknown 兜底时必须说明覆盖的路径、carrying loop 和 family，不能用 VV_ALL 假装全局同步。
 4. 冗余优化用完整链与断链反例共同验证，特别检查同时删除多个候选后的证明是否仍成立。
 5. 精确能力与保守能力分别记录，避免把当前实现限制写成已经满足的设计保证。
+
+### 精确谓词访存与公共动态偏移
+
+A5 的 `plds/pldi` 按 NORM、US、DS 分别建模 32、16、64 字节读取；
+`psts/psti` 按 NORM、PK 分别建模 32、16 字节写入。DS 的读取范围不能用
+32 字节对齐单位代替。当前访问地址和 post-update 增量分别使用统一地址语义，
+常量指针递推可转换为循环 IV 表达式；动态增量仍保守处理。
+
+同一符号根的公共动态 index 项可以相消，从而证明相邻 PK4_B32 存储不重叠。
+循环参数不在该快捷路径相消；循环携带关系仍分别建模前后迭代，未建模的符号项
+不能被当作零。表达式的系数或常量计算溢出时回退为未知依赖。

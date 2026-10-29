@@ -40,7 +40,9 @@
 // CHECK: [[MASK_NORM:%[a-zA-Z0-9_]+]], [[PLDI_NORM_NEXT:%[a-zA-Z0-9_]+]] = pto.pldi [[PLDI_NORM_BASE]][%c1], "NORM"
 // CHECK-NEXT: [[MASK_US:%[a-zA-Z0-9_]+]], [[PLDI_US_NEXT:%[a-zA-Z0-9_]+]] = pto.pldi [[PLDI_US_BASE]][%c1], "US"
 // CHECK-NEXT: [[MASK_DS:%[a-zA-Z0-9_]+]], [[PLDI_DS_NEXT:%[a-zA-Z0-9_]+]] = pto.pldi [[PLDI_DS_BASE]][%c1], "DS"
+// CHECK-NEXT: pto.mem_bar "VLD_VST"
 // CHECK-NEXT: [[PSTI_NORM_NEXT:%[a-zA-Z0-9_]+]] = pto.psti [[MASK_NORM]], [[PSTI_NORM_BASE]][%c1], "NORM"
+// CHECK-NEXT: pto.mem_bar "VST_VST"
 // CHECK-NEXT: [[PSTI_PK_NEXT:%[a-zA-Z0-9_]+]] = pto.psti [[MASK_US]], [[PSTI_PK_BASE]][%c1], "PK"
 // CHECK: scf.yield {{%.*}}, [[PLDI_NORM_NEXT]], [[PLDI_US_NEXT]], [[PLDI_DS_NEXT]], [[PSTI_NORM_NEXT]], [[PSTI_PK_NEXT]]
 

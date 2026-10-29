@@ -1,0 +1,166 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+
+// RUN: ptoas --pto-arch=a5 --pto-backend=vpto --emit-vpto --enable-vecscope-mem-bar %s -o - 2>/dev/null | FileCheck %s
+
+// A conditional fence must not prove the external load-A -> store-A WAR.
+module {
+  // The conditional fence may not execute, so it cannot order the external load A before store A.
+  // Expected: insert VLD_VST before the final store to A.
+  func.func @conditional(%cond: i1, %n: index) {
+    %one = arith.constant 1 : index
+    %zero = arith.constant 0 : index
+    %a0 = arith.constant 0 : i64
+    %b0 = arith.constant 4096 : i64
+    %c0 = arith.constant 8192 : i64
+    %a = pto.castptr %a0 : i64 -> !pto.ptr<f32, ub>
+    %b = pto.castptr %b0 : i64 -> !pto.ptr<f32, ub>
+    %c = pto.castptr %c0 : i64 -> !pto.ptr<f32, ub>
+
+    pto.vecscope {
+      %mask = pto.pset_b32 "PAT_ALL" : !pto.mask<b32>
+      %v = pto.vlds %a[%zero] : !pto.ptr<f32, ub> -> !pto.vreg<64xf32>
+      pto.vsts %v, %b[%zero], %mask : !pto.vreg<64xf32>, !pto.ptr<f32, ub>, !pto.mask<b32>
+      scf.if %cond {
+        pto.mem_bar "VST_VLD"
+      }
+      %w = pto.vlds %c[%zero] : !pto.ptr<f32, ub> -> !pto.vreg<64xf32>
+      pto.vsts %w, %a[%zero], %mask : !pto.vreg<64xf32>, !pto.ptr<f32, ub>, !pto.mask<b32>
+    }
+    return
+  }
+
+  // Control without an existing fence: loading A before overwriting A creates a WAR dependence.
+  // Expected: insert VLD_VST before the final store to A.
+  func.func @no_fence(%cond: i1, %n: index) {
+    %one = arith.constant 1 : index
+    %zero = arith.constant 0 : index
+    %a0 = arith.constant 0 : i64
+    %b0 = arith.constant 4096 : i64
+    %c0 = arith.constant 8192 : i64
+    %a = pto.castptr %a0 : i64 -> !pto.ptr<f32, ub>
+    %b = pto.castptr %b0 : i64 -> !pto.ptr<f32, ub>
+    %c = pto.castptr %c0 : i64 -> !pto.ptr<f32, ub>
+
+    pto.vecscope {
+      %mask = pto.pset_b32 "PAT_ALL" : !pto.mask<b32>
+      %v = pto.vlds %a[%zero] : !pto.ptr<f32, ub> -> !pto.vreg<64xf32>
+      pto.vsts %v, %b[%zero], %mask : !pto.vreg<64xf32>, !pto.ptr<f32, ub>, !pto.mask<b32>
+
+      %w = pto.vlds %c[%zero] : !pto.ptr<f32, ub> -> !pto.vreg<64xf32>
+      pto.vsts %w, %a[%zero], %mask : !pto.vreg<64xf32>, !pto.ptr<f32, ub>, !pto.mask<b32>
+    }
+    return
+  }
+
+  // Unconditional control: load A -> store B -> VST_VLD -> load C -> store A.
+  // Register data dependencies and the existing fence complete the ordering chain; no new fence is needed.
+  func.func @unconditional(%cond: i1, %n: index) {
+    %one = arith.constant 1 : index
+    %zero = arith.constant 0 : index
+    %a0 = arith.constant 0 : i64
+    %b0 = arith.constant 4096 : i64
+    %c0 = arith.constant 8192 : i64
+    %a = pto.castptr %a0 : i64 -> !pto.ptr<f32, ub>
+    %b = pto.castptr %b0 : i64 -> !pto.ptr<f32, ub>
+    %c = pto.castptr %c0 : i64 -> !pto.ptr<f32, ub>
+
+    pto.vecscope {
+      %mask = pto.pset_b32 "PAT_ALL" : !pto.mask<b32>
+      %v = pto.vlds %a[%zero] : !pto.ptr<f32, ub> -> !pto.vreg<64xf32>
+      pto.vsts %v, %b[%zero], %mask : !pto.vreg<64xf32>, !pto.ptr<f32, ub>, !pto.mask<b32>
+      pto.mem_bar "VST_VLD"
+      %w = pto.vlds %c[%zero] : !pto.ptr<f32, ub> -> !pto.vreg<64xf32>
+      pto.vsts %w, %a[%zero], %mask : !pto.vreg<64xf32>, !pto.ptr<f32, ub>, !pto.mask<b32>
+    }
+    return
+  }
+
+  // The loop executes zero times, so its VST_VLD cannot order accesses outside the loop.
+  // Expected: insert VLD_VST before the final store to A.
+  func.func @empty_loop(%cond: i1, %n: index) {
+    %one = arith.constant 1 : index
+    %zero = arith.constant 0 : index
+    %a0 = arith.constant 0 : i64
+    %b0 = arith.constant 4096 : i64
+    %c0 = arith.constant 8192 : i64
+    %a = pto.castptr %a0 : i64 -> !pto.ptr<f32, ub>
+    %b = pto.castptr %b0 : i64 -> !pto.ptr<f32, ub>
+    %c = pto.castptr %c0 : i64 -> !pto.ptr<f32, ub>
+
+    pto.vecscope {
+      %mask = pto.pset_b32 "PAT_ALL" : !pto.mask<b32>
+      %v = pto.vlds %a[%zero] : !pto.ptr<f32, ub> -> !pto.vreg<64xf32>
+      pto.vsts %v, %b[%zero], %mask : !pto.vreg<64xf32>, !pto.ptr<f32, ub>, !pto.mask<b32>
+      scf.for %i = %zero to %zero step %one {
+        pto.mem_bar "VST_VLD"
+      }
+      %w = pto.vlds %c[%zero] : !pto.ptr<f32, ub> -> !pto.vreg<64xf32>
+      pto.vsts %w, %a[%zero], %mask : !pto.vreg<64xf32>, !pto.ptr<f32, ub>, !pto.mask<b32>
+    }
+    return
+  }
+
+  // The trip count depends on n and may be zero; the loop fence is not guaranteed to execute.
+  // Expected: insert VLD_VST before the final store to A.
+  func.func @dynamic_loop(%cond: i1, %n: index) {
+    %one = arith.constant 1 : index
+    %zero = arith.constant 0 : index
+    %a0 = arith.constant 0 : i64
+    %b0 = arith.constant 4096 : i64
+    %c0 = arith.constant 8192 : i64
+    %a = pto.castptr %a0 : i64 -> !pto.ptr<f32, ub>
+    %b = pto.castptr %b0 : i64 -> !pto.ptr<f32, ub>
+    %c = pto.castptr %c0 : i64 -> !pto.ptr<f32, ub>
+
+    pto.vecscope {
+      %mask = pto.pset_b32 "PAT_ALL" : !pto.mask<b32>
+      %v = pto.vlds %a[%zero] : !pto.ptr<f32, ub> -> !pto.vreg<64xf32>
+      pto.vsts %v, %b[%zero], %mask : !pto.vreg<64xf32>, !pto.ptr<f32, ub>, !pto.mask<b32>
+      scf.for %i = %zero to %n step %one {
+        pto.mem_bar "VST_VLD"
+      }
+      %w = pto.vlds %c[%zero] : !pto.ptr<f32, ub> -> !pto.vreg<64xf32>
+      pto.vsts %w, %a[%zero], %mask : !pto.vreg<64xf32>, !pto.ptr<f32, ub>, !pto.mask<b32>
+    }
+    return
+  }
+}
+
+// CHECK-LABEL: func.func @conditional(
+// CHECK: %[[READ:.*]] = pto.vlds %{{.*}}[%{{.*}}]
+// CHECK: %[[LAST:.*]] = pto.vlds %{{.*}}[%{{.*}}]
+// CHECK: pto.mem_bar "VLD_VST"
+// CHECK-NEXT: pto.vsts %[[LAST]]
+// CHECK: return
+
+// CHECK-LABEL: func.func @no_fence(
+// CHECK: %[[READ:.*]] = pto.vlds %{{.*}}[%{{.*}}]
+// CHECK: %[[LAST:.*]] = pto.vlds %{{.*}}[%{{.*}}]
+// CHECK: pto.mem_bar "VLD_VST"
+// CHECK-NEXT: pto.vsts %[[LAST]]
+// CHECK: return
+
+// CHECK-LABEL: func.func @unconditional(
+// CHECK: pto.mem_bar "VST_VLD"
+// CHECK-NOT: pto.mem_bar
+// CHECK: return
+
+// CHECK-LABEL: func.func @empty_loop(
+// CHECK: %[[READ:.*]] = pto.vlds %{{.*}}[%{{.*}}]
+// CHECK: %[[LAST:.*]] = pto.vlds %{{.*}}[%{{.*}}]
+// CHECK: pto.mem_bar "VLD_VST"
+// CHECK-NEXT: pto.vsts %[[LAST]]
+// CHECK: return
+
+// CHECK-LABEL: func.func @dynamic_loop(
+// CHECK: %[[READ:.*]] = pto.vlds %{{.*}}[%{{.*}}]
+// CHECK: %[[LAST:.*]] = pto.vlds %{{.*}}[%{{.*}}]
+// CHECK: pto.mem_bar "VLD_VST"
+// CHECK-NEXT: pto.vsts %[[LAST]]
+// CHECK: return

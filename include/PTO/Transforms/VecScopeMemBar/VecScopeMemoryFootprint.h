@@ -71,6 +71,9 @@ struct VecMemoryAccessDescriptor {
     AffineByteExpr byteOffset;
     std::optional<uint64_t> conservativeByteSize;
     bool forcesMayAlias = false;
+    // Disjoint 32-byte pieces of a block-strided store, relative to byteOffset.
+    // Empty means the descriptor represents a single interval.
+    SmallVector<int64_t, 8> blockByteOffsets;
 };
 
 enum class VecScopeAliasResult {

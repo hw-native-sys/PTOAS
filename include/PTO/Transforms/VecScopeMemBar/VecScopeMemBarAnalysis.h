@@ -40,6 +40,7 @@ enum class DependenceReason {
     PresburgerRelationNonEmpty,
     UnknownRoot,
     DynamicUnmodelledExpression,
+    DynamicLoopBounds,
     UnsupportedAccessShape,
 };
 
@@ -61,11 +62,15 @@ struct MemoryHazard {
     IterationDistance distance;
 };
 
+// A dependence the analysis could not disprove. Each entry is materialized as
+// a conservative MemoryHazard at the recorded scope.
 struct UnknownDependence {
     unsigned producer = 0;
     unsigned consumer = 0;
     MemBarKind kind = MemBarKind::VV_ALL;
     DependenceReason reason = DependenceReason::UnsupportedAccessShape;
+    VecScopeHazardScope scope = VecScopeHazardScope::SameIteration;
+    std::optional<unsigned> carryingLoop;
 };
 
 struct ExistingBarrier {
