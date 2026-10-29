@@ -390,7 +390,10 @@ std::string reduceOpTok(pto::ReduceOp op) ;
 LogicalResult rematerializeFixpipeQuantBindings(ModuleOp mop) ;
 std::string renderStructDef(pto::StructType st) ;
 std::string renderStructFieldDecl(Type fieldTy, const std::string &name) ;
-int64_t renderTileTemplateDim(int64_t rawDim, Type elemTy, pto::BLayout blayout, int dimIdx) ;
+int64_t renderTileTemplateDim(int64_t rawDim, Type elemTy,
+                              pto::BLayout blayout, int dimIdx,
+                              bool scalePackedFp4Dim = false);
+bool shouldScalePackedFp4TileDimensions(Attribute memorySpace);
 void replaceOrEraseWithOpaqueCallAndReturnDst(Operation *op, Value dst, StringRef callee, ArrayRef<Value> args, ArrayAttr templateArgs, ConversionPatternRewriter &rewriter) ;
 FailureOr<TileBufType> resolveFixpipeConsumerTileType(Value pipeHandle) ;
 std::string resolveGlobalTensorLayout(Operation *anchor, Value basePtr, ArrayRef<int64_t> shape, ArrayRef<int64_t> strides, Type elemTy) ;

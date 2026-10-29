@@ -30,6 +30,14 @@ module attributes {pto.target_arch = "a5"} {
   }
 }
 
-// A5: TMATMUL_MX([[D0:[_A-Za-z][_A-Za-z0-9]*]], [[A0:[_A-Za-z][_A-Za-z0-9]*]], [[AS0:[_A-Za-z][_A-Za-z0-9]*]], [[B0:[_A-Za-z][_A-Za-z0-9]*]], [[BS0:[_A-Za-z][_A-Za-z0-9]*]]);
-// A5: TMATMUL_MX([[D1:[_A-Za-z][_A-Za-z0-9]*]], [[A1:[_A-Za-z][_A-Za-z0-9]*]], [[AS1:[_A-Za-z][_A-Za-z0-9]*]], [[B1:[_A-Za-z][_A-Za-z0-9]*]], [[BS1:[_A-Za-z][_A-Za-z0-9]*]]);
-// A5: TMATMUL_MX([[D2:[_A-Za-z][_A-Za-z0-9]*]], [[A2:[_A-Za-z][_A-Za-z0-9]*]], [[AS2:[_A-Za-z][_A-Za-z0-9]*]], [[B2:[_A-Za-z][_A-Za-z0-9]*]], [[BS2:[_A-Za-z][_A-Za-z0-9]*]], [[BIAS2:[_A-Za-z][_A-Za-z0-9]*]]);
+// The packed FP4 carrier uses byte storage, but TMATMUL_MX Tile template
+// dimensions remain logical element counts.
+// A5-DAG: Tile<TileType::Left, float4_e1m2x2_t, 16, 512, BLayout::ColMajor, 16, 512,
+// A5-DAG: Tile<TileType::Right, float4_e2m1x2_t, 512, 16, BLayout::RowMajor, 512, 16,
+// A5-DAG: Tile<TileType::Acc, {{.*}}, 16, 16, BLayout::ColMajor, 16, 16,
+// A5-DAG: Tile<TileType::Scaling, {{.*}}, 16, 16, BLayout::RowMajor, 16, 16,
+// A5-DAG: Tile<TileType::Scaling, {{.*}}, 16, 16, BLayout::ColMajor, 16, 16,
+// A5-DAG: Tile<TileType::Bias, {{.*}}, 1, 16, BLayout::RowMajor, 1, 16,
+// A5-DAG: TMATMUL_MX([[D0:[_A-Za-z][_A-Za-z0-9]*]], [[A0:[_A-Za-z][_A-Za-z0-9]*]], [[AS0:[_A-Za-z][_A-Za-z0-9]*]], [[B0:[_A-Za-z][_A-Za-z0-9]*]], [[BS0:[_A-Za-z][_A-Za-z0-9]*]]);
+// A5-DAG: TMATMUL_MX([[D1:[_A-Za-z][_A-Za-z0-9]*]], [[A1:[_A-Za-z][_A-Za-z0-9]*]], [[AS1:[_A-Za-z][_A-Za-z0-9]*]], [[B1:[_A-Za-z][_A-Za-z0-9]*]], [[BS1:[_A-Za-z][_A-Za-z0-9]*]]);
+// A5-DAG: TMATMUL_MX([[D2:[_A-Za-z][_A-Za-z0-9]*]], [[A2:[_A-Za-z][_A-Za-z0-9]*]], [[AS2:[_A-Za-z][_A-Za-z0-9]*]], [[B2:[_A-Za-z][_A-Za-z0-9]*]], [[BS2:[_A-Za-z][_A-Za-z0-9]*]], [[BIAS2:[_A-Za-z][_A-Za-z0-9]*]]);

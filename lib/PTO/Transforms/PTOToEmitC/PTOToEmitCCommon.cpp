@@ -213,8 +213,13 @@ FailureOr<Value> buildAsyncScratchTileValue(
 
   Type elemTy = memTy.getElementType();
   pto::BLayout blayout = getTileBufBLayoutValue(configAttr);
-  int64_t templateRows = renderTileTemplateDim(rows, elemTy, blayout, 0);
-  int64_t templateCols = renderTileTemplateDim(cols, elemTy, blayout, 1);
+  // This helper always materializes a Vec tile, even when the source memref
+  // has no explicit address-space attribute.
+  constexpr bool scalePackedFp4Dim = true;
+  int64_t templateRows = renderTileTemplateDim(rows, elemTy, blayout, 0,
+                                               scalePackedFp4Dim);
+  int64_t templateCols = renderTileTemplateDim(cols, elemTy, blayout, 1,
+                                               scalePackedFp4Dim);
   std::string elemTypeStr = getEmitCScalarTypeToken(elemTy);
   std::string tileTypeStr =
       "Tile<TileType::Vec, " + elemTypeStr + ", " +
@@ -965,8 +970,11 @@ std::optional<std::string> getEmitCTileTypeString(pto::TileBufType type) {
   int64_t rows = shape[0];
   int64_t cols = shape[1];
 
-  auto render = [elemTy, blayout](int64_t dim, int dimIdx) {
-    return renderTileTemplateDim(dim, elemTy, blayout, dimIdx);
+  const bool scalePackedFp4Dim =
+      shouldScalePackedFp4TileDimensions(type.getMemorySpace());
+  auto render = [elemTy, blayout, scalePackedFp4Dim](int64_t dim, int dimIdx) {
+    return renderTileTemplateDim(dim, elemTy, blayout, dimIdx,
+                                 scalePackedFp4Dim);
   };
 
   std::string vrowTok =
@@ -1936,16 +1944,24 @@ std::string renderStructFieldDecl(Type fieldTy,
 }
 
 int64_t renderTileTemplateDim(int64_t rawDim, Type elemTy,
-                                     pto::BLayout blayout, int dimIdx) {
+                              pto::BLayout blayout, int dimIdx,
+                              bool scalePackedFp4Dim) {
   if (dimIdx < 0 || dimIdx >= kTileRank) {
     return rawDim;
   }
-  if (rawDim == ShapedType::kDynamic)
+  if (rawDim == ShapedType::kDynamic) {
     return rawDim;
-  if (!pto::isPTOFloat4PackedType(elemTy))
+  }
+  if (!scalePackedFp4Dim || !pto::isPTOFloat4PackedType(elemTy)) {
     return rawDim;
+  }
   int packedDim = blayout == pto::BLayout::ColMajor ? 0 : 1;
   return dimIdx == packedDim ? rawDim * kFp4PackFactor : rawDim;
+}
+
+bool shouldScalePackedFp4TileDimensions(Attribute memorySpace) {
+  auto asAttr = dyn_cast_or_null<pto::AddressSpaceAttr>(memorySpace);
+  return asAttr && asAttr.getAddressSpace() == pto::AddressSpace::VEC;
 }
 
 FailureOr<TileBufType> resolveFixpipeConsumerTileType(Value pipeHandle) {

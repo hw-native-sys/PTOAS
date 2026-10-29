@@ -30,7 +30,9 @@ namespace pto {
 using namespace mlir;
 
 const char *reinterpretCastTileRole(pto::AddressSpace as, Value source);
-std::string buildReinterpretCastTileTypeString(MemRefType resMrTy, Type elemTy, const char *roleTok);
+std::string buildReinterpretCastTileTypeString(MemRefType resMrTy, Type elemTy,
+                                               const char *roleTok,
+                                               bool scalePackedFp4Dim);
 Value reinterpretCastBaseAddress(ConversionPatternRewriter &rewriter, Location loc, Value source, pto::AddressSpace as, StringRef elemTok, Type u64Ty);
 void assignTileAddress(ConversionPatternRewriter &rewriter, Location loc, MLIRContext *ctx, Value tile, Value addr);
 FailureOr<Value> createEmitCTileVariable(ConversionPatternRewriter &rewriter, Location loc, const TypeConverter *typeConverter, pto::TileBufType tileTy, bool initializeDynamicValidToShape = false);

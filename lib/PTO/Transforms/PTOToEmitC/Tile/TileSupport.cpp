@@ -48,16 +48,19 @@ const char *reinterpretCastTileRole(pto::AddressSpace as,
 // result shape (fallback 32x32) with a default config.
 std::string buildReinterpretCastTileTypeString(MemRefType resMrTy,
                                                       Type elemTy,
-                                                      const char *roleTok) {
+                                                      const char *roleTok,
+                                                      bool scalePackedFp4Dim) {
   int64_t rows = 32, cols = 32;
   if (resMrTy.getRank() >= mlir::pto::kValue2 && resMrTy.hasStaticShape()) {
     rows = resMrTy.getDimSize(0);
     cols = resMrTy.getDimSize(1);
   }
   int64_t templateRows =
-      renderTileTemplateDim(rows, elemTy, pto::BLayout::RowMajor, 0);
+      renderTileTemplateDim(rows, elemTy, pto::BLayout::RowMajor, 0,
+                            scalePackedFp4Dim);
   int64_t templateCols =
-      renderTileTemplateDim(cols, elemTy, pto::BLayout::RowMajor, 1);
+      renderTileTemplateDim(cols, elemTy, pto::BLayout::RowMajor, 1,
+                            scalePackedFp4Dim);
   return std::string("Tile<") + roleTok + ", " +
          getEmitCScalarTypeToken(elemTy) + ", " + std::to_string(templateRows) +
          ", " + std::to_string(templateCols) + ", BLayout::RowMajor, " +
@@ -134,13 +137,17 @@ createEmitCTileVariable(ConversionPatternRewriter &rewriter, Location loc,
       return failure();
     Type i32Ty = emitc::OpaqueType::get(rewriter.getContext(), "int32_t");
     pto::BLayout blayout = getTileBufBLayoutValue(tileTy.getConfigAttr());
+    const bool scalePackedFp4Dim =
+        shouldScalePackedFp4TileDimensions(tileTy.getMemorySpace());
     SmallVector<Value, mlir::pto::kValue2> constructorArgs;
     constructorArgs.push_back(makeEmitCIntConstant(
         rewriter, loc, i32Ty,
-        renderTileTemplateDim(shape[0], tileTy.getElementType(), blayout, 0)));
+        renderTileTemplateDim(shape[0], tileTy.getElementType(), blayout, 0,
+                              scalePackedFp4Dim)));
     constructorArgs.push_back(makeEmitCIntConstant(
         rewriter, loc, i32Ty,
-        renderTileTemplateDim(shape[1], tileTy.getElementType(), blayout, 1)));
+        renderTileTemplateDim(shape[1], tileTy.getElementType(), blayout, 1,
+                              scalePackedFp4Dim)));
     return rewriter
         .create<emitc::CallOpaqueOp>(loc, convertedTy, *tileTypeString,
                                      ArrayAttr{}, ArrayAttr{}, constructorArgs)

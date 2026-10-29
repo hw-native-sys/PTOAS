@@ -103,7 +103,8 @@ struct ReinterpretCastToEmitC : public OpConversionPattern<memref::ReinterpretCa
 
     const char *roleTok = reinterpretCastTileRole(as, source);
     std::string tileTypeStr =
-        buildReinterpretCastTileTypeString(resMrTy, elemTy, roleTok);
+        buildReinterpretCastTileTypeString(resMrTy, elemTy, roleTok,
+                                           as == pto::AddressSpace::VEC);
 
     auto tileType = emitc::OpaqueType::get(ctx, tileTypeStr);
     Value tile = rewriter

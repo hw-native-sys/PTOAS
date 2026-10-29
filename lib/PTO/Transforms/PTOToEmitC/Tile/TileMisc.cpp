@@ -142,27 +142,30 @@ struct PTOAllocTileToEmitC
     return success();
   }
 
-  // Build the runtime constructor arguments for a dynamic-valid-shape
-  // alloc_tile, doubling the packed FP4 dimension when required.
+  // Keep runtime valid dimensions in the same unit as the emitted Tile type.
+  // Vec FP4 tiles expose packed dimensions to the A5 transfer path; cube and
+  // matmul tiles keep their logical dimensions.
   FailureOr<SmallVector<Value>>
   buildDynamicValidShapeArgs(pto::AllocTileOp op, OpAdaptor adaptor,
                              ConversionPatternRewriter &rewriter,
                              pto::TileBufType tileTy) const {
-    Location loc = op.getLoc();
-    MLIRContext *ctx = rewriter.getContext();
     auto validShape = tileTy.getValidShape();
     Type elemTy = tileTy.getElementType();
     pto::BLayout blayout = getTileBufBLayoutValue(tileTy.getConfigAttr());
-    auto maybeScaleDynamicValid = [&elemTy, &blayout, &ctx, &rewriter, &loc](
-                                      Value emitted, int dimIdx) -> Value {
-      if (!emitted || !pto::isPTOFloat4PackedType(elemTy))
-        return emitted;
+    const bool scalePackedFp4Dim =
+        shouldScalePackedFp4TileDimensions(tileTy.getMemorySpace());
+    auto scaleValid = [&](Value value, int dimIdx) -> Value {
+      if (!scalePackedFp4Dim || !pto::isPTOFloat4PackedType(elemTy)) {
+        return value;
+      }
       int packedDim = blayout == pto::BLayout::ColMajor ? 0 : 1;
-      if (dimIdx != packedDim)
-        return emitted;
-      auto i32Ty = emitc::OpaqueType::get(ctx, "int32_t");
-      Value two = makeEmitCIntConstant(rewriter, loc, i32Ty, mlir::pto::kValue2);
-      return rewriter.create<emitc::MulOp>(loc, i32Ty, emitted, two)
+      if (dimIdx != packedDim) {
+        return value;
+      }
+      auto i32Ty = emitc::OpaqueType::get(rewriter.getContext(), "int32_t");
+      Value two = makeEmitCIntConstant(rewriter, op.getLoc(), i32Ty,
+                                       mlir::pto::kValue2);
+      return rewriter.create<emitc::MulOp>(op.getLoc(), i32Ty, value, two)
           .getResult();
     };
 
@@ -173,7 +176,7 @@ struct PTOAllocTileToEmitC
         return rewriter.notifyMatchFailure(
             op, "dynamic alloc_tile valid row must have an operand");
       validRow = peelUnrealized(validRow);
-      constructorArgs.push_back(maybeScaleDynamicValid(validRow, 0));
+      constructorArgs.push_back(scaleValid(validRow, 0));
     }
     if (validShape.size() > 1 && validShape[1] < 0) {
       Value validCol = adaptor.getValidCol();
@@ -181,7 +184,7 @@ struct PTOAllocTileToEmitC
         return rewriter.notifyMatchFailure(
             op, "dynamic alloc_tile valid col must have an operand");
       validCol = peelUnrealized(validCol);
-      constructorArgs.push_back(maybeScaleDynamicValid(validCol, 1));
+      constructorArgs.push_back(scaleValid(validCol, 1));
     }
     return constructorArgs;
   }
