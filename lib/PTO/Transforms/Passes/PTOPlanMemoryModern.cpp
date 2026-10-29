@@ -307,7 +307,7 @@ static InplacePolicy getInplacePolicy(Operation *op) {
   policy.notInplaceSafe = isOneOf(
       name, {
                 "pto.tands",      "pto.tconcat",
-                "pto.tconcatidx", "pto.tfmod",
+                "pto.tconcatidx", "pto.tdequant",        "pto.tfmod",
                 "pto.tfmods",     "pto.tgather",         "pto.tmrgsort",
                 "pto.tors",       "pto.trecip",          "pto.trsqrt",
                 "pto.tsort32",    "pto.ttrans",          "pto.trowargmax",

@@ -1,0 +1,32 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You should not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY OR FITNESS FOR A PARTICULAR PURPOSE.
+// See the License in the root directory of this software repository for the full text of the License.
+
+// RUN: not ptoas --pto-level=level2 --pto-arch=a5 --emit-pto-ir %s 2>&1 \
+// RUN:   | FileCheck %s
+
+// Regression for issue #1689: once pto.tdequant dst is forbidden from aliasing
+// its i8 src, this shape (254208 bytes after 256-byte alignment) no longer fits
+// the 253952-byte A5 vec space, and planning must fail loudly instead of
+// emitting an aliased plan that computes garbage rows.
+
+module attributes {"pto.target_arch" = "a5"} {
+  func.func @dequant_i8_ubmax() {
+    %src    = pto.alloc_tile : !pto.tile_buf<vec, 1133x32xi8>
+    %scale  = pto.alloc_tile : !pto.tile_buf<vec, 1133x8xf32>
+    %offset = pto.alloc_tile : !pto.tile_buf<vec, 1133x8xf32>
+    %dst    = pto.alloc_tile : !pto.tile_buf<vec, 1133x32xf32>
+
+    pto.tdequant ins(%src, %scale, %offset : !pto.tile_buf<vec, 1133x32xi8>,
+                                             !pto.tile_buf<vec, 1133x8xf32>,
+                                             !pto.tile_buf<vec, 1133x8xf32>)
+                 outs(%dst : !pto.tile_buf<vec, 1133x32xf32>)
+    return
+  }
+}
+
+// CHECK: vec overflow, requires 2033664 bits while 2031616 bits available

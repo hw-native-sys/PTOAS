@@ -1,0 +1,44 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You should not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY OR FITNESS FOR A PARTICULAR PURPOSE.
+// See the License in the root directory of this software repository for the full text of the License.
+
+// RUN: ptoas --pto-level=level2 --pto-arch=a5 \
+// RUN:   --emit-pto-ir --mlir-print-ir-after=pto-plan-memory %s 2>&1 \
+// RUN:   | FileCheck %s
+
+// Regression for issue #1689: pto.tdequant widens i8/i16 src to f32 dst, so dst
+// must not reuse the address of an operand tile it is still reading. This shape
+// (253952 bytes, exactly the A5 vec capacity) used to make dst alias src.
+
+module attributes {"pto.target_arch" = "a5"} {
+  func.func @dequant_i16_ubmax() {
+    %src    = pto.alloc_tile : !pto.tile_buf<vec, 992x32xi16>
+    %scale  = pto.alloc_tile : !pto.tile_buf<vec, 992x8xf32>
+    %offset = pto.alloc_tile : !pto.tile_buf<vec, 992x8xf32>
+    %dst    = pto.alloc_tile : !pto.tile_buf<vec, 992x32xf32>
+
+    pto.tdequant ins(%src, %scale, %offset : !pto.tile_buf<vec, 992x32xi16>,
+                                             !pto.tile_buf<vec, 992x8xf32>,
+                                             !pto.tile_buf<vec, 992x8xf32>)
+                 outs(%dst : !pto.tile_buf<vec, 992x32xf32>)
+    return
+  }
+}
+
+// CHECK-LABEL: func.func @dequant_i16_ubmax() {
+// The four addresses are intentionally pinned to the current packed layout
+// (house style of plan_memory_inplace_forbid_alias.pto): exact constants both
+// keep dst from aliasing an operand and pin the exact-capacity packing.
+// CHECK-DAG: %[[SRC:.*]] = arith.constant 0 : i64
+// CHECK-DAG: %[[SCALE:.*]] = arith.constant 63488 : i64
+// CHECK-DAG: %[[OFFSET:.*]] = arith.constant 95232 : i64
+// CHECK-DAG: %[[DST:.*]] = arith.constant 126976 : i64
+// CHECK: pto.alloc_tile addr = %[[SRC]] : !pto.tile_buf<vec, 992x32xi16>
+// CHECK: pto.alloc_tile addr = %[[SCALE]] : !pto.tile_buf<vec, 992x8xf32>
+// CHECK: pto.alloc_tile addr = %[[OFFSET]] : !pto.tile_buf<vec, 992x8xf32>
+// CHECK: pto.alloc_tile addr = %[[DST]] : !pto.tile_buf<vec, 992x32xf32>
+// CHECK-NOT: memref.alloc
