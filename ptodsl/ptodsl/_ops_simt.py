@@ -12,7 +12,10 @@ math, synchronization, and pipe/buffer management."""
 
 from ._ops_imports import *  # noqa: F401,F403
 
+from ._scalar_adaptation import _pto_cast
+
 from ._ops_common import (
+    castptr,
     _coerce_i32_operand,
     _coerce_index,
     _event_attr,
@@ -393,19 +396,48 @@ def stg(value, ptr_or_ref, offset=None, *, l1cache="cache", l2cache="nmfv"):
     )
 
 
+def _signless_atomic_carrier(elem_type):
+    """Return the signless carrier type for an integer atomic operand.
+
+    ``pto.atomic_*`` only accepts signless i32/i64 operands, while the PTODSL
+    surface may address si/ui buffers.  add/sub/and/or/xor are sign-agnostic
+    and min/max carry their comparison semantics in the ``signedness``
+    attribute, so the carrier can always be signless as long as the original
+    element type is restored on the result.
+    """
+    if not IntegerType.isinstance(elem_type):
+        return None
+    signless_type = IntegerType.get_signless(elem_type.width)
+    return None if elem_type == signless_type else signless_type
+
+
+def _cast_atomic_pointer(raw_ptr, carrier_type):
+    ptr_type = _pto.PtrType(raw_ptr.type)
+    carrier_ptr_type = _pto.PtrType.get(carrier_type, memory_space=ptr_type.memory_space)
+    return unwrap_surface_value(castptr(raw_ptr, carrier_ptr_type))
+
+
+def _cast_atomic_operand(raw_ptr, raw_value, carrier_type, context: str):
+    raw_ptr = _cast_atomic_pointer(raw_ptr, carrier_type)
+    raw_value = coerce_scalar_to_type(raw_value, carrier_type, context=f"{context} signless carrier")
+    return raw_ptr, raw_value
+
+
 def _atomic_binary(op_cls, ptr, value, *, l2cache, signedness, context: str):
     raw_ptr = unwrap_surface_value(ptr)
     elem_type = _pointer_element_type(raw_ptr, context=context)
     _validate_integer_signedness_only(elem_type, signedness, context=context)
     raw_value = coerce_scalar_to_type(value, elem_type, context=context)
+    carrier_type = _signless_atomic_carrier(elem_type)
+    if carrier_type is not None:
+        raw_ptr, raw_value = _cast_atomic_operand(raw_ptr, raw_value, carrier_type, context)
     kwargs = {"l2cache": _st_l2_cache_attr(l2cache, context=f"{context} l2cache")}
     if signedness is not None:
-        kwargs["signedness"] = _optional_signedness_attr(
-            signedness, context=f"{context} signedness"
-        )
-    return wrap_surface_value(
-        op_cls(raw_value.type, raw_ptr, raw_value, **kwargs).old
-    )
+        kwargs["signedness"] = _optional_signedness_attr(signedness, context=f"{context} signedness")
+    old = op_cls(raw_value.type, raw_ptr, raw_value, **kwargs).old
+    if carrier_type is not None:
+        old = _pto_cast(old, elem_type)
+    return wrap_surface_value(old)
 
 
 def atomic_exch(ptr, value, *, l2cache="nmfv"):
@@ -476,12 +508,20 @@ def atomic_cas(ptr, compare, value, *, l2cache="nmfv"):
     elem_type = _pointer_element_type(raw_ptr, context="atomic_cas(ptr, compare, value)")
     raw_compare = coerce_scalar_to_type(compare, elem_type, context="atomic_cas(compare)")
     raw_value = coerce_scalar_to_type(value, elem_type, context="atomic_cas(value)")
-    return wrap_surface_value(_pto.AtomicCasOp(
+    carrier_type = _signless_atomic_carrier(elem_type)
+    if carrier_type is not None:
+        raw_ptr = _cast_atomic_pointer(raw_ptr, carrier_type)
+        raw_compare = coerce_scalar_to_type(raw_compare, carrier_type, context="atomic_cas(compare) signless carrier")
+        raw_value = coerce_scalar_to_type(raw_value, carrier_type, context="atomic_cas(value) signless carrier")
+    old = _pto.AtomicCasOp(
         raw_ptr,
         raw_compare,
         raw_value,
         l2cache=_st_l2_cache_attr(l2cache, context="atomic_cas(..., l2cache)"),
-    ).old)
+    ).old
+    if carrier_type is not None:
+        old = _pto_cast(old, elem_type)
+    return wrap_surface_value(old)
 
 
 def prmt(lhs, rhs, selector):
