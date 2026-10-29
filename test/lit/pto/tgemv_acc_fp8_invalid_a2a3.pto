@@ -1,0 +1,14 @@
+// RUN: not ptoas --pto-arch=a3 %s 2>&1 | FileCheck %s --check-prefix=A2A3
+
+module attributes {pto.target_arch = "a3"} {
+  func.func @tgemv_acc_fp8_invalid_a2a3() attributes {pto.kernel_kind = #pto.kernel_kind<cube>} {
+    %lhs = pto.alloc_tile : !pto.tile_buf<loc=left, dtype=f8E4M3FN, rows=1, cols=32, v_row=1, v_col=32, blayout=col_major, slayout=row_major, fractal=512, pad=0>
+    %rhs = pto.alloc_tile : !pto.tile_buf<loc=right, dtype=f8E4M3FN, rows=32, cols=16, v_row=32, v_col=16, blayout=row_major, slayout=col_major, fractal=512, pad=0>
+    %acc_in = pto.alloc_tile : !pto.tile_buf<loc=acc, dtype=f32, rows=1, cols=16, v_row=1, v_col=16, blayout=col_major, slayout=row_major, fractal=1024, pad=0>
+    %dst = pto.alloc_tile : !pto.tile_buf<loc=acc, dtype=f32, rows=1, cols=16, v_row=1, v_col=16, blayout=col_major, slayout=row_major, fractal=1024, pad=0>
+    pto.tgemv.acc ins(%acc_in, %lhs, %rhs : !pto.tile_buf<loc=acc, dtype=f32, rows=1, cols=16, v_row=1, v_col=16, blayout=col_major, slayout=row_major, fractal=1024, pad=0>, !pto.tile_buf<loc=left, dtype=f8E4M3FN, rows=1, cols=32, v_row=1, v_col=32, blayout=col_major, slayout=row_major, fractal=512, pad=0>, !pto.tile_buf<loc=right, dtype=f8E4M3FN, rows=32, cols=16, v_row=32, v_col=16, blayout=row_major, slayout=col_major, fractal=512, pad=0>) outs(%dst : !pto.tile_buf<loc=acc, dtype=f32, rows=1, cols=16, v_row=1, v_col=16, blayout=col_major, slayout=row_major, fractal=1024, pad=0>)
+    return
+  }
+}
+
+// A2A3: error: 'pto.tgemv.acc' op lhs: dtype 'f8E4M3FN' is not supported by this op yet

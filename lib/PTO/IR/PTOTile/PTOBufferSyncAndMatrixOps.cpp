@@ -173,7 +173,7 @@ static LogicalResult verifyMatBiasCommon(Operation *op, Type a, Type b,
                                          Type bias, Type dst, bool isGemv,
                                          bool allowLowPrecision = false) {
   LogicalResult operands =
-      isGemv ? verifyGemvTileOperands(op, a, b, dst)
+      isGemv ? verifyGemvTileOperands(op, a, b, dst, allowLowPrecision)
              : verifyMatTileOperands(op, a, b, dst, allowLowPrecision);
   if (failed(operands) || failed(verifyMatBiasTile(op, bias, dst)) ||
       failed(verifyMatmulTypeTriple(op, getElemTy(a), getElemTy(b),
@@ -188,7 +188,12 @@ LogicalResult TGemvBiasOp::verify() {
                                getB().getType(), getBias().getType(),
                                getDst().getType(), true);
   };
-  auto verifyA5 = [&verifyA2A3]() -> LogicalResult { return verifyA2A3(); };
+  auto verifyA5 = [this]() -> LogicalResult {
+    return verifyMatBiasCommon(getOperation(), getA().getType(),
+                               getB().getType(), getBias().getType(),
+                               getDst().getType(), true,
+                               /*allowLowPrecision=*/true);
+  };
   return dispatchVerifierByArch(getOperation(), verifyA2A3, verifyA5);
 }
 

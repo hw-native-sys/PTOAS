@@ -804,6 +804,17 @@ def tmatmul_acc(acc_in, lhs, rhs, dst):
     )
 
 
+def tmatmul_bias(lhs, rhs, bias, dst):
+    """``pto.tmatmul.bias ins(lhs, rhs, bias) outs(dst)``."""
+    _pto.TMatmulBiasOp(
+        None,
+        unwrap_surface_value(lhs),
+        unwrap_surface_value(rhs),
+        unwrap_surface_value(bias),
+        unwrap_surface_value(dst),
+    )
+
+
 def tmatmul_mx(lhs, lhs_scale, rhs, rhs_scale, dst, *, acc_phase=None):
     """``pto.tmatmul.mx ins(lhs, lhs_scale, rhs, rhs_scale) outs(dst)``."""
     _pto.TMatmulMxOp(

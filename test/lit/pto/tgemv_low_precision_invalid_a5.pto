@@ -1,0 +1,13 @@
+// RUN: not ptoas --pto-arch=a5 %s 2>&1 | FileCheck %s --check-prefix=A5
+
+module attributes {pto.target_arch = "a5"} {
+  func.func @tgemv_fp4_invalid() attributes {pto.kernel_kind = #pto.kernel_kind<cube>} {
+    %lhs = pto.alloc_tile : !pto.tile_buf<loc=left, dtype=!pto.f4E1M2x2, rows=1, cols=64, v_row=1, v_col=64, blayout=col_major, slayout=row_major, fractal=512, pad=0>
+    %rhs = pto.alloc_tile : !pto.tile_buf<loc=right, dtype=!pto.f4E1M2x2, rows=64, cols=16, v_row=64, v_col=16, blayout=row_major, slayout=col_major, fractal=512, pad=0>
+    %dst = pto.alloc_tile : !pto.tile_buf<loc=acc, dtype=f32, rows=1, cols=16, v_row=1, v_col=16, blayout=col_major, slayout=row_major, fractal=1024, pad=0>
+    pto.tgemv ins(%lhs, %rhs : !pto.tile_buf<loc=left, dtype=!pto.f4E1M2x2, rows=1, cols=64, v_row=1, v_col=64, blayout=col_major, slayout=row_major, fractal=512, pad=0>, !pto.tile_buf<loc=right, dtype=!pto.f4E1M2x2, rows=64, cols=16, v_row=64, v_col=16, blayout=row_major, slayout=col_major, fractal=512, pad=0>) outs(%dst : !pto.tile_buf<loc=acc, dtype=f32, rows=1, cols=16, v_row=1, v_col=16, blayout=col_major, slayout=row_major, fractal=1024, pad=0>)
+    return
+  }
+}
+
+// A5: error: 'pto.tgemv' op expects (dst, lhs, rhs) element types to match one of

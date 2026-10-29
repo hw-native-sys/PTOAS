@@ -269,7 +269,7 @@ static LogicalResult verifyMatmulOrGemv(Operation *op, Type lhs, Type rhs,
                                         Type dst, bool isGemv,
                                         bool allowLowPrecision = false) {
   LogicalResult operands =
-      isGemv ? verifyGemvTileOperands(op, lhs, rhs, dst)
+      isGemv ? verifyGemvTileOperands(op, lhs, rhs, dst, allowLowPrecision)
              : verifyMatTileOperands(op, lhs, rhs, dst, allowLowPrecision);
   if (failed(operands) ||
       failed(verifyMatmulTypeTriple(op, getElemTy(lhs), getElemTy(rhs),
@@ -297,6 +297,10 @@ LogicalResult mlir::pto::TGemvOp::verify() {
     auto verifyA2A3 = [this]() -> LogicalResult {
         return verifyMatmulOrGemv(getOperation(), getLhs().getType(), getRhs().getType(), getDst().getType(), true);
     };
-    auto verifyA5 = [&verifyA2A3]() -> LogicalResult { return verifyA2A3(); };
+    auto verifyA5 = [this]() -> LogicalResult {
+        return verifyMatmulOrGemv(
+            getOperation(), getLhs().getType(), getRhs().getType(), getDst().getType(), true,
+            /*allowLowPrecision=*/true);
+    };
     return dispatchVerifierByArch(getOperation(), verifyA2A3, verifyA5);
 }

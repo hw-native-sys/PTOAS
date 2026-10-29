@@ -115,9 +115,11 @@ static LogicalResult verifyGemvValidShapes(Operation *op, Type lhsTy,
 }
 
 static LogicalResult verifyGemvTileOperandsA2A3(Operation *op, Type lhsTy,
-                                                Type rhsTy, Type dstTy) {
-  if (failed(verifyTileBufCommon(op, lhsTy, "lhs")) ||
-      failed(verifyTileBufCommon(op, rhsTy, "rhs")) ||
+                                                Type rhsTy, Type dstTy,
+                                                bool allowLowPrecision) {
+  if (failed(verifyTileBufCommon(op, lhsTy, "lhs",
+                                 allowLowPrecision)) ||
+      failed(verifyTileBufCommon(op, rhsTy, "rhs", allowLowPrecision)) ||
       failed(verifyAccTileCommon(op, dstTy, "dst"))) {
     return failure();
   }
@@ -136,20 +138,23 @@ static LogicalResult verifyGemvTileOperandsA2A3(Operation *op, Type lhsTy,
                                /*dstMayBeNonTile=*/true);
 }
 static LogicalResult verifyGemvTileOperandsA5(Operation *op, Type lhsTy,
-                                              Type rhsTy, Type dstTy) {
-  if (failed(verifyGemvTileOperandsA2A3(op, lhsTy, rhsTy, dstTy))) {
+                                              Type rhsTy, Type dstTy,
+                                              bool allowLowPrecision) {
+  if (failed(verifyGemvTileOperandsA2A3(op, lhsTy, rhsTy, dstTy,
+                                        allowLowPrecision))) {
     return failure();
   }
-  return verifyMatTileOperandsA5(op, lhsTy, rhsTy, dstTy);
+  return verifyMatTileOperandsA5(op, lhsTy, rhsTy, dstTy, allowLowPrecision);
 }
 
 static LogicalResult verifyGemvTileOperands(Operation *op, Type lhsTy, Type rhsTy,
-                                            Type dstTy) {
+                                            Type dstTy,
+                                            bool allowLowPrecision) {
   switch (getVerifierTargetArch(op)) {
   case VerifierTargetArch::A2A3:
-    return verifyGemvTileOperandsA2A3(op, lhsTy, rhsTy, dstTy);
+    return verifyGemvTileOperandsA2A3(op, lhsTy, rhsTy, dstTy, allowLowPrecision);
   case VerifierTargetArch::A5:
-    return verifyGemvTileOperandsA5(op, lhsTy, rhsTy, dstTy);
+    return verifyGemvTileOperandsA5(op, lhsTy, rhsTy, dstTy, allowLowPrecision);
   }
   return failure();
 }

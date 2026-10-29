@@ -1048,6 +1048,67 @@ pto.tile.matmul_acc(acc_prev, lhs_l0a, rhs_l0b, acc_next)
 
 ---
 
+#### `pto.tile.matmul_bias(lhs: Tile, rhs: Tile, bias: Tile, dst: Tile) -> None`
+
+**Description**: Bias-enabled tile-level matrix multiplication. Computes the
+product `lhs @ rhs`, adds the `bias` tile, and writes the result into `dst`.
+This is the ordinary-precision counterpart of `pto.tile.matmul_mx_bias`.
+
+```text
+dst[m, n] = sum_k lhs[m, k] * rhs[k, n] + bias[n]
+```
+
+**Parameters**:
+
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `lhs` | `Tile` | Left operand tile, typically in `MemorySpace.LEFT` |
+| `rhs` | `Tile` | Right operand tile, typically in `MemorySpace.RIGHT` |
+| `bias` | `Tile` | Bias tile in `MemorySpace.BIAS`, broadcast across M |
+| `dst` | `Tile` | Destination accumulator tile, typically in `MemorySpace.ACC` |
+
+**Returns**: None.
+
+**Constraints**:
+- `lhs`, `rhs`, and `dst` must satisfy the same shape and memory-space relationship as `pto.tile.matmul`.
+- `bias` must be a `[1, N]` tile in `MemorySpace.BIAS` with the same element type as `dst`.
+
+**Example** — compute one cube tile product with a bias add:
+
+<!-- ptodsl-doc-test: {"mode":"compile_fragment","fixture":"compute_ops.tile_window_matmul","symbol":"compute_ops_tile_window_matmul_probe","compile":{"BLOCK_M":16,"BLOCK_K":16,"BLOCK_N":16,"CARRIER_M":64,"CARRIER_N":64}} -->
+```python
+lhs_l0a = pto.alloc_tile(
+    shape=[16, 16],
+    dtype=pto.f16,
+    memory_space=pto.MemorySpace.LEFT,
+    blayout="ColMajor",
+    slayout="RowMajor",
+)
+rhs_l0b = pto.alloc_tile(
+    shape=[16, 16],
+    dtype=pto.f16,
+    memory_space=pto.MemorySpace.RIGHT,
+    blayout="RowMajor",
+    slayout="ColMajor",
+)
+bias_bt = pto.alloc_tile(
+    shape=[1, 16],
+    dtype=pto.f32,
+    memory_space=pto.MemorySpace.BIAS,
+    valid_shape=[1, 16],
+)
+acc_l0c = pto.alloc_tile(
+    shape=[16, 16],
+    dtype=pto.f32,
+    memory_space=pto.MemorySpace.ACC,
+    blayout="ColMajor",
+    slayout="RowMajor",
+)
+pto.tile.matmul_bias(lhs_l0a, rhs_l0b, bias_bt, acc_l0c)
+```
+
+---
+
 #### `pto.tile.matmul_mx(lhs: Tile, lhs_scale: Tile, rhs: Tile, rhs_scale: Tile, dst: Tile) -> None`
 
 **Description**: Tile-level MX matrix multiplication. Computes the product `lhs @ rhs` on the matrix pipeline and writes the result into `dst`. This variant keeps the tile-op abstraction while making the microscaling payload explicit through `lhs_scale` and `rhs_scale`.

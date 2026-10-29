@@ -36,12 +36,33 @@ LogicalResult mlir::pto::TMatmulAccOp::verify() {
 }
 
 LogicalResult mlir::pto::TGemvAccOp::verify() {
-  if (failed(verifyAccTileCommon(*this, getAccIn().getType(), "acc_in")) ||
-      failed(verifyGemvTileOperands(*this, getLhs().getType(), getRhs().getType(),
-                                    getDst().getType()))) {
-    return failure();
-  }
-  return success();
+  auto verifyA2A3 = [this]() -> LogicalResult {
+    if (failed(verifyAccTileCommon(*this, getAccIn().getType(), "acc_in"))) {
+      return failure();
+    }
+    if (failed(verifyGemvTileOperands(*this, getLhs().getType(), getRhs().getType(),
+                                      getDst().getType()))) {
+      return failure();
+    }
+    return success();
+  };
+  auto verifyA5 = [this]() -> LogicalResult {
+    if (failed(verifyMatmulTypeTriple(
+            *this, getElemTy(getLhs().getType()), getElemTy(getRhs().getType()),
+            getElemTy(getDst().getType())))) {
+      return failure();
+    }
+    if (failed(verifyAccTileCommon(*this, getAccIn().getType(), "acc_in"))) {
+      return failure();
+    }
+    if (failed(verifyGemvTileOperands(*this, getLhs().getType(), getRhs().getType(),
+                                      getDst().getType(),
+                                      /*allowLowPrecision=*/true))) {
+      return failure();
+    }
+    return success();
+  };
+  return dispatchVerifierByArch(getOperation(), verifyA2A3, verifyA5);
 }
 
 //===----------------------------------------------------------------------===//

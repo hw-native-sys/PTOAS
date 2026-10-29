@@ -61,6 +61,7 @@ class _TileNamespace:
     concat = staticmethod(_ops.tconcat)
     matmul = staticmethod(_ops.tmatmul)
     matmul_acc = staticmethod(_ops.tmatmul_acc)
+    matmul_bias = staticmethod(_ops.tmatmul_bias)
     matmul_mx = staticmethod(_ops.tmatmul_mx)
     matmul_mx_acc = staticmethod(_ops.tmatmul_mx_acc)
     matmul_mx_bias = staticmethod(_ops.tmatmul_mx_bias)

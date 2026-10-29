@@ -254,14 +254,17 @@ static LogicalResult verifyMatTileOperandsA5(Operation *op, Type lhsTy,
                                              Type rhsTy, Type dstTy,
                                              bool allowLowPrecision = false);
 static LogicalResult verifyGemvTileOperands(Operation *op, Type lhsTy, Type rhsTy,
-                                            Type dstTy);
+                                            Type dstTy,
+                                            bool allowLowPrecision = false);
 static LogicalResult verifyAsyncFlatContiguous1DGMViewLike(Operation *op,
                                                            Value value,
                                                            StringRef name);
 static LogicalResult verifyGemvTileOperandsA2A3(Operation *op, Type lhsTy,
-                                                Type rhsTy, Type dstTy);
+                                                Type rhsTy, Type dstTy,
+                                                bool allowLowPrecision = false);
 static LogicalResult verifyGemvTileOperandsA5(Operation *op, Type lhsTy,
-                                              Type rhsTy, Type dstTy);
+                                              Type rhsTy, Type dstTy,
+                                              bool allowLowPrecision = false);
 static LogicalResult verifyMatBiasTile(Operation *op, Type biasTy, Type dstTy,
                                        bool requireFloatBias = false);
 static LogicalResult verifyMatBiasTileA2A3(Operation *op, Type biasTy, Type dstTy,

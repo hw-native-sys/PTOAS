@@ -1416,6 +1416,41 @@ def tile_surface_window_matmul_probe():
     pto.tile.matmul_acc(acc_prev, lhs_l0a, rhs_l0b, acc_out)
 
 
+@pto.jit(target="a5")
+def tile_matmul_bias_probe():
+    lhs_l0a = pto.alloc_tile(
+        shape=[16, 16],
+        dtype=pto.bf16,
+        memory_space=pto.MemorySpace.LEFT,
+        blayout="ColMajor",
+        slayout="RowMajor",
+        valid_shape=[16, 16],
+    )
+    rhs_l0b = pto.alloc_tile(
+        shape=[16, 16],
+        dtype=pto.bf16,
+        memory_space=pto.MemorySpace.RIGHT,
+        blayout="RowMajor",
+        slayout="ColMajor",
+        valid_shape=[16, 16],
+    )
+    bias_bt = pto.alloc_tile(
+        shape=[1, 16],
+        dtype=pto.f32,
+        memory_space=pto.MemorySpace.BIAS,
+        valid_shape=[1, 16],
+    )
+    acc_l0c = pto.alloc_tile(
+        shape=[16, 16],
+        dtype=pto.f32,
+        memory_space=pto.MemorySpace.ACC,
+        blayout="ColMajor",
+        slayout="RowMajor",
+        valid_shape=[16, 16],
+    )
+    pto.tile.matmul_bias(lhs_l0a, rhs_l0b, bias_bt, acc_l0c)
+
+
 SUBKERNEL_OBSERVATIONS = []
 INLINE_SUBKERNEL_SCOPE_OBSERVATIONS = []
 
@@ -5957,6 +5992,7 @@ def main() -> None:
     expect(not hasattr(pto, "store_tile"), "pto.store_tile should not remain on the public pto namespace")
     expect(hasattr(pto.tile, "matmul"), "pto.tile.matmul should be exported from the public tile namespace")
     expect(hasattr(pto.tile, "matmul_acc"), "pto.tile.matmul_acc should be exported from the public tile namespace")
+    expect(hasattr(pto.tile, "matmul_bias"), "pto.tile.matmul_bias should be exported from the public tile namespace")
     expect(hasattr(pto.tile, "matmul_mx"), "pto.tile.matmul_mx should be exported from the public tile namespace")
     expect(
         hasattr(pto.tile, "matmul_mx_acc"),
@@ -6985,6 +7021,18 @@ def main() -> None:
     expect("pto.tinsert" in tile_window_matmul_text, "pto.tile.insert should lower to pto.tinsert")
     expect("pto.tmatmul ins(" in tile_window_matmul_text, "pto.tile.matmul should lower to pto.tmatmul")
     expect("pto.tmatmul.acc ins(" in tile_window_matmul_text, "pto.tile.matmul_acc should lower to pto.tmatmul.acc")
+
+    tile_matmul_bias_text = tile_matmul_bias_probe.compile().mlir_text()
+    expect_parse_roundtrip_and_verify(tile_matmul_bias_text, "tile matmul_bias specialization")
+    expect("pto.tmatmul.bias ins(" in tile_matmul_bias_text, "pto.tile.matmul_bias should lower to pto.tmatmul.bias")
+    expect(
+        "!pto.tile_buf<left, 16x16xbf16" in tile_matmul_bias_text,
+        "pto.tile.matmul_bias should preserve bf16 LEFT operand typing",
+    )
+    expect(
+        "!pto.tile_buf<acc, 16x16xf32" in tile_matmul_bias_text,
+        "pto.tile.matmul_bias should preserve f32 ACC destination typing",
+    )
     expect("!pto.tile_buf<left, 16x16xf16" in tile_window_matmul_text, "pto.tile.matmul lhs should preserve LEFT scratch tile typing")
     expect("!pto.tile_buf<right, 16x16xf16" in tile_window_matmul_text, "pto.tile.matmul rhs should preserve RIGHT scratch tile typing")
     expect("!pto.tile_buf<acc, 16x16xf32" in tile_window_matmul_text, "pto.tile.matmul/matmul_acc should preserve ACC destination typing")

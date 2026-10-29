@@ -1,0 +1,31 @@
+// RUN: ptoas --pto-arch=a5 %s 2>&1 | FileCheck %s --check-prefix=A5
+
+module attributes {pto.target_arch = "a5"} {
+  func.func @tgemv_fp8_mixed_emitc() attributes {pto.kernel_kind = #pto.kernel_kind<cube>} {
+    %lhs = pto.alloc_tile : !pto.tile_buf<loc=left, dtype=f8E4M3FN, rows=1, cols=32, v_row=1, v_col=32, blayout=col_major, slayout=row_major, fractal=512, pad=0>
+    %rhs = pto.alloc_tile : !pto.tile_buf<loc=right, dtype=f8E5M2, rows=32, cols=16, v_row=32, v_col=16, blayout=row_major, slayout=col_major, fractal=512, pad=0>
+    %acc_in = pto.alloc_tile : !pto.tile_buf<loc=acc, dtype=f32, rows=1, cols=16, v_row=1, v_col=16, blayout=col_major, slayout=row_major, fractal=1024, pad=0>
+    %bias = pto.alloc_tile : !pto.tile_buf<loc=bias, dtype=f32, rows=1, cols=16, v_row=1, v_col=16, blayout=row_major, slayout=none_box, fractal=512, pad=0>
+    %dst0 = pto.alloc_tile : !pto.tile_buf<loc=acc, dtype=f32, rows=1, cols=16, v_row=1, v_col=16, blayout=col_major, slayout=row_major, fractal=1024, pad=0>
+    %dst1 = pto.alloc_tile : !pto.tile_buf<loc=acc, dtype=f32, rows=1, cols=16, v_row=1, v_col=16, blayout=col_major, slayout=row_major, fractal=1024, pad=0>
+    %dst2 = pto.alloc_tile : !pto.tile_buf<loc=acc, dtype=f32, rows=1, cols=16, v_row=1, v_col=16, blayout=col_major, slayout=row_major, fractal=1024, pad=0>
+
+    pto.tgemv ins(%lhs, %rhs : !pto.tile_buf<loc=left, dtype=f8E4M3FN, rows=1, cols=32, v_row=1, v_col=32, blayout=col_major, slayout=row_major, fractal=512, pad=0>, !pto.tile_buf<loc=right, dtype=f8E5M2, rows=32, cols=16, v_row=32, v_col=16, blayout=row_major, slayout=col_major, fractal=512, pad=0>) outs(%dst0 : !pto.tile_buf<loc=acc, dtype=f32, rows=1, cols=16, v_row=1, v_col=16, blayout=col_major, slayout=row_major, fractal=1024, pad=0>)
+    pto.tgemv.acc ins(%acc_in, %lhs, %rhs : !pto.tile_buf<loc=acc, dtype=f32, rows=1, cols=16, v_row=1, v_col=16, blayout=col_major, slayout=row_major, fractal=1024, pad=0>, !pto.tile_buf<loc=left, dtype=f8E4M3FN, rows=1, cols=32, v_row=1, v_col=32, blayout=col_major, slayout=row_major, fractal=512, pad=0>, !pto.tile_buf<loc=right, dtype=f8E5M2, rows=32, cols=16, v_row=32, v_col=16, blayout=row_major, slayout=col_major, fractal=512, pad=0>) outs(%dst1 : !pto.tile_buf<loc=acc, dtype=f32, rows=1, cols=16, v_row=1, v_col=16, blayout=col_major, slayout=row_major, fractal=1024, pad=0>)
+    pto.tgemv.bias ins(%lhs, %rhs, %bias : !pto.tile_buf<loc=left, dtype=f8E4M3FN, rows=1, cols=32, v_row=1, v_col=32, blayout=col_major, slayout=row_major, fractal=512, pad=0>, !pto.tile_buf<loc=right, dtype=f8E5M2, rows=32, cols=16, v_row=32, v_col=16, blayout=row_major, slayout=col_major, fractal=512, pad=0>, !pto.tile_buf<loc=bias, dtype=f32, rows=1, cols=16, v_row=1, v_col=16, blayout=row_major, slayout=none_box, fractal=512, pad=0>) outs(%dst2 : !pto.tile_buf<loc=acc, dtype=f32, rows=1, cols=16, v_row=1, v_col=16, blayout=col_major, slayout=row_major, fractal=1024, pad=0>)
+    return
+  }
+
+  func.func @tgemv_hif8_emitc() attributes {pto.kernel_kind = #pto.kernel_kind<cube>} {
+    %lhs = pto.alloc_tile : !pto.tile_buf<loc=left, dtype=!pto.hif8, rows=1, cols=32, v_row=1, v_col=32, blayout=col_major, slayout=row_major, fractal=512, pad=0>
+    %rhs = pto.alloc_tile : !pto.tile_buf<loc=right, dtype=!pto.hif8, rows=32, cols=16, v_row=32, v_col=16, blayout=row_major, slayout=col_major, fractal=512, pad=0>
+    %dst = pto.alloc_tile : !pto.tile_buf<loc=acc, dtype=f32, rows=1, cols=16, v_row=1, v_col=16, blayout=col_major, slayout=row_major, fractal=1024, pad=0>
+    pto.tgemv ins(%lhs, %rhs : !pto.tile_buf<loc=left, dtype=!pto.hif8, rows=1, cols=32, v_row=1, v_col=32, blayout=col_major, slayout=row_major, fractal=512, pad=0>, !pto.tile_buf<loc=right, dtype=!pto.hif8, rows=32, cols=16, v_row=32, v_col=16, blayout=row_major, slayout=col_major, fractal=512, pad=0>) outs(%dst : !pto.tile_buf<loc=acc, dtype=f32, rows=1, cols=16, v_row=1, v_col=16, blayout=col_major, slayout=row_major, fractal=1024, pad=0>)
+    return
+  }
+}
+
+// A5: TGEMV([[D0:[_A-Za-z][_A-Za-z0-9]*]], [[L0:[_A-Za-z][_A-Za-z0-9]*]], [[R0:[_A-Za-z][_A-Za-z0-9]*]]);
+// A5: TGEMV_ACC([[D1:[_A-Za-z][_A-Za-z0-9]*]], [[C1:[_A-Za-z][_A-Za-z0-9]*]], [[L1:[_A-Za-z][_A-Za-z0-9]*]], [[R1:[_A-Za-z][_A-Za-z0-9]*]]);
+// A5: TGEMV_BIAS([[D2:[_A-Za-z][_A-Za-z0-9]*]], [[L2:[_A-Za-z][_A-Za-z0-9]*]], [[R2:[_A-Za-z][_A-Za-z0-9]*]], [[B2:[_A-Za-z][_A-Za-z0-9]*]]);
+// A5: TGEMV([[D3:[_A-Za-z][_A-Za-z0-9]*]], [[L3:[_A-Za-z][_A-Za-z0-9]*]], [[R3:[_A-Za-z][_A-Za-z0-9]*]]);
