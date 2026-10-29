@@ -51,6 +51,8 @@ constexpr int64_t kSFractal32 = 32;
 constexpr int64_t kFractalInnerDimension = 16;
 constexpr int64_t kSFractal32InnerColumnCount = 2;
 constexpr int32_t kBLayoutColMajor = static_cast<int32_t>(pto::BLayout::ColMajor);
+constexpr int32_t kBLayoutRowMajor =
+    static_cast<int32_t>(pto::BLayout::RowMajor);
 constexpr int32_t kSlayoutNoneBox = static_cast<int32_t>(pto::SLayout::NoneBox);
 constexpr int32_t kSlayoutRowMajor = static_cast<int32_t>(pto::SLayout::RowMajor);
 constexpr int32_t kSlayoutColMajor = static_cast<int32_t>(pto::SLayout::ColMajor);
@@ -330,6 +332,174 @@ static Value getSubviewValidOperand(pto::SubViewOp op,
   return {};
 }
 
+static std::optional<pto::AddressSpace> getTileBufSpace(Type type) {
+  auto tileType = dyn_cast<pto::TileBufType>(type);
+  if (!tileType) {
+    return std::nullopt;
+  }
+  auto spaceAttr =
+      dyn_cast_or_null<pto::AddressSpaceAttr>(tileType.getMemorySpace());
+  if (!spaceAttr) {
+    return std::nullopt;
+  }
+  return spaceAttr.getAddressSpace();
+}
+
+// A parent-shaped subview keeps the parent's physical strides, so a
+// mat-source tmov from it can no longer pair with a compact left/right
+// destination: the tmov verifier compares physical shapes and fails. Such a
+// move is a window transfer, which TEXTRACT_M2LR expresses directly from the
+// parent tile. Mirror the textract verifier's layout and element tables so
+// only rewrites that verify are made; anything else keeps the tmov and its
+// existing diagnostic.
+static bool isTMovExtractCompatible(pto::TMovOp mov, bool isA5) {
+  auto srcTb = dyn_cast<pto::TileBufType>(mov.getSrc().getType());
+  auto dstTb = dyn_cast<pto::TileBufType>(mov.getDst().getType());
+  if (!srcTb || !dstTb) {
+    return false;
+  }
+  Type elem = srcTb.getElementType();
+  const bool elemPairOk =
+      elem == dstTb.getElementType() &&
+      (elem.isF16() || elem.isBF16() || elem.isF32() ||
+       elem.isInteger(static_cast<unsigned>(mlir::pto::kValue8)));
+  if (!elemPairOk) {
+    return false;
+  }
+  auto dstSpace = getTileBufSpace(mov.getDst().getType());
+  if (!dstSpace || (*dstSpace != pto::AddressSpace::LEFT &&
+                   *dstSpace != pto::AddressSpace::RIGHT)) {
+    return false;
+  }
+  int32_t srcBl = srcTb.getBLayoutValueI32();
+  int32_t srcSl = srcTb.getSLayoutValueI32();
+  int32_t dstBl = dstTb.getBLayoutValueI32();
+  int32_t dstSl = dstTb.getSLayoutValueI32();
+  const bool dstIsRight = *dstSpace == pto::AddressSpace::RIGHT;
+  const bool dstLayoutOk =
+      dstIsRight
+          ? (dstBl == kBLayoutRowMajor && dstSl == kSlayoutColMajor)
+          : (isA5 ? (dstBl == kBLayoutColMajor && dstSl == kSlayoutRowMajor)
+                  : (dstBl == kBLayoutRowMajor && dstSl == kSlayoutRowMajor));
+  if (!dstLayoutOk) {
+    return false;
+  }
+  if (isA5) {
+    return (srcBl == kBLayoutRowMajor && srcSl == kSlayoutColMajor) ||
+           (srcBl != kBLayoutRowMajor && srcSl == kSlayoutRowMajor) ||
+           (!dstIsRight && srcBl == kBLayoutRowMajor);
+  }
+  return srcBl == kBLayoutRowMajor || srcSl == kSlayoutRowMajor;
+}
+
+// pto-isa TExtractToA/TExtractToB assert window-origin alignment only in
+// debug builds; release kernels silently truncate sub-aligned offsets, and
+// PTOAS's own alignment verification covers conv-tile sources only. Accept
+// statically known, branch-aligned offsets so a misaligned or dynamic window
+// keeps the original tmov and its compile-time diagnostic instead of turning
+// into a silent wrong-window device read. Runtime branches
+// (textract_common.hpp): the transpose variants run when the src/dst
+// slayouts differ; c0 is 32 / element bytes and the fractal span is 16
+// (32 for one-byte elements).
+//   dst right, non-transpose: row % c0 == 0, col % 16 == 0;
+//   dst right, transpose:     row % fractal == 0, col % fractal == 0;
+//   dst left,  non-transpose: row % 16 == 0, col % c0 == 0;
+//   dst left,  transpose:     row % fractal == 0, col % fractal == 0.
+static bool isSubviewWindowExtractAligned(pto::SubViewOp op, pto::TMovOp mov) {
+  APInt row;
+  APInt col;
+  const bool rowIsConstant =
+      matchPattern(op.getOffsets()[kDim0], m_ConstantInt(&row));
+  const bool colIsConstant =
+      matchPattern(op.getOffsets()[kDim1], m_ConstantInt(&col));
+  if (!rowIsConstant || !colIsConstant) {
+    return false;
+  }
+  auto srcTb = dyn_cast<pto::TileBufType>(op.getSource().getType());
+  auto dstTb = dyn_cast<pto::TileBufType>(mov.getDst().getType());
+  if (!srcTb || !dstTb) {
+    return false;
+  }
+  // The Compact dst variants take their own valid-shape-aware paths and a
+  // single-row row-major source uses the vector extract path; neither is
+  // modeled by the alignment rules above.
+  const bool compactDst =
+      dstTb.getCompactModeI32() != static_cast<int32_t>(pto::CompactMode::Null);
+  if (compactDst) {
+    return false;
+  }
+  auto dstSpace = getTileBufSpace(mov.getDst().getType());
+  if (!dstSpace) {
+    return false;
+  }
+  const bool dstIsLeftOrRight =
+      *dstSpace == pto::AddressSpace::LEFT ||
+      *dstSpace == pto::AddressSpace::RIGHT;
+  ArrayRef<int64_t> srcShape = srcTb.getShape();
+  const bool rank2Source = srcShape.size() > kDim0;
+  if (!rank2Source || !dstIsLeftOrRight || srcShape[kDim0] == 1) {
+    return false;
+  }
+  const int64_t elemBytes = static_cast<int64_t>(
+      pto::getPTOStorageElemByteSize(srcTb.getElementType()));
+  if (elemBytes == 0) {
+    return false;
+  }
+  const int64_t c0Size = kSFractal32 / elemBytes;
+  const int64_t fractalSize =
+      elemBytes == 1 ? kSFractal32 : kFractalInnerDimension;
+  const bool transpose =
+      srcTb.getSLayoutValueI32() != dstTb.getSLayoutValueI32();
+  const bool dstIsRight = *dstSpace == pto::AddressSpace::RIGHT;
+  const int64_t rowModulus =
+      transpose ? fractalSize : (dstIsRight ? c0Size : kFractalInnerDimension);
+  const int64_t colModulus =
+      transpose ? fractalSize : (dstIsRight ? kFractalInnerDimension : c0Size);
+  return row.getSExtValue() % rowModulus == 0 &&
+         col.getSExtValue() % colModulus == 0;
+}
+
+// Rewrite mat-source tmov users of a parent-shaped subview into textract
+// windows from the subview's source at the subview offsets.
+static void rewriteParentShapedTMovUsers(pto::SubViewOp op, MLIRContext *ctx) {
+  const bool rank2Offsets = op.getOffsets().size() == mlir::pto::kValue2;
+  auto srcSpace = getTileBufSpace(op.getResult().getType());
+  if (!rank2Offsets || !srcSpace || *srcSpace != pto::AddressSpace::MAT) {
+    return;
+  }
+  const bool isA5 = pto::isTargetArchA5(op.getOperation());
+  IRRewriter rewriter(ctx);
+  for (OpOperand &use : llvm::make_early_inc_range(op.getResult().getUses())) {
+    auto mov = dyn_cast<pto::TMovOp>(use.getOwner());
+    if (!mov) {
+      continue;
+    }
+    const bool isMoveSource = mov.getSrc() == op.getResult();
+    if (!isMoveSource) {
+      continue;
+    }
+    const bool plainMove =
+        !mov.getFp() && !mov.getPreQuantScalar() &&
+        !mov.getAccToVecModeAttr() && !mov.getGrpAxisAttr() &&
+        mov.getReluPreMode() == pto::ReluPreMode::NoRelu;
+    if (!plainMove) {
+      continue;
+    }
+    if (!isTMovExtractCompatible(mov, isA5)) {
+      continue;
+    }
+    if (!isSubviewWindowExtractAligned(op, mov)) {
+      continue;
+    }
+    rewriter.setInsertionPoint(mov);
+    rewriter.create<pto::TExtractOp>(
+        mov.getLoc(), op.getSource(), op.getOffsets()[kDim0],
+        op.getOffsets()[kDim1], mov.getDst(), Value(), Value(),
+        pto::AccToVecModeAttr(), pto::ReluPreMode::NoRelu);
+    rewriter.eraseOp(mov);
+  }
+}
+
 static LogicalResult resolveTileNativeSubviews(ModuleOp module,
                                                MLIRContext *ctx) {
   SmallVector<pto::SubViewOp, mlir::pto::kValue16> subviews;
@@ -345,6 +515,15 @@ static LogicalResult resolveTileNativeSubviews(ModuleOp module,
       continue;
     }
     pto::TileBufType physicalType = getSubviewPhysicalType(op);
+    const bool keepsParentShape =
+        physicalType.getShape() != op.getResult().getType().getShape();
+    if (keepsParentShape) {
+      // The resolved handle keeps the parent's physical shape and strides,
+      // so mat-source tmov users would compare the parent shape against the
+      // compact destination and fail verification. Move them onto textract
+      // windows from the parent tile before the handle replaces the subview.
+      rewriteParentShapedTMovUsers(op, ctx);
+    }
     auto alloc = rewriter.create<pto::AllocTileOp>(
         op.getLoc(), physicalType, addr,
         getSubviewValidOperand(op, physicalType, kDim0, rewriter),
