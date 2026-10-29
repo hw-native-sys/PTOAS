@@ -27,8 +27,8 @@ module attributes {pto.target_arch = "a5", pto.kernel_kind = #pto.kernel_kind<ve
 }
 
 // CHECK-LABEL: func.func @vecscope_membar_vsstb_conservative
-// An unmodelled strided footprint is Unknown, so it must not introduce a
-// barrier in normal mode.
+// An unmodelled strided footprint may alias the subsequent load.
+// Unknown dependence must preserve ordering in normal mode.
 // CHECK: pto.vsstb
-// CHECK-NOT: pto.mem_bar
+// CHECK: pto.mem_bar "VST_VLD"
 // CHECK: pto.vlds
