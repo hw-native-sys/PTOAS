@@ -234,6 +234,44 @@ def kernel_module_launch_error(function_name: str | None = None) -> RuntimeError
     )
 
 
+def jit_sched_mode_type_error(value: object) -> TypeError:
+    """Return one diagnostic for a non-integer ``@pto.jit(sched_mode=...)``."""
+    return TypeError(
+        "@pto.jit(sched_mode=...) must be an int holding the CCE kernel scheduling "
+        f"mode (0 = normal mode, 1 = batch mode); got {value!r} of type "
+        f"{type(value).__name__}. bool is rejected even though True == 1, because "
+        "the scheduling mode is a mode selector, not a flag."
+    )
+
+
+def jit_sched_mode_range_error(value: int) -> ValueError:
+    """Return one diagnostic for a ``@pto.jit(sched_mode=...)`` that cannot fit i32."""
+    return ValueError(
+        f"@pto.jit(sched_mode={value}) does not fit in the signless-i32 "
+        "`pto.sched_mode` attribute: it would wrap around, and a wrapped value can "
+        "land on a valid mode. Pass 0 (normal mode) or 1 (batch mode) instead."
+    )
+
+
+def jit_sched_mode_entry_false_error() -> TypeError:
+    """Return one diagnostic for unsupported ``@pto.jit(entry=False, sched_mode=...)``."""
+    return TypeError(
+        "@pto.jit(entry=False) kernel modules do not support sched_mode. "
+        "`pto.sched_mode` is the CCE kernel scheduling mode, which only applies to "
+        "launchable kernel entries, and PTOAS rejects it on a non-entry function."
+    )
+
+
+def jit_sched_mode_source_error(source: object) -> TypeError:
+    """Return one diagnostic for unsupported ``@pto.jit(source=..., sched_mode=...)``."""
+    return TypeError(
+        f"@pto.jit(source=...) kernels do not support sched_mode while source={source!r}. "
+        "Source-backed JIT takes the function body and its attributes from the PTO IR "
+        "file, so the argument would be dropped; put the signless-i32 `pto.sched_mode` "
+        "attribute on the entry function in the source IR instead."
+    )
+
+
 def jit_source_entry_false_error(
     source: object,
     *,
@@ -636,6 +674,10 @@ __all__ = [
     "kernel_module_compile_error",
     "kernel_module_launch_error",
     "kernel_module_return_value_error",
+    "jit_sched_mode_entry_false_error",
+    "jit_sched_mode_range_error",
+    "jit_sched_mode_source_error",
+    "jit_sched_mode_type_error",
     "jit_source_abi_error",
     "jit_source_compile_constexpr_error",
     "jit_source_constexpr_error",

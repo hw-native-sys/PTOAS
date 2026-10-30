@@ -115,7 +115,56 @@ LogicalResult mlir::pto::validatePTOEntryFunctions(ModuleOp module)
             return func.emitOpError() << "PTO entry functions must return void";
         }
     }
-    return success();
+
+    return validatePTOSchedModeAttr(module);
+}
+
+// `pto.sched_mode` selects the CCE kernel scheduling mode. Both backends consume
+// it, so both enforce the same contract: a signless i32 holding exactly 0
+// (normal mode) or 1 (batch mode), attached to a PTO kernel entry function.
+// That mirrors the two rules the bisheng compiler enforces, but the messages
+// below are PTOAS's own and deliberately say more than the compiler's terse
+// "Invalid Schedule Mode :'N' ..." / "Launch schedule mode attribute can only
+// be applied to kernel functions"; do not describe them as identical.
+LogicalResult mlir::pto::validatePTOSchedModeAttr(ModuleOp module)
+{
+    if (!module) {
+        return success();
+    }
+
+    constexpr unsigned kSchedModeBitWidth = 32;
+    WalkResult result = module.walk([&](func::FuncOp func) -> WalkResult {
+        Attribute schedMode = func->getAttr(kPTOSchedModeAttrName);
+        if (!schedMode) {
+            return WalkResult::advance();
+        }
+        if (!isPTOEntryFunction(func)) {
+            // Name every marker hasExplicitPTOEntryAttr accepts: the compiler
+            // only rejects the non-kernel case, so a diagnostic that mentioned
+            // `pto.entry` alone would read as if `pto.kernel` were invalid too.
+            func.emitOpError() << "`" << kPTOSchedModeAttrName
+                               << "` is only valid on a PTO kernel entry function, one marked with `"
+                               << kPTOEntryAttrName << "` or `" << kPTOKernelAttrName
+                               << "` (`" << kLegacyPTOAICoreAttrName << "` and `"
+                               << kLegacyHACCEntryAttrName << "` are legacy aliases)";
+            return WalkResult::interrupt();
+        }
+        auto intAttr = dyn_cast<IntegerAttr>(schedMode);
+        if (!intAttr || !intAttr.getType().isSignlessInteger(kSchedModeBitWidth)) {
+            func.emitOpError() << "`" << kPTOSchedModeAttrName
+                               << "` must be a signless i32 integer attribute";
+            return WalkResult::interrupt();
+        }
+        int64_t mode = intAttr.getInt();
+        if (mode != kPTOSchedModeNormal && mode != kPTOSchedModeBatch) {
+            func.emitOpError() << "`" << kPTOSchedModeAttrName << "` must be "
+                               << kPTOSchedModeNormal << " (normal mode) or "
+                               << kPTOSchedModeBatch << " (batch mode), got " << mode;
+            return WalkResult::interrupt();
+        }
+        return WalkResult::advance();
+    });
+    return result.wasInterrupted() ? failure() : success();
 }
 
 // A !pto.struct is represented as a pointer to stack storage. Its provenance

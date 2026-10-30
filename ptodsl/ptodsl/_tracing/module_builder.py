@@ -15,7 +15,16 @@ from dataclasses import dataclass
 from enum import Enum
 
 from ptoas.mlir.dialects import func
-from ptoas.mlir.ir import Attribute, InsertionPoint, Module, Operation, StringAttr, UnitAttr
+from ptoas.mlir.ir import (
+    Attribute,
+    InsertionPoint,
+    IntegerAttr,
+    IntegerType,
+    Module,
+    Operation,
+    StringAttr,
+    UnitAttr,
+)
 
 from .._native_options import EMPTY_NATIVE_OPTIONS, NativeBuildOptions
 
@@ -46,6 +55,7 @@ class KernelModuleSpec:
     jit_source: str | None = None
     native_options: NativeBuildOptions = EMPTY_NATIVE_OPTIONS
     ptoas_flags: tuple[str, ...] = ()
+    sched_mode: int | None = None
 
 
 def _build_flat_aicore_module(spec: KernelModuleSpec, arg_types):
@@ -109,6 +119,13 @@ def _build_backend_partitioned_module(spec: KernelModuleSpec, arg_types):
         ir_fn = func.FuncOp(spec.function_name, fn_ty)
         if spec.entry:
             ir_fn.attributes["pto.entry"] = UnitAttr.get()
+        # CCE kernel scheduling mode (0 = normal, 1 = batch). Stamp it as the
+        # signless-i32 attribute the IR contract defines and leave value/entry
+        # validation to PTOAS, which emits the compiler's own diagnostics.
+        if spec.sched_mode is not None:
+            ir_fn.attributes["pto.sched_mode"] = IntegerAttr.get(
+                IntegerType.get_signless(32), spec.sched_mode
+            )
         if (
             spec.kernel_kind in {"cube", "vector"}
             and (spec.kernel_kind_explicit or (spec.backend == "emitc" and not spec.entry))

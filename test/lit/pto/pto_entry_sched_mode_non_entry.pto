@@ -1,0 +1,23 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+
+// RUN: not ptoas %s 2>&1 | FileCheck %s
+
+// The CCE qualifier only applies to kernel functions, so the attribute is
+// rejected on a plain device function instead of being dropped.
+
+module {
+  func.func @plain_function(%arg0: !pto.ptr<f32>) attributes {pto.sched_mode = 1 : i32} {
+    return
+  }
+}
+
+// The diagnostic names every marker PTOAS accepts, not just `pto.entry`:
+// `pto.kernel` is the VPTO entry spelling and `pto.aicore` / `hacc.entry` are
+// the legacy aliases, so a message naming only `pto.entry` would be wrong.
+// CHECK: `pto.sched_mode` is only valid on a PTO kernel entry function, one marked with `pto.entry` or `pto.kernel` (`pto.aicore` and `hacc.entry` are legacy aliases)

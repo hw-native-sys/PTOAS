@@ -434,7 +434,8 @@ struct FuncToEmitC : public OpConversionPattern<func::FuncOp> {
       if (name == op.getFunctionTypeAttrName() ||
           name == SymbolTable::getSymbolAttrName() ||
           name == pto::kPTOEntryAttrName ||
-          name == pto::kLegacyHACCEntryAttrName)
+          name == pto::kLegacyHACCEntryAttrName ||
+          name == pto::kPTOSchedModeAttrName)
         continue;
       emitcFunc->setAttr(namedAttr.getName(), namedAttr.getValue());
     }

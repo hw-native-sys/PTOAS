@@ -9293,6 +9293,100 @@ func.func @vector_kernel()
 
 ---
 
+##### `pto.sched_mode` - Kernel Scheduling Mode Attribute
+
+**Summary:** Selects the CCE kernel scheduling mode. EmitC emits it as the
+`__schedmode__(n)` C++ kernel qualifier and VPTO records it as a
+`launch-schedule-mode` HIVM kernel annotation. PTODSL authors set it with
+`@pto.jit(sched_mode=1)`, which stamps this attribute on the generated entry
+function.
+
+**Semantics:**
+
+```mlir
+func.func @kernel(...) attributes {pto.entry, pto.sched_mode = 1 : i32}
+```
+
+The value is a signless i32 holding one of the two modes the CCE compiler
+accepts:
+
+| Value | CCE mode | Meaning |
+| --- | --- | --- |
+| `0` | normal mode (default) | The compiler default: cores are taken from whichever are free, so concurrently launched kernels may overlap. |
+| `1` | batch mode | Cores are taken only once every core the kernel needs is free, so concurrently launched kernels do not overlap. |
+
+Batch mode is not free: it trades concurrency for that all-at-once dispatch,
+so keep the default `0` unless the kernel actually needs it. The mode is a
+host-side launch hint -- PTOAS only carries the value, and what a mode does at
+run time is defined by the CCE toolchain and runtime, not by this attribute.
+
+**Attachment Site:** `func.func` attribute; the function must also carry a PTO
+kernel entry marker (`pto.entry`, `pto.kernel`, `pto.aicore` or `hacc.entry`).
+
+**Constraints & Verification:**
+
+- Must be a signless i32 integer attribute
+- Must be `0` (normal mode) or `1` (batch mode); every other value is rejected.
+  The compiler enforces the same rule with its own terse wording
+  (`Invalid Schedule Mode :'N' ...`); the PTOAS diagnostic is deliberately not
+  a copy of it and names the accepted values instead
+- Kernel entry functions only. The compiler's rule is `Launch schedule mode
+  attribute can only be applied to kernel functions`; the PTOAS diagnostic
+  lists the entry markers it accepts (`pto.entry`, `pto.kernel`, and the legacy
+  `pto.aicore` / `hacc.entry` aliases) and is not a copy of that message either
+- Honoured by both backends: EmitC spells it as a C++ kernel qualifier and
+  VPTO records it as a `launch-schedule-mode` HIVM kernel annotation
+
+**Emitted C++ (EmitC backend):**
+
+CCE requires the qualifier ahead of `__global__`, so the entry is emitted as:
+
+```cpp
+extern "C" __schedmode__(1) __global__ AICORE void kernel(...)
+```
+
+**Emitted LLVM IR (VPTO backend):**
+
+Bisheng does not model the scheduling mode as an LLVM function attribute; it
+records it as a `launch-schedule-mode` HIVM kernel annotation together with the
+matching function-level `!annotation` attachment. PTOAS emits the same shape,
+including an explicit `0`, and emits nothing at all when the attribute is
+absent. Only `!3` and `!4` below come from this attribute; every entry already
+carries the `kernel` and `kernel_with_simd` nodes:
+
+```llvm
+define void @kernel_mix_aiv(ptr addrspace(1) %0) #0 !annotation !4 {
+  ...
+}
+
+!hivm.annotations = !{!1, !2, !3}
+!1 = !{ptr @kernel_mix_aiv, !"kernel", i32 1}
+!2 = !{ptr @kernel_mix_aiv, !"kernel_with_simd", i32 1}
+!3 = !{ptr @kernel_mix_aiv, !"launch-schedule-mode", i32 1}
+!4 = !{!"launch-schedule-mode", i32 1}
+```
+
+**Basic Example:**
+
+```mlir
+func.func @kernel(%arg0: !pto.ptr<f32>)
+    attributes {pto.entry, pto.sched_mode = 1 : i32} {
+  return
+}
+```
+
+**Hardware Mapping:**
+
+- Host-side kernel launch scheduling hint; carries no device-side code
+- Batch mode is not free: it serialises the kernel's cores instead of sharing
+  them with concurrently launched kernels, so prefer the default `0` unless the
+  kernel needs it
+
+**See Also:** the CCE `__schedmode__(mode)` kernel qualifier in the CANN
+Ascend C language-extension reference.
+
+---
+
 ##### `pto.section.cube` - Core-Specific Section (Cube)
 
 **Summary:** Marks a region of code that should be emitted only for cube cores.

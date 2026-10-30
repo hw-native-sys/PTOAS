@@ -403,6 +403,15 @@ public:
 
 private:
   LogicalResult validateAuthoringRules() {
+    // `pto.sched_mode` is an authored declaration that the VPTO emitter reads
+    // straight off the entry function to build the HIVM kernel annotation, so
+    // the value/placement contract the EmitC path enforces applies here too.
+    // `validate()` runs these authoring rules for both stages and no pass adds
+    // or removes the attribute, so this single walk covers every VPTO path;
+    // repeating it in validateEmissionRules() only re-walked the same module.
+    if (failed(pto::validatePTOSchedModeAttr(helper.getModule()))) {
+      return failure();
+    }
     if (failed(validateAuthoringFunctionSurface())) {
       return failure();
     }

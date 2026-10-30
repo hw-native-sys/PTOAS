@@ -21,6 +21,7 @@ Decorator overview:
   backend="emitc"           EmitC backend — mode="auto" only
   mode="auto"               tile-first authoring, compiler-managed staging (default)
   mode="explicit"           micro-instruction authoring, user-managed staging
+  sched_mode=1              CCE kernel scheduling mode: 0 normal, 1 batch (entries)
 
 @pto.tileop                 Single-core Tile/scalar compute helper with inferred Vector/Cube kind
 @pto.func                   Reusable PTODSL helper with AST-rewritten control flow
@@ -55,6 +56,31 @@ The **`mode`** parameter selects the programming model within the kernel body
 build level and enables sync insertion by default, while `mode="explicit"` uses
 `--pto-level=level3` and disables sync insertion by default. This matches the
 manual-address, user-managed staging contract of explicit kernels.
+
+The **`sched_mode`** parameter is available on `entry=True` kernels. It sets
+the CCE kernel scheduling mode: `0` selects normal mode (the compiler default)
+and `1` selects batch mode, which only dispatches the kernel once every core it
+needs is free, so concurrently launched kernels do not overlap. Batch mode is
+not free -- it trades concurrency for that all-at-once dispatch -- so keep the
+default unless the kernel needs it. PTODSL stamps the value as the signless-i32
+`pto.sched_mode` attribute on the generated entry function and leaves the
+accepted value set and the entry-placement rule to PTOAS, which rejects
+anything outside `{0, 1}` and any non-entry placement with its own diagnostics
+(they mirror the compiler's rules, not its wording). The argument itself must
+be an int in the signless-i32 range: `bool`, floats, strings and values that
+would wrap into a legal mode are rejected at decoration, and so is combining
+it with `source=` or `entry=False`, because neither path can carry the
+attribute to the IR. EmitC emits the attribute as `__schedmode__(n)` ahead of
+`__global__`; VPTO records it as the `launch-schedule-mode` HIVM kernel
+annotation. Omitting `sched_mode` leaves the attribute off the function
+entirely.
+
+```python
+@pto.jit(target="a5", sched_mode=1)
+def batch_kernel(x_ptr: pto.ptr(pto.f32, "gm")):
+    # ... kernel body ...
+    return
+```
 
 `@pto.jit` owns compilation (tracing + lowering), caching, and — for
 `entry=True` — runtime launch binding. The compute helper decorators

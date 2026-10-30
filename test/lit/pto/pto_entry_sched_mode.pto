@@ -1,0 +1,45 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+
+// RUN: ptoas %s | FileCheck %s
+
+// `pto.sched_mode` selects the CCE kernel scheduling mode and is emitted as the
+// `__schedmode__(n)` qualifier ahead of `__global__`. 0 is normal mode (the
+// default) and 1 is batch mode; both are accepted, and omitting the attribute
+// leaves the emitted signature untouched.
+
+module {
+  func.func @batch_kernel(%arg0: !pto.ptr<f32>) attributes {pto.entry, pto.sched_mode = 1 : i32} {
+    return
+  }
+
+  func.func @normal_kernel(%arg0: !pto.ptr<f32>) attributes {pto.entry, pto.sched_mode = 0 : i32} {
+    return
+  }
+
+  func.func @default_kernel(%arg0: !pto.ptr<f32>) attributes {pto.entry} {
+    return
+  }
+
+  // `pto.kernel` is the VPTO naming for the same entry marker; the attribute is
+  // valid there too, which is why the placement diagnostic names every marker.
+  func.func @alias_kernel(%arg0: !pto.ptr<f32>) attributes {pto.kernel, pto.sched_mode = 1 : i32} {
+    return
+  }
+}
+
+// A regression that defaulted every kernel to `__schedmode__(0)` would emit the
+// qualifier ahead of the first kernel too.
+// CHECK-NOT: __schedmode__
+// CHECK: __schedmode__(1) __global__ AICORE void batch_kernel(
+// CHECK: __schedmode__(0) __global__ AICORE void normal_kernel(
+// CHECK-NOT: __schedmode__
+// CHECK: __global__ AICORE void default_kernel(
+// CHECK: __schedmode__(1) __global__ AICORE void alias_kernel(
+// The attribute-less kernel is the last place a default could hide.
+// CHECK-NOT: __schedmode__

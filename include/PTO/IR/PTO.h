@@ -259,6 +259,25 @@ inline constexpr llvm::StringLiteral kPTOSimtMaxThreadsAttrName =
     "pto.simt_max_threads";
 inline constexpr llvm::StringLiteral kPTOSimtMaxRegistersAttrName =
     "pto.simt_max_regs";
+
+/// Kernel scheduling mode, carried as a signless-i32 integer attribute on a PTO
+/// entry function. It selects the CCE kernel scheduling mode and is emitted as
+/// the `__schedmode__(n)` kernel qualifier, which the bisheng compiler expands
+/// to `__attribute__((cce_schedule_mode(n)))`.
+///
+/// The compiler accepts exactly two values and rejects every other value:
+///   0 - normal mode (the default): the kernel is dispatched onto whichever
+///       physical cores are free, so concurrently launched kernels can overlap.
+///   1 - batch mode: dispatch waits until every core the kernel needs is free,
+///       so concurrently launched kernels are split and never overlap. This is
+///       the mode that avoids the multi-stream deadlock documented for
+///       inter-core sync (`pto.sync.set`/`pto.sync.wait`) kernels.
+inline constexpr llvm::StringLiteral kPTOSchedModeAttrName = "pto.sched_mode";
+
+/// Accepted values for `kPTOSchedModeAttrName`.
+inline constexpr int64_t kPTOSchedModeNormal = 0;
+inline constexpr int64_t kPTOSchedModeBatch = 1;
+
 inline constexpr llvm::StringLiteral kPTOVisibilityAttrName = "pto.visibility";
 inline constexpr llvm::StringLiteral kPTOVisibilityInternalValue = "internal";
 inline constexpr llvm::StringLiteral kPTOVisibilityExternalValue = "external";
@@ -371,6 +390,14 @@ void setExternalArtifactVisibility(func::FuncOp func, bool isExternal);
 
 /// Validate module-level PTO entry configuration before EmitC lowering.
 LogicalResult validatePTOEntryFunctions(ModuleOp module);
+
+/// Validate every `pto.sched_mode` attribute in `module`.
+///
+/// The attribute must be a signless i32 holding exactly 0 (normal mode) or 1
+/// (batch mode) and must sit on a kernel entry function. Both backends call
+/// this: EmitC emits the value as the CCE `__schedmode__(n)` kernel qualifier
+/// and VPTO emits it as the `launch-schedule-mode` HIVM annotation.
+LogicalResult validatePTOSchedModeAttr(ModuleOp module);
 
 /// Reject !pto.struct function arguments/results and operation results other
 /// than pto.declare_struct, so aliases cannot hide stack-storage provenance.

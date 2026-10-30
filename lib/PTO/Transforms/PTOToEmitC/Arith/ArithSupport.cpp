@@ -343,8 +343,20 @@ void applyFuncSpecifiers(func::FuncOp op,
                                 ConversionPatternRewriter &rewriter,
                                 emitc::FuncOp &emitcFunc) {
   if (pto::isPTOEntryFunction(op)) {
-    emitcFunc.setSpecifiersAttr(
-        rewriter.getStrArrayAttr({"extern \"C\"", "__global__ AICORE"}));
+    // CCE requires the scheduling-mode qualifier ahead of `__global__`, i.e.
+    // `__schedmode__(1) __global__ ...`. Validation has already restricted the
+    // attribute to kernel entries and to the values 0/1. The specifier text is
+    // owned here so the StringRefs handed to the builder stay valid.
+    std::string schedModeSpecifier;
+    SmallVector<StringRef, 3> specifiers{"extern \"C\""};
+    if (auto schedMode =
+            op->getAttrOfType<IntegerAttr>(pto::kPTOSchedModeAttrName)) {
+      schedModeSpecifier = "__schedmode__(" +
+                           std::to_string(schedMode.getInt()) + ")";
+      specifiers.push_back(schedModeSpecifier);
+    }
+    specifiers.push_back("__global__ AICORE");
+    emitcFunc.setSpecifiersAttr(rewriter.getStrArrayAttr(specifiers));
   } else if (op.isPrivate()) {
     emitcFunc.setSpecifiersAttr(rewriter.getStrArrayAttr({"static", "AICORE"}));
   } else if (pto::hasExternalArtifactVisibility(op)) {

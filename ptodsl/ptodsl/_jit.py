@@ -12,17 +12,23 @@
 from __future__ import annotations
 
 import inspect
+import numbers
 from collections.abc import Mapping
+from dataclasses import dataclass
 
 from ._diagnostics import (
     invalid_jit_backend_error,
     invalid_jit_mode_error,
+    jit_sched_mode_entry_false_error,
+    jit_sched_mode_range_error,
+    jit_sched_mode_source_error,
+    jit_sched_mode_type_error,
     jit_source_constexpr_error,
     jit_source_entry_false_error,
     kernel_module_launch_error,
 )
 from ._kernel_compilation import CompiledKernelHandle, KernelCompiler
-from ._kernel_signature import parse_jit_kernel_signature
+from ._kernel_signature import KernelSignature, parse_jit_kernel_signature
 from ._native_options import normalize_native_options
 from ._tracing import (
     KernelModuleSpec,
@@ -223,6 +229,122 @@ def merge_jit_modules(*kernels: KernelHandle):
     return merged
 
 
+@dataclass(frozen=True)
+class _JitOptions:
+    name: str | None
+    target: str
+    kernel_kind: object
+    backend: str
+    entry: bool
+    sched_mode: int | None
+    mode: str
+    insert_sync: bool | None
+    source: str | None
+    native_options: Mapping | None
+    ptoas_flags: tuple[str, ...]
+    ast_rewrite: bool
+
+
+def _jit_source_file(fn) -> str | None:
+    try:
+        return inspect.getsourcefile(fn) or inspect.getfile(fn)
+    except (OSError, TypeError):
+        return None
+
+
+def _validate_jit_source(
+    source, *, entry: bool, kernel_signature, fn_name: str
+) -> None:
+    if source is None:
+        return
+    if not isinstance(source, str):
+        raise TypeError(
+            "@pto.jit source must be a filesystem path string when provided"
+        )
+    if entry is False:
+        raise jit_source_entry_false_error(source, function_name=fn_name)
+    if kernel_signature.constexpr_parameters:
+        raise jit_source_constexpr_error(
+            kernel_signature.constexpr_parameters[0].name,
+            source,
+            function_name=fn_name,
+        )
+
+
+def _build_jit_kernel_spec(
+    fn, options: _JitOptions
+) -> tuple[KernelModuleSpec, KernelSignature]:
+    fn_name = options.name or fn.__name__
+    kernel_signature = parse_jit_kernel_signature(fn, entry=options.entry)
+    normalized_mode = _normalize_mode(options.mode, fn=fn)
+    normalized_backend = _normalize_backend(options.backend, fn=fn)
+    _validate_jit_source(
+        options.source,
+        entry=options.entry,
+        kernel_signature=kernel_signature,
+        fn_name=fn_name,
+    )
+    source_file = _jit_source_file(fn)
+    normalized_native_options = normalize_native_options(
+        options.native_options,
+        declaring_file=source_file,
+        function_name=fn_name,
+    )
+    kernel_kind_explicit = options.kernel_kind is not _DEFAULT_KERNEL_KIND_SENTINEL
+    effective_kernel_kind = (
+        options.kernel_kind if kernel_kind_explicit else _DEFAULT_KERNEL_KIND
+    )
+    module_spec = KernelModuleSpec(
+        function_name=fn_name,
+        target_arch=options.target,
+        kernel_kind=effective_kernel_kind,
+        kernel_kind_explicit=kernel_kind_explicit,
+        backend=normalized_backend,
+        entry=options.entry,
+        sched_mode=options.sched_mode,
+        mode=normalized_mode,
+        insert_sync=options.insert_sync,
+        module_style=ModuleStyle.BACKEND_PARTITIONED,
+        source_file=source_file,
+        source_line=getattr(fn.__code__, "co_firstlineno", None),
+        jit_source=options.source,
+        native_options=normalized_native_options,
+        ptoas_flags=options.ptoas_flags,
+    )
+    return module_spec, kernel_signature
+
+
+def _normalize_sched_mode(value, *, entry: bool, source) -> int | None:
+    """Validate ``@pto.jit(sched_mode=...)`` before a kernel captures it.
+
+    The accepted value set ({0, 1}) and the kernel-entry placement rule stay
+    PTOAS's job: `validatePTOSchedModeAttr` rejects anything else with the
+    documented diagnostic, and a `@pto.jit(sched_mode=2)` kernel fails at
+    compilation. What is checked here is the Python-side contract the verifier
+    cannot express: the argument has to be an integer in the signless-i32
+    range, and it has to reach the IR at all. `True` would silently become 1,
+    `1.0` and "1" would raise a raw pybind TypeError, and 2**32 + 1 would wrap
+    to a valid 1 -- none of those should depend on the caller reading the
+    docstring. numpy integer scalars are accepted and narrowed to int, because
+    host code routinely produces them for sizes and counts.
+    """
+    if value is None:
+        return None
+    # bool is an Integral too, but True == 1 would silently mean batch mode.
+    # Anything else integral (numpy scalars included) is narrowed to int so the
+    # module spec and the cache signature hold a plain Python int.
+    if isinstance(value, bool) or not isinstance(value, numbers.Integral):
+        raise jit_sched_mode_type_error(value)
+    value = int(value)
+    if not -(2**31) <= value <= 2**31 - 1:
+        raise jit_sched_mode_range_error(value)
+    if entry is False:
+        raise jit_sched_mode_entry_false_error()
+    if source is not None:
+        raise jit_sched_mode_source_error(source)
+    return value
+
+
 def jit(
     name=None,
     *,
@@ -230,6 +352,7 @@ def jit(
     kernel_kind: str | None = _DEFAULT_KERNEL_KIND_SENTINEL,
     backend: str = "vpto",
     entry: bool = True,
+    sched_mode: int | None = None,
     mode: str = "auto",
     insert_sync: bool | None = None,
     ast_rewrite: bool | None = None,
@@ -251,6 +374,19 @@ def jit(
                  cube/vector regions.
     backend:     ``"vpto"`` or ``"emitc"`` – records the intended backend.
     entry:       ``True`` for launchable kernel entries, ``False`` for helpers.
+    sched_mode:  optional CCE kernel scheduling mode for an entry kernel:
+                 ``0`` normal mode (the compiler default) or ``1`` batch
+                 mode. Recorded as the signless-i32 ``pto.sched_mode``
+                 attribute on the generated entry function. The value must be
+                 an integer in the signless-i32 range -- ``int`` or any
+                 integral scalar, numpy integers included; ``bool``, floats,
+                 strings and anything that would wrap are rejected here so a
+                 coerced value can never reach the IR. Which values are legal
+                 stays PTOAS's job, so ``2`` is only rejected once the kernel
+                 compiles.
+                 Omit it to leave the attribute off the function. Combining it
+                 with ``entry=False`` or ``source=`` is rejected at decoration
+                 time: neither path can carry the attribute to the IR.
     mode:        ``"auto"`` or ``"explicit"`` – feeds child compile policy.
     insert_sync: ``True``/``False`` to explicitly control PTOAS sync insertion
                  for launch builds. ``None`` keeps the mode-based default
@@ -296,60 +432,35 @@ def jit(
     ):
         raise TypeError("ptoas_flags must be a tuple or list of --option or --option=value strings")
     normalized_ptoas_flags = tuple(ptoas_flags)
+    normalized_sched_mode = _normalize_sched_mode(sched_mode, entry=entry, source=source)
     normalized_ast_rewrite = _normalize_frontend_options(
         ast_rewrite=ast_rewrite,
         frontend_options=frontend_options,
     )
 
+    options = _JitOptions(
+        name=name,
+        target=target,
+        kernel_kind=kernel_kind,
+        backend=backend,
+        entry=entry,
+        sched_mode=normalized_sched_mode,
+        mode=mode,
+        insert_sync=insert_sync,
+        source=source,
+        native_options=native_options,
+        ptoas_flags=normalized_ptoas_flags,
+        ast_rewrite=normalized_ast_rewrite,
+    )
+
     def decorator(fn):
-        fn_name = name or fn.__name__
-        kernel_signature = parse_jit_kernel_signature(fn, entry=entry)
-        normalized_mode = _normalize_mode(mode, fn=fn)
-        normalized_backend = _normalize_backend(backend, fn=fn)
-        if source is not None:
-            if not isinstance(source, str):
-                raise TypeError("@pto.jit source must be a filesystem path string when provided")
-            if entry is False:
-                raise jit_source_entry_false_error(source, function_name=fn_name)
-            if kernel_signature.constexpr_parameters:
-                raise jit_source_constexpr_error(
-                    kernel_signature.constexpr_parameters[0].name,
-                    source,
-                    function_name=fn_name,
-                )
-        source_file = None
-        try:
-            source_file = inspect.getsourcefile(fn) or inspect.getfile(fn)
-        except (OSError, TypeError):
-            source_file = None
-        normalized_native_options = normalize_native_options(
-            native_options,
-            declaring_file=source_file,
-            function_name=fn_name,
-        )
-        kernel_kind_explicit = kernel_kind is not _DEFAULT_KERNEL_KIND_SENTINEL
-        effective_kernel_kind = kernel_kind if kernel_kind_explicit else _DEFAULT_KERNEL_KIND
+        module_spec, kernel_signature = _build_jit_kernel_spec(fn, options)
         compiler = KernelCompiler(
             fn.__name__,
-            KernelModuleSpec(
-                function_name=fn_name,
-                target_arch=target,
-                kernel_kind=effective_kernel_kind,
-                kernel_kind_explicit=kernel_kind_explicit,
-                backend=normalized_backend,
-                entry=entry,
-                mode=normalized_mode,
-                insert_sync=insert_sync,
-                module_style=ModuleStyle.BACKEND_PARTITIONED,
-                source_file=source_file,
-                source_line=getattr(fn.__code__, "co_firstlineno", None),
-                jit_source=source,
-                native_options=normalized_native_options,
-                ptoas_flags=normalized_ptoas_flags,
-            ),
+            module_spec,
             kernel_signature,
             fn,
-            ast_rewrite=normalized_ast_rewrite,
+            ast_rewrite=options.ast_rewrite,
         )
         return KernelHandle(fn.__name__, compiler)
 
@@ -395,6 +506,7 @@ class KernelHandle(ModuleArtifact):
 
     def __ptodsl_cache_signature__(self):
         module_spec = self._compiler._module_spec
+        # Keep sched_mode ahead of ptoas_flags: tests index this tuple by position.
         return (
             type(self).__name__,
             self._compiler._py_name,
@@ -406,6 +518,7 @@ class KernelHandle(ModuleArtifact):
             module_spec.kernel_kind,
             module_spec.kernel_kind_explicit,
             module_spec.native_options,
+            module_spec.sched_mode,
             module_spec.ptoas_flags,
         )
 

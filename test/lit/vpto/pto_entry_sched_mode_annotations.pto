@@ -1,0 +1,55 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+
+// RUN: ptoas --pto-arch=a5 --pto-backend=vpto --emit-vpto-llvm-ir %s -o - | FileCheck %s --implicit-check-not='ptr @k_default_mix_aiv, !"launch-schedule-mode"'
+
+// The VPTO backend emits LLVM IR, where Bisheng spells the CCE scheduling mode
+// as a `launch-schedule-mode` HIVM kernel annotation plus the matching
+// function-level `!annotation` attachment. Mirror that exactly, including an
+// explicit 0, and emit nothing when the attribute is absent.
+
+module attributes {
+  pto.kernel_kind = #pto.kernel_kind<vector>,
+  pto.target_arch = "a5"
+} {
+  func.func @k_batch() attributes {pto.entry, pto.sched_mode = 1 : i32} {
+    %ctrl = pto.get_ctrl : i64
+    pto.set_ctrl %ctrl : i64
+    return
+  }
+
+  func.func @k_normal() attributes {pto.entry, pto.sched_mode = 0 : i32} {
+    %ctrl = pto.get_ctrl : i64
+    pto.set_ctrl %ctrl : i64
+    return
+  }
+
+  func.func @k_default() attributes {pto.entry} {
+    %ctrl = pto.get_ctrl : i64
+    pto.set_ctrl %ctrl : i64
+    return
+  }
+}
+
+// PTOAS emits `!hivm.annotations` and the `!annotation` nodes after the function
+// definitions, so nothing may spell the annotation before the first entry; a
+// regression that hoisted the metadata into the module preamble lands here.
+// CHECK-NOT: !"launch-schedule-mode"
+// CHECK: define void @k_batch_mix_aiv() #0 !annotation
+// CHECK: define void @k_normal_mix_aiv() #0 !annotation
+// The kernel without the attribute gets no function-level attachment at all.
+// CHECK: define void @k_default_mix_aiv() #0 {
+
+// The annotation nodes follow the function order, so these are ordered checks:
+// that gives the implicit negative guard below a bounded region on both sides.
+// CHECK: !{ptr @k_batch_mix_aiv, !"launch-schedule-mode", i32 1}
+// CHECK: !{ptr @k_normal_mix_aiv, !"launch-schedule-mode", i32 0}
+// The kernel without the attribute must get no metadata node either. A CHECK-NOT
+// here would only cover the text after the last matched node, so a synthesized
+// node inserted above it slipped through; the RUN-line --implicit-check-not
+// instead bans the pattern on every line these checks do not match.

@@ -712,12 +712,21 @@ void attachHIVMKernelAnnotations(llvm::Module &llvmModule,
   llvm::Constant *one = llvm::ConstantInt::get(i32Ty, 1);
 
   llvm::StringMap<uint32_t> simtMaxThreadsByName;
+  llvm::StringMap<uint32_t> schedModeByName;
   llvm::StringSet<llvm::MallocAllocator> ptoEntryFunctions;
 
   sourceModule.walk([&](LLVM::LLVMFuncOp funcOp) {
     StringRef symName = funcOp.getSymName();
     if (pto::isPTOEntryFunction(funcOp)) {
       ptoEntryFunctions.insert(symName);
+    }
+
+    // `pto.sched_mode` is the CCE kernel scheduling mode. Bisheng records it on
+    // the kernel as a `launch-schedule-mode` HIVM annotation rather than an
+    // LLVM function attribute, so carry the value through to the same place.
+    if (auto schedMode =
+            funcOp->getAttrOfType<IntegerAttr>(pto::kPTOSchedModeAttrName)) {
+      schedModeByName[symName] = static_cast<uint32_t>(schedMode.getInt());
     }
 
     if (!funcOp->hasAttr(pto::kPTOSimtEntryAttrName)) {
@@ -754,6 +763,18 @@ void attachHIVMKernelAnnotations(llvm::Module &llvmModule,
         llvm::ValueAsMetadata::get(&function),
         llvm::MDString::get(*ctx, kind),
         llvm::ConstantAsMetadata::get(one)};
+    annotations->addOperand(llvm::MDNode::get(*ctx, ops));
+  };
+
+  // `!{ptr @kernel, !"<kind>", i32 <value>}`, matching the shape Bisheng emits
+  // for per-kernel integer annotations such as `launch-schedule-mode`.
+  auto addAnnotationI32 = [annotations, ctx, i32Ty](llvm::Function &function,
+                                                    llvm::StringRef kind,
+                                                    uint32_t value) {
+    llvm::Metadata *ops[] = {
+        llvm::ValueAsMetadata::get(&function),
+        llvm::MDString::get(*ctx, kind),
+        llvm::ConstantAsMetadata::get(llvm::ConstantInt::get(i32Ty, value))};
     annotations->addOperand(llvm::MDNode::get(*ctx, ops));
   };
 
@@ -810,6 +831,17 @@ void attachHIVMKernelAnnotations(llvm::Module &llvmModule,
     addAnnotation(function, "kernel_with_simd");
     if (callsSimtEntry(function)) {
       addAnnotation(function, "kernel_with_simt");
+    }
+
+    // Mirror Bisheng: an explicit `pto.sched_mode` is always recorded, mode 0
+    // included (the compiler treats "absent" and "explicit 0" differently in
+    // its own IR, so do not synthesize a default here). The value is attached
+    // both as a HIVM kernel annotation and as the function's `!annotation`
+    // attachment, which is the pair Bisheng's C++ frontend produces.
+    if (auto it = schedModeByName.find(name); it != schedModeByName.end()) {
+      addAnnotationI32(function, "launch-schedule-mode", it->second);
+      addLLVMFunctionI32Annotation(function, "launch-schedule-mode",
+                                   it->second);
     }
   }
 }
