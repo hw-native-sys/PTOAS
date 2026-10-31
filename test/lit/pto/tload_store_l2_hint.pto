@@ -1,0 +1,109 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+
+// RUN: ptoas --pto-level=level3 --pto-arch=a5 %s | FileCheck %s --check-prefix=CPP --implicit-check-not=__pypto_l2_hint
+// RUN: ptoas --pto-level=level3 --pto-arch=a5 --emit-pto-ir %s -o %t.pto
+// RUN: ptoas --pto-level=level3 --pto-arch=a5 --emit-pto-ir %t.pto | FileCheck %s --check-prefix=IR
+
+module {
+  func.func private @load_normal_first_victim(%src: !pto.partition_tensor_view<16x16xf32>, %dst: !pto.tile_buf<vec, 16x16xf32>) {
+    pto.tload ins(%src : !pto.partition_tensor_view<16x16xf32>) outs(%dst : !pto.tile_buf<vec, 16x16xf32>) {l2_hint = #pto.load_l2_hint<normal_first_victim>}
+    return
+  }
+  func.func private @load_normal_last_victim(%src: !pto.partition_tensor_view<16x16xf32>, %dst: !pto.tile_buf<vec, 16x16xf32>) {
+    pto.tload ins(%src : !pto.partition_tensor_view<16x16xf32>) outs(%dst : !pto.tile_buf<vec, 16x16xf32>) {l2_hint = #pto.load_l2_hint<normal_last_victim>}
+    return
+  }
+  func.func private @load_normal_persistent(%src: !pto.partition_tensor_view<16x16xf32>, %dst: !pto.tile_buf<vec, 16x16xf32>) {
+    pto.tload ins(%src : !pto.partition_tensor_view<16x16xf32>) outs(%dst : !pto.tile_buf<vec, 16x16xf32>) {l2_hint = #pto.load_l2_hint<normal_persistent>}
+    return
+  }
+  func.func private @load_not_alloc_keep(%src: !pto.partition_tensor_view<16x16xf32>, %dst: !pto.tile_buf<vec, 16x16xf32>) {
+    pto.tload ins(%src : !pto.partition_tensor_view<16x16xf32>) outs(%dst : !pto.tile_buf<vec, 16x16xf32>) {l2_hint = #pto.load_l2_hint<not_alloc_keep>}
+    return
+  }
+  func.func private @load_not_alloc_clean(%src: !pto.partition_tensor_view<16x16xf32>, %dst: !pto.tile_buf<vec, 16x16xf32>) {
+    pto.tload ins(%src : !pto.partition_tensor_view<16x16xf32>) outs(%dst : !pto.tile_buf<vec, 16x16xf32>) {l2_hint = #pto.load_l2_hint<not_alloc_clean>}
+    return
+  }
+  func.func private @load_not_alloc_drop(%src: !pto.partition_tensor_view<16x16xf32>, %dst: !pto.tile_buf<vec, 16x16xf32>) {
+    pto.tload ins(%src : !pto.partition_tensor_view<16x16xf32>) outs(%dst : !pto.tile_buf<vec, 16x16xf32>) {l2_hint = #pto.load_l2_hint<not_alloc_drop>}
+    return
+  }
+  func.func private @store_normal_first_victim(%src: !pto.tile_buf<vec, 16x16xf32>, %dst: !pto.partition_tensor_view<16x16xf32>) {
+    pto.tstore ins(%src : !pto.tile_buf<vec, 16x16xf32>) outs(%dst : !pto.partition_tensor_view<16x16xf32>) {l2_hint = #pto.store_l2_hint<normal_first_victim>}
+    return
+  }
+  func.func private @store_normal_last_victim(%src: !pto.tile_buf<vec, 16x16xf32>, %dst: !pto.partition_tensor_view<16x16xf32>) {
+    pto.tstore ins(%src : !pto.tile_buf<vec, 16x16xf32>) outs(%dst : !pto.partition_tensor_view<16x16xf32>) {l2_hint = #pto.store_l2_hint<normal_last_victim>}
+    return
+  }
+  func.func private @store_normal_persistent(%src: !pto.tile_buf<vec, 16x16xf32>, %dst: !pto.partition_tensor_view<16x16xf32>) {
+    pto.tstore ins(%src : !pto.tile_buf<vec, 16x16xf32>) outs(%dst : !pto.partition_tensor_view<16x16xf32>) {l2_hint = #pto.store_l2_hint<normal_persistent>}
+    return
+  }
+  func.func private @store_not_alloc_clean(%src: !pto.tile_buf<vec, 16x16xf32>, %dst: !pto.partition_tensor_view<16x16xf32>) {
+    pto.tstore ins(%src : !pto.tile_buf<vec, 16x16xf32>) outs(%dst : !pto.partition_tensor_view<16x16xf32>) {l2_hint = #pto.store_l2_hint<not_alloc_clean>}
+    return
+  }
+  // Omitted and explicit zero are different contracts and must survive roundtrip.
+  func.func private @omitted_vs_explicit_zero(%src: !pto.partition_tensor_view<16x16xf32>, %dst: !pto.tile_buf<vec, 16x16xf32>) {
+    pto.tload ins(%src : !pto.partition_tensor_view<16x16xf32>) outs(%dst : !pto.tile_buf<vec, 16x16xf32>)
+    pto.tload ins(%src : !pto.partition_tensor_view<16x16xf32>) outs(%dst : !pto.tile_buf<vec, 16x16xf32>) {l2_hint = #pto.load_l2_hint<normal_first_victim>}
+    return
+  }
+}
+
+// CPP-LABEL: load_normal_first_victim(
+// CPP: TLOAD<pto::TLoadL2Hint::NormalFirstVictim>(
+// IR-LABEL: @load_normal_first_victim(
+// IR: l2_hint = #pto.load_l2_hint<normal_first_victim>
+// CPP-LABEL: load_normal_last_victim(
+// CPP: TLOAD<pto::TLoadL2Hint::NormalLastVictim>(
+// IR-LABEL: @load_normal_last_victim(
+// IR: l2_hint = #pto.load_l2_hint<normal_last_victim>
+// CPP-LABEL: load_normal_persistent(
+// CPP: TLOAD<pto::TLoadL2Hint::NormalPersistent>(
+// IR-LABEL: @load_normal_persistent(
+// IR: l2_hint = #pto.load_l2_hint<normal_persistent>
+// CPP-LABEL: load_not_alloc_keep(
+// CPP: TLOAD<pto::TLoadL2Hint::NotAllocKeep>(
+// IR-LABEL: @load_not_alloc_keep(
+// IR: l2_hint = #pto.load_l2_hint<not_alloc_keep>
+// CPP-LABEL: load_not_alloc_clean(
+// CPP: TLOAD<pto::TLoadL2Hint::NotAllocClean>(
+// IR-LABEL: @load_not_alloc_clean(
+// IR: l2_hint = #pto.load_l2_hint<not_alloc_clean>
+// CPP-LABEL: load_not_alloc_drop(
+// CPP: TLOAD<pto::TLoadL2Hint::NotAllocDrop>(
+// IR-LABEL: @load_not_alloc_drop(
+// IR: l2_hint = #pto.load_l2_hint<not_alloc_drop>
+// CPP-LABEL: store_normal_first_victim(
+// CPP: TSTORE<pto::TStoreL2Hint::NormalFirstVictim>(
+// IR-LABEL: @store_normal_first_victim(
+// IR: l2_hint = #pto.store_l2_hint<normal_first_victim>
+// CPP-LABEL: store_normal_last_victim(
+// CPP: TSTORE<pto::TStoreL2Hint::NormalLastVictim>(
+// IR-LABEL: @store_normal_last_victim(
+// IR: l2_hint = #pto.store_l2_hint<normal_last_victim>
+// CPP-LABEL: store_normal_persistent(
+// CPP: TSTORE<pto::TStoreL2Hint::NormalPersistent>(
+// IR-LABEL: @store_normal_persistent(
+// IR: l2_hint = #pto.store_l2_hint<normal_persistent>
+// CPP-LABEL: store_not_alloc_clean(
+// CPP: TSTORE<pto::TStoreL2Hint::NotAllocClean>(
+// IR-LABEL: @store_not_alloc_clean(
+// IR: l2_hint = #pto.store_l2_hint<not_alloc_clean>
+// CPP-LABEL: omitted_vs_explicit_zero(
+// CPP: TLOAD(
+// CPP-NEXT: TLOAD<pto::TLoadL2Hint::NormalFirstVictim>(
+// IR-LABEL: @omitted_vs_explicit_zero(
+// IR: pto.tload
+// IR-NOT: l2_hint
+// IR: pto.tload
+// IR-SAME: l2_hint = #pto.load_l2_hint<normal_first_victim>

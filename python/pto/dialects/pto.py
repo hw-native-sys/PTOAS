@@ -1,4 +1,3 @@
-# coding=utf-8
 # Copyright (c) 2026 Huawei Technologies Co., Ltd.
 # This program is free software, you can redistribute it and/or modify it under the terms and conditions of
 # CANN Open Software License Agreement Version 2.0 (the "License").
@@ -69,6 +68,10 @@ AddressSpace = _pto_mod.AddressSpace
 AddressSpaceAttr = _pto_mod.AddressSpaceAttr
 FenceScope = _pto_mod.FenceScope
 FenceScopeAttr = _pto_mod.FenceScopeAttr
+LoadL2Hint = _pto_mod.LoadL2Hint
+LoadL2HintAttr = _pto_mod.LoadL2HintAttr
+StoreL2Hint = _pto_mod.StoreL2Hint
+StoreL2HintAttr = _pto_mod.StoreL2HintAttr
 LoadCachePolicy = _pto_mod.LoadCachePolicy
 LoadCachePolicyAttr = _pto_mod.LoadCachePolicyAttr
 TileBufConfigAttr = _pto_mod.TileBufConfigAttr
@@ -223,6 +226,15 @@ def _install_enum_attr_builders():
     def fence_scope_attr_builder(value, context=None):
         return FenceScopeAttr.get(value, context)
 
+    def load_l2_hint_attr_builder(value, context=None):
+        return LoadL2HintAttr.get(value, context)
+
+    def store_l2_hint_attr_builder(value, context=None):
+        return StoreL2HintAttr.get(value, context)
+
+    _ods_ir.AttrBuilder.insert("PTO_LoadL2HintAttr", load_l2_hint_attr_builder, replace=True)
+    _ods_ir.AttrBuilder.insert("PTO_StoreL2HintAttr", store_l2_hint_attr_builder, replace=True)
+
     def load_cache_policy_attr_builder(value, context=None):
         return LoadCachePolicyAttr.get(value, context)
 
@@ -265,6 +277,10 @@ __all__ = [
     "AddressSpaceAttr",
     "FenceScope",
     "FenceScopeAttr",
+    "LoadL2Hint",
+    "LoadL2HintAttr",
+    "StoreL2Hint",
+    "StoreL2HintAttr",
     "LoadCachePolicy",
     "LoadCachePolicyAttr",
     "BLayout",

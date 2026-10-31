@@ -1,0 +1,21 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+
+// RUN: ptoas --pto-arch=a5 --pto-level=level3 %s 2>&1 | FileCheck %s --implicit-check-not=TSTORE_FP
+
+module {
+  func.func private @vector_quantized(%src: !pto.tile_buf<acc, 16x32xf32, blayout=col_major, slayout=row_major, fractal=1024>, %dst: !pto.partition_tensor_view<16x32xf16>, %fp: !pto.tile_buf<scaling, 1x32xi64>) attributes {pto.kernel_kind = #pto.kernel_kind<cube>} {
+    pto.tstore ins(%src : !pto.tile_buf<acc, 16x32xf32, blayout=col_major, slayout=row_major, fractal=1024> fp %fp : !pto.tile_buf<scaling, 1x32xi64>) outs(%dst : !pto.partition_tensor_view<16x32xf16>) {l2_hint = #pto.store_l2_hint<not_alloc_clean>}
+    pto.tstore ins(%src : !pto.tile_buf<acc, 16x32xf32, blayout=col_major, slayout=row_major, fractal=1024> fp %fp : !pto.tile_buf<scaling, 1x32xi64>) outs(%dst : !pto.partition_tensor_view<16x32xf16>) {l2_hint = #pto.store_l2_hint<not_alloc_clean>, atomicType = #pto<atomic_type atomic_add>, reluPreMode = #pto<relu_pre_mode normal_relu>}
+    return
+  }
+}
+// CHECK-LABEL: vector_quantized(
+// CHECK: TSTORE<pto::TStoreL2Hint::NotAllocClean>(
+// CHECK: TSTORE<pto::TStoreL2Hint::NotAllocClean,
+// CHECK-SAME: AtomicType::AtomicAdd, ReluPreMode::NormalRelu>(

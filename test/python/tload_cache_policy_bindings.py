@@ -1,5 +1,4 @@
 #!/usr/bin/env python3
-# coding=utf-8
 # Copyright (c) 2026 Huawei Technologies Co., Ltd.
 # This program is free software, you can redistribute it and/or modify it under the terms and conditions of
 # CANN Open Software License Agreement Version 2.0 (the "License").
@@ -41,6 +40,55 @@ def check_tload_offsets(policy) -> None:
         raise RuntimeError("tload offset module did not survive a round trip")
 
 
+def check_native_l2_hints() -> None:
+    """Typed native attributes preserve all encodings, including explicit zero."""
+    module = Module.parse("""
+        module attributes {pto.target_arch = "a5"} {
+          func.func @transfers(%src: !pto.partition_tensor_view<16x16xf32>,
+                               %tile: !pto.tile_buf<vec, 16x16xf32>) {
+            return
+          }
+        }
+    """)
+    block = module.body.operations[0].regions[0].blocks[0]
+    src, tile = block.arguments
+    with InsertionPoint.at_block_begin(block):
+        ordinary = pto.TLoadOp(None, src, tile)
+        if ordinary.l2_hint is not None:
+            raise RuntimeError("omitted L2 hint must remain absent")
+        for encoding in (0, 1, 2, 4, 5, 6):
+            hint = pto.LoadL2HintAttr.get(encoding)
+            op = pto.TLoadOp(None, src, tile, l2_hint=hint)
+            if pto.LoadL2HintAttr(op.l2_hint).value != encoding:
+                raise RuntimeError("load hint encoding was not preserved")
+        for encoding in (0, 1, 2, 4):
+            hint = pto.StoreL2HintAttr.get(encoding)
+            op = pto.TStoreOp(None, tile, src, l2_hint=hint)
+            if pto.StoreL2HintAttr(op.l2_hint).value != encoding:
+                raise RuntimeError("store hint encoding was not preserved")
+    if not module.operation.verify() or not Module.parse(str(module)).operation.verify():
+        raise RuntimeError("native L2 hint module did not verify/roundtrip")
+    if pto.LoadL2HintAttr.get(pto.LoadL2Hint.NotAllocClean).value != 5:
+        raise RuntimeError("typed load enum lost its direction-specific encoding")
+    if pto.StoreL2HintAttr.get(pto.StoreL2Hint.NotAllocClean).value != 4:
+        raise RuntimeError("typed store enum lost its direction-specific encoding")
+    for attr, foreign in ((pto.LoadL2HintAttr, pto.StoreL2Hint.NotAllocClean),
+                          (pto.StoreL2HintAttr, pto.LoadL2Hint.NotAllocClean)):
+        try:
+            attr.get(foreign)
+        except TypeError:
+            continue
+        raise RuntimeError("an enum from the wrong transfer direction was accepted")
+    for attr, invalid in ((pto.LoadL2HintAttr, (3, 7, -1)),
+                          (pto.StoreL2HintAttr, (3, 5, 6, -1))):
+        for encoding in invalid:
+            try:
+                attr.get(encoding)
+            except ValueError:
+                continue
+            raise RuntimeError(f"invalid {attr} encoding accepted: {encoding}")
+
+
 def main() -> None:
     with Context() as ctx, Location.unknown(ctx):
         pto.register_dialect(ctx, load=True)
@@ -50,6 +98,7 @@ def main() -> None:
         if policy.value != pto.LoadCachePolicy.L2Bypass.value:
             raise RuntimeError(f"unexpected load cache policy value: {policy.value}")
         check_tload_offsets(policy)
+        check_native_l2_hints()
 
     print("tload_cache_policy_bindings: PASS")
 

@@ -110,6 +110,11 @@ static LogicalResult verifyTStoreA5(TStoreOp op) {
 }
 
 LogicalResult TStoreOp::verify() {
+  if (getL2HintAttr()) {
+    if (failed(verifyA5L2HintTarget(getOperation()))) {
+      return failure();
+    }
+  }
   bool hasFp = static_cast<bool>(getFp());
   bool hasPreQuant = static_cast<bool>(getPreQuantScalar());
   if (hasFp && hasPreQuant)

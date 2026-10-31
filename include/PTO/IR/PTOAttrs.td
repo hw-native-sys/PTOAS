@@ -152,6 +152,36 @@ def PTO_LoadCachePolicyAttr
   }];
 }
 
+// A5 DMA policies are distinct from SIMT cache controls and the A2/A3
+// address-alias policy. Optional use on the op preserves explicit ISA zero.
+def PTO_LoadL2HintEnum : PTO_I32Enum<
+  "LoadL2Hint", "A5 DMA load L2 cache mode", [
+    I32EnumAttrCase<"NormalFirstVictim", 0, "normal_first_victim">,
+    I32EnumAttrCase<"NormalLastVictim", 1, "normal_last_victim">,
+    I32EnumAttrCase<"NormalPersistent", 2, "normal_persistent">,
+    I32EnumAttrCase<"NotAllocKeep", 4, "not_alloc_keep">,
+    I32EnumAttrCase<"NotAllocClean", 5, "not_alloc_clean">,
+    I32EnumAttrCase<"NotAllocDrop", 6, "not_alloc_drop">
+  ]>;
+def PTO_LoadL2HintAttr
+    : EnumAttr<PTO_Dialect, PTO_LoadL2HintEnum, "load_l2_hint"> {
+  let assemblyFormat = "`<` params `>`";
+  let summary = "A5 DMA load L2 cache mode";
+}
+
+def PTO_StoreL2HintEnum : PTO_I32Enum<
+  "StoreL2Hint", "A5 DMA store L2 cache mode", [
+    I32EnumAttrCase<"NormalFirstVictim", 0, "normal_first_victim">,
+    I32EnumAttrCase<"NormalLastVictim", 1, "normal_last_victim">,
+    I32EnumAttrCase<"NormalPersistent", 2, "normal_persistent">,
+    I32EnumAttrCase<"NotAllocClean", 4, "not_alloc_clean">
+  ]>;
+def PTO_StoreL2HintAttr
+    : EnumAttr<PTO_Dialect, PTO_StoreL2HintEnum, "store_l2_hint"> {
+  let assemblyFormat = "`<` params `>`";
+  let summary = "A5 DMA store L2 cache mode";
+}
+
 //===----------------------------------------------------------------------===//
 // Implicit state resource and access kind
 //===----------------------------------------------------------------------===//

@@ -92,15 +92,33 @@ static void bindPTOEnumAttr(pybind11::module &m, const char *attrName,
                             const char *enumName,
                             bool (*isA)(MlirAttribute),
                             MlirAttribute (*get)(MlirContext, int32_t),
-                            int32_t (*getValue)(MlirAttribute)) {
+                            int32_t (*getValue)(MlirAttribute),
+                            bool strictValue = false) {
+  // An invalid optional L2 hint must not become None and silently omit the
+  // control. Preserve the historical None contract for existing attributes.
+  py::object enumType = py::none();
+  if (strictValue) {
+    enumType = m.attr(enumName);
+  }
   mlir_attribute_subclass(m, attrName, isA)
       .def_classmethod(
           "get",
-          [attrName, enumName, get](py::object cls, py::object value,
+          [attrName, enumName, get, strictValue, enumType](py::object cls, py::object value,
                                     MlirContext ctx) -> py::object {
+            const bool validInputType = !strictValue || py::isinstance<py::int_>(value) ||
+                                        py::isinstance(value, enumType);
+            if (!validInputType) {
+              throw py::type_error(std::string(attrName) + ".get expects int or " +
+                                   enumName + " enum");
+            }
             int32_t v = enumValueFromPy(value, attrName, enumName);
             MlirAttribute a = get(ctx, v);
             if (mlirAttributeIsNull(a)) {
+              if (strictValue) {
+                throw py::value_error(std::string(attrName) +
+                                      ".get received invalid encoding: " +
+                                      std::to_string(v));
+              }
               return py::none();
             }
             return cls.attr("__call__")(a);
@@ -158,6 +176,18 @@ static void registerPTOEnums1(py::module_& m)
         .value("GM", MlirPTOFenceScope::GM)
         .value("All", MlirPTOFenceScope::All)
         .export_values();
+    py::enum_<MlirPTOLoadL2Hint>(m, "LoadL2Hint")
+        .value("NormalFirstVictim", MlirPTOLoadL2Hint::NormalFirstVictim)
+        .value("NormalLastVictim", MlirPTOLoadL2Hint::NormalLastVictim)
+        .value("NormalPersistent", MlirPTOLoadL2Hint::NormalPersistent)
+        .value("NotAllocKeep", MlirPTOLoadL2Hint::NotAllocKeep)
+        .value("NotAllocClean", MlirPTOLoadL2Hint::NotAllocClean)
+        .value("NotAllocDrop", MlirPTOLoadL2Hint::NotAllocDrop);
+    py::enum_<MlirPTOStoreL2Hint>(m, "StoreL2Hint")
+        .value("NormalFirstVictim", MlirPTOStoreL2Hint::NormalFirstVictim)
+        .value("NormalLastVictim", MlirPTOStoreL2Hint::NormalLastVictim)
+        .value("NormalPersistent", MlirPTOStoreL2Hint::NormalPersistent)
+        .value("NotAllocClean", MlirPTOStoreL2Hint::NotAllocClean);
     py::enum_<MlirPTOLoadCachePolicy>(m, "LoadCachePolicy")
         .value("Default", MlirPTOLoadCachePolicy::Default)
         .value("L2Bypass", MlirPTOLoadCachePolicy::L2Bypass);
@@ -588,6 +618,14 @@ static void registerPTOValueAttrs1(py::module_ &m) {
 }
 
 static void registerPTOValueAttrs2(py::module_ &m) {
+    bindPTOEnumAttr(m, "LoadL2HintAttr", "LoadL2Hint",
+                    mlirPTOAttrIsALoadL2HintAttr,
+                    mlirPTOLoadL2HintAttrGet,
+                    mlirPTOLoadL2HintAttrGetValue, /*strictValue=*/true);
+    bindPTOEnumAttr(m, "StoreL2HintAttr", "StoreL2Hint",
+                    mlirPTOAttrIsAStoreL2HintAttr,
+                    mlirPTOStoreL2HintAttrGet,
+                    mlirPTOStoreL2HintAttrGetValue, /*strictValue=*/true);
     bindPTOEnumAttr(m, "LoadCachePolicyAttr", "LoadCachePolicy",
                     mlirPTOAttrIsALoadCachePolicyAttr,
                     mlirPTOLoadCachePolicyAttrGet,
