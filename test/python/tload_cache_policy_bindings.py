@@ -68,6 +68,17 @@ def check_native_l2_hints() -> None:
                 raise RuntimeError("store hint encoding was not preserved")
     if not module.operation.verify() or not Module.parse(str(module)).operation.verify():
         raise RuntimeError("native L2 hint module did not verify/roundtrip")
+    if pto.LoadL2HintAttr.get(pto.LoadL2Hint.NotAllocClean).value != 5:
+        raise RuntimeError("typed load enum lost its direction-specific encoding")
+    if pto.StoreL2HintAttr.get(pto.StoreL2Hint.NotAllocClean).value != 4:
+        raise RuntimeError("typed store enum lost its direction-specific encoding")
+    for attr, foreign in ((pto.LoadL2HintAttr, pto.StoreL2Hint.NotAllocClean),
+                          (pto.StoreL2HintAttr, pto.LoadL2Hint.NotAllocClean)):
+        try:
+            attr.get(foreign)
+        except TypeError:
+            continue
+        raise RuntimeError("an enum from the wrong transfer direction was accepted")
     for attr, invalid in ((pto.LoadL2HintAttr, (3, 7, -1)),
                           (pto.StoreL2HintAttr, (3, 5, 6, -1))):
         for encoding in invalid:

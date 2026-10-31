@@ -7,7 +7,7 @@
 // See LICENSE in the root of the software repository for the full text of the License.
 
 // RUN: not ptoas --pto-arch=a5 --emit-pto-ir %s 2>&1 | FileCheck %s
-// CHECK: not_alloc_keep
+// CHECK: expected ::mlir::pto::StoreL2Hint to be one of: normal_first_victim, normal_last_victim, normal_persistent, not_alloc_clean
 
 module {
   func.func private @invalid(%src: !pto.tile_buf<vec, 16x16xf32>, %dst: !pto.partition_tensor_view<16x16xf32>) {
