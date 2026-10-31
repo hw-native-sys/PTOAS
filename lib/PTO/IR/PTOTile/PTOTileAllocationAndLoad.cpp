@@ -589,8 +589,16 @@ LogicalResult TLoadOp::verify() {
     if (hasOffset || hasBypass) {
       return emitOpError("l2_hint cannot be combined with a cache-policy bypass or offset");
     }
-    if (!isa<pto::TileBufType>(getDst().getType())) {
+    // The native hint contract covers the Vec/Mat TileBuf TLOAD forms.
+    // Other forms must be added with an ISA forwarding regression, not ignored.
+    auto tile = dyn_cast<pto::TileBufType>(getDst().getType());
+    if (!tile) {
       return emitOpError("l2_hint requires a regular tile_buf destination");
+    }
+    const auto space = getPTOMemorySpaceEnum(tile);
+    const bool supportedSpace = space == pto::AddressSpace::VEC || space == pto::AddressSpace::MAT;
+    if (!supportedSpace) {
+      return emitOpError("l2_hint requires a Vec or Mat tile_buf destination");
     }
   }
   auto verifyA2A3 = [this]() -> LogicalResult { return verifyTLoadA2A3Types(*this); };

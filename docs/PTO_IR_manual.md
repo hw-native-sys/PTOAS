@@ -1257,7 +1257,7 @@ For each element (i, j) in the tile valid region:
 `l2_hint = #pto.load_l2_hint<MODE>` accepts `normal_first_victim` (0),
 `normal_last_victim` (1), `normal_persistent` (2), `not_alloc_keep` (4),
 `not_alloc_clean` (5), and `not_alloc_drop` (6). The verifier requires A5 and a
-regular tile-buffer destination, rejects a simultaneous bypass policy or offset,
+regular Vec/Mat tile-buffer destination, rejects a simultaneous bypass policy or offset,
 and rejects binary VPTO compilation units. EmitC emits `TLOAD<TLoadL2Hint::MODE>`
 directly. An omitted attribute keeps the ordinary `TLOAD` overload. The A2/A3
 `cache_policy + offset` path is independent and unchanged.
