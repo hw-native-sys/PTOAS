@@ -84,6 +84,18 @@ struct PTOAddPtrToEmitC : public OpConversionPattern<pto::AddPtrOp> {
   }
 };
 
+static StringRef loadL2HintToken(pto::LoadL2Hint hint) {
+  switch (hint) {
+  case pto::LoadL2Hint::NormalFirstVictim: return "pto::TLoadL2Hint::NormalFirstVictim";
+  case pto::LoadL2Hint::NormalLastVictim: return "pto::TLoadL2Hint::NormalLastVictim";
+  case pto::LoadL2Hint::NormalPersistent: return "pto::TLoadL2Hint::NormalPersistent";
+  case pto::LoadL2Hint::NotAllocKeep: return "pto::TLoadL2Hint::NotAllocKeep";
+  case pto::LoadL2Hint::NotAllocClean: return "pto::TLoadL2Hint::NotAllocClean";
+  case pto::LoadL2Hint::NotAllocDrop: return "pto::TLoadL2Hint::NotAllocDrop";
+  }
+  llvm_unreachable("invalid verified load L2 hint");
+}
+
 struct PTOTLoadToTLOAD : public OpConversionPattern<pto::TLoadOp> {
   using OpConversionPattern<pto::TLoadOp>::OpConversionPattern;
 
@@ -110,8 +122,13 @@ struct PTOTLoadToTLOAD : public OpConversionPattern<pto::TLoadOp> {
                                      op.getDst().getType())))
       return failure();
 
+    ArrayAttr templateArgs;
+    if (auto hint = op.getL2HintAttr()) {
+      templateArgs = rewriter.getArrayAttr({emitc::OpaqueAttr::get(
+          rewriter.getContext(), loadL2HintToken(hint.getValue()))});
+    }
     rewriter.create<emitc::CallOpaqueOp>(op.getLoc(), TypeRange{}, "TLOAD",
-                                       ArrayAttr{}, ArrayAttr{},
+                                       ArrayAttr{}, templateArgs,
                                        ValueRange{dst, src});
 
     if (op->getNumResults() == 1) {

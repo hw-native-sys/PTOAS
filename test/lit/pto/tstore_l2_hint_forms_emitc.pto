@@ -1,0 +1,76 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+
+// RUN: ptoas --pto-arch=a5 %s 2>&1 | FileCheck %s
+
+module {
+  func.func @tstore_forms(%arg0: !pto.ptr<f16>, %arg1: !pto.ptr<f16>) {
+    %c0 = arith.constant 0 : index
+    %c1 = arith.constant 1 : index
+    %c32 = arith.constant 32 : index
+    %pre = arith.constant 7 : i64
+
+    %tv0 = pto.make_tensor_view %arg0, shape = [%c32, %c32], strides = [%c32, %c1] : !pto.tensor_view<?x?xf16>
+    %tv1 = pto.make_tensor_view %arg1, shape = [%c32, %c32], strides = [%c32, %c1] : !pto.tensor_view<?x?xf16>
+    %dst0 = pto.partition_view %tv0, offsets = [%c0, %c0], sizes = [%c32, %c32] : !pto.tensor_view<?x?xf16> -> !pto.partition_tensor_view<32x32xf16>
+    %dst1 = pto.partition_view %tv1, offsets = [%c0, %c0], sizes = [%c32, %c32] : !pto.tensor_view<?x?xf16> -> !pto.partition_tensor_view<32x32xf16>
+
+    %vec = pto.alloc_tile : !pto.tile_buf<loc=vec, dtype=f16, rows=32, cols=32, v_row=32, v_col=32, blayout=row_major, slayout=none_box, fractal=512, pad=0>
+    %acc = pto.alloc_tile : !pto.tile_buf<loc=acc, dtype=i32, rows=32, cols=32, v_row=32, v_col=32, blayout=col_major, slayout=row_major, fractal=1024, pad=0>
+
+    // 1) TSTORE(dst, src)
+    pto.tstore ins(%vec : !pto.tile_buf<loc=vec, dtype=f16, rows=32, cols=32, v_row=32, v_col=32, blayout=row_major, slayout=none_box, fractal=512, pad=0>)
+               outs(%dst0 : !pto.partition_tensor_view<32x32xf16>) {l2_hint = #pto.store_l2_hint<not_alloc_clean>}
+
+    // 2) TSTORE<STPhase::Final>(dst, src)
+    pto.tstore ins(%vec : !pto.tile_buf<loc=vec, dtype=f16, rows=32, cols=32, v_row=32, v_col=32, blayout=row_major, slayout=none_box, fractal=512, pad=0>)
+               outs(%dst0 : !pto.partition_tensor_view<32x32xf16>) {stPhase = #pto<st_phase final>, l2_hint = #pto.store_l2_hint<not_alloc_clean>}
+
+    // 3) TSTORE<TileData, GlobalData, AtomicType::AtomicAdd>(dst, src)
+    pto.tstore ins(%vec : !pto.tile_buf<loc=vec, dtype=f16, rows=32, cols=32, v_row=32, v_col=32, blayout=row_major, slayout=none_box, fractal=512, pad=0>)
+               outs(%dst0 : !pto.partition_tensor_view<32x32xf16>) {atomicType = #pto<atomic_type atomic_add>, l2_hint = #pto.store_l2_hint<not_alloc_clean>}
+
+    // 4) TSTORE<STPhase::Final, TileData, GlobalData, AtomicType::AtomicAdd>(dst, src)
+    pto.tstore ins(%vec : !pto.tile_buf<loc=vec, dtype=f16, rows=32, cols=32, v_row=32, v_col=32, blayout=row_major, slayout=none_box, fractal=512, pad=0>)
+               outs(%dst0 : !pto.partition_tensor_view<32x32xf16>) {stPhase = #pto<st_phase final>, atomicType = #pto<atomic_type atomic_add>, l2_hint = #pto.store_l2_hint<not_alloc_clean>}
+
+    // 5) TSTORE<TileData, GlobalData, AtomicType::AtomicAdd, ReluPreMode::NormalRelu>(dst, src)
+    pto.tstore ins(%acc : !pto.tile_buf<loc=acc, dtype=i32, rows=32, cols=32, v_row=32, v_col=32, blayout=col_major, slayout=row_major, fractal=1024, pad=0>)
+               outs(%dst1 : !pto.partition_tensor_view<32x32xf16>) {atomicType = #pto<atomic_type atomic_add>, reluPreMode = #pto<relu_pre_mode normal_relu>, l2_hint = #pto.store_l2_hint<not_alloc_clean>}
+
+    // 6) TSTORE<STPhase::Final, TileData, GlobalData, AtomicType::AtomicAdd, ReluPreMode::NormalRelu>(dst, src)
+    pto.tstore ins(%acc : !pto.tile_buf<loc=acc, dtype=i32, rows=32, cols=32, v_row=32, v_col=32, blayout=col_major, slayout=row_major, fractal=1024, pad=0>)
+               outs(%dst1 : !pto.partition_tensor_view<32x32xf16>) {stPhase = #pto<st_phase final>, atomicType = #pto<atomic_type atomic_add>, reluPreMode = #pto<relu_pre_mode normal_relu>, l2_hint = #pto.store_l2_hint<not_alloc_clean>}
+
+    // 7) TSTORE<TileData, GlobalData, AtomicType::AtomicAdd, ReluPreMode::NormalRelu>(dst, src, preQuantScalar)
+    pto.tstore ins(%acc : !pto.tile_buf<loc=acc, dtype=i32, rows=32, cols=32, v_row=32, v_col=32, blayout=col_major, slayout=row_major, fractal=1024, pad=0>, %pre : i64)
+               outs(%dst1 : !pto.partition_tensor_view<32x32xf16>) {atomicType = #pto<atomic_type atomic_add>, reluPreMode = #pto<relu_pre_mode normal_relu>, l2_hint = #pto.store_l2_hint<not_alloc_clean>}
+
+    // 8) TSTORE<STPhase::Final, TileData, GlobalData, AtomicType::AtomicAdd, ReluPreMode::NormalRelu>(dst, src, preQuantScalar)
+    pto.tstore ins(%acc : !pto.tile_buf<loc=acc, dtype=i32, rows=32, cols=32, v_row=32, v_col=32, blayout=col_major, slayout=row_major, fractal=1024, pad=0>, %pre : i64)
+               outs(%dst1 : !pto.partition_tensor_view<32x32xf16>) {stPhase = #pto<st_phase final>, atomicType = #pto<atomic_type atomic_add>, reluPreMode = #pto<relu_pre_mode normal_relu>, l2_hint = #pto.store_l2_hint<not_alloc_clean>}
+
+    return
+  }
+}
+
+// A3: TSTORE([[DST0:[_A-Za-z][_A-Za-z0-9]*]], [[VEC:[_A-Za-z][_A-Za-z0-9]*]]);
+// A3: TSTORE<STPhase::Final>([[DST0]], [[VEC]]);
+// A3: TSTORE<{{.*}}AtomicType::AtomicAdd>([[DST0]], [[VEC]]);
+// A3: TSTORE<STPhase::Final, {{.*}}AtomicType::AtomicAdd>([[DST0]], [[VEC]]);
+// A3: TSTORE<{{.*}}AtomicType::AtomicAdd, ReluPreMode::NormalRelu>([[DST1:[_A-Za-z][_A-Za-z0-9]*]], [[ACC:[_A-Za-z][_A-Za-z0-9]*]]);
+// A3: TSTORE<STPhase::Final, {{.*}}AtomicType::AtomicAdd, ReluPreMode::NormalRelu>([[DST1]], [[ACC]]);
+// A3: uint64_t [[PRE:[_A-Za-z][_A-Za-z0-9]*]] = static_cast<uint64_t>({{.*}});
+// A3: TSTORE<{{.*}}AtomicType::AtomicAdd, ReluPreMode::NormalRelu>([[DST1]], [[ACC]], [[PRE]]);
+// A3: uint64_t [[PRE2:[_A-Za-z][_A-Za-z0-9]*]] = static_cast<uint64_t>({{.*}});
+// A3: TSTORE<STPhase::Final, {{.*}}AtomicType::AtomicAdd, ReluPreMode::NormalRelu>([[DST1]], [[ACC]], [[PRE2]]);
+
+// CHECK: TSTORE<pto::TStoreL2Hint::NotAllocClean>(
+// CHECK: TSTORE<pto::TStoreL2Hint::NotAllocClean, STPhase::Final>(
+// CHECK: AtomicType::AtomicAdd
+// CHECK: ReluPreMode::NormalRelu

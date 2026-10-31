@@ -22,6 +22,31 @@ namespace pto {
 constexpr unsigned kTStoreMaxTemplateArgumentCount = mlir::pto::kValue5;
 constexpr unsigned kTStoreMaxOperandCount = mlir::pto::kValue3;
 
+static StringRef storeL2HintToken(pto::StoreL2Hint hint) {
+  switch (hint) {
+  case pto::StoreL2Hint::NormalFirstVictim: return "pto::TStoreL2Hint::NormalFirstVictim";
+  case pto::StoreL2Hint::NormalLastVictim: return "pto::TStoreL2Hint::NormalLastVictim";
+  case pto::StoreL2Hint::NormalPersistent: return "pto::TStoreL2Hint::NormalPersistent";
+  case pto::StoreL2Hint::NotAllocClean: return "pto::TStoreL2Hint::NotAllocClean";
+  }
+  llvm_unreachable("invalid verified store L2 hint");
+}
+
+// The ISA hint-first overloads preserve phase, atomic, ReLU and both
+// quantization forms. Absence leaves the historical overload exactly intact.
+static ArrayAttr prependStoreL2Hint(pto::TStoreOp op, ArrayAttr args,
+                                   ConversionPatternRewriter &rewriter) {
+  if (!op.getL2HintAttr()) {
+    return args;
+  }
+  SmallVector<Attribute> result{emitc::OpaqueAttr::get(
+      rewriter.getContext(), storeL2HintToken(op.getL2HintAttr().getValue()))};
+  if (args) {
+    llvm::append_range(result, args);
+  }
+  return rewriter.getArrayAttr(result);
+}
+
 struct PTOTStoreToTSTORE : public OpConversionPattern<pto::TStoreOp> {
   using OpConversionPattern<pto::TStoreOp>::OpConversionPattern;
 
@@ -164,7 +189,7 @@ targs = ArrayAttr{};
                                              preQuantScalar);
     if (failed(targsOr))
       return failure();
-    ArrayAttr targs = *targsOr;
+    ArrayAttr targs = prependStoreL2Hint(op, *targsOr, rewriter);
 
     SmallVector<Value, kTStoreMaxOperandCount> operands{dstArg, src};
     if (hasPreQuantScalar)
@@ -212,7 +237,9 @@ targs = ArrayAttr{};
       targs = ArrayAttr{};
     }
 
-    emitTileCallAndReplace(op.getOperation(), rewriter, "TSTORE_FP", targs,
+    targs = prependStoreL2Hint(op, targs, rewriter);
+    StringRef callee = op.getL2HintAttr() ? "TSTORE" : "TSTORE_FP";
+    emitTileCallAndReplace(op.getOperation(), rewriter, callee, targs,
                            operands, dst);
     return success();
   }

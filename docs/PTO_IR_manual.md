@@ -1234,6 +1234,7 @@ For each element (i, j) in the tile valid region:
 | `init_out_buffer` | `BoolAttr` (default: false) | Initialize output buffer |
 | `init_condition` | `AnyType` (optional) | Init condition |
 | `cache_policy` | `LoadCachePolicyAttr` (optional) | Per-load cache allocation policy; absence means `default` |
+| `l2_hint` | `LoadL2HintAttr` (optional) | A5 DMA L2 mode; omission differs from explicit `normal_first_victim` (zero) |
 
 **Results:** None. Writes into `dst` via DPS pattern.
 
@@ -1250,6 +1251,16 @@ For each element (i, j) in the tile valid region:
   - The destination tile element size must be `1`, `2`, `4`, or `8` bytes, and must match the source partition element size.
   - For `i64`, the destination tile `pad` must be `null` or `zero`.
   - `cache_policy=l2_bypass` requests a non-allocating L2 load for this transfer.
+
+**A5 native L2 controls:**
+
+`l2_hint = #pto.load_l2_hint<MODE>` accepts `normal_first_victim` (0),
+`normal_last_victim` (1), `normal_persistent` (2), `not_alloc_keep` (4),
+`not_alloc_clean` (5), and `not_alloc_drop` (6). The verifier requires A5 and a
+regular tile-buffer destination, rejects a simultaneous bypass policy or offset,
+and rejects binary VPTO compilation units. EmitC emits `TLOAD<TLoadL2Hint::MODE>`
+directly. An omitted attribute keeps the ordinary `TLOAD` overload. The A2/A3
+`cache_policy + offset` path is independent and unchanged.
 
 **Hardware Mapping:**
 
@@ -1391,6 +1402,7 @@ For each element (i, j) in the tile valid region:
 | `stPhase` | `#pto<st_phase ...>` | `unspecified` | Store phase selector (`unspecified/partial/final`) |
 | `atomicType` | `#pto<atomic_type ...>` | `atomic_none` | Atomic mode (`atomic_none/atomic_add`) |
 | `reluPreMode` | `#pto<relu_pre_mode ...>` | `no_relu` | ReLU pre-processing mode (`no_relu/normal_relu`) |
+| `l2_hint` | `StoreL2HintAttr` (optional) | absent | A5 DMA L2 mode, including explicit zero |
 
 **Results:** None. Writes into `dst` via DPS pattern.
 
@@ -1429,6 +1441,16 @@ For each element (i, j) in the tile valid region:
     - With `preQuantScalar`:
       - `src=i32` -> `dst=i8(ui8)/f16/bf16`
       - `src=f32` -> `dst=i8(ui8)/f16/bf16/f32/!pto.hif8/f8E4M3*`
+
+**A5 native L2 controls:**
+
+`l2_hint = #pto.store_l2_hint<MODE>` accepts `normal_first_victim` (0),
+`normal_last_victim` (1), `normal_persistent` (2), and `not_alloc_clean` (4).
+The load-only KEEP/DROP modes and load attributes are not valid store attributes.
+The verifier requires an A5 Vec/ACC store on a supported backend. EmitC selects
+the hint-first `TSTORE` overload while preserving phase, atomic, ReLU and scalar
+or vector quantization arguments. Omission leaves the existing overload intact;
+explicit zero remains present in parse/print and lowering.
 
 **Type Note (PTO IR):**
 

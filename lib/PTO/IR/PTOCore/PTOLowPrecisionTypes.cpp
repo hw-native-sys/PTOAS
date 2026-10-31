@@ -174,6 +174,25 @@ static LogicalResult dispatchVerifierByArch(Operation *op, FnA2A3 &&verifyA2A3,
   }
   return failure();
 }
+// Explicit A5 DMA controls must never be silently discarded by another
+// architecture or a binary backend without a corresponding instruction recipe.
+static LogicalResult verifyA5L2HintTarget(Operation *op) {
+  const auto arch = getVerifierTargetArch(op);
+  if (arch != VerifierTargetArch::A5) {
+    return op->emitOpError("l2_hint is only supported on A5");
+  }
+  for (Operation *parent = op; parent; parent = parent->getParentOp()) {
+    if (auto backend = parent->getAttrOfType<StringAttr>("pto.backend")) {
+      const auto backendName = backend.getValue();
+      if (backendName == "vpto") {
+        return op->emitOpError("l2_hint is not supported in binary VPTO compilation units");
+      }
+      break;
+    }
+  }
+  return success();
+}
+
 static std::optional<pto::AddressSpace> parsePtrAddressSpaceKeyword(StringRef keyword) {
   return llvm::StringSwitch<std::optional<pto::AddressSpace>>(keyword)
       .Case("gm", pto::AddressSpace::GM)

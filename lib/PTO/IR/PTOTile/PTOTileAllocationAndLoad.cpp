@@ -579,6 +579,20 @@ static LogicalResult verifyTLoadA5Types(TLoadOp op) {
 }
 
 LogicalResult TLoadOp::verify() {
+  if (getL2HintAttr()) {
+    if (failed(verifyA5L2HintTarget(getOperation()))) {
+      return failure();
+    }
+    const auto aliasPolicy = getCachePolicyAttr();
+    const bool hasBypass = aliasPolicy && aliasPolicy.getValue() == pto::LoadCachePolicy::L2Bypass;
+    const bool hasOffset = static_cast<bool>(getOffset());
+    if (hasOffset || hasBypass) {
+      return emitOpError("l2_hint cannot be combined with a cache-policy bypass or offset");
+    }
+    if (!isa<pto::TileBufType>(getDst().getType())) {
+      return emitOpError("l2_hint requires a regular tile_buf destination");
+    }
+  }
   auto verifyA2A3 = [this]() -> LogicalResult { return verifyTLoadA2A3Types(*this); };
   auto verifyA5 = [this]() -> LogicalResult { return verifyTLoadA5Types(*this); };
   return dispatchVerifierByArch(getOperation(), verifyA2A3, verifyA5);

@@ -215,6 +215,17 @@ PTO_ENUM_MIRROR_EQ(MxGroupAxis, Axis1, MlirPTOMxGroupAxis::Axis1);
 PTO_ENUM_MIRROR_EQ(VecStoreMode, ND, MlirPTOVecStoreMode::ND);
 PTO_ENUM_MIRROR_EQ(VecStoreMode, NZ, MlirPTOVecStoreMode::NZ);
 
+PTO_ENUM_MIRROR_EQ(LoadL2Hint, NormalFirstVictim, MlirPTOLoadL2Hint::NormalFirstVictim);
+PTO_ENUM_MIRROR_EQ(LoadL2Hint, NormalLastVictim, MlirPTOLoadL2Hint::NormalLastVictim);
+PTO_ENUM_MIRROR_EQ(LoadL2Hint, NormalPersistent, MlirPTOLoadL2Hint::NormalPersistent);
+PTO_ENUM_MIRROR_EQ(LoadL2Hint, NotAllocKeep, MlirPTOLoadL2Hint::NotAllocKeep);
+PTO_ENUM_MIRROR_EQ(LoadL2Hint, NotAllocClean, MlirPTOLoadL2Hint::NotAllocClean);
+PTO_ENUM_MIRROR_EQ(LoadL2Hint, NotAllocDrop, MlirPTOLoadL2Hint::NotAllocDrop);
+PTO_ENUM_MIRROR_EQ(StoreL2Hint, NormalFirstVictim, MlirPTOStoreL2Hint::NormalFirstVictim);
+PTO_ENUM_MIRROR_EQ(StoreL2Hint, NormalLastVictim, MlirPTOStoreL2Hint::NormalLastVictim);
+PTO_ENUM_MIRROR_EQ(StoreL2Hint, NormalPersistent, MlirPTOStoreL2Hint::NormalPersistent);
+PTO_ENUM_MIRROR_EQ(StoreL2Hint, NotAllocClean, MlirPTOStoreL2Hint::NotAllocClean);
+
 #undef PTO_ENUM_MIRROR_EQ
 } // namespace
 
@@ -380,6 +391,42 @@ MlirAttribute mlirPTOAddressSpaceAttrGet(MlirContext ctx, int32_t value) {
 int32_t mlirPTOAddressSpaceAttrGetValue(MlirAttribute attr) {
   auto a = mlir::cast<mlir::pto::AddressSpaceAttr>(unwrap(attr));
   return static_cast<int32_t>(a.getAddressSpace());
+}
+
+
+bool mlirPTOAttrIsALoadL2HintAttr(MlirAttribute attr) {
+  return mlir::isa<mlir::pto::LoadL2HintAttr>(unwrap(attr));
+}
+
+MlirAttribute mlirPTOLoadL2HintAttrGet(MlirContext ctx, int32_t value) {
+  // Enum encodings are sparse and direction-specific; reject every hole.
+  auto mode = mlir::pto::symbolizeLoadL2Hint(static_cast<uint32_t>(value));
+  if (!mode) {
+    return MlirAttribute{nullptr};
+  }
+  return wrap(mlir::pto::LoadL2HintAttr::get(unwrap(ctx), *mode));
+}
+
+int32_t mlirPTOLoadL2HintAttrGetValue(MlirAttribute attr) {
+  return static_cast<int32_t>(mlir::cast<mlir::pto::LoadL2HintAttr>(unwrap(attr)).getValue());
+}
+
+
+bool mlirPTOAttrIsAStoreL2HintAttr(MlirAttribute attr) {
+  return mlir::isa<mlir::pto::StoreL2HintAttr>(unwrap(attr));
+}
+
+MlirAttribute mlirPTOStoreL2HintAttrGet(MlirContext ctx, int32_t value) {
+  // Enum encodings are sparse and direction-specific; reject every hole.
+  auto mode = mlir::pto::symbolizeStoreL2Hint(static_cast<uint32_t>(value));
+  if (!mode) {
+    return MlirAttribute{nullptr};
+  }
+  return wrap(mlir::pto::StoreL2HintAttr::get(unwrap(ctx), *mode));
+}
+
+int32_t mlirPTOStoreL2HintAttrGetValue(MlirAttribute attr) {
+  return static_cast<int32_t>(mlir::cast<mlir::pto::StoreL2HintAttr>(unwrap(attr)).getValue());
 }
 
 bool mlirPTOAttrIsALoadCachePolicyAttr(MlirAttribute attr) {

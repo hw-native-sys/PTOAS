@@ -65,6 +65,16 @@ MLIR_CAPI_EXPORTED MlirType mlirPTOF4E2M1x2TypeGet(MlirContext ctx);
 MLIR_CAPI_EXPORTED bool mlirPTOTypeIsABF16x2Type(MlirType type);
 MLIR_CAPI_EXPORTED MlirType mlirPTOBF16x2TypeGet(MlirContext ctx);
 
+// ---- #pto.load_l2_hint<...> ----
+MLIR_CAPI_EXPORTED bool mlirPTOAttrIsALoadL2HintAttr(MlirAttribute attr);
+MLIR_CAPI_EXPORTED MlirAttribute mlirPTOLoadL2HintAttrGet(MlirContext ctx, int32_t value);
+MLIR_CAPI_EXPORTED int32_t mlirPTOLoadL2HintAttrGetValue(MlirAttribute attr);
+
+// ---- #pto.store_l2_hint<...> ----
+MLIR_CAPI_EXPORTED bool mlirPTOAttrIsAStoreL2HintAttr(MlirAttribute attr);
+MLIR_CAPI_EXPORTED MlirAttribute mlirPTOStoreL2HintAttrGet(MlirContext ctx, int32_t value);
+MLIR_CAPI_EXPORTED int32_t mlirPTOStoreL2HintAttrGetValue(MlirAttribute attr);
+
 // ---- #pto.address_space<...> ----
 MLIR_CAPI_EXPORTED bool mlirPTOAttrIsAAddressSpaceAttr(MlirAttribute attr);
 
