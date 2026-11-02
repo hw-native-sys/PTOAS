@@ -764,6 +764,13 @@ static LogicalResult emitVPTOLLVMFatobj(
     mlir::pto::PTOASContext &context, llvm::StringRef moduleId,
     llvm::StringRef outputPath);
 
+// Device-object output mode (issue #1726): reuses the fatobj device
+// pipeline but stops after the relocatable merge, skipping host-stub
+// compilation and fatobj packaging.
+static LogicalResult emitVPTOLLVMDeviceObject(
+    const mlir::pto::PTOASCompileResult &jobResult,
+    mlir::pto::PTOASContext &context, llvm::StringRef outputPath);
+
 mlir::pto::PTOASContext::PTOASContext(DialectRegistry &registry,
                                       llvm::StringRef outputPath)
     : ownedMlirContext(std::make_unique<MLIRContext>(registry)),
@@ -1114,7 +1121,10 @@ LogicalResult VPTOBackendJob::run(PTOASContext &context) {
     op = singleChildJobModule.get();
   }
 
-  bool emitHostStub = hasPTOEntry(op);
+  // Device-object mode never packages a host stub (issue #1726), so the stub
+  // source is not collected either.
+  bool emitHostStub =
+      hasPTOEntry(op) && !mlir::pto::emitVPTODeviceObject;
   if (mlir::pto::compilePTOASModule(
           *compileUnit, context, mlir::pto::PTOBackend::VPTO, result,
           emitHostStub) != 0) {
@@ -1135,8 +1145,13 @@ LogicalResult VPTOBackendJob::run(PTOASContext &context) {
   }
 
   std::string moduleId = context.allocModuleId();
-  if (failed(emitVPTOLLVMFatobj(result, context, moduleId,
-                                context.getOutputPath()))) {
+  if (mlir::pto::emitVPTODeviceObject) {
+    if (failed(emitVPTOLLVMDeviceObject(result, context,
+                                         context.getOutputPath()))) {
+      return failure();
+    }
+  } else if (failed(emitVPTOLLVMFatobj(result, context, moduleId,
+                                       context.getOutputPath()))) {
     return failure();
   }
 
@@ -1165,6 +1180,25 @@ static LogicalResult emitVPTOLLVMFatobj(
               context.getBishengSchedulerMode(), jobResult.vptoBridgeWrappers,
               jobResult.vptoPrintMode))) {
       return failure();
+  }
+  return success();
+}
+
+static LogicalResult emitVPTOLLVMDeviceObject(
+    const mlir::pto::PTOASCompileResult &jobResult, PTOASContext &context,
+    llvm::StringRef outputPath) {
+  const mlir::pto::CANNToolchain *toolchain =
+      context.getToolchain(llvm::errs());
+  if (!toolchain) {
+    return failure();
+  }
+  if (failed(mlir::pto::emitVPTODeviceObjectsLLVM(
+          jobResult.vptoCubeModule.module.get(),
+          jobResult.vptoVectorModule.module.get(), outputPath, *toolchain,
+          context.getTempFiles(), context.getVFSIMTSizeFixMode(),
+          llvm::errs(), context.getBishengSchedulerMode(),
+          jobResult.vptoBridgeWrappers, jobResult.vptoPrintMode))) {
+    return failure();
   }
   return success();
 }
@@ -1307,6 +1341,15 @@ static LogicalResult buildBackendInfo(ModuleOp module, bool cliBackendSpecified,
     return failure();
   }
 
+  if (mlir::pto::emitVPTODeviceObject &&
+      (mlir::pto::emitMlirIR || mlir::pto::emitVPTO ||
+       mlir::pto::emitVPTOLLVMDialect)) {
+    llvm::errs() << "Error: --emit-vpto-device-object cannot be combined with "
+                    "the IR output flags --emit-mlir, --emit-vpto, or "
+                    "--emit-vpto-llvm-ir.\n";
+    return failure();
+  }
+
   std::optional<mlir::pto::PTOBackend> moduleBackend;
   if (!cliBackendSpecified) {
     if (failed(parseDriverBackendAttr(module.getOperation(), moduleBackend))) {
@@ -1321,11 +1364,25 @@ static LogicalResult buildBackendInfo(ModuleOp module, bool cliBackendSpecified,
   }
 
   if (backendInfo.singleBackend) {
+    if (mlir::pto::emitVPTODeviceObject &&
+        *backendInfo.singleBackend != mlir::pto::PTOBackend::VPTO) {
+      llvm::errs() << "Error: --emit-vpto-device-object requires the VPTO "
+                      "backend; pass --pto-backend=vpto (or mark the module "
+                      "with the vpto backend attribute).\n";
+      return failure();
+    }
     backendInfo.requiresToolchain =
         *backendInfo.singleBackend == mlir::pto::PTOBackend::VPTO &&
         !mlir::pto::emitMlirIR && !mlir::pto::emitVPTO &&
         !mlir::pto::emitVPTOLLVMDialect;
     return success();
+  }
+
+  if (mlir::pto::emitVPTODeviceObject) {
+    llvm::errs() << "Error: --emit-vpto-device-object does not support mixed "
+                    "pto.backend assemblies; split the input or drop the "
+                    "flag to get the default fatobj output.\n";
+    return failure();
   }
 
   if (mlir::pto::emitMlirIR || mlir::pto::emitVPTO ||

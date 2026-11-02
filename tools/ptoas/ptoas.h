@@ -36,6 +36,7 @@ extern llvm::cl::opt<std::string> ptoTargetArch;
 extern llvm::cl::opt<std::string> ptoBackend;
 extern llvm::cl::opt<bool> emitVPTO;
 extern llvm::cl::opt<bool> emitVPTOLLVMDialect;
+extern llvm::cl::opt<bool> emitVPTODeviceObject;
 extern llvm::cl::opt<std::string> cannOutputVersion;
 extern llvm::cl::opt<bool> ptoPrintSeamIR;
 extern llvm::cl::opt<std::string> ptoSeamIRFile;

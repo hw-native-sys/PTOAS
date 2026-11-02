@@ -683,6 +683,13 @@ public:
                                 "fatobj repack");
   }
 
+  // Device-object output mode (issue #1726): the merged relocatable device
+  // ELF is the final artifact, so callers stop after mergeDeviceObjects and
+  // copy this path to the output instead of running the host-stub packaging.
+  const std::string &getMergedDeviceObjPath() const {
+    return mergedDeviceObjPath;
+  }
+
 private:
   mlir::pto::TempFileRegistry &tempFiles;
   std::string cubeLLPath;
@@ -1457,6 +1464,50 @@ mlir::LogicalResult mlir::pto::emitFatobjLLVM(
   constexpr llvm::StringLiteral targetCPU = "dav-c310";
   if (!artifacts.compileHostStubToFatobj(toolchain, moduleId, targetCPU,
                                          outputPath, diagOS)) {
+    return failure();
+  }
+  return success();
+}
+
+mlir::LogicalResult mlir::pto::emitVPTODeviceObjectsLLVM(
+    llvm::Module *cubeModule, llvm::Module *vectorModule,
+    llvm::StringRef outputPath, const CANNToolchain &toolchain,
+    TempFileRegistry &tempFiles, VFSIMTSizeFixMode vfsimtSizeFixMode,
+    llvm::raw_ostream &diagOS, BishengSchedulerMode schedulerMode,
+    llvm::ArrayRef<BridgeWrapperTU> bridgeWrappers,
+    PrintDTDataMode printMode) {
+  if (!cubeModule && !vectorModule) {
+    diagOS << "Error: VPTO device-object emission requires at least one "
+              "device module.\n";
+    return failure();
+  }
+
+  VPTOFatobjArtifacts artifacts(tempFiles);
+  artifacts.setPrintMode(printMode);
+  if (!artifacts.initCommandLogs(diagOS)) {
+    return failure();
+  }
+  if (!artifacts.compileBridgeWrappers(bridgeWrappers, cubeModule != nullptr,
+                                       vectorModule != nullptr, toolchain,
+                                       diagOS)) {
+    return failure();
+  }
+  if (!artifacts.emitCubeObject(cubeModule, toolchain, schedulerMode, diagOS)) {
+    return failure();
+  }
+  if (!artifacts.emitVectorObject(vectorModule, toolchain,
+                                  vfsimtSizeFixMode, schedulerMode, diagOS)) {
+    return failure();
+  }
+  if (!artifacts.mergeDeviceObjects(toolchain, diagOS)) {
+    return failure();
+  }
+
+  std::error_code ec = llvm::sys::fs::copy_file(
+      artifacts.getMergedDeviceObjPath(), outputPath);
+  if (ec) {
+    diagOS << "Error: writing device object to '" << outputPath
+           << "' failed: " << ec.message() << "\n";
     return failure();
   }
   return success();
