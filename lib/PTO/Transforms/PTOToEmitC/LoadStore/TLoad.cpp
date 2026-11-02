@@ -9,6 +9,7 @@
 //===----------------------------------------------------------------------===//
 // L2 bypass byte offsets are applied to a copy of the source descriptor before
 // calling ordinary TLOAD, preserving metadata and other users of the source.
+// A5 native l2_hint selects the ISA template argument without an address alias.
 
 #include "../PTOToEmitCEmitters.h"
 #include "LoadStoreInternal.h"
@@ -20,6 +21,24 @@ using namespace mlir::pto;
 
 namespace mlir {
 namespace pto {
+
+static StringRef loadL2HintToken(LoadL2Hint hint) {
+  switch (hint) {
+  case LoadL2Hint::NormalFirstVictim:
+    return "pto::TLoadL2Hint::NormalFirstVictim";
+  case LoadL2Hint::NormalLastVictim:
+    return "pto::TLoadL2Hint::NormalLastVictim";
+  case LoadL2Hint::NormalPersistent:
+    return "pto::TLoadL2Hint::NormalPersistent";
+  case LoadL2Hint::NotAllocKeep:
+    return "pto::TLoadL2Hint::NotAllocKeep";
+  case LoadL2Hint::NotAllocClean:
+    return "pto::TLoadL2Hint::NotAllocClean";
+  case LoadL2Hint::NotAllocDrop:
+    return "pto::TLoadL2Hint::NotAllocDrop";
+  }
+  return {};
+}
 
 // TLOAD hands its partition descriptor to the A5 transfer paths whose FP4
 // strides are nibble based.  TPREFETCH has a separate byte-based stride
@@ -110,8 +129,17 @@ struct PTOTLoadToTLOAD : public OpConversionPattern<pto::TLoadOp> {
                                      op.getDst().getType())))
       return failure();
 
+    ArrayAttr templateArgs;
+    if (auto hint = op.getL2HintAttr()) {
+      StringRef token = loadL2HintToken(hint.getValue());
+      if (token.empty()) {
+        return op.emitOpError("unsupported load L2 hint");
+      }
+      templateArgs = rewriter.getArrayAttr(
+          {emitc::OpaqueAttr::get(rewriter.getContext(), token)});
+    }
     rewriter.create<emitc::CallOpaqueOp>(op.getLoc(), TypeRange{}, "TLOAD",
-                                       ArrayAttr{}, ArrayAttr{},
+                                       ArrayAttr{}, templateArgs,
                                        ValueRange{dst, src});
 
     if (op->getNumResults() == 1) {

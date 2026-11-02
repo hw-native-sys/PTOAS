@@ -599,7 +599,8 @@ def TLoadOp  : PTO_TOp<"tload", [
     DefaultValuedOptionalAttr<BoolAttr, "false">:$init_out_buffer,
     Optional<AnyType>:$init_condition,
     OptionalAttr<PTO_LoadCachePolicyAttr>:$cache_policy,
-    Optional<AnyTypeOf<[I64, Index]>>:$offset
+    Optional<AnyTypeOf<[I64, Index]>>:$offset,
+    OptionalAttr<PTO_LoadL2HintAttr>:$l2_hint
   );
 
   let results = (outs
@@ -615,7 +616,7 @@ def TLoadOp  : PTO_TOp<"tload", [
             /*pad_mode=*/nullptr, /*pad_value=*/nullptr, 
             /*left=*/nullptr, /*right=*/nullptr, 
             /*init_out=*/nullptr, /*init_cond=*/nullptr,
-            /*cache_policy=*/nullptr, /*offset=*/nullptr);
+            /*cache_policy=*/nullptr, /*offset=*/nullptr, /*l2_hint=*/nullptr);
     }]>,
 
     // 2. With left_padding_num
@@ -623,7 +624,7 @@ def TLoadOp  : PTO_TOp<"tload", [
                    "Value":$left_padding_num), [{
       build($_builder, $_state, res, src, dst, 
             nullptr, nullptr, left_padding_num, nullptr, nullptr, nullptr,
-            nullptr, nullptr);
+            nullptr, nullptr, nullptr);
     }]>,
 
     // 3. With pad_mode, pad_value
@@ -631,7 +632,7 @@ def TLoadOp  : PTO_TOp<"tload", [
                    "pto::PadModeAttr":$pad_mode, "Value":$pad_value), [{
       build($_builder, $_state, res, src, dst, 
             pad_mode, pad_value, nullptr, nullptr, nullptr, nullptr, nullptr,
-            nullptr);
+            nullptr, nullptr);
     }]>,
 
     // 4. ... + left
@@ -640,7 +641,7 @@ def TLoadOp  : PTO_TOp<"tload", [
                    "Value":$left_padding_num), [{
       build($_builder, $_state, res, src, dst, 
             pad_mode, pad_value, left_padding_num, nullptr, nullptr, nullptr,
-            nullptr, nullptr);
+            nullptr, nullptr, nullptr);
     }]>,
 
     // 5. ... + left + right
@@ -649,7 +650,7 @@ def TLoadOp  : PTO_TOp<"tload", [
                    "Value":$left_padding_num, "Value":$right_padding_num), [{
       build($_builder, $_state, res, src, dst, 
             pad_mode, pad_value, left_padding_num, right_padding_num, nullptr,
-            nullptr, nullptr, nullptr);
+            nullptr, nullptr, nullptr, nullptr);
     }]>,
 
     // 6. ... + left + right + bool
@@ -659,7 +660,7 @@ def TLoadOp  : PTO_TOp<"tload", [
                    "bool":$init_out_buffer), [{
       build($_builder, $_state, res, src, dst, 
             pad_mode, pad_value, left_padding_num, right_padding_num, 
-            init_out_buffer, nullptr, nullptr, nullptr);
+            init_out_buffer, nullptr, nullptr, nullptr, nullptr);
     }]>
   ];
 
@@ -812,7 +813,8 @@ def TStoreOp: PTO_TOp<"tstore", [
     Optional<I64>:$preQuantScalar,
     DefaultValuedAttr<PTO_STPhaseAttr, "::mlir::pto::STPhase::Unspecified">:$stPhase,
     DefaultValuedAttr<PTO_AtomicTypeAttr, "::mlir::pto::AtomicType::AtomicNone">:$atomicType,
-    DefaultValuedAttr<PTO_ReluPreModeAttr, "::mlir::pto::ReluPreMode::NoRelu">:$reluPreMode
+    DefaultValuedAttr<PTO_ReluPreModeAttr, "::mlir::pto::ReluPreMode::NoRelu">:$reluPreMode,
+    OptionalAttr<PTO_StoreL2HintAttr>:$l2_hint
   );
 
   let results = (outs

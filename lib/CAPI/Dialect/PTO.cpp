@@ -62,6 +62,22 @@ PTO_ENUM_MIRROR_EQ(LoadCachePolicy, Default,
                    MlirPTOLoadCachePolicy::Default);
 PTO_ENUM_MIRROR_EQ(LoadCachePolicy, L2Bypass,
                    MlirPTOLoadCachePolicy::L2Bypass);
+PTO_ENUM_MIRROR_EQ(LoadL2Hint, NormalFirstVictim,
+                   MlirPTOLoadL2Hint::NormalFirstVictim);
+PTO_ENUM_MIRROR_EQ(LoadL2Hint, NormalLastVictim,
+                   MlirPTOLoadL2Hint::NormalLastVictim);
+PTO_ENUM_MIRROR_EQ(LoadL2Hint, NormalPersistent,
+                   MlirPTOLoadL2Hint::NormalPersistent);
+PTO_ENUM_MIRROR_EQ(LoadL2Hint, NotAllocKeep, MlirPTOLoadL2Hint::NotAllocKeep);
+PTO_ENUM_MIRROR_EQ(LoadL2Hint, NotAllocClean, MlirPTOLoadL2Hint::NotAllocClean);
+PTO_ENUM_MIRROR_EQ(LoadL2Hint, NotAllocDrop, MlirPTOLoadL2Hint::NotAllocDrop);
+PTO_ENUM_MIRROR_EQ(StoreL2Hint, NormalFirstVictim,
+                   MlirPTOStoreL2Hint::NormalFirstVictim);
+PTO_ENUM_MIRROR_EQ(StoreL2Hint, NormalLastVictim,
+                   MlirPTOStoreL2Hint::NormalLastVictim);
+PTO_ENUM_MIRROR_EQ(StoreL2Hint, NormalPersistent,
+                   MlirPTOStoreL2Hint::NormalPersistent);
+PTO_ENUM_MIRROR_EQ(StoreL2Hint, NotAllocClean, MlirPTOStoreL2Hint::NotAllocClean);
 
 PTO_ENUM_MIRROR_EQ(BLayout, RowMajor, MlirPTOBLayout::RowMajor);
 PTO_ENUM_MIRROR_EQ(BLayout, ColMajor, MlirPTOBLayout::ColMajor);
@@ -400,6 +416,40 @@ MlirAttribute mlirPTOLoadCachePolicyAttrGet(MlirContext ctx, int32_t value) {
 int32_t mlirPTOLoadCachePolicyAttrGetValue(MlirAttribute attr) {
   auto policy = mlir::cast<mlir::pto::LoadCachePolicyAttr>(unwrap(attr));
   return static_cast<int32_t>(policy.getValue());
+}
+
+bool mlirPTOAttrIsALoadL2HintAttr(MlirAttribute attr) {
+  return mlir::isa<mlir::pto::LoadL2HintAttr>(unwrap(attr));
+}
+
+MlirAttribute mlirPTOLoadL2HintAttrGet(MlirContext ctx, int32_t value) {
+  auto hint = mlir::pto::symbolizeLoadL2Hint(static_cast<uint32_t>(value));
+  if (!hint) {
+    return MlirAttribute{nullptr};
+  }
+  return wrap(mlir::pto::LoadL2HintAttr::get(unwrap(ctx), *hint));
+}
+
+int32_t mlirPTOLoadL2HintAttrGetValue(MlirAttribute attr) {
+  return static_cast<int32_t>(
+      mlir::cast<mlir::pto::LoadL2HintAttr>(unwrap(attr)).getValue());
+}
+
+bool mlirPTOAttrIsAStoreL2HintAttr(MlirAttribute attr) {
+  return mlir::isa<mlir::pto::StoreL2HintAttr>(unwrap(attr));
+}
+
+MlirAttribute mlirPTOStoreL2HintAttrGet(MlirContext ctx, int32_t value) {
+  auto hint = mlir::pto::symbolizeStoreL2Hint(static_cast<uint32_t>(value));
+  if (!hint) {
+    return MlirAttribute{nullptr};
+  }
+  return wrap(mlir::pto::StoreL2HintAttr::get(unwrap(ctx), *hint));
+}
+
+int32_t mlirPTOStoreL2HintAttrGetValue(MlirAttribute attr) {
+  return static_cast<int32_t>(
+      mlir::cast<mlir::pto::StoreL2HintAttr>(unwrap(attr)).getValue());
 }
 
 //===----------------------------------------------------------------------===//

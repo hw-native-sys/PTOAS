@@ -152,6 +152,36 @@ def PTO_LoadCachePolicyAttr
   }];
 }
 
+// A5 per-transfer instruction fields, kept separate from the generic cache
+// policy and from each other: NotAllocClean has direction-specific encodings.
+def PTO_LoadL2HintEnum : PTO_I32Enum<
+  "LoadL2Hint", "A5 tile load L2 hint", [
+    I32EnumAttrCase<"NormalFirstVictim", 0, "normal_first_victim">,
+    I32EnumAttrCase<"NormalLastVictim", 1, "normal_last_victim">,
+    I32EnumAttrCase<"NormalPersistent", 2, "normal_persistent">,
+    I32EnumAttrCase<"NotAllocKeep", 4, "not_alloc_keep">,
+    I32EnumAttrCase<"NotAllocClean", 5, "not_alloc_clean">,
+    I32EnumAttrCase<"NotAllocDrop", 6, "not_alloc_drop">
+  ]>;
+
+def PTO_LoadL2HintAttr
+    : EnumAttr<PTO_Dialect, PTO_LoadL2HintEnum, "load_l2_hint"> {
+  let assemblyFormat = "`<` params `>`";
+}
+
+def PTO_StoreL2HintEnum : PTO_I32Enum<
+  "StoreL2Hint", "A5 tile store L2 hint", [
+    I32EnumAttrCase<"NormalFirstVictim", 0, "normal_first_victim">,
+    I32EnumAttrCase<"NormalLastVictim", 1, "normal_last_victim">,
+    I32EnumAttrCase<"NormalPersistent", 2, "normal_persistent">,
+    I32EnumAttrCase<"NotAllocClean", 4, "not_alloc_clean">
+  ]>;
+
+def PTO_StoreL2HintAttr
+    : EnumAttr<PTO_Dialect, PTO_StoreL2HintEnum, "store_l2_hint"> {
+  let assemblyFormat = "`<` params `>`";
+}
+
 //===----------------------------------------------------------------------===//
 // Implicit state resource and access kind
 //===----------------------------------------------------------------------===//

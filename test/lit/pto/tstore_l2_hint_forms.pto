@@ -1,0 +1,79 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+
+// RUN: ptoas --pto-arch=a5 --pto-level=level3 %s | FileCheck %s
+// RUN: ptoas --pto-arch=a5 --pto-level=level3 --emit-pto-ir %s -o %t.pto
+// RUN: ptoas --pto-arch=a5 --pto-level=level3 %t.pto | FileCheck %s
+
+!view = !pto.partition_tensor_view<16x16xf16>
+!vec = !pto.tile_buf<vec, 16x16xf16>
+!acc = !pto.tile_buf<acc, 16x16xf32, blayout=col_major, slayout=row_major>
+!fp = !pto.tile_buf<scaling, 1x16xui64>
+
+module attributes {pto.target_arch = "a5"} {
+  func.func private @vec_forms(%dst: !view, %src: !vec) {
+    pto.tstore ins(%src : !vec) outs(%dst : !view)
+      {l2_hint = #pto.store_l2_hint<not_alloc_clean>, stPhase = #pto<st_phase final>}
+    pto.tstore ins(%src : !vec) outs(%dst : !view)
+      {l2_hint = #pto.store_l2_hint<normal_persistent>, atomicType = #pto<atomic_type atomic_add>}
+    pto.tstore ins(%src : !vec) outs(%dst : !view)
+      {l2_hint = #pto.store_l2_hint<normal_last_victim>, stPhase = #pto<st_phase partial>,
+       atomicType = #pto<atomic_type atomic_add>}
+    return
+  }
+
+  // Exercise ACC phase/atomic/ReLU/quantization with non-default hints.
+  // The final unannotated FP store retains its existing TSTORE_FP call.
+  func.func private @acc_forms(%dst: !view, %src: !acc, %scale: !fp, %quant: i64) {
+    pto.tstore ins(%src : !acc) outs(%dst : !view)
+      {l2_hint = #pto.store_l2_hint<normal_first_victim>}
+    pto.tstore ins(%src : !acc) outs(%dst : !view)
+      {l2_hint = #pto.store_l2_hint<normal_last_victim>, stPhase = #pto<st_phase partial>}
+    pto.tstore ins(%src : !acc) outs(%dst : !view)
+      {l2_hint = #pto.store_l2_hint<normal_persistent>, atomicType = #pto<atomic_type atomic_add>}
+    pto.tstore ins(%src : !acc) outs(%dst : !view)
+      {l2_hint = #pto.store_l2_hint<not_alloc_clean>, stPhase = #pto<st_phase final>,
+       atomicType = #pto<atomic_type atomic_add>}
+    pto.tstore ins(%src : !acc) outs(%dst : !view)
+      {l2_hint = #pto.store_l2_hint<normal_persistent>, reluPreMode = #pto<relu_pre_mode normal_relu>}
+    pto.tstore ins(%src : !acc) outs(%dst : !view)
+      {l2_hint = #pto.store_l2_hint<not_alloc_clean>, stPhase = #pto<st_phase final>,
+       atomicType = #pto<atomic_type atomic_add>, reluPreMode = #pto<relu_pre_mode normal_relu>}
+    pto.tstore ins(%src : !acc, %quant : i64) outs(%dst : !view)
+      {l2_hint = #pto.store_l2_hint<normal_last_victim>}
+    pto.tstore ins(%src : !acc, %quant : i64) outs(%dst : !view)
+      {l2_hint = #pto.store_l2_hint<not_alloc_clean>, stPhase = #pto<st_phase final>,
+       atomicType = #pto<atomic_type atomic_add>, reluPreMode = #pto<relu_pre_mode normal_relu>}
+    pto.tstore ins(%src : !acc fp %scale : !fp) outs(%dst : !view)
+      {l2_hint = #pto.store_l2_hint<normal_persistent>}
+    pto.tstore ins(%src : !acc fp %scale : !fp) outs(%dst : !view)
+      {l2_hint = #pto.store_l2_hint<not_alloc_clean>,
+       atomicType = #pto<atomic_type atomic_add>, reluPreMode = #pto<relu_pre_mode normal_relu>}
+    pto.tstore ins(%src : !acc fp %scale : !fp) outs(%dst : !view)
+    return
+  }
+}
+
+// CHECK-LABEL: vec_forms(
+// CHECK: TSTORE<pto::TStoreL2Hint::NotAllocClean, STPhase::Final>(
+// CHECK: TSTORE<pto::TStoreL2Hint::NormalPersistent, {{.*}}AtomicType::AtomicAdd>(
+// CHECK: TSTORE<pto::TStoreL2Hint::NormalLastVictim, STPhase::Partial, {{.*}}AtomicType::AtomicAdd>(
+// CHECK-LABEL: acc_forms(
+// CHECK: TSTORE<pto::TStoreL2Hint::NormalFirstVictim>([[DST:[a-zA-Z0-9_]+]], [[SRC:[a-zA-Z0-9_]+]]);
+// CHECK: TSTORE<pto::TStoreL2Hint::NormalLastVictim, STPhase::Partial>([[DST]], [[SRC]]);
+// CHECK: TSTORE<pto::TStoreL2Hint::NormalPersistent, {{.*}}AtomicType::AtomicAdd>([[DST]], [[SRC]]);
+// CHECK: TSTORE<pto::TStoreL2Hint::NotAllocClean, STPhase::Final, {{.*}}AtomicType::AtomicAdd>([[DST]], [[SRC]]);
+// CHECK: TSTORE<pto::TStoreL2Hint::NormalPersistent, {{.*}}ReluPreMode::NormalRelu>([[DST]], [[SRC]]);
+// CHECK: TSTORE<pto::TStoreL2Hint::NotAllocClean, STPhase::Final, {{.*}}ReluPreMode::NormalRelu>([[DST]], [[SRC]]);
+// CHECK: uint64_t [[Q1:[a-zA-Z0-9_]+]] = static_cast<uint64_t>([[QUANT:[a-zA-Z0-9_]+]]);
+// CHECK: TSTORE<pto::TStoreL2Hint::NormalLastVictim, {{.*}}ReluPreMode::NoRelu>([[DST]], [[SRC]], [[Q1]]);
+// CHECK: uint64_t [[Q2:[a-zA-Z0-9_]+]] = static_cast<uint64_t>([[QUANT]]);
+// CHECK: TSTORE<pto::TStoreL2Hint::NotAllocClean, STPhase::Final, {{.*}}ReluPreMode::NormalRelu>([[DST]], [[SRC]], [[Q2]]);
+// CHECK: TSTORE<pto::TStoreL2Hint::NormalPersistent>([[DST]], [[SRC]], [[FP:[a-zA-Z0-9_]+]]);
+// CHECK: TSTORE<pto::TStoreL2Hint::NotAllocClean, {{.*}}AtomicType::AtomicAdd, ReluPreMode::NormalRelu>([[DST]], [[SRC]], [[FP]]);
+// CHECK: TSTORE_FP([[DST]], [[SRC]], [[FP]]);

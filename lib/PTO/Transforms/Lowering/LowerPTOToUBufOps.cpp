@@ -33,6 +33,7 @@
 #include "llvm/ADT/SmallVector.h"
 
 #include <algorithm>
+#include <type_traits>
 
 namespace mlir {
 namespace pto {
@@ -1489,40 +1490,42 @@ private:
                               llvm::ArrayRef(it->second.shape)};
   }
 
-  LogicalResult lowerTLoad(pto::TLoadOp op, OpBuilder &b,
-                           const TileShapeMap &tileShapes) const {
+  template <typename TransferOp>
+  LogicalResult lowerLoadStore(TransferOp op, Value tile, OpBuilder &b,
+                               const TileShapeMap &tileShapes) const {
+    if (op.getL2HintAttr()) {
+      return op.emitOpError(
+          "cannot lower l2_hint to UBuf operations; use the EmitC backend");
+    }
     Location loc = op.getLoc();
     auto viewInfo = extractDmaViewInfo(op);
     if (failed(viewInfo)) {
       return failure();
     }
-    auto prologue = checkLoadStoreTile(op.getDst(), tileShapes);
+    auto prologue = checkLoadStoreTile(tile, tileShapes);
     if (!prologue) {
       return failure();
     }
 
     Value byteOff = computeGMByteOffset(loc, b, *viewInfo, prologue->elemSize);
     Value gmPtr = offsetGMPtrByBytes(loc, b, viewInfo->gmPtr, byteOff);
-    return emitMteGmUb(loc, b, gmPtr, op.getDst(), *viewInfo,
-                       prologue->elemTy, prologue->shape);
+    if constexpr (std::is_same_v<TransferOp, pto::TLoadOp>) {
+      return emitMteGmUb(loc, b, gmPtr, tile, *viewInfo,
+                         prologue->elemTy, prologue->shape);
+    } else {
+      return emitMteUbGm(loc, b, tile, gmPtr, *viewInfo,
+                         prologue->elemTy, prologue->shape);
+    }
+  }
+
+  LogicalResult lowerTLoad(pto::TLoadOp op, OpBuilder &b,
+                           const TileShapeMap &tileShapes) const {
+    return lowerLoadStore(op, op.getDst(), b, tileShapes);
   }
 
   LogicalResult lowerTStore(pto::TStoreOp op, OpBuilder &b,
                             const TileShapeMap &tileShapes) const {
-    Location loc = op.getLoc();
-    auto viewInfo = extractDmaViewInfo(op);
-    if (failed(viewInfo)) {
-      return failure();
-    }
-    auto prologue = checkLoadStoreTile(op.getSrc(), tileShapes);
-    if (!prologue) {
-      return failure();
-    }
-
-    Value byteOff = computeGMByteOffset(loc, b, *viewInfo, prologue->elemSize);
-    Value gmPtr = offsetGMPtrByBytes(loc, b, viewInfo->gmPtr, byteOff);
-    return emitMteUbGm(loc, b, op.getSrc(), gmPtr, *viewInfo,
-                       prologue->elemTy, prologue->shape);
+    return lowerLoadStore(op, op.getSrc(), b, tileShapes);
   }
 
   //===--------------------------------------------------------------------===//

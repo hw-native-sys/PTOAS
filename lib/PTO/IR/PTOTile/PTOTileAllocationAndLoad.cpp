@@ -579,6 +579,17 @@ static LogicalResult verifyTLoadA5Types(TLoadOp op) {
 }
 
 LogicalResult TLoadOp::verify() {
+  if (getL2HintAttr()) {
+    if (failed(verifyTransferL2HintTarget(getOperation()))) {
+      return failure();
+    }
+    auto policy = getCachePolicyAttr();
+    if (getOffset() ||
+        (policy && policy.getValue() == LoadCachePolicy::L2Bypass)) {
+      return emitOpError(
+          "l2_hint cannot be combined with l2_bypass cache_policy or offset");
+    }
+  }
   auto verifyA2A3 = [this]() -> LogicalResult { return verifyTLoadA2A3Types(*this); };
   auto verifyA5 = [this]() -> LogicalResult { return verifyTLoadA5Types(*this); };
   return dispatchVerifierByArch(getOperation(), verifyA2A3, verifyA5);

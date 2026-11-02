@@ -139,6 +139,22 @@ static void populatePTODialectSubmodule(const pybind11::module &m) {
   (void)m;
 }
 
+static void registerPTOTransferL2HintEnums(py::module_ &m) {
+    py::enum_<MlirPTOLoadL2Hint>(m, "LoadL2Hint")
+        .value("NormalFirstVictim", MlirPTOLoadL2Hint::NormalFirstVictim)
+        .value("NormalLastVictim", MlirPTOLoadL2Hint::NormalLastVictim)
+        .value("NormalPersistent", MlirPTOLoadL2Hint::NormalPersistent)
+        .value("NotAllocKeep", MlirPTOLoadL2Hint::NotAllocKeep)
+        .value("NotAllocClean", MlirPTOLoadL2Hint::NotAllocClean)
+        .value("NotAllocDrop", MlirPTOLoadL2Hint::NotAllocDrop);
+
+    py::enum_<MlirPTOStoreL2Hint>(m, "StoreL2Hint")
+        .value("NormalFirstVictim", MlirPTOStoreL2Hint::NormalFirstVictim)
+        .value("NormalLastVictim", MlirPTOStoreL2Hint::NormalLastVictim)
+        .value("NormalPersistent", MlirPTOStoreL2Hint::NormalPersistent)
+        .value("NotAllocClean", MlirPTOStoreL2Hint::NotAllocClean);
+}
+
 static void registerPTOEnums1(py::module_& m)
 {
     // [保留 HEAD]: AddressSpace 枚举定义
@@ -161,6 +177,8 @@ static void registerPTOEnums1(py::module_& m)
     py::enum_<MlirPTOLoadCachePolicy>(m, "LoadCachePolicy")
         .value("Default", MlirPTOLoadCachePolicy::Default)
         .value("L2Bypass", MlirPTOLoadCachePolicy::L2Bypass);
+
+    registerPTOTransferL2HintEnums(m);
     py::enum_<MlirPTOBLayout>(m, "BLayout")
         .value("RowMajor", MlirPTOBLayout::RowMajor)
         .value("ColMajor", MlirPTOBLayout::ColMajor);
@@ -588,6 +606,12 @@ static void registerPTOValueAttrs1(py::module_ &m) {
 }
 
 static void registerPTOValueAttrs2(py::module_ &m) {
+    bindPTOEnumAttr(m, "LoadL2HintAttr", "LoadL2Hint",
+                    mlirPTOAttrIsALoadL2HintAttr,
+                    mlirPTOLoadL2HintAttrGet, mlirPTOLoadL2HintAttrGetValue);
+    bindPTOEnumAttr(m, "StoreL2HintAttr", "StoreL2Hint",
+                    mlirPTOAttrIsAStoreL2HintAttr,
+                    mlirPTOStoreL2HintAttrGet, mlirPTOStoreL2HintAttrGetValue);
     bindPTOEnumAttr(m, "LoadCachePolicyAttr", "LoadCachePolicy",
                     mlirPTOAttrIsALoadCachePolicyAttr,
                     mlirPTOLoadCachePolicyAttrGet,

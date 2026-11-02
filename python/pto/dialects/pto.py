@@ -71,6 +71,10 @@ FenceScope = _pto_mod.FenceScope
 FenceScopeAttr = _pto_mod.FenceScopeAttr
 LoadCachePolicy = _pto_mod.LoadCachePolicy
 LoadCachePolicyAttr = _pto_mod.LoadCachePolicyAttr
+LoadL2Hint = _pto_mod.LoadL2Hint
+LoadL2HintAttr = _pto_mod.LoadL2HintAttr
+StoreL2Hint = _pto_mod.StoreL2Hint
+StoreL2HintAttr = _pto_mod.StoreL2HintAttr
 TileBufConfigAttr = _pto_mod.TileBufConfigAttr
 ConvTileConfigAttr = _pto_mod.ConvTileConfigAttr
 BLayout = _pto_mod.BLayout
@@ -226,6 +230,12 @@ def _install_enum_attr_builders():
     def load_cache_policy_attr_builder(value, context=None):
         return LoadCachePolicyAttr.get(value, context)
 
+    def load_l2_hint_attr_builder(value, context=None):
+        return LoadL2HintAttr.get(value, context)
+
+    def store_l2_hint_attr_builder(value, context=None):
+        return StoreL2HintAttr.get(value, context)
+
     _ods_ir.AttrBuilder.insert(
         "PTO_AddressSpaceAttr", address_space_attr_builder, replace=True
     )
@@ -234,6 +244,12 @@ def _install_enum_attr_builders():
     )
     _ods_ir.AttrBuilder.insert(
         "PTO_LoadCachePolicyAttr", load_cache_policy_attr_builder, replace=True
+    )
+    _ods_ir.AttrBuilder.insert(
+        "PTO_LoadL2HintAttr", load_l2_hint_attr_builder, replace=True
+    )
+    _ods_ir.AttrBuilder.insert(
+        "PTO_StoreL2HintAttr", store_l2_hint_attr_builder, replace=True
     )
 
 
@@ -267,6 +283,10 @@ __all__ = [
     "FenceScopeAttr",
     "LoadCachePolicy",
     "LoadCachePolicyAttr",
+    "LoadL2Hint",
+    "LoadL2HintAttr",
+    "StoreL2Hint",
+    "StoreL2HintAttr",
     "BLayout",
     "BLayoutAttr",
     "SLayout",

@@ -1,0 +1,83 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+
+// RUN: split-file %s %t
+// RUN: ptoas --pto-arch=a5 --pto-level=level2 --enable-insert-sync %t/planned.pto | FileCheck %s --check-prefix=PLAN
+// RUN: ptoas --pto-arch=a5 --pto-level=level3 --enable-insert-sync %t/assigned.pto | FileCheck %s --check-prefix=ADDR
+
+//--- planned.pto
+!view = !pto.partition_tensor_view<16x16xf32>
+!vec = !pto.tile_buf<vec, 16x16xf32>
+module attributes {pto.target_arch = "a5"} {
+  func.func @planned(%input: !pto.ptr<f32>, %output: !pto.ptr<f32>, %n: index, %cond: i1) {
+    %c0 = arith.constant 0 : index
+    %c1 = arith.constant 1 : index
+    %c16 = arith.constant 16 : index
+    %src_view = pto.make_tensor_view %input, shape = [%c16, %c16], strides = [%c16, %c1]
+      : !pto.tensor_view<16x16xf32>
+    %dst_view = pto.make_tensor_view %output, shape = [%c16, %c16], strides = [%c16, %c1]
+      : !pto.tensor_view<16x16xf32>
+    %src = pto.partition_view %src_view, offsets = [%c0, %c0], sizes = [%c16, %c16]
+      : !pto.tensor_view<16x16xf32> -> !view
+    %dst = pto.partition_view %dst_view, offsets = [%c0, %c0], sizes = [%c16, %c16]
+      : !pto.tensor_view<16x16xf32> -> !view
+    %tile = pto.alloc_tile : !vec
+    scf.for %i = %c0 to %n step %c1 {
+      pto.tload ins(%src : !view) outs(%tile : !vec)
+        {l2_hint = #pto.load_l2_hint<normal_persistent>}
+      pto.tstore ins(%tile : !vec) outs(%dst : !view)
+        {l2_hint = #pto.store_l2_hint<not_alloc_clean>}
+    }
+    scf.if %cond {
+      pto.tload ins(%src : !view) outs(%tile : !vec)
+        {l2_hint = #pto.load_l2_hint<not_alloc_keep>}
+      pto.tstore ins(%tile : !vec) outs(%dst : !view)
+        {l2_hint = #pto.store_l2_hint<normal_last_victim>}
+    } else {
+      pto.tload ins(%src : !view) outs(%tile : !vec)
+        {l2_hint = #pto.load_l2_hint<not_alloc_drop>}
+      pto.tstore ins(%tile : !vec) outs(%dst : !view)
+        {l2_hint = #pto.store_l2_hint<normal_persistent>}
+    }
+    return
+  }
+}
+
+// PLAN-LABEL: planned(
+// PLAN: TASSIGN(
+// PLAN: for (
+// PLAN: TLOAD<pto::TLoadL2Hint::NormalPersistent>(
+// PLAN: TSTORE<pto::TStoreL2Hint::NotAllocClean>(
+// PLAN: if (
+// PLAN: TLOAD<pto::TLoadL2Hint::NotAllocKeep>(
+// PLAN: TSTORE<pto::TStoreL2Hint::NormalLastVictim>(
+// PLAN: } else {
+// PLAN: TLOAD<pto::TLoadL2Hint::NotAllocDrop>(
+// PLAN: TSTORE<pto::TStoreL2Hint::NormalPersistent>(
+
+//--- assigned.pto
+!view = !pto.partition_tensor_view<16x16xf32>
+!vec = !pto.tile_buf<vec, 16x16xf32>
+module attributes {pto.target_arch = "a5"} {
+  func.func private @assigned(%src: !view, %dst: !view) {
+    %address = arith.constant 4096 : i64
+    %tile = pto.alloc_tile addr = %address : !vec
+    pto.tload ins(%src : !view) outs(%tile : !vec)
+      {l2_hint = #pto.load_l2_hint<normal_first_victim>}
+    pto.tstore ins(%tile : !vec) outs(%dst : !view)
+      {l2_hint = #pto.store_l2_hint<normal_first_victim>}
+    return
+  }
+}
+
+// ADDR-LABEL: assigned(
+// ADDR: const int64_t [[ADDRESS:[a-zA-Z0-9_]+]] = 4096;
+// ADDR: uint64_t [[CAST:[a-zA-Z0-9_]+]] = (uint64_t) [[ADDRESS]];
+// ADDR: TASSIGN([[TILE:[a-zA-Z0-9_]+]], [[CAST]]);
+// ADDR: TLOAD<pto::TLoadL2Hint::NormalFirstVictim>(
+// ADDR: TSTORE<pto::TStoreL2Hint::NormalFirstVictim>(

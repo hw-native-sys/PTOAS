@@ -1234,6 +1234,7 @@ For each element (i, j) in the tile valid region:
 | `init_out_buffer` | `BoolAttr` (default: false) | Initialize output buffer |
 | `init_condition` | `AnyType` (optional) | Init condition |
 | `cache_policy` | `LoadCachePolicyAttr` (optional) | Per-load cache allocation policy; absence means `default` |
+| `l2_hint` | `LoadL2HintAttr` (optional) | Explicit per-transfer A5 L2 instruction mode; see below |
 
 **Results:** None. Writes into `dst` via DPS pattern.
 
@@ -1262,13 +1263,59 @@ pto.tload ins(%pv : !pto.partition_tensor_view<16x16xf16>)
           outs(%tb : !pto.tile_buf<loc=vec, dtype=f16, rows=16, cols=16, v_row=16, v_col=16, blayout=row_major, slayout=none_box, fractal=512, pad=0>)
 ```
 
-**L2-bypass example (A2/A3/A5):**
+**L2-bypass example (A2/A3):**
 
 ```mlir
 pto.tload ins(%weight : !pto.partition_tensor_view<16x16xf16>)
           outs(%weight_tile : !pto.tile_buf<loc=mat, dtype=f16, rows=16, cols=16, v_row=16, v_col=16, blayout=row_major, slayout=none_box, fractal=512, pad=0>)
           {cache_policy = #pto.load_cache_policy<l2_bypass>}
 ```
+
+**Native A5 L2 hints (EmitC backend):**
+
+Attach `l2_hint` to each transfer to select the exact PTO-ISA mode. Load and
+store attributes are distinct because their encodings differ:
+
+| Mode | `#pto.load_l2_hint<...>` | `#pto.store_l2_hint<...>` |
+|------|-------------------------|--------------------------|
+| `normal_first_victim` | 0 | 0 |
+| `normal_last_victim` | 1 | 1 |
+| `normal_persistent` | 2 | 2 |
+| `not_alloc_keep` | 4 | Unsupported |
+| `not_alloc_clean` | 5 | 4 |
+| `not_alloc_drop` | 6 | Unsupported |
+
+```mlir
+pto.tload ins(%pv : !pto.partition_tensor_view<16x16xf32>)
+          outs(%tb : !pto.tile_buf<vec, 16x16xf32>)
+          {l2_hint = #pto.load_l2_hint<normal_persistent>}
+pto.tstore ins(%tb : !pto.tile_buf<vec, 16x16xf32>)
+           outs(%pv : !pto.partition_tensor_view<16x16xf32>)
+           {l2_hint = #pto.store_l2_hint<not_alloc_clean>}
+```
+
+These lower directly to `TLOAD<pto::TLoadL2Hint::NormalPersistent>(dst, src)`
+and `TSTORE<pto::TStoreL2Hint::NotAllocClean>(dst, src)`. No C++ postprocessing
+or runtime address-alias offset is required. An absent attribute retains the
+ordinary call; an explicit `normal_first_victim` remains an explicit template
+argument even though its encoding is zero. Each transfer keeps its selected
+hint through layout inference, synchronization and memory planning.
+
+Hints require the A5 target and EmitC backend. A load hint cannot be combined
+with `cache_policy = l2_bypass` or an `offset` operand. Generic cache policies
+do not implicitly select an A5 hint. Existing unannotated transfers and the
+A2/A3 cache-policy/byte-offset lowering retain their behavior.
+
+Generated hinted transfers require PTO-ISA commit
+`b5d268128cce55c46b908d9987edc6b5f88f66fb` or a compatible descendant. This
+revision forwards store hints through the ACC/FIXPIPE path to the instruction's
+L2 control field, including ReLU and scalar/FP quantization. Earlier revisions
+can accept the C++ argument while silently ignoring it on ACC stores.
+
+Python builders accept `l2_hint=pto.LoadL2Hint.NormalPersistent` on `TLoadOp`
+and `l2_hint=pto.StoreL2Hint.NotAllocClean` on `TStoreOp`, or the corresponding
+`LoadL2HintAttr` / `StoreL2HintAttr` instances. The enums use the exact encodings
+above; attribute construction rejects invalid integers.
 
 ---
 
@@ -1371,7 +1418,7 @@ Lowering maps `%ctx` to `pto::PrefetchAsyncContext`, emits
 
 ##### `pto.tstore` - Store Tile to Partition View
 
-**Summary:** Stores a 2-D tile buffer back to a 2-D partition view. Supports phase/atomic/relu/pre-quant controls and an optional scaling tile. The scaling-tile form lowers to `TSTORE_FP`.
+**Summary:** Stores a 2-D tile buffer back to a 2-D partition view. Supports phase/atomic/relu/pre-quant controls and an optional scaling tile. The scaling-tile form lowers to `TSTORE_FP`, or the hint-first `TSTORE` overload when an A5 `l2_hint` is present.
 
 **Semantics:**
 
@@ -1391,6 +1438,7 @@ For each element (i, j) in the tile valid region:
 | `stPhase` | `#pto<st_phase ...>` | `unspecified` | Store phase selector (`unspecified/partial/final`) |
 | `atomicType` | `#pto<atomic_type ...>` | `atomic_none` | Atomic mode (`atomic_none/atomic_add`) |
 | `reluPreMode` | `#pto<relu_pre_mode ...>` | `no_relu` | ReLU pre-processing mode (`no_relu/normal_relu`) |
+| `l2_hint` | `#pto.store_l2_hint<...>` (optional) | Absent | Explicit A5 L2 instruction mode; see native A5 L2 hints above |
 
 **Results:** None. Writes into `dst` via DPS pattern.
 
@@ -1419,6 +1467,11 @@ For each element (i, j) in the tile valid region:
     - Static/runtime column bound checks on `src`: `1 <= cols <= 4095` and `1 <= valid_shape[1] <= 4095` (when static).
 - A5 checks:
   - `src.loc` must be `vec` or `acc` (A5 does not support `mat` here).
+  - Native `l2_hint` requires the EmitC backend and the PTO-ISA revision specified
+    above. Vec and ACC stores accept all four store hints, including ACC phase,
+    atomic, ReLU and scalar/FP quantization forms. The selected hint precedes
+    existing template arguments; destination, source and quantization operands
+    keep their original order.
   - For `loc=vec`:
     - `preQuantScalar` is not allowed.
     - `src` element type must be one of `i8/i16/i32/i64/f16/bf16/f32/f8E4M3*/f8E5M2*/!pto.hif8/!pto.f4E1M2x2/!pto.f4E2M1x2`.

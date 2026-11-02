@@ -194,3 +194,10 @@ add_test(NAME ptobc_tload_cache_policy_v0_encode
     TESTDATA_DIR=${PTObc_TESTDATA_DIR}
     bash ${CMAKE_CURRENT_LIST_DIR}/tload_cache_policy_v0_encode.sh
 )
+
+add_test(NAME ptobc_transfer_l2_hints_v0_encode
+  COMMAND ${CMAKE_COMMAND} -E env
+    PTOBC_BIN=$<TARGET_FILE:ptobc>
+    TEST_IR=${PROJECT_SOURCE_DIR}/test/lit/pto/transfer_l2_hints.pto
+    bash ${CMAKE_CURRENT_LIST_DIR}/transfer_l2_hints_v0_encode.sh
+)

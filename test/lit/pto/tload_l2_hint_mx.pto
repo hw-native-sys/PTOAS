@@ -1,0 +1,41 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+
+// RUN: ptoas --pto-arch=a5 --pto-level=level2 --enable-insert-sync %s | FileCheck %s
+
+!a = !pto.tile_buf<mat, 128x4x!pto.f8E8M0, blayout=row_major, slayout=row_major, fractal=32>
+!b = !pto.tile_buf<mat, 4x128x!pto.f8E8M0, blayout=col_major, slayout=col_major, fractal=32>
+
+module attributes {pto.target_arch = "a5", pto.kernel_kind = #pto.kernel_kind<cube>} {
+  func.func @mx_hints(%a_ptr: !pto.ptr<!pto.f8E8M0, gm>, %b_ptr: !pto.ptr<!pto.f8E8M0, gm>) {
+    %c0 = arith.constant 0 : index
+    %c1 = arith.constant 1 : index
+    %c4 = arith.constant 4 : index
+    %c128 = arith.constant 128 : index
+    %av = pto.make_tensor_view %a_ptr, shape = [%c128, %c4], strides = [%c4, %c1]
+      : !pto.tensor_view<?x?x!pto.f8E8M0>
+    %bv = pto.make_tensor_view %b_ptr, shape = [%c4, %c128], strides = [%c128, %c1]
+      : !pto.tensor_view<?x?x!pto.f8E8M0>
+    %ap = pto.partition_view %av, offsets = [%c0, %c0], sizes = [%c128, %c4]
+      : !pto.tensor_view<?x?x!pto.f8E8M0>
+    %bp = pto.partition_view %bv, offsets = [%c0, %c0], sizes = [%c4, %c128]
+      : !pto.tensor_view<?x?x!pto.f8E8M0>
+    %at = pto.alloc_tile : !a
+    %bt = pto.alloc_tile : !b
+    pto.tload ins(%ap : !pto.partition_tensor_view<128x4x!pto.f8E8M0>) outs(%at : !a)
+      {l2_hint = #pto.load_l2_hint<normal_persistent>}
+    pto.tload ins(%bp : !pto.partition_tensor_view<4x128x!pto.f8E8M0>) outs(%bt : !b)
+      {l2_hint = #pto.load_l2_hint<not_alloc_clean>}
+    return
+  }
+}
+
+// CHECK: pto::Layout::MX_A_ZZ
+// CHECK: pto::Layout::MX_B_NN
+// CHECK: TLOAD<pto::TLoadL2Hint::NormalPersistent>(
+// CHECK: TLOAD<pto::TLoadL2Hint::NotAllocClean>(

@@ -174,6 +174,23 @@ static LogicalResult dispatchVerifierByArch(Operation *op, FnA2A3 &&verifyA2A3,
   }
   return failure();
 }
+
+// Native transfer hints describe A5 ISA modes. Reject backends that replace
+// transfers without forwarding the hint rather than silently losing it.
+static LogicalResult verifyTransferL2HintTarget(Operation *op) {
+  if (getVerifierTargetArch(op) != VerifierTargetArch::A5) {
+    return op->emitOpError("l2_hint requires the A5 target");
+  }
+  for (Operation *parent = op; parent; parent = parent->getParentOp()) {
+    if (auto backend = parent->getAttrOfType<StringAttr>("pto.backend")) {
+      if (backend.getValue() == "vpto") {
+        return op->emitOpError("l2_hint requires the EmitC backend");
+      }
+      break;
+    }
+  }
+  return success();
+}
 static std::optional<pto::AddressSpace> parsePtrAddressSpaceKeyword(StringRef keyword) {
   return llvm::StringSwitch<std::optional<pto::AddressSpace>>(keyword)
       .Case("gm", pto::AddressSpace::GM)

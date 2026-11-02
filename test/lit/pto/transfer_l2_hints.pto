@@ -1,0 +1,81 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+
+// RUN: ptoas --pto-arch=a5 --pto-level=level3 %s | FileCheck %s --check-prefix=CPP
+// RUN: ptoas --pto-arch=a5 --pto-level=level3 --emit-pto-ir %s -o %t.pto
+// RUN: ptoas --pto-arch=a5 --pto-level=level3 --emit-pto-ir %t.pto | FileCheck %s --check-prefix=IR
+
+!view = !pto.partition_tensor_view<16x16xf32>
+!vec = !pto.tile_buf<vec, 16x16xf32>
+
+module attributes {pto.target_arch = "a5"} {
+  func.func private @unhinted(%view: !view, %tile: !vec) {
+    pto.tload ins(%view : !view) outs(%tile : !vec)
+    pto.tstore ins(%tile : !vec) outs(%view : !view)
+    return
+  }
+
+  func.func private @load_modes(%view: !view, %tile: !vec) {
+    pto.tload ins(%view : !view) outs(%tile : !vec)
+      {l2_hint = #pto.load_l2_hint<normal_first_victim>}
+    pto.tload ins(%view : !view) outs(%tile : !vec)
+      {l2_hint = #pto.load_l2_hint<normal_last_victim>}
+    pto.tload ins(%view : !view) outs(%tile : !vec)
+      {l2_hint = #pto.load_l2_hint<normal_persistent>}
+    pto.tload ins(%view : !view) outs(%tile : !vec)
+      {l2_hint = #pto.load_l2_hint<not_alloc_keep>}
+    pto.tload ins(%view : !view) outs(%tile : !vec)
+      {l2_hint = #pto.load_l2_hint<not_alloc_clean>}
+    pto.tload ins(%view : !view) outs(%tile : !vec)
+      {l2_hint = #pto.load_l2_hint<not_alloc_drop>}
+    return
+  }
+
+  func.func private @store_modes(%view: !view, %tile: !vec) {
+    pto.tstore ins(%tile : !vec) outs(%view : !view)
+      {l2_hint = #pto.store_l2_hint<normal_first_victim>}
+    pto.tstore ins(%tile : !vec) outs(%view : !view)
+      {l2_hint = #pto.store_l2_hint<normal_last_victim>}
+    pto.tstore ins(%tile : !vec) outs(%view : !view)
+      {l2_hint = #pto.store_l2_hint<normal_persistent>}
+    pto.tstore ins(%tile : !vec) outs(%view : !view)
+      {l2_hint = #pto.store_l2_hint<not_alloc_clean>}
+    return
+  }
+}
+
+// CPP-LABEL: unhinted(
+// CPP: TLOAD([[TILE:[a-zA-Z0-9_]+]], [[VIEW:[a-zA-Z0-9_]+]]);
+// CPP: TSTORE([[VIEW]], [[TILE]]);
+// CPP-LABEL: load_modes(
+// CPP: TLOAD<pto::TLoadL2Hint::NormalFirstVictim>([[TILE:[a-zA-Z0-9_]+]], [[VIEW:[a-zA-Z0-9_]+]]);
+// CPP: TLOAD<pto::TLoadL2Hint::NormalLastVictim>([[TILE]], [[VIEW]]);
+// CPP: TLOAD<pto::TLoadL2Hint::NormalPersistent>([[TILE]], [[VIEW]]);
+// CPP: TLOAD<pto::TLoadL2Hint::NotAllocKeep>([[TILE]], [[VIEW]]);
+// CPP: TLOAD<pto::TLoadL2Hint::NotAllocClean>([[TILE]], [[VIEW]]);
+// CPP: TLOAD<pto::TLoadL2Hint::NotAllocDrop>([[TILE]], [[VIEW]]);
+// CPP-LABEL: store_modes(
+// CPP: TSTORE<pto::TStoreL2Hint::NormalFirstVictim>([[VIEW:[a-zA-Z0-9_]+]], [[TILE:[a-zA-Z0-9_]+]]);
+// CPP: TSTORE<pto::TStoreL2Hint::NormalLastVictim>([[VIEW]], [[TILE]]);
+// CPP: TSTORE<pto::TStoreL2Hint::NormalPersistent>([[VIEW]], [[TILE]]);
+// CPP: TSTORE<pto::TStoreL2Hint::NotAllocClean>([[VIEW]], [[TILE]]);
+
+// IR-LABEL: @unhinted(
+// IR-NOT: l2_hint
+// IR-LABEL: @load_modes(
+// IR: l2_hint = #pto.load_l2_hint<normal_first_victim>
+// IR: l2_hint = #pto.load_l2_hint<normal_last_victim>
+// IR: l2_hint = #pto.load_l2_hint<normal_persistent>
+// IR: l2_hint = #pto.load_l2_hint<not_alloc_keep>
+// IR: l2_hint = #pto.load_l2_hint<not_alloc_clean>
+// IR: l2_hint = #pto.load_l2_hint<not_alloc_drop>
+// IR-LABEL: @store_modes(
+// IR: l2_hint = #pto.store_l2_hint<normal_first_victim>
+// IR: l2_hint = #pto.store_l2_hint<normal_last_victim>
+// IR: l2_hint = #pto.store_l2_hint<normal_persistent>
+// IR: l2_hint = #pto.store_l2_hint<not_alloc_clean>

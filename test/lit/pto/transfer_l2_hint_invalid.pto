@@ -1,0 +1,125 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+
+// RUN: pto-test-opt --split-input-file --verify-diagnostics %s
+
+module attributes {pto.target_arch = "a3"} {
+  func.func @load_wrong_target(%src: !pto.partition_tensor_view<16x16xf32>,
+                               %dst: !pto.tile_buf<vec, 16x16xf32>) {
+    // expected-error@+1 {{l2_hint requires the A5 target}}
+    pto.tload ins(%src : !pto.partition_tensor_view<16x16xf32>)
+      outs(%dst : !pto.tile_buf<vec, 16x16xf32>)
+      {l2_hint = #pto.load_l2_hint<normal_first_victim>}
+    return
+  }
+}
+
+// -----
+
+module attributes {pto.target_arch = "a3"} {
+  func.func @store_wrong_target(%src: !pto.tile_buf<vec, 16x16xf32>,
+                                %dst: !pto.partition_tensor_view<16x16xf32>) {
+    // expected-error@+1 {{l2_hint requires the A5 target}}
+    pto.tstore ins(%src : !pto.tile_buf<vec, 16x16xf32>)
+      outs(%dst : !pto.partition_tensor_view<16x16xf32>)
+      {l2_hint = #pto.store_l2_hint<normal_first_victim>}
+    return
+  }
+}
+
+// -----
+
+module attributes {pto.target_arch = "a5"} {
+  func.func @wrong_direction(%src: !pto.partition_tensor_view<16x16xf32>,
+                             %dst: !pto.tile_buf<vec, 16x16xf32>) {
+    // expected-error@+3 {{attribute 'l2_hint' failed to satisfy constraint}}
+    pto.tload ins(%src : !pto.partition_tensor_view<16x16xf32>)
+      outs(%dst : !pto.tile_buf<vec, 16x16xf32>)
+      {l2_hint = #pto.store_l2_hint<normal_persistent>}
+    return
+  }
+}
+
+// -----
+
+module attributes {pto.target_arch = "a5"} {
+  func.func @raw_integer(%src: !pto.tile_buf<vec, 16x16xf32>,
+                         %dst: !pto.partition_tensor_view<16x16xf32>) {
+    // expected-error@+2 {{attribute 'l2_hint' failed to satisfy constraint}}
+    pto.tstore ins(%src : !pto.tile_buf<vec, 16x16xf32>)
+      outs(%dst : !pto.partition_tensor_view<16x16xf32>) {l2_hint = 3 : i32}
+    return
+  }
+}
+
+// -----
+
+module attributes {pto.target_arch = "a5"} {
+  func.func @bypass_conflict(%src: !pto.partition_tensor_view<16x16xf32>,
+                             %dst: !pto.tile_buf<vec, 16x16xf32>) {
+    // expected-error@+1 {{l2_hint cannot be combined with l2_bypass cache_policy or offset}}
+    pto.tload ins(%src : !pto.partition_tensor_view<16x16xf32>)
+      outs(%dst : !pto.tile_buf<vec, 16x16xf32>)
+      {l2_hint = #pto.load_l2_hint<normal_first_victim>, cache_policy = #pto.load_cache_policy<l2_bypass>}
+    return
+  }
+}
+
+// -----
+
+module attributes {pto.target_arch = "a5"} {
+  func.func @offset_conflict(%src: !pto.partition_tensor_view<16x16xf32>,
+                             %dst: !pto.tile_buf<vec, 16x16xf32>, %offset: i64) {
+    // expected-error@+1 {{l2_hint cannot be combined with l2_bypass cache_policy or offset}}
+    pto.tload ins(%src : !pto.partition_tensor_view<16x16xf32>)
+      outs(%dst : !pto.tile_buf<vec, 16x16xf32>)
+      {l2_hint = #pto.load_l2_hint<normal_persistent>} offset = %offset : i64
+    return
+  }
+}
+
+// -----
+
+module attributes {pto.target_arch = "a5", pto.backend = "vpto"} {
+  func.func @unsupported_backend(%src: !pto.partition_tensor_view<16x16xf32>,
+                                  %dst: !pto.tile_buf<vec, 16x16xf32>) {
+    // expected-error@+1 {{l2_hint requires the EmitC backend}}
+    pto.tload ins(%src : !pto.partition_tensor_view<16x16xf32>)
+      outs(%dst : !pto.tile_buf<vec, 16x16xf32>)
+      {l2_hint = #pto.load_l2_hint<normal_persistent>}
+    return
+  }
+}
+
+// -----
+
+module attributes {pto.target_arch = "a5"} {
+  func.func @invalid_enum(%src: !pto.partition_tensor_view<16x16xf32>,
+                          %dst: !pto.tile_buf<vec, 16x16xf32>) {
+    pto.tload ins(%src : !pto.partition_tensor_view<16x16xf32>)
+      outs(%dst : !pto.tile_buf<vec, 16x16xf32>)
+      // expected-error@+2 {{expected ::mlir::pto::LoadL2Hint}}
+      // expected-error@+1 {{failed to parse PTO_LoadL2HintAttr}}
+      {l2_hint = #pto.load_l2_hint<invalid_mode>}
+    return
+  }
+}
+
+// -----
+
+module attributes {pto.target_arch = "a5"} {
+  func.func @store_load_only_mode(%src: !pto.tile_buf<vec, 16x16xf32>,
+                                  %dst: !pto.partition_tensor_view<16x16xf32>) {
+    pto.tstore ins(%src : !pto.tile_buf<vec, 16x16xf32>)
+      outs(%dst : !pto.partition_tensor_view<16x16xf32>)
+      // expected-error@+2 {{expected ::mlir::pto::StoreL2Hint}}
+      // expected-error@+1 {{failed to parse PTO_StoreL2HintAttr}}
+      {l2_hint = #pto.store_l2_hint<not_alloc_keep>}
+    return
+  }
+}

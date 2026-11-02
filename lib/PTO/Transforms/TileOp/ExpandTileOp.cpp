@@ -1427,6 +1427,10 @@ LogicalResult ExpandState::expandTileOpsInFunction(func::FuncOp func,
   });
 
   for (auto *op : tileOps) {
+    if (isa<pto::TLoadOp, pto::TStoreOp>(op) && op->hasAttr("l2_hint")) {
+      return op->emitOpError(
+          "cannot expand l2_hint through TileLib; use the EmitC backend");
+    }
     auto specKey = buildSpecKey(op);
     if (failed(specKey)) {
       return failure();

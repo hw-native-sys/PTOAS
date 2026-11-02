@@ -82,6 +82,16 @@ mlirPTOLoadCachePolicyAttrGet(MlirContext ctx, int32_t value);
 MLIR_CAPI_EXPORTED int32_t
 mlirPTOLoadCachePolicyAttrGetValue(MlirAttribute attr);
 
+// ---- A5 per-transfer L2 hints; invalid integer values return a null attr. ----
+MLIR_CAPI_EXPORTED bool mlirPTOAttrIsALoadL2HintAttr(MlirAttribute attr);
+MLIR_CAPI_EXPORTED MlirAttribute
+mlirPTOLoadL2HintAttrGet(MlirContext ctx, int32_t value);
+MLIR_CAPI_EXPORTED int32_t mlirPTOLoadL2HintAttrGetValue(MlirAttribute attr);
+MLIR_CAPI_EXPORTED bool mlirPTOAttrIsAStoreL2HintAttr(MlirAttribute attr);
+MLIR_CAPI_EXPORTED MlirAttribute
+mlirPTOStoreL2HintAttrGet(MlirContext ctx, int32_t value);
+MLIR_CAPI_EXPORTED int32_t mlirPTOStoreL2HintAttrGetValue(MlirAttribute attr);
+
 // ---- !pto.tensor_view<shape x elem> ----
 MLIR_CAPI_EXPORTED bool mlirPTOTypeIsATensorViewType(MlirType type);
 MLIR_CAPI_EXPORTED MlirType mlirPTOTensorViewTypeGet(MlirContext ctx, intptr_t rank,

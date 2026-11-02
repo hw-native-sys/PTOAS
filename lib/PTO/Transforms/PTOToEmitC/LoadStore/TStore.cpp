@@ -7,6 +7,8 @@
 // See LICENSE in the root of the software repository for the full text of the License.
 //===- TStore.cpp - LoadStore TStore op lowering --------------------------------===//
 //===----------------------------------------------------------------------===//
+// Preserve the existing overload arguments, prepending an optional A5 hint.
+// Hinted FP stores use TSTORE: TSTORE_FP has no hint-first ISA overload.
 
 #include "../PTOToEmitCEmitters.h"
 #include "LoadStoreInternal.h"
@@ -21,6 +23,38 @@ namespace pto {
 
 constexpr unsigned kTStoreMaxTemplateArgumentCount = mlir::pto::kValue5;
 constexpr unsigned kTStoreMaxOperandCount = mlir::pto::kValue3;
+
+static StringRef storeL2HintToken(StoreL2Hint hint) {
+  switch (hint) {
+  case StoreL2Hint::NormalFirstVictim:
+    return "pto::TStoreL2Hint::NormalFirstVictim";
+  case StoreL2Hint::NormalLastVictim:
+    return "pto::TStoreL2Hint::NormalLastVictim";
+  case StoreL2Hint::NormalPersistent:
+    return "pto::TStoreL2Hint::NormalPersistent";
+  case StoreL2Hint::NotAllocClean:
+    return "pto::TStoreL2Hint::NotAllocClean";
+  }
+  return {};
+}
+
+static FailureOr<ArrayAttr> prependStoreL2Hint(
+    TStoreOp op, ArrayAttr templateArgs, ConversionPatternRewriter &rewriter) {
+  auto hint = op.getL2HintAttr();
+  if (!hint) {
+    return templateArgs;
+  }
+  StringRef token = storeL2HintToken(hint.getValue());
+  if (token.empty()) {
+    return op.emitOpError("unsupported store L2 hint");
+  }
+  SmallVector<Attribute> hintedArgs{
+      emitc::OpaqueAttr::get(rewriter.getContext(), token)};
+  if (templateArgs) {
+    llvm::append_range(hintedArgs, templateArgs);
+  }
+  return rewriter.getArrayAttr(hintedArgs);
+}
 
 struct PTOTStoreToTSTORE : public OpConversionPattern<pto::TStoreOp> {
   using OpConversionPattern<pto::TStoreOp>::OpConversionPattern;
@@ -164,7 +198,11 @@ targs = ArrayAttr{};
                                              preQuantScalar);
     if (failed(targsOr))
       return failure();
-    ArrayAttr targs = *targsOr;
+    auto hintedArgs = prependStoreL2Hint(op, *targsOr, rewriter);
+    if (failed(hintedArgs)) {
+      return failure();
+    }
+    ArrayAttr targs = *hintedArgs;
 
     SmallVector<Value, kTStoreMaxOperandCount> operands{dstArg, src};
     if (hasPreQuantScalar)
@@ -212,7 +250,12 @@ targs = ArrayAttr{};
       targs = ArrayAttr{};
     }
 
-    emitTileCallAndReplace(op.getOperation(), rewriter, "TSTORE_FP", targs,
+    auto hintedArgs = prependStoreL2Hint(op, targs, rewriter);
+    if (failed(hintedArgs)) {
+      return failure();
+    }
+    StringRef callee = op.getL2HintAttr() ? "TSTORE" : "TSTORE_FP";
+    emitTileCallAndReplace(op.getOperation(), rewriter, callee, *hintedArgs,
                            operands, dst);
     return success();
   }

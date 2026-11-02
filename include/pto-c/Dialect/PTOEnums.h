@@ -54,6 +54,22 @@ enum class MlirPTOLoadCachePolicy {
   L2Bypass = 1,
 };
 
+enum class MlirPTOLoadL2Hint {
+  NormalFirstVictim = 0,
+  NormalLastVictim = 1,
+  NormalPersistent = 2,
+  NotAllocKeep = 4,
+  NotAllocClean = 5,
+  NotAllocDrop = 6,
+};
+
+enum class MlirPTOStoreL2Hint {
+  NormalFirstVictim = 0,
+  NormalLastVictim = 1,
+  NormalPersistent = 2,
+  NotAllocClean = 4,
+};
+
 enum class MlirPTOBLayout {
   RowMajor = 0,
   ColMajor = 1,
