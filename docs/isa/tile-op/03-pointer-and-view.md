@@ -295,6 +295,7 @@ pto.set_validshape %src, %valid_row, %valid_col : !pto.tile_buf<vec, RxCxT, vali
 **Constraints:**
 
 - `%src` must be rank-2 and use `v_row = ?` and `v_col = ?` on both dimensions.
+- `%src` must be a locally bound tile: an `alloc_tile`/`declare_tile`/frontend `tpop` result, or a `bitcast`/`treshape` view of one. Function arguments and other non-local sources are rejected.
 - Tile programs use `pto.tile_buf`; memref forms are a lowering artifact and are not part of this surface.
 - Constant `valid_row`/`valid_col` must be non-negative and `<=` the tile's static shape bounds.
 

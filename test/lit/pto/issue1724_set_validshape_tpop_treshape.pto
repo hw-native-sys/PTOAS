@@ -1,0 +1,87 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+//
+// Guards set_validshape on a treshape view of a frontend pipe pop result
+// (issue #1724): pop results are function-local, FIFO-backed tile sources,
+// so their treshape views can be validity-initialized without a payload
+// allocation. Compile-only: the producer only supplies the peer pipe
+// initialization and no data is produced.
+//
+// RUN: split-file %s %t
+// RUN: ptoas --pto-arch=a3 --pto-level=level3 --enable-insert-sync %t/tpop_treshape_zero.pto 2>&1 | FileCheck %s
+// RUN: ptoas --pto-arch=a3 --pto-level=level3 --enable-insert-sync %t/tpop_treshape_positive.pto 2>&1 | FileCheck %s --check-prefix=POS
+// RUN: not ptoas --pto-arch=a3 --pto-level=level3 --enable-insert-sync %t/funcarg_invalid.pto 2>&1 | FileCheck %s --check-prefix=FUNCARG
+
+// CHECK-LABEL: AICORE void consumer(__gm__ float*
+// CHECK: Tile<TileType::Vec, float, 64, 256, BLayout::RowMajor, -1, -1, SLayout::NoneBox, 512, PadValue::Null, CompactMode::Null> [[POP:[A-Za-z0-9_]+]] = Tile<TileType::Vec, float, 64, 256, BLayout::RowMajor, -1, -1, SLayout::NoneBox, 512, PadValue::Null, CompactMode::Null>([[ROWS:[A-Za-z0-9_]+]], [[COLS:[A-Za-z0-9_]+]]);
+// CHECK: [[POP]].SetValidShape([[ZERO:[A-Za-z0-9_]+]], [[ZERO]]);
+// CHECK: TPOP<TPipe<0, Direction::DIR_C2V, 65536, 2, 2, true>, Tile<TileType::Vec, float, 64, 256, BLayout::RowMajor, -1, -1, SLayout::NoneBox, 512, PadValue::Null, CompactMode::Null>, TileSplitAxis::TILE_NO_SPLIT>(
+// CHECK: // pto: %view
+// CHECK-NEXT: Tile<TileType::Vec, float, 128, 128, BLayout::RowMajor, -1, -1, SLayout::NoneBox, 512, PadValue::Null, CompactMode::Null> [[VIEW:[A-Za-z0-9_]+]];
+// CHECK-NEXT: TRESHAPE([[VIEW]], [[POP]]);
+// CHECK-NEXT: [[VIEW]].SetValidShape([[ZERO]], [[ZERO]]);
+
+// POS: const int64_t [[C128:[A-Za-z0-9_]+]] = 128;
+// POS: Tile<TileType::Vec, float, 128, 128, BLayout::RowMajor, -1, -1, SLayout::NoneBox, 512, PadValue::Null, CompactMode::Null> [[VIEW:[A-Za-z0-9_]+]];
+// POS: TRESHAPE([[VIEW]], [[POP:[A-Za-z0-9_]+]]);
+// POS: [[VIEW]].SetValidShape([[C128]], [[C128]]);
+
+// FUNCARG: error: 'pto.set_validshape' op requires a locally bound tile source (alloc_tile/declare_tile/tpop results or their bitcast/treshape views)
+
+//--- tpop_treshape_zero.pto
+!src = !pto.tile_buf<loc=vec, dtype=f32, rows=64, cols=256, v_row=?, v_col=?, blayout=row_major, slayout=none_box, fractal=512, pad=0>
+!view = !pto.tile_buf<loc=vec, dtype=f32, rows=128, cols=128, v_row=?, v_col=?, blayout=row_major, slayout=none_box, fractal=512, pad=0>
+module attributes {pto.target_arch = "a2a3"} {
+  func.func @producer(%gm: !pto.ptr<f32>) attributes {pto.kernel_kind = #pto.kernel_kind<cube>} {
+    %peer = pto.import_reserved_buffer {name = "c2v", peer_func = @consumer} -> i32
+    pto.aic_initialize_pipe {dir_mask = 1, slot_size = 65536, slot_num = 2} (gm_slot_buffer = %gm : !pto.ptr<f32>, c2v_consumer_buf = %peer : i32)
+    return
+  }
+  func.func @consumer(%gm: !pto.ptr<f32>) attributes {pto.kernel_kind = #pto.kernel_kind<vector>} {
+    %c0 = arith.constant 0 : index
+    %ring = pto.reserve_buffer {name = "c2v", size = 131072, location = #pto.address_space<vec>, auto = false, base = 0} -> i32
+    pto.aiv_initialize_pipe {dir_mask = 1, slot_size = 65536, slot_num = 2} (gm_slot_buffer = %gm : !pto.ptr<f32>, c2v_consumer_buf = %ring : i32)
+    %popped = pto.tpop_from_aic(%c0, %c0) {split = 0} -> !src
+    %view = pto.treshape %popped : !src -> !view
+    pto.set_validshape %view, %c0, %c0 : !view
+    pto.tfree_from_aic {split = 0}
+    return
+  }
+}
+
+//--- tpop_treshape_positive.pto
+!src = !pto.tile_buf<loc=vec, dtype=f32, rows=64, cols=256, v_row=?, v_col=?, blayout=row_major, slayout=none_box, fractal=512, pad=0>
+!view = !pto.tile_buf<loc=vec, dtype=f32, rows=128, cols=128, v_row=?, v_col=?, blayout=row_major, slayout=none_box, fractal=512, pad=0>
+module attributes {pto.target_arch = "a2a3"} {
+  func.func @producer_pos(%gm: !pto.ptr<f32>) attributes {pto.kernel_kind = #pto.kernel_kind<cube>} {
+    %peer = pto.import_reserved_buffer {name = "c2v_pos", peer_func = @consumer_pos} -> i32
+    pto.aic_initialize_pipe {dir_mask = 1, slot_size = 65536, slot_num = 2} (gm_slot_buffer = %gm : !pto.ptr<f32>, c2v_consumer_buf = %peer : i32)
+    return
+  }
+  func.func @consumer_pos(%gm: !pto.ptr<f32>) attributes {pto.kernel_kind = #pto.kernel_kind<vector>} {
+    %c0 = arith.constant 0 : index
+    %c128 = arith.constant 128 : index
+    %ring = pto.reserve_buffer {name = "c2v_pos", size = 131072, location = #pto.address_space<vec>, auto = false, base = 0} -> i32
+    pto.aiv_initialize_pipe {dir_mask = 1, slot_size = 65536, slot_num = 2} (gm_slot_buffer = %gm : !pto.ptr<f32>, c2v_consumer_buf = %ring : i32)
+    %popped = pto.tpop_from_aic(%c0, %c0) {split = 0} -> !src
+    %view = pto.treshape %popped : !src -> !view
+    pto.set_validshape %view, %c128, %c128 : !view
+    pto.tfree_from_aic {split = 0}
+    return
+  }
+}
+
+//--- funcarg_invalid.pto
+!arg = !pto.tile_buf<loc=vec, dtype=f32, rows=32, cols=32, v_row=?, v_col=?, blayout=row_major, slayout=none_box, fractal=512, pad=0>
+module attributes {pto.target_arch = "a2a3"} {
+  func.func @consumer(%t: !arg) attributes {pto.kernel_kind = #pto.kernel_kind<vector>} {
+    %c0 = arith.constant 0 : index
+    pto.set_validshape %t, %c0, %c0 : !arg
+    return
+  }
+}

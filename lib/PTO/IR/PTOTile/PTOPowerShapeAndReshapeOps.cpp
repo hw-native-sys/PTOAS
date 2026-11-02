@@ -76,7 +76,11 @@ static bool isLocallyBoundTileSource(Value value) {
     return false;
   }
 
-  if (isa<AllocTileOp, DeclareTileOp>(value.getDefiningOp())) {
+  // Frontend pipe pops produce function-local, FIFO-backed tile descriptors
+  // (issue #1724), so their results are locally bound like alloc/declare
+  // tiles.
+  if (isa<AllocTileOp, DeclareTileOp, TPopFromAicOp, TPopFromAivOp>(
+          value.getDefiningOp())) {
     return true;
   }
 
@@ -136,8 +140,8 @@ mlir::LogicalResult mlir::pto::SetValidShapeOp::verify() {
 
   if (!isLocallyBoundTileSource(getSource())) {
     return emitOpError(
-        "requires a locally bound tile source; function arguments/results "
-        "are unsupported");
+        "requires a locally bound tile source (alloc_tile/declare_tile/tpop "
+        "results or their bitcast/treshape views)");
   }
 
   auto checkDim = [this, &shape](Value operand, unsigned dimIdx,

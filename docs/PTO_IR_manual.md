@@ -1082,6 +1082,9 @@ set_validshape(source, valid_row, valid_col)
   - `v_col = ?`
 - User-authored PTO IR must use the `pto.tile_buf` form; any memref form seen
   later in the pipeline is compiler-internal lowering state only
+- `source` must be a locally bound tile result: `alloc_tile`, `declare_tile`,
+  a frontend pop (`tpop_from_aic`/`tpop_from_aiv`), or a `bitcast`/`treshape`
+  view of one; function arguments and other non-local sources are rejected
 - If `valid_row` / `valid_col` are compile-time constants, they must be non-negative and not exceed the tile's static shape bounds
 
 **Hardware Mapping:**
