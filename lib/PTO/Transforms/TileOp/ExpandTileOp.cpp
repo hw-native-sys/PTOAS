@@ -51,6 +51,7 @@
 #include "PTO/Support/CodeConstants.h"
 #include "PTO/IR/PTO.h"
 #include "PTO/IR/PTOTypeUtils.h"
+#include "PTO/Transforms/Tf32ModeSupport.h"
 #include "PTO/Transforms/Passes.h"
 #include "PTO/Transforms/TileLibService.h"
 #include "PTO/Transforms/TileOpExpansionUtils.h"
@@ -1470,15 +1471,14 @@ LogicalResult ExpandState::expandTileOpsInFunction(func::FuncOp func,
 // ============================================================================
 // Main entry point.
 // ============================================================================
-void ExpandTileOpPass::runOnOperation()
-{
-    ModuleOp mod = getOperation();
-    MLIRContext *ctx = &getContext();
 
-    // Per-operation HF32 rounding (`tf32_mode`) is lowered by the EmitC backend
-    // only: the TileLib templates expanded here do not model it yet. Reject it
-    // loudly instead of silently dropping the precision request on the floor.
-    WalkResult tf32Walk = mod.walk([&](Operation *op) -> WalkResult {
+// Per-operation HF32 rounding (`tf32_mode`) is lowered by the EmitC backend
+// only: the TileLib templates expanded here do not model it yet, and every other
+// op has no HF32 semantics at all. Reject both loudly instead of silently
+// dropping the precision request on the floor.
+static LogicalResult rejectUnsupportedTf32Mode(ModuleOp mod)
+{
+    WalkResult walk = mod.walk([](Operation *op) -> WalkResult {
         if (!op->hasAttr("tf32_mode")) {
             return WalkResult::advance();
         }
@@ -1488,9 +1488,20 @@ void ExpandTileOpPass::runOnOperation()
                 << "use --pto-backend=emitc";
             return WalkResult::interrupt();
         }
+        if (failed(pto::verifyTf32ModeSupported(op))) {
+            return WalkResult::interrupt();
+        }
         return WalkResult::advance();
     });
-    if (tf32Walk.wasInterrupted()) {
+    return walk.wasInterrupted() ? failure() : success();
+}
+
+void ExpandTileOpPass::runOnOperation()
+{
+    ModuleOp mod = getOperation();
+    MLIRContext *ctx = &getContext();
+
+    if (failed(rejectUnsupportedTf32Mode(mod))) {
         signalPassFailure();
         return;
     }

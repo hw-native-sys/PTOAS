@@ -11,6 +11,7 @@
 
 #include "PTOToEmitCPatterns.h"
 #include "PTO/Transforms/Passes.h"
+#include "PTO/Transforms/Tf32ModeSupport.h"
 #include <set>
 
 #include "mlir/Target/Cpp/CppEmitter.h"
@@ -663,6 +664,15 @@ struct EmitPTOManualPass
     });
     if (dumpResult.wasInterrupted()) {
       return signalPassFailure();
+    }
+    const WalkResult tf32Result = mop.walk([](Operation *op) -> WalkResult {
+        if (failed(pto::verifyTf32ModeSupported(op))) {
+            return WalkResult::interrupt();
+        }
+        return WalkResult::advance();
+    });
+    if (tf32Result.wasInterrupted()) {
+        return signalPassFailure();
     }
     if (failed(validateAndAnnotate(mop))) {
       return signalPassFailure();

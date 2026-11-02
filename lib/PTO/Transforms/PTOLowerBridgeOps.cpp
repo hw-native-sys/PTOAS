@@ -12,6 +12,7 @@
 #include "PTO/Transforms/Passes.h"
 #include "PTO/IR/VPTOBridgeRegistry.h"
 #include "PTO/Transforms/PrintEncoding.h"
+#include "PTO/Transforms/Tf32ModeSupport.h"
 #include "PTO/Transforms/VPTOBridgeWhitelist.h"
 #include "mlir/Dialect/Func/IR/FuncOps.h"
 #include "mlir/Dialect/LLVMIR/LLVMDialect.h"
@@ -52,66 +53,88 @@ LogicalResult collectCubeOperands(Operation *op, ArrayRef<Value> tiles,
   return success();
 }
 
+/// Preconditions shared by the Cube bridge adapters. The bridge ABI carries the
+/// tile specs and the acc phase only, so a routed operation must be destination
+/// style and must not ask for per-operation HF32 rounding: either would change
+/// what the emitted instruction computes.
+static LogicalResult checkCubeBridgePreconditions(Operation *op)
+{
+    const bool hasTensorResults = op->getNumResults() != 0;
+    if (hasTensorResults) {
+        return op->emitError(
+            "matmul bridge requires destination-style tiles without tensor "
+            "results");
+    }
+    if (op->hasAttr("tf32_mode")) {
+        return op->emitOpError()
+            << "tf32_mode is not supported by the Cube bridge; drop the "
+            << "--vpto-bridge-policy route for this op or use "
+            << "--pto-backend=emitc";
+    }
+    return success();
+}
+
 /// Direct Cube adapter: take the tiles and planned addresses from the typed
 /// getters and build one structured call.
 struct TMatmulBridgeAdapter {
-  static LogicalResult lower(TMatmulOp op) {
-    const bool hasTensorResults = op.getNumResults() != 0;
-    if (hasTensorResults) {
-      return op.emitError("matmul bridge requires destination-style tiles without tensor results");
+    static LogicalResult lower(TMatmulOp op)
+    {
+        if (failed(checkCubeBridgePreconditions(op))) {
+            return failure();
+        }
+        SmallVector<Value> addresses;
+        SmallVector<BridgeTileSpecAttr> specs;
+        const Value tiles[] = {op.getDst(), op.getLhs(), op.getRhs()};
+        const StringRef roles[] = {"dst", "lhs", "rhs"};
+        if (failed(collectCubeOperands(op, tiles, roles, addresses, specs))) {
+            return failure();
+        }
+        auto spec = BridgeCubeSpecAttr::getChecked(
+            [&] { return op.emitError(); }, op.getContext(), specs[0],
+            specs[1], specs[2],
+            AccPhaseAttr::get(op.getContext(), op.getAccPhase()),
+            BridgeTileSpecAttr());
+        if (!spec) {
+            return failure();
+        }
+        OpBuilder builder(op);
+        builder.create<BridgeCallOp>(op.getLoc(), TypeRange{},
+            BridgeEntryId::CubeTMatmul, spec, nullptr, addresses);
+        op.erase();
+        return success();
     }
-    SmallVector<Value> addresses;
-    SmallVector<BridgeTileSpecAttr> specs;
-    const Value tiles[] = {op.getDst(), op.getLhs(), op.getRhs()};
-    const StringRef roles[] = {"dst", "lhs", "rhs"};
-    if (failed(collectCubeOperands(op, tiles, roles, addresses, specs))) {
-      return failure();
-    }
-    auto spec = BridgeCubeSpecAttr::getChecked(
-        [&] { return op.emitError(); }, op.getContext(), specs[0], specs[1],
-        specs[2], AccPhaseAttr::get(op.getContext(), op.getAccPhase()),
-        /*accIn=*/BridgeTileSpecAttr());
-    if (!spec) {
-      return failure();
-    }
-    OpBuilder builder(op);
-    builder.create<BridgeCallOp>(op.getLoc(), TypeRange{},
-                                BridgeEntryId::CubeTMatmul, spec, nullptr, addresses);
-    op.erase();
-    return success();
-  }
 };
 
 /// The accumulate form keeps its accumulator and destination apart, so it has
 /// one more operand than the plain matmul and its own entry.
 struct TMatmulAccBridgeAdapter {
-  static LogicalResult lower(TMatmulAccOp op) {
-    const bool hasTensorResults = op.getNumResults() != 0;
-    if (hasTensorResults) {
-      return op.emitError("matmul bridge requires destination-style tiles without tensor results");
+    static LogicalResult lower(TMatmulAccOp op)
+    {
+        if (failed(checkCubeBridgePreconditions(op))) {
+            return failure();
+        }
+        SmallVector<Value> addresses;
+        SmallVector<BridgeTileSpecAttr> specs;
+        // ABI order follows the PTO-ISA call: destination, accumulator, lhs, rhs.
+        const Value tiles[] = {op.getDst(), op.getAccIn(), op.getLhs(),
+            op.getRhs()};
+        const StringRef roles[] = {"dst", "acc_in", "lhs", "rhs"};
+        if (failed(collectCubeOperands(op, tiles, roles, addresses, specs))) {
+            return failure();
+        }
+        auto spec = BridgeCubeSpecAttr::getChecked(
+            [&] { return op.emitError(); }, op.getContext(), specs[0],
+            specs[2], specs[3],
+            AccPhaseAttr::get(op.getContext(), op.getAccPhase()), specs[1]);
+        if (!spec) {
+            return failure();
+        }
+        OpBuilder builder(op);
+        builder.create<BridgeCallOp>(op.getLoc(), TypeRange{},
+            BridgeEntryId::CubeTMatmulAcc, spec, nullptr, addresses);
+        op.erase();
+        return success();
     }
-    SmallVector<Value> addresses;
-    SmallVector<BridgeTileSpecAttr> specs;
-    // ABI order follows the PTO-ISA call: destination, accumulator, lhs, rhs.
-    const Value tiles[] = {op.getDst(), op.getAccIn(), op.getLhs(), op.getRhs()};
-    const StringRef roles[] = {"dst", "acc_in", "lhs", "rhs"};
-    if (failed(collectCubeOperands(op, tiles, roles, addresses, specs))) {
-      return failure();
-    }
-    auto spec = BridgeCubeSpecAttr::getChecked(
-        [&] { return op.emitError(); }, op.getContext(), specs[0], specs[2],
-        specs[3], AccPhaseAttr::get(op.getContext(), op.getAccPhase()),
-        specs[1]);
-    if (!spec) {
-      return failure();
-    }
-    OpBuilder builder(op);
-    builder.create<BridgeCallOp>(op.getLoc(), TypeRange{},
-                                BridgeEntryId::CubeTMatmulAcc, spec, nullptr,
-                                addresses);
-    op.erase();
-    return success();
-  }
 };
 
 template <typename OpTy, typename Adapter>
