@@ -258,7 +258,10 @@ def main():
                     print(f"[INFO] smoke cases: {', '.join(smoke_case_names)}")
                 try:
                     run_st.run_gen_data(testcase, case_filters)
-                    run_st.run_binary(testcase, case_filters)
+                    run_st.run_binary(
+                        testcase, case_filters, run_mode=args.run_mode,
+                        soc_version=default_soc_version,
+                    )
                     run_st.run_compare(testcase, case_filters)
                 except Exception as exc:  # pragma: no cover - CI-side aggregation path
                     failures.append((testcase, str(exc)))

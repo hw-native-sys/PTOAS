@@ -327,6 +327,18 @@ if(BUILD_TESTING)
       LABELS "PTO"
       ENVIRONMENT "${_pto_python_test_env}"
     )
+    add_test(
+      NAME pto_tilelang_st_runner
+      COMMAND "${Python3_EXECUTABLE}"
+              "${CMAKE_CURRENT_SOURCE_DIR}/test/python/test_tilelang_st_runner.py"
+    )
+    set_tests_properties(pto_tilelang_st_runner PROPERTIES LABELS "PTO")
+    add_test(
+      NAME pto_fetch_cann_cmake
+      COMMAND "${Python3_EXECUTABLE}"
+              "${CMAKE_CURRENT_SOURCE_DIR}/test/python/test_fetch_cann_cmake.py"
+    )
+    set_tests_properties(pto_fetch_cann_cmake PROPERTIES LABELS "PTO")
   endif()
   add_subdirectory(tools/ptobc/tests)
 endif()

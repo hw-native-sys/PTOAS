@@ -443,7 +443,7 @@ def _emit_column_expand_loop(src0, src1, dst, apply_op):
     """Shared column-expand loop.
 
     ``apply_op(lhs, rhs, mask, remained)`` receives the two operands in the authored
-    order ``src0, src1`` and returns the result vector of the current column chunk.
+    order ``src0, src1`` and the element count before the current mask consumes it.
     """
     dtype = dst.dtype
     valid_rows, valid_cols = dst.valid_shape
@@ -461,9 +461,9 @@ def _emit_column_expand_loop(src0, src1, dst, apply_op):
             full_vec = pto.vlds(full[row, col:])
             broadcast_vec = pto.vlds(broadcast_row[0, col:])
             if src0_is_full:
-                result = apply_op(full_vec, broadcast_vec, mask, remained)
+                result = apply_op(full_vec, broadcast_vec, mask, col_loop.remained)
             else:
-                result = apply_op(broadcast_vec, full_vec, mask, remained)
+                result = apply_op(broadcast_vec, full_vec, mask, col_loop.remained)
             pto.vsts(result, dst[row, col:], mask)
             col_loop.update(remained=remained)
 

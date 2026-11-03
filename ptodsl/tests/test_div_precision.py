@@ -14,6 +14,7 @@ import json
 from collections import Counter
 
 import pytest
+from ptoas.mlir.dialects import pto as pto_ir
 from ptoas.mlir.ir import InsertionPoint, Location, MLIRError, Module
 from ptodsl import pto
 from ptodsl._context import make_context
@@ -306,6 +307,21 @@ def test_div_algo_rejects_the_retired_high_precision_token():
                 raise AssertionError("retired high_precision token was accepted")
 
 
+def test_remainder_precision_keeps_high_precision():
+    for op_name, enum_cls in (("rem", pto_ir.RemPrecision), ("fmod", pto_ir.FmodPrecision)):
+        for precision in ("high_precision", enum_cls.HighPrecision):
+            @pto.jit(target="a5", ast_rewrite=False)
+            def kernel():
+                lhs = pto.alloc_tile(shape=[16, 64], dtype=pto.f32)
+                rhs = pto.alloc_tile(shape=[16, 64], dtype=pto.f32)
+                dst = pto.alloc_tile(shape=[16, 64], dtype=pto.f32)
+                getattr(pto.tile, op_name)(lhs, rhs, dst, precision=precision)
+
+            module = pto.merge_jit_modules(kernel)
+            assert f"#pto<{op_name}_precision high_precision>" in str(module)
+            assert module.operation.verify()
+
+
 def test_diff_compensation_uses_the_compensated_implementation():
     """DIFF_COMPENSATION is a software algorithm, not a native divide."""
     _module, block = _vector_div_softop("diff_compensation")
@@ -460,6 +476,7 @@ if __name__ == "__main__":
     test_vmi_vdiv_precision_rejects_unknown_values()
     test_div_algo_tokens_round_trip_through_the_ir()
     test_div_algo_rejects_the_retired_high_precision_token()
+    test_remainder_precision_keeps_high_precision()
     test_native_div_algos_have_no_softlib_expansion()
     test_ieee754_divisions_share_the_normalisation_prologue()
     test_ieee754_0ulp_adds_the_residual_search()

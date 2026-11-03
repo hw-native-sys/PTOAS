@@ -12,6 +12,9 @@
 """
 TileLang ST runner — validates TileLang DSL template library on NPU / simulator.
 
+Simulator runs require CANN's msprof on PATH. Each binary invocation keeps its
+launcher, exit status and profiling log in a private msprof-* case directory.
+
 Usage:
     python3 test/tilelang_st/script/run_st.py -r npu -v a5 -t tadd
     python3 test/tilelang_st/script/run_st.py -r sim -v a5 -t tadd
@@ -22,6 +25,10 @@ import sys
 import subprocess
 import shutil
 import argparse
+import resource
+import shlex
+import tempfile
+from pathlib import Path
 
 
 def run_command(command, cwd=None, check=True):
@@ -65,6 +72,10 @@ def find_ptoas_bin():
 
 def set_env_variables(run_mode, soc_version):
     if run_mode == "sim":
+        soft, hard = resource.getrlimit(resource.RLIMIT_NOFILE)
+        if soft != resource.RLIM_INFINITY and soft < 65535:
+            limit = 65535 if hard == resource.RLIM_INFINITY else min(65535, hard)
+            resource.setrlimit(resource.RLIMIT_NOFILE, (limit, hard))
         ld_lib_path = os.environ.get("LD_LIBRARY_PATH", "")
         if ld_lib_path:
             filtered_paths = [
@@ -226,17 +237,66 @@ def run_gen_data(testcase, case_filters=None):
         os.chdir(original_dir)
 
 
-def run_binary(testcase, case_filters=None):
+def _run_simulator_binary(command, soc_version):
+    msprof = shutil.which("msprof")
+    if not msprof:
+        raise RuntimeError("msprof is required for simulator execution; source the CANN environment")
+
+    work_dir = Path.cwd()
+    output_dir = Path(tempfile.mkdtemp(prefix="msprof-", dir=work_dir))
+    exit_file = output_dir / "binary.exitcode"
+    launcher = output_dir / "run_binary.sh"
+    command = [str(Path(command[0]).resolve()), *command[1:]]
+    launcher.write_text(
+        "#!/usr/bin/env bash\n"
+        f"cd {shlex.quote(str(work_dir))} || exit 1\n"
+        f"{shlex.join(command)}\n"
+        "status=$?\n"
+        f"printf '%s\\n' \"$status\" > {shlex.quote(str(exit_file))}\n"
+        "exit \"$status\"\n",
+        encoding="utf-8",
+    )
+    launcher.chmod(0o700)
+    log_path = output_dir / "msprof.log"
+    with log_path.open("w", encoding="utf-8") as log:
+        result = subprocess.run(
+            [msprof, "op", "simulator", f"--soc-version={soc_version}",
+             f"--output={output_dir / 'profile'}", str(launcher)],
+            cwd=output_dir, stdout=log, stderr=subprocess.STDOUT, check=False,
+        )
+    print(f"[INFO] simulator log: {log_path}")
+    log_text = log_path.read_text(encoding="utf-8", errors="replace")
+    try:
+        if not exit_file.is_file():
+            raise RuntimeError("simulator did not record the binary exit status")
+        binary_status = int(exit_file.read_text(encoding="utf-8").strip())
+        if binary_status:
+            raise subprocess.CalledProcessError(binary_status, command)
+        if result.returncode:
+            raise subprocess.CalledProcessError(result.returncode, result.args)
+    except (RuntimeError, ValueError, subprocess.CalledProcessError):
+        print(log_text[-16000:])
+        raise
+    if "Profiling data parse failed" in log_text:
+        # Numerical ST does not consume profiling traces. CANN may fail to
+        # export them even after successful execution (e.g. TLOAD on CANN 9).
+        # Keep the diagnostic visible; run_compare still checks every output.
+        print(f"[WARN] simulator profiling data parsing failed; see {log_path}. "
+              "Continuing with numerical comparison.")
+
+
+def run_binary(testcase, case_filters=None, *, run_mode="npu", soc_version=None):
     original_dir = os.getcwd()
     try:
         os.chdir(get_testcase_work_dir(testcase))
         binary = os.path.join("..", "..", "bin", testcase)
         normalized_case_filters = _normalize_case_filters(case_filters)
-        if not normalized_case_filters:
-            run_command([binary])
-        else:
-            for case_filter in normalized_case_filters:
-                run_command([binary, case_filter])
+        commands = [[binary, case] for case in normalized_case_filters] or [[binary]]
+        for command in commands:
+            if run_mode == "sim":
+                _run_simulator_binary(command, soc_version)
+            else:
+                run_command(command)
     except Exception as e:
         print(f"run binary failed: {e}")
         raise
@@ -330,7 +390,7 @@ def main():
 
         # gen golden → run binary → compare
         run_gen_data(testcase, args.case)
-        run_binary(testcase, args.case)
+        run_binary(testcase, args.case, run_mode=args.run_mode, soc_version=default_soc_version)
         run_compare(testcase, args.case)
 
     except Exception as e:

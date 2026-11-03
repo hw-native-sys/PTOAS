@@ -87,12 +87,15 @@ def _make_kernel(case_name, op_name, dtype_key, rows, cols, expanded):
     ``"src1"``); the other one matches ``dst``.  Column expand requires row-major
     tiles for all three operands.
     """
-    pto_dtype, _np_dtype = _DTYPE[dtype_key]
+    pto_dtype, np_dtype = _DTYPE[dtype_key]
     op_fn = _OPS[op_name][0]
     src0_is_full = expanded == "src1"
     full_shape, row_shape = [rows, cols], [1, cols]
     src0_shape = full_shape if src0_is_full else row_shape
     src1_shape = row_shape if src0_is_full else full_shape
+    # UB rows require 32-byte alignment; keep logical tails in valid_shape.
+    row_alignment = 32 // np.dtype(np_dtype).itemsize
+    physical_cols = ((cols + row_alignment - 1) // row_alignment) * row_alignment
 
     @pto.jit(name=case_name, target="a5")
     def _kernel(
@@ -104,9 +107,9 @@ def _make_kernel(case_name, op_name, dtype_key, rows, cols, expanded):
         src1_view = pto.make_tensor_view(src1_ptr, shape=src1_shape, strides=[cols, 1])
         dst_view = pto.make_tensor_view(dst_ptr, shape=[rows, cols], strides=[cols, 1])
 
-        src0 = pto.alloc_tile(shape=src0_shape, dtype=pto_dtype, valid_shape=src0_shape)
-        src1 = pto.alloc_tile(shape=src1_shape, dtype=pto_dtype, valid_shape=src1_shape)
-        dst = pto.alloc_tile(shape=[rows, cols], dtype=pto_dtype, valid_shape=[rows, cols])
+        src0 = pto.alloc_tile(shape=[src0_shape[0], physical_cols], dtype=pto_dtype, valid_shape=src0_shape)
+        src1 = pto.alloc_tile(shape=[src1_shape[0], physical_cols], dtype=pto_dtype, valid_shape=src1_shape)
+        dst = pto.alloc_tile(shape=[rows, physical_cols], dtype=pto_dtype, valid_shape=[rows, cols])
 
         pto.tile.load(src0_view, src0)
         pto.tile.load(src1_view, src1)
@@ -198,6 +201,10 @@ CASE_SPECS += [
     ("div", "i32", 16, 64, "src1"),
     ("div", "i32", 16, 64, "src0"),
     ("div", "i16", 16, 64, "src0"),
+    ("div", "i16", 16, 64, "src1"),
+    # More than one i16 vector register, followed by an odd masked tail.
+    ("div", "i16", 2, 129, "src0"),
+    ("div", "i16", 2, 129, "src1"),
     # dst width below one vector register of f32 (64 lanes): a single masked chunk.
     ("sub", "f32", 16, 40, "src0"),
 ]
