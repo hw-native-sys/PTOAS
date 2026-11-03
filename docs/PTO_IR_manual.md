@@ -10818,6 +10818,11 @@ pto.comm.tget(%dst, %src, buf(%ping, %pong) : !pto.partition_tensor_view<128xf32
 
 - `signal` must be a GM-shaped value with element type `i32`.
 - `value` / `cmpValue` must be signless integer scalars.
+- `pto.comm.twait` accepts optional `backoffTicks : i64` in `[0, INT32_MAX]`.
+  A positive value requires A3, comparison `ge`, and a statically single-element
+  `i32` signal. It delays each unsuccessful poll by device counter ticks (not
+  microseconds); the first poll is immediate. Each poll invalidates the signal
+  cache line. Zero or omission retains the ordinary TWAIT lowering.
 
 **Lowering ordering guarantee:**
 
