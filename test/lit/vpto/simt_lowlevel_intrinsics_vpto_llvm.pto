@@ -6,7 +6,7 @@
 // INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
 // See LICENSE in the root of the software repository for the full text of the License.
 
-// RUN: ( mkdir -p %T && ptoas --pto-arch=a5 --pto-backend=vpto %s -o %t --mlir-print-ir-after=convert-func-to-llvm 2>&1 || true ) | FileCheck %s
+// RUN: ( mkdir -p %T && ptoas --pto-arch=a5 --pto-backend=vpto %s -o %t --mlir-print-ir-after=convert-func-to-llvm 2>&1 || true ) | FileCheck %s --implicit-check-not=llvm.hivm.get.GRID.DIM
 
 module attributes {pto.target_arch = "a5", pto.kernel_kind = #pto.kernel_kind<vector>} {
   func.func @simt_intrinsics_kernel(%dst_i32: !pto.ptr<i32, ub>, %dst_i64: !pto.ptr<i64, ub>, %dst_f32: !pto.ptr<f32, ub>, %dst_f16: !pto.ptr<f16, ub>) attributes {pto.aicore} {
@@ -142,9 +142,11 @@ module attributes {pto.target_arch = "a5", pto.kernel_kind = #pto.kernel_kind<ve
 // CHECK-DAG: llvm.call @llvm.hivm.get.BLOCK.DIM.X
 // CHECK-DAG: llvm.call @llvm.hivm.get.BLOCK.DIM.Y
 // CHECK-DAG: llvm.call @llvm.hivm.get.BLOCK.DIM.Z
-// CHECK-DAG: llvm.call @llvm.hivm.get.GRID.DIM.X
-// CHECK-DAG: llvm.call @llvm.hivm.get.GRID.DIM.Y
-// CHECK-DAG: llvm.call @llvm.hivm.get.GRID.DIM.Z
+// Grid dims lower to the block-count query plus unit constants (see
+// LowerGridDimQueryOpPattern): the dedicated llvm.hivm.get.GRID.DIM.*
+// intrinsics have no data source under VF SIMT execution, so they must not
+// appear anywhere in the emitted module.
+// CHECK-DAG: llvm.call @llvm.hivm.tpe.get.BLOCK.NUM
 // CHECK-DAG: llvm.call @llvm.hivm.get.BLOCK.IDX.X
 // CHECK-DAG: llvm.call @llvm.hivm.get.BLOCK.IDX.Y
 // CHECK-DAG: llvm.call @llvm.hivm.get.BLOCK.IDX.Z

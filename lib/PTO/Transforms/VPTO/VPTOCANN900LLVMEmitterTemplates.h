@@ -153,18 +153,6 @@ template <> inline StringRef buildRuntimeQueryCallee<pto::GetBlockDimZOp>(MLIRCo
   return StringAttr::get(context, "llvm.hivm.get.BLOCK.DIM.Z").getValue();
 }
 
-template <> inline StringRef buildRuntimeQueryCallee<pto::GetGridDimXOp>(MLIRContext *context) {
-  return StringAttr::get(context, "llvm.hivm.get.GRID.DIM.X").getValue();
-}
-
-template <> inline StringRef buildRuntimeQueryCallee<pto::GetGridDimYOp>(MLIRContext *context) {
-  return StringAttr::get(context, "llvm.hivm.get.GRID.DIM.Y").getValue();
-}
-
-template <> inline StringRef buildRuntimeQueryCallee<pto::GetGridDimZOp>(MLIRContext *context) {
-  return StringAttr::get(context, "llvm.hivm.get.GRID.DIM.Z").getValue();
-}
-
 template <> inline StringRef buildRuntimeQueryCallee<pto::GetBlockIdxXOp>(MLIRContext *context) {
   return StringAttr::get(context, "llvm.hivm.get.BLOCK.IDX.X").getValue();
 }

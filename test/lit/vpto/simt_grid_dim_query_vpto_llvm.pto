@@ -1,0 +1,62 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software; you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details.
+// You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, EITHER EXPRESS OR
+// IMPLIED, INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY OR FITNESS FOR A PARTICULAR
+// PURPOSE. See the License for the specific language governing permissions and limitations under the License.
+
+// RUN: ptoas --pto-arch=a5 --pto-backend=vpto --emit-vpto-llvm-ir %s -o - 2>&1 | FileCheck %s --implicit-check-not=llvm.hivm.get.GRID.DIM
+
+// Grid dims under the VPTO SIMT launch model: the grid is one-dimensional
+// over blocks, so grid_dim_x lowers to the block-count query (the same callee
+// the simt block-query pattern uses for pto.get_block_num) while grid_dim_y
+// and grid_dim_z fold to the unit constant. The dedicated
+// llvm.hivm.get.GRID.DIM.* intrinsics read launch-model state that VF SIMT
+// execution provides no source for and must not appear anywhere.
+
+module attributes {pto.target_arch = "a5", pto.kernel_kind = #pto.kernel_kind<vector>} {
+  func.func @grid_dim_query_kernel(%dst: !pto.ptr<i32, ub>) attributes {pto.aicore} {
+    %c0 = arith.constant 0 : index
+    %c1 = arith.constant 1 : index
+    %c2 = arith.constant 2 : index
+    %dim_z = arith.constant 1 : i32
+    %dim_y = arith.constant 1 : i32
+    %dim_x = arith.constant 1 : i32
+    pto.store_vfsimt_info %dim_z, %dim_y, %dim_x : i32, i32, i32
+    func.call @grid_dim_query_body(%dst) : (!pto.ptr<i32, ub>) -> ()
+    return
+  }
+
+  func.func @grid_dim_query_body(%dst: !pto.ptr<i32, ub>) attributes {pto.simt_entry} {
+    %c0 = arith.constant 0 : index
+    %c1 = arith.constant 1 : index
+    %c2 = arith.constant 2 : index
+    %grid_x = pto.get_grid_dim_x : i32
+    %grid_y = pto.get_grid_dim_y : i32
+    %grid_z = pto.get_grid_dim_z : i32
+    pto.store %grid_x, %dst[%c0] : !pto.ptr<i32, ub>, i32
+    pto.store %grid_y, %dst[%c1] : !pto.ptr<i32, ub>, i32
+    pto.store %grid_z, %dst[%c2] : !pto.ptr<i32, ub>, i32
+    return
+  }
+}
+
+// CHECK-DAG: declare i32 @llvm.hivm.tpe.get.BLOCK.NUM()
+
+// CHECK-LABEL: define linkonce_odr simt_entry void @grid_dim_query_body(
+// grid_dim_x: the one block-count query, stored to slot 0.
+// CHECK: %[[GX:.*]] = call i32 @llvm.hivm.tpe.get.BLOCK.NUM()
+// CHECK: %[[PTR0:.*]] = getelementptr i32, ptr addrspace(6) {{.*}}, i64 0
+// CHECK: store i32 %[[GX]], ptr addrspace(6) %[[PTR0]], align 4
+// Guard the slot where grid_dim_y's lowering output appears: Y must fold to
+// a constant, not grow its own block-count query.
+// CHECK-NOT: llvm.hivm.tpe.get.BLOCK.NUM
+// grid_dim_y / grid_dim_z: folded unit constants, stored to slots 1 and 2.
+// CHECK: %[[PTR1:.*]] = getelementptr i32, ptr addrspace(6) {{.*}}, i64 1
+// CHECK: store i32 1, ptr addrspace(6) %[[PTR1]], align 4
+// CHECK: %[[PTR2:.*]] = getelementptr i32, ptr addrspace(6) {{.*}}, i64 2
+// CHECK: store i32 1, ptr addrspace(6) %[[PTR2]], align 4
+// CHECK: ret void
+// CHECK-NOT: llvm.hivm.tpe.get.BLOCK.NUM

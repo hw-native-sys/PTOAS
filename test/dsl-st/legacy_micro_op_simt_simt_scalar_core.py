@@ -143,9 +143,11 @@ def _golden_scope():
             golden_v1[base + 2] = 32
             golden_v1[base + 3] = 1
             golden_v1[base + 4] = 1
-            golden_v1[base + 5] = 0
-            golden_v1[base + 6] = 0
-            golden_v1[base + 7] = 0
+            # Grid dims: the grid is one-dimensional over blocks, so x is the
+            # block count (1 here) and y/z are degenerate.
+            golden_v1[base + 5] = 1
+            golden_v1[base + 6] = 1
+            golden_v1[base + 7] = 1
             golden_v1[base + 8] = 0
             golden_v1[base + 9] = i32_bits(1 << lane)
             golden_v1[base + 10] = i32_bits((1 << (lane + 1)) - 1) if lane < 31 else np.int32(-1)

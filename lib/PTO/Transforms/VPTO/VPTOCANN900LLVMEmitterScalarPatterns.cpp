@@ -1250,6 +1250,47 @@ private:
   LoweringState &state;
 };
 
+// Grid-dim queries under the VPTO SIMT launch model. The grid is
+// one-dimensional over blocks: grid_dim_x is the block count and
+// grid_dim_y/grid_dim_z are degenerate, which is also how the CCE frontend
+// maps its gridDim builtins (get_block_num(), 1, 1). The dedicated
+// llvm.hivm.get.GRID.DIM.* intrinsics read launch-model state that VF SIMT
+// execution provides no source for (the CA model has no GRID_DIM SPR, so the
+// reads return uninitialized data), so grid_dim_x routes through the
+// block-count query the launch actually backs and Y/Z become constants.
+template <typename GridDimOp> class LowerGridDimQueryOpPattern final : public OpConversionPattern<GridDimOp> {
+public:
+  explicit LowerGridDimQueryOpPattern(const TypeConverter &typeConverter, MLIRContext *context, LoweringState &state)
+      : OpConversionPattern<GridDimOp>(typeConverter, context), state(state) {}
+
+  LogicalResult matchAndRewrite(GridDimOp op, typename GridDimOp::Adaptor adaptor,
+                                ConversionPatternRewriter &rewriter) const override {
+    (void)adaptor;
+    Type resultType = this->getTypeConverter()->convertType(op.getResult().getType());
+    if (!resultType) {
+      return rewriter.notifyMatchFailure(op, "failed to convert grid-dim query result type");
+    }
+    if (!resultType.isInteger(kBits32)) {
+      return rewriter.notifyMatchFailure(op, "grid-dim query expects an i32 result");
+    }
+
+    if constexpr (std::is_same_v<GridDimOp, pto::GetGridDimXOp>) {
+      StringRef calleeName = buildSimtBlockQueryCallee<pto::GetBlockNumOp>(op.getContext());
+      auto funcType = rewriter.getFunctionType(TypeRange{}, TypeRange{resultType});
+      auto call = rewriter.create<func::CallOp>(op.getLoc(), calleeName, TypeRange{resultType}, ValueRange{});
+      state.plannedDecls.push_back(PlannedDecl{calleeName.str(), funcType});
+      rewriter.replaceOp(op, call.getResults());
+      return success();
+    } else {
+      rewriter.replaceOpWithNewOp<arith::ConstantOp>(op, resultType, rewriter.getI32IntegerAttr(1));
+      return success();
+    }
+  }
+
+private:
+  LoweringState &state;
+};
+
 template <typename QueryOp> class LowerBlockRuntimeQueryOpPattern final : public OpConversionPattern<QueryOp> {
 public:
   explicit LowerBlockRuntimeQueryOpPattern(const TypeConverter &typeConverter, MLIRContext *context, LoweringState &state)
@@ -1880,8 +1921,8 @@ static void populateVPTOSIMTAndScalarPatterns(const VPTOTypeConverter &typeConve
       LowerRuntimeQueryOpPattern<pto::GetCtrlOp>, LowerGetVms4SrOpPattern, LowerRuntimeQueryOpPattern<pto::GetTidXOp>,
       LowerRuntimeQueryOpPattern<pto::GetTidYOp>, LowerRuntimeQueryOpPattern<pto::GetTidZOp>,
       LowerRuntimeQueryOpPattern<pto::GetBlockDimXOp>, LowerRuntimeQueryOpPattern<pto::GetBlockDimYOp>,
-      LowerRuntimeQueryOpPattern<pto::GetBlockDimZOp>, LowerRuntimeQueryOpPattern<pto::GetGridDimXOp>,
-      LowerRuntimeQueryOpPattern<pto::GetGridDimYOp>, LowerRuntimeQueryOpPattern<pto::GetGridDimZOp>,
+      LowerRuntimeQueryOpPattern<pto::GetBlockDimZOp>, LowerGridDimQueryOpPattern<pto::GetGridDimXOp>,
+      LowerGridDimQueryOpPattern<pto::GetGridDimYOp>, LowerGridDimQueryOpPattern<pto::GetGridDimZOp>,
       LowerRuntimeQueryOpPattern<pto::GetBlockIdxXOp>, LowerRuntimeQueryOpPattern<pto::GetBlockIdxYOp>,
       LowerRuntimeQueryOpPattern<pto::GetBlockIdxZOp>, LowerRuntimeQueryOpPattern<pto::GetVecCoreIdOp>,
       LowerRuntimeQueryOpPattern<pto::GetLaneIdOp>, LowerRuntimeQueryOpPattern<pto::GetClock32Op>,

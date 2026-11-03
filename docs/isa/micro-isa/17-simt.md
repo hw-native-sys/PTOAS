@@ -199,7 +199,10 @@ linear_tid = tid_x + dim_x * (tid_y + dim_y * tid_z)
 - **outputs:** One `i32` grid dimension. The value is a positive count, so
   `0 < grid_dim` always holds.
 - **constraints and limitations:** Use grid dimensions with block dimensions and
-  block indices when deriving global workitem coordinates.
+  block indices when deriving global workitem coordinates. The VPTO SIMT grid
+  is one-dimensional over blocks: `grid_dim_x` is the block count of the
+  launch and `grid_dim_y` / `grid_dim_z` are always `1`; the `simt_launch`
+  dimensions configure block dimensions, not grid dimensions.
 
 ### `pto.get_block_idx_x` / `pto.get_block_idx_y` / `pto.get_block_idx_z`
 
