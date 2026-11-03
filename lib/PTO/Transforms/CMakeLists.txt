@@ -413,14 +413,6 @@ target_compile_options(PTOTransforms PRIVATE -Wno-overloaded-virtual)
 if(CMAKE_CXX_COMPILER_ID STREQUAL "GNU")
   set_source_files_properties(InsertSync/PTOUnifiedSync.cpp
     PROPERTIES COMPILE_OPTIONS "-Wno-error=array-bounds")
-  # GCC 15 warns about the inactive bool payload of LLVM's FailureOr<bool>
-  # when the ExtF/TruncF helpers are inlined. Each caller checks failed(result)
-  # before dereferencing it; the failure path contains an empty std::optional.
-  # Keep the diagnostic visible without making it fatal for this one unit.
-  if(CMAKE_CXX_COMPILER_VERSION VERSION_GREATER_EQUAL 15)
-    set_source_files_properties(VMIToVPTO/VMIToVPTO.cpp
-      PROPERTIES COMPILE_OPTIONS "-Wno-error=maybe-uninitialized")
-  endif()
 endif()
 
 if(TARGET vfsim::native_core AND TARGET obj.PTOTransforms)

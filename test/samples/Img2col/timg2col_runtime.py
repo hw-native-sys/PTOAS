@@ -21,7 +21,6 @@ from ptoas.mlir.ir import (
     Location,
     Module,
     StringAttr,
-    Type,
     UnitAttr,
 )
 
@@ -39,15 +38,13 @@ def build():
             i64 = IntegerType.get_signless(64, ctx)
 
             ptr_f32 = pto.PtrType.get(f32, ctx)
-            layout = pto.ConvLayoutAttr.get(pto.ConvLayout.NC1HWC0, ctx)
-            tv5_f32 = Type.parse(f"!pto.tensor_view<1x1x3x4x8xf32, {layout}>", context=ctx)
-            src_ptv = Type.parse(
-                f"!pto.partition_tensor_view<1x1x3x4x8xf32, {layout}>", context=ctx
-            )
+            tv5_f32 = pto.TensorViewType.get(5, f32, ctx)
+            src_ptv = pto.PartitionTensorViewType.get([1, 1, 3, 4, 8], f32, ctx)
 
             vec = pto.AddressSpaceAttr.get(pto.AddressSpace.VEC, ctx)
             left = pto.AddressSpaceAttr.get(pto.AddressSpace.LEFT, ctx)
             mat = pto.AddressSpaceAttr.get(pto.AddressSpace.MAT, ctx)
+            layout = pto.ConvLayoutAttr.get(pto.ConvLayout.NC1HWC0, ctx)
             col_major = pto.BLayoutAttr.get(pto.BLayout.ColMajor, ctx)
             row_box = pto.SLayoutAttr.get(pto.SLayout.RowMajor, ctx)
             null_pad = pto.PadValueAttr.get(pto.PadValue.Null, ctx)
@@ -85,6 +82,7 @@ def build():
                 IntegerAttr.get(i64, 1 * 1 * 3 * 4 * 8),
                 mat,
                 layout,
+                conv_cfg,
                 ctx,
             )
 
@@ -115,7 +113,7 @@ def build():
                     sizes=[c1, c1, c3, c4, c8],
                 ).result
 
-                src_tile = pto.AllocTileOp(src_tile_ty, config=conv_cfg).result
+                src_tile = pto.AllocTileOp(src_tile_ty).result
                 dst_tile = pto.AllocTileOp(dst_tile_ty).result
                 cube_section = pto.SectionCubeOp()
                 with InsertionPoint(cube_section.body.blocks.append()):
@@ -129,8 +127,8 @@ def build():
                     pto.TImg2colOp(
                         dst_tile,
                         src_tile,
-                        posM=c1,
-                        posK=c8,
+                        c1,
+                        c8,
                         fmatrixMode=fmatrix_mode,
                     )
                 func.ReturnOp([])

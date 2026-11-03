@@ -303,8 +303,9 @@ def _normalize_enum_attr(value, *, enum_cls, attr_cls, context: str):
             if not name.startswith("_")
             and "".join(ch for ch in name if ch.isalnum()).lower() == normalized
         ]
-        # DivAlgo retired HighPrecision; other precision enums still accept it.
-        if normalized == "highprecision" and not candidates:
+        # ``high_precision`` predates the DivAlgo selector; point the caller at
+        # the family-specific replacement instead of just listing case names.
+        if normalized == "highprecision":
             raise ValueError(
                 f"{context} no longer accepts 'high_precision'; pick an explicit "
                 f"algorithm: 'precision_0ulp_ftz_true' for the compensated "
