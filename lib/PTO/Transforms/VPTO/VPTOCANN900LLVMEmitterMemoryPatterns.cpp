@@ -1052,7 +1052,10 @@ public:
       return rewriter.notifyMatchFailure(op, "unexpected converted vstur operand/result types");
     }
 
-    StringRef calleeName = buildVsturCallee(op.getContext());
+    FailureOr<StringRef> calleeName = buildVsturCallee(op.getContext(), op.getValue().getType());
+    if (failed(calleeName)) {
+      return rewriter.notifyMatchFailure(op, "unsupported vstur signature");
+    }
     Value modeValue = getI32Constant(rewriter, op.getLoc(), *postMode);
     Value zeroValue = getI32Constant(rewriter, op.getLoc(), 0);
     Value value = castToPayloadABI(op.getLoc(), adaptor.getValue(), op.getValue().getType(), rewriter);
@@ -1061,8 +1064,8 @@ public:
         rewriter.getFunctionType(TypeRange{value.getType(), adaptor.getBase().getType(), adaptor.getAlignIn().getType(),
                                            modeValue.getType(), zeroValue.getType()},
                                  TypeRange{resultType});
-    auto call = rewriter.create<func::CallOp>(op.getLoc(), calleeName, TypeRange{resultType}, args);
-    state.plannedDecls.push_back(PlannedDecl{calleeName.str(), funcType});
+    auto call = rewriter.create<func::CallOp>(op.getLoc(), *calleeName, TypeRange{resultType}, args);
+    state.plannedDecls.push_back(PlannedDecl{calleeName->str(), funcType});
     rewriter.replaceOp(op, call.getResults());
     return success();
   }

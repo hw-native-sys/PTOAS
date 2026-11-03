@@ -20,7 +20,9 @@
 
 // Fused FP8 quantization and BF16 dequantization with dynamic double buffering.
 // Keep the row body as scf.for for hardware-loop lowering. The costed plan
-// shares contiguous loads between reduction and quantization, materializes the
+// shares contiguous loads between reduction and quantization as long as no
+// store intervenes (a pto.vstus is a real UB write, so CSE conservatively
+// reloads the quantized inputs after it), materializes the
 // reduction's deinterleaved layout after vand, and broadcasts reciprocal slots
 // directly in registers. BF16 widening uses zero interleaves and bitcasts;
 // four separate FP8 parts feed dequantization without a packed intermediate.
@@ -47,8 +49,11 @@
 // VPTO: %[[SCALE_ALIGN_OUT:.*]], %[[SCALE_BASE_OUT:.*]] = pto.vstus %[[SCALE_ALIGN_ARG]], {{.*}}, {{.*}}, %[[SCALE_BASE_ARG]]
 // VPTO: %[[RECIP_LOW:[^ ]+]] = pto.vselr {{.*}} : !pto.vreg<128xbf16>, !pto.vreg<128xui16> -> !pto.vreg<128xbf16>
 // VPTO: %[[RECIP_HIGH:[^ ]+]] = pto.vselr {{.*}} : !pto.vreg<128xbf16>, !pto.vreg<128xui16> -> !pto.vreg<128xbf16>
-// VPTO: %[[SCALED_LOW:[^ ]+]] = pto.vmul %[[LOAD_LOW]], %[[RECIP_LOW]]
-// VPTO: %[[SCALED_HIGH:[^ ]+]] = pto.vmul %[[LOAD_HIGH]], %[[RECIP_HIGH]]
+// VPTO-NOT: scf.yield
+// VPTO: %[[SCALED_LOAD_LOW:[^,]+]], %{{.*}} = pto.vlds
+// VPTO: %[[SCALED_LOAD_HIGH:[^,]+]], %{{.*}} = pto.vlds
+// VPTO: %[[SCALED_LOW:[^ ]+]] = pto.vmul %[[SCALED_LOAD_LOW]], %[[RECIP_LOW]]
+// VPTO: %[[SCALED_HIGH:[^ ]+]] = pto.vmul %[[SCALED_LOAD_HIGH]], %[[RECIP_HIGH]]
 // VPTO: %[[WIDE_0:[^,]+]], %[[WIDE_1:[^,]+]] = pto.vintlv %[[ZERO]], %[[SCALED_LOW]]
 // VPTO: %[[WIDE_2:[^,]+]], %[[WIDE_3:[^,]+]] = pto.vintlv %[[ZERO]], %[[SCALED_HIGH]]
 // VPTO: %[[F32_0:[^ ]+]] = pto.vbitcast %[[WIDE_0]]

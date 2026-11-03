@@ -3261,7 +3261,8 @@ def public_vector_surface_probe(inp_tile: pto.Tile, out_tile: pto.Tile, stats_ti
     sub_carry = pto.pnot(sub_carry, integer_mask)
     # Register-level probe: only assert that pto.vsqz emits the op. The
     # compacted result is intentionally discarded here — a real compress_store
-    # would consume it via pto.init_align + pto.vstur(POST_UPDATE) + pto.vstar
+    # would consume it via pto.vsqz + pto.init_align + pto.vstur(POST_UPDATE)
+    # + pto.vstar (vstur needs the vsqz producer for SPR SQZN)
     # (see docs/user_guide/08-compute-operations.md). This probe deliberately
     # does NOT chain a masked pto.vsts, because the original col_mask selects
     # source lanes, not compacted positions, and would scatter the survivors.
@@ -4547,19 +4548,14 @@ def ui8_pad_surface_probe():
     pto.mte_gm_ub(gm_src, ub_dst, 0, 3, nburst=(1, 3, 32), pad=(pad_value, 0, 29))
 
 
-@pto.jit(target="a5", mode="explicit")
-def public_data_movement_surface_probe():
-    zero_u64 = pto.const(0, dtype=pto.ui64)
-    gm_src = pto.castptr(zero_u64, pto.ptr(pto.f16, "gm"))
-    gm_dst = pto.castptr(zero_u64, pto.ptr(pto.f16, "gm"))
-    ub_src = pto.castptr(zero_u64, pto.ptr(pto.f16, "ub"))
-    ub_dst = pto.castptr(zero_u64, pto.ptr(pto.f16, "ub"))
-    l1_dst = pto.castptr(zero_u64, pto.ptr(pto.f16, "mat"))
-    bias_dst = pto.castptr(zero_u64, pto.ptr(pto.f32, pto.MemorySpace.BIAS))
-    scaling_dst = pto.castptr(zero_u64, pto.ptr(pto.f32, pto.MemorySpace.SCALING))
-    ub_src_f32 = pto.castptr(zero_u64, pto.ptr(pto.f32, "ub"))
-    ub_dst_f32 = pto.castptr(zero_u64, pto.ptr(pto.f32, "ub"))
-
+@pto.func(returns=None)
+def _data_movement_grouped_dma_surface_probe(
+    gm_src: pto.ptr(pto.f16, "gm"),
+    gm_dst: pto.ptr(pto.f16, "gm"),
+    ub_src: pto.ptr(pto.f16, "ub"),
+    ub_dst: pto.ptr(pto.f16, "ub"),
+    l1_dst: pto.ptr(pto.f16, "mat"),
+):
     pto.mte_gm_ub(gm_src, ub_dst, 0, 256, nburst=(8, 256, 256), loops=[(4, 2048, 2048)])
     pto.mte_gm_ub(gm_src, ub_dst, 0, 200, nburst=(64, 200, 256), pad=(0.0, 0, 0))
     pto.mte_ub_gm(ub_src, gm_dst, 256, nburst=(64, 256, 1024))
@@ -4580,6 +4576,16 @@ def public_data_movement_surface_probe():
     pto.mte_ub_ub(ub_src, ub_dst, 8, nburst=(16, 0, 4))
     pto.mte_ub_l1(ub_src, l1_dst, 8, nburst=(16, 0, 4))
     pto.mte_gm_l1(gm_src, l1_dst, 256, nburst=(8, 256, 256), loops=[(2, 2048, 2048)])
+
+
+@pto.func(returns=None)
+def _data_movement_l1_setup_surface_probe(
+    gm_src: pto.ptr(pto.f16, "gm"),
+    l1_dst: pto.ptr(pto.f16, "mat"),
+    ub_dst: pto.ptr(pto.f16, "ub"),
+    bias_dst: pto.ptr(pto.f32, pto.MemorySpace.BIAS),
+    scaling_dst: pto.ptr(pto.f32, pto.MemorySpace.SCALING),
+):
     pto.raw_fill_l1(
         l1_dst,
         byte_offset=32,
@@ -4602,11 +4608,23 @@ def public_data_movement_surface_probe():
     pto.mte_l1_bt(l1_dst, bias_dst, 8, nburst=(1, 0, 0))
     pto.mte_l1_fb(l1_dst, scaling_dst, 8, nburst=(1, 0, 0))
 
+
+@pto.func(returns=None)
+def _data_movement_vector_memory_surface_probe(
+    ub_src: pto.ptr(pto.f16, "ub"),
+    ub_src_f32: pto.ptr(pto.f32, "ub"),
+    ub_dst: pto.ptr(pto.f16, "ub"),
+    ub_dst_f32: pto.ptr(pto.f32, "ub"),
+):
     load_align0 = pto.vldas(ub_src)
     vec0, load_align1 = pto.vldus(ub_src, load_align0)
     low0, high0 = pto.vldsx2(ub_src, pto.const(0), pto.DeinterleaveDist.DINTLV_B16)
+    # pto.vstur reads its store length from SPR SQZN; only pto.vsqz writes
+    # SQZN, and pto.init_align does not.  Emit the squeeze producer first.
+    mask16_full = pto.pset_b16(pto.MaskPattern.ALL)
+    squeezed = pto.vsqz(vec0, mask16_full)
     store_align0 = pto.init_align()
-    store_align1 = pto.vstur(store_align0, vec0, ub_dst, pto.PostUpdate.OFF)
+    store_align1 = pto.vstur(store_align0, squeezed, ub_dst, pto.PostUpdate.OFF)
     pto.vstar(store_align1, ub_dst)
 
     store_align2 = pto.init_align()
@@ -4616,7 +4634,6 @@ def public_data_movement_surface_probe():
     vec_f32 = pto.vlds(ub_src_f32, pto.const(0))
     offsets_i16 = pto.vbitcast(vec0, pto.i16)
     offsets_i32 = pto.vbitcast(vec_f32, pto.i32)
-    mask16_full = pto.pset_b16(pto.MaskPattern.ALL)
     mask32_full = pto.pset_b32(pto.MaskPattern.ALL)
     gather0 = pto.vgather2(ub_src_f32, offsets_i32, mask32_full)
     gather1 = pto.vgather2_bc(ub_src_f32, offsets_i32, mask32_full)
@@ -4635,6 +4652,24 @@ def public_data_movement_surface_probe():
     _ = gather1
     _ = gatherb
     _ = blocked
+
+
+@pto.jit(target="a5", mode="explicit")
+def public_data_movement_surface_probe():
+    zero_u64 = pto.const(0, dtype=pto.ui64)
+    gm_src = pto.castptr(zero_u64, pto.ptr(pto.f16, "gm"))
+    gm_dst = pto.castptr(zero_u64, pto.ptr(pto.f16, "gm"))
+    ub_src = pto.castptr(zero_u64, pto.ptr(pto.f16, "ub"))
+    ub_dst = pto.castptr(zero_u64, pto.ptr(pto.f16, "ub"))
+    l1_dst = pto.castptr(zero_u64, pto.ptr(pto.f16, "mat"))
+    bias_dst = pto.castptr(zero_u64, pto.ptr(pto.f32, pto.MemorySpace.BIAS))
+    scaling_dst = pto.castptr(zero_u64, pto.ptr(pto.f32, pto.MemorySpace.SCALING))
+    ub_src_f32 = pto.castptr(zero_u64, pto.ptr(pto.f32, "ub"))
+    ub_dst_f32 = pto.castptr(zero_u64, pto.ptr(pto.f32, "ub"))
+
+    _data_movement_grouped_dma_surface_probe(gm_src, gm_dst, ub_src, ub_dst, l1_dst)
+    _data_movement_l1_setup_surface_probe(gm_src, l1_dst, ub_dst, bias_dst, scaling_dst)
+    _data_movement_vector_memory_surface_probe(ub_src, ub_src_f32, ub_dst, ub_dst_f32)
 
 
 @pto.jit(target="a5", mode="explicit")

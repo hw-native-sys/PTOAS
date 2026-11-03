@@ -1086,10 +1086,12 @@ static void describeByMemoryEffects(Operation* op, VecMemoryAccessDescriptor& de
         break;
     }
 
-    // These stateful stores currently describe their UB base as a read effect
-    // because the pointer itself participates in the state update. Classify the
-    // actual UB access by operation semantics until their effects are split into
-    // pointer-state reads and memory writes.
+    // The stateful unaligned-store family also reports a Read on the same UB
+    // base because the pointer participates in the state update, so the
+    // first-VEC-effect scan above can pick that Read. Keep the explicit Store
+    // classification as the semantic source of truth even though the Write
+    // effect is now present; it also guards the analysis if the effect order
+    // changes.
     if (isa<pto::PstuOp, pto::VstusOp, pto::VsturOp>(op)) {
         desc.kind = VecScopeAccessKind::Store;
     }

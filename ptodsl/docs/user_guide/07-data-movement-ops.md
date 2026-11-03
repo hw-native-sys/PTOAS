@@ -792,7 +792,20 @@ the winning request is implementation-defined.
 
 ### Stateful store family
 
-For streaming unaligned stores with explicit alignment threading:
+For streaming unaligned stores with explicit alignment threading.
+
+**`vstus` and `vstur` are not interchangeable.** `vstus` is the
+non-squeezed form: its length is the scalar `offset` operand. `vstur` is the
+register-update form: its length is read from SPR `SQZN`, which only
+`pto.vsqz` writes, and only when the `VSQZ #st` hint is 1. `pto.init_align`
+only creates the SSA align-state carrier and does **not** initialize `SQZN`
+(its reset value is Undefined), so a `vstur` whose value is not produced by a
+`vsqz` (directly or through `pto.vbitcast`) is invalid: the store length —
+and therefore whether and what it writes — is undefined. The emitter sets
+`VSQZ #st=1` only for that value chain. Emit the squeeze producer on this
+value, or use `vstus` for a non-squeezed unaligned store. See
+[`pto.vstur` in the ISA reference](../../../docs/isa/micro-isa/03-vector-load-store.md#ptovstur)
+and the [`vsqz` store example](08-compute-operations.md#829-vector-rearrangement).
 
 #### `pto.vstus(align_in: AlignType, offset: Index, vec: VRegType, buf: PtrType) -> AlignType`
 
@@ -817,7 +830,21 @@ For streaming unaligned stores with explicit alignment threading:
 
 #### `pto.vstur(align_in: AlignType, vec: VRegType, buf: PtrType, mode: PostUpdate = PostUpdate.OFF) -> AlignType`
 
-**Description**: Register-update unaligned store. Updates only residual alignment state without base pointer update.
+**Description**: Register-update unaligned store. Updates only residual alignment state without base pointer update. The store length is not an operand: it is read from SPR `SQZN`.
+
+**SQZN requirement**: `vstur` requires its `vec` operand to be produced
+by a `pto.vsqz` directly or through `pto.vbitcast` — the value-chain form
+for which the emitter sets `VSQZ #st=1`. Only `VSQZ` writes `SQZN`;
+`pto.init_align` does not initialize it (its reset value is Undefined), and
+the AR-only `SPRCLR` / `SPRSTI` / `SPRSTS` ops do not touch it. If `SQZN`
+is Undefined, the store length — and therefore whether and what the store
+writes — is undefined, so the verifier rejects the sequence. Use `vstus` when
+the store is not squeezed.
+
+**Pairing limitation**: the verifier checks only the producer/value chain. The
+ISA also requires `#VSTUR == #(VSQZ with #st=1)` and a `VSTUR` between two
+such `VSQZ` (`visa.txt:311`-`:312`, `:5662`-`:5663`); that FIFO
+pairing and ordering remain the programmer's/emitter's responsibility.
 
 **Parameters**:
 
@@ -857,16 +884,38 @@ For streaming unaligned stores with explicit alignment threading:
 
 ---
 
-**Unaligned store stream pattern** — prime, thread, flush:
+**Unaligned store stream pattern (non-squeezed)** — prime, thread, flush:
 
 <!-- ptodsl-doc-test: {"mode":"compile_fragment","fixture":"data_movement.grouped_dma_ptrs","symbol":"data_movement_grouped_dma_ptrs_probe","compile":{}} -->
 ```python
 align = pto.init_align()
 vec0 = pto.vlds(ub_src_f32, pto.const(0))
-align = pto.vstur(align, vec0, ub_dst_f32, pto.PostUpdate.OFF)
+align = pto.vstus(align, pto.const(0), vec0, ub_dst_f32)
 align = pto.vstus(align, pto.const(32), vec0, ub_dst_f32)
 pto.vstas(align, ub_dst_f32, pto.const(64))
 ```
+
+**Squeezed store with `vstur`** — the `vsqz` producer is required because
+`vstur` reads its length from `SQZN`; `init_align` does not define it:
+
+<!-- ptodsl-doc-test: {"mode":"compile_fragment","fixture":"data_movement.grouped_dma_ptrs","symbol":"data_movement_grouped_dma_ptrs_probe","compile":{}} -->
+```python
+mask = pto.pset_b32(pto.MaskPattern.ALL)
+vec0 = pto.vlds(ub_src_f32, pto.const(0))
+compacted = pto.vsqz(vec0, mask)
+align = pto.init_align()
+align = pto.vstur(align, compacted, ub_dst_f32, pto.PostUpdate.ON)
+pto.vstar(align, ub_dst_f32)
+```
+
+**ISA provenance**: `VSTUR Vd, [Sn], AR, SQZN, USTd, #p` stores
+`length = SQZN` (`visa.txt:3176`); only `VSQZ` writes `SQZN`
+(`:5657`, `:5660`); `SQZN` resets to Undefined (`:833`);
+`SPRCLR` / `SPRSTI` / `SPRSTS` are AR-only (`:3275`, `:3294`,
+`:3309`); `VSQZ #st=1` pushes `SQZN` to `VSTUR` (`:5662`) and the
+`VSTUR` / `VSQZ #st=1` counts must match (`:5663`). With an undefined
+`SQZN` the store length, and therefore whether and what it writes, is
+undefined.
 
 ### Distribution enums reference
 

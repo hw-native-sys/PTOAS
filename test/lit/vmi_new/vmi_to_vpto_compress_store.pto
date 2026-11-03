@@ -6,18 +6,25 @@
 // INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
 // See LICENSE in the root of the software repository for the full text of the License.
 
-// RUN: pto-test-opt %s -vmi-to-vpto | FileCheck %s
+// RUN: pto-test-opt %s -vmi-to-vpto -pto-validate-vpto-ir | FileCheck %s
 
+// The compress_store lowering emits vsqz + init_align + vstur + vstar.  The
+// vsqz must stay in front of the vstur: VSTUR reads its store length from SPR
+// SQZN, and this is one of the in-tree producers that makes the sequence legal.
+// Running the authoring verifier here keeps the lowering from drifting into an
+// invalid init_align + vstur sequence.
 module {
   func.func @vmi_to_vpto_compress_store(
       %value: !pto.vmi.vreg<64xf32, #pto.vmi.layout<contiguous>>,
       %dst: !pto.ptr<f32, ub>,
       %offset: index,
       %mask: !pto.vmi.mask<64xb32, #pto.vmi.layout<contiguous>>) {
-    pto.vmi.compress_store %value, %dst[%offset], %mask
-        : !pto.vmi.vreg<64xf32, #pto.vmi.layout<contiguous>>,
-          !pto.ptr<f32, ub>,
-          !pto.vmi.mask<64xb32, #pto.vmi.layout<contiguous>>
+    pto.vecscope {
+      pto.vmi.compress_store %value, %dst[%offset], %mask
+          : !pto.vmi.vreg<64xf32, #pto.vmi.layout<contiguous>>,
+            !pto.ptr<f32, ub>,
+            !pto.vmi.mask<64xb32, #pto.vmi.layout<contiguous>>
+    }
     return
   }
 }

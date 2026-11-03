@@ -23,6 +23,13 @@ void PstuOp::getEffects(
   effects.emplace_back(MemoryEffects::Read::get(), &getAlignInMutable());
   effects.emplace_back(MemoryEffects::Read::get(), &getValueMutable());
   effects.emplace_back(MemoryEffects::Read::get(), &getBaseMutable());
+  // pto.pstu writes UB through %base, so the write effect is load-bearing
+  // even though the updated state is also returned as SSA results. Without it,
+  // DCE and other effect-based consumers treat the op as free of side effects
+  // and can delete it when the caller drops those results (issue 1716: the
+  // store disappeared from the emitted LLVM IR). The effect also lets
+  // effect-based classifications of the UB access see a store.
+  effects.emplace_back(MemoryEffects::Write::get(), &getBaseMutable());
 }
 
 LogicalResult PstuOp::verify() {

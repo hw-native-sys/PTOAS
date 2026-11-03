@@ -462,7 +462,7 @@ FailureOr<StringRef> buildVbrCallee(MLIRContext *context, Type resultType);
 FailureOr<StringRef> buildPstuCallee(MLIRContext *context, pto::PstuOp op);
 FailureOr<StringRef> buildVstusCallee(MLIRContext *context, Type valueType);
 FailureOr<StringRef> buildVstusPostCallee(MLIRContext *context, Type valueType);
-StringRef buildVsturCallee(MLIRContext *context);
+FailureOr<StringRef> buildVsturCallee(MLIRContext *context, Type valueType);
 StringRef buildInitAlignCallee(MLIRContext *context);
 StringRef buildSprclrCallee(MLIRContext *context);
 StringRef buildSprstiCallee(MLIRContext *context, bool post);

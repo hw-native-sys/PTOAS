@@ -721,8 +721,16 @@ These ops make reference-updated state explicit as SSA results.
   begin from `AR = 0`; if the surrounding program does not already guarantee
   that, the hardware sequence should clear `SPR AR` before the first dependent
   `pto.vstur`. The first `%align_in` in the stream should come from
-  `pto.init_align`. `pto.vstur` also consumes the fixed `SPR SQZN` state, so a
-  preceding squeeze producer such as `pto.vsqz` / `pto.vusqz` MUST establish
-  the byte count before the store. `MODE` MUST be one of `POST_UPDATE` or
-  `NO_POST_UPDATE`.
+  `pto.init_align`. `pto.vstur` also consumes the fixed `SPR SQZN` state.
+  Only `pto.vsqz` writes `SQZN`, and only when its `#st` hint is 1; the
+  VSQZ result MUST reach this store's value operand directly or through
+  `pto.vbitcast` in the same function. `pto.init_align` does not initialize
+  `SQZN` (its reset value is Undefined), and the AR-only `SPRCLR` /
+  `SPRSTI` / `SPRSTS` ops do not write it. A `pto.vstur` without such a
+  value-chain producer is invalid: `SQZN` is Undefined, so the store length —
+  and therefore whether and what it writes — is undefined. The ISA also
+  requires `#VSTUR == #(VSQZ with #st=1)` and a `VSTUR` between two such
+  `VSQZ` (`visa.txt:311`-`:312`, `:5662`-`:5663`); the verifier checks
+  only the local value-chain producer. Use `pto.vstus` when the store is not
+  squeezed. `MODE` MUST be one of `POST_UPDATE` or `NO_POST_UPDATE`.
 - **Latency:** **9** cycles.

@@ -1,0 +1,69 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+
+// An unaligned-store step whose align/base result is not consumed is still a
+// memory write and MUST survive to the intrinsic call. Issue 1716: these ops
+// used to be reported as read-only, so DCE deleted the store (and the value
+// chain feeding it) whenever the caller dropped the updated align state.
+
+// RUN: ptoas --pto-arch=a5 --pto-backend=vpto --emit-vpto-llvm-ir %s -o - 2>&1 | FileCheck %s
+
+module attributes {pto.target_arch = "a5", pto.kernel_kind = #pto.kernel_kind<vector>} {
+  func.func @vstus_align_out_unused(%src: !pto.ptr<f32, ub>,
+                                    %dst: !pto.ptr<f32, ub>) attributes {pto.kernel} {
+    %c0 = arith.constant 0 : index
+    %c0_i32 = arith.constant 0 : i32
+    pto.vecscope {
+      %vec = pto.vlds %src[%c0] : !pto.ptr<f32, ub> -> !pto.vreg<64xf32>
+      %align = pto.init_align : !pto.align
+      %align_next = pto.vstus %align, %c0_i32, %vec, %dst
+          : !pto.align, i32, !pto.vreg<64xf32>, !pto.ptr<f32, ub> -> !pto.align
+    }
+    return
+  }
+
+  func.func @vstur_align_out_unused(%src: !pto.ptr<f32, ub>,
+                                    %dst: !pto.ptr<f32, ub>) attributes {pto.kernel} {
+    %c0 = arith.constant 0 : index
+    pto.vecscope {
+      %vec = pto.vlds %src[%c0] : !pto.ptr<f32, ub> -> !pto.vreg<64xf32>
+      %full = pto.pset_b32 "PAT_ALL" : !pto.mask<b32>
+      // vstur reads its length from SPR SQZN; emit the squeeze producer first.
+      %sqz = pto.vsqz %vec, %full : !pto.vreg<64xf32>, !pto.mask<b32> -> !pto.vreg<64xf32>
+      %align = pto.init_align : !pto.align
+      %align_out = pto.vstur %align, %sqz, %dst, "NO_POST_UPDATE"
+          : !pto.align, !pto.vreg<64xf32>, !pto.ptr<f32, ub> -> !pto.align
+    }
+    return
+  }
+
+  func.func @pstu_results_unused(%src: !pto.ptr<i32, ub>,
+                                 %pred: !pto.ptr<i32, ub>) attributes {pto.kernel} {
+    %c0 = arith.constant 0 : index
+    %zero = arith.constant 0 : i32
+    pto.vecscope {
+      %vec = pto.vlds %src[%c0] : !pto.ptr<i32, ub> -> !pto.vreg<64xi32>
+      %full = pto.pset_b32 "PAT_ALL" : !pto.mask<b32>
+      %mask = pto.vcmps %vec, %zero, %full, "gt"
+          : !pto.vreg<64xi32>, i32, !pto.mask<b32> -> !pto.mask<b32>
+      %align = pto.init_align : !pto.align
+      %align_out, %base_out = pto.pstu %align, %mask, %pred
+          : !pto.align, !pto.mask<b32>, !pto.ptr<i32, ub> -> !pto.align, !pto.ptr<i32, ub>
+    }
+    return
+  }
+}
+
+// CHECK-LABEL: define void @vstus_align_out_unused_mix_aiv
+// CHECK: call <32 x i8> @llvm.hivm.vstus.v64f32
+
+// CHECK-LABEL: define void @vstur_align_out_unused_mix_aiv
+// CHECK: call <32 x i8> @llvm.hivm.vstur.v64f32
+
+// CHECK-LABEL: define void @pstu_results_unused_mix_aiv
+// CHECK: call { <32 x i8>, ptr addrspace(6) } @llvm.hivm.pstu.b32

@@ -1,0 +1,71 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+
+// RUN: pto-test-opt %s -pto-validate-vpto-ir | FileCheck %s
+
+// A VSQZ defines SQZN for a VSTUR only when the VSQZ result reaches the store's
+// value operand, directly or through pto.vbitcast; that is also the form for
+// which the emitter sets VSQZ #st=1. A same-block producer and a producer in an
+// enclosing region are both accepted.
+module attributes {pto.target_arch = "a5", pto.kernel_kind = #pto.kernel_kind<vector>} {
+  func.func @vstur_with_vsqz(%value: !pto.vreg<64xf32>, %mask: !pto.mask<b32>,
+                             %dst: !pto.ptr<f32, ub>) {
+    pto.vecscope {
+      %sqz = pto.vsqz %value, %mask
+          : !pto.vreg<64xf32>, !pto.mask<b32> -> !pto.vreg<64xf32>
+      %align = pto.init_align : !pto.align
+      %next = pto.vstur %align, %sqz, %dst, "NO_POST_UPDATE"
+          : !pto.align, !pto.vreg<64xf32>, !pto.ptr<f32, ub> -> !pto.align
+      pto.vstar %next, %dst : !pto.align, !pto.ptr<f32, ub>
+    }
+    return
+  }
+
+  func.func @vstur_with_vbitcast_producer(%value: !pto.vreg<64xf32>,
+                                          %mask: !pto.mask<b32>,
+                                          %dst: !pto.ptr<i32, ub>) {
+    pto.vecscope {
+      %sqz = pto.vsqz %value, %mask
+          : !pto.vreg<64xf32>, !pto.mask<b32> -> !pto.vreg<64xf32>
+      %bits = pto.vbitcast %sqz : !pto.vreg<64xf32> -> !pto.vreg<64xi32>
+      %align = pto.init_align : !pto.align
+      %next = pto.vstur %align, %bits, %dst, "NO_POST_UPDATE"
+          : !pto.align, !pto.vreg<64xi32>, !pto.ptr<i32, ub> -> !pto.align
+      pto.vstar %next, %dst : !pto.align, !pto.ptr<i32, ub>
+    }
+    return
+  }
+
+  func.func @vstur_dominated_across_region(%value: !pto.vreg<64xf32>,
+                                           %mask: !pto.mask<b32>,
+                                           %dst: !pto.ptr<f32, ub>, %cond: i1) {
+    pto.vecscope {
+      %sqz = pto.vsqz %value, %mask
+          : !pto.vreg<64xf32>, !pto.mask<b32> -> !pto.vreg<64xf32>
+      %align = pto.init_align : !pto.align
+      scf.if %cond {
+        %next = pto.vstur %align, %sqz, %dst, "NO_POST_UPDATE"
+            : !pto.align, !pto.vreg<64xf32>, !pto.ptr<f32, ub> -> !pto.align
+        pto.vstar %next, %dst : !pto.align, !pto.ptr<f32, ub>
+      }
+    }
+    return
+  }
+}
+
+// CHECK-LABEL: func.func @vstur_with_vsqz
+// CHECK: pto.vsqz
+// CHECK: pto.vstur
+// CHECK-LABEL: func.func @vstur_with_vbitcast_producer
+// CHECK: pto.vsqz
+// CHECK: pto.vbitcast
+// CHECK: pto.vstur
+// CHECK-LABEL: func.func @vstur_dominated_across_region
+// CHECK: pto.vsqz
+// CHECK: scf.if
+// CHECK: pto.vstur

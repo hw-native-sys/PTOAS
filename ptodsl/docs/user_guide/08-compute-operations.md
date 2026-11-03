@@ -2610,7 +2610,17 @@ contents but does not itself perform any store.
 a UB base through the alignment-coupled store chain. `vsqz` only compacts the
 register; the dense store must be performed with `pto.vstur` (the required
 consumer that lets the VPTO LLVM emitter set `VSQZ #st=1`), followed by
-`pto.vstar` to flush the trailing bytes. Do **not** feed the compacted vector
+`pto.vstar` to flush the trailing bytes. `pto.vstur` takes its store length
+from SPR `SQZN`, which only `pto.vsqz` writes, and only when the `VSQZ #st`
+hint is 1; `pto.init_align` does not initialize it. Keep the `vsqz` result
+feeding the `vstur` (directly or through `pto.vbitcast`) in the same
+function — that is what makes the emitter set `#st=1`, and the verifier
+rejects the store otherwise. If `SQZN` is Undefined, the store length — and
+therefore whether and what it writes — is undefined. The 1:1
+`VSTUR` / `VSQZ #st=1` FIFO pairing is still the programmer's/emitter's
+responsibility. See
+[the `vstur` requirement](07-data-movement-ops.md#stateful-store-family).
+Do **not** feed the compacted vector
 back to `pto.vsts(..., mask)` with the original mask — the original mask selects
 source lanes, not the compacted positions, so it would write the surviving
 elements to the wrong destinations.

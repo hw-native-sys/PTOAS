@@ -8,6 +8,8 @@
 
 #include "VPTOCANN900LLVMEmitterInternal.h"
 
+#include "llvm/ADT/SmallPtrSet.h"
+
 namespace mlir::pto::detail {
 
 LLVM::LLVMArrayType getVPTOLocalArrayStorageType(pto::LocalArrayType arrayType, Builder &builder) {
@@ -736,17 +738,28 @@ std::optional<VcvtContract> lookupVcvtContract(VcvtElemKind src, VcvtElemKind ds
   }
   return std::nullopt;
 }
-// VSQZ #st hint must only be set when the compacted vector feeds VSTUR.
-// Emitting #st=1 without a matching VSTUR consumer can deadlock hardware queues.
+// VSQZ #st=1 pushes the squeezed byte count into SQZN for a following VSTUR.
+// Set it only when the compacted vector reaches a VSTUR value, directly or
+// through pto.vbitcast view ops; emitting #st=1 without a matching VSTUR
+// consumer can deadlock the hardware SQZN queue. A VSQZ used anywhere else is
+// a plain register compaction and must keep #st=0.
 uint64_t determineVsqzStoreHint(pto::VsqzOp vsqz) {
-  Value result = vsqz.getResult();
-  for (Operation *user : result.getUsers()) {
-    auto vstur = dyn_cast<pto::VsturOp>(user);
-    if (!vstur) {
-      continue;
-    }
-    if (vstur.getValue() == result) {
-      return 1;
+  SmallVector<Value, 4> worklist{vsqz.getResult()};
+  SmallPtrSet<Operation *, 8> visitedBitcasts;
+  while (!worklist.empty()) {
+    Value current = worklist.pop_back_val();
+    for (Operation *user : current.getUsers()) {
+      if (auto vstur = dyn_cast<pto::VsturOp>(user)) {
+        if (vstur.getValue() == current) {
+          return 1;
+        }
+        continue;
+      }
+      if (auto bitcast = dyn_cast<pto::VbitcastOp>(user)) {
+        if (visitedBitcasts.insert(bitcast).second) {
+          worklist.push_back(bitcast.getResult());
+        }
+      }
     }
   }
   return 0;

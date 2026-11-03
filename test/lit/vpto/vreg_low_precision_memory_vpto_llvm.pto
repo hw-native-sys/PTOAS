@@ -55,7 +55,11 @@ module attributes {pto.target_arch = "a5", pto.kernel_kind = #pto.kernel_kind<ve
       %loaded, %align1 = pto.vldus %src, %load_align : !pto.ptr<!pto.hif8, ub>, !pto.align -> !pto.vreg<256x!pto.hif8>, !pto.align
       %store_align = pto.init_align : !pto.align
       %align2 = pto.vstus %store_align, %c0_i32, %loaded, %dst : !pto.align, i32, !pto.vreg<256x!pto.hif8>, !pto.ptr<!pto.hif8, ub> -> !pto.align
-      %align3 = pto.vstur %align2, %value, %dst, "POST_UPDATE" : !pto.align, !pto.vreg<256x!pto.hif8>, !pto.ptr<!pto.hif8, ub> -> !pto.align
+      // VSTUR would take its store length from SPR SQZN, which a low-precision
+      // VREG cannot define (pto.vsqz rejects low-precision operands). Use the
+      // non-squeezed VSTUS form so this test does not teach the illegal
+      // init_align + vstur sequence.
+      %align3 = pto.vstus %align2, %c0_i32, %value, %dst : !pto.align, i32, !pto.vreg<256x!pto.hif8>, !pto.ptr<!pto.hif8, ub> -> !pto.align
       pto.vstar %align3, %dst : !pto.align, !pto.ptr<!pto.hif8, ub>
     }
     return
@@ -68,6 +72,34 @@ module attributes {pto.target_arch = "a5", pto.kernel_kind = #pto.kernel_kind<ve
       %mask = pto.pset_b8 "PAT_ALL" : !pto.mask<b8>
       %u = pto.uvld %src[%c0] : !pto.ptr<f8E4M3FN, ub> -> !pto.vreg<256xf8E4M3FN>
       pto.vsts %u, %dst[%c0], %mask : !pto.vreg<256xf8E4M3FN>, !pto.ptr<f8E4M3FN, ub>, !pto.mask<b8>
+    }
+    return
+  }
+
+  // Issue 1716: an unused align/base result must not turn these stores into
+  // dead code -- they write UB whatever the caller does with the state.
+  func.func @lowp_unaligned_store_unused_result(%src: !pto.ptr<!pto.hif8, ub>,
+                                              %dst: !pto.ptr<!pto.hif8, ub>,
+                                              %pred: !pto.ptr<ui32, ub>) attributes {pto.kernel} {
+    %c0 = arith.constant 0 : index
+    %c0_i32 = arith.constant 0 : i32
+    pto.vecscope {
+      %loaded = pto.vlds %src[%c0] : !pto.ptr<!pto.hif8, ub> -> !pto.vreg<256x!pto.hif8>
+      %full = pto.pset_b32 "PAT_ALL" : !pto.mask<b32>
+      // VSTUR reads its length from SPR SQZN.  A low-precision VREG cannot be
+      // squeezed directly (pto.vsqz rejects low-precision operands), so define
+      // SQZN by squeezing the same storage viewed as f32 and view it back.
+      %loaded_f32 = pto.vbitcast %loaded : !pto.vreg<256x!pto.hif8> -> !pto.vreg<64xf32>
+      %sqz_f32 = pto.vsqz %loaded_f32, %full
+          : !pto.vreg<64xf32>, !pto.mask<b32> -> !pto.vreg<64xf32>
+      %squeezed = pto.vbitcast %sqz_f32 : !pto.vreg<64xf32> -> !pto.vreg<256x!pto.hif8>
+      %store_align = pto.init_align : !pto.align
+      %align_vstus = pto.vstus %store_align, %c0_i32, %loaded, %dst
+          : !pto.align, i32, !pto.vreg<256x!pto.hif8>, !pto.ptr<!pto.hif8, ub> -> !pto.align
+      %align_vstur = pto.vstur %align_vstus, %squeezed, %dst, "NO_POST_UPDATE"
+          : !pto.align, !pto.vreg<256x!pto.hif8>, !pto.ptr<!pto.hif8, ub> -> !pto.align
+      %align_pstu, %base_pstu = pto.pstu %align_vstur, %full, %pred
+          : !pto.align, !pto.mask<b32>, !pto.ptr<ui32, ub> -> !pto.align, !pto.ptr<ui32, ub>
     }
     return
   }
@@ -92,10 +124,16 @@ module attributes {pto.target_arch = "a5", pto.kernel_kind = #pto.kernel_kind<ve
 // CHECK: call <32 x i8> @llvm.hivm.vldas
 // CANN: call { <256 x i8>, <32 x i8>, ptr addrspace(6) } @llvm.hivm.vldus.v256s8
 // CANN: call <32 x i8> @llvm.hivm.vstus.v256s8
-// CHECK: call <32 x i8> @llvm.hivm.vstur
+// CHECK: call <32 x i8> @llvm.hivm.vstus
 // CHECK: call void @llvm.hivm.vstar
 
 // CHECK-LABEL: define void @lowp_uvld_expansion_mix_aiv
 // CHECK: call <32 x i8> @llvm.hivm.vldas
 // CHECK: call { <256 x i8>, <32 x i8>, ptr addrspace(6) } @llvm.hivm.vldus.v256f8e4m3
 // CHECK: call void @llvm.hivm.vstsx1.v256f8e4m3
+
+// CHECK-LABEL: define void @lowp_unaligned_store_unused_result_mix_aiv
+// CHECK-DAG: call <64 x float> @llvm.hivm.vsqz.x.v64f32({{.*}}, i32 1)
+// CHECK-DAG: call <32 x i8> @llvm.hivm.vstus.v256s8
+// CHECK-DAG: call <32 x i8> @llvm.hivm.vstur.v256s8
+// CHECK-DAG: call { <32 x i8>, ptr addrspace(6) } @llvm.hivm.pstu.b32

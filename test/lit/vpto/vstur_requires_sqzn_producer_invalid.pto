@@ -1,0 +1,45 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+
+// VSTUR's store length is read from SPR SQZN. Only VSQZ writes SQZN, and
+// pto.init_align only creates the align-state carrier; it does not initialize
+// SQZN. A VSTUR whose value is not produced by a VSQZ therefore has an
+// undefined store length and must be rejected.
+//
+// RUN: not pto-test-opt %s 2>&1 | FileCheck %s
+
+module attributes {pto.target_arch = "a5", pto.kernel_kind = #pto.kernel_kind<vector>} {
+  func.func @vstur_without_sqzn(%value: !pto.vreg<64xf32>, %dst: !pto.ptr<f32, ub>) {
+    pto.vecscope {
+      %align = pto.init_align : !pto.align
+      %next = pto.vstur %align, %value, %dst, "NO_POST_UPDATE"
+          : !pto.align, !pto.vreg<64xf32>, !pto.ptr<f32, ub> -> !pto.align
+      pto.vstar %next, %dst : !pto.align, !pto.ptr<f32, ub>
+    }
+    return
+  }
+
+  // A VSQZ in another function cannot be the value producer for the store
+  // above, and its SQZN does not reach this function.
+  func.func @sqzn_producer_in_another_function(
+      %value: !pto.vreg<64xf32>, %mask: !pto.mask<b32>) {
+    pto.vecscope {
+      %sqz = pto.vsqz %value, %mask
+          : !pto.vreg<64xf32>, !pto.mask<b32> -> !pto.vreg<64xf32>
+    }
+    return
+  }
+}
+
+// CHECK: error: 'pto.vstur' op requires its value to be produced by a pto.vsqz (directly or through pto.vbitcast)
+// CHECK-SAME: VSTUR's store length comes from SPR SQZN
+// CHECK-SAME: only VSQZ writes SQZN
+// CHECK-SAME: pto.init_align does not initialize it
+// CHECK-SAME: sets #st=1
+// CHECK-SAME: use pto.vstus for a non-squeezed unaligned store
+// CHECK-SAME: SQZN is Undefined

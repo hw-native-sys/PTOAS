@@ -98,7 +98,14 @@ FailureOr<StringRef> buildVstusPostCallee(MLIRContext *context, Type valueType) 
   return StringAttr::get(context, "llvm.hivm.vstus.post.v" + std::to_string(*lanes) + vec).getValue();
 }
 
-StringRef buildVsturCallee(MLIRContext *context) { return StringAttr::get(context, "llvm.hivm.vstur").getValue(); }
+FailureOr<StringRef> buildVsturCallee(MLIRContext *context, Type valueType) {
+  std::string vec = getCANN900MemoryElementTypeFragment(getElementTypeFromVectorLike(valueType));
+  auto lanes = getElementCountFromVectorLike(valueType);
+  if (vec.empty() || !lanes) {
+    return failure();
+  }
+  return StringAttr::get(context, "llvm.hivm.vstur.v" + std::to_string(*lanes) + vec).getValue();
+}
 
 StringRef buildInitAlignCallee(MLIRContext *context) {
   return StringAttr::get(context, "llvm.hivm.init.vector.align.data").getValue();
