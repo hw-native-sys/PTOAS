@@ -87,8 +87,8 @@ module {
 
 // A5-LABEL: func.func @index_no_tmp
 // A5-COUNT-3: pto.alloc_tile
-// A5-NOT: pto.alloc_tile
-// A5: pto.tgather ins(%{{[^,]+}}, %{{[^, ]+}} :
+// A5: %[[ITMP:.*]] = pto.alloc_tile{{.*}} : !pto.tile_buf<vec, 2x32xi32>
+// A5: pto.tgather ins(%{{[^,]+}}, %{{[^,]+}}, %[[ITMP]] :
 // A5-LABEL: func.func @compare_no_tmp
 // A5: %[[PLACEHOLDER:.*]] = pto.alloc_tile {{.*}} : !pto.tile_buf<vec, 1x16xf16>
 // A5: pto.tgather ins(%{{[^,]+}}, %{{[^,]+}}, %[[PLACEHOLDER]] :

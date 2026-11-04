@@ -47,4 +47,4 @@ module {
 }
 
 // CHECK: error: 'pto.tgather' op requires explicit tmp when PlanMemory is skipped
-// A5: TGATHER({{[^,)]+}}, {{[^,)]+}}, {{[^,)]+}});
+// A5: TGATHER({{[^,)]+}}, {{[^,)]+}}, {{[^,)]+}}, {{[^,)]+}});

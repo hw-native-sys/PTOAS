@@ -82,7 +82,8 @@ struct PTOGatherToEmitC : public OpConversionPattern<pto::TGatherOp> {
     return success();
   }
 
-  // TGATHER(dst, src0, indices[, tmp]) without template arguments.
+  // TGATHER(dst, src0, indices, tmp) without template arguments. The
+  // materialization pass supplies an ABI placeholder for A5 index-form.
   LogicalResult emitIndexedGather(pto::TGatherOp op, OpAdaptor adaptor,
                                   ConversionPatternRewriter &rewriter,
                                   Value idx) const {
@@ -90,9 +91,13 @@ struct PTOGatherToEmitC : public OpConversionPattern<pto::TGatherOp> {
     Value dst = adaptor.getDst();
     Value src0 = adaptor.getSrc();
     idx = peelUnrealized(idx);
-    SmallVector<Value, mlir::pto::kValue4> operands{dst, src0, idx};
-    if (Value tmp = adaptor.getTmp())
-      operands.push_back(peelUnrealized(tmp));
+    Value tmp = adaptor.getTmp();
+    if (!tmp) {
+      return op.emitOpError(
+          "index-form tgather requires a materialized tmp before EmitC");
+    }
+    SmallVector<Value, mlir::pto::kValue4> operands{dst, src0, idx,
+                                                     peelUnrealized(tmp)};
 
     rewriter.create<emitc::CallOpaqueOp>(
         loc, TypeRange{}, "TGATHER",

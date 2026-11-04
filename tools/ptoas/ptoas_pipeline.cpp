@@ -1734,7 +1734,8 @@ static LogicalResult populateMainLoweringPasses(PassManager &pm,
 
   pm.addNestedPass<mlir::func::FuncOp>(
       pto::createPTOMaterializeImplicitTmpPass(
-          effectiveLevel == PTOBuildLevel::Level3));
+          effectiveLevel == PTOBuildLevel::Level3,
+          effectiveBackend == PTOBackend::EmitC));
   pm.addNestedPass<mlir::func::FuncOp>(
       pto::createPTORematerializeFixpipeVectorQuantPass());
 

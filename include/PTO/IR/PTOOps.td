@@ -5013,10 +5013,12 @@ def TGatherOp : PTO_TOp<"tgather", [
 ]> {
   let summary = "Gather/select elements using indices, scalar comparison, or a mask pattern (tilebuf, DPS)";
   let description = [{
-    Index and compare forms accept an optional temporary tile. Level1/level2
-    supply omitted scratch tiles when needed. Level3 requires an explicit tmp
-    for compare forms and A2/A3 index forms. A5 index and mask-pattern forms
-    need no tmp.
+    Index and compare forms accept an optional temporary tile in PTO IR.
+    Lowering materializes an omitted tmp when required by the target ABI.
+    Level1/level2 allocate omitted scratch tiles; level3 requires explicit
+    tmp for operations whose implementation consumes scratch. A5 index-form
+    does not consume tmp algorithmically, but the current PTO-ISA overload
+    requires an ABI placeholder. Mask-pattern forms do not take tmp.
 
     Compare-form kValue is authored as a scalar with the src element type;
     PTOMaterializeImplicitTmp lowers it to a K tile (same element type, one

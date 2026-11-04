@@ -22,6 +22,6 @@ module {
 }
 
 // CHECK-LABEL: tgather_a5_index_no_tmp
-// CHECK: TGATHER({{[^,)]+}}, {{[^,)]+}}, {{[^,)]+}});
+// CHECK: TGATHER({{[^,)]+}}, {{[^,)]+}}, {{[^,)]+}}, {{[^,)]+}});
 // CHECK-LABEL: tgather_a5_index_with_tmp
 // CHECK: TGATHER({{[^,)]+}}, {{[^,)]+}}, {{[^,)]+}}, {{[^,)]+}});

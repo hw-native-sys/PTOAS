@@ -324,13 +324,24 @@ static void rebuildTGatherWithTmp(pto::TGatherOp op, Value tmp) {
                                         op.getKValue() ? 1 : 0});
 }
 
-static LogicalResult materializeTGatherTmp(pto::TGatherOp op, bool requireExplicitTmp, MLIRContext *ctx) {
+static LogicalResult materializeTGatherTmp(pto::TGatherOp op,
+                                           bool requireExplicitTmp,
+                                           bool materializeA5IndexPlaceholder,
+                                           MLIRContext *ctx) {
   bool isA5 = pto::getTargetArch(op) == pto::PTOArch::A5;
-  bool needsTmp = !op.getTmp() && !op.hasMaskForm() && !(isA5 && op.hasIndexForm());
+  // The current PTO-ISA index-form overload takes a tmp operand on every
+  // architecture. A5 does not consume this buffer algorithmically, but it
+  // still needs an ABI placeholder before EmitC. Mask-form remains the only
+  // form that does not take a tmp operand.
+  bool needsTmp = !op.getTmp() && !op.hasMaskForm();
   if (!needsTmp) {
     return success();
   }
-  if (requireExplicitTmp) {
+  bool isA5IndexPlaceholder = isA5 && op.hasIndexForm();
+  if (isA5IndexPlaceholder && !materializeA5IndexPlaceholder) {
+    return success();
+  }
+  if (requireExplicitTmp && !isA5IndexPlaceholder) {
     return op.emitOpError("requires explicit tmp when PlanMemory is skipped");
   }
   FailureOr<pto::TileBufType> type =
@@ -1356,8 +1367,10 @@ struct PTOMaterializeImplicitTmpPass
   MLIR_DEFINE_EXPLICIT_INTERNAL_INLINE_TYPE_ID(PTOMaterializeImplicitTmpPass)
 
   PTOMaterializeImplicitTmpPass() = default;
-  explicit PTOMaterializeImplicitTmpPass(bool requireExplicitTmp)
-      : requireExplicitTmp(requireExplicitTmp) {}
+  PTOMaterializeImplicitTmpPass(bool requireExplicitTmp,
+                                bool materializeA5IndexPlaceholder)
+      : requireExplicitTmp(requireExplicitTmp),
+        materializeA5IndexPlaceholder(materializeA5IndexPlaceholder) {}
 
   StringRef getArgument() const final { return "pto-materialize-implicit-tmp"; }
   StringRef getDescription() const final {
@@ -1442,7 +1455,6 @@ struct PTOMaterializeImplicitTmpPass
   // Materialize implicit tmp for ops with an optional tmp operand.
   LogicalResult materializeOptionalTmpOps() {
     func::FuncOp func = getOperation();
-    MLIRContext *ctx = func.getContext();
     SmallVector<Operation *> optionalTmpOps;
     func.walk([&optionalTmpOps](Operation *op) {
       if (isa<pto::TColSumOp, pto::TQuantOp, pto::TPowOp,
@@ -1453,40 +1465,7 @@ struct PTOMaterializeImplicitTmpPass
     });
 
     for (Operation *op : optionalTmpOps) {
-      LogicalResult result =
-          llvm::TypeSwitch<Operation *, LogicalResult>(op)
-              .Case<pto::TColSumOp>([this, ctx](auto typedOp) {
-                return replaceTColSumWithTmp(typedOp, requireExplicitTmp, ctx);
-              })
-              .Case<pto::TQuantOp>([this, ctx](auto typedOp) {
-                return replaceTQuantWithTmp(typedOp, requireExplicitTmp, ctx);
-              })
-              .Case<pto::TPowOp>([this, ctx](auto typedOp) {
-                return replaceTPowWithTmp(typedOp, requireExplicitTmp, ctx);
-              })
-              .Case<pto::TPowSOp>([this, ctx](auto typedOp) {
-                return replaceTPowSWithTmp(typedOp, requireExplicitTmp, ctx);
-              })
-              .Case<pto::TSort32Op>([this, ctx](auto typedOp) {
-                return replaceTSort32WithTmp(typedOp, requireExplicitTmp, ctx);
-              })
-              .Case<pto::TXorOp>([this, ctx](auto typedOp) {
-                return replaceTXorWithTmp(typedOp, requireExplicitTmp, ctx);
-              })
-              .Case<pto::TXorSOp>([this, ctx](auto typedOp) {
-                return replaceTXorSWithTmp(typedOp, requireExplicitTmp, ctx);
-              })
-              .Case<pto::TCvtOp>([this, ctx](auto typedOp) {
-                return materializeTCvtTmp(typedOp, requireExplicitTmp, ctx);
-              })
-              .Case<pto::TMrgSortOp>([this, ctx](auto typedOp) {
-                return materializeTMrgSortTmp(typedOp, requireExplicitTmp, ctx);
-              })
-              .Case<pto::TGatherOp>([this, ctx](auto typedOp) {
-                return materializeTGatherTmp(typedOp, requireExplicitTmp, ctx);
-              })
-              .Default([](Operation *) { return success(); });
-      if (mlir::failed(result)) {
+      if (mlir::failed(materializeOptionalTmpOp(op, func.getContext()))) {
         return failure();
       }
     }
@@ -1583,12 +1562,51 @@ struct PTOMaterializeImplicitTmpPass
   }
 
 private:
+  LogicalResult materializeOptionalTmpOp(Operation *op, MLIRContext *ctx) {
+    return llvm::TypeSwitch<Operation *, LogicalResult>(op)
+        .Case<pto::TColSumOp>([this, ctx](auto typedOp) {
+          return replaceTColSumWithTmp(typedOp, requireExplicitTmp, ctx);
+        })
+        .Case<pto::TQuantOp>([this, ctx](auto typedOp) {
+          return replaceTQuantWithTmp(typedOp, requireExplicitTmp, ctx);
+        })
+        .Case<pto::TPowOp>([this, ctx](auto typedOp) {
+          return replaceTPowWithTmp(typedOp, requireExplicitTmp, ctx);
+        })
+        .Case<pto::TPowSOp>([this, ctx](auto typedOp) {
+          return replaceTPowSWithTmp(typedOp, requireExplicitTmp, ctx);
+        })
+        .Case<pto::TSort32Op>([this, ctx](auto typedOp) {
+          return replaceTSort32WithTmp(typedOp, requireExplicitTmp, ctx);
+        })
+        .Case<pto::TXorOp>([this, ctx](auto typedOp) {
+          return replaceTXorWithTmp(typedOp, requireExplicitTmp, ctx);
+        })
+        .Case<pto::TXorSOp>([this, ctx](auto typedOp) {
+          return replaceTXorSWithTmp(typedOp, requireExplicitTmp, ctx);
+        })
+        .Case<pto::TCvtOp>([this, ctx](auto typedOp) {
+          return materializeTCvtTmp(typedOp, requireExplicitTmp, ctx);
+        })
+        .Case<pto::TMrgSortOp>([this, ctx](auto typedOp) {
+          return materializeTMrgSortTmp(typedOp, requireExplicitTmp, ctx);
+        })
+        .Case<pto::TGatherOp>([this, ctx](auto typedOp) {
+          return materializeTGatherTmp(typedOp, requireExplicitTmp,
+                                       materializeA5IndexPlaceholder, ctx);
+        })
+        .Default([](Operation *) { return success(); });
+  }
+
   bool requireExplicitTmp = false;
+  bool materializeA5IndexPlaceholder = true;
 };
 
 } // namespace
 
 std::unique_ptr<Pass>
-mlir::pto::createPTOMaterializeImplicitTmpPass(bool requireExplicitTmp) {
-  return std::make_unique<PTOMaterializeImplicitTmpPass>(requireExplicitTmp);
+mlir::pto::createPTOMaterializeImplicitTmpPass(
+    bool requireExplicitTmp, bool materializeA5IndexPlaceholder) {
+  return std::make_unique<PTOMaterializeImplicitTmpPass>(
+      requireExplicitTmp, materializeA5IndexPlaceholder);
 }
