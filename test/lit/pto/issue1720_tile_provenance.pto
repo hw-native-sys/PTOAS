@@ -1,0 +1,95 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+
+// RUN: sed -E 's/ addr = %addr_[ab]//g' %s > %t.level2.pto
+// RUN: ptoas %t.level2.pto --pto-arch=a2 --pto-level=level2 -o %t.cpp
+// RUN: ptoas %t.level2.pto --pto-arch=a3 --pto-level=level2 -o %t.cpp
+// RUN: ptoas %t.level2.pto --pto-arch=a5 --pto-level=level2 -o %t.cpp
+// RUN: ptoas %s --pto-arch=a2 --pto-level=level3 -o %t.cpp
+// RUN: bash %S/Inputs/run_issue1708_descriptor_cpp.sh %t.cpp %S/Inputs/issue1720_runtime.cpp
+// RUN: ptoas %s --pto-arch=a3 --pto-level=level3 -o %t.cpp
+// RUN: bash %S/Inputs/run_issue1708_descriptor_cpp.sh %t.cpp %S/Inputs/issue1720_runtime.cpp
+// RUN: ptoas %s --pto-arch=a5 --pto-level=level3 -o %t.cpp
+// RUN: bash %S/Inputs/run_issue1708_descriptor_cpp.sh %t.cpp %S/Inputs/issue1720_runtime.cpp
+
+!T = !pto.tile_buf<vec, 32x256xf32, valid=?x?>
+!S = !pto.tile_buf<vec, 16x256xf32>
+!R = !pto.tile_buf<vec, 16x512xf32>
+!RS = !pto.tile_buf<vec, 8x512xf32>
+!U = !pto.tile_buf<vec, 32x256xi32, valid=?x?>
+!US = !pto.tile_buf<vec, 16x256xi32>
+!SD = !pto.tile_buf<vec, 16x256xf32, valid=?x?>
+
+module {
+  // The #1720 composition, with the nonzero full-width row offset retained.
+  func.func @subview_address(%cond: i1, %addr_a: i64, %addr_b: i64) -> i64 {
+    %c0 = arith.constant 0 : index
+    %c16 = arith.constant 16 : index
+    %c32 = arith.constant 32 : index
+    %c256 = arith.constant 256 : index
+    %a = pto.alloc_tile addr = %addr_a valid_row = %c32 valid_col = %c256 : !T
+    %b = pto.alloc_tile addr = %addr_b valid_row = %c32 valid_col = %c256 : !T
+    %selected = scf.if %cond -> (!T) { scf.yield %a : !T } else { scf.yield %b : !T }
+    %window = pto.subview %selected[%c16, %c0] sizes [16, 256] : !T -> !S
+    pto.tadd ins(%window, %window : !S, !S) outs(%window : !S)
+    %pointer = pto.tile_buf_addr %window : !S -> !pto.ptr<f32, vec>
+    %address = pto.castptr %pointer : !pto.ptr<f32, vec> -> i64
+    return %address : i64
+  }
+
+  func.func @reshape_subview_address(%cond: i1, %addr_a: i64, %addr_b: i64) -> i64 {
+    %c0 = arith.constant 0 : index
+    %c8 = arith.constant 8 : index
+    %c32 = arith.constant 32 : index
+    %c256 = arith.constant 256 : index
+    %a = pto.alloc_tile addr = %addr_a valid_row = %c32 valid_col = %c256 : !T
+    %b = pto.alloc_tile addr = %addr_b valid_row = %c32 valid_col = %c256 : !T
+    %selected = scf.if %cond -> (!T) { scf.yield %a : !T } else { scf.yield %b : !T }
+    %reshaped = pto.treshape %selected : !T -> !R
+    %window = pto.subview %reshaped[%c8, %c0] sizes [8, 512] : !R -> !RS
+    %pointer = pto.tile_buf_addr %window : !RS -> !pto.ptr<f32, vec>
+    %address = pto.castptr %pointer : !pto.ptr<f32, vec> -> i64
+    return %address : i64
+  }
+
+  func.func @bitcast_subview_address(%cond: i1, %addr_a: i64, %addr_b: i64) -> i64 {
+    %c0 = arith.constant 0 : index
+    %c16 = arith.constant 16 : index
+    %c32 = arith.constant 32 : index
+    %c256 = arith.constant 256 : index
+    %a = pto.alloc_tile addr = %addr_a valid_row = %c32 valid_col = %c256 : !T
+    %b = pto.alloc_tile addr = %addr_b valid_row = %c32 valid_col = %c256 : !T
+    %selected = scf.if %cond -> (!T) { scf.yield %a : !T } else { scf.yield %b : !T }
+    %retyped = pto.bitcast %selected : !T -> !U
+    %window = pto.subview %retyped[%c16, %c0] sizes [16, 256] : !U -> !US
+    %pointer = pto.tile_buf_addr %window : !US -> !pto.ptr<i32, vec>
+    %address = pto.castptr %pointer : !pto.ptr<i32, vec> -> i64
+    return %address : i64
+  }
+
+  func.func @branch_subview_address(%cond: i1, %addr_a: i64, %addr_b: i64,
+                                    %rows: index, %cols: index) -> i64 {
+    %c0 = arith.constant 0 : index
+    %c16 = arith.constant 16 : index
+    %c32 = arith.constant 32 : index
+    %c256 = arith.constant 256 : index
+    %a = pto.alloc_tile addr = %addr_a valid_row = %c32 valid_col = %c256 : !T
+    %b = pto.alloc_tile addr = %addr_b valid_row = %c32 valid_col = %c256 : !T
+    %selected = scf.if %cond -> (!SD) {
+      %window = pto.subview %a[%c16, %c0] sizes [16, 256] valid [%rows, %cols] : !T -> !SD
+      scf.yield %window : !SD
+    } else {
+      %window = pto.subview %b[%c0, %c0] sizes [16, 256] valid [%rows, %cols] : !T -> !SD
+      scf.yield %window : !SD
+    }
+    pto.set_validshape %selected, %c0, %cols : !SD
+    %pointer = pto.tile_buf_addr %selected : !SD -> !pto.ptr<f32, vec>
+    %address = pto.castptr %pointer : !pto.ptr<f32, vec> -> i64
+    return %address : i64
+  }
+}

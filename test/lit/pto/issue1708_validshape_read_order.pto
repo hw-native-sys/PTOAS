@@ -1,0 +1,40 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+
+// RUN: pto-test-opt --pto-fold-tile-buf-intrinsics %s | FileCheck %s
+
+!T = !pto.tile_buf<vec, 32x32xf32, valid=?x?>
+module {
+  func.func @read_order(%address: i64) -> index {
+    %c0 = arith.constant 0 : index
+    %c16 = arith.constant 16 : index
+    %c32 = arith.constant 32 : index
+    %tile = pto.alloc_tile addr = %address valid_row = %c32 valid_col = %c32 : !T
+    %before, %bc = pto.get_validshape %tile : !T
+    pto.set_validshape %tile, %c16, %c32 : !T
+    %rows = pto.tile_valid_rows %tile : !T -> index
+    %cols = pto.tile_valid_cols %tile : !T -> index
+    pto.set_validshape %tile, %c0, %c32 : !T
+    %after, %ac = pto.get_validshape %tile : !T
+    %x = arith.addi %before, %rows : index
+    %y = arith.addi %x, %cols : index
+    %result = arith.addi %y, %after : index
+    return %result : index
+  }
+}
+// CHECK-LABEL: func.func @read_order
+// CHECK: %[[TILE:.*]] = pto.alloc_tile
+// CHECK: pto.get_validshape %[[TILE]]
+// CHECK-SAME: __pto.tileop_valid_shape_abi
+// CHECK: pto.set_validshape %[[TILE]]
+// CHECK: pto.get_validshape %[[TILE]]
+// CHECK: pto.get_validshape %[[TILE]]
+// CHECK: pto.set_validshape %[[TILE]]
+// CHECK: pto.get_validshape %[[TILE]]
+// CHECK-NOT: pto.tile_valid_rows
+// CHECK-NOT: pto.tile_valid_cols

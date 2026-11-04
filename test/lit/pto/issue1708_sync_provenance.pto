@@ -1,0 +1,171 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+
+// RUN: sed -E 's/ addr = %a[abo]//g' %s > %t.level2.pto
+// RUN: ptoas %t.level2.pto --pto-arch=a2 --pto-level=level2 --enable-insert-sync -o %t.cpp
+// RUN: FileCheck %s < %t.cpp
+// RUN: ptoas %t.level2.pto --pto-arch=a2 --pto-level=level2 --enable-unified-sync -o %t.cpp
+// RUN: FileCheck %s < %t.cpp
+// RUN: ptoas %s --pto-arch=a2 --pto-level=level3 --enable-insert-sync -o %t.cpp
+// RUN: FileCheck %s < %t.cpp
+// RUN: ptoas %s --pto-arch=a2 --pto-level=level3 --enable-unified-sync -o %t.cpp
+// RUN: FileCheck %s < %t.cpp
+// RUN: ptoas %t.level2.pto --pto-arch=a3 --pto-level=level2 --enable-insert-sync -o %t.cpp
+// RUN: FileCheck %s < %t.cpp
+// RUN: ptoas %t.level2.pto --pto-arch=a3 --pto-level=level2 --enable-unified-sync -o %t.cpp
+// RUN: FileCheck %s < %t.cpp
+// RUN: ptoas %s --pto-arch=a3 --pto-level=level3 --enable-insert-sync -o %t.cpp
+// RUN: FileCheck %s < %t.cpp
+// RUN: ptoas %s --pto-arch=a3 --pto-level=level3 --enable-unified-sync -o %t.cpp
+// RUN: FileCheck %s < %t.cpp
+// RUN: ptoas %t.level2.pto --pto-arch=a5 --pto-level=level2 --enable-insert-sync -o %t.cpp
+// RUN: FileCheck %s < %t.cpp
+// RUN: ptoas %t.level2.pto --pto-arch=a5 --pto-level=level2 --enable-unified-sync -o %t.cpp
+// RUN: FileCheck %s < %t.cpp
+// RUN: ptoas %s --pto-arch=a5 --pto-level=level3 --enable-insert-sync -o %t.cpp
+// RUN: FileCheck %s < %t.cpp
+// RUN: ptoas %s --pto-arch=a5 --pto-level=level3 --enable-unified-sync -o %t.cpp
+// RUN: FileCheck %s < %t.cpp
+
+!D = !pto.tile_buf<loc=vec, dtype=f32, rows=32, cols=32, v_row=?, v_col=?, blayout=row_major, slayout=none_box, fractal=512, pad=0>
+!I = !pto.tile_buf<loc=vec, dtype=i32, rows=32, cols=32, v_row=?, v_col=?, blayout=row_major, slayout=none_box, fractal=512, pad=0>
+module {
+func.func @alloc_inside(%cond: i1, %x: !pto.ptr<f32>, %y: !pto.ptr<f32>, %out: !pto.ptr<f32>) attributes {pto.kernel_kind = #pto.kernel_kind<vector>} {
+%aa = arith.constant 0 : i64
+%ab = arith.constant 65536 : i64
+%ao = arith.constant 131072 : i64
+%c1 = arith.constant 1 : index
+%c0 = arith.constant 0 : index
+%c16 = arith.constant 16 : index
+%c32 = arith.constant 32 : index
+%xv = pto.make_tensor_view %x, shape = [%c32, %c32], strides = [%c32, %c1] : !pto.tensor_view<?x?xf32>
+%xp = pto.partition_view %xv, offsets = [%c0, %c0], sizes = [%c32, %c32] : !pto.tensor_view<?x?xf32> -> !pto.partition_tensor_view<32x32xf32>
+%yv = pto.make_tensor_view %y, shape = [%c32, %c32], strides = [%c32, %c1] : !pto.tensor_view<?x?xf32>
+%yp = pto.partition_view %yv, offsets = [%c0, %c0], sizes = [%c32, %c32] : !pto.tensor_view<?x?xf32> -> !pto.partition_tensor_view<32x32xf32>
+%outv = pto.make_tensor_view %out, shape = [%c32, %c32], strides = [%c32, %c1] : !pto.tensor_view<?x?xf32>
+%outp = pto.partition_view %outv, offsets = [%c0, %c0], sizes = [%c32, %c32] : !pto.tensor_view<?x?xf32> -> !pto.partition_tensor_view<32x32xf32>
+%s = scf.if %cond -> (!D) {
+%a = pto.alloc_tile addr = %aa valid_row = %c32 valid_col = %c32 : !D
+pto.tload ins(%xp : !pto.partition_tensor_view<32x32xf32>) outs(%a : !D)
+scf.yield %a : !D
+} else {
+%b = pto.alloc_tile addr = %ab valid_row = %c32 valid_col = %c32 : !D
+pto.tload ins(%yp : !pto.partition_tensor_view<32x32xf32>) outs(%b : !D)
+scf.yield %b : !D
+}
+pto.set_validshape %s, %c16, %c32 : !D
+%dst = pto.alloc_tile addr = %ao valid_row = %c16 valid_col = %c32 : !D
+pto.tabs ins(%s : !D) outs(%dst : !D)
+pto.tstore ins(%dst : !D) outs(%outp : !pto.partition_tensor_view<32x32xf32>)
+return
+}
+func.func @alloc_outside(%cond: i1, %x: !pto.ptr<f32>, %y: !pto.ptr<f32>, %out: !pto.ptr<f32>) attributes {pto.kernel_kind = #pto.kernel_kind<vector>} {
+%aa = arith.constant 0 : i64
+%ab = arith.constant 65536 : i64
+%ao = arith.constant 131072 : i64
+%c1 = arith.constant 1 : index
+%c0 = arith.constant 0 : index
+%c16 = arith.constant 16 : index
+%c32 = arith.constant 32 : index
+%xv = pto.make_tensor_view %x, shape = [%c32, %c32], strides = [%c32, %c1] : !pto.tensor_view<?x?xf32>
+%xp = pto.partition_view %xv, offsets = [%c0, %c0], sizes = [%c32, %c32] : !pto.tensor_view<?x?xf32> -> !pto.partition_tensor_view<32x32xf32>
+%yv = pto.make_tensor_view %y, shape = [%c32, %c32], strides = [%c32, %c1] : !pto.tensor_view<?x?xf32>
+%yp = pto.partition_view %yv, offsets = [%c0, %c0], sizes = [%c32, %c32] : !pto.tensor_view<?x?xf32> -> !pto.partition_tensor_view<32x32xf32>
+%outv = pto.make_tensor_view %out, shape = [%c32, %c32], strides = [%c32, %c1] : !pto.tensor_view<?x?xf32>
+%outp = pto.partition_view %outv, offsets = [%c0, %c0], sizes = [%c32, %c32] : !pto.tensor_view<?x?xf32> -> !pto.partition_tensor_view<32x32xf32>
+%a = pto.alloc_tile addr = %aa valid_row = %c32 valid_col = %c32 : !D
+%b = pto.alloc_tile addr = %ab valid_row = %c32 valid_col = %c32 : !D
+%s = scf.if %cond -> (!D) {
+pto.tload ins(%xp : !pto.partition_tensor_view<32x32xf32>) outs(%a : !D)
+scf.yield %a : !D
+} else {
+pto.tload ins(%yp : !pto.partition_tensor_view<32x32xf32>) outs(%b : !D)
+scf.yield %b : !D
+}
+pto.set_validshape %s, %c16, %c32 : !D
+%dst = pto.alloc_tile addr = %ao valid_row = %c16 valid_col = %c32 : !D
+pto.tabs ins(%s : !D) outs(%dst : !D)
+pto.tstore ins(%dst : !D) outs(%outp : !pto.partition_tensor_view<32x32xf32>)
+return
+}
+func.func @alloc_outside_views(%cond: i1, %x: !pto.ptr<f32>, %y: !pto.ptr<f32>, %out: !pto.ptr<f32>, %rows: index, %cols: index) attributes {pto.kernel_kind = #pto.kernel_kind<vector>} {
+%aa = arith.constant 0 : i64
+%ab = arith.constant 65536 : i64
+%ao = arith.constant 131072 : i64
+%c1 = arith.constant 1 : index
+%c0 = arith.constant 0 : index
+%c16 = arith.constant 16 : index
+%c32 = arith.constant 32 : index
+%xv = pto.make_tensor_view %x, shape = [%c32, %c32], strides = [%c32, %c1] : !pto.tensor_view<?x?xf32>
+%xp = pto.partition_view %xv, offsets = [%c0, %c0], sizes = [%c32, %c32] : !pto.tensor_view<?x?xf32> -> !pto.partition_tensor_view<32x32xf32>
+%yv = pto.make_tensor_view %y, shape = [%c32, %c32], strides = [%c32, %c1] : !pto.tensor_view<?x?xf32>
+%yp = pto.partition_view %yv, offsets = [%c0, %c0], sizes = [%c32, %c32] : !pto.tensor_view<?x?xf32> -> !pto.partition_tensor_view<32x32xf32>
+%outv = pto.make_tensor_view %out, shape = [%c32, %c32], strides = [%c32, %c1] : !pto.tensor_view<?x?xf32>
+%outp = pto.partition_view %outv, offsets = [%c0, %c0], sizes = [%c32, %c32] : !pto.tensor_view<?x?xf32> -> !pto.partition_tensor_view<32x32xf32>
+%a = pto.alloc_tile addr = %aa valid_row = %c32 valid_col = %c32 : !D
+%b = pto.alloc_tile addr = %ab valid_row = %c32 valid_col = %c32 : !D
+%s = scf.if %cond -> (!D) {
+pto.tload ins(%xp : !pto.partition_tensor_view<32x32xf32>) outs(%a : !D)
+scf.yield %a : !D
+} else {
+pto.tload ins(%yp : !pto.partition_tensor_view<32x32xf32>) outs(%b : !D)
+scf.yield %b : !D
+}
+%reshaped = pto.treshape %s : !D -> !D
+%bits = pto.bitcast %reshaped : !D -> !I
+%back = pto.bitcast %bits : !I -> !D
+%window = pto.subview %back[%c0, %c0] sizes [32, 32] valid [%rows, %cols] : !D -> !D
+pto.set_validshape %window, %c16, %c32 : !D
+%dst = pto.alloc_tile addr = %ao valid_row = %c16 valid_col = %c32 : !D
+pto.tabs ins(%window : !D) outs(%dst : !D)
+pto.tstore ins(%dst : !D) outs(%outp : !pto.partition_tensor_view<32x32xf32>)
+return
+}
+}
+
+// CHECK-LABEL: alloc_inside(
+// CHECK: if (
+// CHECK: TLOAD([[A:v[0-9]+]],
+// CHECK-NEXT: [[SELECTED:v[0-9]+]] = [[A]];
+// CHECK: } else {
+// CHECK: TLOAD([[B:v[0-9]+]],
+// CHECK-NEXT: [[SELECTED]] = [[B]];
+// CHECK: set_flag(PIPE_MTE2, PIPE_V,
+// CHECK-NOT: GetValidRow
+// CHECK-NOT: GetValidCol
+// CHECK: [[SELECTED]].SetValidShape(
+// CHECK: wait_flag(PIPE_MTE2, PIPE_V,
+// CHECK: TABS(
+// CHECK: TSTORE(
+
+// CHECK-LABEL: alloc_outside(
+// CHECK: if (
+// CHECK: TLOAD([[A:v[0-9]+]],
+// CHECK-NEXT: [[SELECTED:v[0-9]+]] = [[A]];
+// CHECK: } else {
+// CHECK: TLOAD([[B:v[0-9]+]],
+// CHECK-NEXT: [[SELECTED]] = [[B]];
+// CHECK: set_flag(PIPE_MTE2, PIPE_V,
+// CHECK-NOT: GetValidRow
+// CHECK-NOT: GetValidCol
+// CHECK: [[SELECTED]].SetValidShape(
+// CHECK: wait_flag(PIPE_MTE2, PIPE_V,
+// CHECK: TABS(
+// CHECK: TSTORE(
+
+// CHECK-LABEL: alloc_outside_views(
+// CHECK: if (
+// CHECK: TLOAD(
+// CHECK: } else {
+// CHECK: TLOAD(
+// CHECK: set_flag(PIPE_MTE2, PIPE_V,
+// CHECK: TRESHAPE(
+// CHECK: .SetValidShape(
+// CHECK: wait_flag(PIPE_MTE2, PIPE_V,
+// CHECK: TABS(
+// CHECK: TSTORE(

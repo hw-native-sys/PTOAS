@@ -1,0 +1,67 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+
+// RUN: ptoas --pto-arch=a3 --pto-level=level2 %s -o %t.cpp
+// RUN: FileCheck %s < %t.cpp
+// RUN: pto-test-opt --pto-materialize-tile-if-results --canonicalize --cse %s | FileCheck %s --check-prefix=IR
+
+!T = !pto.tile_buf<vec, 8x16xf32>
+module {
+  func.func @declare_if_capture(%cond: i1, %gm: memref<256xf32, #pto.address_space<gm>>, %buf: i32) -> i64 attributes {pto.kernel_kind = #pto.kernel_kind<vector>} {
+    %pipe = pto.initialize_l2g2l_pipe {dir_mask = 1, slot_size = 1024, slot_num = 8, local_slot_num = 8, flag_base = 0}(%gm : memref<256xf32, #pto.address_space<gm>>, %buf : i32) -> !pto.pipe
+    %a = pto.declare_tile -> !T
+    %b = pto.declare_tile -> !T
+    %selected = scf.if %cond -> (!T) {
+      pto.tpop(%a, %pipe : !T, !pto.pipe) {split = 1}
+      scf.yield %a : !T
+    } else {
+      pto.tpop(%b, %pipe : !T, !pto.pipe) {split = 1}
+      scf.yield %b : !T
+    }
+    %pointer = pto.tile_buf_addr %selected : !T -> !pto.ptr<f32, vec>
+    %address = pto.castptr %pointer : !pto.ptr<f32, vec> -> i64
+    return %address : i64
+  }
+  func.func @static_view_identity(%gm: memref<256xf32, #pto.address_space<gm>>, %buf: i32) -> i64 attributes {pto.kernel_kind = #pto.kernel_kind<vector>} {
+    %pipe = pto.initialize_l2g2l_pipe {dir_mask = 1, slot_size = 1024, slot_num = 8, local_slot_num = 8, flag_base = 0}(%gm : memref<256xf32, #pto.address_space<gm>>, %buf : i32) -> !pto.pipe
+    %source = pto.declare_tile -> !T
+    pto.tpop(%source, %pipe : !T, !pto.pipe) {split = 1}
+    %first = pto.treshape %source : !T -> !T
+    %second = pto.treshape %source : !T -> !T
+    pto.tpop(%first, %pipe : !T, !pto.pipe) {split = 1}
+    %pointer = pto.tile_buf_addr %second : !T -> !pto.ptr<f32, vec>
+    %address = pto.castptr %pointer : !pto.ptr<f32, vec> -> i64
+    return %address : i64
+  }
+
+}
+
+// CHECK-LABEL: declare_if_capture(
+// CHECK-NOT: ?
+// CHECK: if (
+// CHECK: TPOP<
+// CHECK: [[SELECTED:v[0-9]+]] = {{v[0-9]+}};
+// CHECK: } else {
+// CHECK: TPOP<
+// CHECK: [[SELECTED]] = {{v[0-9]+}};
+// CHECK: [[SELECTED]].data()
+// IR-LABEL: func.func @declare_if_capture
+// IR: scf.if
+// IR: pto.tpop
+// IR: pto.copy_tile_descriptor
+// IR: } else {
+// IR: pto.tpop
+// IR: pto.copy_tile_descriptor
+
+// IR-LABEL: func.func @static_view_identity
+// IR: %[[SOURCE:.*]] = pto.declare_tile
+// IR: pto.tpop
+// IR: %[[FIRST:.*]] = pto.treshape %[[SOURCE]]
+// IR: %[[SECOND:.*]] = pto.treshape %[[SOURCE]]
+// IR: pto.tpop(%[[FIRST]],
+// IR: pto.tile_buf_addr %[[SECOND]]

@@ -1,0 +1,47 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+
+// RUN: pto-test-opt --pto-materialize-tile-if-results --pto-plan-memory %s | FileCheck %s
+// RUN: ptoas --pto-level=level2 --pto-arch=a3 --enable-insert-sync %s -o %t.cpp
+
+!T = !pto.tile_buf<vec, 32x32xf32, valid=?x?>
+module attributes {pto.target_arch = "a3"} {
+  func.func @snapshot_keeps_storage_live(%cond: i1) {
+    %c16 = arith.constant 16 : index
+    %c32 = arith.constant 32 : index
+    %one = arith.constant 1.0 : f32
+    %two = arith.constant 2.0 : f32
+    %three = arith.constant 3.0 : f32
+    %a = pto.alloc_tile valid_row = %c32 valid_col = %c32 : !T
+    %b = pto.alloc_tile valid_row = %c32 valid_col = %c32 : !T
+    pto.texpands ins(%one : f32) outs(%a : !T)
+    pto.texpands ins(%two : f32) outs(%b : !T)
+    %selected = scf.if %cond -> (!T) {
+      scf.yield %a : !T
+    } else {
+      scf.yield %b : !T
+    }
+    pto.set_validshape %selected, %c16, %c32 : !T
+    %scratch = pto.alloc_tile valid_row = %c32 valid_col = %c32 : !T
+    pto.texpands ins(%three : f32) outs(%scratch : !T)
+    pto.tadd ins(%selected, %scratch : !T, !T) outs(%selected : !T)
+    return
+  }
+}
+// CHECK-LABEL: func.func @snapshot_keeps_storage_live
+// CHECK-DAG: %[[A_ADDR:.*]] = arith.constant 0 : i64
+// CHECK-DAG: %[[B_ADDR:.*]] = arith.constant 4096 : i64
+// CHECK-DAG: %[[SCRATCH_ADDR:.*]] = arith.constant 8192 : i64
+// CHECK: pto.alloc_tile addr = %[[A_ADDR]]
+// CHECK: pto.alloc_tile addr = %[[B_ADDR]]
+// CHECK: %[[SELECTED:.*]] = scf.if
+// CHECK: pto.copy_tile_descriptor
+// CHECK: pto.copy_tile_descriptor
+// CHECK: pto.set_validshape %[[SELECTED]]
+// CHECK: %[[SCRATCH:.*]] = pto.alloc_tile addr = %[[SCRATCH_ADDR]]
+// CHECK: pto.tadd ins(%[[SELECTED]], %[[SCRATCH]]

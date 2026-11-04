@@ -1083,14 +1083,40 @@ set_validshape(source, valid_row, valid_col)
 - User-authored PTO IR must use the `pto.tile_buf` form; any memref form seen
   later in the pipeline is compiler-internal lowering state only
 - `source` must be a locally bound tile result: `alloc_tile`, `declare_tile`,
-  a frontend pop (`tpop_from_aic`/`tpop_from_aiv`), or a `bitcast`/`treshape`
-  view of one; function arguments and other non-local sources are rejected
+  a frontend pop (`tpop_from_aic`/`tpop_from_aiv`), or a supported local view or
+  selection derived from these sources; function arguments and other non-local
+  sources are rejected
 - If `valid_row` / `valid_col` are compile-time constants, they must be non-negative and not exceed the tile's static shape bounds
+
+**Descriptor and alias semantics:**
+
+- The source may be a native `scf.if` Tile result when both yielded sources
+  are supported local Tile descriptors, including locally derived reshape,
+  bitcast and subview chains. Each result position is checked independently.
+- A dynamic Tile selection captures its data address and current valid
+  extents in an independent descriptor. `set_validshape` changes that result's
+  metadata; it does not change the original branch operands' valid extents.
+- Payload storage remains shared. Writes through the result are visible
+  through the selected source's storage; no Tile payload copy is introduced.
+- A subsequent `treshape`, tile `bitcast` or `subview` has its own descriptor. Updating its valid extents
+  leaves the selected result's metadata unchanged.
+- Reads and updates occur in program order, including when `tfillpad` appears
+  between selection and a validity update. Function arguments/call results and
+  loop-carried results remain outside the `set_validshape` source contract.
+- Capture takes place at each branch's `scf.yield`, after its metadata updates.
+  EmitC uses the if result object's branch assignment directly; it does not
+  reconstruct another Tile from `.data()` and `GetValidRow/Col()` after the if.
+- Subviews of selected local Tiles retain the selected address and apply their
+  offsets using the parent view's physical layout. The planner and both sync
+  modes keep all possible storage aliases live through the join. See
+  [tile provenance](designs/tile-provenance.md) for the analysis contract.
 
 **Hardware Mapping:**
 
 - No hardware pipeline (metadata update op only)
 - Lowers in `PTOToEmitC` to updates of the tile's runtime valid-shape fields
+- Validity mutation on native `scf.if` Tile results currently requires
+  `--pto-backend=emitc`. VPTO reports this unsupported composition explicitly.
 
 **Basic Example:**
 

@@ -76,7 +76,12 @@ module attributes {pto.target_arch = "a3"} {
 // INSERT: pto.tload
 // INSERT: pto.tload
 // INSERT: pto.set_flag[<PIPE_MTE2>, <PIPE_MTE3>,
-// INSERT: arith.select
+// Tile value selection is captured at branch yields. Both payload aliases
+// must retain the same producer/consumer synchronization as arith.select.
+// INSERT: scf.if
+// INSERT: pto.copy_tile_descriptor
+// INSERT: } else {
+// INSERT: pto.copy_tile_descriptor
 // INSERT: pto.wait_flag[<PIPE_MTE2>, <PIPE_MTE3>,
 // INSERT-NEXT: pto.tstore
 
@@ -85,13 +90,19 @@ module attributes {pto.target_arch = "a3"} {
 // INSERT: pto.set_flag[<PIPE_MTE2>, <PIPE_MTE3>,
 // INSERT: pto.tabs
 // INSERT: pto.set_flag[<PIPE_V>, <PIPE_MTE3>,
-// INSERT: arith.select
+// INSERT: scf.if
+// INSERT: pto.copy_tile_descriptor
+// INSERT: } else {
+// INSERT: pto.copy_tile_descriptor
 // INSERT-DAG: pto.wait_flag[<PIPE_MTE2>, <PIPE_MTE3>,
 // INSERT-DAG: pto.wait_flag[<PIPE_V>, <PIPE_MTE3>,
 // INSERT-NEXT: pto.tstore
 
 // INSERT-LABEL: func.func @arith_select_tile_write_sync
-// INSERT: arith.select
+// INSERT: scf.if
+// INSERT: pto.copy_tile_descriptor
+// INSERT: } else {
+// INSERT: pto.copy_tile_descriptor
 // INSERT: pto.tload
 // INSERT: pto.set_flag[<PIPE_MTE2>, <PIPE_MTE3>,
 // INSERT: pto.wait_flag[<PIPE_MTE2>, <PIPE_MTE3>,

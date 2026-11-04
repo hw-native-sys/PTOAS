@@ -691,10 +691,40 @@ struct EmitPTOManualPass
     if (failed(cleanupConversionCasts(mop, typeConverter))) {
         return signalPassFailure();
     }
+    fuseDescriptorAssignments(mop);
     eraseDeadPureEmitCValueOps(mop);
     fixLoopInductionVariables(mop);
     eraseDeadTileVariables(mop);
     eraseDeadConstants(mop);
+  }
+
+  static void fuseDescriptorAssignments(ModuleOp mop)
+  {
+      SmallVector<emitc::CallOpaqueOp> captures;
+      mop.walk([&](emitc::CallOpaqueOp call) {
+          if (call->hasAttr("__pto.tile_descriptor_capture")) {
+              captures.push_back(call);
+          }
+      });
+      for (auto call : captures) {
+          if (call->getNumOperands() != 1 || call.getNumResults() != 1 || !call->hasOneUse()) {
+              continue;
+          }
+          Value copied = call.getResult(0);
+          auto assignment = dyn_cast<emitc::AssignOp>(*copied.getUsers().begin());
+          if (!assignment || assignment->getOperand(1) != copied) {
+              continue;
+          }
+          // A direct variable destination and adjacent assignment introduce
+          // no intervening evaluation that could change the captured state.
+          Value destination = assignment->getOperand(0);
+          if (!destination.getDefiningOp<emitc::VariableOp>() ||
+              call->getNextNode() != assignment.getOperation()) {
+              continue;
+          }
+          assignment->setOperand(1, call.getOperand(0));
+          call.erase();
+      }
   }
 
   LogicalResult validateAndAnnotate(ModuleOp mop) const

@@ -12,6 +12,8 @@
 //===----------------------------------------------------------------------===//
 
 #include "ptoas_internal.h"
+#include "PTO/IR/TileProvenance.h"
+#include "llvm/ADT/DenseSet.h"
 #include "PTO/Transforms/VPTOBridgeTokens.h"
 #include "PTO/Transforms/VMIFastmathState.h"
 #include "PTO/Transforms/VMILayoutPlanner.h"
@@ -1524,12 +1526,53 @@ static LogicalResult validateCompileOptions(ModuleOp module,
              : success();
 }
 
-static LogicalResult runPreBackendNormalization(ModuleOp module) {
+static bool isSelectedTileDescriptor(Value source) {
+  SmallVector<Value> pending{source};
+  llvm::DenseSet<Value> visited;
+  while (!pending.empty()) {
+    Value current = pending.pop_back_val();
+    if (!visited.insert(current).second) {
+      continue;
+    }
+    if (isa_and_nonnull<scf::IfOp, arith::SelectOp>(current.getDefiningOp())) {
+      return true;
+    }
+    for (const auto &edge : pto::getTileSources(current).edges) {
+      pending.push_back(edge.source);
+    }
+  }
+  return false;
+}
+
+static LogicalResult validateTileIfDescriptorBackend(ModuleOp module,
+                                                     PTOBackend backend) {
+  if (backend != PTOBackend::VPTO) {
+    return success();
+  }
+  WalkResult result = module.walk([](pto::SetValidShapeOp update) {
+    if (!isSelectedTileDescriptor(update.getSource())) {
+      return WalkResult::advance();
+    }
+    update.emitOpError("native Tile selection descriptor mutation currently "
+                       "requires --pto-backend=emitc");
+    return WalkResult::interrupt();
+  });
+  return failure(result.wasInterrupted());
+}
+
+static LogicalResult runPreBackendNormalization(ModuleOp module,
+                                                PTOBackend backend) {
+  if (failed(validateTileIfDescriptorBackend(module, backend))) {
+    return failure();
+  }
   // This entry also serves embedded compilation, outside the CLI job driver.
   if (failed(pto::verifyFrontendPeerContracts(module)))
     return failure();
   PassManager preBackendPM(module.getContext());
   preBackendPM.enableVerifier();
+  if (backend == PTOBackend::EmitC) {
+    preBackendPM.addPass(pto::createPTOMaterializeTileIfResultsPass());
+  }
   preBackendPM.addPass(pto::createPTOMaterializeTileOpSectionsPass());
   preBackendPM.addPass(pto::createPTONormalizeUncoveredTileSectionsPass());
   preBackendPM.addPass(pto::createPTOValidatePhysicalSectionBoundariesPass());
@@ -1993,7 +2036,7 @@ int mlir::pto::compilePTOASModule(
   if (failed(validateCompileOptions(*module, state.level))) {
     return 1;
   }
-  if (failed(runPreBackendNormalization(*module))) {
+  if (failed(runPreBackendNormalization(*module, effectiveBackend))) {
     return 1;
   }
   state.hasTileOpsToExpand = hasUnexpandedTileOps(*module);

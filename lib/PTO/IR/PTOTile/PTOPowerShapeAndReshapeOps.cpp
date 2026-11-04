@@ -8,6 +8,9 @@
 
 // Included by PTO.cpp as part of the PTO IR implementation translation unit.
 
+#include "mlir/Dialect/SCF/IR/SCF.h"
+#include "llvm/ADT/DenseSet.h"
+
 mlir::LogicalResult mlir::pto::TPowSOp::verify() {
   Type dstTy = getDst().getType();
   FailureOr<Type> elem = verifyRowMajorScalarTileCommon(
@@ -71,29 +74,6 @@ static std::optional<int64_t> getElemBytes(Type elemTy) {
   return std::max<int64_t>(1, bits / mlir::pto::kValue8);
 }
 
-static bool isLocallyBoundTileSource(Value value) {
-  if (!value || isa<BlockArgument>(value)) {
-    return false;
-  }
-
-  // Frontend pipe pops produce function-local, FIFO-backed tile descriptors
-  // (issue #1724), so their results are locally bound like alloc/declare
-  // tiles.
-  if (isa<AllocTileOp, DeclareTileOp, TPopFromAicOp, TPopFromAivOp>(
-          value.getDefiningOp())) {
-    return true;
-  }
-
-  if (auto bitcast = value.getDefiningOp<BitcastOp>()) {
-    return isLocallyBoundTileSource(bitcast.getSrc());
-  }
-  if (auto reshape = value.getDefiningOp<TReshapeOp>()) {
-    return isLocallyBoundTileSource(reshape.getSrc());
-  }
-
-  return false;
-}
-
 static std::optional<int64_t> getConstIndexLike(Value v) {
   if (auto cOp = v.getDefiningOp<arith::ConstantIndexOp>()) {
     return cOp.value();
@@ -138,10 +118,10 @@ mlir::LogicalResult mlir::pto::SetValidShapeOp::verify() {
 
   shape.assign(srcTy.getShape().begin(), srcTy.getShape().end());
 
-  if (!isLocallyBoundTileSource(getSource())) {
+  if (!isLocallyBoundTile(getSource())) {
     return emitOpError(
         "requires a locally bound tile source (alloc_tile/declare_tile/tpop "
-        "results or their bitcast/treshape views)");
+        "results or supported local views/selections)");
   }
 
   auto checkDim = [this, &shape](Value operand, unsigned dimIdx,

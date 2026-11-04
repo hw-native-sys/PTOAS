@@ -1,0 +1,43 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+
+// RUN: pto-test-opt --pto-plan-memory %s -o /dev/null
+// RUN: sed 's/scf.yield %dstB/scf.yield %dstA/' %s > %t.bad.pto
+// RUN: not pto-test-opt --pto-plan-memory %t.bad.pto -o /dev/null 2>&1 | FileCheck %s
+
+!T = !pto.tile_buf<vec, 16x32xui8>
+!D = !pto.tile_buf<vec, 16x32xui8, slayout=row_major>
+!F = !pto.tile_buf<vec, 1x32xui8, valid=1x1>
+module attributes {pto.target_arch = "a5"} {
+  func.func @correlated_selections(%cond: i1) {
+    %zero = arith.constant 0 : i64
+    %other = arith.constant 4096 : i64
+    %scratch = arith.constant 8192 : i64
+    %c0 = arith.constant 0 : index
+    %srcA = pto.alloc_tile addr = %zero : !T
+    %srcB = pto.alloc_tile addr = %other : !T
+    %dstA = pto.alloc_tile addr = %zero : !D
+    %dstB = pto.alloc_tile addr = %other : !D
+    %tmp = pto.alloc_tile addr = %scratch : !F
+    %src = scf.if %cond -> (!T) {
+      scf.yield %srcA : !T
+    } else {
+      scf.yield %srcB : !T
+    }
+    %dst = scf.if %cond -> (!D) {
+      scf.yield %dstB : !D
+    } else {
+      scf.yield %dstA : !D
+    }
+    %window = pto.subview %src[%c0, %c0] sizes [16, 32] : !T -> !T
+    pto.tmov ins(%window : !T, %tmp : !F) outs(%dst : !D)
+      {grpAxis = #pto<mx_group_axis axis0>}
+    return
+  }
+}
+// CHECK: PlanMemory semantic no-alias violation: operand byte ranges overlap

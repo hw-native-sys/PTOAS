@@ -13,8 +13,10 @@
 
 #include "PTO/Transforms/InsertSync/PTOIRTranslator.h"
 #include "PTO/IR/PTOMultiBuffer.h"
+#include "PTO/IR/TileProvenance.h"
 #include "PTO/IR/PTOTypeUtils.h"
 #include "PTO/Transforms/InsertSync/SyncMacroModel.h"
+#include "Utils.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/IR/AsmState.h"
 #include "mlir/IR/Matchers.h"
@@ -846,10 +848,8 @@ PTOIRTranslator::dispatchAliasViewOp(Operation *op) {
     UpdateTileSubViewAliasBufferInfo(subViewOp);
   } else if (auto multiGet = dyn_cast<pto::MultiTileGetOp>(op)) {
     UpdateMultiTileGetAliasBufferInfo(multiGet);
-  } else if (auto reshape = dyn_cast<pto::TReshapeOp>(op)) {
-    UpdateAliasBufferInfo(reshape.getResult(), reshape.getSrc());
-  } else if (auto bitcast = dyn_cast<pto::BitcastOp>(op)) {
-    UpdateAliasBufferInfo(bitcast.getResult(), bitcast.getSrc());
+  } else if (op->getNumResults() == 1 && getTileViewSource(op->getResult(0))) {
+    UpdateAliasBufferInfo(op->getResult(0), getTileViewSource(op->getResult(0)));
   } else if (auto select = dyn_cast<arith::SelectOp>(op)) {
     UpdateAliasBufferInfo(select.getResult(), select.getTrueValue());
     UpdateAliasBufferInfo(select.getResult(), select.getFalseValue());
@@ -914,7 +914,6 @@ void PTOIRTranslator::RecursionIR(Region *region) {
 // ============================================================================
 LogicalResult PTOIRTranslator::UpdateAllocTileOpMemInfo(pto::AllocTileOp op) {
   Value res = op.getResult();
-
   auto tileType = dyn_cast<pto::TileBufType>(res.getType());
   uint64_t sizeInBytes = 0;
   uint64_t baseAddr = 0;
@@ -1370,6 +1369,16 @@ void PTOIRTranslator::UpdateIfOpInfo(scf::IfOp ifOp) {
   ifEndElement->elementOp = ifOp.getOperation();
   syncIR_.emplace_back(std::move(ifEndElement));
   index++;
+  // Resolve each result position through the same source edges as the
+  // verifier and view lowering. Keep all possible payloads at the join.
+  for (Value result : ifOp.getResults()) {
+    if (!isa<pto::TileBufType>(result.getType())) {
+      continue;
+    }
+    for (const auto &edge : getTileSources(result).edges) {
+      UpdateAliasBufferInfo(result, edge.source);
+    }
+  }
 }
 
 void PTOIRTranslator::UpdateYieldOpInfo(scf::YieldOp yieldOp) {
@@ -1384,6 +1393,9 @@ void PTOIRTranslator::UpdateYieldOpInfo(scf::YieldOp yieldOp) {
   // both arms are recorded, and neither repeats.
   bool parentIsLoop = isa<LoopLikeOpInterface>(parentOp);
   for (auto [yieldVal, resultVal] : llvm::zip(yieldOp->getOpOperands(), parentOp->getResults())) {
+    if (isa<scf::IfOp>(parentOp) && isa<pto::TileBufType>(resultVal.getType())) {
+      continue; // Both alternatives are propagated together at the if join.
+    }
     UpdateAliasBufferInfo(resultVal, yieldVal.get());
     if (parentIsLoop) {
       DropCarriedGMWindows(resultVal);
@@ -1399,6 +1411,18 @@ void PTOIRTranslator::UpdateAliasBufferInfo(Value result, Value source) {
     return;
   }
   if (!buffer2MemInfoMap_.contains(source)) {
+    auto tileType = dyn_cast<pto::TileBufType>(source.getType());
+    if (tileType) {
+      auto space = dyn_cast_or_null<pto::AddressSpaceAttr>(tileType.getMemorySpace());
+      if (space) {
+        // Missing provenance is an unknown range, never an empty access set.
+        auto info = std::make_unique<BaseMemInfo>(
+            result, source, space.getAddressSpace(), SmallVector<uint64_t>{0},
+            /*allocateSize=*/0, /*hasKnownPhysicalAddresses=*/false,
+            /*aliasesUnknownRange=*/true);
+        appendUniqueMemInfo(buffer2MemInfoMap_[result], std::move(info));
+      }
+    }
     return;
   }
 

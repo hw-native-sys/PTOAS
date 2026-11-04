@@ -41,6 +41,7 @@
 #include "mlir/Pass/Pass.h"
 #include "PTO/Support/CodeConstants.h"
 #include "PTO/IR/PTO.h"
+#include "PTO/IR/TileProvenance.h"
 #include "PTO/Transforms/Passes.h"
 
 namespace mlir {
@@ -170,6 +171,13 @@ struct TileHandleInfo {
   pto::TileBufConfigAttr config;
 };
 
+static bool hasValidShapeMutation(Value tile) {
+  return llvm::any_of(tile.getUsers(), [&](Operation *user) {
+    auto update = dyn_cast<pto::SetValidShapeOp>(user);
+    return update && update.getSource() == tile;
+  });
+}
+
 static std::pair<Value, Value> findSetValidShapeOverride(Value tileBuf) {
   for (Operation *user : tileBuf.getUsers()) {
     auto setValid = dyn_cast<pto::SetValidShapeOp>(user);
@@ -219,6 +227,24 @@ static bool isSCFTileCarrier(Value value) {
   auto blockArg = dyn_cast<BlockArgument>(value);
   return blockArg &&
          isa_and_nonnull<scf::ForOp>(blockArg.getOwner()->getParentOp());
+}
+
+static bool needsRuntimeValidShape(Value value) {
+  auto type = dyn_cast<pto::TileBufType>(value.getType());
+  if (!type || !llvm::is_contained(type.getValidShape(), ShapedType::kDynamic)) {
+    return false;
+  }
+  if (hasValidShapeMutation(value)) {
+    return true;
+  }
+  Value current = value;
+  while (current) {
+    if (isSCFTileCarrier(current) || current.getDefiningOp<pto::CopyTileDescriptorOp>()) {
+      return true;
+    }
+    current = pto::getTileViewSource(current);
+  }
+  return false;
 }
 
 static std::optional<TileHandleInfo> resolveTileHandle(Value tileBuf,
@@ -695,6 +721,9 @@ struct FoldTileBufIntrinsicsPass
     // resolveTileHandle observe the overridden valid shape carried by a
     // treshape + set_validshape pair.
     for (auto gvsOp : getValidShapeOps) {
+            if (needsRuntimeValidShape(gvsOp.getSource())) {
+              gvsOp->setAttr(kTileOpValidShapeReadAttr, builder.getUnitAttr());
+            }
             if (gvsOp->hasAttr(kTileOpValidShapeReadAttr)) {
               continue;
             }
@@ -837,6 +866,14 @@ struct FoldTileBufIntrinsicsPass
     // valid_row operand carried by the new tile handle bridge.
     for (auto rowsOp : rowsOps) {
             builder.setInsertionPoint(rowsOp);
+            if (needsRuntimeValidShape(rowsOp.getSrc())) {
+              auto current = builder.create<pto::GetValidShapeOp>(
+                  rowsOp.getLoc(), rowsOp.getSrc());
+              current->setAttr(kTileOpValidShapeReadAttr, builder.getUnitAttr());
+              rowsOp.getResult().replaceAllUsesWith(current.getValidRow());
+              rowsOp.erase();
+              continue;
+            }
             auto tbTy = dyn_cast<pto::TileBufType>(rowsOp.getSrc().getType());
             if (!tbTy || tbTy.getValidShape().empty()) {
               rowsOp.emitError("tile_valid_rows: invalid tile_buf type");
@@ -879,6 +916,14 @@ struct FoldTileBufIntrinsicsPass
     // valid_col operand carried by the new tile handle bridge.
     for (auto colsOp : colsOps) {
             builder.setInsertionPoint(colsOp);
+            if (needsRuntimeValidShape(colsOp.getSrc())) {
+              auto current = builder.create<pto::GetValidShapeOp>(
+                  colsOp.getLoc(), colsOp.getSrc());
+              current->setAttr(kTileOpValidShapeReadAttr, builder.getUnitAttr());
+              colsOp.getResult().replaceAllUsesWith(current.getValidCol());
+              colsOp.erase();
+              continue;
+            }
             auto tbTy = dyn_cast<pto::TileBufType>(colsOp.getSrc().getType());
             if (!tbTy || tbTy.getValidShape().size() < mlir::pto::kValue2) {
               colsOp.emitError("tile_valid_cols: invalid tile_buf type");
@@ -1106,7 +1151,9 @@ struct FoldTileBufIntrinsicsPass
     SmallVector<pto::SetValidShapeOp, mlir::pto::kValue8> setValidShapeOps;
     func.walk([&](pto::SetValidShapeOp op) { setValidShapeOps.push_back(op); });
     for (auto op : llvm::reverse(setValidShapeOps)) {
-      bool hasRuntimeReader = false;
+      bool hasRuntimeReader = llvm::any_of(op.getSource().getUsers(), [](Operation *user) {
+        return isa<pto::CopyTileDescriptorOp>(user);
+      });
       func.walk([&](pto::GetValidShapeOp reader) {
         if (reader.getSource() == op.getSource() &&
             reader->hasAttr(kTileOpValidShapeReadAttr)) {

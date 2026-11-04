@@ -1,0 +1,338 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+
+// RUN: sed -E 's/ addr = %addr_[ab]//g' %s > %t.level2.pto
+// RUN: ptoas %t.level2.pto --pto-arch=a2 --pto-level=level2 -o %t.a2.level2.cpp
+// RUN: FileCheck %s < %t.a2.level2.cpp
+// RUN: ptoas %s --pto-arch=a2 --pto-level=level3 -o %t.a2.level3.cpp
+// RUN: FileCheck %s < %t.a2.level3.cpp
+// RUN: bash %S/Inputs/run_issue1708_descriptor_cpp.sh %t.a2.level3.cpp
+// RUN: ptoas %t.level2.pto --pto-arch=a3 --pto-level=level2 -o %t.a3.level2.cpp
+// RUN: FileCheck %s < %t.a3.level2.cpp
+// RUN: ptoas %s --pto-arch=a3 --pto-level=level3 -o %t.a3.level3.cpp
+// RUN: FileCheck %s < %t.a3.level3.cpp
+// RUN: bash %S/Inputs/run_issue1708_descriptor_cpp.sh %t.a3.level3.cpp
+// RUN: ptoas %t.level2.pto --pto-arch=a5 --pto-level=level2 -o %t.a5.level2.cpp
+// RUN: FileCheck %s < %t.a5.level2.cpp
+// RUN: ptoas %s --pto-arch=a5 --pto-level=level3 -o %t.a5.level3.cpp
+// RUN: FileCheck %s < %t.a5.level3.cpp
+// RUN: bash %S/Inputs/run_issue1708_descriptor_cpp.sh %t.a5.level3.cpp
+// RUN: not ptoas %s --pto-arch=a5 --pto-level=level3 --pto-backend=vpto --emit-vpto-llvm-ir -o /dev/null 2>&1 | FileCheck %s --check-prefix=VPTO
+// RUN: not ptoas %t.level2.pto --pto-arch=a3 --pto-level=level2 --pto-backend=vpto --emit-vpto -o /dev/null 2>&1 | FileCheck %s --check-prefix=VPTO
+// RUN: pto-test-opt --pto-materialize-tile-if-results %s -o %t.once.pto
+// RUN: pto-test-opt --pto-materialize-tile-if-results %t.once.pto -o %t.twice.pto
+// RUN: diff %t.once.pto %t.twice.pto
+// RUN: pto-test-opt --pto-materialize-tile-if-results --canonicalize --cse %s | FileCheck %s --check-prefix=SNAPSHOT
+
+!T = !pto.tile_buf<loc=vec, dtype=f32, rows=32, cols=32, v_row=?, v_col=?, blayout=row_major, slayout=none_box, fractal=512, pad=1>
+!U = !pto.tile_buf<loc=vec, dtype=i32, rows=32, cols=32, v_row=?, v_col=?, blayout=row_major, slayout=none_box, fractal=512, pad=1>
+!S = !pto.tile_buf<loc=vec, dtype=f32, rows=16, cols=32, v_row=?, v_col=?, blayout=row_major, slayout=none_box, fractal=512, pad=1>
+module {
+  func.func @branch_fillpad(%cond: i1, %addr_a: i64, %addr_b: i64) -> index {
+    %c0 = arith.constant 0 : index
+    %c8 = arith.constant 8 : index
+    %c16 = arith.constant 16 : index
+    %c32 = arith.constant 32 : index
+    %a = pto.alloc_tile addr = %addr_a valid_row = %c32 valid_col = %c32 : !T
+    %b = pto.alloc_tile addr = %addr_b valid_row = %c8 valid_col = %c16 : !T
+    %selected = scf.if %cond -> (!T) {
+      scf.yield %a : !T
+    } else {
+      scf.yield %b : !T
+    }
+    %before, %bc = pto.get_validshape %selected : !T
+    pto.tfillpad ins(%selected : !T) outs(%selected : !T)
+    pto.set_validshape %selected, %c16, %c32 : !T
+    pto.tfillpad ins(%selected : !T) outs(%selected : !T)
+    %after, %ac = pto.get_validshape %selected : !T
+    %ar, %acol = pto.get_validshape %a : !T
+    %br, %bcol = pto.get_validshape %b : !T
+    %k100 = arith.constant 100 : index
+    %k10000 = arith.constant 10000 : index
+    %k1000000 = arith.constant 1000000 : index
+    %x = arith.muli %before, %k1000000 : index
+    %y = arith.muli %after, %k10000 : index
+    %z = arith.muli %ar, %k100 : index
+    %xy = arith.addi %x, %y : index
+    %xyz = arith.addi %xy, %z : index
+    %result = arith.addi %xyz, %br : index
+    return %result : index
+  }
+
+  func.func @branch_reshape(%cond: i1, %addr_a: i64, %addr_b: i64, %rows: index) -> index {
+    %c0 = arith.constant 0 : index
+    %c8 = arith.constant 8 : index
+    %c16 = arith.constant 16 : index
+    %c32 = arith.constant 32 : index
+    %a = pto.alloc_tile addr = %addr_a valid_row = %c32 valid_col = %c32 : !T
+    %b = pto.alloc_tile addr = %addr_b valid_row = %c8 valid_col = %c16 : !T
+    %selected = scf.if %cond -> (!T) {
+      scf.yield %a : !T
+    } else {
+      scf.yield %b : !T
+    }
+    %view = pto.treshape %selected : !T -> !T
+    pto.set_validshape %view, %rows, %c32 : !T
+    pto.tfillpad ins(%view : !T) outs(%view : !T)
+    %sr, %sc = pto.get_validshape %selected : !T
+    %vr, %vc = pto.get_validshape %view : !T
+    %ar, %ac = pto.get_validshape %a : !T
+    %k10000 = arith.constant 10000 : index
+    %k100 = arith.constant 100 : index
+    %x = arith.muli %sr, %k10000 : index
+    %y = arith.muli %vr, %k100 : index
+    %xy = arith.addi %x, %y : index
+    %result = arith.addi %xy, %ar : index
+    return %result : index
+  }
+
+  func.func @same_source(%cond: i1, %addr_a: i64, %addr_b: i64) -> index {
+    %c0 = arith.constant 0 : index
+    %c8 = arith.constant 8 : index
+    %c16 = arith.constant 16 : index
+    %c32 = arith.constant 32 : index
+    %a = pto.alloc_tile addr = %addr_a valid_row = %c32 valid_col = %c32 : !T
+    %b = pto.alloc_tile addr = %addr_b valid_row = %c8 valid_col = %c16 : !T
+    %selected = scf.if %cond -> (!T) {
+      scf.yield %a : !T
+    } else {
+      scf.yield %a : !T
+    }
+    pto.set_validshape %selected, %c16, %c32 : !T
+    %sr, %sc = pto.get_validshape %selected : !T
+    %ar, %ac = pto.get_validshape %a : !T
+    %k100 = arith.constant 100 : index
+    %x = arith.muli %sr, %k100 : index
+    %result = arith.addi %x, %ar : index
+    return %result : index
+  }
+
+  func.func @snapshot_time(%cond: i1, %addr_a: i64, %addr_b: i64) -> index {
+    %c0 = arith.constant 0 : index
+    %c8 = arith.constant 8 : index
+    %c16 = arith.constant 16 : index
+    %c32 = arith.constant 32 : index
+    %a = pto.alloc_tile addr = %addr_a valid_row = %c32 valid_col = %c32 : !T
+    %b = pto.alloc_tile addr = %addr_b valid_row = %c8 valid_col = %c16 : !T
+    %selected = scf.if %cond -> (!T) {
+      scf.yield %a : !T
+    } else {
+      scf.yield %b : !T
+    }
+    pto.set_validshape %a, %c0, %c32 : !T
+    %sr, %sc = pto.get_validshape %selected : !T
+    %ar, %ac = pto.get_validshape %a : !T
+    %k100 = arith.constant 100 : index
+    %x = arith.muli %sr, %k100 : index
+    %result = arith.addi %x, %ar : index
+    return %result : index
+  }
+
+  func.func @nested_multi_result(%cond: i1, %inner_cond: i1, %addr_a: i64, %addr_b: i64) -> index {
+    %c0 = arith.constant 0 : index
+    %c8 = arith.constant 8 : index
+    %c16 = arith.constant 16 : index
+    %c32 = arith.constant 32 : index
+    %a = pto.alloc_tile addr = %addr_a valid_row = %c32 valid_col = %c32 : !T
+    %b = pto.alloc_tile addr = %addr_b valid_row = %c8 valid_col = %c16 : !T
+    %c7 = arith.constant 7 : index
+    %c9 = arith.constant 9 : index
+    %tag, %selected = scf.if %cond -> (index, !T) {
+      %inner = scf.if %inner_cond -> (!T) {
+        scf.yield %a : !T
+      } else {
+        scf.yield %b : !T
+      }
+      scf.yield %c7, %inner : index, !T
+    } else {
+      scf.yield %c9, %b : index, !T
+    }
+    pto.set_validshape %selected, %c16, %c32 : !T
+    %sr, %sc = pto.get_validshape %selected : !T
+    %k100 = arith.constant 100 : index
+    %x = arith.muli %tag, %k100 : index
+    %result = arith.addi %x, %sr : index
+    return %result : index
+  }
+  func.func @two_reshapes(%cond: i1, %addr_a: i64, %addr_b: i64) -> index {
+    %c0 = arith.constant 0 : index
+    %c16 = arith.constant 16 : index
+    %c32 = arith.constant 32 : index
+    %a = pto.alloc_tile addr = %addr_a valid_row = %c32 valid_col = %c32 : !T
+    %b = pto.alloc_tile addr = %addr_b valid_row = %c32 valid_col = %c32 : !T
+    %selected = scf.if %cond -> (!T) {
+      scf.yield %a : !T
+    } else {
+      scf.yield %b : !T
+    }
+    %first = pto.treshape %selected : !T -> !T
+    %second = pto.treshape %selected : !T -> !T
+    pto.set_validshape %first, %c0, %c32 : !T
+    pto.set_validshape %second, %c16, %c32 : !T
+    %fr, %fc = pto.get_validshape %first : !T
+    %sr, %sc = pto.get_validshape %second : !T
+    %k100 = arith.constant 100 : index
+    %x = arith.muli %fr, %k100 : index
+    %result = arith.addi %x, %sr : index
+    return %result : index
+  }
+
+  func.func @branch_capture(%cond: i1, %addr_a: i64, %addr_b: i64) -> index {
+    %c0 = arith.constant 0 : index
+    %c8 = arith.constant 8 : index
+    %c16 = arith.constant 16 : index
+    %c32 = arith.constant 32 : index
+    %a = pto.alloc_tile addr = %addr_a valid_row = %c32 valid_col = %c32 : !T
+    %b = pto.alloc_tile addr = %addr_b valid_row = %c32 valid_col = %c32 : !T
+    %selected = scf.if %cond -> (!T) {
+      pto.set_validshape %a, %c16, %c32 : !T
+      scf.yield %a : !T
+    } else {
+      pto.set_validshape %b, %c8, %c32 : !T
+      scf.yield %b : !T
+    }
+    %before, %bc = pto.get_validshape %selected : !T
+    pto.set_validshape %selected, %c0, %c32 : !T
+    return %before : index
+  }
+
+  func.func @branch_read_only(%cond: i1, %addr_a: i64, %addr_b: i64) -> index {
+    %c8 = arith.constant 8 : index
+    %c16 = arith.constant 16 : index
+    %c32 = arith.constant 32 : index
+    %a = pto.alloc_tile addr = %addr_a valid_row = %c32 valid_col = %c32 : !T
+    %b = pto.alloc_tile addr = %addr_b valid_row = %c32 valid_col = %c32 : !T
+    %selected = scf.if %cond -> (!T) {
+      pto.set_validshape %a, %c16, %c32 : !T
+      scf.yield %a : !T
+    } else {
+      pto.set_validshape %b, %c8, %c32 : !T
+      scf.yield %b : !T
+    }
+    %row, %col = pto.get_validshape %selected : !T
+    return %row : index
+  }
+
+  func.func @constant_selection(%addr_a: i64, %addr_b: i64) -> index {
+    %true = arith.constant true
+    %c0 = arith.constant 0 : index
+    %c16 = arith.constant 16 : index
+    %c32 = arith.constant 32 : index
+    %a = pto.alloc_tile addr = %addr_a valid_row = %c32 valid_col = %c32 : !T
+    %selected = scf.if %true -> (!T) {
+      pto.set_validshape %a, %c16, %c32 : !T
+      scf.yield %a : !T
+    } else {
+      scf.yield %a : !T
+    }
+    pto.set_validshape %selected, %c0, %c32 : !T
+    %ar, %ac = pto.get_validshape %a : !T
+    %sr, %sc = pto.get_validshape %selected : !T
+    %k100 = arith.constant 100 : index
+    %x = arith.muli %ar, %k100 : index
+    %result = arith.addi %x, %sr : index
+    return %result : index
+  }
+
+  func.func @arith_selection(%cond: i1, %addr_a: i64, %addr_b: i64) -> index {
+    %c0 = arith.constant 0 : index
+    %c8 = arith.constant 8 : index
+    %c16 = arith.constant 16 : index
+    %c32 = arith.constant 32 : index
+    %a = pto.alloc_tile addr = %addr_a valid_row = %c32 valid_col = %c32 : !T
+    %b = pto.alloc_tile addr = %addr_b valid_row = %c8 valid_col = %c32 : !T
+    %selected = arith.select %cond, %a, %b : !T
+    pto.set_validshape %a, %c16, %c32 : !T
+    %before, %bc = pto.get_validshape %selected : !T
+    pto.set_validshape %selected, %c0, %c32 : !T
+    %ar, %ac = pto.get_validshape %a : !T
+    %k100 = arith.constant 100 : index
+    %x = arith.muli %before, %k100 : index
+    %result = arith.addi %x, %ar : index
+    return %result : index
+  }
+
+  func.func @two_subviews(%addr_a: i64, %addr_b: i64, %rows: index, %cols: index) -> index {
+    %c0 = arith.constant 0 : index
+    %c8 = arith.constant 8 : index
+    %c32 = arith.constant 32 : index
+    %a = pto.alloc_tile addr = %addr_a valid_row = %c32 valid_col = %c32 : !T
+    %first = pto.subview %a[%c0, %c0] sizes [16, 32] valid [%rows, %cols] : !T -> !S
+    %second = pto.subview %a[%c0, %c0] sizes [16, 32] valid [%rows, %cols] : !T -> !S
+    pto.set_validshape %first, %c0, %c32 : !S
+    pto.set_validshape %second, %c8, %c32 : !S
+    %fr, %fc = pto.get_validshape %first : !S
+    %sr, %sc = pto.get_validshape %second : !S
+    %k100 = arith.constant 100 : index
+    %x = arith.muli %fr, %k100 : index
+    %result = arith.addi %x, %sr : index
+    return %result : index
+  }
+
+  func.func @two_bitcasts(%addr_a: i64, %addr_b: i64) -> index {
+    %c0 = arith.constant 0 : index
+    %c16 = arith.constant 16 : index
+    %c32 = arith.constant 32 : index
+    %a = pto.alloc_tile addr = %addr_a valid_row = %c32 valid_col = %c32 : !T
+    %first = pto.bitcast %a : !T -> !U
+    %second = pto.bitcast %a : !T -> !U
+    pto.set_validshape %first, %c0, %c32 : !U
+    pto.set_validshape %second, %c16, %c32 : !U
+    %fr, %fc = pto.get_validshape %first : !U
+    %sr, %sc = pto.get_validshape %second : !U
+    %k100 = arith.constant 100 : index
+    %x = arith.muli %fr, %k100 : index
+    %result = arith.addi %x, %sr : index
+    return %result : index
+  }
+}
+
+// CHECK-LABEL: branch_fillpad(
+// CHECK: if (
+// CHECK: } else {
+// CHECK: GetValidRow()
+// CHECK: GetValidCol()
+// CHECK: TFILLPAD<pto::TFillPadMode::InPlace>(
+// CHECK: .SetValidShape(
+// CHECK: TFILLPAD<pto::TFillPadMode::InPlace>(
+// CHECK: GetValidRow()
+// CHECK-LABEL: branch_reshape(
+// CHECK: TRESHAPE(
+// CHECK: .SetValidShape(
+// CHECK: TFILLPAD<pto::TFillPadMode::InPlace>(
+// CHECK-LABEL: same_source(
+// CHECK: .SetValidShape(
+// CHECK-LABEL: snapshot_time(
+// CHECK: .SetValidShape(
+// CHECK-LABEL: nested_multi_result(
+// CHECK: .SetValidShape(
+
+// CHECK-LABEL: two_reshapes(
+// CHECK: TRESHAPE(
+// CHECK: TRESHAPE(
+// SNAPSHOT-LABEL: func.func @same_source(
+// SNAPSHOT: %[[ORIGINAL:.*]] = pto.alloc_tile
+// SNAPSHOT: %[[SELECTED:.*]] = scf.if
+// SNAPSHOT: pto.copy_tile_descriptor %[[ORIGINAL]]
+// SNAPSHOT: } else {
+// SNAPSHOT: pto.copy_tile_descriptor %[[ORIGINAL]]
+// SNAPSHOT: pto.set_validshape %[[SELECTED]]
+// SNAPSHOT: pto.get_validshape %[[SELECTED]]
+// SNAPSHOT: pto.get_validshape %[[ORIGINAL]]
+// SNAPSHOT-LABEL: func.func @two_reshapes(
+// SNAPSHOT: %[[FIRST:.*]] = pto.treshape
+// SNAPSHOT: %[[SECOND:.*]] = pto.treshape
+// SNAPSHOT: pto.set_validshape %[[FIRST]]
+// SNAPSHOT: pto.set_validshape %[[SECOND]]
+// SNAPSHOT-LABEL: func.func @two_bitcasts(
+// SNAPSHOT: %[[FIRST:.*]] = pto.bitcast
+// SNAPSHOT: %[[SECOND:.*]] = pto.bitcast
+// SNAPSHOT: pto.set_validshape %[[FIRST]]
+// SNAPSHOT: pto.set_validshape %[[SECOND]]
+
+// VPTO: native Tile selection descriptor mutation currently requires --pto-backend=emitc

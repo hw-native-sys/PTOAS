@@ -24,9 +24,11 @@
 #include "PTO/IR/PTO.h"
 #include "PTO/IR/PTOMultiBuffer.h"
 #include "PTO/IR/PTOTypeUtils.h"
+#include "PTO/IR/TileProvenance.h"
 #include "PTO/Transforms/Passes.h"
 
 #include "mlir/Dialect/Arith/IR/Arith.h"
+#include "mlir/Dialect/SCF/IR/SCF.h"
 #include "mlir/IR/BuiltinOps.h"
 #include "mlir/IR/Matchers.h"
 #include "mlir/IR/PatternMatch.h"
@@ -211,12 +213,45 @@ static uint64_t getTileAddressAlignmentBytes(pto::TileBufType type) {
   return 1;
 }
 
+static Value computeSubviewAddress(pto::SubViewOp subview, Value base,
+                                   IRRewriter &rewriter, Location loc) {
+  auto sourceType = subview.getSource().getType();
+  int64_t rowStride = 0;
+  int64_t colStride = 0;
+  if (!base || !getTilePointerStrides(sourceType, rowStride, colStride) ||
+      subview.getOffsets().size() != mlir::pto::kValue2) {
+    return {};
+  }
+  Value row = ensureI64(subview.getOffsets()[0], rewriter, loc);
+  Value col = ensureI64(subview.getOffsets()[1], rewriter, loc);
+  if (!row || !col) {
+    return {};
+  }
+  Value rowScale = rewriter.create<arith::ConstantIntOp>(loc, rowStride, 64);
+  Value colScale = rewriter.create<arith::ConstantIntOp>(loc, colStride, 64);
+  row = rewriter.create<arith::MulIOp>(loc, row, rowScale);
+  col = rewriter.create<arith::MulIOp>(loc, col, colScale);
+  Value elements = rewriter.create<arith::AddIOp>(loc, row, col);
+  int64_t elemBytes = static_cast<int64_t>(
+      pto::getPTOStorageElemByteSize(sourceType.getElementType()));
+  if (elemBytes == 0) {
+    return {};
+  }
+  Value byteScale = rewriter.create<arith::ConstantIntOp>(loc, elemBytes, 64);
+  Value bytes = rewriter.create<arith::MulIOp>(loc, elements, byteScale);
+  return rewriter.create<arith::AddIOp>(loc, base, bytes);
+}
+
 static Value computeTileAddress(Value value, IRRewriter &rewriter,
                                 Location loc) {
   if (auto alloc = value.getDefiningOp<pto::AllocTileOp>()) {
     return ensureI64(alloc.getAddr(), rewriter, loc);
   }
-  if (value.getDefiningOp<pto::DeclareTileOp>()) {
+  // A selected/view descriptor already carries the chosen runtime address.
+  // Reading that address preserves branch correlation; choosing one origin
+  // from the analysis would silently select the wrong allocation.
+  if (!value.getDefiningOp<pto::SubViewOp>() &&
+      pto::isLocallyBoundTile(value)) {
     auto tileType = dyn_cast<pto::TileBufType>(value.getType());
     if (!tileType) {
       return {};
@@ -235,31 +270,7 @@ static Value computeTileAddress(Value value, IRRewriter &rewriter,
   }
   if (auto subview = value.getDefiningOp<pto::SubViewOp>()) {
     Value base = computeTileAddress(subview.getSource(), rewriter, loc);
-    auto sourceType = subview.getSource().getType();
-    int64_t rowStride = 0;
-    int64_t colStride = 0;
-    if (!base || !getTilePointerStrides(sourceType, rowStride, colStride) ||
-        subview.getOffsets().size() != mlir::pto::kValue2) {
-      return {};
-    }
-    Value row = ensureI64(subview.getOffsets()[0], rewriter, loc);
-    Value col = ensureI64(subview.getOffsets()[1], rewriter, loc);
-    if (!row || !col) {
-      return {};
-    }
-    Value rowScale = rewriter.create<arith::ConstantIntOp>(loc, rowStride, 64);
-    Value colScale = rewriter.create<arith::ConstantIntOp>(loc, colStride, 64);
-    row = rewriter.create<arith::MulIOp>(loc, row, rowScale);
-    col = rewriter.create<arith::MulIOp>(loc, col, colScale);
-    Value elements = rewriter.create<arith::AddIOp>(loc, row, col);
-    int64_t elemBytes = static_cast<int64_t>(
-        pto::getPTOStorageElemByteSize(sourceType.getElementType()));
-    if (elemBytes == 0) {
-      return {};
-    }
-    Value byteScale = rewriter.create<arith::ConstantIntOp>(loc, elemBytes, 64);
-    Value bytes = rewriter.create<arith::MulIOp>(loc, elements, byteScale);
-    return rewriter.create<arith::AddIOp>(loc, base, bytes);
+    return computeSubviewAddress(subview, base, rewriter, loc);
   }
   return {};
 }
@@ -500,39 +511,78 @@ static void rewriteParentShapedTMovUsers(pto::SubViewOp op, MLIRContext *ctx) {
   }
 }
 
-static LogicalResult resolveTileNativeSubviews(ModuleOp module,
-                                               MLIRContext *ctx) {
-  SmallVector<pto::SubViewOp, mlir::pto::kValue16> subviews;
-  module.walk([&subviews](pto::SubViewOp op) { subviews.push_back(op); });
-  for (pto::SubViewOp op : subviews) {
-    IRRewriter rewriter(ctx);
-    rewriter.setInsertionPoint(op);
-    Value addr = computeTileAddress(op.getResult(), rewriter, op.getLoc());
-    // A tile function argument is a symbolic runtime-bound handle. Keep its
-    // subview tile-native; only planned local roots and declare_tile handles
-    // assigned by preceding pipe operations can be normalized here.
-    if (!addr) {
-      continue;
+static void resolveTileNativeSubview(pto::SubViewOp op, IRRewriter &rewriter) {
+  rewriter.setInsertionPoint(op);
+  Value addr = computeTileAddress(op.getResult(), rewriter, op.getLoc());
+  // Keep symbolic subviews tile-native when the parent has no local address.
+  if (!addr) {
+    return;
+  }
+  pto::TileBufType physicalType = getSubviewPhysicalType(op);
+  if (physicalType.getShape() != op.getResult().getType().getShape()) {
+    // A mat-source move compares the physical parent shape with its compact
+    // destination. Express it as an extract before replacing the subview.
+    rewriteParentShapedTMovUsers(op, rewriter.getContext());
+  }
+  auto alloc = rewriter.create<pto::AllocTileOp>(
+      op.getLoc(), physicalType, addr,
+      getSubviewValidOperand(op, physicalType, kDim0, rewriter),
+      getSubviewValidOperand(op, physicalType, kDim1, rewriter),
+      pto::ConvTileConfigAttr());
+  alloc->setAttr("pto.view_semantics", rewriter.getStringAttr("subview"));
+  rewriter.replaceOp(op, alloc.getResult());
+}
+
+static LogicalResult propagateSelectedTileType(OpResult result, Value lhs,
+                                              Value rhs) {
+  if (!isa<pto::TileBufType>(result.getType())) {
+    return success();
+  }
+  if (lhs.getType() != rhs.getType()) {
+    return result.getOwner()->emitOpError()
+           << "cannot select tile descriptors with different physical types: "
+           << lhs.getType() << " and " << rhs.getType();
+  }
+  result.setType(lhs.getType());
+  return success();
+}
+
+static LogicalResult propagateIfTileTypes(scf::IfOp selection) {
+  for (OpResult result : selection.getResults()) {
+    unsigned index = result.getResultNumber();
+    if (failed(propagateSelectedTileType(
+            result, selection.thenYield().getOperand(index),
+            selection.elseYield().getOperand(index)))) {
+      return failure();
     }
-    pto::TileBufType physicalType = getSubviewPhysicalType(op);
-    const bool keepsParentShape =
-        physicalType.getShape() != op.getResult().getType().getShape();
-    if (keepsParentShape) {
-      // The resolved handle keeps the parent's physical shape and strides,
-      // so mat-source tmov users would compare the parent shape against the
-      // compact destination and fail verification. Move them onto textract
-      // windows from the parent tile before the handle replaces the subview.
-      rewriteParentShapedTMovUsers(op, ctx);
-    }
-    auto alloc = rewriter.create<pto::AllocTileOp>(
-        op.getLoc(), physicalType, addr,
-        getSubviewValidOperand(op, physicalType, kDim0, rewriter),
-        getSubviewValidOperand(op, physicalType, kDim1, rewriter),
-        pto::ConvTileConfigAttr());
-    alloc->setAttr("pto.view_semantics", rewriter.getStringAttr("subview"));
-    rewriter.replaceOp(op, alloc.getResult());
   }
   return success();
+}
+
+static LogicalResult resolveTileNativeSubviews(ModuleOp module,
+                                               MLIRContext *ctx) {
+  IRRewriter rewriter(ctx);
+  // Resolve branches before their selection and propagate the physical type
+  // before any following subview uses it to compute an address.
+  WalkResult result = module.walk<WalkOrder::PostOrder>([&](Operation *op) {
+    if (auto subview = dyn_cast<pto::SubViewOp>(op)) {
+      resolveTileNativeSubview(subview, rewriter);
+    } else if (auto copy = dyn_cast<pto::CopyTileDescriptorOp>(op)) {
+      copy.getResult().setType(copy.getSource().getType());
+    } else if (auto selection = dyn_cast<scf::IfOp>(op)) {
+      if (failed(propagateIfTileTypes(selection))) {
+        return WalkResult::interrupt();
+      }
+    } else if (auto select = dyn_cast<arith::SelectOp>(op)) {
+      if (failed(propagateSelectedTileType(
+              select->getResult(0), select.getTrueValue(),
+              select.getFalseValue()))) {
+        return WalkResult::interrupt();
+      }
+    }
+    return WalkResult::advance();
+  });
+  return failure(result.wasInterrupted());
 }
 
 static FailureOr<uint64_t> getStaticSlotBytes(pto::TileBufType slotType) {

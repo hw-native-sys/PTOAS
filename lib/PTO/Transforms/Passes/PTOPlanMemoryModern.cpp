@@ -11,6 +11,7 @@
 #include <limits>
 #include <tuple>
 #include "PTO/IR/PTOMultiBuffer.h"
+#include "PTO/IR/TileProvenance.h"
 #include "PTO/IR/PTOTypeUtils.h"
 #include "PTO/Support/CodeConstants.h"
 #include "PTO/Transforms/Passes.h"
@@ -1038,7 +1039,12 @@ struct PlannerAnalysis {
 
   // Root aliasing: propagate roots through value-forwarding ops.
   void recordRootAliases(Operation *op) {
-    if (auto multiGet = dyn_cast<pto::MultiTileGetOp>(op)) {
+    if (op->getNumResults() == 1 && getTileViewSource(op->getResult(0))) {
+      Value result = op->getResult(0);
+      Value source = getTileViewSource(result);
+      setRoots(result, getRoots(source));
+      propagateSplitTpopDerived(result, ValueRange{source});
+    } else if (auto multiGet = dyn_cast<pto::MultiTileGetOp>(op)) {
       setRoots(multiGet.getResult(), getRoots(multiGet.getSource()));
       propagateSplitTpopDerived(multiGet.getResult(),
                                 ValueRange{multiGet.getSource()});
@@ -1049,18 +1055,6 @@ struct PlannerAnalysis {
       propagateSplitTpopDerived(select.getResult(),
                                 ValueRange{select.getTrueValue(),
                                            select.getFalseValue()});
-    } else if (auto subview = dyn_cast<pto::SubViewOp>(op)) {
-      setRoots(subview.getResult(), getRoots(subview.getSource()));
-      propagateSplitTpopDerived(subview.getResult(),
-                                ValueRange{subview.getSource()});
-    } else if (auto bitcast = dyn_cast<pto::BitcastOp>(op)) {
-      setRoots(bitcast.getResult(), getRoots(bitcast.getSrc()));
-      propagateSplitTpopDerived(bitcast.getResult(),
-                                ValueRange{bitcast.getSrc()});
-    } else if (auto reshape = dyn_cast<pto::TReshapeOp>(op)) {
-      setRoots(reshape.getResult(), getRoots(reshape.getSrc()));
-      propagateSplitTpopDerived(reshape.getResult(),
-                                ValueRange{reshape.getSrc()});
     } else if (auto branchOp = dyn_cast<RegionBranchOpInterface>(op)) {
       seedRegionBranchEntryAliases(branchOp);
     }

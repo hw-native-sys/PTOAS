@@ -10,6 +10,7 @@
 
 #include "../PTOToEmitCEmitters.h"
 #include "TileInternal.h"
+#include "mlir/Dialect/SCF/IR/SCF.h"
 
 using namespace mlir;
 using namespace mlir::pto;
@@ -101,6 +102,30 @@ struct PTODeclareTileToEmitC
       return rewriter.notifyMatchFailure(
           op, "only rank-2 declare_tile handles can be converted to EmitC");
     rewriter.replaceOp(op, *tile);
+    return success();
+  }
+};
+
+struct PTOCopyTileDescriptorToEmitC : public OpConversionPattern<pto::CopyTileDescriptorOp> {
+  using OpConversionPattern::OpConversionPattern;
+
+  LogicalResult matchAndRewrite(pto::CopyTileDescriptorOp op, OpAdaptor adaptor,
+                                ConversionPatternRewriter &rewriter) const override {
+    if (op->use_empty()) {
+      rewriter.eraseOp(op);
+      return success();
+    }
+    // Preserve the capture point even if SCF canonicalization moved the copy
+    // out of its branch. The final EmitC cleanup can fuse an adjacent
+    // assignment after the conversion bridges have been removed.
+    auto token = getEmitCTileTypeString(op.getResult().getType());
+    Type type = getTypeConverter()->convertType(op.getResult().getType());
+    if (!token || !type) {
+      return failure();
+    }
+    auto captured = rewriter.replaceOpWithNewOp<emitc::CallOpaqueOp>(
+        op, TypeRange{type}, *token, ArrayAttr{}, ArrayAttr{}, ValueRange{adaptor.getSource()});
+    captured->setAttr("__pto.tile_descriptor_capture", rewriter.getUnitAttr());
     return success();
   }
 };
@@ -206,6 +231,7 @@ void populateTileTileAllocPatterns(RewritePatternSet &patterns,
                         TypeConverter &typeConverter, MLIRContext *ctx,
                         PTOArch targetArch) {
   patterns.add<PTODeclareTileToEmitC>(typeConverter, ctx);
+  patterns.add<PTOCopyTileDescriptorToEmitC>(typeConverter, ctx);
   patterns.add<PTOTileBufAddrToEmitC>(typeConverter, ctx);
   patterns.add<PTOTReshapeToEmitC>(typeConverter, ctx);
   patterns.add<PTOBitcastToEmitC>(typeConverter, ctx);

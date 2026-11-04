@@ -12,6 +12,7 @@
 #include <limits>
 
 #include "PTO/IR/PTO.h"
+#include "PTO/IR/TileProvenance.h"
 #include "PTO/IR/PTOMultiBuffer.h"
 #include "PTO/IR/PTOTypeUtils.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
@@ -314,6 +315,11 @@ std::optional<AddressSpaceAttr> GetBufferSpaceAttr(Value operand) {
 
 static std::optional<std::pair<Value, Value>>
 getPTOOperationAliasInfo(Operation *op) {
+  if (op->getNumResults() == 1) {
+    if (Value source = getTileViewSource(op->getResult(0))) {
+      return std::make_pair(op->getResult(0), source);
+    }
+  }
   if (auto makeViewOp = dyn_cast<pto::MakeTensorViewOp>(op)) {
     return std::make_pair(makeViewOp.getResult(), makeViewOp.getPtr());
   }
@@ -326,14 +332,8 @@ getPTOOperationAliasInfo(Operation *op) {
   if (auto castPtrOp = dyn_cast<pto::CastPtrOp>(op)) {
     return std::make_pair(castPtrOp.getResult(), castPtrOp.getInput());
   }
-  if (auto subViewOp = dyn_cast<pto::SubViewOp>(op)) {
-    return std::make_pair(subViewOp.getResult(), subViewOp.getSource());
-  }
   if (auto bitcastOp = dyn_cast<pto::BitcastOp>(op)) {
     return std::make_pair(bitcastOp.getResult(), bitcastOp.getSrc());
-  }
-  if (auto reshapeOp = dyn_cast<pto::TReshapeOp>(op)) {
-    return std::make_pair(reshapeOp.getResult(), reshapeOp.getSrc());
   }
   if (auto multiGetOp = dyn_cast<pto::MultiTileGetOp>(op)) {
     return std::make_pair(multiGetOp.getResult(), multiGetOp.getSource());
@@ -775,9 +775,8 @@ resolveMultiTileRange(MultiTileGetOp multiGet) {
   return makeTileRange(alloc.getResult(), slotType, *slotBytes, *base);
 }
 
-static std::optional<SemanticRange> resolveSubviewRange(SubViewOp subview) {
-  std::optional<SemanticRange> source =
-      resolveSemanticRange(subview.getSource());
+static std::optional<SemanticRange> refineSubviewRange(
+    SubViewOp subview, std::optional<SemanticRange> source) {
   if (!source) {
     return std::nullopt;
   }
@@ -803,9 +802,8 @@ static std::optional<SemanticRange> resolveSubviewRange(SubViewOp subview) {
   return source;
 }
 
-static std::optional<SemanticRange> resolveViewRange(Value sourceValue,
-                                                     Value resultValue) {
-  std::optional<SemanticRange> source = resolveSemanticRange(sourceValue);
+static std::optional<SemanticRange> refineViewRange(
+    Value resultValue, std::optional<SemanticRange> source) {
   auto viewType = dyn_cast<TileBufType>(resultValue.getType());
   if (!source || !viewType) {
     return std::nullopt;
@@ -826,6 +824,9 @@ static std::optional<SemanticRange> resolveSemanticRange(Value value) {
   if (!value) {
     return std::nullopt;
   }
+  if (auto copy = value.getDefiningOp<CopyTileDescriptorOp>()) {
+    return resolveSemanticRange(copy.getSource());
+  }
   if (auto alloc = value.getDefiningOp<AllocTileOp>()) {
     return resolveAllocTileRange(alloc);
   }
@@ -833,13 +834,13 @@ static std::optional<SemanticRange> resolveSemanticRange(Value value) {
     return resolveMultiTileRange(multiGet);
   }
   if (auto subview = value.getDefiningOp<SubViewOp>()) {
-    return resolveSubviewRange(subview);
+    return refineSubviewRange(subview, resolveSemanticRange(subview.getSource()));
   }
   if (auto bitcast = value.getDefiningOp<BitcastOp>()) {
-    return resolveViewRange(bitcast.getSrc(), bitcast.getResult());
+    return refineViewRange(bitcast.getResult(), resolveSemanticRange(bitcast.getSrc()));
   }
   if (auto reshape = value.getDefiningOp<TReshapeOp>()) {
-    return resolveViewRange(reshape.getSrc(), reshape.getResult());
+    return refineViewRange(reshape.getResult(), resolveSemanticRange(reshape.getSrc()));
   }
   if (auto cast = value.getDefiningOp<UnrealizedConversionCastOp>()) {
     bool hasSingleOperand = cast.getNumOperands() == 1;
@@ -873,6 +874,79 @@ static bool rangesOverlap(const SemanticRange &lhs, const SemanticRange &rhs) {
                                *rhs.absoluteBegin, rhs.bytes);
 }
 
+struct GuardedTileRange {
+  SemanticRange range;
+  SmallVector<TileSourceEdge, 2> guards;
+};
+
+static bool guardsCompatible(ArrayRef<TileSourceEdge> lhs,
+                             ArrayRef<TileSourceEdge> rhs) {
+  for (const auto &a : lhs) {
+    for (const auto &b : rhs) {
+      if (a.condition == b.condition && a.whenTrue != b.whenTrue) {
+        return false;
+      }
+    }
+  }
+  return true;
+}
+
+// This diagnostic reports only proven overlap. Unknown ranges, including
+// recurrent loop offsets, are left to the conservative planner/sync models.
+static SmallVector<GuardedTileRange> getGuardedTileRanges(Value tile) {
+  struct Path {
+    Value value;
+    SmallVector<Value, 4> views;
+    SmallVector<TileSourceEdge, 2> guards;
+  };
+  SmallVector<Path> pending{{tile, {}, {}}};
+  SmallVector<GuardedTileRange> ranges;
+  constexpr unsigned maxPaths = 256;
+  for (unsigned count = 0; !pending.empty() && count < maxPaths; ++count) {
+    Path path = pending.pop_back_val();
+    TileSources sources = getTileSources(path.value);
+    if (sources.kind == TileSourceKind::View || sources.kind == TileSourceKind::Selection) {
+      for (const auto &edge : sources.edges) {
+        Path next{edge.source, path.views, path.guards};
+        if (sources.kind == TileSourceKind::View) {
+          next.views.push_back(path.value);
+        } else if (guardsCompatible(next.guards, ArrayRef<TileSourceEdge>(edge))) {
+          next.guards.push_back(edge);
+        } else {
+          continue;
+        }
+        pending.push_back(std::move(next));
+      }
+      continue;
+    }
+    auto range = resolveSemanticRange(path.value);
+    for (Value view : llvm::reverse(path.views)) {
+      if (auto subview = view.getDefiningOp<SubViewOp>()) {
+        range = refineSubviewRange(subview, range);
+      } else if (!view.getDefiningOp<CopyTileDescriptorOp>()) {
+        range = refineViewRange(view, range);
+      }
+    }
+    if (range) {
+      ranges.push_back({*range, std::move(path.guards)});
+    }
+  }
+  return ranges;
+}
+
+static bool haveOverlappingTileRanges(Value lhs, Value rhs) {
+  auto lhsRanges = getGuardedTileRanges(lhs);
+  auto rhsRanges = getGuardedTileRanges(rhs);
+  for (const auto &a : lhsRanges) {
+    for (const auto &b : rhsRanges) {
+      if (guardsCompatible(a.guards, b.guards) && rangesOverlap(a.range, b.range)) {
+        return true;
+      }
+    }
+  }
+  return false;
+}
+
 } // namespace
 
 LogicalResult verifySemanticNoAliasRanges(func::FuncOp func) {
@@ -881,10 +955,9 @@ LogicalResult verifySemanticNoAliasRanges(func::FuncOp func) {
     if (failed(result))
       return;
     for (auto [lhs, rhs] : getSemanticNoAliasPairs(op)) {
-      auto lhsRange = resolveSemanticRange(lhs);
-      auto rhsRange = resolveSemanticRange(rhs);
-      if (!lhsRange || !rhsRange || !rangesOverlap(*lhsRange, *rhsRange))
+      if (!haveOverlappingTileRanges(lhs, rhs)) {
         continue;
+      }
       op->emitError("PlanMemory semantic no-alias violation: operand byte ranges overlap");
       result = failure();
       return;

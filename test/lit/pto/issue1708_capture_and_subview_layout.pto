@@ -1,0 +1,66 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+
+// RUN: sed -E 's/ addr = %addr_[abc]//g' %s > %t.level2.pto
+// RUN: ptoas %t.level2.pto --pto-arch=a3 --pto-level=level2 -o %t.level2.cpp
+// RUN: ptoas %s --pto-arch=a3 --pto-level=level3 -o %t.cpp
+// RUN: bash %S/Inputs/run_issue1708_descriptor_cpp.sh %t.cpp %S/Inputs/issue1708_capture_and_subview_layout.cpp
+
+!T = !pto.tile_buf<vec, 32x32xf32, valid=?x?>
+!P = !pto.tile_buf<vec, 32x256xf32>
+!W = !pto.tile_buf<vec, 16x128xf32>
+!N = !pto.tile_buf<vec, 8x128xf32>
+
+module {
+  func.func @capture_time(%count: index) -> index {
+    %true = arith.constant true
+    %c0 = arith.constant 0 : index
+    %c1 = arith.constant 1 : index
+    %c16 = arith.constant 16 : index
+    %c32 = arith.constant 32 : index
+    %addr_c = arith.constant 0 : i64
+    %a = pto.alloc_tile addr = %addr_c valid_row = %c32 valid_col = %c32 : !T
+    %result = scf.for %i = %c0 to %count step %c1
+        iter_args(%previous = %a) -> (!T) {
+      %selected = scf.if %true -> (!T) {
+        scf.yield %a : !T
+      } else {
+        scf.yield %a : !T
+      }
+      pto.set_validshape %a, %c16, %c32 : !T
+      scf.yield %selected : !T
+    }
+    %rows, %cols = pto.get_validshape %result : !T
+    return %rows : index
+  }
+
+  func.func @noncompact_subview(%first: i1, %second: i1, %addr_a: i64, %addr_b: i64) -> i64 {
+    %c0 = arith.constant 0 : index
+    %c1 = arith.constant 1 : index
+    %c8 = arith.constant 8 : index
+    %c16 = arith.constant 16 : index
+    %a = pto.alloc_tile addr = %addr_a : !P
+    %b = pto.alloc_tile addr = %addr_b : !P
+    %selected = scf.if %first -> (!P) {
+      scf.yield %a : !P
+    } else {
+      scf.yield %b : !P
+    }
+    %again = scf.if %second -> (!W) {
+      %upper = pto.subview %selected[%c16, %c0] sizes [16, 128] : !P -> !W
+      scf.yield %upper : !W
+    } else {
+      %lower = pto.subview %selected[%c8, %c0] sizes [16, 128] : !P -> !W
+      scf.yield %lower : !W
+    }
+    %nested = pto.subview %again[%c1, %c0] sizes [8, 128] : !W -> !N
+    %pointer = pto.tile_buf_addr %nested : !N -> !pto.ptr<f32, vec>
+    %address = pto.castptr %pointer : !pto.ptr<f32, vec> -> i64
+    return %address : i64
+  }
+}

@@ -425,7 +425,7 @@ def MultiTileGetOp : PTO_Op<"multi_tile_get", [
 
 
 def SubViewOp : PTO_Op<"subview", [
-    Pure,
+    DeclareOpInterfaceMethods<MemoryEffectsOpInterface>,
     ViewLikeOpInterface,
     AttrSizedOperandSegments,
     DeclareOpInterfaceMethods<InferTypeOpInterface> // 启用 C++ 推导
@@ -482,7 +482,14 @@ def SetValidShapeOp : PTO_Op<"set_validshape", [
     This op does not allocate or alias a new tile handle. It is only valid for
     tile_buf types whose valid_row and valid_col are both dynamic (`?`), and
     the source must be a locally bound tile handle (for example `alloc_tile`
-    or a view derived from it). Function arguments/results are not supported.
+    or a view derived from it), or an scf.if result whose selected sources
+    are supported local handles. Function arguments/results are not supported.
+
+    Dynamic Tile scf.if results capture an independent descriptor: they share
+    the selected payload storage and copy its current valid extents. Updating
+    the selected result does not change the input descriptors' valid extents.
+    Treshape creates another descriptor over that storage; set_validshape on
+    it updates that descriptor alone.
   }];
 
   let arguments = (ins
@@ -535,7 +542,8 @@ def PTO_BitcastType : AnyTypeOf<[
   ], "tile buffer, integer, float, or builtin vector thereof">;
 
 def BitcastOp : PTO_Op<"bitcast", [
-    Pure,
+    ConditionallySpeculatable,
+    DeclareOpInterfaceMethods<MemoryEffectsOpInterface>,
     ViewLikeOpInterface
   ]> {
   let summary = "Bitwise reinterpretation of a value or tile buffer view";
@@ -561,7 +569,29 @@ def BitcastOp : PTO_Op<"bitcast", [
   let assemblyFormat = "$src attr-dict `:` qualified(type($src)) `->` qualified(type($result))";
 
   let extraClassDeclaration = [{
+    ::mlir::Speculation::Speculatability getSpeculatability();
     ::mlir::Value getViewSource() { return getSrc(); }
+  }];
+}
+
+def CopyTileDescriptorOp : PTO_Op<"copy_tile_descriptor", [
+    SameOperandsAndResultType,
+    ViewLikeOpInterface,
+    DeclareOpInterfaceMethods<MemoryEffectsOpInterface>
+  ]> {
+  let summary = "Capture a fresh descriptor sharing the source tile payload";
+  let description = [{
+    Internal normalization operation. Copies the current address and valid
+    extents, without allocating or copying payload storage. Its fresh mutable
+    descriptor identity prevents CSE and speculative selection before updates
+    in an scf.if branch. EmitC can fuse an adjacent result assignment after
+    structural conversion.
+  }];
+  let arguments = (ins TileBufType:$source);
+  let results = (outs TileBufType:$result);
+  let assemblyFormat = "$source attr-dict `:` qualified(type($source))";
+  let extraClassDeclaration = [{
+    ::mlir::Value getViewSource() { return getSource(); }
   }];
 }
 
@@ -6002,7 +6032,7 @@ def TRemSOp: PTO_TOp<"trems", [
 
 def TReshapeOp: PTO_TOp<"treshape", [
   OpPipeInterface,
-  Pure,
+  DeclareOpInterfaceMethods<MemoryEffectsOpInterface>,
   ViewLikeOpInterface
 ]> {
   let summary = "TRESHAPE: Reinterpret a tile buffer view (SSA; aliases src storage)";

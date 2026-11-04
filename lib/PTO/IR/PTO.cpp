@@ -10,6 +10,7 @@
 //===----------------------------------------------------------------------===//
 
 #include "PTO/IR/PTO.h"
+#include "PTO/IR/TileProvenance.h"
 
 #include "mlir/Interfaces/InferIntRangeInterface.h"
 

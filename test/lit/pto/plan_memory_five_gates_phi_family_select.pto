@@ -81,9 +81,13 @@ module attributes {"pto.target_arch" = "a3"} {
 // CHECK-DAG: %[[ADDR0:.*]] = arith.constant 0 : i64
 // CHECK-DAG: %[[ADDR1:.*]] = arith.constant 512 : i64
 // CHECK: scf.if
-// CHECK: pto.alloc_tile addr = %[[ADDR0]]
-// CHECK: pto.alloc_tile addr = %[[ADDR1]]
-// CHECK: arith.select
+// CHECK: %[[A:.*]] = pto.alloc_tile addr = %[[ADDR0]]
+// CHECK: %[[B:.*]] = pto.alloc_tile addr = %[[ADDR1]]
+// CHECK: %[[INNER:.*]] = scf.if
+// CHECK: pto.copy_tile_descriptor %[[A]]
+// CHECK: } else {
+// CHECK: pto.copy_tile_descriptor %[[B]]
+// CHECK: pto.copy_tile_descriptor %[[INNER]]
 // CHECK: } else {
 // CHECK: pto.alloc_tile addr = %[[ADDR0]]
 // CHECK-NOT: memref.alloc

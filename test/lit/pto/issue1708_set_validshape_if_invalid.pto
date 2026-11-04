@@ -1,0 +1,101 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+
+// RUN: pto-test-opt --split-input-file --verify-diagnostics %s
+
+!T = !pto.tile_buf<vec, 32x32xf32, valid=?x?>
+module {
+  func.func @loop_result(%count: index) {
+    %c0 = arith.constant 0 : index
+    %c1 = arith.constant 1 : index
+    %c32 = arith.constant 32 : index
+    %tile = pto.alloc_tile valid_row = %c32 valid_col = %c32 : !T
+    %carried = scf.for %i = %c0 to %count step %c1 iter_args(%arg = %tile) -> (!T) {
+      scf.yield %arg : !T
+    }
+    // expected-error@+1 {{requires a locally bound tile source}}
+    pto.set_validshape %carried, %c0, %c32 : !T
+    return
+  }
+}
+
+// -----
+
+!T = !pto.tile_buf<vec, 32x32xf32, valid=?x?>
+module {
+  func.func @while_result(%cond: i1) {
+    %c0 = arith.constant 0 : index
+    %c32 = arith.constant 32 : index
+    %tile = pto.alloc_tile valid_row = %c32 valid_col = %c32 : !T
+    %carried = scf.while (%arg = %tile) : (!T) -> (!T) {
+      scf.condition(%cond) %arg : !T
+    } do {
+    ^bb0(%arg: !T):
+      scf.yield %arg : !T
+    }
+    // expected-error@+1 {{requires a locally bound tile source}}
+    pto.set_validshape %carried, %c0, %c32 : !T
+    return
+  }
+}
+
+// -----
+
+!T = !pto.tile_buf<vec, 32x32xf32, valid=?x?>
+module {
+  func.func private @external_tile() -> !T
+  func.func @call_result() {
+    %c0 = arith.constant 0 : index
+    %c32 = arith.constant 32 : index
+    %tile = func.call @external_tile() : () -> !T
+    // expected-error@+1 {{requires a locally bound tile source}}
+    pto.set_validshape %tile, %c0, %c32 : !T
+    return
+  }
+}
+
+// -----
+
+
+!T = !pto.tile_buf<loc=vec, dtype=f32, rows=32, cols=32, v_row=?, v_col=?, blayout=row_major, slayout=none_box, fractal=512, pad=0>
+module {
+  func.func @argument_in_one_arm(%cond: i1, %arg: !T) {
+    %c16 = arith.constant 16 : index
+    %c32 = arith.constant 32 : index
+    %local = pto.alloc_tile valid_row = %c32 valid_col = %c32 : !T
+    %scalar, %selected = scf.if %cond -> (index, !T) {
+      scf.yield %c16, %local : index, !T
+    } else {
+      scf.yield %c32, %arg : index, !T
+    }
+    // expected-error@+1 {{requires a locally bound tile source}}
+    pto.set_validshape %selected, %c16, %c32 : !T
+    return
+  }
+}
+
+// -----
+
+
+!T = !pto.tile_buf<loc=vec, dtype=f32, rows=32, cols=32, v_row=?, v_col=?, blayout=row_major, slayout=none_box, fractal=512, pad=0>
+module {
+  func.func @argument_in_one_arm(%cond: i1, %arg: !T) {
+    %c16 = arith.constant 16 : index
+    %c32 = arith.constant 32 : index
+    %local = pto.alloc_tile valid_row = %c32 valid_col = %c32 : !T
+    %scalar, %selected = scf.if %cond -> (index, !T) {
+      scf.yield %c16, %local : index, !T
+    } else {
+      scf.yield %c32, %arg : index, !T
+    }
+    %view = pto.treshape %selected : !T -> !T
+    // expected-error@+1 {{requires a locally bound tile source}}
+    pto.set_validshape %view, %c16, %c32 : !T
+    return
+  }
+}

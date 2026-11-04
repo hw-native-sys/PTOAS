@@ -825,11 +825,24 @@ def PTOVerifyTFree : Pass<"pto-verify-tfree", "func::FuncOp"> {
   ];
 }
 
+def PTOMaterializeTileIfResults : Pass<"pto-materialize-tile-if-results", "ModuleOp"> {
+  let summary = "Give dynamic Tile if results independent runtime descriptors";
+  let description = [{
+    In functions with validity mutation, insert fresh descriptor captures at
+    each Tile yield, after branch side effects. Captures share payload storage
+    and survive canonicalization/CSE until final EmitC result assignment.
+  }];
+  let constructor = "mlir::pto::createPTOMaterializeTileIfResultsPass()";
+  let dependentDialects = ["mlir::pto::PTODialect", "mlir::arith::ArithDialect",
+                           "mlir::scf::SCFDialect"];
+}
+
 def PTOResolveBufferSelect : Pass<"pto-resolve-buffer-select", "ModuleOp"> {
   let summary = "Resolve tile views and multi-buffer selections to addressed handles";
   let description = [{
     Consumes tile-native `pto.subview` operations rooted at an addressed
-    `pto.alloc_tile` or a runtime-bound `pto.declare_tile`, and
+    `pto.alloc_tile`, a runtime-bound `pto.declare_tile`, or their selected/view
+    descriptors (including scf.if, reshape and bitcast chains), and
     `pto.multi_tile_get %src[%k]` operations. Subviews become zero-copy
     addressed `pto.alloc_tile` handles after folding their physical offset.
 
