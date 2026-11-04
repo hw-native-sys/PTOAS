@@ -73,12 +73,10 @@ def main():
     meta = load_case_meta()
     output_names = meta.outputs
 
-    # Outputs are ordered by tstore appearance: dst, exp, max, scaling, exp_zz.
     dst_name = output_names[0] if len(output_names) > 0 else "v2"
     exp_name = output_names[1] if len(output_names) > 1 else "v3"
     max_name = output_names[2] if len(output_names) > 2 else "v4"
     scaling_name = output_names[3] if len(output_names) > 3 else "v5"
-    exp_zz_name = output_names[4] if len(output_names) > 4 else "v6"
 
     ok = True
     # dst: fp8 e4m3fn packed as int8 — exact byte match.
@@ -89,10 +87,6 @@ def main():
     ok = compare_file_prefix(
         f"golden_{scaling_name}.bin", f"{scaling_name}.bin", np.float32, GROUP_COUNT, atol=1e-5
     ) and ok
-    ok = compare_file(
-        f"golden_{exp_zz_name}.bin", f"{exp_zz_name}.bin", np.uint8, atol=0.0
-    ) and ok
-
     finalize_compare(ok)
 
 

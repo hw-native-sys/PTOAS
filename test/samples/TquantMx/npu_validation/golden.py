@@ -119,13 +119,6 @@ def fp32_to_fp8_element(data_abs_max, emax=EMAX):
     return e8m0, scaling
 
 
-def nd_to_zz(exp):
-    rows, cols = exp.shape
-    padded_rows = ((rows + 15) // 16) * 16
-    padded = np.zeros((padded_rows, cols), dtype=np.uint8)
-    padded[:rows, :] = exp
-    return padded.reshape(padded_rows // 16, 16, cols // 2, 2).transpose(0, 2, 1, 3).reshape(-1)
-
 
 def main():
     np.random.seed(23)
@@ -157,8 +150,6 @@ def main():
 
     scaling_tile = scaling_per_group.reshape(M, GROUP_COLS).astype(np.float32)
     scaling_tile.tofile("scaling.bin")
-
-    nd_to_zz(exp_tile).tofile("exp_zz.bin")
 
     # dst: fp8 e4m3 = clamp(src * scaling, -448, 448), packed as int8 bytes.
     # Pure-numpy fp32 -> fp8 e4m3fn (round-to-nearest-even), no ml_dtypes needed.

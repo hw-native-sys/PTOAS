@@ -113,14 +113,6 @@ def pack_output_buffer(meta, name, values):
     return packed
 
 
-def nd_to_zz(exp):
-    """Pack [M, N/32] exponents as [row_block, col_pair, row, pair_lane]."""
-    rows, cols = exp.shape
-    padded_rows = ((rows + 15) // 16) * 16
-    padded = np.zeros((padded_rows, cols), dtype=np.uint8)
-    padded[:rows, :] = exp
-    return padded.reshape(padded_rows // 16, 16, cols // 2, 2).transpose(0, 2, 1, 3).reshape(-1)
-
 
 def main():
     meta = load_case_meta()
@@ -134,12 +126,10 @@ def main():
     output_names = meta.outputs
 
     src_name = input_names[0] if input_names else "v1"
-    # Outputs are ordered by tstore appearance: dst, exp, max, scaling, exp_zz.
     dst_name = output_names[0] if len(output_names) > 0 else "v2"
     exp_name = output_names[1] if len(output_names) > 1 else "v3"
     max_name = output_names[2] if len(output_names) > 2 else "v4"
     scaling_name = output_names[3] if len(output_names) > 3 else "v5"
-    exp_zz_name = output_names[4] if len(output_names) > 4 else "v6"
 
     # Generate source: f32 [M, K], then vary the magnitude of each group.
     src = generator.uniform(-10, 10, size=M * K).astype(np.float32).reshape(M, K)
@@ -190,10 +180,6 @@ def main():
     # scaling: f32 [groups] = per-group reciprocal scale.
     golden_outputs[scaling_name] = pack_output_buffer(
         meta, scaling_name, scaling_per_group.reshape(GROUP_COUNT)
-    )
-
-    golden_outputs[exp_zz_name] = pack_output_buffer(
-        meta, exp_zz_name, nd_to_zz(e8m0.reshape(M, GROUP_COLS))
     )
 
     write_golden(meta, golden_outputs)
