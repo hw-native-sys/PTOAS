@@ -15,6 +15,12 @@
 
 namespace mlir::pto::detail {
 
+static bool isInsideSimtScope(Operation *op) {
+  auto funcOp = op->getParentOfType<func::FuncOp>();
+  return (funcOp && funcOp->hasAttr(pto::kPTOSimtEntryAttrName)) ||
+         op->getParentOfType<pto::SectionSimtOp>();
+}
+
 /// Resolve the concrete pipe of a buffer sync pattern to its immediate value.
 template <typename BufSyncOp>
 static FailureOr<uint64_t> resolveBufSyncPipeImmediate(BufSyncOp op,
@@ -1046,7 +1052,17 @@ public:
   LogicalResult matchAndRewrite(pto::BarrierOp op, OpAdaptor adaptor,
                                 ConversionPatternRewriter &rewriter) const override {
     (void)adaptor;
-    if (isTargetArchA5(op.getOperation()) && op.getPipe().getPipe() == PIPE::PIPE_V) {
+    const bool isSimtScope = isInsideSimtScope(op.getOperation());
+    if (isSimtScope && op.getPipe().getPipe() != PIPE::PIPE_ALL) {
+      op.emitError("only PIPE_ALL barriers are supported inside SIMT entry "
+                   "functions or pto.section.simt; use 'pto.syncthreads' for "
+                   "workitem synchronization or move the pipeline barrier "
+                   "outside the SIMT scope");
+      return failure();
+    }
+
+    if (!isSimtScope && isTargetArchA5(op.getOperation()) &&
+        op.getPipe().getPipe() == PIPE::PIPE_V) {
       op.emitError("internal error: A5 PIPE_V barrier should be erased before "
                    "VPTO LLVM lowering");
       return failure();
@@ -1055,6 +1071,19 @@ public:
     auto pipe = parsePipeImmediate(stringifyPIPE(op.getPipe().getPipe()));
     if (!pipe) {
       return rewriter.notifyMatchFailure(op, "unsupported barrier pipe");
+    }
+
+    // Bisheng cannot lower the scalar pipeline-barrier intrinsic inside a SIMT
+    // VF function. The SIMT-scope barrier form is the workitem synchronization
+    // intrinsic, which is supported in VF bodies. Other pipe barriers have no
+    // SIMT-scope equivalent and are rejected above.
+    if (isSimtScope) {
+      constexpr StringLiteral calleeName = "llvm.hivm.sync.workitems";
+      auto funcType = rewriter.getFunctionType(TypeRange{}, TypeRange{});
+      rewriter.create<func::CallOp>(op.getLoc(), calleeName, TypeRange{}, ValueRange{});
+      state.plannedDecls.push_back(PlannedDecl{calleeName.str(), funcType});
+      rewriter.eraseOp(op);
+      return success();
     }
 
     StringRef calleeName = buildSyncCallee<pto::BarrierOp>(op.getContext());

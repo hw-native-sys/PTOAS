@@ -1,0 +1,41 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+
+// RUN: ( mkdir -p %T && ptoas --pto-arch=a5 --pto-backend=vpto %s -o %t --mlir-print-ir-after=convert-func-to-llvm 2>&1 || true ) | FileCheck %s
+// RUN: ( mkdir -p %T && ptoas --pto-arch=a5 --pto-backend=vpto --vpto-scheduler=off %s -o %t --mlir-print-ir-after=convert-func-to-llvm 2>&1 || true ) | FileCheck %s
+
+module attributes {pto.target_arch = "a5", pto.kernel_kind = #pto.kernel_kind<vector>} {
+  func.func @simt_pipe_barrier_kernel(%dst: !pto.ptr<i32, gm>) attributes {pto.aicore} {
+    %dim_z = arith.constant 1 : i32
+    %dim_y = arith.constant 1 : i32
+    %dim_x = arith.constant 32 : i32
+    pto.store_vfsimt_info %dim_z, %dim_y, %dim_x : i32, i32, i32
+    func.call @simt_pipe_barrier_body(%dst) : (!pto.ptr<i32, gm>) -> ()
+    pto.barrier #pto.pipe<PIPE_ALL>
+    return
+  }
+
+  func.func @simt_pipe_barrier_body(%dst: !pto.ptr<i32, gm>) attributes {pto.simt_entry} {
+    %tid = pto.get_tid_x : i32
+    pto.barrier #pto.pipe<PIPE_ALL>
+    %idx = pto.index_cast %tid signed : i32 -> index
+    pto.stg %tid, %dst[%idx] l1cache(cache) l2cache(nmfv) : !pto.ptr<i32, gm>, i32
+    return
+  }
+}
+
+// The outer pipeline barrier still uses the scalar hardware barrier intrinsic.
+// CHECK-LABEL: llvm.func @simt_pipe_barrier_kernel_mix_aiv
+// CHECK: llvm.call @llvm.hivm.BARRIER
+
+// Inside a SIMT VF body, the same op lowers to the workitem barrier intrinsic
+// that Bisheng supports in VF compilation.
+// CHECK-LABEL: llvm.func @simt_pipe_barrier_body
+// CHECK-NOT: llvm.call @llvm.hivm.BARRIER
+// CHECK-DAG: llvm.call @llvm.hivm.get.TID.X
+// CHECK-DAG: llvm.call @llvm.hivm.sync.workitems

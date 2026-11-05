@@ -137,6 +137,11 @@ pto.wait_flag(pto.Pipe.MTE2, pto.Pipe.V, event_id=0)
 pto.pipe_barrier(pto.Pipe.ALL)
 ```
 
+Inside a `@pto.simt` body, only `pipe_barrier(Pipe.ALL)` is supported and it
+lowers to the SIMT workitem barrier. Other pipe barriers are rejected; prefer
+`pto.syncthreads` for explicit lane synchronization and keep pipeline barriers
+around the SIMT launch.
+
 ### Typical explicit-mode usage pattern
 
 A common explicit-mode pattern interleaves DMA and compute with `set_flag` /

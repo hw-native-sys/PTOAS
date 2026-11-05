@@ -1075,6 +1075,12 @@ For pipeline synchronization semantics, see
 substitute for lane collectives: vote, shuffle, redux, and atomic ops are the
 SIMT-specific mechanisms documented in this chapter.
 
+A `PIPE_ALL` barrier placed inside a `pto.simt_entry` is lowered to the SIMT
+workitem barrier intrinsic rather than the scalar pipeline barrier. Other pipe
+barriers are rejected inside SIMT scopes because they have no SIMT-scope
+equivalent. Prefer `pto.syncthreads` when a workitem barrier is intended, and
+keep pipeline barriers around the SIMT call.
+
 ---
 
 ## Complete Minimal Example
