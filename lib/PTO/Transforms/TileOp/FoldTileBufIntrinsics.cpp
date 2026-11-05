@@ -33,6 +33,7 @@
 //===----------------------------------------------------------------------===//
 
 #include <optional>
+#include "../Support/TileSubviewAddress.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/MemRef/IR/MemRef.h"
 #include "mlir/Dialect/SCF/IR/SCF.h"
@@ -168,25 +169,50 @@ struct TileHandleInfo {
   Value addr;
   Value validRow;
   Value validCol;
-  pto::TileBufConfigAttr config;
+  pto::TileBufType physicalType{};
 };
 
-static bool hasValidShapeMutation(Value tile) {
-  return llvm::any_of(tile.getUsers(), [&](Operation *user) {
-    auto update = dyn_cast<pto::SetValidShapeOp>(user);
-    return update && update.getSource() == tile;
-  });
+enum class TileHandleQuery { Address, ValidShape };
+
+static std::pair<Value, Value> findSetValidShapeOverride(Value tileBuf,
+                                                        Operation *read) {
+  for (Operation *anchor = read; anchor; anchor = anchor->getParentOp()) {
+    pto::SetValidShapeOp latest;
+    for (Operation *setValid : tileBuf.getUsers()) {
+      auto update = dyn_cast<pto::SetValidShapeOp>(setValid);
+      if (!update || setValid->getBlock() != anchor->getBlock() ||
+          !setValid->isBeforeInBlock(anchor)) {
+        continue;
+      }
+      if (!latest || latest->isBeforeInBlock(setValid)) {
+        latest = update;
+      }
+    }
+    if (latest) {
+      return {latest.getValidRow(), latest.getValidCol()};
+    }
+  }
+  return {};
 }
 
-static std::pair<Value, Value> findSetValidShapeOverride(Value tileBuf) {
-  for (Operation *user : tileBuf.getUsers()) {
-    auto setValid = dyn_cast<pto::SetValidShapeOp>(user);
-    if (!setValid || setValid.getSource() != tileBuf) {
-      continue;
-    }
-    return {setValid.getValidRow(), setValid.getValidCol()};
+static Value materializeValidDim(ArrayRef<int64_t> shape, unsigned dim,
+                                 Value dynamicExtent, OpBuilder &builder,
+                                 Location loc) {
+  if (dim < shape.size() && !ShapedType::isDynamic(shape[dim])) {
+    return builder.create<arith::ConstantIndexOp>(loc, shape[dim]);
   }
-  return {Value(), Value()};
+  return dynamicExtent;
+}
+
+static TileHandleInfo makeTileShape(Value tile, Value row, Value col,
+                                    OpBuilder &builder, Location loc) {
+  auto type = dyn_cast<pto::TileBufType>(tile.getType());
+  if (!type) {
+    return {};
+  }
+  ArrayRef<int64_t> valid = type.getValidShape();
+  return {{}, materializeValidDim(valid, 0, row, builder, loc),
+          materializeValidDim(valid, 1, col, builder, loc)};
 }
 
 // Walk through value-conversion casts that preserve the underlying producer.
@@ -229,72 +255,140 @@ static bool isSCFTileCarrier(Value value) {
          isa_and_nonnull<scf::ForOp>(blockArg.getOwner()->getParentOp());
 }
 
+// Fold local subview extents when their mutations have an unambiguous order.
+// Keep ABI reads for the mutable descriptors supported by SCF lowering.
 static bool needsRuntimeValidShape(Value value) {
   auto type = dyn_cast<pto::TileBufType>(value.getType());
   if (!type || !llvm::is_contained(type.getValidShape(), ShapedType::kDynamic)) {
     return false;
   }
-  if (hasValidShapeMutation(value)) {
-    return true;
-  }
-  Value current = value;
-  while (current) {
-    if (isSCFTileCarrier(current) || current.getDefiningOp<pto::CopyTileDescriptorOp>()) {
+  bool hasSubview = false;
+  bool hasMutation = false;
+  for (Value current = value; current; current = pto::getTileViewSource(current)) {
+    Operation *def = current.getDefiningOp();
+    if (isSCFTileCarrier(current) || isa_and_nonnull<pto::CopyTileDescriptorOp>(def)) {
       return true;
     }
-    current = pto::getTileViewSource(current);
+    hasSubview |= isa_and_nonnull<pto::SubViewOp>(def);
+    if (auto alloc = dyn_cast_or_null<pto::AllocTileOp>(def)) {
+      auto semantics = alloc->getAttrOfType<StringAttr>("pto.view_semantics");
+      hasSubview |= semantics && semantics.getValue() == "subview";
+    }
+    for (auto *user : current.getUsers()) {
+      auto update = dyn_cast<pto::SetValidShapeOp>(user);
+      if (!update || update.getSource() != current) {
+        continue;
+      }
+      if (!def || user->getBlock() != def->getBlock()) {
+        return true;
+      }
+      hasMutation = true;
+    }
   }
-  return false;
+  return hasMutation && !hasSubview;
 }
 
-static std::optional<TileHandleInfo> resolveTileHandle(Value tileBuf,
-                                                       Operation *user) {
-  if (auto regionResult = dyn_cast<OpResult>(tileBuf)) {
-    if (auto fusionRegion =
-            dyn_cast<pto::FusionRegionOp>(regionResult.getOwner())) {
-      auto yieldOp = dyn_cast<pto::YieldOp>(
-          fusionRegion.getBody().front().getTerminator());
-      if (!yieldOp) {
-        user->emitError("FoldTileBufIntrinsics: pto.fusion_region must terminate with pto.yield");
-        return std::nullopt;
-      }
-      unsigned resultIndex = regionResult.getResultNumber();
-      if (resultIndex >= yieldOp.getNumOperands()) {
-        user->emitError("FoldTileBufIntrinsics: pto.fusion_region result/yield sizes are inconsistent");
-        return std::nullopt;
-      }
-      return resolveTileHandle(yieldOp.getOperand(resultIndex), user);
-    }
+static std::optional<TileHandleInfo>
+resolveTileHandle(Value tileBuf, Operation *user, OpBuilder &builder,
+                  TileHandleQuery query);
+
+static std::optional<TileHandleInfo>
+resolveSubviewHandle(pto::SubViewOp subview, Operation *user,
+                     OpBuilder &builder, TileHandleQuery query) {
+  if (query == TileHandleQuery::ValidShape) {
+    auto [row, col] = findSetValidShapeOverride(subview.getResult(), user);
+    return makeTileShape(subview.getResult(), row ? row : subview.getValidRow(),
+                         col ? col : subview.getValidCol(), builder,
+                         user->getLoc());
   }
+  auto parent = resolveTileHandle(subview.getSource(), user, builder, query);
+  if (!parent) {
+    return std::nullopt;
+  }
+  Value addr = pto::buildTileSubviewAddress(subview, parent->addr,
+                                           parent->physicalType, builder,
+                                           user->getLoc());
+  if (!addr) {
+    user->emitError("FoldTileBufIntrinsics: cannot resolve subview address "
+                    "from the parent handle and layout");
+    return std::nullopt;
+  }
+  return TileHandleInfo{
+      addr, {}, {},
+      pto::getTileSubviewPhysicalType(subview, parent->physicalType)};
+}
+
+static std::optional<TileHandleInfo>
+resolveReshapeHandle(pto::TReshapeOp reshape, Operation *user,
+                     OpBuilder &builder, TileHandleQuery query) {
+  if (query == TileHandleQuery::Address) {
+    auto source = resolveTileHandle(reshape.getSrc(), user, builder, query);
+    if (source) {
+      source->physicalType = dyn_cast<pto::TileBufType>(reshape.getResult().getType());
+    }
+    return source;
+  }
+  auto [row, col] = findSetValidShapeOverride(reshape.getResult(), user);
+  auto shape = makeTileShape(reshape.getResult(), row, col, builder,
+                             user->getLoc());
+  if (shape.validRow && shape.validCol) {
+    return shape;
+  }
+  // A view inherits its source's extents at the reshape, not at a later read.
+  auto source = resolveTileHandle(reshape.getSrc(), reshape, builder, query);
+  if (!source) {
+    return std::nullopt;
+  }
+  return TileHandleInfo{{}, shape.validRow ? shape.validRow : source->validRow,
+                       shape.validCol ? shape.validCol : source->validCol};
+}
+
+static Value getFusionYieldSource(pto::FusionRegionOp region, unsigned index,
+                                  Operation *user) {
+  Region &body = region.getBody();
+  if (!body.hasOneBlock() || body.front().empty()) {
+    user->emitError("FoldTileBufIntrinsics: expected a nonempty fusion body");
+    return {};
+  }
+  auto yield = dyn_cast<pto::YieldOp>(body.front().getTerminator());
+  if (!yield || index >= yield.getNumOperands()) {
+    user->emitError("FoldTileBufIntrinsics: invalid pto.fusion_region yield");
+    return {};
+  }
+  return yield.getOperand(index);
+}
+
+static std::optional<TileHandleInfo>
+resolveTileHandle(Value tileBuf, Operation *user, OpBuilder &builder,
+                  TileHandleQuery query) {
   tileBuf = unwrapBridgingCasts(tileBuf);
-  if (auto alloc = tileBuf.getDefiningOp<pto::AllocTileOp>()) {
-    auto tileTy = dyn_cast<pto::TileBufType>(alloc.getResult().getType());
-    if (!tileTy) {
-      user->emitError("FoldTileBufIntrinsics: pto.alloc_tile must produce !pto.tile_buf");
+  if (auto fusion = tileBuf.getDefiningOp<pto::FusionRegionOp>()) {
+    auto index = cast<OpResult>(tileBuf).getResultNumber();
+    Value source = getFusionYieldSource(fusion, index, user);
+    if (!source) {
       return std::nullopt;
     }
-    return TileHandleInfo{alloc.getAddr(), alloc.getValidRow(),
-                          alloc.getValidCol(), tileTy.getConfigAttr()};
+    return resolveTileHandle(source, user, builder, query);
+  }
+  if (auto alloc = tileBuf.getDefiningOp<pto::AllocTileOp>()) {
+    if (query == TileHandleQuery::Address) {
+      return TileHandleInfo{alloc.getAddr(), {}, {},
+                            dyn_cast<pto::TileBufType>(tileBuf.getType())};
+    }
+    auto [row, col] = findSetValidShapeOverride(tileBuf, user);
+    return makeTileShape(tileBuf, row ? row : alloc.getValidRow(),
+                         col ? col : alloc.getValidCol(), builder,
+                         user->getLoc());
+  }
+  if (auto subview = tileBuf.getDefiningOp<pto::SubViewOp>()) {
+    return resolveSubviewHandle(subview, user, builder, query);
   }
   if (auto reshape = tileBuf.getDefiningOp<pto::TReshapeOp>()) {
-    auto sourceInfo = resolveTileHandle(reshape.getSrc(), user);
-    if (!sourceInfo) {
-      return std::nullopt;
-    }
-    auto tileTy = dyn_cast<pto::TileBufType>(reshape.getResult().getType());
-    if (!tileTy) {
-      user->emitError("FoldTileBufIntrinsics: pto.treshape must produce !pto.tile_buf");
-      return std::nullopt;
-    }
-    auto [validRow, validCol] = findSetValidShapeOverride(tileBuf);
-    return TileHandleInfo{sourceInfo->addr,
-                          validRow ? validRow : sourceInfo->validRow,
-                          validCol ? validCol : sourceInfo->validCol,
-                          tileTy.getConfigAttr()};
+    return resolveReshapeHandle(reshape, user, builder, query);
   }
   user->emitError("FoldTileBufIntrinsics: expected tile_buf to be defined by "
-                  "the active materialized tile-handle bridge (pto.alloc_tile or "
-                  "pto.treshape, or a pto.fusion_region result that yields one of them)");
+                  "pto.alloc_tile, pto.subview, pto.treshape, or a "
+                  "pto.fusion_region result that yields one of them");
   return std::nullopt;
 }
 
@@ -714,62 +808,36 @@ struct FoldTileBufIntrinsicsPass
   LogicalResult foldGetValidShapeOps(
       SmallVector<pto::GetValidShapeOp, mlir::pto::kValue8> &getValidShapeOps,
       OpBuilder &builder) const {
-    // Fold pto.get_validshape into the materialized tile handle
-    // valid_row / valid_col. This must precede tile_buf_addr and
-    // tile_valid_{rows,cols} folding: set_validshape operands are usually
-    // produced by get_validshape, so resolving them first lets
-    // resolveTileHandle observe the overridden valid shape carried by a
-    // treshape + set_validshape pair.
+    // Fold the paired reads before the individual address/shape intrinsics.
+    // Their SSA results may feed a subsequent set_validshape.
     for (auto gvsOp : getValidShapeOps) {
-            if (needsRuntimeValidShape(gvsOp.getSource())) {
-              gvsOp->setAttr(kTileOpValidShapeReadAttr, builder.getUnitAttr());
-            }
-            if (gvsOp->hasAttr(kTileOpValidShapeReadAttr)) {
-              continue;
-            }
-            if (!isa<pto::TileBufType>(gvsOp.getSource().getType())) {
-              continue;
-            }
-    
-            builder.setInsertionPoint(gvsOp);
-            auto tileTy = cast<pto::TileBufType>(gvsOp.getSource().getType());
-            auto validShape = tileTy.getValidShape();
-    
-            Value rowReplacement;
-            if (!validShape.empty() && validShape[0] != ShapedType::kDynamic) {
-              rowReplacement =
-                  builder.create<arith::ConstantIndexOp>(gvsOp.getLoc(), validShape[0]);
-            }
-    
-            Value colReplacement;
-            if (validShape.size() >= mlir::pto::kValue2 && validShape[1] != ShapedType::kDynamic) {
-              colReplacement =
-                  builder.create<arith::ConstantIndexOp>(gvsOp.getLoc(), validShape[1]);
-            }
-    
-            if (!rowReplacement || !colReplacement) {
-              auto handleInfo = resolveTileHandle(gvsOp.getSource(), gvsOp);
-              if (!handleInfo) {
-                return failure();
-              }
-              if (!rowReplacement) {
-                rowReplacement = handleInfo->validRow;
-              }
-              if (!colReplacement) {
-                colReplacement = handleInfo->validCol;
-              }
-            }
-    
-            if (!rowReplacement || !colReplacement) {
-              gvsOp.emitError("FoldTileBufIntrinsics: pto.get_validshape could not "
-                              "resolve a concrete valid_row / valid_col");
-              return failure();
-            }
-    
-            gvsOp.getValidRow().replaceAllUsesWith(rowReplacement);
-            gvsOp.getValidCol().replaceAllUsesWith(colReplacement);
-            gvsOp.erase();
-          }
+      Value source = gvsOp.getSource();
+      if (needsRuntimeValidShape(source)) {
+        gvsOp->setAttr(kTileOpValidShapeReadAttr, builder.getUnitAttr());
+      }
+      if (gvsOp->hasAttr(kTileOpValidShapeReadAttr) ||
+          !isa<pto::TileBufType>(source.getType())) {
+        continue;
+      }
+      builder.setInsertionPoint(gvsOp);
+      auto shape = makeTileShape(source, {}, {}, builder, gvsOp.getLoc());
+      if (!shape.validRow || !shape.validCol) {
+        auto resolved = resolveTileHandle(source, gvsOp, builder,
+                                          TileHandleQuery::ValidShape);
+        if (!resolved) {
+          return failure();
+        }
+        shape.validRow = shape.validRow ? shape.validRow : resolved->validRow;
+        shape.validCol = shape.validCol ? shape.validCol : resolved->validCol;
+      }
+      if (!shape.validRow || !shape.validCol) {
+        return gvsOp.emitError("FoldTileBufIntrinsics: pto.get_validshape could "
+                               "not resolve a concrete valid_row / valid_col");
+      }
+      gvsOp.getValidRow().replaceAllUsesWith(shape.validRow);
+      gvsOp.getValidCol().replaceAllUsesWith(shape.validCol);
+      gvsOp.erase();
+    }
     return success();
   }
 
@@ -805,7 +873,9 @@ struct FoldTileBufIntrinsicsPass
   // addr operand to the requested pointer type.
   LogicalResult foldTileBufAddrHandle(pto::TileBufAddrOp addrOp,
                                       OpBuilder &builder) const {
-    auto handleInfo = resolveTileHandle(addrOp.getSrc(), addrOp);
+    builder.setInsertionPoint(addrOp);
+    auto handleInfo = resolveTileHandle(addrOp.getSrc(), addrOp, builder,
+                                        TileHandleQuery::Address);
     if (!handleInfo) {
       return failure();
     }
@@ -827,7 +897,6 @@ struct FoldTileBufIntrinsicsPass
                        "VPTO path");
       return failure();
     }
-    builder.setInsertionPoint(addrOp);
     Value replacement = builder.create<pto::CastPtrOp>(
         addrOp.getLoc(), resultPtrType, handleInfo->addr);
     addrOp.getDst().replaceAllUsesWith(replacement);
@@ -886,7 +955,8 @@ struct FoldTileBufIntrinsicsPass
               replacement =
                   builder.create<arith::ConstantIndexOp>(rowsOp.getLoc(), vRow);
             } else {
-              auto handleInfo = resolveTileHandle(rowsOp.getSrc(), rowsOp);
+              auto handleInfo = resolveTileHandle(rowsOp.getSrc(), rowsOp,
+                                                  builder, TileHandleQuery::ValidShape);
               if (!handleInfo) {
                 return failure();
               }
@@ -936,7 +1006,8 @@ struct FoldTileBufIntrinsicsPass
               replacement =
                   builder.create<arith::ConstantIndexOp>(colsOp.getLoc(), vCol);
             } else {
-              auto handleInfo = resolveTileHandle(colsOp.getSrc(), colsOp);
+              auto handleInfo = resolveTileHandle(colsOp.getSrc(), colsOp,
+                                                  builder, TileHandleQuery::ValidShape);
               if (!handleInfo) {
                 return failure();
               }

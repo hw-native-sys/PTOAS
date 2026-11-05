@@ -20,6 +20,7 @@
 //
 //===----------------------------------------------------------------------===//
 
+#include "../Support/TileSubviewAddress.h"
 #include "PTO/Support/CodeConstants.h"
 #include "PTO/IR/PTO.h"
 #include "PTO/IR/PTOMultiBuffer.h"
@@ -72,7 +73,7 @@ static uint64_t alignUp(uint64_t value, uint64_t align) {
   return ((value + align - 1) / align) * align;
 }
 
-static Value ensureI64(Value value, IRRewriter &rewriter, Location loc) {
+static Value ensureI64(Value value, OpBuilder &rewriter, Location loc) {
   if (!value) {
     return {};
   }
@@ -213,35 +214,6 @@ static uint64_t getTileAddressAlignmentBytes(pto::TileBufType type) {
   return 1;
 }
 
-static Value computeSubviewAddress(pto::SubViewOp subview, Value base,
-                                   IRRewriter &rewriter, Location loc) {
-  auto sourceType = subview.getSource().getType();
-  int64_t rowStride = 0;
-  int64_t colStride = 0;
-  if (!base || !getTilePointerStrides(sourceType, rowStride, colStride) ||
-      subview.getOffsets().size() != mlir::pto::kValue2) {
-    return {};
-  }
-  Value row = ensureI64(subview.getOffsets()[0], rewriter, loc);
-  Value col = ensureI64(subview.getOffsets()[1], rewriter, loc);
-  if (!row || !col) {
-    return {};
-  }
-  Value rowScale = rewriter.create<arith::ConstantIntOp>(loc, rowStride, 64);
-  Value colScale = rewriter.create<arith::ConstantIntOp>(loc, colStride, 64);
-  row = rewriter.create<arith::MulIOp>(loc, row, rowScale);
-  col = rewriter.create<arith::MulIOp>(loc, col, colScale);
-  Value elements = rewriter.create<arith::AddIOp>(loc, row, col);
-  int64_t elemBytes = static_cast<int64_t>(
-      pto::getPTOStorageElemByteSize(sourceType.getElementType()));
-  if (elemBytes == 0) {
-    return {};
-  }
-  Value byteScale = rewriter.create<arith::ConstantIntOp>(loc, elemBytes, 64);
-  Value bytes = rewriter.create<arith::MulIOp>(loc, elements, byteScale);
-  return rewriter.create<arith::AddIOp>(loc, base, bytes);
-}
-
 static Value computeTileAddress(Value value, IRRewriter &rewriter,
                                 Location loc) {
   if (auto alloc = value.getDefiningOp<pto::AllocTileOp>()) {
@@ -270,7 +242,8 @@ static Value computeTileAddress(Value value, IRRewriter &rewriter,
   }
   if (auto subview = value.getDefiningOp<pto::SubViewOp>()) {
     Value base = computeTileAddress(subview.getSource(), rewriter, loc);
-    return computeSubviewAddress(subview, base, rewriter, loc);
+    return pto::buildTileSubviewAddress(subview, base, subview.getSource().getType(),
+                                        rewriter, loc);
   }
   return {};
 }
@@ -292,8 +265,10 @@ static bool isNoneBoxLayout(pto::TileBufType type)
     return static_cast<int32_t>(type.getConfigAttr().getSLayout().getValue()) == kSlayoutNoneBox;
 }
 
-static pto::TileBufType getSubviewPhysicalType(pto::SubViewOp op) {
-  pto::TileBufType sourceType = op.getSource().getType();
+} // namespace
+
+pto::TileBufType mlir::pto::getTileSubviewPhysicalType(SubViewOp op,
+                                                      TileBufType sourceType) {
   pto::TileBufType resultType = op.getResult().getType();
   ArrayRef<int64_t> physicalShape = sourceType.getShape();
 
@@ -324,6 +299,8 @@ static pto::TileBufType getSubviewPhysicalType(pto::SubViewOp op) {
       resultType.getMemorySpace(), resultType.getValidShape(),
       resultType.getConfigAttr());
 }
+
+namespace {
 
 static Value getSubviewValidOperand(pto::SubViewOp op,
                                     pto::TileBufType physicalType,
@@ -518,7 +495,8 @@ static void resolveTileNativeSubview(pto::SubViewOp op, IRRewriter &rewriter) {
   if (!addr) {
     return;
   }
-  pto::TileBufType physicalType = getSubviewPhysicalType(op);
+  pto::TileBufType physicalType =
+      pto::getTileSubviewPhysicalType(op, op.getSource().getType());
   if (physicalType.getShape() != op.getResult().getType().getShape()) {
     // A mat-source move compares the physical parent shape with its compact
     // destination. Express it as an extract before replacing the subview.
@@ -720,6 +698,36 @@ struct PTOResolveBufferSelectPass
   }
 };
 } // namespace
+
+Value mlir::pto::buildTileSubviewAddress(SubViewOp subview, Value base,
+                                        TileBufType sourceType,
+                                        OpBuilder &builder, Location loc) {
+  int64_t rowStride = 0;
+  int64_t colStride = 0;
+  if (!base || !sourceType ||
+      !getTilePointerStrides(sourceType, rowStride, colStride) ||
+      subview.getOffsets().size() != mlir::pto::kValue2) {
+    return {};
+  }
+  Value row = ensureI64(subview.getOffsets()[0], builder, loc);
+  Value col = ensureI64(subview.getOffsets()[1], builder, loc);
+  if (!row || !col) {
+    return {};
+  }
+  Value rowScale = builder.create<arith::ConstantIntOp>(loc, rowStride, kI64BitWidth);
+  Value colScale = builder.create<arith::ConstantIntOp>(loc, colStride, kI64BitWidth);
+  row = builder.create<arith::MulIOp>(loc, row, rowScale);
+  col = builder.create<arith::MulIOp>(loc, col, colScale);
+  Value elements = builder.create<arith::AddIOp>(loc, row, col);
+  int64_t elemBytes = static_cast<int64_t>(
+      pto::getPTOStorageElemByteSize(sourceType.getElementType()));
+  if (elemBytes == 0) {
+    return {};
+  }
+  Value byteScale = builder.create<arith::ConstantIntOp>(loc, elemBytes, kI64BitWidth);
+  Value bytes = builder.create<arith::MulIOp>(loc, elements, byteScale);
+  return builder.create<arith::AddIOp>(loc, base, bytes);
+}
 
 std::unique_ptr<Pass> mlir::pto::createPTOResolveBufferSelectPass() {
   return std::make_unique<PTOResolveBufferSelectPass>();

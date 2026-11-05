@@ -1077,15 +1077,17 @@ set_validshape(source, valid_row, valid_col)
 **Constraints & Verification:**
 
 - `source` must be a rank-2 `pto.tile_buf`
+- `source` must be a locally bound tile result: `alloc_tile`, `declare_tile`,
+  a frontend pop (`tpop_from_aic`/`tpop_from_aiv`), or a supported local view or
+  selection derived from one. This includes a reshape of a contiguous local subview. Function
+  arguments and other non-local sources are rejected.
+- The view retains the subview address offset and its own valid extents.
+  Reads after `set_validshape` observe the updated view descriptor.
 - `source` must have dynamic valid shape:
   - `v_row = ?`
   - `v_col = ?`
 - User-authored PTO IR must use the `pto.tile_buf` form; any memref form seen
   later in the pipeline is compiler-internal lowering state only
-- `source` must be a locally bound tile result: `alloc_tile`, `declare_tile`,
-  a frontend pop (`tpop_from_aic`/`tpop_from_aiv`), or a supported local view or
-  selection derived from these sources; function arguments and other non-local
-  sources are rejected
 - If `valid_row` / `valid_col` are compile-time constants, they must be non-negative and not exceed the tile's static shape bounds
 
 **Descriptor and alias semantics:**

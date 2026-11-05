@@ -1,0 +1,116 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+
+// RUN: sed 's/addr = %addr //g' %s > %t.level2.pto
+// RUN: ptoas %t.level2.pto --pto-arch=a2 --pto-level=level2 | FileCheck %s
+// RUN: ptoas %s --pto-arch=a2 --pto-level=level3 | FileCheck %s
+// RUN: ptoas %t.level2.pto --pto-arch=a3 --pto-level=level2 | FileCheck %s
+// RUN: ptoas %s --pto-arch=a3 --pto-level=level3 | FileCheck %s
+// RUN: ptoas %t.level2.pto --pto-arch=a5 --pto-level=level2 | FileCheck %s
+// RUN: ptoas %s --pto-arch=a5 --pto-level=level3 | FileCheck %s
+
+!base = !pto.tile_buf<loc=vec, dtype=f32, rows=16, cols=8, v_row=?, v_col=?, blayout=row_major, slayout=none_box, fractal=512, pad=0>
+!slice = !pto.tile_buf<loc=vec, dtype=f32, rows=8, cols=8, v_row=8, v_col=8, blayout=row_major, slayout=none_box, fractal=512, pad=0>
+!view = !pto.tile_buf<loc=vec, dtype=i32, rows=8, cols=8, v_row=?, v_col=?, blayout=row_major, slayout=none_box, fractal=512, pad=0>
+
+module {
+  func.func @zero() {
+    %addr = arith.constant 0 : i64
+    %c0 = arith.constant 0 : index
+    %c8 = arith.constant 8 : index
+    %c16 = arith.constant 16 : index
+    %src = pto.alloc_tile addr = %addr valid_row = %c16 valid_col = %c8 : !base
+    %slice = pto.subview %src[%c8, %c0] sizes [8, 8] : !base -> !slice
+    %view = pto.treshape %slice : !slice -> !view
+    pto.set_validshape %view, %c0, %c8 : !view
+    %row, %col = pto.get_validshape %view : !view
+    pto.set_validshape %view, %row, %col : !view
+    pto.tadd ins(%view, %view : !view, !view) outs(%view : !view)
+    return
+  }
+
+  func.func @positive() {
+    %addr = arith.constant 0 : i64
+    %c0 = arith.constant 0 : index
+    %c8 = arith.constant 8 : index
+    %c16 = arith.constant 16 : index
+    %src = pto.alloc_tile addr = %addr valid_row = %c16 valid_col = %c8 : !base
+    %slice = pto.subview %src[%c8, %c0] sizes [8, 8] : !base -> !slice
+    %view = pto.treshape %slice : !slice -> !view
+    pto.set_validshape %view, %c8, %c8 : !view
+    pto.tadd ins(%view, %view : !view, !view) outs(%view : !view)
+    return
+  }
+
+  func.func @direct_control() {
+    %addr = arith.constant 0 : i64
+    %c0 = arith.constant 0 : index
+    %c8 = arith.constant 8 : index
+    %c16 = arith.constant 16 : index
+    %slice = pto.alloc_tile addr = %addr : !slice
+    %view = pto.treshape %slice : !slice -> !view
+    pto.set_validshape %view, %c8, %c8 : !view
+    pto.tadd ins(%view, %view : !view, !view) outs(%view : !view)
+    return
+  }
+  func.func @nested_offset() {
+    %addr = arith.constant 0 : i64
+    %c0 = arith.constant 0 : index
+    %c4 = arith.constant 4 : index
+    %c8 = arith.constant 8 : index
+    %c16 = arith.constant 16 : index
+    %src = pto.alloc_tile addr = %addr valid_row = %c16 valid_col = %c8 : !base
+    %slice = pto.subview %src[%c8, %c0] sizes [8, 8] : !base -> !slice
+    %inner = pto.subview %slice[%c4, %c0] sizes [4, 8] : !slice -> !pto.tile_buf<vec, 4x8xf32>
+    %view = pto.treshape %inner : !pto.tile_buf<vec, 4x8xf32> -> !pto.tile_buf<vec, 4x8xi32, valid=?x?>
+    pto.set_validshape %view, %c4, %c8 : !pto.tile_buf<vec, 4x8xi32, valid=?x?>
+    pto.tadd ins(%view, %view : !pto.tile_buf<vec, 4x8xi32, valid=?x?>, !pto.tile_buf<vec, 4x8xi32, valid=?x?>) outs(%view : !pto.tile_buf<vec, 4x8xi32, valid=?x?>)
+    return
+  }
+
+}
+
+// CHECK-LABEL: AICORE void zero(
+// CHECK: const int64_t [[ZERO_ADDR:[_A-Za-z][_A-Za-z0-9]*]] = 256;
+// CHECK: // pto: %c0
+// CHECK-NEXT: const int64_t [[ZERO_ROW:[_A-Za-z][_A-Za-z0-9]*]] = 0;
+// CHECK: const int64_t [[ZERO_COL:[_A-Za-z][_A-Za-z0-9]*]] = 8;
+// CHECK: uint64_t [[ZERO_UADDR:[_A-Za-z][_A-Za-z0-9]*]] = (uint64_t) [[ZERO_ADDR]];
+// CHECK: TASSIGN([[ZERO_SLICE:[_A-Za-z][_A-Za-z0-9]*]], [[ZERO_UADDR]]);
+// CHECK: TRESHAPE([[ZERO_VIEW:[_A-Za-z][_A-Za-z0-9]*]], [[ZERO_SLICE]]);
+// CHECK: [[ZERO_VIEW]].SetValidShape([[ZERO_ROW]], [[ZERO_COL]])
+// CHECK: int64_t [[READ_ROW:v[0-9]+]] = [[ZERO_VIEW]].GetValidRow();
+// CHECK: int64_t [[READ_COL:v[0-9]+]] = [[ZERO_VIEW]].GetValidCol();
+// CHECK: [[ZERO_VIEW]].SetValidShape([[READ_ROW]], [[READ_COL]])
+// CHECK: TADD([[ZERO_VIEW]], [[ZERO_VIEW]], [[ZERO_VIEW]]);
+
+// CHECK-LABEL: AICORE void positive(
+// CHECK-DAG: const int64_t [[POSITIVE_ADDR:[_A-Za-z][_A-Za-z0-9]*]] = 256;
+// CHECK-DAG: const int64_t [[POSITIVE_COL:[_A-Za-z][_A-Za-z0-9]*]] = 8;
+// CHECK: uint64_t [[POSITIVE_UADDR:[_A-Za-z][_A-Za-z0-9]*]] = (uint64_t) [[POSITIVE_ADDR]];
+// CHECK: TASSIGN([[POSITIVE_SLICE:[_A-Za-z][_A-Za-z0-9]*]], [[POSITIVE_UADDR]]);
+// CHECK: TRESHAPE([[POSITIVE_VIEW:[_A-Za-z][_A-Za-z0-9]*]], [[POSITIVE_SLICE]]);
+// CHECK: [[POSITIVE_VIEW]].SetValidShape([[POSITIVE_COL]], [[POSITIVE_COL]])
+// CHECK: TADD([[POSITIVE_VIEW]], [[POSITIVE_VIEW]], [[POSITIVE_VIEW]]);
+
+// CHECK-LABEL: AICORE void direct_control(
+// CHECK-DAG: const int64_t [[DIRECT_CONTROL_ADDR:[_A-Za-z][_A-Za-z0-9]*]] = 0;
+// CHECK-DAG: const int64_t [[DIRECT_CONTROL_COL:[_A-Za-z][_A-Za-z0-9]*]] = 8;
+// CHECK: uint64_t [[DIRECT_CONTROL_UADDR:[_A-Za-z][_A-Za-z0-9]*]] = (uint64_t) [[DIRECT_CONTROL_ADDR]];
+// CHECK: TASSIGN([[DIRECT_CONTROL_SLICE:[_A-Za-z][_A-Za-z0-9]*]], [[DIRECT_CONTROL_UADDR]]);
+// CHECK: TRESHAPE([[DIRECT_CONTROL_VIEW:[_A-Za-z][_A-Za-z0-9]*]], [[DIRECT_CONTROL_SLICE]]);
+// CHECK: [[DIRECT_CONTROL_VIEW]].SetValidShape([[DIRECT_CONTROL_COL]], [[DIRECT_CONTROL_COL]])
+// CHECK: TADD([[DIRECT_CONTROL_VIEW]], [[DIRECT_CONTROL_VIEW]], [[DIRECT_CONTROL_VIEW]]);
+
+// CHECK-LABEL: AICORE void nested_offset(
+// CHECK: const int64_t [[NESTED_ADDR:[_A-Za-z][_A-Za-z0-9]*]] = 384;
+// CHECK: uint64_t [[NESTED_UADDR:[_A-Za-z][_A-Za-z0-9]*]] = (uint64_t) [[NESTED_ADDR]];
+// CHECK: TASSIGN([[NESTED_SLICE:[_A-Za-z][_A-Za-z0-9]*]], [[NESTED_UADDR]]);
+// CHECK: TRESHAPE([[NESTED_VIEW:[_A-Za-z][_A-Za-z0-9]*]], [[NESTED_SLICE]]);
+// CHECK: [[NESTED_VIEW]].SetValidShape(
+// CHECK: TADD([[NESTED_VIEW]], [[NESTED_VIEW]], [[NESTED_VIEW]]);

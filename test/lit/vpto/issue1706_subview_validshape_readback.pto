@@ -1,0 +1,68 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+
+// RUN: pto-test-opt --pass-pipeline='builtin.module(func.func(pto-fold-tile-buf-intrinsics),canonicalize)' %s | FileCheck %s
+// RUN: pto-test-opt --pass-pipeline='builtin.module(pto-resolve-buffer-select,func.func(pto-fold-tile-buf-intrinsics),canonicalize)' %s | FileCheck %s
+
+!base = !pto.tile_buf<vec, 16x8xf32, valid=?x?>
+!slice = !pto.tile_buf<vec, 8x8xf32>
+!view = !pto.tile_buf<vec, 8x8xi32, valid=?x?>
+!inner = !pto.tile_buf<vec, 4x8xf32, valid=?x?>
+!wide = !pto.tile_buf<vec, 16x16xf32>
+
+module {
+  func.func @readback(%row: index, %col: index) -> (index, index, index, index, index, index, !pto.ptr<i32, ub>) {
+    %baseAddr = arith.constant 512 : i64
+    %c0 = arith.constant 0 : index
+    %c8 = arith.constant 8 : index
+    %c16 = arith.constant 16 : index
+    %src = pto.alloc_tile addr = %baseAddr valid_row = %c16 valid_col = %c8 : !base
+    %slice = pto.subview %src[%c8, %c0] sizes [8, 8] : !base -> !slice
+    %view = pto.treshape %slice : !slice -> !view
+    %oldRow, %oldCol = pto.get_validshape %view : !view
+    pto.set_validshape %view, %c0, %c8 : !view
+    %zeroRow, %zeroCol = pto.get_validshape %view : !view
+    pto.set_validshape %view, %row, %col : !view
+    %newRow = pto.tile_valid_rows %view : !view -> index
+    %newCol = pto.tile_valid_cols %view : !view -> index
+    %addr = pto.tile_buf_addr %view : !view -> !pto.ptr<i32, ub>
+    return %oldRow, %oldCol, %zeroRow, %zeroCol, %newRow, %newCol, %addr : index, index, index, index, index, index, !pto.ptr<i32, ub>
+  }
+
+  func.func @nested(%row: index, %col: index) -> (index, index, index, index, !pto.ptr<f32, ub>) {
+    %baseAddr = arith.constant 512 : i64
+    %c0 = arith.constant 0 : index
+    %c4 = arith.constant 4 : index
+    %c8 = arith.constant 8 : index
+    %src = pto.alloc_tile addr = %baseAddr : !wide
+    %slice = pto.subview %src[%c8, %c0] sizes [8, 8] : !wide -> !slice
+    %inner = pto.subview %slice[%c4, %c0] sizes [4, 8] valid [%row, %col] : !slice -> !inner
+    %validRow, %validCol = pto.get_validshape %inner : !inner
+    pto.set_validshape %inner, %c0, %c8 : !inner
+    %newRow, %newCol = pto.get_validshape %inner : !inner
+    %addr = pto.tile_buf_addr %inner : !inner -> !pto.ptr<f32, ub>
+    return %validRow, %validCol, %newRow, %newCol, %addr : index, index, index, index, !pto.ptr<f32, ub>
+  }
+}
+
+// CHECK-LABEL: func.func @readback(
+// CHECK-SAME: [[ROW:%[^:]+]]: index, [[COL:%[^:]+]]: index)
+// CHECK-DAG: [[C8:%[^ ]+]] = arith.constant 8 : index
+// CHECK-DAG: [[C0:%[^ ]+]] = arith.constant 0 : index
+// CHECK-DAG: [[ADDR:%[^ ]+]] = arith.constant 768 : i64
+// CHECK: [[PTR:%[^ ]+]] = pto.castptr [[ADDR]] : i64 -> !pto.ptr<i32, ub>
+// CHECK: return [[C8]], [[C8]], [[C0]], [[C8]], [[ROW]], [[COL]], [[PTR]]
+
+// CHECK-LABEL: func.func @nested(
+// CHECK-SAME: [[ROW:%[^:]+]]: index, [[COL:%[^:]+]]: index)
+// Both windows inherit the 16-column physical row stride: 512 + (8 + 4) * 16 * 4.
+// CHECK-DAG: [[C8:%[^ ]+]] = arith.constant 8 : index
+// CHECK-DAG: [[C0:%[^ ]+]] = arith.constant 0 : index
+// CHECK-DAG: [[ADDR:%[^ ]+]] = arith.constant 1280 : i64
+// CHECK: [[PTR:%[^ ]+]] = pto.castptr [[ADDR]] : i64 -> !pto.ptr<f32, ub>
+// CHECK: return [[ROW]], [[COL]], [[C0]], [[C8]], [[PTR]]

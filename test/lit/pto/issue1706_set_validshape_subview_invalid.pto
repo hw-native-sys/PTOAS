@@ -1,0 +1,69 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+
+// RUN: pto-test-opt --split-input-file --verify-diagnostics %s
+
+!base = !pto.tile_buf<loc=vec, dtype=f32, rows=16, cols=8, v_row=?, v_col=?, blayout=row_major, slayout=none_box, fractal=512, pad=0>
+!slice = !pto.tile_buf<loc=vec, dtype=f32, rows=8, cols=8, v_row=8, v_col=8, blayout=row_major, slayout=none_box, fractal=512, pad=0>
+!view = !pto.tile_buf<loc=vec, dtype=i32, rows=8, cols=8, v_row=?, v_col=?, blayout=row_major, slayout=none_box, fractal=512, pad=0>
+module {
+  func.func @argument_source(%src : !base) {
+    %addr = arith.constant 0 : i64
+    %c0 = arith.constant 0 : index
+    %c8 = arith.constant 8 : index
+    %c16 = arith.constant 16 : index
+    %slice = pto.subview %src[%c8, %c0] sizes [8, 8] : !base -> !slice
+    %view = pto.treshape %slice : !slice -> !view
+    %row = arith.constant 8 : index
+    // expected-error@+1 {{requires a locally bound tile source}}
+    pto.set_validshape %view, %row, %c8 : !view
+    return
+  }
+}
+
+// -----
+
+!base = !pto.tile_buf<loc=vec, dtype=f32, rows=16, cols=8, v_row=?, v_col=?, blayout=row_major, slayout=none_box, fractal=512, pad=0>
+!slice = !pto.tile_buf<loc=vec, dtype=f32, rows=8, cols=8, v_row=8, v_col=8, blayout=row_major, slayout=none_box, fractal=512, pad=0>
+!view = !pto.tile_buf<loc=vec, dtype=i32, rows=8, cols=8, v_row=?, v_col=?, blayout=row_major, slayout=none_box, fractal=512, pad=0>
+module {
+  func.func @negative_extent() {
+    %addr = arith.constant 0 : i64
+    %c0 = arith.constant 0 : index
+    %c8 = arith.constant 8 : index
+    %c16 = arith.constant 16 : index
+    %src = pto.alloc_tile addr = %addr valid_row = %c16 valid_col = %c8 : !base
+    %slice = pto.subview %src[%c8, %c0] sizes [8, 8] : !base -> !slice
+    %view = pto.treshape %slice : !slice -> !view
+    %row = arith.constant -1 : index
+    // expected-error@+1 {{expects row operand to be non-negative}}
+    pto.set_validshape %view, %row, %c8 : !view
+    return
+  }
+}
+
+// -----
+
+!base = !pto.tile_buf<loc=vec, dtype=f32, rows=16, cols=8, v_row=?, v_col=?, blayout=row_major, slayout=none_box, fractal=512, pad=0>
+!slice = !pto.tile_buf<loc=vec, dtype=f32, rows=8, cols=8, v_row=8, v_col=8, blayout=row_major, slayout=none_box, fractal=512, pad=0>
+!view = !pto.tile_buf<loc=vec, dtype=i32, rows=8, cols=8, v_row=?, v_col=?, blayout=row_major, slayout=none_box, fractal=512, pad=0>
+module {
+  func.func @oversized_extent() {
+    %addr = arith.constant 0 : i64
+    %c0 = arith.constant 0 : index
+    %c8 = arith.constant 8 : index
+    %c16 = arith.constant 16 : index
+    %src = pto.alloc_tile addr = %addr valid_row = %c16 valid_col = %c8 : !base
+    %slice = pto.subview %src[%c8, %c0] sizes [8, 8] : !base -> !slice
+    %view = pto.treshape %slice : !slice -> !view
+    %row = arith.constant 9 : index
+    // expected-error@+1 {{expects row operand <= shape dim (8)}}
+    pto.set_validshape %view, %row, %c8 : !view
+    return
+  }
+}

@@ -1,0 +1,29 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+
+// RUN: not ptoas --pto-arch=a3 --pto-level=level3 %s 2>&1 | FileCheck %s
+
+!base = !pto.tile_buf<vec, 16x16xf32>
+!slice = !pto.tile_buf<vec, 8x8xf32>
+!view = !pto.tile_buf<vec, 8x8xi32, valid=?x?>
+module {
+  func.func @noncontiguous() {
+    %addr = arith.constant 0 : i64
+    %c0 = arith.constant 0 : index
+    %c8 = arith.constant 8 : index
+    %src = pto.alloc_tile addr = %addr : !base
+    %slice = pto.subview %src[%c8, %c0] sizes [8, 8] : !base -> !slice
+    %view = pto.treshape %slice : !slice -> !view
+    pto.set_validshape %view, %c8, %c8 : !view
+    return
+  }
+}
+// A non-compact slice retains the parent's physical shape/stride. It must
+// still fail the reshape byte-size check rather than silently bind a compact
+// view to the wrong elements after the provenance restriction is relaxed.
+// CHECK: expects src and dst to have the same total byte size
