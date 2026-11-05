@@ -2302,7 +2302,8 @@ def TWaitOp : PTO_Op<"comm.twait", [
   let arguments = (ins
       PTOCommType:$signal,
       AnySignlessInteger:$cmpValue,
-      PTO_WaitCmpAttr:$cmp
+      PTO_WaitCmpAttr:$cmp,
+      OptionalAttr<I64Attr>:$backoffTicks
   );
   let results = (outs);
   let hasVerifier = 1;

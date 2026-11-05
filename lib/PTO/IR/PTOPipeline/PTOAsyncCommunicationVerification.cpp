@@ -243,8 +243,20 @@ LogicalResult TNotifyOp::verify() {
 }
 
 LogicalResult TWaitOp::verify() {
-  return verifyCommSignalI32(getOperation(), getSignal(), getCmpValue(),
-                             "cmp_value");
+    if (failed(verifyCommSignalI32(getOperation(), getSignal(), getCmpValue(), "cmp_value")))
+        return failure();
+    if (auto ticks = getBackoffTicksAttr()) {
+        if (ticks.getInt() < 0 || ticks.getInt() > INT32_MAX)
+            return emitOpError("expects backoffTicks in [0, INT32_MAX]");
+        if (ticks.getInt() > 0) {
+            if (getCmp() != pto::WaitCmp::GE)
+                return emitOpError("positive backoffTicks requires the GE comparison");
+            auto shape = getShapeVec(getSignal().getType());
+            if (shape.empty() || llvm::any_of(shape, [](int64_t dim) { return dim != 1; }))
+                return emitOpError("positive backoffTicks requires one statically sized i32 signal");
+        }
+    }
+    return success();
 }
 
 LogicalResult TTestOp::verify() {

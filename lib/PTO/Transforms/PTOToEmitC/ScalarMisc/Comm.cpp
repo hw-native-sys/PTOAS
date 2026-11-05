@@ -225,6 +225,16 @@ struct PTOSignalCommToEmitC : public OpConversionPattern<SignalOp> {
                                            ArrayAttr{}, ArrayAttr{}, operands);
       rewriter.eraseOp(op);
     } else {
+        if constexpr (std::is_same_v<SignalOp, pto::TWaitOp>) {
+            if (auto ticks = op.getBackoffTicksAttr(); ticks && ticks.getInt() > 0) {
+                std::string waitCallee = "PTOAS__WAIT_GE_BACKOFF<" + std::to_string(ticks.getInt()) + ">";
+                rewriter.create<emitc::CallOpaqueOp>(
+                    op.getLoc(), TypeRange{}, waitCallee, ArrayAttr{}, ArrayAttr{},
+                    ValueRange{*signalGT, adaptor.getCmpValue()});
+                rewriter.eraseOp(op);
+                return success();
+            }
+        }
       auto waitCmpTy =
           emitc::OpaqueType::get(rewriter.getContext(), "pto::comm::WaitCmp");
       Value waitCmp = makeEmitCOpaqueConstant(
