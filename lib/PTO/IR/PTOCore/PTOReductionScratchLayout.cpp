@@ -126,9 +126,13 @@ static LogicalResult verifyTRowArgTmpA2A3(Operation* op, Type srcTy, Type tmpTy)
 
 static LogicalResult verifyRowArgReductionTypes(Operation *op, Type srcTy,
                                                 Type dstTy) {
-  if (!isSupportedRowReductionElemType(getElemTy(srcTy)))
-    return op->emitOpError(
-        "expects src element type to be i16/i32/f16/f32");
+  Type srcElem = getElemTy(srcTy);
+  bool isA5 = isTargetArchA5(op);
+  if (!isSupportedRowReductionElemType(srcElem) && !(isA5 && srcElem.isBF16())) {
+    return op->emitOpError(isA5
+                               ? "expects src element type to be i16/i32/f16/bf16/f32"
+                               : "expects src element type to be i16/i32/f16/f32");
+  }
   auto dstInt = dyn_cast<IntegerType>(getElemTy(dstTy));
   if (!dstInt || dstInt.getWidth() != mlir::pto::kValue32)
     return op->emitOpError("expects dst element type to be i32 or ui32");

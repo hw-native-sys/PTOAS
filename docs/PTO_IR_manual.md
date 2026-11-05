@@ -4981,7 +4981,8 @@ pto.trowargmax ins(<src>, <tmp> : <src_type>, <tmp_type>)
     - `src valid row == dst valid row`
     - `dst valid column == 1`
 - **Implementation checks (A5)**
-  - `src` and `dst` follow the same layout, element-type, and valid-region rules as A2/A3.
+  - `src` and `dst` follow the A2/A3 layout and valid-region rules.
+  - A5 additionally accepts `bf16` sources with `i32` or `ui32` indices. The VPTO template widens `bf16` to `f32` before reduction and preserves the original column indices.
   - `tmp` is not used by the A5 implementation. PTO IR still requires it to be a row-major `loc=vec` tile, but no shape or valid-shape relation with `src/dst` is required.
 
 **Hardware Mapping:**
@@ -5124,7 +5125,8 @@ pto.trowargmin ins(<src>, <tmp> : <src_type>, <tmp_type>)
     - `src valid row == dst valid row`
     - `dst valid column == 1`
 - **Implementation checks (A5)**
-  - `src` and `dst` follow the same layout, element-type, and valid-region rules as A2/A3.
+  - `src` and `dst` follow the A2/A3 layout and valid-region rules.
+  - A5 additionally accepts `bf16` sources with `i32` or `ui32` indices. The VPTO template widens `bf16` to `f32` before reduction and preserves the original column indices.
   - `tmp` is not used by the A5 implementation. PTO IR still requires it to be a row-major `loc=vec` tile, but no shape or valid-shape relation with `src/dst` is required.
 
 **Hardware Mapping:**

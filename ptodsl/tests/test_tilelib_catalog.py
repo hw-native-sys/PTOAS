@@ -724,19 +724,15 @@ class TileLibCatalogTest(unittest.TestCase):
                 self.assertIn(expected_op, selected.specialize(**specs).mlir_text())
 
     def test_row_reductions_reject_unsupported_source_types(self):
-        # Row extremes additionally accept 8-bit integers on A5 (issue #1599);
-        # arg reductions and low-precision types stay rejected for all four.
-        ops = ("pto.trowmax", "pto.trowmin", "pto.trowargmax", "pto.trowargmin")
-        low_precision = ("bf16", "f8e4m3", "f8e5m2", "hif8")
-        for op, dtype in product(ops, low_precision):
+        row_extremes = ("pto.trowmax", "pto.trowmin")
+        row_args = ("pto.trowargmax", "pto.trowargmin")
+        unsupported_fp8 = ("f8e4m3", "f8e5m2", "hif8")
+        for op in row_extremes + row_args:
+            # A5 row extremes accept 8-bit integers. Row arg reductions
+            # instead accept bf16 via lossless widening to f32.
+            extra = ("bf16",) if op in row_extremes else ("i8", "ui8")
             _, _, parameters, _, candidate_id = _entry_parts(CATALOG[op])
-            with self.subTest(op=op, dtype=dtype):
-                specs = _specs(op, parameters, dtype)
-                with self.assertRaises(tilelib.NoMatchingTemplate):
-                    select(op, "a5", specs, candidate_id=candidate_id)
-        for op in ("pto.trowargmax", "pto.trowargmin"):
-            for dtype in ("i8", "ui8"):
-                _, _, parameters, _, candidate_id = _entry_parts(CATALOG[op])
+            for dtype in unsupported_fp8 + extra:
                 with self.subTest(op=op, dtype=dtype):
                     specs = _specs(op, parameters, dtype)
                     with self.assertRaises(tilelib.NoMatchingTemplate):
