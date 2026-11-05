@@ -1030,6 +1030,11 @@ static DmaLoopPlan configureStoreFromUbLoops(
     pto::MteUbGmOp op, DmaArch dmaArch,
     ArrayRef<pto::DmaLoopConfig> loops, Value one,
     PatternRewriter &rewriter) {
+  // A5 UB->OUT packs loop strides as `src << 40 | dst`, the opposite of
+  // OUT->UB. These config ops are lowered by packLoopPair(low=first,
+  // high=second), so pass (dst, src). Reverse this and every multi-dimensional
+  // store is mis-addressed; set_loop_size_ubtoout already packs loop2 high and
+  // loop1 low, so it needs no such swap.
   DmaLoopPlan plan{{}, {}, one};
   ArrayRef<pto::DmaLoopConfig> hardwareLoops =
       splitDmaHardwareLoops(op, dmaArch, loops, plan);
@@ -1039,15 +1044,15 @@ static DmaLoopPlan configureStoreFromUbLoops(
   bool hasTwoHardwareLoops = hardwareLoops.size() == mlir::pto::kValue2;
   if (hasTwoHardwareLoops) {
     rewriter.create<pto::SetLoop2StrideUbToOutOp>(
-        op.getLoc(), hardwareLoops[0].srcStride, hardwareLoops[0].dstStride);
+        op.getLoc(), hardwareLoops[0].dstStride, hardwareLoops[0].srcStride);
     plan.loop2Count = hardwareLoops[0].count;
     plan.loop1Count = hardwareLoops[1].count;
     rewriter.create<pto::SetLoop1StrideUbToOutOp>(
-        op.getLoc(), hardwareLoops[1].srcStride, hardwareLoops[1].dstStride);
+        op.getLoc(), hardwareLoops[1].dstStride, hardwareLoops[1].srcStride);
   } else if (hardwareLoops.size() == 1) {
     plan.loop1Count = hardwareLoops[0].count;
     rewriter.create<pto::SetLoop1StrideUbToOutOp>(
-        op.getLoc(), hardwareLoops[0].srcStride, hardwareLoops[0].dstStride);
+        op.getLoc(), hardwareLoops[0].dstStride, hardwareLoops[0].srcStride);
   }
   if (plan.loop1Count) {
     rewriter.create<pto::SetLoopSizeUbToOutOp>(op.getLoc(), plan.loop2Count,
