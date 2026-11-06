@@ -1094,6 +1094,20 @@ LogicalResult EmitCBackendJob::run(PTOASContext &context) {
   return success();
 }
 
+// Emits the VPTO object output for a finished compile result: the merged
+// relocatable device object when --emit-vpto-device-object is requested,
+// the default host fatobj otherwise.
+static LogicalResult emitVPTOObjectOutput(
+    const mlir::pto::PTOASCompileResult &jobResult, PTOASContext &context) {
+  const std::string moduleId = context.allocModuleId();
+  if (mlir::pto::emitVPTODeviceObject) {
+    return emitVPTOLLVMDeviceObject(jobResult, context,
+                                    context.getOutputPath());
+  }
+  return emitVPTOLLVMFatobj(jobResult, context, moduleId,
+                            context.getOutputPath());
+}
+
 LogicalResult VPTOBackendJob::run(PTOASContext &context) {
   OwningOpRef<ModuleOp> singleChildJobModule;
   OwningOpRef<ModuleOp> *compileUnit = &module;
@@ -1144,14 +1158,7 @@ LogicalResult VPTOBackendJob::run(PTOASContext &context) {
     return failure();
   }
 
-  std::string moduleId = context.allocModuleId();
-  if (mlir::pto::emitVPTODeviceObject) {
-    if (failed(emitVPTOLLVMDeviceObject(result, context,
-                                         context.getOutputPath()))) {
-      return failure();
-    }
-  } else if (failed(emitVPTOLLVMFatobj(result, context, moduleId,
-                                       context.getOutputPath()))) {
+  if (failed(emitVPTOObjectOutput(result, context))) {
     return failure();
   }
 
@@ -1330,6 +1337,43 @@ static LogicalResult resolveSingleBackend(
   return success();
 }
 
+// Validates the --emit-vpto-device-object output mode before any toolchain
+// work or lowering runs: the mode rejects mixed pto.backend assemblies and
+// non-VPTO backends, cannot be combined with the IR output flags, and needs
+// an explicit output path. The job-side path check stays as a backstop for
+// the default fatobj output.
+static LogicalResult validateDeviceObjectMode(
+    const mlir::pto::BackendInfo &backendInfo) {
+  if (!mlir::pto::emitVPTODeviceObject) {
+    return success();
+  }
+  if (!backendInfo.singleBackend) {
+    llvm::errs() << "Error: --emit-vpto-device-object does not support mixed "
+                    "pto.backend assemblies; split the input or drop the "
+                    "flag to get the default fatobj output.\n";
+    return failure();
+  }
+  if (*backendInfo.singleBackend != mlir::pto::PTOBackend::VPTO) {
+    llvm::errs() << "Error: --emit-vpto-device-object requires the VPTO "
+                    "backend; pass --pto-backend=vpto (or mark the module "
+                    "with the vpto backend attribute).\n";
+    return failure();
+  }
+  if (mlir::pto::emitMlirIR || mlir::pto::emitVPTO ||
+      mlir::pto::emitVPTOLLVMDialect) {
+    llvm::errs() << "Error: --emit-vpto-device-object cannot be combined with "
+                    "the IR output flags --emit-pto-ir, --emit-vpto, or "
+                    "--emit-vpto-llvm-ir.\n";
+    return failure();
+  }
+  if (outputFilename.empty() || outputFilename == "-") {
+    llvm::errs() << "Error: object output requires an explicit file path "
+                    "passed with -o.\n";
+    return failure();
+  }
+  return success();
+}
+
 static LogicalResult buildBackendInfo(ModuleOp module, bool cliBackendSpecified,
                                       mlir::pto::BackendInfo &backendInfo) {
   backendInfo = mlir::pto::BackendInfo();
@@ -1338,15 +1382,6 @@ static LogicalResult buildBackendInfo(ModuleOp module, bool cliBackendSpecified,
                           backendInfo.defaultBackend)) {
     llvm::errs() << "Error: invalid --pto-backend='" << mlir::pto::ptoBackend
                  << "'. Expected 'emitc' or 'vpto'.\n";
-    return failure();
-  }
-
-  if (mlir::pto::emitVPTODeviceObject &&
-      (mlir::pto::emitMlirIR || mlir::pto::emitVPTO ||
-       mlir::pto::emitVPTOLLVMDialect)) {
-    llvm::errs() << "Error: --emit-vpto-device-object cannot be combined with "
-                    "the IR output flags --emit-pto-ir, --emit-vpto, or "
-                    "--emit-vpto-llvm-ir.\n";
     return failure();
   }
 
@@ -1363,36 +1398,16 @@ static LogicalResult buildBackendInfo(ModuleOp module, bool cliBackendSpecified,
     return failure();
   }
 
+  if (failed(validateDeviceObjectMode(backendInfo))) {
+    return failure();
+  }
+
   if (backendInfo.singleBackend) {
-    if (mlir::pto::emitVPTODeviceObject &&
-        *backendInfo.singleBackend != mlir::pto::PTOBackend::VPTO) {
-      llvm::errs() << "Error: --emit-vpto-device-object requires the VPTO "
-                      "backend; pass --pto-backend=vpto (or mark the module "
-                      "with the vpto backend attribute).\n";
-      return failure();
-    }
-    // Reject a missing or stdout output path before any toolchain work or
-    // lowering runs, so the user gets the path diagnostic instead of a
-    // toolchain or lowering error first. The job-side check stays as a
-    // backstop for the default fatobj path.
-    if (mlir::pto::emitVPTODeviceObject &&
-        (outputFilename.empty() || outputFilename == "-")) {
-      llvm::errs() << "Error: object output requires an explicit file path "
-                      "passed with -o.\n";
-      return failure();
-    }
     backendInfo.requiresToolchain =
         *backendInfo.singleBackend == mlir::pto::PTOBackend::VPTO &&
         !mlir::pto::emitMlirIR && !mlir::pto::emitVPTO &&
         !mlir::pto::emitVPTOLLVMDialect;
     return success();
-  }
-
-  if (mlir::pto::emitVPTODeviceObject) {
-    llvm::errs() << "Error: --emit-vpto-device-object does not support mixed "
-                    "pto.backend assemblies; split the input or drop the "
-                    "flag to get the default fatobj output.\n";
-    return failure();
   }
 
   if (mlir::pto::emitMlirIR || mlir::pto::emitVPTO ||

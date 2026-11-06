@@ -591,6 +591,32 @@ public:
                                 toolchain.ldLldPath, stderrPath, diagOS);
   }
 
+  // Shared device pipeline used by both output paths: command logs, bridge
+  // wrapper bitcode linking, the per-target device compilations, and the
+  // ld.lld -r merge. Returns false on the first failing step.
+  bool emitDeviceObjects(llvm::Module *cubeModule, llvm::Module *vectorModule,
+                         const mlir::pto::CANNToolchain &toolchain,
+                         mlir::pto::VFSIMTSizeFixMode vfsimtSizeFixMode,
+                         mlir::pto::BishengSchedulerMode schedulerMode,
+                         llvm::ArrayRef<mlir::pto::BridgeWrapperTU> bridgeWrappers,
+                         llvm::raw_ostream &diagOS) {
+    if (!initCommandLogs(diagOS)) {
+      return false;
+    }
+    if (!compileBridgeWrappers(bridgeWrappers, cubeModule != nullptr,
+                               vectorModule != nullptr, toolchain, diagOS)) {
+      return false;
+    }
+    if (!emitCubeObject(cubeModule, toolchain, schedulerMode, diagOS)) {
+      return false;
+    }
+    if (!emitVectorObject(vectorModule, toolchain, vfsimtSizeFixMode,
+                          schedulerMode, diagOS)) {
+      return false;
+    }
+    return mergeDeviceObjects(toolchain, diagOS);
+  }
+
   bool compileHostStub(const mlir::pto::CANNToolchain &toolchain,
                        llvm::StringRef moduleId,
                        llvm::StringRef targetCPU,
@@ -1442,22 +1468,9 @@ mlir::LogicalResult mlir::pto::emitFatobjLLVM(
   if (!artifacts.emitStubSource(stubSource, diagOS)) {
     return failure();
   }
-  if (!artifacts.initCommandLogs(diagOS)) {
-    return failure();
-  }
-  if (!artifacts.compileBridgeWrappers(bridgeWrappers, cubeModule != nullptr,
-                                       vectorModule != nullptr, toolchain,
-                                       diagOS)) {
-    return failure();
-  }
-  if (!artifacts.emitCubeObject(cubeModule, toolchain, schedulerMode, diagOS)) {
-    return failure();
-  }
-  if (!artifacts.emitVectorObject(vectorModule, toolchain,
-                                  vfsimtSizeFixMode, schedulerMode, diagOS)) {
-    return failure();
-  }
-  if (!artifacts.mergeDeviceObjects(toolchain, diagOS)) {
+  if (!artifacts.emitDeviceObjects(cubeModule, vectorModule, toolchain,
+                                  vfsimtSizeFixMode, schedulerMode,
+                                  bridgeWrappers, diagOS)) {
     return failure();
   }
 
@@ -1484,22 +1497,9 @@ mlir::LogicalResult mlir::pto::emitVPTODeviceObjectsLLVM(
 
   VPTOFatobjArtifacts artifacts(tempFiles);
   artifacts.setPrintMode(printMode);
-  if (!artifacts.initCommandLogs(diagOS)) {
-    return failure();
-  }
-  if (!artifacts.compileBridgeWrappers(bridgeWrappers, cubeModule != nullptr,
-                                       vectorModule != nullptr, toolchain,
-                                       diagOS)) {
-    return failure();
-  }
-  if (!artifacts.emitCubeObject(cubeModule, toolchain, schedulerMode, diagOS)) {
-    return failure();
-  }
-  if (!artifacts.emitVectorObject(vectorModule, toolchain,
-                                  vfsimtSizeFixMode, schedulerMode, diagOS)) {
-    return failure();
-  }
-  if (!artifacts.mergeDeviceObjects(toolchain, diagOS)) {
+  if (!artifacts.emitDeviceObjects(cubeModule, vectorModule, toolchain,
+                                  vfsimtSizeFixMode, schedulerMode,
+                                  bridgeWrappers, diagOS)) {
     return failure();
   }
 
