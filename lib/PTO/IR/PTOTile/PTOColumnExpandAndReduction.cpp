@@ -204,27 +204,26 @@ ParseResult mlir::pto::TColSumOp::parse(OpAsmParser &parser, OperationState &res
 }
 
 void mlir::pto::TColSumOp::print(OpAsmPrinter &p) {
+  // isBinary defaults to false, so !getIsBinary() means "absent or false" --
+  // the only states whose attribute can be elided without changing semantics.
+  SmallVector<StringRef, mlir::pto::kValue2> elidedAttrs = {"operandSegmentSizes"};
+  if (!getIsBinary()) {
+    elidedAttrs.push_back("isBinary");
+  }
   if (getTmp()) {
     // Format 2: ins(%src, %tmp {isBinary = ...}: type, type) outs(%dst : type)
     p << " ins(" << getSrc() << ", " << getTmp();
-    // Print isBinary attribute if present
-    SmallVector<StringRef, mlir::pto::kValue2> elidedAttrs = {"operandSegmentSizes"};
-    if (!getIsBinaryAttr() || getIsBinaryAttr().getValue() == false) {
-      elidedAttrs.push_back("isBinary");
-    }
     p.printOptionalAttrDict((*this)->getAttrs(), elidedAttrs);
     p << " : " << getSrc().getType() << ", " << getTmp().getType() << ")";
   } else {
-    // Format 1: ins(%src : type) outs(%dst : type)
+    // Format 1: ins(%src : type) outs(%dst : type) {isBinary = ...}
     p << " ins(" << getSrc() << " : " << getSrc().getType() << ")";
   }
 
   p << " outs(" << getDst() << " : " << getDst().getType() << ")";
 
-  // Print remaining attributes for format 1 (excluding isBinary)
   if (!getTmp()) {
-      SmallVector<StringRef, mlir::pto::kValue2> elidedAttrs = {"isBinary", "operandSegmentSizes"};
-      p.printOptionalAttrDict((*this)->getAttrs(), elidedAttrs);
+    p.printOptionalAttrDict((*this)->getAttrs(), elidedAttrs);
   }
 }
 

@@ -15,9 +15,12 @@ static LogicalResult verifyTColSumArch(TColSumOp op, bool isA5) {
       failed(verifyNDStyleVecTile(op, dstTy, "dst"))) {
     return failure();
   }
-  if (op.getTmp() && !op.getIsBinaryAttr()) {
-    return op.emitOpError("tmp operand requires isBinary attribute");
-  }
+  // tmp is legal with any isBinary value: per the pto-isa TCOLSUM contract a
+  // false isBinary accepts tmp without actively using it, and an absent
+  // attribute defaults to false (DefaultValuedOptionalAttr). Only the
+  // binary-tree capacity checks in verifyTColSumTmp are isBinary-gated, so
+  // both textual spellings -- explicit false and elided/absent -- verify and
+  // round-trip identically.
   if (failed(verifyTColSumTmp(op, srcTy, dstTy))) {
     return failure();
   }

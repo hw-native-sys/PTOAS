@@ -1,0 +1,54 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// You may refer to the License for details on copying or using this file.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+
+// RUN: ptoas --pto-arch=a3 --emit-pto-ir %s 2>&1 | FileCheck %s --check-prefix=IR
+// RUN: ptoas --pto-arch=a5 --emit-pto-ir %s 2>&1 | FileCheck %s --check-prefix=IR
+// RUN: ptoas --pto-arch=a5 %s 2>&1 | FileCheck %s --check-prefix=EMITC
+
+// A tmp operand with isBinary = false is a legal pto-isa TCOLSUM state: tmp
+// is accepted but not actively used while the reduction accumulates into
+// dst. The ODS default makes an absent isBinary attribute equal to false, so
+// the explicit {isBinary = false} spelling and the elided spelling are the
+// same state and must verify, round-trip, and lower identically (issue
+// #1712, case 2).
+
+module {
+  func.func @tcolsum_tmp_explicit_false() {
+    %src = pto.alloc_tile : !pto.tile_buf<loc=vec, dtype=f32, rows=8, cols=16, v_row=8, v_col=16, blayout=row_major, slayout=none_box, fractal=512, pad=0>
+    %tmp = pto.alloc_tile : !pto.tile_buf<loc=vec, dtype=f32, rows=4, cols=16, v_row=4, v_col=16, blayout=row_major, slayout=none_box, fractal=512, pad=0>
+    %dst = pto.alloc_tile : !pto.tile_buf<loc=vec, dtype=f32, rows=8, cols=16, v_row=1, v_col=16, blayout=row_major, slayout=none_box, fractal=512, pad=0>
+    pto.tcolsum ins(%src, %tmp {isBinary = false} : !pto.tile_buf<loc=vec, dtype=f32, rows=8, cols=16, v_row=8, v_col=16, blayout=row_major, slayout=none_box, fractal=512, pad=0>, !pto.tile_buf<loc=vec, dtype=f32, rows=4, cols=16, v_row=4, v_col=16, blayout=row_major, slayout=none_box, fractal=512, pad=0>)
+                outs(%dst : !pto.tile_buf<loc=vec, dtype=f32, rows=8, cols=16, v_row=1, v_col=16, blayout=row_major, slayout=none_box, fractal=512, pad=0>)
+    return
+  }
+
+  // The textual form the printer emits for the function above (a false
+  // isBinary is elided): the same state spelled without the attribute.
+  func.func @tcolsum_tmp_isbinary_absent() {
+    %src = pto.alloc_tile : !pto.tile_buf<loc=vec, dtype=f32, rows=8, cols=16, v_row=8, v_col=16, blayout=row_major, slayout=none_box, fractal=512, pad=0>
+    %tmp = pto.alloc_tile : !pto.tile_buf<loc=vec, dtype=f32, rows=4, cols=16, v_row=4, v_col=16, blayout=row_major, slayout=none_box, fractal=512, pad=0>
+    %dst = pto.alloc_tile : !pto.tile_buf<loc=vec, dtype=f32, rows=8, cols=16, v_row=1, v_col=16, blayout=row_major, slayout=none_box, fractal=512, pad=0>
+    pto.tcolsum ins(%src, %tmp : !pto.tile_buf<loc=vec, dtype=f32, rows=8, cols=16, v_row=8, v_col=16, blayout=row_major, slayout=none_box, fractal=512, pad=0>, !pto.tile_buf<loc=vec, dtype=f32, rows=4, cols=16, v_row=4, v_col=16, blayout=row_major, slayout=none_box, fractal=512, pad=0>)
+                outs(%dst : !pto.tile_buf<loc=vec, dtype=f32, rows=8, cols=16, v_row=1, v_col=16, blayout=row_major, slayout=none_box, fractal=512, pad=0>)
+    return
+  }
+}
+
+// IR-LABEL: func.func @tcolsum_tmp_explicit_false
+// IR: pto.tcolsum ins(%{{[0-9]+}}, %{{[0-9]+}} : {{.*}}) outs(%{{[0-9]+}} : {{.*}})
+// IR-NOT: isBinary
+// IR-LABEL: func.func @tcolsum_tmp_isbinary_absent
+// IR: pto.tcolsum ins(%{{[0-9]+}}, %{{[0-9]+}} : {{.*}}) outs(%{{[0-9]+}} : {{.*}})
+// IR-NOT: isBinary
+
+// EMITC-LABEL: tcolsum_tmp_explicit_false() {
+// EMITC: const bool v{{[0-9]+}} = false;
+// EMITC: TCOLSUM(v{{[0-9]+}}, v{{[0-9]+}}, v{{[0-9]+}}, v{{[0-9]+}});
+// EMITC-LABEL: tcolsum_tmp_isbinary_absent() {
+// EMITC: const bool v{{[0-9]+}} = false;
+// EMITC: TCOLSUM(v{{[0-9]+}}, v{{[0-9]+}}, v{{[0-9]+}}, v{{[0-9]+}});
