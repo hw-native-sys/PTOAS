@@ -162,6 +162,20 @@ LogicalResult emitFatobjLLVM(
     llvm::ArrayRef<BridgeWrapperTU> bridgeWrappers = {},
     PrintDTDataMode printMode = PrintDTDataMode::None);
 
+// Device-object output mode: runs the same device pipeline as
+// emitFatobjLLVM (bridge wrapper linking, per-target device compilation,
+// VFSIMT size repair, and the ld.lld -r merge) but stops before host-stub
+// compilation and fatobj packaging, writing the merged relocatable AI Core
+// ELF to outputPath. Requires at least one device module.
+LogicalResult emitVPTODeviceObjectsLLVM(
+    llvm::Module* cubeModule, llvm::Module* vectorModule,
+    llvm::StringRef outputPath, const CANNToolchain& toolchain,
+    TempFileRegistry& tempFiles, VFSIMTSizeFixMode vfsimtSizeFixMode,
+    llvm::raw_ostream& diagOS,
+    BishengSchedulerMode schedulerMode = BishengSchedulerMode::Auto,
+    llvm::ArrayRef<BridgeWrapperTU> bridgeWrappers = {},
+    PrintDTDataMode printMode = PrintDTDataMode::None);
+
 LogicalResult mergeDeviceObjects(llvm::ArrayRef<std::string> deviceObjPaths,
                                  llvm::StringRef outObjPath,
                                  const CANNToolchain &toolchain,

@@ -339,6 +339,11 @@ ptoas input.pto --pto-arch=a5 --pto-backend=vpto \
 ptoas input.pto --pto-arch=a5 --pto-backend=vpto \
   --vpto-print-dtdata=explicit -o output.o
 
+# 输出可重定位 AI Core device object（跳过 host stub 编译与 fatobj 打包）
+# 需要 --pto-backend=vpto 与显式 -o 路径；不支持 mixed pto.backend 输入
+ptoas input.pto --pto-arch=a5 --pto-backend=vpto \
+  --emit-vpto-device-object -o output.o
+
 # 查看当前 ptoas release 版本号
 ptoas --version
 
@@ -368,6 +373,17 @@ bridge 实现，不经 bridge 无法编译），cube 操作默认保持原有 `E
 `printFormat` 会明确报错。Pipe/Cube bridge 的 tile specialization 也要求
 静态有效尺寸。模块启用打印时，kernel entry 会追加独立的隐藏 DTData 槽，
 用户参数的位置和类型保持不变，不会被重新命名为 DTData。
+
+`--emit-vpto-device-object` 让 VPTO 后端把可重定位的 AI Core device
+object（`ld.lld -r` 合并后的 ELF，cube/vector 同时存在时合并为单个 `.o`）
+直接写入 `-o`，跳过 host stub 编译与 fatobj 打包；默认的 fatobj 输出不受
+影响。该产物面向自带 kernel entry 包装和最终 device 链接的运行时（如
+PyPTO persistent runtime）。导出符号命名规则：kernel entry 为
+`<logical>_mix_aiv`（vector 侧）/ `<logical>_mix_aic`（cube 侧）；其余
+外部可见函数为逻辑名追加 target ABI 后缀——CANN ≥ 9.0.0-beta.2 使用
+`.vector`/`.cube`，更早版本使用 `_mix_aiv`/`_mix_aic`；逻辑名即去掉
+对应后缀后的名字。该模式要求 `--pto-backend=vpto` 与显式 `-o` 路径，
+不支持 mixed `pto.backend` 输入（会得到明确的报错诊断）。
 
 `--vpto-scheduler` 在 VPTO 发射流水线的最终 CSE 之后、发射合法性校验之前运行。
 目标模型仅支持 A5 Vector kernel；规范化后的 Cube 子模块会被跳过，不生成

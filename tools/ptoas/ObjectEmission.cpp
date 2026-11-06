@@ -591,6 +591,32 @@ public:
                                 toolchain.ldLldPath, stderrPath, diagOS);
   }
 
+  // Shared device pipeline used by both output paths: command logs, bridge
+  // wrapper bitcode linking, the per-target device compilations, and the
+  // ld.lld -r merge. Returns false on the first failing step.
+  bool emitDeviceObjects(llvm::Module *cubeModule, llvm::Module *vectorModule,
+                         const mlir::pto::CANNToolchain &toolchain,
+                         mlir::pto::VFSIMTSizeFixMode vfsimtSizeFixMode,
+                         mlir::pto::BishengSchedulerMode schedulerMode,
+                         llvm::ArrayRef<mlir::pto::BridgeWrapperTU> bridgeWrappers,
+                         llvm::raw_ostream &diagOS) {
+    if (!initCommandLogs(diagOS)) {
+      return false;
+    }
+    if (!compileBridgeWrappers(bridgeWrappers, cubeModule != nullptr,
+                               vectorModule != nullptr, toolchain, diagOS)) {
+      return false;
+    }
+    if (!emitCubeObject(cubeModule, toolchain, schedulerMode, diagOS)) {
+      return false;
+    }
+    if (!emitVectorObject(vectorModule, toolchain, vfsimtSizeFixMode,
+                          schedulerMode, diagOS)) {
+      return false;
+    }
+    return mergeDeviceObjects(toolchain, diagOS);
+  }
+
   bool compileHostStub(const mlir::pto::CANNToolchain &toolchain,
                        llvm::StringRef moduleId,
                        llvm::StringRef targetCPU,
@@ -681,6 +707,13 @@ public:
     };
     return runCommandWithStderr(toolchain.cceLdPath, args, stderrPath, diagOS,
                                 "fatobj repack");
+  }
+
+  // Device-object output mode (issue #1726): the merged relocatable device
+  // ELF is the final artifact, so callers stop after mergeDeviceObjects and
+  // copy this path to the output instead of running the host-stub packaging.
+  const std::string &getMergedDeviceObjPath() const {
+    return mergedDeviceObjPath;
   }
 
 private:
@@ -1435,28 +1468,67 @@ mlir::LogicalResult mlir::pto::emitFatobjLLVM(
   if (!artifacts.emitStubSource(stubSource, diagOS)) {
     return failure();
   }
-  if (!artifacts.initCommandLogs(diagOS)) {
-    return failure();
-  }
-  if (!artifacts.compileBridgeWrappers(bridgeWrappers, cubeModule != nullptr,
-                                       vectorModule != nullptr, toolchain,
-                                       diagOS)) {
-    return failure();
-  }
-  if (!artifacts.emitCubeObject(cubeModule, toolchain, schedulerMode, diagOS)) {
-    return failure();
-  }
-  if (!artifacts.emitVectorObject(vectorModule, toolchain,
-                                  vfsimtSizeFixMode, schedulerMode, diagOS)) {
-    return failure();
-  }
-  if (!artifacts.mergeDeviceObjects(toolchain, diagOS)) {
+  if (!artifacts.emitDeviceObjects(cubeModule, vectorModule, toolchain,
+                                  vfsimtSizeFixMode, schedulerMode,
+                                  bridgeWrappers, diagOS)) {
     return failure();
   }
 
   constexpr llvm::StringLiteral targetCPU = "dav-c310";
   if (!artifacts.compileHostStubToFatobj(toolchain, moduleId, targetCPU,
                                          outputPath, diagOS)) {
+    return failure();
+  }
+  return success();
+}
+
+mlir::LogicalResult mlir::pto::emitVPTODeviceObjectsLLVM(
+    llvm::Module *cubeModule, llvm::Module *vectorModule,
+    llvm::StringRef outputPath, const CANNToolchain &toolchain,
+    TempFileRegistry &tempFiles, VFSIMTSizeFixMode vfsimtSizeFixMode,
+    llvm::raw_ostream &diagOS, BishengSchedulerMode schedulerMode,
+    llvm::ArrayRef<BridgeWrapperTU> bridgeWrappers,
+    PrintDTDataMode printMode) {
+  if (!cubeModule && !vectorModule) {
+    diagOS << "Error: VPTO device-object emission requires at least one "
+              "device module.\n";
+    return failure();
+  }
+
+  VPTOFatobjArtifacts artifacts(tempFiles);
+  artifacts.setPrintMode(printMode);
+  if (!artifacts.emitDeviceObjects(cubeModule, vectorModule, toolchain,
+                                  vfsimtSizeFixMode, schedulerMode,
+                                  bridgeWrappers, diagOS)) {
+    return failure();
+  }
+
+  // copy_file truncates its destination on open, so a failed copy (for
+  // example on ENOSPC) would destroy a valid object already sitting at the
+  // output path. Write to a sibling temporary file and atomically replace
+  // the output instead; the sibling lives in the same directory so the
+  // rename cannot cross filesystems.
+  llvm::SmallString<mlir::pto::kValue256> tempOutputPath;
+  std::error_code ec = llvm::sys::fs::createUniqueFile(
+      llvm::Twine(outputPath) + ".ptoas-write-%%%%%%", tempOutputPath);
+  if (ec) {
+    diagOS << "Error: creating a temporary output next to '" << outputPath
+           << "' failed: " << ec.message() << "\n";
+    return failure();
+  }
+  ec = llvm::sys::fs::copy_file(artifacts.getMergedDeviceObjPath(),
+                                tempOutputPath);
+  if (ec) {
+    (void)llvm::sys::fs::remove(tempOutputPath);
+    diagOS << "Error: writing device object to '" << outputPath
+           << "' failed: " << ec.message() << "\n";
+    return failure();
+  }
+  ec = llvm::sys::fs::rename(tempOutputPath, outputPath);
+  if (ec) {
+    (void)llvm::sys::fs::remove(tempOutputPath);
+    diagOS << "Error: moving device object to '" << outputPath
+           << "' failed: " << ec.message() << "\n";
     return failure();
   }
   return success();
