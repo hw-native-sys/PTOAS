@@ -54,9 +54,9 @@ ptoas kernel.pto --pto-arch=a5 --pto-backend=vpto \
 | 约束 | 诊断 |
 |---|---|
 | 需要 VPTO 后端（`--pto-backend=vpto` 或模块 backend 属性解析为 vpto） | `Error: --emit-vpto-device-object requires the VPTO backend; pass --pto-backend=vpto (or mark the module with the vpto backend attribute).` |
-| 不与 IR 输出 flag 组合（`--emit-mlir` / `--emit-vpto` / `--emit-vpto-llvm-ir`） | `Error: --emit-vpto-device-object cannot be combined with the IR output flags ...` |
+| 不与 IR 输出 flag 组合（`--emit-pto-ir` / `--emit-vpto` / `--emit-vpto-llvm-ir`） | `Error: --emit-vpto-device-object cannot be combined with the IR output flags ...` |
 | 不支持 mixed `pto.backend` 装配 | `Error: --emit-vpto-device-object does not support mixed pto.backend assemblies; split the input or drop the flag to get the default fatobj output.` |
-| 显式 `-o` 文件路径（沿用对象输出的既有检查，`-o -` 不支持） | `Error: object output requires an explicit file path passed with -o.` |
+| 显式 `-o` 文件路径（`-o -` 不支持）。本模式在 `buildBackendInfo` 中早期校验，早于工具链初始化与 lowering；作业侧既有检查保留为兜底 | `Error: object output requires an explicit file path passed with -o.` |
 
 LLVM-inspection 工作流（`--emit-vpto-llvm-ir` 等，PyPTO 用于同步准入检查）不受
 影响：这些模式与 device-object 模式互斥，各自独立可用。
@@ -108,6 +108,9 @@ compilePTOASModule ───►│ initCommandLogs                              
   device ELF；
 - 面向"自带 kernel entry 包装 + 最终 device 链接"的 runtime（PyPTO
   persistent）。
+- 输出写入采用**同目录临时文件 + `rename` 原子替换**：写入失败（如磁盘
+  满）不会截断或破坏 `-o` 路径上已有的有效对象，命令以失败退出且原文件
+  保持不变。
 
 ## 导出符号命名契约
 
@@ -130,9 +133,10 @@ $ llvm-readelf --symbols kernel.device.o
   ...OBJECT  LOCAL  .AIV_Kernel_Type_abs_kernel_2d_mix_aiv ...
 ```
 
-客户端从产物符号去后缀即可得到 logical 名并注册别名；后缀随 CANN 版本切换
-的两条规则都已文档化（README），版本由工具链探测决定，可用
-`--cann-output-version` 覆写。
+客户端从产物符号去后缀即可得到 logical 名并注册别名。后缀随 CANN 版本
+切换的两条规则都已文档化（README）；后缀版本由工具链探测
+（`discoverCANNVersion`，读 `ASCEND_HOME_PATH` 下的 version.info）决定，
+`--cann-output-version` 仅作用于 VPTO lowering，**不影响**符号后缀。
 
 ## 验证设计
 
@@ -140,7 +144,8 @@ $ llvm-readelf --symbols kernel.device.o
 
 1. **诊断回归（无工具链，任意 CI 机可跑）**：
    `test/lit/pto/` 下的 `not ptoas` 用例——backend 约束、IR flag 互斥、
-   mixed 拒绝，全部在工具链初始化前触发。
+   显式 `-o` 路径（缺失与 `-o -`）、mixed 拒绝，全部在工具链初始化与
+   lowering 之前触发。
 2. **真实发射验证（需 Bisheng/CANN，`ASCEND_HOME_PATH`）**：同一输入分别走
    默认 fatobj 与 `--emit-vpto-device-object`，`llvm-readelf` 断言：
    默认产物为 x86-64 host 容器且含 `__aicore_rel_binary` 段（回归不变）；

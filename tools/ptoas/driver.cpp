@@ -1345,7 +1345,7 @@ static LogicalResult buildBackendInfo(ModuleOp module, bool cliBackendSpecified,
       (mlir::pto::emitMlirIR || mlir::pto::emitVPTO ||
        mlir::pto::emitVPTOLLVMDialect)) {
     llvm::errs() << "Error: --emit-vpto-device-object cannot be combined with "
-                    "the IR output flags --emit-mlir, --emit-vpto, or "
+                    "the IR output flags --emit-pto-ir, --emit-vpto, or "
                     "--emit-vpto-llvm-ir.\n";
     return failure();
   }
@@ -1369,6 +1369,16 @@ static LogicalResult buildBackendInfo(ModuleOp module, bool cliBackendSpecified,
       llvm::errs() << "Error: --emit-vpto-device-object requires the VPTO "
                       "backend; pass --pto-backend=vpto (or mark the module "
                       "with the vpto backend attribute).\n";
+      return failure();
+    }
+    // Reject a missing or stdout output path before any toolchain work or
+    // lowering runs, so the user gets the path diagnostic instead of a
+    // toolchain or lowering error first. The job-side check stays as a
+    // backstop for the default fatobj path.
+    if (mlir::pto::emitVPTODeviceObject &&
+        (outputFilename.empty() || outputFilename == "-")) {
+      llvm::errs() << "Error: object output requires an explicit file path "
+                      "passed with -o.\n";
       return failure();
     }
     backendInfo.requiresToolchain =

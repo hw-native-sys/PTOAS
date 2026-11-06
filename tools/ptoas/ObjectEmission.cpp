@@ -1503,10 +1503,31 @@ mlir::LogicalResult mlir::pto::emitVPTODeviceObjectsLLVM(
     return failure();
   }
 
-  std::error_code ec = llvm::sys::fs::copy_file(
-      artifacts.getMergedDeviceObjPath(), outputPath);
+  // copy_file truncates its destination on open, so a failed copy (for
+  // example on ENOSPC) would destroy a valid object already sitting at the
+  // output path. Write to a sibling temporary file and atomically replace
+  // the output instead; the sibling lives in the same directory so the
+  // rename cannot cross filesystems.
+  llvm::SmallString<mlir::pto::kValue256> tempOutputPath;
+  std::error_code ec = llvm::sys::fs::createUniqueFile(
+      llvm::Twine(outputPath) + ".ptoas-write-%%%%%%", tempOutputPath);
   if (ec) {
+    diagOS << "Error: creating a temporary output next to '" << outputPath
+           << "' failed: " << ec.message() << "\n";
+    return failure();
+  }
+  ec = llvm::sys::fs::copy_file(artifacts.getMergedDeviceObjPath(),
+                                tempOutputPath);
+  if (ec) {
+    (void)llvm::sys::fs::remove(tempOutputPath);
     diagOS << "Error: writing device object to '" << outputPath
+           << "' failed: " << ec.message() << "\n";
+    return failure();
+  }
+  ec = llvm::sys::fs::rename(tempOutputPath, outputPath);
+  if (ec) {
+    (void)llvm::sys::fs::remove(tempOutputPath);
+    diagOS << "Error: moving device object to '" << outputPath
            << "' failed: " << ec.message() << "\n";
     return failure();
   }
