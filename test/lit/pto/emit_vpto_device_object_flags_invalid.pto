@@ -1,0 +1,44 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+//
+// Guards the --emit-vpto-device-object flag diagnostics (issue #1726). All
+// checks fire during backend option validation, before any toolchain work
+// or lowering, so they are toolchain-independent.
+//
+// RUN: split-file %s %t
+// RUN: not ptoas --pto-arch=a5 --emit-vpto-device-object %t/simple.pto -o %t.o 2>&1 | FileCheck %s --check-prefix=BACKEND
+// RUN: not ptoas --pto-arch=a5 --pto-backend=vpto --emit-vpto --emit-vpto-device-object %t/simple.pto -o %t.o 2>&1 | FileCheck %s --check-prefix=IRFLAGS
+// RUN: not ptoas --pto-arch=a5 --pto-backend=vpto --emit-vpto-device-object %t/simple.pto 2>&1 | FileCheck %s --check-prefix=OUTPATH
+// RUN: not ptoas --pto-arch=a5 --pto-backend=vpto --emit-vpto-device-object %t/simple.pto -o - 2>&1 | FileCheck %s --check-prefix=OUTPATH
+// RUN: not ptoas --pto-arch=a5 --pto-backend=vpto --emit-vpto-device-object %t/mixed.pto -o %t.o 2>&1 | FileCheck %s --check-prefix=MIXED
+
+// BACKEND: Error: --emit-vpto-device-object requires the VPTO backend; pass --pto-backend=vpto (or mark the module with the vpto backend attribute).
+// IRFLAGS: Error: --emit-vpto-device-object cannot be combined with the IR output flags --emit-pto-ir, --emit-vpto, or --emit-vpto-llvm-ir.
+// OUTPATH: Error: object output requires an explicit file path passed with -o.
+// MIXED: Error: --emit-vpto-device-object does not support mixed pto.backend assemblies; split the input or drop the flag to get the default fatobj output.
+
+//--- simple.pto
+module attributes {pto.target_arch = "a5"} {
+  func.func @kernel(%gm: !pto.ptr<f32, gm>) attributes {pto.entry} {
+    return
+  }
+}
+
+//--- mixed.pto
+module attributes {pto.target_arch = "a5"} {
+  module attributes {pto.backend = "emitc"} {
+    func.func @host_entry(%gm: !pto.ptr<f32, gm>) attributes {pto.entry} {
+      return
+    }
+  }
+  module attributes {pto.backend = "vpto"} {
+    func.func public @sidecar() {
+      return
+    }
+  }
+}

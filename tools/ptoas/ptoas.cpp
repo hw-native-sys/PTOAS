@@ -419,6 +419,14 @@ llvm::cl::opt<bool> mlir::pto::emitVPTOLLVMDialect(
     llvm::cl::desc("Write translated VPTO LLVM IR to -o"),
     llvm::cl::init(false));
 
+llvm::cl::opt<bool> mlir::pto::emitVPTODeviceObject(
+    "emit-vpto-device-object",
+    llvm::cl::desc(
+        "Write the merged relocatable AI Core device object to -o instead of "
+        "packaging a host fatobj; skips host-stub compilation; requires "
+        "--pto-backend=vpto and an explicit -o path"),
+    llvm::cl::init(false));
+
 llvm::cl::opt<std::string> mlir::pto::cannOutputVersion(
     "cann-output-version",
     llvm::cl::desc(
