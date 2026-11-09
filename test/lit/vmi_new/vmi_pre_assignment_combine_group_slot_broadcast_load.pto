@@ -10,7 +10,7 @@
 // RUN: pto-test-opt %s -vmi-lower-unified-to-legacy -vmi-pre-assignment-combine -vmi-mask-granularity-assignment -vmi-layout-assignment -vmi-to-vpto | FileCheck %s --check-prefix=LOWER
 
 module {
-  func.func @not_e2b_num_groups_16(%src: !pto.ptr<f16, ub>, %off: index)
+  func.func @not_e2b_num_groups_16(%src: !pto.ptr<f16, ub> {pto.alignment = 32 : i64}, %off: index)
       -> !pto.vmi.vreg<256xf16> {
     %c1 = arith.constant 1 : index
     %c32 = arith.constant 32 : index
@@ -22,7 +22,7 @@ module {
     return %out : !pto.vmi.vreg<256xf16>
   }
 
-  func.func @e2b_deint4_candidate(%src: !pto.ptr<f32, ub>, %off: index)
+  func.func @e2b_deint4_candidate(%src: !pto.ptr<f32, ub> {pto.alignment = 32 : i64}, %off: index)
       -> !pto.vmi.vreg<256xf32> {
     %c1 = arith.constant 1 : index
     %c8 = arith.constant 8 : index
@@ -34,7 +34,7 @@ module {
     return %out : !pto.vmi.vreg<256xf32>
   }
 
-  func.func @e2b_deint4_consumer(%scale: !pto.ptr<f32, ub>,
+  func.func @e2b_deint4_consumer(%scale: !pto.ptr<f32, ub> {pto.alignment = 32 : i64},
                                      %x: !pto.vmi.vreg<256xf16>, %off: index)
       -> !pto.vmi.vreg<256xf32> {
     %c1 = arith.constant 1 : index

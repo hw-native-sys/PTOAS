@@ -18,7 +18,7 @@ module {
   func.func @bf16x2_d2_dynamic_mask(
       %src: !pto.vmi.vreg<128x!pto.bf16x2,
                            #pto.vmi.layout<deinterleaved = 2>>,
-      %dst: !pto.ptr<!pto.f4E1M2x2, ub>,
+      %dst: !pto.ptr<!pto.f4E1M2x2, ub> {pto.alignment = 32 : i64},
       %off: index,
       %active: index) {
     %c32 = arith.constant 32 : index

@@ -13,6 +13,7 @@ module {
   func.func @vmi_layout_rematerialize_direct_ext(
       %src: memref<512xf16, #pto.address_space<vec>>, %off: index)
       -> !pto.vmi.vreg<256xf8E4M3FN, #pto.vmi.layout<contiguous>> {
+    memref.assume_alignment %src, 32 : memref<512xf16, #pto.address_space<vec>>
     %c0 = arith.constant 0 : index
     %x16 = pto.vmi.vload %src[%c0]
         : memref<512xf16, #pto.address_space<vec>>
@@ -33,6 +34,8 @@ module {
       %lhs: memref<512xf16, #pto.address_space<vec>>,
       %rhs: memref<512xf16, #pto.address_space<vec>>, %off: index)
       -> !pto.vmi.vreg<256xf8E4M3FN, #pto.vmi.layout<contiguous>> {
+    memref.assume_alignment %lhs, 32 : memref<512xf16, #pto.address_space<vec>>
+    memref.assume_alignment %rhs, 32 : memref<512xf16, #pto.address_space<vec>>
     %c0 = arith.constant 0 : index
     %lhs16 = pto.vmi.vload %lhs[%c0]
         : memref<512xf16, #pto.address_space<vec>>

@@ -17,7 +17,7 @@
 
 module {
   func.func @vmi_to_vpto_iota_group2_deint_vcvt(
-      %base: i32, %dst: !pto.ptr<f32, ub>) {
+      %base: i32, %dst: !pto.ptr<f32, ub> {pto.alignment = 32 : i64}) {
     %c0 = arith.constant 0 : index
     %idx = pto.vmi.vci %base {group = 2 : i64}
         : i32 -> !pto.vmi.vreg<128xsi32, #pto.vmi.layout<deinterleaved = 2>>

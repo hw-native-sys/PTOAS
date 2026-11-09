@@ -16,7 +16,7 @@
 // block_stride cannot overflow the 16-bit control word.
 module {
   func.func @vmi_to_vpto_stride_load_multichunk(
-      %src: !pto.ptr<f32, ub>, %dst: !pto.ptr<f32, ub>, %offset: index,
+      %src: !pto.ptr<f32, ub> {pto.alignment = 32 : i64}, %dst: !pto.ptr<f32, ub> {pto.alignment = 32 : i64}, %offset: index,
       %mask: !pto.vmi.mask<128xb32, #pto.vmi.layout<contiguous>>) {
     %c0 = arith.constant 0 : index
     %c8 = arith.constant 8 : i16
@@ -30,7 +30,7 @@ module {
   }
 
   func.func @vmi_to_vpto_stride_load_multichunk_dynamic_stride(
-      %src: !pto.ptr<f32, ub>, %dst: !pto.ptr<f32, ub>, %offset: index,
+      %src: !pto.ptr<f32, ub> {pto.alignment = 32 : i64}, %dst: !pto.ptr<f32, ub> {pto.alignment = 32 : i64}, %offset: index,
       %block_stride: i16,
       %mask: !pto.vmi.mask<128xb32, #pto.vmi.layout<contiguous>>) {
     %c0 = arith.constant 0 : index

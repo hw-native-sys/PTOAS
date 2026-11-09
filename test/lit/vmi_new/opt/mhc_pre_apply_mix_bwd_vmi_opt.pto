@@ -21,11 +21,11 @@
 
 module attributes {pto.target_arch = "a5", pto.kernel_kind = #pto.kernel_kind<vector>} {
   func.func @mhc_pre_apply_mix_bwd_tile_mhc4_ub(
-      %o_grad_ub16: !pto.ptr<ui16, ub>,
-      %x_ub16: !pto.ptr<ui16, ub>,
-      %mix_ub: !pto.ptr<f32, ub>,
-      %x_grad_ub16: !pto.ptr<ui16, ub>,
-      %mix_grad_acc_ub: !pto.ptr<f32, ub>,
+      %o_grad_ub16: !pto.ptr<ui16, ub> {pto.alignment = 32 : i64},
+      %x_ub16: !pto.ptr<ui16, ub> {pto.alignment = 32 : i64},
+      %mix_ub: !pto.ptr<f32, ub> {pto.alignment = 32 : i64},
+      %x_grad_ub16: !pto.ptr<ui16, ub> {pto.alignment = 32 : i64},
+      %mix_grad_acc_ub: !pto.ptr<f32, ub> {pto.alignment = 32 : i64},
       %numChunks: i32) {
     %c0 = arith.constant 0 : index
     %c1 = arith.constant 1 : index

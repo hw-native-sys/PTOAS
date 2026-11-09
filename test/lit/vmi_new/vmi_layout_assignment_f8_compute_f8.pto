@@ -11,9 +11,9 @@
 
 module {
   func.func @vmi_layout_assignment_f8_compute_f8(
-      %src: !pto.ptr<f8E4M3FN, ub>,
+      %src: !pto.ptr<f8E4M3FN, ub> {pto.alignment = 32 : i64},
       %scale: f32,
-      %dst: !pto.ptr<f8E4M3FN, ub>,
+      %dst: !pto.ptr<f8E4M3FN, ub> {pto.alignment = 32 : i64},
       %off: index) {
     %c32 = arith.constant 32 : index
     %aligned_off = arith.muli %off, %c32 : index

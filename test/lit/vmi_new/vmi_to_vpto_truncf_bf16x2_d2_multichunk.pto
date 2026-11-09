@@ -17,7 +17,7 @@ module {
   func.func @bf16x2_d2_multichunk(
       %src: !pto.vmi.vreg<256x!pto.bf16x2,
                            #pto.vmi.layout<deinterleaved = 2>>,
-      %dst: !pto.ptr<!pto.f4E2M1x2, ub>,
+      %dst: !pto.ptr<!pto.f4E2M1x2, ub> {pto.alignment = 32 : i64},
       %off: index) {
     %c32 = arith.constant 32 : index
     %aligned_off = arith.muli %off, %c32 : index

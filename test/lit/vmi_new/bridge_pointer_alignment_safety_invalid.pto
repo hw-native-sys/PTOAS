@@ -1,0 +1,20 @@
+// RUN: not pto-test-opt %s -split-input-file -vmi-mask-granularity-assignment -vmi-layout-assignment -vmi-lower-unified-to-legacy -vmi-to-vpto=load-safety=error 2>&1 | FileCheck %s
+module {
+  func.func @shifted_masked_store(%value: !pto.vmi.vreg<64xf32>, %mask: !pto.vmi.mask<64xb32>, %addr: i64) {
+    %p = pto.castptr %addr {pto.alignment = 32 : i64} : i64 -> !pto.ptr<f32, ub>
+    %one = arith.constant 1 : index
+    pto.vmi.vstore %value, %p[%one], %mask : !pto.vmi.vreg<64xf32>, !pto.ptr<f32, ub>, !pto.vmi.mask<64xb32>
+    return
+  }
+}
+// -----
+module {
+  func.func @shifted_load_without_envelope(%addr: i64) -> !pto.vmi.vreg<8xf32> {
+    %p = pto.castptr %addr {pto.alignment = 32 : i64} : i64 -> !pto.ptr<f32, ub>
+    %one = arith.constant 1 : index
+    %v = pto.vmi.vload %p[%one] : !pto.ptr<f32, ub> -> !pto.vmi.vreg<8xf32>
+    return %v : !pto.vmi.vreg<8xf32>
+  }
+}
+// CHECK: pto.vmi.masked_store requires a destination address with a proven store alignment
+// CHECK: load-safety=error requires a safe unaligned full-read proof: requires statically shaped memref source

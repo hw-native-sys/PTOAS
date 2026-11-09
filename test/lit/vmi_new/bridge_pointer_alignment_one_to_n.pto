@@ -1,0 +1,15 @@
+// RUN: pto-test-opt %s -vmi-lower-unified-to-legacy -vmi-mask-granularity-assignment -vmi-layout-assignment -vmi-to-vpto | FileCheck %s
+module {
+  func.func @remap_proofs(%v: !pto.vmi.vreg<128xf32>, %dst: !pto.ptr<f32, ub> {pto.alignment = 32 : i64, test.keep = 7 : i64}, %off: index {test.keep = 9 : i64}) {
+    %eight = arith.constant 8 : index
+    %aligned = arith.muli %off, %eight : index
+    pto.vmi.vstore %v, %dst[%aligned] : !pto.vmi.vreg<128xf32>, !pto.ptr<f32, ub>
+    return
+  }
+}
+// CHECK-LABEL: func.func @remap_proofs(
+// CHECK-SAME: !pto.vreg<64xf32>
+// CHECK-SAME: !pto.vreg<64xf32>
+// CHECK-SAME: !pto.ptr<f32, ub> {pto.alignment = 32 : i64, test.keep = 7 : i64}
+// CHECK-SAME: index {test.keep = 9 : i64}
+// CHECK: pto.vsts

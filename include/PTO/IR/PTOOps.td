@@ -193,6 +193,10 @@ def CastPtrOp : PTO_Op<"castptr", [Pure]> {
     - !pto.ptr<srcElem, space> -> !pto.ptr<dstElem, space>
     - memref<..., space> -> !pto.ptr<elem, space> (extract the aligned base ptr)
 
+    An integer-to-pointer cast may carry `pto.alignment = N : i64`, a
+    producer guarantee that the exact resulting byte address is divisible by
+    the positive power-of-two N. This does not describe later offsets.
+
     Pointer-to-pointer casts must stay within the same PTO memory space. Cross
     space casts such as gm <-> ub are rejected by the verifier.
   }];

@@ -1,0 +1,52 @@
+// RUN: pto-test-opt %s -split-input-file -verify-diagnostics
+
+func.func @zero(%a: i64) {
+  // expected-error @+1 {{pto.alignment must be a positive power of two}}
+  %p = pto.castptr %a {pto.alignment = 0 : i64} : i64 -> !pto.ptr<f32, ub>
+  return
+}
+// -----
+func.func @contradiction() {
+  %a = arith.constant 4100 : i64
+  // expected-error @+1 {{pto.alignment contradicts the constant address}}
+  %p = pto.castptr %a {pto.alignment = 32 : i64} : i64 -> !pto.ptr<f32, ub>
+  return
+}
+
+// -----
+func.func @negative(%a: i64) {
+  // expected-error @+1 {{pto.alignment must be a positive power of two}}
+  %p = pto.castptr %a {pto.alignment = -1 : i64} : i64 -> !pto.ptr<f32, ub>
+  return
+}
+// -----
+func.func @not_power_two(%a: i64) {
+  // expected-error @+1 {{pto.alignment must be a positive power of two}}
+  %p = pto.castptr %a {pto.alignment = 24 : i64} : i64 -> !pto.ptr<f32, ub>
+  return
+}
+// -----
+func.func @wrong_result(%p: !pto.ptr<f32, ub>) {
+  // expected-error @+1 {{pto.alignment requires an integer-to-pointer pto.castptr}}
+  %a = pto.castptr %p {pto.alignment = 32 : i64} : !pto.ptr<f32, ub> -> i64
+  return
+}
+// -----
+func.func @wrong_op(%a: i64) {
+  // expected-error @+1 {{pto.alignment requires an integer-to-pointer pto.castptr}}
+  %x = arith.addi %a, %a {pto.alignment = 32 : i64} : i64
+  return
+}
+// -----
+// expected-error @+1 {{pto.alignment requires a pointer function argument}}
+func.func @wrong_argument(%a: i64 {pto.alignment = 32 : i64}) { return }
+
+// -----
+func.func @not_integer(%a: i64) {
+  // expected-error @+1 {{pto.alignment must be a positive power of two}}
+  %p = pto.castptr %a {pto.alignment = "32"} : i64 -> !pto.ptr<f32, ub>
+  return
+}
+// -----
+// expected-error @+1 {{pto.alignment is not supported on function results}}
+func.func private @wrong_result_attribute() -> (!pto.ptr<f32, ub> {pto.alignment = 32 : i64})

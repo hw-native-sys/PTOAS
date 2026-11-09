@@ -15,9 +15,12 @@
 #include "PTO/Support/CodeConstants.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/SCF/IR/SCF.h"
+#include "mlir/Dialect/MemRef/IR/MemRef.h"
+#include "mlir/IR/Dominance.h"
 #include "mlir/IR/Matchers.h"
 #include "mlir/Pass/AnalysisManager.h"
 #include "llvm/Support/MathExtras.h"
+#include "llvm/ADT/DenseSet.h"
 
 #include <numeric>
 
@@ -26,9 +29,7 @@ using namespace mlir::pto;
 
 namespace {
 
-constexpr unsigned kPointerTraceMaxDepth = 8;
 constexpr int64_t kBitsPerByte = 8;
-constexpr unsigned kSignExtendedIntBitWidth = 64;
 
 static std::optional<int64_t> getElementBytes(Value pointer) {
   Type elementType;
@@ -79,198 +80,164 @@ static bool isZero(const PTOTypedExprRef &expression) {
   return constant && *constant == 0;
 }
 
-static std::optional<int64_t> getConstantIndexValue(Value value) {
-  IntegerAttr attr;
-  if (!matchPattern(value, m_Constant(&attr))) {
-    return std::nullopt;
-  }
-  if (!attr.getValue().isSignedIntN(kSignExtendedIntBitWidth)) {
-    return std::nullopt;
-  }
-  return attr.getValue().getSExtValue();
-}
-
-static int64_t normalizeRemainder(int64_t value, int64_t modulus) {
-  int64_t remainder = value % modulus;
-  return remainder < 0 ? remainder + modulus : remainder;
-}
-
-static std::optional<int64_t> getKnownIndexRemainder(Value value,
-                                                     int64_t modulus,
-                                                     unsigned depth);
-
-// A ForOp induction variable is congruent to its lower bound modulo `modulus`
-// only when the step is a multiple of the modulus (remainder 0).
-static std::optional<int64_t>
-indexRemainderFromInductionVar(BlockArgument blockArgument, Value value,
-                               int64_t modulus, unsigned depth) {
-  auto forOp =
-      dyn_cast_or_null<scf::ForOp>(blockArgument.getOwner()->getParentOp());
-  if (!forOp || forOp.getInductionVar() != value) {
-    return std::nullopt;
-  }
-  auto lower = getKnownIndexRemainder(forOp.getLowerBound(), modulus, depth + 1);
-  auto step = getKnownIndexRemainder(forOp.getStep(), modulus, depth + 1);
-  if (lower && step && *step == 0) {
-    return lower;
-  }
-  return std::nullopt;
-}
-
-// Forward the remainder query through width/index-preserving casts. Returns
-// true when `value` is such a cast; the forwarded result is written to `out`.
-static bool tryIndexRemainderThroughCast(Value value, int64_t modulus,
-                                         unsigned depth,
-                                         std::optional<int64_t> &out) {
-  if (auto cast = value.getDefiningOp<arith::IndexCastOp>()) {
-    out = getKnownIndexRemainder(cast.getIn(), modulus, depth + 1);
-    return true;
-  }
-  if (auto cast = value.getDefiningOp<arith::IndexCastUIOp>()) {
-    out = getKnownIndexRemainder(cast.getIn(), modulus, depth + 1);
-    return true;
-  }
-  if (auto cast = value.getDefiningOp<arith::ExtSIOp>()) {
-    out = getKnownIndexRemainder(cast.getIn(), modulus, depth + 1);
-    return true;
-  }
-  if (auto cast = value.getDefiningOp<arith::ExtUIOp>()) {
-    out = getKnownIndexRemainder(cast.getIn(), modulus, depth + 1);
-    return true;
-  }
-  if (auto cast = value.getDefiningOp<UnrealizedConversionCastOp>()) {
-    if (cast->getNumOperands() == 1 && cast->getNumResults() == 1) {
-      out = getKnownIndexRemainder(cast.getOperand(0), modulus, depth + 1);
-      return true;
-    }
-  }
-  return false;
-}
-
-// Combine remainders of arithmetic add/sub/mul operands. Returns true when
-// `value` is such a binary op; the combined result is written to `out`.
-static bool tryIndexRemainderThroughBinaryOp(Value value, int64_t modulus,
-                                             unsigned depth,
-                                             std::optional<int64_t> &out) {
-  if (auto add = value.getDefiningOp<arith::AddIOp>()) {
-    auto lhs = getKnownIndexRemainder(add.getLhs(), modulus, depth + 1);
-    auto rhs = getKnownIndexRemainder(add.getRhs(), modulus, depth + 1);
-    out = lhs && rhs ? std::optional<int64_t>(
-                           normalizeRemainder(*lhs + *rhs, modulus))
-                     : std::nullopt;
-    return true;
-  }
-  if (auto sub = value.getDefiningOp<arith::SubIOp>()) {
-    auto lhs = getKnownIndexRemainder(sub.getLhs(), modulus, depth + 1);
-    auto rhs = getKnownIndexRemainder(sub.getRhs(), modulus, depth + 1);
-    out = lhs && rhs ? std::optional<int64_t>(
-                           normalizeRemainder(*lhs - *rhs, modulus))
-                     : std::nullopt;
-    return true;
-  }
-  if (auto mul = value.getDefiningOp<arith::MulIOp>()) {
-    auto lhs = getKnownIndexRemainder(mul.getLhs(), modulus, depth + 1);
-    auto rhs = getKnownIndexRemainder(mul.getRhs(), modulus, depth + 1);
-    if ((lhs && *lhs == 0) || (rhs && *rhs == 0)) {
-      out = 0;
-      return true;
-    }
-    out = lhs && rhs ? std::optional<int64_t>(
-                           normalizeRemainder(*lhs * *rhs, modulus))
-                     : std::nullopt;
-    return true;
-  }
-  return false;
-}
-
-static std::optional<int64_t>
-getKnownIndexRemainder(Value value, int64_t modulus, unsigned depth = 0) {
-  if (modulus <= 1) {
-    return 0;
-  }
-  if (depth > kPointerTraceMaxDepth) {
-    return std::nullopt;
-  }
-  if (auto constant = getConstantIndexValue(value)) {
-    return normalizeRemainder(*constant, modulus);
-  }
-  if (auto blockArgument = dyn_cast<BlockArgument>(value)) {
-    return indexRemainderFromInductionVar(blockArgument, value, modulus, depth);
-  }
-  std::optional<int64_t> result;
-  if (tryIndexRemainderThroughCast(value, modulus, depth, result)) {
+// Each top-level address query has its own budget and memo table. Cycles and
+// budget exhaustion never publish a provisional result.
+class AlignmentQueryContext {
+public:
+  std::optional<int64_t> query(Value value, int64_t modulus) {
+    if (modulus <= 1)
+      return 0;
+    auto key = std::make_pair(value, modulus);
+    auto found = cache.find(key);
+    if (found != cache.end())
+      return found->second;
+    if (active.contains(key) || remaining == 0)
+      return std::nullopt;
+    --remaining;
+    active.insert(key);
+    auto result = evaluate(value, modulus);
+    active.erase(key);
+    cache[key] = result;
     return result;
   }
-  if (tryIndexRemainderThroughBinaryOp(value, modulus, depth, result)) {
-    return result;
-  }
-  return std::nullopt;
-}
 
-static std::optional<int64_t>
-getKnownPointerRemainder(Value pointer, int64_t alignmentBytes, unsigned depth);
+private:
+  unsigned remaining = 256;
+  llvm::DenseMap<std::pair<Value, int64_t>, std::optional<int64_t>> cache;
+  llvm::DenseSet<std::pair<Value, int64_t>> active;
 
-// Fold an AddPtr into the remainder of its base by scaling the element offset
-// by the element size, using the gcd-reduced modulus for the offset query.
-static std::optional<int64_t>
-pointerRemainderThroughAddPtr(AddPtrOp add, int64_t alignmentBytes,
-                              unsigned depth) {
-  auto base = getKnownPointerRemainder(add.getPtr(), alignmentBytes, depth + 1);
-  auto pointerType = dyn_cast<PtrType>(add.getPtr().getType());
-  if (!base || !pointerType) {
-    return std::nullopt;
+  // Integer wrapping and signed/unsigned casts preserve congruence only if
+  // the modulus divides the wrap boundary of every relevant width.
+  static bool survivesWidth(Type type, int64_t modulus) {
+    unsigned width = 64;
+    if (auto integer = dyn_cast<IntegerType>(type))
+      width = integer.getWidth();
+    else if (!isa<IndexType>(type))
+      return false;
+    return llvm::isPowerOf2_64(static_cast<uint64_t>(modulus)) &&
+           (width >= 63 || static_cast<uint64_t>(modulus) <= (uint64_t(1) << width));
   }
-  unsigned elementBits = getPTOStorageElemBitWidth(pointerType.getElementType());
-  if (elementBits == 0 || elementBits % kBitsPerByte != 0) {
-    return std::nullopt;
-  }
-  int64_t elementBytes = static_cast<int64_t>(elementBits / 8);
-  int64_t offsetModulus =
-      alignmentBytes / std::gcd(alignmentBytes, elementBytes);
-  auto offset = getKnownIndexRemainder(add.getOffset(), offsetModulus);
-  if (!offset) {
-    return std::nullopt;
-  }
-  return normalizeRemainder(*base + *offset * elementBytes, alignmentBytes);
-}
 
-static std::optional<int64_t>
-getKnownPointerRemainder(Value pointer, int64_t alignmentBytes,
-                         unsigned depth = 0) {
-  if (alignmentBytes <= 1) {
-    return 0;
-  }
-  if (depth > kPointerTraceMaxDepth) {
-    return std::nullopt;
-  }
-  if (isa<BlockArgument>(pointer)) {
-    return 0;
-  }
-  if (auto cast = pointer.getDefiningOp<CastPtrOp>()) {
-    Value input = cast.getInput();
-    if (isa<PtrType>(input.getType())) {
-      return getKnownPointerRemainder(input, alignmentBytes, depth + 1);
+  std::optional<int64_t> explicitAlignment(Value value) {
+    IntegerAttr attr;
+    if (auto arg = dyn_cast<BlockArgument>(value)) {
+      auto func = dyn_cast_or_null<func::FuncOp>(arg.getOwner()->getParentOp());
+      if (func && !func.isDeclaration() && arg.getOwner() == &func.getBody().front())
+        attr = func.getArgAttrOfType<IntegerAttr>(arg.getArgNumber(), "pto.alignment");
+    } else if (auto op = value.getDefiningOp<CastPtrOp>()) {
+      if (isa<IntegerType>(op.getInput().getType()) && isa<PtrType>(value.getType()))
+        attr = op->getAttrOfType<IntegerAttr>("pto.alignment");
     }
-    if (isa<IntegerType>(input.getType())) {
-      return getKnownIndexRemainder(input, alignmentBytes);
+    if (!attr || !attr.getValue().isStrictlyPositive() ||
+        attr.getValue().getActiveBits() > 63 || !attr.getValue().isPowerOf2())
+      return std::nullopt;
+    return static_cast<int64_t>(attr.getValue().getZExtValue());
+  }
+
+  std::optional<int64_t> evaluate(Value value, int64_t modulus) {
+    if (auto type = dyn_cast<MemRefType>(value.getType())) {
+      // The query has no use-site parameter. An assumption is usable only if
+      // it dominates every use, including all uses in nested control flow.
+      // Restrict this to identity layouts whose logical offset is zero.
+      if (!type.hasStaticShape() || !type.getLayout().isIdentity())
+        return std::nullopt;
+      auto func = value.getParentRegion()->getParentOfType<func::FuncOp>();
+      if (!func)
+        return std::nullopt;
+      DominanceInfo dominance(func);
+      for (Operation *user : value.getUsers()) {
+        auto assume = dyn_cast<memref::AssumeAlignmentOp>(user);
+        if (!assume || assume.getAlignment() == 0 ||
+            assume.getAlignment() % modulus != 0)
+          continue;
+        bool dominatesAll = llvm::all_of(value.getUsers(), [&](Operation *use) {
+          return use == user || dominance.dominates(user, use);
+        });
+        if (dominatesAll)
+          return 0;
+      }
+      return std::nullopt;
+    }
+    if (isa<PtrType>(value.getType())) {
+      if (auto alignment = explicitAlignment(value))
+        if (*alignment % modulus == 0)
+          return 0;
+      if (auto cast = value.getDefiningOp<CastPtrOp>()) {
+        Value input = cast.getInput();
+        if (isa<PtrType>(input.getType()) ||
+            (isa<IntegerType>(input.getType()) && survivesWidth(input.getType(), modulus)))
+          return query(input, modulus);
+        return std::nullopt;
+      }
+      if (auto add = value.getDefiningOp<AddPtrOp>()) {
+        auto base = query(add.getPtr(), modulus);
+        auto bytes = getElementBytes(add.getPtr());
+        if (!base || !bytes)
+          return std::nullopt;
+        auto offset = query(add.getOffset(), modulus / std::gcd(modulus, *bytes));
+        if (!offset)
+          return std::nullopt;
+        return static_cast<int64_t>((static_cast<unsigned __int128>(*base) +
+               static_cast<unsigned __int128>(*offset) * *bytes) % modulus);
+      }
+    } else {
+      IntegerAttr constant;
+      if (matchPattern(value, m_Constant(&constant))) {
+        // Sign extension changes the represented integer by 2^width.
+        if (!survivesWidth(value.getType(), modulus)) {
+          // For non-power-of-two queries, retain exact signed constants only.
+          if (!constant.getValue().isSignedIntN(64))
+            return std::nullopt;
+          int64_t remainder = constant.getValue().getSExtValue() % modulus;
+          return remainder < 0 ? remainder + modulus : remainder;
+        }
+        return static_cast<int64_t>(constant.getValue().urem(static_cast<uint64_t>(modulus)));
+      }
+      if (auto arg = dyn_cast<BlockArgument>(value)) {
+        auto loop = dyn_cast_or_null<scf::ForOp>(arg.getOwner()->getParentOp());
+        if (loop && loop.getInductionVar() == value && survivesWidth(value.getType(), modulus)) {
+          auto lower = query(loop.getLowerBound(), modulus);
+          auto step = query(loop.getStep(), modulus);
+          if (lower && step && *step == 0)
+            return lower;
+        }
+      }
+      if (!survivesWidth(value.getType(), modulus))
+        return std::nullopt;
+      Value input;
+      if (auto op = value.getDefiningOp<arith::IndexCastOp>()) input = op.getIn();
+      else if (auto op = value.getDefiningOp<arith::IndexCastUIOp>()) input = op.getIn();
+      else if (auto op = value.getDefiningOp<arith::ExtSIOp>()) input = op.getIn();
+      else if (auto op = value.getDefiningOp<arith::ExtUIOp>()) input = op.getIn();
+      else if (auto op = value.getDefiningOp<arith::TruncIOp>()) input = op.getIn();
+      if (input)
+        return survivesWidth(input.getType(), modulus) ? query(input, modulus) : std::nullopt;
+      Value lhs, rhs;
+      enum { None, Add, Sub, Mul } kind = None;
+      if (auto op = value.getDefiningOp<arith::AddIOp>()) { lhs = op.getLhs(); rhs = op.getRhs(); kind = Add; }
+      else if (auto op = value.getDefiningOp<arith::SubIOp>()) { lhs = op.getLhs(); rhs = op.getRhs(); kind = Sub; }
+      else if (auto op = value.getDefiningOp<arith::MulIOp>()) { lhs = op.getLhs(); rhs = op.getRhs(); kind = Mul; }
+      if (kind != None) {
+        auto a = query(lhs, modulus), b = query(rhs, modulus);
+        if (kind == Mul && ((a && *a == 0) || (b && *b == 0))) return 0;
+        if (!a || !b) return std::nullopt;
+        unsigned __int128 x = *a, y = *b, m = modulus;
+        return static_cast<int64_t>((kind == Add ? x + y : kind == Sub ? x + m - y : x * y) % m);
+      }
+    }
+    if (auto select = value.getDefiningOp<arith::SelectOp>()) {
+      auto a = query(select.getTrueValue(), modulus);
+      auto b = query(select.getFalseValue(), modulus);
+      return a && b && *a == *b ? a : std::nullopt;
+    }
+    if (auto cast = value.getDefiningOp<UnrealizedConversionCastOp>()) {
+      if (cast->getNumOperands() == 1 && cast->getNumResults() == 1 &&
+          isa<PtrType>(value.getType()) && isa<PtrType>(cast.getOperand(0).getType()))
+        return query(cast.getOperand(0), modulus);
     }
     return std::nullopt;
   }
-  if (auto cast = pointer.getDefiningOp<UnrealizedConversionCastOp>()) {
-    bool isSingleCast = cast->getNumOperands() == 1 &&
-                        cast->getNumResults() == 1;
-    if (isSingleCast) {
-      return getKnownPointerRemainder(cast.getOperand(0), alignmentBytes,
-                                      depth + 1);
-    }
-    return std::nullopt;
-  }
-  auto add = pointer.getDefiningOp<AddPtrOp>();
-  if (!add) {
-    return std::nullopt;
-  }
-  return pointerRemainderThroughAddPtr(add, alignmentBytes, depth);
-}
+};
 
 struct NormalizedPointer {
   Value root;
@@ -321,7 +288,8 @@ mlir::pto::getKnownAddressRemainderBytes(Value pointer, Value elementOffset,
   if (alignmentBytes <= 0) {
     return std::nullopt;
   }
-  auto base = getKnownPointerRemainder(pointer, alignmentBytes);
+  AlignmentQueryContext context;
+  auto base = context.query(pointer, alignmentBytes);
   unsigned elementBits = getPTOStorageElemBitWidth(elementType);
   if (!base || elementBits == 0 || elementBits % kBitsPerByte != 0) {
     return std::nullopt;
@@ -329,11 +297,12 @@ mlir::pto::getKnownAddressRemainderBytes(Value pointer, Value elementOffset,
   int64_t elementBytes = static_cast<int64_t>(elementBits / 8);
   int64_t offsetModulus =
       alignmentBytes / std::gcd(alignmentBytes, elementBytes);
-  auto offset = getKnownIndexRemainder(elementOffset, offsetModulus);
+  auto offset = context.query(elementOffset, offsetModulus);
   if (!offset) {
     return std::nullopt;
   }
-  return normalizeRemainder(*base + *offset * elementBytes, alignmentBytes);
+  return static_cast<int64_t>((static_cast<unsigned __int128>(*base) +
+         static_cast<unsigned __int128>(*offset) * elementBytes) % alignmentBytes);
 }
 
 bool mlir::pto::isKnownAddressAligned(Value pointer, Value elementOffset,

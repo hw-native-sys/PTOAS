@@ -48,9 +48,11 @@ struct PTOAddressExpr {
 };
 
 /// Prove that a pointer plus an element offset is aligned to the requested
-/// byte boundary. Pointer block arguments are assumed to satisfy their
-/// address-space ABI alignment; derived addptr/cast expressions are accepted
-/// only when their byte remainder can be proven.
+/// byte boundary. Function pointer arguments require an explicit pto.alignment
+/// contract; arbitrary region arguments are unknown. Derived expressions are
+/// accepted only when their byte remainder can be proven within the query budget.
+/// A static identity-layout memref may use a dominating memref.assume_alignment
+/// that precedes every use of that value.
 bool isKnownAddressAligned(Value pointer, Value elementOffset,
                            Type elementType, int64_t alignmentBytes);
 

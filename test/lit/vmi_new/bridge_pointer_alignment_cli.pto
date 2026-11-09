@@ -1,0 +1,15 @@
+// RUN: ptoas --pto-arch=a5 --pto-backend=vpto --emit-vpto %s -o - | FileCheck %s
+module {
+  func.func @aligned_projection(%addr: i64) attributes {pto.entry, pto.kernel_kind = #pto.kernel_kind<vector>} {
+    %p = pto.castptr %addr {pto.alignment = 32 : i64} : i64 -> !pto.ptr<f32, ub>
+    %outaddr = arith.constant 4096 : i64
+    %out = pto.castptr %outaddr : i64 -> !pto.ptr<f32, ub>
+    %z = arith.constant 0 : index
+    %v = pto.vmi.vload %p[%z] : !pto.ptr<f32, ub> -> !pto.vmi.vreg<8xf32>
+    pto.vmi.vstore %v, %out[%z] : !pto.vmi.vreg<8xf32>, !pto.ptr<f32, ub>
+    return
+  }
+}
+// CHECK-LABEL: func.func @aligned_projection
+// CHECK: pto.vsldb
+// CHECK-NOT: pto.vldas

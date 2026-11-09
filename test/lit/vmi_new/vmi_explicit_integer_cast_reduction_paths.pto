@@ -12,7 +12,7 @@
 // These reductions consume explicitly extended 16-bit inputs. Eight-bit
 // stores and broadcasts of their explicitly truncated results remain legal.
 module {
- func.func @si8_vl128_g1_add(%src: !pto.ptr<si8, ub>, %dst: !pto.ptr<si8, ub>, %active: index) {
+ func.func @si8_vl128_g1_add(%src: !pto.ptr<si8, ub> {pto.alignment = 32 : i64}, %dst: !pto.ptr<si8, ub> {pto.alignment = 32 : i64}, %active: index) {
  %zero = arith.constant 0 : index
  %x = pto.vmi.vload %src[%zero] : !pto.ptr<si8, ub> -> !pto.vmi.vreg<128xsi8>
  %mask = pto.vmi.create_mask %active : index -> !pto.vmi.mask<128xpred>
@@ -23,7 +23,7 @@ module {
  pto.vmi.vstore %b, %dst[%zero] : !pto.vmi.vreg<128xsi8>, !pto.ptr<si8, ub>
  return
  }
- func.func @ui8_vl64_g2_add(%src: !pto.ptr<ui8, ub>, %dst: !pto.ptr<ui8, ub>, %active: index) {
+ func.func @ui8_vl64_g2_add(%src: !pto.ptr<ui8, ub> {pto.alignment = 32 : i64}, %dst: !pto.ptr<ui8, ub> {pto.alignment = 32 : i64}, %active: index) {
  %zero = arith.constant 0 : index
  %x = pto.vmi.vload %src[%zero] : !pto.ptr<ui8, ub> -> !pto.vmi.vreg<64xui8>
  %mask = pto.vmi.create_mask %active : index -> !pto.vmi.mask<64xpred>
@@ -34,7 +34,7 @@ module {
  pto.vmi.vstore %b, %dst[%zero] : !pto.vmi.vreg<64xui8>, !pto.ptr<ui8, ub>
  return
  }
- func.func @ui8_vl64_g8_max(%src: !pto.ptr<ui8, ub>, %dst: !pto.ptr<ui8, ub>, %active: index) {
+ func.func @ui8_vl64_g8_max(%src: !pto.ptr<ui8, ub> {pto.alignment = 32 : i64}, %dst: !pto.ptr<ui8, ub> {pto.alignment = 32 : i64}, %active: index) {
  %zero = arith.constant 0 : index
  %x = pto.vmi.vload %src[%zero] : !pto.ptr<ui8, ub> -> !pto.vmi.vreg<64xui8>
  %mask = pto.vmi.create_mask %active : index -> !pto.vmi.mask<64xpred>
@@ -49,7 +49,7 @@ module {
  pto.vmi.vstore %b, %dst[%zero] : !pto.vmi.vreg<64xui8>, !pto.ptr<ui8, ub>
  return
  }
- func.func @ui8_vl256_g8_explicit_add(%src: !pto.ptr<ui8, ub>, %dst: !pto.ptr<ui8, ub>, %active: index) {
+ func.func @ui8_vl256_g8_explicit_add(%src: !pto.ptr<ui8, ub> {pto.alignment = 32 : i64}, %dst: !pto.ptr<ui8, ub> {pto.alignment = 32 : i64}, %active: index) {
  %zero = arith.constant 0 : index
  %x = pto.vmi.vload %src[%zero] : !pto.ptr<ui8, ub> -> !pto.vmi.vreg<256xui8>
  %mask = pto.vmi.create_mask %active : index -> !pto.vmi.mask<256xpred>
@@ -60,7 +60,7 @@ module {
  pto.vmi.vstore %b, %dst[%zero] : !pto.vmi.vreg<256xui8>, !pto.ptr<ui8, ub>
  return
  }
- func.func @ui8_vl128_g8_explicit_add(%src: !pto.ptr<ui8, ub>, %dst: !pto.ptr<ui8, ub>, %active: index) {
+ func.func @ui8_vl128_g8_explicit_add(%src: !pto.ptr<ui8, ub> {pto.alignment = 32 : i64}, %dst: !pto.ptr<ui8, ub> {pto.alignment = 32 : i64}, %active: index) {
  %zero = arith.constant 0 : index
  %x = pto.vmi.vload %src[%zero] : !pto.ptr<ui8, ub> -> !pto.vmi.vreg<128xui8>
  %mask = pto.vmi.create_mask %active : index -> !pto.vmi.mask<128xpred>

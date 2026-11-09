@@ -10,21 +10,21 @@
 // RUN: pto-test-opt %s -vmi-lower-unified-to-legacy -vmi-pre-assignment-combine -vmi-mask-granularity-assignment -vmi-layout-assignment -vmi-to-vpto | FileCheck %s --check-prefix=LOWER
 
 module {
-  func.func @scalar_ub_load_broadcast_f32(%src: !pto.ptr<f32, ub>, %off: index)
+  func.func @scalar_ub_load_broadcast_f32(%src: !pto.ptr<f32, ub> {pto.alignment = 32 : i64}, %off: index)
       -> !pto.vmi.vreg<64xf32> {
     %scalar = pto.load %src[%off] : !pto.ptr<f32, ub> -> f32
     %broadcast = pto.vmi.vbrc %scalar : f32 -> !pto.vmi.vreg<64xf32>
     return %broadcast : !pto.vmi.vreg<64xf32>
   }
 
-  func.func @scalar_ub_load_broadcast_f16(%src: !pto.ptr<f16, ub>, %off: index)
+  func.func @scalar_ub_load_broadcast_f16(%src: !pto.ptr<f16, ub> {pto.alignment = 32 : i64}, %off: index)
       -> !pto.vmi.vreg<128xf16> {
     %scalar = pto.load %src[%off] : !pto.ptr<f16, ub> -> f16
     %broadcast = pto.vmi.vbrc %scalar : f16 -> !pto.vmi.vreg<128xf16>
     return %broadcast : !pto.vmi.vreg<128xf16>
   }
 
-  func.func @scalar_ub_load_broadcast_i8(%src: !pto.ptr<i8, ub>, %off: index)
+  func.func @scalar_ub_load_broadcast_i8(%src: !pto.ptr<i8, ub> {pto.alignment = 32 : i64}, %off: index)
       -> !pto.vmi.vreg<256xi8> {
     %scalar = pto.load %src[%off] : !pto.ptr<i8, ub> -> i8
     %broadcast = pto.vmi.vbrc %scalar : i8 -> !pto.vmi.vreg<256xi8>

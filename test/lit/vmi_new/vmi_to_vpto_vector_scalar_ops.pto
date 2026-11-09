@@ -15,7 +15,7 @@ module attributes {pto.target_arch = "a5", pto.kernel_kind = #pto.kernel_kind<ve
       %source: !pto.vmi.vreg<256xf32>,
       %scalar: f32,
       %mask: !pto.vmi.mask<256xpred>,
-      %dst: !pto.ptr<f32, ub>) attributes {pto.kernel} {
+      %dst: !pto.ptr<f32, ub> {pto.alignment = 32 : i64}) attributes {pto.kernel} {
     %c0 = arith.constant 0 : index
     pto.vecscope {
       %added = pto.vmi.vadds %source, %scalar, %mask
@@ -40,7 +40,7 @@ module attributes {pto.target_arch = "a5", pto.kernel_kind = #pto.kernel_kind<ve
       %source: !pto.vmi.vreg<256xi16>,
       %scalar: i16,
       %mask: !pto.vmi.mask<256xpred>,
-      %dst: !pto.ptr<i16, ub>) attributes {pto.kernel} {
+      %dst: !pto.ptr<i16, ub> {pto.alignment = 32 : i64}) attributes {pto.kernel} {
     %c0 = arith.constant 0 : index
     pto.vecscope {
       %left = pto.vmi.vshls %source, %scalar, %mask

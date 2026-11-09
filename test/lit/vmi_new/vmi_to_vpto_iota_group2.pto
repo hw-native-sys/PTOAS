@@ -13,7 +13,7 @@
 
 module {
   func.func @vmi_to_vpto_iota_group2_vadds_vsts(
-      %base: i32, %dst: !pto.ptr<i32, ub>, %mask: !pto.vmi.mask<128xpred>) {
+      %base: i32, %dst: !pto.ptr<i32, ub> {pto.alignment = 32 : i64}, %mask: !pto.vmi.mask<128xpred>) {
     %c0 = arith.constant 0 : index
     %idx = pto.vmi.vci %base {group = 2 : i64}
         : i32 -> !pto.vmi.vreg<128xi32>

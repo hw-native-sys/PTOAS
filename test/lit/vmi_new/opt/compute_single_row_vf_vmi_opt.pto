@@ -19,9 +19,9 @@
 
 module attributes {pto.target_arch = "a5", pto.kernel_kind = #pto.kernel_kind<vector>} {
   func.func @ComputeSingleRowVF_fp16_vmi_opt(
-      %inUb16_u: !pto.ptr<ui16, ub>,
-      %scaleUb: !pto.ptr<f32, ub>,
-      %outUb8_u: !pto.ptr<ui8, ub>,
+      %inUb16_u: !pto.ptr<ui16, ub> {pto.alignment = 32 : i64},
+      %scaleUb: !pto.ptr<f32, ub> {pto.alignment = 32 : i64},
+      %outUb8_u: !pto.ptr<ui8, ub> {pto.alignment = 32 : i64},
       %fp8MaxValue: f32,
       %minScale: f32) attributes {pto.kernel} {
     %c0 = arith.constant 0 : index

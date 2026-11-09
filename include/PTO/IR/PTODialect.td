@@ -31,6 +31,9 @@ def PTO_Dialect : Dialect {
   let name = "pto";
   let cppNamespace = "::mlir::pto";
 
+  let hasOperationAttrVerify = 1;
+  let hasRegionArgAttrVerify = 1;
+  let hasRegionResultAttrVerify = 1;
   let useDefaultTypePrinterParser = 1;
   let useDefaultAttributePrinterParser = 1;
 }

@@ -11,7 +11,7 @@
 
 module {
   func.func @vmi_layout_assignment_load_truncf(
-      %src: !pto.ptr<f32, ub>,
+      %src: !pto.ptr<f32, ub> {pto.alignment = 32 : i64},
       %offset: index) -> !pto.vmi.vreg<128xf16> {
     %c8 = arith.constant 8 : index
     %aligned_offset = arith.muli %offset, %c8 : index
@@ -23,8 +23,8 @@ module {
   }
 
   func.func @vmi_layout_assignment_load_truncf_multi_use(
-      %src: !pto.ptr<f32, ub>,
-      %dst: !pto.ptr<f32, ub>,
+      %src: !pto.ptr<f32, ub> {pto.alignment = 32 : i64},
+      %dst: !pto.ptr<f32, ub> {pto.alignment = 32 : i64},
       %offset: index) -> !pto.vmi.vreg<128xf16> {
     %c8 = arith.constant 8 : index
     %aligned_offset = arith.muli %offset, %c8 : index

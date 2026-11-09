@@ -20,7 +20,7 @@
 // needed and must not override the group-slot pair).
 
 module attributes {pto.target_arch = "a5", pto.kernel_kind = #pto.kernel_kind<vector>} {
-  func.func @bf16_extend_store_f32_L1(%src: !pto.ptr<bf16, ub>, %dst: !pto.ptr<f32, ub>, %off: index) attributes {pto.kernel} {
+  func.func @bf16_extend_store_f32_L1(%src: !pto.ptr<bf16, ub> {pto.alignment = 32 : i64}, %dst: !pto.ptr<f32, ub> {pto.alignment = 32 : i64}, %off: index) attributes {pto.kernel} {
     %c16 = arith.constant 16 : index
     %aoff = arith.muli %off, %c16 : index
     pto.vecscope {
@@ -30,7 +30,7 @@ module attributes {pto.target_arch = "a5", pto.kernel_kind = #pto.kernel_kind<ve
     }
     return
   }
-  func.func @bf16_extend_store_f32_L2(%src: !pto.ptr<bf16, ub>, %dst: !pto.ptr<f32, ub>, %off: index) attributes {pto.kernel} {
+  func.func @bf16_extend_store_f32_L2(%src: !pto.ptr<bf16, ub> {pto.alignment = 32 : i64}, %dst: !pto.ptr<f32, ub> {pto.alignment = 32 : i64}, %off: index) attributes {pto.kernel} {
     %c16 = arith.constant 16 : index
     %aoff = arith.muli %off, %c16 : index
     pto.vecscope {
@@ -40,7 +40,7 @@ module attributes {pto.target_arch = "a5", pto.kernel_kind = #pto.kernel_kind<ve
     }
     return
   }
-  func.func @bf16_extend_store_f32_L4(%src: !pto.ptr<bf16, ub>, %dst: !pto.ptr<f32, ub>, %off: index) attributes {pto.kernel} {
+  func.func @bf16_extend_store_f32_L4(%src: !pto.ptr<bf16, ub> {pto.alignment = 32 : i64}, %dst: !pto.ptr<f32, ub> {pto.alignment = 32 : i64}, %off: index) attributes {pto.kernel} {
     %c16 = arith.constant 16 : index
     %aoff = arith.muli %off, %c16 : index
     pto.vecscope {
@@ -50,7 +50,7 @@ module attributes {pto.target_arch = "a5", pto.kernel_kind = #pto.kernel_kind<ve
     }
     return
   }
-  func.func @bf16_extend_store_f32_L8(%src: !pto.ptr<bf16, ub>, %dst: !pto.ptr<f32, ub>, %off: index) attributes {pto.kernel} {
+  func.func @bf16_extend_store_f32_L8(%src: !pto.ptr<bf16, ub> {pto.alignment = 32 : i64}, %dst: !pto.ptr<f32, ub> {pto.alignment = 32 : i64}, %off: index) attributes {pto.kernel} {
     %c16 = arith.constant 16 : index
     %aoff = arith.muli %off, %c16 : index
     pto.vecscope {
@@ -60,7 +60,7 @@ module attributes {pto.target_arch = "a5", pto.kernel_kind = #pto.kernel_kind<ve
     }
     return
   }
-  func.func @bf16_extend_store_f32_mul_L2(%src: !pto.ptr<bf16, ub>, %dst: !pto.ptr<f32, ub>, %off: index) attributes {pto.kernel} {
+  func.func @bf16_extend_store_f32_mul_L2(%src: !pto.ptr<bf16, ub> {pto.alignment = 32 : i64}, %dst: !pto.ptr<f32, ub> {pto.alignment = 32 : i64}, %off: index) attributes {pto.kernel} {
     %c16 = arith.constant 16 : index
     %aoff = arith.muli %off, %c16 : index
     pto.vecscope {
@@ -73,7 +73,7 @@ module attributes {pto.target_arch = "a5", pto.kernel_kind = #pto.kernel_kind<ve
     }
     return
   }
-  func.func @bf16_extend_store_f32_mul_L4(%src: !pto.ptr<bf16, ub>, %dst: !pto.ptr<f32, ub>, %off: index) attributes {pto.kernel} {
+  func.func @bf16_extend_store_f32_mul_L4(%src: !pto.ptr<bf16, ub> {pto.alignment = 32 : i64}, %dst: !pto.ptr<f32, ub> {pto.alignment = 32 : i64}, %off: index) attributes {pto.kernel} {
     %c16 = arith.constant 16 : index
     %aoff = arith.muli %off, %c16 : index
     pto.vecscope {
@@ -86,7 +86,7 @@ module attributes {pto.target_arch = "a5", pto.kernel_kind = #pto.kernel_kind<ve
     }
     return
   }
-  func.func @bf16_extend_store_f32_mul_L8(%src: !pto.ptr<bf16, ub>, %dst: !pto.ptr<f32, ub>, %off: index) attributes {pto.kernel} {
+  func.func @bf16_extend_store_f32_mul_L8(%src: !pto.ptr<bf16, ub> {pto.alignment = 32 : i64}, %dst: !pto.ptr<f32, ub> {pto.alignment = 32 : i64}, %off: index) attributes {pto.kernel} {
     %c16 = arith.constant 16 : index
     %aoff = arith.muli %off, %c16 : index
     pto.vecscope {

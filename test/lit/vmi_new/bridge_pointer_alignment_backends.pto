@@ -1,0 +1,23 @@
+// RUN: ptoas --pto-arch=a5 --pto-backend=vpto --emit-vpto-llvm-ir %s -o - | FileCheck %s --check-prefix=LLVM
+// RUN: ptoas --pto-arch=a5 --pto-backend=emitc %s -o - | FileCheck %s --check-prefix=EMITC
+// RUN: ptoas --pto-arch=a5 --pto-backend=vpto --emit-vpto-llvm-ir --mlir-print-ir-after-all %s -o /dev/null 2>&1 | FileCheck %s --check-prefix=LLVMATTR
+// RUN: ptoas --pto-arch=a5 --pto-backend=emitc --mlir-print-ir-after-all %s -o /dev/null 2>&1 | FileCheck %s --check-prefix=EMITCATTR
+
+module attributes {pto.target_arch = "a5", pto.kernel_kind = #pto.kernel_kind<vector>} {
+  func.func private @aligned_helper(%p: !pto.ptr<f32, ub> {pto.alignment = 32 : i64, test.keep = 7 : i64}) attributes {no_inline} {
+    return
+  }
+  func.func @aligned_entry(%p: !pto.ptr<f32, ub> {pto.alignment = 32 : i64, test.keep = 9 : i64}) attributes {pto.entry} {
+    func.call @aligned_helper(%p) : (!pto.ptr<f32, ub>) -> ()
+    return
+  }
+}
+// LLVM: define{{.*}} @aligned_helper
+// LLVM: define{{.*}} @aligned_entry
+// LLVM: call{{.*}} @aligned_helper
+// EMITC: aligned_helper
+// EMITC: aligned_entry
+// LLVMATTR: func.func private @aligned_helper(%arg0: !llvm.ptr<6> {test.keep = 7 : i64})
+// LLVMATTR: func.func @aligned_entry_mix_aiv(%arg0: !llvm.ptr<6> {test.keep = 9 : i64})
+// EMITCATTR: emitc.func private @aligned_helper(%arg0: !emitc.ptr<!emitc.opaque<"__ubuf__ float">> {test.keep = 7 : i64})
+// EMITCATTR: emitc.func @aligned_entry(%arg0: !emitc.ptr<!emitc.opaque<"__ubuf__ float">> {test.keep = 9 : i64})

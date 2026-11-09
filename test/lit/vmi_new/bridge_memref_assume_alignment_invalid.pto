@@ -1,0 +1,30 @@
+// RUN: not pto-test-opt %s -split-input-file -vmi-lower-unified-to-legacy -vmi-mask-granularity-assignment -vmi-layout-assignment -vmi-to-vpto 2>&1 | FileCheck %s
+module {
+  func.func @late_assume(%src: memref<72xf32, #pto.address_space<vec>>) -> !pto.vmi.vreg<8xf32> {
+    %one = arith.constant 1 : index
+    %v = pto.vmi.vload %src[%one] : memref<72xf32, #pto.address_space<vec>> -> !pto.vmi.vreg<8xf32>
+    memref.assume_alignment %src, 32 : memref<72xf32, #pto.address_space<vec>>
+    return %v : !pto.vmi.vreg<8xf32>
+  }
+}
+// -----
+module {
+  func.func @conditional_assume(%src: memref<72xf32, #pto.address_space<vec>>, %c: i1) -> !pto.vmi.vreg<8xf32> {
+    scf.if %c {
+      memref.assume_alignment %src, 32 : memref<72xf32, #pto.address_space<vec>>
+    }
+    %one = arith.constant 1 : index
+    %v = pto.vmi.vload %src[%one] : memref<72xf32, #pto.address_space<vec>> -> !pto.vmi.vreg<8xf32>
+    return %v : !pto.vmi.vreg<8xf32>
+  }
+}
+// -----
+module {
+  func.func @offset_layout(%src: memref<72xf32, strided<[1], offset: 1>, #pto.address_space<vec>>) -> !pto.vmi.vreg<8xf32> {
+    memref.assume_alignment %src, 32 : memref<72xf32, strided<[1], offset: 1>, #pto.address_space<vec>>
+    %one = arith.constant 1 : index
+    %v = pto.vmi.vload %src[%one] : memref<72xf32, strided<[1], offset: 1>, #pto.address_space<vec>> -> !pto.vmi.vreg<8xf32>
+    return %v : !pto.vmi.vreg<8xf32>
+  }
+}
+// CHECK-COUNT-3: requires a proven fixed 32-byte address remainder

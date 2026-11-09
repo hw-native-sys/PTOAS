@@ -200,6 +200,12 @@ LogicalResult lowerVPTOOps(ModuleOp module, StringRef march, llvm::raw_ostream &
 }
 
 LogicalResult lowerVPTOTypes(ModuleOp module, llvm::raw_ostream &diagOS) {
+  // PTO pointer proofs have already served VMI selection. Do not carry them
+  // onto the converted LLVM argument types, while preserving other attributes.
+  module.walk([](func::FuncOp funcOp) {
+    for (unsigned i = 0; i < funcOp.getNumArguments(); ++i)
+      funcOp.removeArgAttr(i, "pto.alignment");
+  });
   MLIRContext *context = module.getContext();
   VPTOTypeConverter typeConverter(context);
   ConversionTarget target(*context);

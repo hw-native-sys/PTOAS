@@ -589,10 +589,66 @@ struct OneToNSCFIndexSwitchOpPattern
   }
 };
 
+// The generic OneToN function conversion updates the signature but leaves
+// argument/result dictionaries at their old indices. Rebuild those arrays
+// from the actual mapping so an unchanged pointer keeps its proof when earlier
+// vector arguments expand into several physical values.
+struct OneToNFuncSignatureAttrsPattern : OneToNConversionPattern {
+  OneToNFuncSignatureAttrsPattern(MLIRContext *ctx, OneToNTypeConverter &converter)
+      : OneToNConversionPattern(converter, func::FuncOp::getOperationName(),
+                                /*benefit=*/2, ctx) {}
+
+  LogicalResult matchAndRewrite(Operation *op, OneToNPatternRewriter &rewriter,
+                                const OneToNTypeMapping &, const OneToNTypeMapping &,
+                                ValueRange) const override {
+    auto func = cast<func::FuncOp>(op);
+    auto *converter = getTypeConverter<OneToNTypeConverter>();
+    OneToNTypeMapping args(func.getArgumentTypes());
+    OneToNTypeMapping results(func.getResultTypes());
+    if (failed(converter->computeTypeMapping(func.getArgumentTypes(), args)) ||
+        failed(converter->computeTypeMapping(func.getResultTypes(), results)))
+      return failure();
+    if (!args.hasNonIdentityConversion() && !results.hasNonIdentityConversion())
+      return failure();
+
+    SmallVector<DictionaryAttr> argAttrs, resultAttrs;
+    auto empty = DictionaryAttr::get(rewriter.getContext());
+    for (unsigned i = 0; i < func.getNumArguments(); ++i) {
+      DictionaryAttr dict = func.getArgAttrDict(i);
+      if (!dict) dict = empty;
+      for (Type type : args.getConvertedTypes(i)) {
+        (void)type;
+        argAttrs.push_back(dict);
+      }
+    }
+    for (unsigned i = 0; i < func.getResultTypes().size(); ++i) {
+      DictionaryAttr dict = func.getResultAttrDict(i);
+      if (!dict) dict = empty;
+      for (Type type : results.getConvertedTypes(i)) {
+        (void)type;
+        resultAttrs.push_back(dict);
+      }
+    }
+    bool hasArgs = static_cast<bool>(func.getAllArgAttrs());
+    bool hasResults = static_cast<bool>(func.getAllResultAttrs());
+    auto type = FunctionType::get(rewriter.getContext(), args.getConvertedTypes(),
+                                  results.getConvertedTypes());
+    rewriter.modifyOpInPlace(op, [&] {
+      func.setFunctionType(type);
+      if (hasArgs) func.setAllArgAttrs(argAttrs);
+      if (hasResults) func.setAllResultAttrs(resultAttrs);
+    });
+    if (!func.isExternal())
+      rewriter.applySignatureConversion(&func.getBody().front(), args);
+    return success();
+  }
+};
+
 static void populateVMIStructuralAndMemoryPatterns(
     VMIToVPTOTypeConverter &typeConverter, RewritePatternSet &patterns,
     VMILoadSafetyPolicy loadSafety) {
   populateFuncTypeConversionPatterns(typeConverter, patterns);
+  patterns.add<OneToNFuncSignatureAttrsPattern>(patterns.getContext(), typeConverter);
   scf::populateSCFStructuralOneToNTypeConversions(typeConverter, patterns);
   patterns.add<OneToNCFBranchOpPattern, OneToNCFCondBranchOpPattern,
                OneToNCFSwitchOpPattern>(typeConverter, patterns.getContext());

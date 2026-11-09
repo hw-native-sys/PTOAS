@@ -439,6 +439,11 @@ struct FuncToEmitC : public OpConversionPattern<func::FuncOp> {
       emitcFunc->setAttr(namedAttr.getName(), namedAttr.getValue());
     }
 
+    // Alignment proofs describe PTO pointer carriers. The EmitC signature
+    // uses different types; retain every other argument attribute.
+    for (unsigned i = 0; i < op.getNumArguments(); ++i)
+      emitcFunc.removeArgAttr(i, "pto.alignment");
+
     if (op.isDeclaration()) {
       emitcFunc.setSpecifiersAttr(
           rewriter.getStrArrayAttr({"extern \"C\"", "AICORE"}));

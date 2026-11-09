@@ -9,6 +9,69 @@
 // Included by PTO.cpp as part of the PTO IR implementation translation unit.
 
 #include "llvm/ADT/APInt.h"
+#include "llvm/Support/MathExtras.h"
+#include "mlir/IR/Matchers.h"
+
+// An alignment is a claim about an exact pointer value, in bytes. It is
+// deliberately limited to signed 64-bit positive values for the analysis API.
+static LogicalResult verifyPointerAlignmentValue(Operation *op, Attribute value)
+{
+    auto alignment = dyn_cast<IntegerAttr>(value);
+    if (!alignment || !alignment.getValue().isStrictlyPositive() ||
+        alignment.getValue().getActiveBits() > 63 || !alignment.getValue().isPowerOf2()) {
+        return op->emitError("pto.alignment must be a positive power of two fitting in 63 bits");
+    }
+    return success();
+}
+
+LogicalResult PTODialect::verifyOperationAttribute(Operation *op, NamedAttribute attr)
+{
+    if (attr.getName() != "pto.alignment") {
+        return success();
+    }
+    auto ptrCast = dyn_cast<CastPtrOp>(op);
+    if (!ptrCast || !isa<IntegerType>(ptrCast.getInput().getType()) ||
+        !isa<PtrType>(ptrCast.getResult().getType())) {
+        return op->emitError("pto.alignment requires an integer-to-pointer pto.castptr");
+    }
+    if (failed(verifyPointerAlignmentValue(op, attr.getValue()))) {
+        return failure();
+    }
+    auto alignment = cast<IntegerAttr>(attr.getValue()).getValue().getZExtValue();
+    auto inputType = cast<IntegerType>(ptrCast.getInput().getType());
+    if (llvm::Log2_64(alignment) >= inputType.getWidth()) {
+        return op->emitError("pto.alignment does not fit the address width");
+    }
+    IntegerAttr constant;
+    if (matchPattern(ptrCast.getInput(), m_Constant(&constant)) &&
+        constant.getValue().urem(alignment) != 0) {
+        return op->emitError("pto.alignment contradicts the constant address");
+    }
+    return success();
+}
+
+LogicalResult PTODialect::verifyRegionArgAttribute(Operation *op, unsigned regionIndex,
+                                                    unsigned argIndex, NamedAttribute attr)
+{
+    if (attr.getName() != "pto.alignment") {
+        return success();
+    }
+    auto func = dyn_cast<func::FuncOp>(op);
+    if (!func || regionIndex != 0 || argIndex >= func.getNumArguments() ||
+        !isa<PtrType>(func.getArgumentTypes()[argIndex])) {
+        return op->emitError("pto.alignment requires a pointer function argument");
+    }
+    return verifyPointerAlignmentValue(op, attr.getValue());
+}
+
+LogicalResult PTODialect::verifyRegionResultAttribute(Operation *op, unsigned,
+                                                       unsigned, NamedAttribute attr)
+{
+    if (attr.getName() == "pto.alignment") {
+        return op->emitError("pto.alignment is not supported on function results");
+    }
+    return success();
+}
 
 AddressSpaceAttr mlir::pto::getPTOAddressSpaceAttr(Type type)
 {

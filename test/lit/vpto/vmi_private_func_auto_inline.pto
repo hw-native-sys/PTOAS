@@ -12,8 +12,8 @@
 // RUN: ptoas --pto-arch=a5 --pto-backend=vpto --emit-vpto %s -o - | FileCheck %s
 
 module attributes {pto.kernel_kind = #pto.kernel_kind<vector>, pto.target_arch = "a5"} {
-  func.func private @inline_helper(%src: !pto.ptr<f32, ub>,
-                                   %dst: !pto.ptr<f32, ub>) {
+  func.func private @inline_helper(%src: !pto.ptr<f32, ub> {pto.alignment = 32 : i64},
+                                   %dst: !pto.ptr<f32, ub> {pto.alignment = 32 : i64}) {
     %c0 = arith.constant 0 : index
     %c64 = arith.constant 64 : index
     %mask = pto.vmi.create_mask %c64 : index -> !pto.vmi.mask<64xpred>
@@ -27,8 +27,8 @@ module attributes {pto.kernel_kind = #pto.kernel_kind<vector>, pto.target_arch =
     return
   }
 
-  func.func @kernel(%src: !pto.ptr<f32, ub>, %tmp: !pto.ptr<f32, ub>,
-                    %dst: !pto.ptr<f32, ub>) {
+  func.func @kernel(%src: !pto.ptr<f32, ub> {pto.alignment = 32 : i64}, %tmp: !pto.ptr<f32, ub> {pto.alignment = 32 : i64},
+                    %dst: !pto.ptr<f32, ub> {pto.alignment = 32 : i64}) {
     func.call @inline_helper(%src, %tmp)
         : (!pto.ptr<f32, ub>, !pto.ptr<f32, ub>) -> ()
     func.call @kept_helper(%tmp, %dst)
@@ -37,8 +37,8 @@ module attributes {pto.kernel_kind = #pto.kernel_kind<vector>, pto.target_arch =
     return
   }
 
-  func.func private @kept_helper(%src: !pto.ptr<f32, ub>,
-                                 %dst: !pto.ptr<f32, ub>)
+  func.func private @kept_helper(%src: !pto.ptr<f32, ub> {pto.alignment = 32 : i64},
+                                 %dst: !pto.ptr<f32, ub> {pto.alignment = 32 : i64})
       attributes {no_inline} {
     %c0 = arith.constant 0 : index
     %c64 = arith.constant 64 : index

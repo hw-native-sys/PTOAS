@@ -35,7 +35,7 @@ module {
 
   func.func @vmi_to_vpto_group_store_slots8_i32_to_u8_padded(
       %value: !pto.vmi.vreg<8xi32, #pto.vmi.layout<num_groups = 8, slots = 8>>,
-      %dst: !pto.ptr<ui8, ub>) {
+      %dst: !pto.ptr<ui8, ub> {pto.alignment = 32 : i64}) {
     %c1 = arith.constant 1 : index
     %c32 = arith.constant 32 : index
     pto.vmi.vstore %value, %dst[%c32], %c1 {group = 8}

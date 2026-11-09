@@ -14,7 +14,7 @@
 // fanout. The final pipeline may insert consumer conversions where needed.
 
 module {
-  func.func @f16_vl64_store(%src: !pto.ptr<f16, ub>, %dst: !pto.ptr<f16, ub>, %wide: !pto.ptr<ui32, ub>, %active: index) {
+  func.func @f16_vl64_store(%src: !pto.ptr<f16, ub> {pto.alignment = 32 : i64}, %dst: !pto.ptr<f16, ub> {pto.alignment = 32 : i64}, %wide: !pto.ptr<ui32, ub> {pto.alignment = 32 : i64}, %active: index) {
     %zero = arith.constant 0 : index
     %one = arith.constant 1 : index
     %eight = arith.constant 8 : index
@@ -25,7 +25,7 @@ module {
     pto.vmi.vstore %r, %dst[%zero] : !pto.vmi.vreg<8xf16>, !pto.ptr<f16, ub>
     return
   }
-  func.func @si16_vl128_broadcast(%src: !pto.ptr<si16, ub>, %dst: !pto.ptr<si16, ub>, %wide: !pto.ptr<si32, ub>, %active: index) {
+  func.func @si16_vl128_broadcast(%src: !pto.ptr<si16, ub> {pto.alignment = 32 : i64}, %dst: !pto.ptr<si16, ub> {pto.alignment = 32 : i64}, %wide: !pto.ptr<si32, ub> {pto.alignment = 32 : i64}, %active: index) {
     %zero = arith.constant 0 : index
     %one = arith.constant 1 : index
     %eight = arith.constant 8 : index
@@ -37,7 +37,7 @@ module {
     pto.vmi.vstore %b, %dst[%offset] : !pto.vmi.vreg<128xsi16>, !pto.ptr<si16, ub>
     return
   }
-  func.func @si16_vl128_cast(%src: !pto.ptr<si16, ub>, %dst: !pto.ptr<si16, ub>, %wide: !pto.ptr<si32, ub>, %active: index) {
+  func.func @si16_vl128_cast(%src: !pto.ptr<si16, ub> {pto.alignment = 32 : i64}, %dst: !pto.ptr<si16, ub> {pto.alignment = 32 : i64}, %wide: !pto.ptr<si32, ub> {pto.alignment = 32 : i64}, %active: index) {
     %zero = arith.constant 0 : index
     %one = arith.constant 1 : index
     %eight = arith.constant 8 : index
@@ -49,7 +49,7 @@ module {
     pto.vmi.vstore %w, %wide[%zero] : !pto.vmi.vreg<8xsi32>, !pto.ptr<si32, ub>
     return
   }
-  func.func @si16_vl128_group_store(%src: !pto.ptr<si16, ub>, %dst: !pto.ptr<si16, ub>, %wide: !pto.ptr<si32, ub>, %active: index) {
+  func.func @si16_vl128_group_store(%src: !pto.ptr<si16, ub> {pto.alignment = 32 : i64}, %dst: !pto.ptr<si16, ub> {pto.alignment = 32 : i64}, %wide: !pto.ptr<si32, ub> {pto.alignment = 32 : i64}, %active: index) {
     %zero = arith.constant 0 : index
     %one = arith.constant 1 : index
     %eight = arith.constant 8 : index
@@ -60,7 +60,7 @@ module {
     pto.vmi.vstore %r, %dst[%zero], %one {group = 8} : !pto.vmi.vreg<8xsi16>, !pto.ptr<si16, ub>
     return
   }
-  func.func @si16_vl128_multi(%src: !pto.ptr<si16, ub>, %dst: !pto.ptr<si16, ub>, %wide: !pto.ptr<si32, ub>, %active: index) {
+  func.func @si16_vl128_multi(%src: !pto.ptr<si16, ub> {pto.alignment = 32 : i64}, %dst: !pto.ptr<si16, ub> {pto.alignment = 32 : i64}, %wide: !pto.ptr<si32, ub> {pto.alignment = 32 : i64}, %active: index) {
     %zero = arith.constant 0 : index
     %one = arith.constant 1 : index
     %eight = arith.constant 8 : index
@@ -75,7 +75,7 @@ module {
     pto.vmi.vstore %b, %dst[%offset] : !pto.vmi.vreg<128xsi16>, !pto.ptr<si16, ub>
     return
   }
-  func.func @si16_vl128_store(%src: !pto.ptr<si16, ub>, %dst: !pto.ptr<si16, ub>, %wide: !pto.ptr<si32, ub>, %active: index) {
+  func.func @si16_vl128_store(%src: !pto.ptr<si16, ub> {pto.alignment = 32 : i64}, %dst: !pto.ptr<si16, ub> {pto.alignment = 32 : i64}, %wide: !pto.ptr<si32, ub> {pto.alignment = 32 : i64}, %active: index) {
     %zero = arith.constant 0 : index
     %one = arith.constant 1 : index
     %eight = arith.constant 8 : index
@@ -86,7 +86,7 @@ module {
     pto.vmi.vstore %r, %dst[%zero] : !pto.vmi.vreg<8xsi16>, !pto.ptr<si16, ub>
     return
   }
-  func.func @si16_vl64_broadcast(%src: !pto.ptr<si16, ub>, %dst: !pto.ptr<si16, ub>, %wide: !pto.ptr<si32, ub>, %active: index) {
+  func.func @si16_vl64_broadcast(%src: !pto.ptr<si16, ub> {pto.alignment = 32 : i64}, %dst: !pto.ptr<si16, ub> {pto.alignment = 32 : i64}, %wide: !pto.ptr<si32, ub> {pto.alignment = 32 : i64}, %active: index) {
     %zero = arith.constant 0 : index
     %one = arith.constant 1 : index
     %eight = arith.constant 8 : index
@@ -98,7 +98,7 @@ module {
     pto.vmi.vstore %b, %dst[%offset] : !pto.vmi.vreg<64xsi16>, !pto.ptr<si16, ub>
     return
   }
-  func.func @si16_vl64_cast(%src: !pto.ptr<si16, ub>, %dst: !pto.ptr<si16, ub>, %wide: !pto.ptr<si32, ub>, %active: index) {
+  func.func @si16_vl64_cast(%src: !pto.ptr<si16, ub> {pto.alignment = 32 : i64}, %dst: !pto.ptr<si16, ub> {pto.alignment = 32 : i64}, %wide: !pto.ptr<si32, ub> {pto.alignment = 32 : i64}, %active: index) {
     %zero = arith.constant 0 : index
     %one = arith.constant 1 : index
     %eight = arith.constant 8 : index
@@ -110,7 +110,7 @@ module {
     pto.vmi.vstore %w, %wide[%zero] : !pto.vmi.vreg<8xsi32>, !pto.ptr<si32, ub>
     return
   }
-  func.func @si16_vl64_group_store(%src: !pto.ptr<si16, ub>, %dst: !pto.ptr<si16, ub>, %wide: !pto.ptr<si32, ub>, %active: index) {
+  func.func @si16_vl64_group_store(%src: !pto.ptr<si16, ub> {pto.alignment = 32 : i64}, %dst: !pto.ptr<si16, ub> {pto.alignment = 32 : i64}, %wide: !pto.ptr<si32, ub> {pto.alignment = 32 : i64}, %active: index) {
     %zero = arith.constant 0 : index
     %one = arith.constant 1 : index
     %eight = arith.constant 8 : index
@@ -121,7 +121,7 @@ module {
     pto.vmi.vstore %r, %dst[%zero], %one {group = 8} : !pto.vmi.vreg<8xsi16>, !pto.ptr<si16, ub>
     return
   }
-  func.func @si16_vl64_multi(%src: !pto.ptr<si16, ub>, %dst: !pto.ptr<si16, ub>, %wide: !pto.ptr<si32, ub>, %active: index) {
+  func.func @si16_vl64_multi(%src: !pto.ptr<si16, ub> {pto.alignment = 32 : i64}, %dst: !pto.ptr<si16, ub> {pto.alignment = 32 : i64}, %wide: !pto.ptr<si32, ub> {pto.alignment = 32 : i64}, %active: index) {
     %zero = arith.constant 0 : index
     %one = arith.constant 1 : index
     %eight = arith.constant 8 : index
@@ -136,7 +136,7 @@ module {
     pto.vmi.vstore %b, %dst[%offset] : !pto.vmi.vreg<64xsi16>, !pto.ptr<si16, ub>
     return
   }
-  func.func @si16_vl64_store(%src: !pto.ptr<si16, ub>, %dst: !pto.ptr<si16, ub>, %wide: !pto.ptr<si32, ub>, %active: index) {
+  func.func @si16_vl64_store(%src: !pto.ptr<si16, ub> {pto.alignment = 32 : i64}, %dst: !pto.ptr<si16, ub> {pto.alignment = 32 : i64}, %wide: !pto.ptr<si32, ub> {pto.alignment = 32 : i64}, %active: index) {
     %zero = arith.constant 0 : index
     %one = arith.constant 1 : index
     %eight = arith.constant 8 : index
@@ -147,7 +147,7 @@ module {
     pto.vmi.vstore %r, %dst[%zero] : !pto.vmi.vreg<8xsi16>, !pto.ptr<si16, ub>
     return
   }
-  func.func @ui16_vl128_broadcast(%src: !pto.ptr<ui16, ub>, %dst: !pto.ptr<ui16, ub>, %wide: !pto.ptr<ui32, ub>, %active: index) {
+  func.func @ui16_vl128_broadcast(%src: !pto.ptr<ui16, ub> {pto.alignment = 32 : i64}, %dst: !pto.ptr<ui16, ub> {pto.alignment = 32 : i64}, %wide: !pto.ptr<ui32, ub> {pto.alignment = 32 : i64}, %active: index) {
     %zero = arith.constant 0 : index
     %one = arith.constant 1 : index
     %eight = arith.constant 8 : index
@@ -159,7 +159,7 @@ module {
     pto.vmi.vstore %b, %dst[%offset] : !pto.vmi.vreg<128xui16>, !pto.ptr<ui16, ub>
     return
   }
-  func.func @ui16_vl128_cast(%src: !pto.ptr<ui16, ub>, %dst: !pto.ptr<ui16, ub>, %wide: !pto.ptr<ui32, ub>, %active: index) {
+  func.func @ui16_vl128_cast(%src: !pto.ptr<ui16, ub> {pto.alignment = 32 : i64}, %dst: !pto.ptr<ui16, ub> {pto.alignment = 32 : i64}, %wide: !pto.ptr<ui32, ub> {pto.alignment = 32 : i64}, %active: index) {
     %zero = arith.constant 0 : index
     %one = arith.constant 1 : index
     %eight = arith.constant 8 : index
@@ -171,7 +171,7 @@ module {
     pto.vmi.vstore %w, %wide[%zero] : !pto.vmi.vreg<8xui32>, !pto.ptr<ui32, ub>
     return
   }
-  func.func @ui16_vl128_group_store(%src: !pto.ptr<ui16, ub>, %dst: !pto.ptr<ui16, ub>, %wide: !pto.ptr<ui32, ub>, %active: index) {
+  func.func @ui16_vl128_group_store(%src: !pto.ptr<ui16, ub> {pto.alignment = 32 : i64}, %dst: !pto.ptr<ui16, ub> {pto.alignment = 32 : i64}, %wide: !pto.ptr<ui32, ub> {pto.alignment = 32 : i64}, %active: index) {
     %zero = arith.constant 0 : index
     %one = arith.constant 1 : index
     %eight = arith.constant 8 : index
@@ -182,7 +182,7 @@ module {
     pto.vmi.vstore %r, %dst[%zero], %one {group = 8} : !pto.vmi.vreg<8xui16>, !pto.ptr<ui16, ub>
     return
   }
-  func.func @ui16_vl128_multi(%src: !pto.ptr<ui16, ub>, %dst: !pto.ptr<ui16, ub>, %wide: !pto.ptr<ui32, ub>, %active: index) {
+  func.func @ui16_vl128_multi(%src: !pto.ptr<ui16, ub> {pto.alignment = 32 : i64}, %dst: !pto.ptr<ui16, ub> {pto.alignment = 32 : i64}, %wide: !pto.ptr<ui32, ub> {pto.alignment = 32 : i64}, %active: index) {
     %zero = arith.constant 0 : index
     %one = arith.constant 1 : index
     %eight = arith.constant 8 : index
@@ -197,7 +197,7 @@ module {
     pto.vmi.vstore %b, %dst[%offset] : !pto.vmi.vreg<128xui16>, !pto.ptr<ui16, ub>
     return
   }
-  func.func @ui16_vl128_store(%src: !pto.ptr<ui16, ub>, %dst: !pto.ptr<ui16, ub>, %wide: !pto.ptr<ui32, ub>, %active: index) {
+  func.func @ui16_vl128_store(%src: !pto.ptr<ui16, ub> {pto.alignment = 32 : i64}, %dst: !pto.ptr<ui16, ub> {pto.alignment = 32 : i64}, %wide: !pto.ptr<ui32, ub> {pto.alignment = 32 : i64}, %active: index) {
     %zero = arith.constant 0 : index
     %one = arith.constant 1 : index
     %eight = arith.constant 8 : index
@@ -208,7 +208,7 @@ module {
     pto.vmi.vstore %r, %dst[%zero] : !pto.vmi.vreg<8xui16>, !pto.ptr<ui16, ub>
     return
   }
-  func.func @ui16_vl64_broadcast(%src: !pto.ptr<ui16, ub>, %dst: !pto.ptr<ui16, ub>, %wide: !pto.ptr<ui32, ub>, %active: index) {
+  func.func @ui16_vl64_broadcast(%src: !pto.ptr<ui16, ub> {pto.alignment = 32 : i64}, %dst: !pto.ptr<ui16, ub> {pto.alignment = 32 : i64}, %wide: !pto.ptr<ui32, ub> {pto.alignment = 32 : i64}, %active: index) {
     %zero = arith.constant 0 : index
     %one = arith.constant 1 : index
     %eight = arith.constant 8 : index
@@ -220,7 +220,7 @@ module {
     pto.vmi.vstore %b, %dst[%offset] : !pto.vmi.vreg<64xui16>, !pto.ptr<ui16, ub>
     return
   }
-  func.func @ui16_vl64_cast(%src: !pto.ptr<ui16, ub>, %dst: !pto.ptr<ui16, ub>, %wide: !pto.ptr<ui32, ub>, %active: index) {
+  func.func @ui16_vl64_cast(%src: !pto.ptr<ui16, ub> {pto.alignment = 32 : i64}, %dst: !pto.ptr<ui16, ub> {pto.alignment = 32 : i64}, %wide: !pto.ptr<ui32, ub> {pto.alignment = 32 : i64}, %active: index) {
     %zero = arith.constant 0 : index
     %one = arith.constant 1 : index
     %eight = arith.constant 8 : index
@@ -232,7 +232,7 @@ module {
     pto.vmi.vstore %w, %wide[%zero] : !pto.vmi.vreg<8xui32>, !pto.ptr<ui32, ub>
     return
   }
-  func.func @ui16_vl64_group_store(%src: !pto.ptr<ui16, ub>, %dst: !pto.ptr<ui16, ub>, %wide: !pto.ptr<ui32, ub>, %active: index) {
+  func.func @ui16_vl64_group_store(%src: !pto.ptr<ui16, ub> {pto.alignment = 32 : i64}, %dst: !pto.ptr<ui16, ub> {pto.alignment = 32 : i64}, %wide: !pto.ptr<ui32, ub> {pto.alignment = 32 : i64}, %active: index) {
     %zero = arith.constant 0 : index
     %one = arith.constant 1 : index
     %eight = arith.constant 8 : index
@@ -243,7 +243,7 @@ module {
     pto.vmi.vstore %r, %dst[%zero], %one {group = 8} : !pto.vmi.vreg<8xui16>, !pto.ptr<ui16, ub>
     return
   }
-  func.func @ui16_vl64_multi(%src: !pto.ptr<ui16, ub>, %dst: !pto.ptr<ui16, ub>, %wide: !pto.ptr<ui32, ub>, %active: index) {
+  func.func @ui16_vl64_multi(%src: !pto.ptr<ui16, ub> {pto.alignment = 32 : i64}, %dst: !pto.ptr<ui16, ub> {pto.alignment = 32 : i64}, %wide: !pto.ptr<ui32, ub> {pto.alignment = 32 : i64}, %active: index) {
     %zero = arith.constant 0 : index
     %one = arith.constant 1 : index
     %eight = arith.constant 8 : index
@@ -258,7 +258,7 @@ module {
     pto.vmi.vstore %b, %dst[%offset] : !pto.vmi.vreg<64xui16>, !pto.ptr<ui16, ub>
     return
   }
-  func.func @ui16_vl64_store(%src: !pto.ptr<ui16, ub>, %dst: !pto.ptr<ui16, ub>, %wide: !pto.ptr<ui32, ub>, %active: index) {
+  func.func @ui16_vl64_store(%src: !pto.ptr<ui16, ub> {pto.alignment = 32 : i64}, %dst: !pto.ptr<ui16, ub> {pto.alignment = 32 : i64}, %wide: !pto.ptr<ui32, ub> {pto.alignment = 32 : i64}, %active: index) {
     %zero = arith.constant 0 : index
     %one = arith.constant 1 : index
     %eight = arith.constant 8 : index
@@ -269,7 +269,7 @@ module {
     pto.vmi.vstore %r, %dst[%zero] : !pto.vmi.vreg<8xui16>, !pto.ptr<ui16, ub>
     return
   }
-  func.func @ui32_vl64_store(%src: !pto.ptr<ui32, ub>, %dst: !pto.ptr<ui32, ub>, %wide: !pto.ptr<ui32, ub>, %active: index) {
+  func.func @ui32_vl64_store(%src: !pto.ptr<ui32, ub> {pto.alignment = 32 : i64}, %dst: !pto.ptr<ui32, ub> {pto.alignment = 32 : i64}, %wide: !pto.ptr<ui32, ub> {pto.alignment = 32 : i64}, %active: index) {
     %zero = arith.constant 0 : index
     %one = arith.constant 1 : index
     %eight = arith.constant 8 : index
@@ -280,7 +280,7 @@ module {
     pto.vmi.vstore %r, %dst[%zero] : !pto.vmi.vreg<8xui32>, !pto.ptr<ui32, ub>
     return
   }
-func.func @si16_vl256_cast(%src: !pto.ptr<si16, ub>, %dst: !pto.ptr<si16, ub>, %wide: !pto.ptr<si32, ub>, %active: index) {
+func.func @si16_vl256_cast(%src: !pto.ptr<si16, ub> {pto.alignment = 32 : i64}, %dst: !pto.ptr<si16, ub> {pto.alignment = 32 : i64}, %wide: !pto.ptr<si32, ub> {pto.alignment = 32 : i64}, %active: index) {
 %zero = arith.constant 0 : index
 %one = arith.constant 1 : index
 %eight = arith.constant 8 : index
@@ -292,7 +292,7 @@ func.func @si16_vl256_cast(%src: !pto.ptr<si16, ub>, %dst: !pto.ptr<si16, ub>, %
 pto.vmi.vstore %w, %wide[%zero] : !pto.vmi.vreg<8xsi32>, !pto.ptr<si32, ub>
 return
  }
-func.func @si16_vl512_cast(%src: !pto.ptr<si16, ub>, %dst: !pto.ptr<si16, ub>, %wide: !pto.ptr<si32, ub>, %active: index) {
+func.func @si16_vl512_cast(%src: !pto.ptr<si16, ub> {pto.alignment = 32 : i64}, %dst: !pto.ptr<si16, ub> {pto.alignment = 32 : i64}, %wide: !pto.ptr<si32, ub> {pto.alignment = 32 : i64}, %active: index) {
 %zero = arith.constant 0 : index
 %one = arith.constant 1 : index
 %eight = arith.constant 8 : index
@@ -304,7 +304,7 @@ func.func @si16_vl512_cast(%src: !pto.ptr<si16, ub>, %dst: !pto.ptr<si16, ub>, %
 pto.vmi.vstore %w, %wide[%zero] : !pto.vmi.vreg<8xsi32>, !pto.ptr<si32, ub>
 return
  }
-func.func @ui16_vl256_cast(%src: !pto.ptr<ui16, ub>, %dst: !pto.ptr<ui16, ub>, %wide: !pto.ptr<ui32, ub>, %active: index) {
+func.func @ui16_vl256_cast(%src: !pto.ptr<ui16, ub> {pto.alignment = 32 : i64}, %dst: !pto.ptr<ui16, ub> {pto.alignment = 32 : i64}, %wide: !pto.ptr<ui32, ub> {pto.alignment = 32 : i64}, %active: index) {
 %zero = arith.constant 0 : index
 %one = arith.constant 1 : index
 %eight = arith.constant 8 : index
@@ -316,7 +316,7 @@ func.func @ui16_vl256_cast(%src: !pto.ptr<ui16, ub>, %dst: !pto.ptr<ui16, ub>, %
 pto.vmi.vstore %w, %wide[%zero] : !pto.vmi.vreg<8xui32>, !pto.ptr<ui32, ub>
 return
  }
-func.func @ui16_vl512_cast(%src: !pto.ptr<ui16, ub>, %dst: !pto.ptr<ui16, ub>, %wide: !pto.ptr<ui32, ub>, %active: index) {
+func.func @ui16_vl512_cast(%src: !pto.ptr<ui16, ub> {pto.alignment = 32 : i64}, %dst: !pto.ptr<ui16, ub> {pto.alignment = 32 : i64}, %wide: !pto.ptr<ui32, ub> {pto.alignment = 32 : i64}, %active: index) {
 %zero = arith.constant 0 : index
 %one = arith.constant 1 : index
 %eight = arith.constant 8 : index

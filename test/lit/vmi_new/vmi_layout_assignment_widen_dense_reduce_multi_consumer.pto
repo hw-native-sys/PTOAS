@@ -11,10 +11,10 @@
 
 module {
   func.func @vmi_layout_assignment_widen_dense_reduce_multi_consumer(
-      %src: !pto.ptr<f16, ub>,
-      %rhs: !pto.ptr<f32, ub>,
-      %out0: !pto.ptr<f32, ub>,
-      %out1: !pto.ptr<f32, ub>,
+      %src: !pto.ptr<f16, ub> {pto.alignment = 32 : i64},
+      %rhs: !pto.ptr<f32, ub> {pto.alignment = 32 : i64},
+      %out0: !pto.ptr<f32, ub> {pto.alignment = 32 : i64},
+      %out1: !pto.ptr<f32, ub> {pto.alignment = 32 : i64},
       %off: index) {
     %c128 = arith.constant 128 : index
     %c0 = arith.constant 0 : index

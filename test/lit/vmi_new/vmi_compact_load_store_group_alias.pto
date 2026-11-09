@@ -30,7 +30,7 @@ module {
     return
   }
 
-  func.func @compact_2(%src: !pto.ptr<f32, ub>, %dst: !pto.ptr<f32, ub>,
+  func.func @compact_2(%src: !pto.ptr<f32, ub> {pto.alignment = 32 : i64}, %dst: !pto.ptr<f32, ub> {pto.alignment = 32 : i64},
                        %off: index) {
     // Keep the load block-aligned while the store retains its dynamic offset.
     %c8 = arith.constant 8 : index
@@ -42,7 +42,7 @@ module {
     return
   }
 
-  func.func @compact_4(%src: !pto.ptr<f32, ub>, %dst: !pto.ptr<f32, ub>,
+  func.func @compact_4(%src: !pto.ptr<f32, ub> {pto.alignment = 32 : i64}, %dst: !pto.ptr<f32, ub> {pto.alignment = 32 : i64},
                        %off: index) {
     // Keep the load block-aligned while the store retains its dynamic offset.
     %c8 = arith.constant 8 : index
@@ -54,7 +54,7 @@ module {
     return
   }
 
-  func.func @compact_8(%src: !pto.ptr<f32, ub>, %dst: !pto.ptr<f32, ub>,
+  func.func @compact_8(%src: !pto.ptr<f32, ub> {pto.alignment = 32 : i64}, %dst: !pto.ptr<f32, ub> {pto.alignment = 32 : i64},
                        %off: index) {
     // Keep the load block-aligned while the store retains its dynamic offset.
     %c8 = arith.constant 8 : index
@@ -68,7 +68,7 @@ module {
 
   func.func @compact_reduce_through_elementwise(
       %source: !pto.vmi.vreg<64xf32>,
-      %mask: !pto.vmi.mask<64xpred>, %dst: !pto.ptr<f32, ub>, %off: index) {
+      %mask: !pto.vmi.mask<64xpred>, %dst: !pto.ptr<f32, ub> {pto.alignment = 32 : i64}, %off: index) {
     %max = pto.vmi.vcmax %source, %mask
         : !pto.vmi.vreg<64xf32>, !pto.vmi.mask<64xpred>
         -> !pto.vmi.vreg<1xf32>

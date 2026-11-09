@@ -15,7 +15,7 @@ module {
   func.func @vmi_lane_stride2_masked_store_f16(
       %value: !pto.vmi.vreg<64xf16, #pto.vmi.layout<contiguous, lane_stride = 2>>,
       %mask: !pto.vmi.mask<64xb16, #pto.vmi.layout<contiguous, lane_stride = 2>>,
-      %dst: !pto.ptr<f16, ub>, %offset: index) {
+      %dst: !pto.ptr<f16, ub> {pto.alignment = 32 : i64}, %offset: index) {
     %c16 = arith.constant 16 : index
     %aligned_offset = arith.muli %offset, %c16 : index
     %value_c = pto.vmi.ensure_layout %value
@@ -34,7 +34,7 @@ module {
   func.func @vmi_lane_stride4_masked_store_ui8(
       %value: !pto.vmi.vreg<64xui8, #pto.vmi.layout<contiguous, lane_stride = 4>>,
       %mask: !pto.vmi.mask<64xb8, #pto.vmi.layout<contiguous, lane_stride = 4>>,
-      %dst: !pto.ptr<ui8, ub>, %offset: index) {
+      %dst: !pto.ptr<ui8, ub> {pto.alignment = 32 : i64}, %offset: index) {
     %c32 = arith.constant 32 : index
     %aligned_offset = arith.muli %offset, %c32 : index
     %value_c = pto.vmi.ensure_layout %value

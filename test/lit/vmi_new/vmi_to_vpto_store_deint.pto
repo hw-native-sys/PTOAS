@@ -11,7 +11,7 @@
 module {
   func.func @vmi_to_vpto_store_deint2(
       %value: !pto.vmi.vreg<128xf32, #pto.vmi.layout<deinterleaved = 2>>,
-      %dst: !pto.ptr<f32, ub>, %offset: index) {
+      %dst: !pto.ptr<f32, ub> {pto.alignment = 32 : i64}, %offset: index) {
     %c8 = arith.constant 8 : index
     %aligned_offset = arith.muli %offset, %c8 : index
     pto.vmi.vstore %value, %dst[%aligned_offset]
@@ -21,7 +21,7 @@ module {
 
   func.func @vmi_to_vpto_store_deint4(
       %value: !pto.vmi.vreg<256xf32, #pto.vmi.layout<deinterleaved = 4>>,
-      %dst: !pto.ptr<f32, ub>, %offset: index) {
+      %dst: !pto.ptr<f32, ub> {pto.alignment = 32 : i64}, %offset: index) {
     %c8 = arith.constant 8 : index
     %aligned_offset = arith.muli %offset, %c8 : index
     pto.vmi.vstore %value, %dst[%aligned_offset]
@@ -31,7 +31,7 @@ module {
 
   func.func @vmi_to_vpto_store_deint2_multichunk(
       %value: !pto.vmi.vreg<256xf32, #pto.vmi.layout<deinterleaved = 2>>,
-      %dst: !pto.ptr<f32, ub>, %offset: index) {
+      %dst: !pto.ptr<f32, ub> {pto.alignment = 32 : i64}, %offset: index) {
     %c8 = arith.constant 8 : index
     %aligned_offset = arith.muli %offset, %c8 : index
     pto.vmi.vstore %value, %dst[%aligned_offset]

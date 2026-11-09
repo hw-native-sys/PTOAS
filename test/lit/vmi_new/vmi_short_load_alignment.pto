@@ -30,6 +30,7 @@ module {
   // Exact boundary for the existing unaligned fallback: 288 readable bytes.
   func.func @safe_unaligned_read_envelope(%src: memref<72xf32, #pto.address_space<vec>>)
       -> !pto.vmi.vreg<8xf32> {
+    memref.assume_alignment %src, 32 : memref<72xf32, #pto.address_space<vec>>
     %off = arith.constant 1 : index
     %v = pto.vmi.vload %src[%off] : memref<72xf32, #pto.address_space<vec>> -> !pto.vmi.vreg<8xf32>
     return %v : !pto.vmi.vreg<8xf32>

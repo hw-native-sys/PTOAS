@@ -12,6 +12,7 @@ module {
   func.func @vmi_to_vpto_load_safe_tail_memref(
       %src: memref<128xf32, #pto.address_space<vec>>)
       -> (!pto.vreg<64xf32>, !pto.vreg<64xf32>) {
+    memref.assume_alignment %src, 32 : memref<128xf32, #pto.address_space<vec>>
     %c0 = arith.constant 0 : index
     %value = pto.vmi.vload %src[%c0]
         : memref<128xf32, #pto.address_space<vec>>
@@ -25,6 +26,7 @@ module {
   func.func @vmi_to_vpto_load_safe_tail_memref_nonzero_offset(
       %src: memref<136xf32, #pto.address_space<vec>>)
       -> (!pto.vreg<64xf32>, !pto.vreg<64xf32>) {
+    memref.assume_alignment %src, 32 : memref<136xf32, #pto.address_space<vec>>
     %c4 = arith.constant 4 : index
     %value = pto.vmi.vload %src[%c4]
         : memref<136xf32, #pto.address_space<vec>>

@@ -13,8 +13,8 @@
 
 module {
   func.func @f16_store_prefers_lane_stride(
-      %src0: !pto.ptr<f16, ub>, %src1: !pto.ptr<f16, ub>,
-      %dst: !pto.ptr<f16, ub>, %off: index) {
+      %src0: !pto.ptr<f16, ub> {pto.alignment = 32 : i64}, %src1: !pto.ptr<f16, ub> {pto.alignment = 32 : i64},
+      %dst: !pto.ptr<f16, ub> {pto.alignment = 32 : i64}, %off: index) {
     %c16 = arith.constant 16 : index
     %aligned_off = arith.muli %off, %c16 : index
     %x = pto.vmi.vload %src0[%aligned_off]
@@ -30,8 +30,8 @@ module {
   }
 
   func.func @f16_masked_store_prefers_lane_stride(
-      %src0: !pto.ptr<f16, ub>, %src1: !pto.ptr<f16, ub>,
-      %dst: !pto.ptr<f16, ub>, %off: index) {
+      %src0: !pto.ptr<f16, ub> {pto.alignment = 32 : i64}, %src1: !pto.ptr<f16, ub> {pto.alignment = 32 : i64},
+      %dst: !pto.ptr<f16, ub> {pto.alignment = 32 : i64}, %off: index) {
     %c16 = arith.constant 16 : index
     %c32 = arith.constant 32 : index
     %aligned_off = arith.muli %off, %c16 : index
@@ -50,8 +50,8 @@ module {
   }
 
   func.func @f16_full_width_store_stays_contiguous(
-      %src0: !pto.ptr<f16, ub>, %src1: !pto.ptr<f16, ub>,
-      %dst: !pto.ptr<f16, ub>, %off: index) {
+      %src0: !pto.ptr<f16, ub> {pto.alignment = 32 : i64}, %src1: !pto.ptr<f16, ub> {pto.alignment = 32 : i64},
+      %dst: !pto.ptr<f16, ub> {pto.alignment = 32 : i64}, %off: index) {
     %c16 = arith.constant 16 : index
     %aligned_off = arith.muli %off, %c16 : index
     %x = pto.vmi.vload %src0[%aligned_off]
@@ -67,8 +67,8 @@ module {
   }
 
   func.func @ui8_half_width_store_prefers_lane_stride2(
-      %src0: !pto.ptr<ui8, ub>, %src1: !pto.ptr<ui8, ub>,
-      %dst: !pto.ptr<ui8, ub>, %off: index) {
+      %src0: !pto.ptr<ui8, ub> {pto.alignment = 32 : i64}, %src1: !pto.ptr<ui8, ub> {pto.alignment = 32 : i64},
+      %dst: !pto.ptr<ui8, ub> {pto.alignment = 32 : i64}, %off: index) {
     %c32 = arith.constant 32 : index
     %aligned_off = arith.muli %off, %c32 : index
     %x = pto.vmi.vload %src0[%aligned_off]
@@ -84,8 +84,8 @@ module {
   }
 
   func.func @ui8_quarter_width_store_prefers_lane_stride4(
-      %src0: !pto.ptr<ui8, ub>, %src1: !pto.ptr<ui8, ub>,
-      %dst: !pto.ptr<ui8, ub>, %off: index) {
+      %src0: !pto.ptr<ui8, ub> {pto.alignment = 32 : i64}, %src1: !pto.ptr<ui8, ub> {pto.alignment = 32 : i64},
+      %dst: !pto.ptr<ui8, ub> {pto.alignment = 32 : i64}, %off: index) {
     %c32 = arith.constant 32 : index
     %aligned_off = arith.muli %off, %c32 : index
     %x = pto.vmi.vload %src0[%aligned_off]
@@ -102,7 +102,8 @@ module {
 
   func.func @f16_store_does_not_override_channel_merge(
       %src: memref<256xf16, #pto.address_space<vec>>,
-      %dst: !pto.ptr<f16, ub>, %off: index) {
+      %dst: !pto.ptr<f16, ub> {pto.alignment = 32 : i64}, %off: index) {
+    memref.assume_alignment %src, 32 : memref<256xf16, #pto.address_space<vec>>
     %c0 = arith.constant 0 : index
     %c64 = arith.constant 64 : index
     %mask = pto.vmi.create_mask %c64 : index -> !pto.vmi.mask<128xpred>

@@ -18,8 +18,8 @@ module {
       %x: !pto.vmi.vreg<128xf32>,
       %max: !pto.vmi.vreg<128xf32>,
       %scale: f32,
-      %dst0: !pto.ptr<f32, ub>,
-      %dst1: !pto.ptr<f32, ub>,
+      %dst0: !pto.ptr<f32, ub> {pto.alignment = 32 : i64},
+      %dst1: !pto.ptr<f32, ub> {pto.alignment = 32 : i64},
       %off: index) {
     %c8 = arith.constant 8 : index
     %aligned_off = arith.muli %off, %c8 : index

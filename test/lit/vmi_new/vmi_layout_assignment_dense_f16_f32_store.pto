@@ -11,8 +11,8 @@
 
 module {
   func.func @vmi_layout_assignment_dense_f16_to_f32_store(
-      %src: !pto.ptr<f16, ub>,
-      %dst: !pto.ptr<f32, ub>,
+      %src: !pto.ptr<f16, ub> {pto.alignment = 32 : i64},
+      %dst: !pto.ptr<f32, ub> {pto.alignment = 32 : i64},
       %off: index) {
     %c16 = arith.constant 16 : index
     %aligned_off = arith.muli %off, %c16 : index
@@ -26,8 +26,8 @@ module {
   }
 
   func.func @vmi_layout_assignment_multichunk_f16_to_f32_store(
-      %src: !pto.ptr<f16, ub>,
-      %dst: !pto.ptr<f32, ub>,
+      %src: !pto.ptr<f16, ub> {pto.alignment = 32 : i64},
+      %dst: !pto.ptr<f32, ub> {pto.alignment = 32 : i64},
       %off: index) {
     %c16 = arith.constant 16 : index
     %aligned_off = arith.muli %off, %c16 : index
@@ -41,8 +41,8 @@ module {
   }
 
   func.func @vmi_layout_assignment_compact_f16_to_f32_store(
-      %src: !pto.ptr<f16, ub>,
-      %dst: !pto.ptr<f32, ub>,
+      %src: !pto.ptr<f16, ub> {pto.alignment = 32 : i64},
+      %dst: !pto.ptr<f32, ub> {pto.alignment = 32 : i64},
       %off: index) {
     %c16 = arith.constant 16 : index
     %aligned_off = arith.muli %off, %c16 : index
@@ -56,8 +56,8 @@ module {
   }
 
   func.func @vmi_layout_assignment_compact_f16_to_f32_masked_store(
-      %src: !pto.ptr<f16, ub>,
-      %dst: !pto.ptr<f16, ub>,
+      %src: !pto.ptr<f16, ub> {pto.alignment = 32 : i64},
+      %dst: !pto.ptr<f16, ub> {pto.alignment = 32 : i64},
       %off: index) {
     %c16 = arith.constant 16 : index
     %c64 = arith.constant 64 : index
@@ -75,8 +75,8 @@ module {
   }
 
   func.func @vmi_layout_assignment_dense_f32_to_f16_store(
-      %src: !pto.ptr<f32, ub>,
-      %dst: !pto.ptr<f16, ub>,
+      %src: !pto.ptr<f32, ub> {pto.alignment = 32 : i64},
+      %dst: !pto.ptr<f16, ub> {pto.alignment = 32 : i64},
       %off: index) {
     %c16 = arith.constant 16 : index
     %aligned_off = arith.muli %off, %c16 : index
@@ -90,8 +90,8 @@ module {
   }
 
   func.func @vmi_layout_assignment_multichunk_f32_to_f16_store(
-      %src: !pto.ptr<f32, ub>,
-      %dst: !pto.ptr<f16, ub>,
+      %src: !pto.ptr<f32, ub> {pto.alignment = 32 : i64},
+      %dst: !pto.ptr<f16, ub> {pto.alignment = 32 : i64},
       %off: index) {
     %c16 = arith.constant 16 : index
     %aligned_off = arith.muli %off, %c16 : index

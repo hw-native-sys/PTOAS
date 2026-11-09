@@ -11,9 +11,9 @@
 
 module {
   func.func @vmi_layout_assignment_mask_granularity_f32_f16_store(
-      %src: !pto.ptr<f32, ub>,
-      %out32: !pto.ptr<f32, ub>,
-      %out16: !pto.ptr<f16, ub>,
+      %src: !pto.ptr<f32, ub> {pto.alignment = 32 : i64},
+      %out32: !pto.ptr<f32, ub> {pto.alignment = 32 : i64},
+      %out16: !pto.ptr<f16, ub> {pto.alignment = 32 : i64},
       %off: index) {
     %c16 = arith.constant 16 : index
     %c96 = arith.constant 96 : index

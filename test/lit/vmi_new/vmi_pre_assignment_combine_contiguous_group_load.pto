@@ -11,7 +11,7 @@
 
 module {
   func.func @contiguous_bf16_group_load(
-      %src: !pto.ptr<bf16, ub>,
+      %src: !pto.ptr<bf16, ub> {pto.alignment = 32 : i64},
       %off: index) -> !pto.vmi.vreg<8xui16> {
     %c256 = arith.constant 256 : index
     %mask = pto.vmi.create_mask %c256 : index -> !pto.vmi.mask<256xpred>
@@ -38,6 +38,7 @@ module {
   func.func @contiguous_ui8_group_load(
       %src: memref<256xui8, #pto.address_space<vec>>,
       %off: index) -> !pto.vmi.vreg<64xui8> {
+    memref.assume_alignment %src, 32 : memref<256xui8, #pto.address_space<vec>>
     %c0 = arith.constant 0 : index
     %c16 = arith.constant 16 : index
     %value = pto.vmi.vload %src[%c0], %c16 {group = 4}
@@ -46,7 +47,7 @@ module {
   }
 
   func.func @contiguous_f32_group_load(
-      %src: !pto.ptr<f32, ub>,
+      %src: !pto.ptr<f32, ub> {pto.alignment = 32 : i64},
       %off: index) -> !pto.vmi.vreg<128xf32> {
     %c8 = arith.constant 8 : index
     %aligned_off = arith.muli %off, %c8 : index
@@ -56,7 +57,7 @@ module {
   }
 
   func.func @contiguous_si16_group_load(
-      %src: !pto.ptr<si16, ub>,
+      %src: !pto.ptr<si16, ub> {pto.alignment = 32 : i64},
       %off: index) -> !pto.vmi.vreg<128xsi16> {
     %c16 = arith.constant 16 : index
     %aligned_off = arith.muli %off, %c16 : index

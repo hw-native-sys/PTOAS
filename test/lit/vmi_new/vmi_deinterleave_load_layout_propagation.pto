@@ -11,7 +11,7 @@
 
 module {
   func.func @vmi_deinterleave_load_compare_histogram(
-      %src: !pto.ptr<ui32, ub>,
+      %src: !pto.ptr<ui32, ub> {pto.alignment = 32 : i64},
       %offset: index,
       %acc: !pto.vmi.vreg<256xui16>,
       %full_mask: !pto.vmi.mask<256xpred>,
@@ -40,7 +40,7 @@ module {
   }
 
   func.func @vmi_deinterleave_load_high_cast(
-      %src: !pto.ptr<ui32, ub>,
+      %src: !pto.ptr<ui32, ub> {pto.alignment = 32 : i64},
       %offset: index) -> !pto.vmi.vreg<256xui8> {
     %c8 = arith.constant 8 : index
     %c256 = arith.constant 256 : index
