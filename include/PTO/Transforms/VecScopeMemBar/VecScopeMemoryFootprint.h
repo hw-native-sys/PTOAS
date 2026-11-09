@@ -17,6 +17,7 @@
 #include "mlir/Support/LLVM.h"
 #include "llvm/ADT/SmallVector.h"
 
+#include <cstdint>
 #include <optional>
 #include <utility>
 
@@ -25,9 +26,14 @@ namespace mlir::pto::vecscopemembar {
 struct AffineByteExpr {
     int64_t constant = 0;
     SmallVector<std::pair<Value, int64_t>, 2> coefficients;
+    // Narrowest signed integer width of the arithmetic that produced this
+    // expression. Zero means the width is unknown. Kept as one byte so the
+    // access record still fits in SmallVector's default inline storage.
+    uint8_t safeSignedBits = 0;
     bool exact = true;
 
     int64_t getCoeff(Value v) const;
+    std::optional<std::pair<int64_t, int64_t>> getRange(Value v) const;
     bool isConstant() const { return coefficients.empty(); }
     AffineByteExpr& scale(int64_t factor);
     AffineByteExpr& combine(const AffineByteExpr& other);

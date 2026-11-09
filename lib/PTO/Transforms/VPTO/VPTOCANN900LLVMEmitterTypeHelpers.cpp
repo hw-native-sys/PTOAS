@@ -201,7 +201,10 @@ std::string getCANN900VectorElementFragment(Type type) {
     return lowPrecision;
   }
   if (auto intType = dyn_cast<IntegerType>(type)) {
-    return "i" + std::to_string(intType.getWidth());
+    // GCC 12 -Werror=restrict rejects the temporary from `"i" + to_string`.
+    std::string fragment("i");
+    fragment += std::to_string(intType.getWidth());
+    return fragment;
   }
   return {};
 }

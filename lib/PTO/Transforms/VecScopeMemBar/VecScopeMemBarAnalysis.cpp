@@ -480,11 +480,16 @@ static bool sequentialRootsComparable(const VecScopeMemoryFootprint& P, const Ve
 
 // A relation currently has dimensions for IVs only. Never silently discard
 // opaque index terms that were retained for same-iteration cancellation.
-static bool hasOnlyIVTerms(const VecScopeMemoryFootprint& footprint, ArrayRef<Value> ivs)
+static bool hasOnlyIVTerms(const AffineByteExpr& offset, ArrayRef<Value> ivs)
 {
-    return llvm::all_of(footprint.byteOffset.coefficients, [&](const auto& term) {
+    return llvm::all_of(offset.coefficients, [&](const auto& term) {
         return term.second == 0 || llvm::is_contained(ivs, term.first);
     });
+}
+
+static bool hasOnlyIVTerms(const VecScopeMemoryFootprint& footprint, ArrayRef<Value> ivs)
+{
+    return hasOnlyIVTerms(footprint.byteOffset, ivs);
 }
 
 // Resolved loop-nest layout of a sequential-region access pair. Dual-set
@@ -1200,6 +1205,114 @@ static RootRelation classifyRootRelation(
     return rel;
 }
 
+static bool isCarriedIV(Value value, ArrayRef<Value> pi, ArrayRef<Value> pj)
+{
+    return llvm::is_contained(pi, value) || llvm::is_contained(pj, value);
+}
+
+// Extremes of `coeff * v` over the constant loop domain, or over a proved
+// symbol range. Fails when a non-IV symbol has no range.
+static bool coefficientSpan(
+    const AffineByteExpr& expr, Value value, int64_t coeff, ArrayRef<Value> ivs, ArrayRef<ConstLoopBounds> bounds,
+    __int128& lo, __int128& hi)
+{
+    if (auto index = llvm::find(ivs, value); index != ivs.end()) {
+        const ConstLoopBounds& bound = bounds[static_cast<unsigned>(index - ivs.begin())];
+        auto trip = bound.tripCount();
+        if (!trip || bound.step == 0) {
+            return false;
+        }
+        __int128 first = static_cast<__int128>(coeff) * bound.lb;
+        __int128 lastIV = bound.lb;
+        if (*trip > 0) {
+            lastIV = static_cast<__int128>(bound.lb) + static_cast<__int128>(*trip - 1) * bound.step;
+        }
+        __int128 last = static_cast<__int128>(coeff) * lastIV;
+        lo = std::min(first, last);
+        hi = std::max(first, last);
+        return true;
+    }
+    auto range = expr.getRange(value);
+    if (!range) {
+        return false;
+    }
+    __int128 left = static_cast<__int128>(coeff) * range->first;
+    __int128 right = static_cast<__int128>(coeff) * range->second;
+    lo = std::min(left, right);
+    hi = std::max(left, right);
+    return true;
+}
+
+// The affine form matches the wrapped address computation when every value it
+// can take, over the IV domain and the proved symbol ranges, fits in the
+// signed width of that computation.
+static bool addressFitsIndexWidth(const AffineByteExpr& expr, ArrayRef<Value> ivs, ArrayRef<ConstLoopBounds> bounds)
+{
+    if (!expr.exact || expr.safeSignedBits < 2 || expr.safeSignedBits > 63) {
+        return false;
+    }
+    __int128 minValue = expr.constant;
+    __int128 maxValue = expr.constant;
+    for (auto [value, coeff] : expr.coefficients) {
+        if (coeff == 0) {
+            continue;
+        }
+        __int128 lo = 0;
+        __int128 hi = 0;
+        if (!coefficientSpan(expr, value, coeff, ivs, bounds, lo, hi)) {
+            return false;
+        }
+        minValue += lo;
+        maxValue += hi;
+    }
+    __int128 limit = static_cast<__int128>(1) << (expr.safeSignedBits - 1);
+    return minValue >= -limit && maxValue < limit;
+}
+
+// Drop invariant symbols that appear with the same coefficient on both
+// accesses, after proving the address cannot wrap the index width. A mismatched
+// coefficient or a possible wrap leaves the symbols in place so the caller
+// keeps the barrier.
+static bool cancelMatchingInvariants(
+    AffineByteExpr& producer, AffineByteExpr& consumer, ArrayRef<Value> pi, ArrayRef<Value> pj,
+    ArrayRef<ConstLoopBounds> boundsP, ArrayRef<ConstLoopBounds> boundsC)
+{
+    auto coefficientsMatch = [&](const AffineByteExpr& lhs, const AffineByteExpr& rhs) {
+        for (auto [value, coeff] : lhs.coefficients) {
+            if (coeff != 0 && !isCarriedIV(value, pi, pj) && rhs.getCoeff(value) != coeff) {
+                return false;
+            }
+        }
+        return true;
+    };
+    if (!coefficientsMatch(producer, consumer) || !coefficientsMatch(consumer, producer)) {
+        return false;
+    }
+    bool hasInvariant = llvm::any_of(producer.coefficients, [&](const auto& term) {
+        return term.second != 0 && !isCarriedIV(term.first, pi, pj);
+    }) || llvm::any_of(consumer.coefficients, [&](const auto& term) {
+        return term.second != 0 && !isCarriedIV(term.first, pi, pj);
+    });
+    if (!hasInvariant) {
+        return true;
+    }
+    if (!addressFitsIndexWidth(producer, pi, boundsP) || !addressFitsIndexWidth(consumer, pj, boundsC)) {
+        return false;
+    }
+    auto strip = [&](AffineByteExpr& expr) {
+        SmallVector<std::pair<Value, int64_t>, 2> kept;
+        for (auto term : expr.coefficients) {
+            if (term.second == 0 || isCarriedIV(term.first, pi, pj)) {
+                kept.push_back(term);
+            }
+        }
+        expr.coefficients = std::move(kept);
+    };
+    strip(producer);
+    strip(consumer);
+    return true;
+}
+
 // Model the roots, byte sizes, and IV coefficients of a carried pair. On
 // failure, `failure` names the unmodelled part.
 static bool modelCarriedPairRoots(
@@ -1207,7 +1320,10 @@ static bool modelCarriedPairRoots(
     CarriedPairModel& m, DependenceReason& failure)
 {
     const auto& A = result.accesses;
-    if (!hasOnlyIVTerms(A[i].footprint, pi) || !hasOnlyIVTerms(A[j].footprint, pj)) {
+    AffineByteExpr producerOffset = A[i].footprint.byteOffset;
+    AffineByteExpr consumerOffset = A[j].footprint.byteOffset;
+    if (!cancelMatchingInvariants(producerOffset, consumerOffset, pi, pj, m.boundsP, m.boundsC) ||
+        !hasOnlyIVTerms(producerOffset, pi) || !hasOnlyIVTerms(consumerOffset, pj)) {
         failure = DependenceReason::DynamicUnmodelledExpression;
         return false;
     }
@@ -1228,10 +1344,10 @@ static bool modelCarriedPairRoots(
         return false;
     }
     for (unsigned k = 0; k < m.depthP; ++k) {
-        m.coeffP.push_back(A[i].footprint.byteOffset.getCoeff(pi[k]));
+        m.coeffP.push_back(producerOffset.getCoeff(pi[k]));
     }
     for (unsigned k = 0; k < m.depthC; ++k) {
-        m.coeffC.push_back(A[j].footprint.byteOffset.getCoeff(pj[k]));
+        m.coeffC.push_back(consumerOffset.getCoeff(pj[k]));
     }
     if (!convertToIterationCounters(m.coeffP, m.boundsP, m.constP) ||
         !convertToIterationCounters(m.coeffC, m.boundsC, m.constC)) {

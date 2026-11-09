@@ -144,6 +144,78 @@ static AffineByteExpr extractAffineExpr(mlir::AffineExpr expr, ValueRange dims, 
     }
 }
 
+static std::optional<unsigned> integerBitWidth(Type type)
+{
+    if (auto intType = dyn_cast<IntegerType>(type)) {
+        return intType.getWidth();
+    }
+    // The internal index width used by arith on this target is 64.
+    if (type.isIndex()) {
+        return 64;
+    }
+    return std::nullopt;
+}
+
+// `replace` installs the result width. Otherwise the width can only shrink,
+// which keeps a widening cast from forgetting a narrower computation.
+static void noteSafeWidth(AffineByteExpr& expr, Type type, bool replace)
+{
+    auto width = integerBitWidth(type);
+    if (!width) {
+        expr.safeSignedBits = 0;
+        return;
+    }
+    if (replace || expr.safeSignedBits == 0 || *width < expr.safeSignedBits) {
+        expr.safeSignedBits = *width;
+    }
+}
+
+static bool castMayNarrow(Value result)
+{
+    Operation* op = result.getDefiningOp();
+    if (!op || op->getNumOperands() < 1) {
+        return true;
+    }
+    auto inWidth = integerBitWidth(op->getOperand(0).getType());
+    auto outWidth = integerBitWidth(result.getType());
+    if (!inWidth || !outWidth) {
+        return true;
+    }
+    return *outWidth < *inWidth;
+}
+
+// True when `value` is not one of `ivs` and its definition is not inside any
+// of those loops. Iter args of those loops vary and are not invariant.
+static bool definedOutsideIVs(Value value, ArrayRef<Value> ivs)
+{
+    if (llvm::is_contained(ivs, value)) {
+        return false;
+    }
+    if (auto arg = dyn_cast<BlockArgument>(value)) {
+        if (auto forOp = dyn_cast<scf::ForOp>(arg.getOwner()->getParentOp())) {
+            if (llvm::is_contained(ivs, forOp.getInductionVar())) {
+                return false;
+            }
+        }
+        return true;
+    }
+    Operation* def = value.getDefiningOp();
+    if (!def) {
+        return false;
+    }
+    for (Value iv : ivs) {
+        auto ivArg = dyn_cast<BlockArgument>(iv);
+        if (!ivArg) {
+            continue;
+        }
+        auto forOp = dyn_cast<scf::ForOp>(ivArg.getOwner()->getParentOp());
+        if (forOp && forOp->isAncestor(def)) {
+            return false;
+        }
+    }
+    return true;
+}
+
 // Recognize the arithmetic op shapes with an affine form: add/sub and mul by
 // a constant. Returns nullopt when `value` is not defined by one of them.
 static std::optional<AffineByteExpr> extractArithAffineElement(Value value, ArrayRef<Value> ivs)
@@ -154,7 +226,9 @@ static std::optional<AffineByteExpr> extractArithAffineElement(Value value, Arra
         if (!lhs.exact || !rhs.exact) {
             return makeInexactExpr();
         }
-        return lhs.combine(rhs);
+        lhs.combine(rhs);
+        noteSafeWidth(lhs, value.getType(), false);
+        return lhs;
     }
     if (auto subIOp = value.getDefiningOp<arith::SubIOp>()) {
         auto lhs = extractAffineElement(subIOp.getLhs(), ivs);
@@ -163,7 +237,9 @@ static std::optional<AffineByteExpr> extractArithAffineElement(Value value, Arra
             return makeInexactExpr();
         }
         rhs.scale(-1);
-        return lhs.combine(rhs);
+        lhs.combine(rhs);
+        noteSafeWidth(lhs, value.getType(), false);
+        return lhs;
     }
     if (auto mulIOp = value.getDefiningOp<arith::MulIOp>()) {
         APInt mc;
@@ -173,6 +249,7 @@ static std::optional<AffineByteExpr> extractArithAffineElement(Value value, Arra
                 return rhs;
             }
             rhs.scale(mc.getSExtValue());
+            noteSafeWidth(rhs, value.getType(), false);
             return rhs;
         }
         if (matchPattern(mulIOp.getRhs(), m_ConstantInt(&mc))) {
@@ -181,6 +258,7 @@ static std::optional<AffineByteExpr> extractArithAffineElement(Value value, Arra
                 return lhs;
             }
             lhs.scale(mc.getSExtValue());
+            noteSafeWidth(lhs, value.getType(), false);
             return lhs;
         }
         return makeInexactExpr();
@@ -238,12 +316,14 @@ static AffineByteExpr extractAffineElement(Value value, ArrayRef<Value> ivs)
     APInt c;
     if (matchPattern(value, m_ConstantInt(&c))) {
         expr.constant = c.getSExtValue();
+        noteSafeWidth(expr, value.getType(), true);
         return expr;
     }
 
     for (Value iv : ivs) {
         if (value == iv) {
             expr.coefficients.push_back({value, 1});
+            noteSafeWidth(expr, value.getType(), true);
             return expr;
         }
     }
@@ -252,22 +332,31 @@ static AffineByteExpr extractAffineElement(Value value, ArrayRef<Value> ivs)
         return *arith;
     }
     if (auto cast = extractCastAffineElement(value, ivs)) {
-        // A width-changing cast of an unbounded symbol can wrap. Preserve
-        // only the existing bounded-IV model through these casts.
-        for (auto [term, coefficient] : cast->coefficients) {
-            if (coefficient != 0 && !llvm::is_contained(ivs, term)) {
-                return makeInexactExpr();
-            }
+        // A narrowing cast of a non-IV symbol can wrap the index width.
+        // Widening casts keep the narrower computation's safe width. An
+        // IV-only value may narrow: its loop bounds are the values that exist.
+        bool nonIV = llvm::any_of(cast->coefficients, [&](const auto& term) {
+            return term.second != 0 && !llvm::is_contained(ivs, term.first);
+        });
+        if (castMayNarrow(value) && nonIV) {
+            return makeInexactExpr();
         }
+        noteSafeWidth(*cast, value.getType(), !nonIV);
         return *cast;
     }
     if (auto applied = extractAffineApplyElement(value, ivs)) {
         return *applied;
     }
 
-    // Opaque index values can cancel within one execution. Dependence queries
-    // must reject remaining non-IV symbols rather than silently dropping them.
+    // A value defined outside the vecscope IVs is an exact invariant symbol.
+    // Mul-by-constant then scales that one symbol. Carried queries cancel it
+    // only when both sides share the coefficient and the address cannot wrap.
     expr.coefficients.push_back({value, 1});
+    if (definedOutsideIVs(value, ivs)) {
+        expr.exact = true;
+        noteSafeWidth(expr, value.getType(), true);
+        return expr;
+    }
     auto arg = dyn_cast<BlockArgument>(value);
     expr.exact = value.getType().isIndex() && arg && isa<func::FuncOp>(arg.getOwner()->getParentOp());
     return expr;
@@ -653,6 +742,27 @@ int64_t AffineByteExpr::getCoeff(Value v) const
     return 0;
 }
 
+std::optional<std::pair<int64_t, int64_t>> AffineByteExpr::getRange(Value v) const
+{
+    // The range belongs to the symbol, not to its coefficient, so scaling and
+    // combining do not have to carry a side table.
+    if (getCoeff(v) == 0) {
+        return std::nullopt;
+    }
+    auto andOp = v.getDefiningOp<arith::AndIOp>();
+    if (!andOp) {
+        return std::nullopt;
+    }
+    APInt mask;
+    if (!matchPattern(andOp.getRhs(), m_ConstantInt(&mask)) && !matchPattern(andOp.getLhs(), m_ConstantInt(&mask))) {
+        return std::nullopt;
+    }
+    if (mask.getBitWidth() > 64 || !mask.isNonNegative()) {
+        return std::nullopt;
+    }
+    return std::make_pair(int64_t{0}, mask.getSExtValue());
+}
+
 AffineByteExpr& AffineByteExpr::scale(int64_t factor)
 {
     __int128 scaled = static_cast<__int128>(constant) * factor;
@@ -698,6 +808,11 @@ AffineByteExpr& AffineByteExpr::combine(const AffineByteExpr& other)
         if (!found) {
             coefficients.push_back({val, coeff});
         }
+    }
+    if (safeSignedBits == 0 || other.safeSignedBits == 0) {
+        safeSignedBits = 0;
+    } else if (other.safeSignedBits < safeSignedBits) {
+        safeSignedBits = other.safeSignedBits;
     }
     return *this;
 }
