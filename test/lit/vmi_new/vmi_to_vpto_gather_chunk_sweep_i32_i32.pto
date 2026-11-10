@@ -6,7 +6,7 @@
 // INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
 // See LICENSE in the root of the software repository for the full text of the License.
 
-// RUN: pto-test-opt %s -vmi-lower-unified-to-legacy -vmi-to-vpto | FileCheck %s
+// RUN: pto-test-opt %s -vmi-lower-unified-to-legacy -vmi-to-vpto | FileCheck %s --implicit-check-not=pto.vsel
 
 // Chunk sweep for physical block counts {1,2,4} x {static all-active, dynamic mask}.
 // C=4 is the ISA limit of four physical registers per VMI instruction.
@@ -82,14 +82,11 @@ module {
 // CHECK-LABEL: func.func @gather_i32_i32_2chunk_allactive(
 // CHECK: pto.vgather2_bc
 // CHECK: pto.vgather2_bc
-// CHECK-NOT: pto.vsel
 // CHECK: return
 
 // CHECK-LABEL: func.func @gather_i32_i32_2chunk_dynamic(
 // CHECK: pto.vgather2_bc
-// CHECK: pto.vsel
 // CHECK: pto.vgather2_bc
-// CHECK: pto.vsel
 // CHECK: return
 
 // CHECK-LABEL: func.func @gather_i32_i32_4chunk_allactive(
@@ -97,18 +94,13 @@ module {
 // CHECK: pto.vgather2_bc
 // CHECK: pto.vgather2_bc
 // CHECK: pto.vgather2_bc
-// CHECK-NOT: pto.vsel
 // CHECK: return
 
 // CHECK-LABEL: func.func @gather_i32_i32_4chunk_dynamic(
 // CHECK: pto.vgather2_bc
-// CHECK: pto.vsel
 // CHECK: pto.vgather2_bc
-// CHECK: pto.vsel
 // CHECK: pto.vgather2_bc
-// CHECK: pto.vsel
 // CHECK: pto.vgather2_bc
-// CHECK: pto.vsel
 // CHECK: return
 // CHECK-NOT: pto.vmi.
 // CHECK-NOT: !pto.vmi.

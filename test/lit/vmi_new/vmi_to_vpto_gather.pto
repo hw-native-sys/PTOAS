@@ -6,7 +6,7 @@
 // INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
 // See LICENSE in the root of the software repository for the full text of the License.
 
-// RUN: pto-test-opt %s -vmi-lower-unified-to-legacy -vmi-to-vpto | FileCheck %s
+// RUN: pto-test-opt %s -vmi-lower-unified-to-legacy -vmi-to-vpto -canonicalize | FileCheck %s
 
 module {
   func.func @vmi_to_vpto_gather(
@@ -24,14 +24,40 @@ module {
         -> !pto.vreg<64xf32>
     return %part : !pto.vreg<64xf32>
   }
+
+  func.func @gather_negative_zero_passthru(
+      %src: !pto.ptr<f32, ub>,
+      %indices: !pto.vmi.vreg<64xi32, #pto.vmi.layout<contiguous>>,
+      %mask: !pto.vmi.mask<64xb32, #pto.vmi.layout<contiguous>>)
+      -> !pto.vreg<64xf32> {
+    %passthru = "pto.vmi.constant"() {value = dense<-0.0> : tensor<64xf32>}
+        : () -> !pto.vmi.vreg<64xf32, #pto.vmi.layout<contiguous>>
+    %out = pto.vmi.gather %src[%indices], %mask, %passthru
+        : !pto.ptr<f32, ub>,
+          !pto.vmi.vreg<64xi32, #pto.vmi.layout<contiguous>>,
+          !pto.vmi.mask<64xb32, #pto.vmi.layout<contiguous>>,
+          !pto.vmi.vreg<64xf32, #pto.vmi.layout<contiguous>>
+        -> !pto.vmi.vreg<64xf32, #pto.vmi.layout<contiguous>>
+    %part = "pto.vmi.unpack"(%out)
+        : (!pto.vmi.vreg<64xf32, #pto.vmi.layout<contiguous>>)
+        -> !pto.vreg<64xf32>
+    return %part : !pto.vreg<64xf32>
+  }
 }
 
-// vgather (pmode="zero") lowers to a legacy gather with a synthesised zero
-// passthru, then to pto.vgather2_bc + pto.vsel; inactive lanes select the zero
-// constant (wildcarded below) instead of an explicit passthru operand.
+// VGATHER2_BC already zero-fills inactive lanes under a runtime mask.
 // CHECK-LABEL: func.func @vmi_to_vpto_gather(
+// CHECK-NOT: pto.vdup
+// CHECK-NOT: pto.vsel
 // CHECK: %[[GATHER:.*]] = pto.vgather2_bc %arg0, %arg1, %arg2 : !pto.ptr<f32, ub>, !pto.vreg<64xi32>, !pto.mask<b32> -> !pto.vreg<64xf32>
-// CHECK: %[[OUT:.*]] = pto.vsel %[[GATHER]], %{{.*}}, %arg2 : !pto.vreg<64xf32>, !pto.vreg<64xf32>, !pto.mask<b32> -> !pto.vreg<64xf32>
+// CHECK-NEXT: return %[[GATHER]]
+
+// The legacy op must preserve the sign bit of a negative-zero passthru.
+// CHECK-LABEL: func.func @gather_negative_zero_passthru(
+// CHECK: %[[NEG_ZERO:.*]] = arith.constant -0.000000e+00 : f32
+// CHECK: %[[PASSTHRU:.*]] = pto.vdup %[[NEG_ZERO]]
+// CHECK: %[[GATHER:.*]] = pto.vgather2_bc %arg0, %arg1, %arg2 : !pto.ptr<f32, ub>, !pto.vreg<64xi32>, !pto.mask<b32> -> !pto.vreg<64xf32>
+// CHECK: %[[OUT:.*]] = pto.vsel %[[GATHER]], %[[PASSTHRU]], %arg2 : !pto.vreg<64xf32>, !pto.vreg<64xf32>, !pto.mask<b32> -> !pto.vreg<64xf32>
 // CHECK: return %[[OUT]]
 // CHECK-NOT: pto.vmi.
 // CHECK-NOT: !pto.vmi.

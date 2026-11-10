@@ -11,8 +11,8 @@
 
 // B32 gathers whose result fits in one partially filled physical chunk
 // (issue #1638). Padding lanes stay masked off, so each case lowers to one
-// pto.vgather2_bc over the full 64-lane physical register; a statically
-// all-active mask omits the trailing pto.vsel.
+// pto.vgather2_bc over the full 64-lane physical register. The instruction
+// zero-fills inactive lanes, so the zero-mode gather needs no pto.vsel.
 
 module {
   func.func @gather_f32_vl1_allactive(
@@ -201,16 +201,14 @@ module {
 
 // CHECK-LABEL: func.func @gather_f32_vl8_dynamic(
 // CHECK: %[[GATHER:.*]] = pto.vgather2_bc %arg0, %arg1, %arg2 : !pto.ptr<f32, ub>, !pto.vreg<64xi32>, !pto.mask<b32> -> !pto.vreg<64xf32>
-// CHECK: pto.vsel %[[GATHER]], %{{.*}}, %arg2 : !pto.vreg<64xf32>, !pto.vreg<64xf32>, !pto.mask<b32> -> !pto.vreg<64xf32>
-// CHECK: return
+// CHECK-NEXT: return %[[GATHER]]
 
 // CHECK-LABEL: func.func @gather_f32_vl8_prefix_mask(
-// The prefix mask (4 of 8 logical lanes) gates both the gather and the
-// passthru vsel, so inactive and padding lanes never read memory.
+// Only the first 4 of 8 logical lanes read memory. The gather also
+// zero-fills the inactive logical lanes and the padding lanes.
 // CHECK: %[[MASK:.*]] = pto.pset_b32 "PAT_VL4" : !pto.mask<b32>
 // CHECK: %[[GATHER:.*]] = pto.vgather2_bc %arg0, %arg1, %[[MASK]] : !pto.ptr<f32, ub>, !pto.vreg<64xi32>, !pto.mask<b32> -> !pto.vreg<64xf32>
-// CHECK: pto.vsel %[[GATHER]], %{{.*}}, %[[MASK]] : !pto.vreg<64xf32>, !pto.vreg<64xf32>, !pto.mask<b32> -> !pto.vreg<64xf32>
-// CHECK: return
+// CHECK-NEXT: return %[[GATHER]]
 
 // CHECK-LABEL: func.func @gather_i32_vl8_allactive(
 // CHECK: %[[MASK:.*]] = pto.pset_b32 "PAT_VL8" : !pto.mask<b32>

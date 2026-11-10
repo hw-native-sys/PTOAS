@@ -158,6 +158,23 @@ struct OneToNVMIGatherOpPattern : OneToNOpConversionPattern<VMIGatherOp> {
   using OneToNOpConversionPattern<VMIGatherOp>::OneToNOpConversionPattern;
 
 private:
+  static bool isZeroPassthru(Value passthru) {
+    auto constant = passthru.getDefiningOp<VMIConstantOp>();
+    if (!constant) {
+      return false;
+    }
+    auto dense = dyn_cast<DenseElementsAttr>(constant.getValue());
+    if (!dense || !dense.isSplat()) {
+      return false;
+    }
+    Attribute splat = dense.getSplatValue<Attribute>();
+    if (auto integer = dyn_cast<IntegerAttr>(splat)) {
+      return integer.getValue().isZero();
+    }
+    auto floating = dyn_cast<FloatAttr>(splat);
+    return floating && floating.getValue().isPosZero();
+  }
+
   FailureOr<Value> materializeGatherPart(
       VMIGatherOp op, OneToNPatternRewriter &rewriter, Value source,
       Value indices, Value mask, Value passthru, Type resultType,
@@ -179,7 +196,8 @@ private:
                          : rewriter.create<Vgather2BcOp>(
                                op.getLoc(), resultType, source, indices, mask)
                                .getResult();
-    if (allActive) {
+    // VGATHER2_BC zero-fills inactive lanes, matching an all-zero passthru.
+    if (allActive || (resultBits == 32 && isZeroPassthru(op.getPassthru()))) {
       return gathered;
     }
     return rewriter
@@ -232,9 +250,7 @@ public:
     }
     SmallVector<Type> resultTypes = std::move(*maybe_resultTypes);
 
-    // Static all-active masks select gathered[0] for every lane, so the
-    // trailing vsel is a semantic no-op. Skip it and keep gathered directly.
-    // Non-static masks still take the original gather + vsel path.
+    // A static all-active mask makes the passthru irrelevant.
     auto resultVMIType = cast<VMIVRegType>(op.getResult().getType());
     bool allActive = isStaticAllActiveMask(op.getMask(),
                                            resultVMIType.getElementCount());
