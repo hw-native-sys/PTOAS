@@ -1,0 +1,23 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+
+// issue #1606: the TMUL A5 clause does not list 8-bit integers (unlike tmax and
+// tsub), so the widened A5 whitelist must still reject them.
+// RUN: not ptoas --pto-arch=a5 --emit-pto-ir %s 2>&1 | FileCheck %s
+
+module {
+  func.func private @tmul_i8_a5(
+      %a: !pto.tile_buf<vec, 8x32xi8>, %b: !pto.tile_buf<vec, 8x32xi8>,
+      %dst: !pto.tile_buf<vec, 8x32xi8>) {
+    pto.tmul ins(%a, %b : !pto.tile_buf<vec, 8x32xi8>, !pto.tile_buf<vec, 8x32xi8>)
+             outs(%dst : !pto.tile_buf<vec, 8x32xi8>)
+    return
+  }
+}
+
+// CHECK: error: 'pto.tmul' op expects A5 tmul element type to be i32/i16/f16/bf16/f32

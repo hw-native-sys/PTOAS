@@ -2620,7 +2620,7 @@ pto.tsub ins(<src0>, <src1> : <src0_type>, <src1_type>)
   - Valid bounds: `valid row <= rows` and `valid column <= cols`.
   - Runtime: `src0`, `src1` and `dst` tiles should have the same `validRow/validCol`.
 - **Implementation checks (A5)**
-  - Tile element type must be one of: `i32`, `i16`, `i8`, `f32`, `f16`.
+  - Tile element type must be one of: `i32`, `i16`, `i8`, `f32`, `f16`, `bf16`.
   - Tile must use row-major layout (`blayout=row_major`).
   - Valid bounds: `valid row <= rows` and `valid column <= cols`.
   - Runtime: `src0`, `src1` and `dst` tiles should have the same `validRow/validCol`.
@@ -2683,7 +2683,7 @@ pto.tmul ins(<src0>, <src1> : <src0_type>, <src1_type>)
   - Tile must use row-major layout (`blayout=row_major`).
   - Runtime: `src0`, `src1` and `dst` tiles should have the same `validRow/validCol`.
 - **Implementation checks (A5)**
-  - Tile element type must be one of: `i32`, `f32`, `i16`, `f16`.
+  - Tile element type must be one of: `i32`, `f32`, `i16`, `f16`, `bf16`.
   - Tile must use `loc=vec`.
   - Valid bounds: `valid row <= rows` and `valid column <= cols`.
   - Tile must use row-major layout (`blayout=row_major`).
@@ -2813,7 +2813,7 @@ pto.tmax ins(<src0>, <src1> : <src0_type>, <src1_type>)
   - Valid bounds: `valid row <= rows` and `valid column <= cols`.
   - Runtime: `src0`, `src1` and `dst` tiles should have the same `validRow/validCol`.
 - **Implementation checks (A5)**
-  - Tile element type must be one of: `i32`, `i16`, `i8`, `f32`, `f16`.
+  - Tile element type must be one of: `i32`, `i16`, `i8`, `f32`, `f16`, `bf16`.
   - Tile must use row-major layout (`blayout=row_major`).
   - Valid bounds: `valid row <= rows` and `valid column <= cols`.
   - Runtime: `src0`, `src1` and `dst` tiles should have the same `validRow/validCol`.
@@ -6900,10 +6900,10 @@ pto.tsels ins(<mask>, <src>, <tmp>, <scalar> : <mask_type>, <src_type>, <tmp_typ
 - `src` and `dst` must have the same element type.
 - `src` and `dst` must have the same valid region.
 - **Implementation checks (A2/A3)**:
-  - The shared element type must be `i16`, `i32`, `f16`, or `f32`.
+  - The shared element type must be `i16`, `ui16`, `i32`, `ui32`, `f16`, `bf16`, or `f32`.
   - `src` and `dst` must use row-major layout (`blayout=row_major`).
 - **Implementation checks (A5)**:
-  - The shared element type must be `i8`, `i16`, `i32`, `ui8`, `ui16`, `ui32`, `f16`, or `f32`.
+  - The shared element type must be `i8`, `i16`, `i32`, `ui8`, `ui16`, `ui32`, `f16`, `bf16`, or `f32`.
   - `mask`, `src`, and `dst` must use row-major layout (`blayout=row_major`).
 - The DPS form keeps a `tmp` operand, but PTO IR does not impose an extra tmp shape, valid-shape, or layout relation.
 - On A5, `tmp` may be a placeholder tile that is smaller than `src` / `dst`.

@@ -14,6 +14,7 @@
 //   pto.tand/tor A5: 1/2/4-byte integral types           (pto-isa docs/isa/TAND.md, TOR.md)
 //   pto.tands/tors/txors A5: 1/2/4-byte integral types   (pto-isa docs/isa/TANDS.md, TORS.md, TXORS.md)
 //   pto.tcmps/tfmods A5: also bf16 (and u8/u16/u32)      (pto-isa docs/isa/TCMPS.md, TFMODS.md)
+//   pto.tsels/tmax/tmul/tsub A5: also bf16               (pto-isa docs/isa/TSELS.md, TMAX.md, TMUL.md, TSUB.md)
 
 // RUN: ptoas --pto-arch=a5 --emit-pto-ir %s 2>&1 | FileCheck %s
 
@@ -105,6 +106,47 @@ module {
               outs(%dst : !pto.tile_buf<vec, 8x32xi8>)
     return
   }
+
+  // bf16 joins the A5 whitelist of the global-select and binary eltwise ops.
+  func.func private @tsels_bf16(
+      %mask: !pto.tile_buf<vec, 8x32xi8>, %src: !pto.tile_buf<vec, 8x32xbf16>,
+      %tmp: !pto.tile_buf<vec, 1x32xbf16>, %scalar: bf16,
+      %dst: !pto.tile_buf<vec, 8x32xbf16>) {
+    pto.tsels ins(%mask, %src, %tmp, %scalar : !pto.tile_buf<vec, 8x32xi8>, !pto.tile_buf<vec, 8x32xbf16>, !pto.tile_buf<vec, 1x32xbf16>, bf16)
+              outs(%dst : !pto.tile_buf<vec, 8x32xbf16>)
+    return
+  }
+  // The A5 tsels clause lists the unsigned integer forms. This case pins only
+  // the verifier: the unsigned TileLib payload templates are tracked in #1607.
+  func.func private @tsels_ui32(
+      %mask: !pto.tile_buf<vec, 8x32xi8>, %src: !pto.tile_buf<vec, 8x32xui32>,
+      %tmp: !pto.tile_buf<vec, 1x32xui32>, %scalar: ui32,
+      %dst: !pto.tile_buf<vec, 8x32xui32>) {
+    pto.tsels ins(%mask, %src, %tmp, %scalar : !pto.tile_buf<vec, 8x32xi8>, !pto.tile_buf<vec, 8x32xui32>, !pto.tile_buf<vec, 1x32xui32>, ui32)
+              outs(%dst : !pto.tile_buf<vec, 8x32xui32>)
+    return
+  }
+  func.func private @tmax_bf16(
+      %a: !pto.tile_buf<vec, 8x32xbf16>, %b: !pto.tile_buf<vec, 8x32xbf16>,
+      %dst: !pto.tile_buf<vec, 8x32xbf16>) {
+    pto.tmax ins(%a, %b : !pto.tile_buf<vec, 8x32xbf16>, !pto.tile_buf<vec, 8x32xbf16>)
+             outs(%dst : !pto.tile_buf<vec, 8x32xbf16>)
+    return
+  }
+  func.func private @tmul_bf16(
+      %a: !pto.tile_buf<vec, 8x32xbf16>, %b: !pto.tile_buf<vec, 8x32xbf16>,
+      %dst: !pto.tile_buf<vec, 8x32xbf16>) {
+    pto.tmul ins(%a, %b : !pto.tile_buf<vec, 8x32xbf16>, !pto.tile_buf<vec, 8x32xbf16>)
+             outs(%dst : !pto.tile_buf<vec, 8x32xbf16>)
+    return
+  }
+  func.func private @tsub_bf16(
+      %a: !pto.tile_buf<vec, 8x32xbf16>, %b: !pto.tile_buf<vec, 8x32xbf16>,
+      %dst: !pto.tile_buf<vec, 8x32xbf16>) {
+    pto.tsub ins(%a, %b : !pto.tile_buf<vec, 8x32xbf16>, !pto.tile_buf<vec, 8x32xbf16>)
+             outs(%dst : !pto.tile_buf<vec, 8x32xbf16>)
+    return
+  }
 }
 
 // CHECK-LABEL: func.func private @tabs_i8
@@ -131,3 +173,13 @@ module {
 // CHECK: pto.tfmods
 // CHECK-LABEL: func.func private @tcmps_ui8
 // CHECK: pto.tcmps
+// CHECK-LABEL: func.func private @tsels_bf16
+// CHECK: pto.tsels
+// CHECK-LABEL: func.func private @tsels_ui32
+// CHECK: pto.tsels
+// CHECK-LABEL: func.func private @tmax_bf16
+// CHECK: pto.tmax
+// CHECK-LABEL: func.func private @tmul_bf16
+// CHECK: pto.tmul
+// CHECK-LABEL: func.func private @tsub_bf16
+// CHECK: pto.tsub

@@ -1,0 +1,110 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+
+// bf16 is a 16-bit packed payload for pto.tsels on A5: the templates must be
+// selectable with a bf16 dtype signature and the emitted select must use the
+// packed b16 predicate path (US mask load + mask<b8> -> mask<b16> pbitcast),
+// exactly like f16, instead of the byte/NORM select path.  Both the flattened
+// 1d template (template_tsels_1d) and the per-row 2d template (template_tsels)
+// are covered.
+//
+// RUN: ptoas --pto-arch=a5 --pto-backend=vpto --emit-pto-ir --mlir-print-ir-after=pto-insert-template-attributes %s -o /dev/null 2>&1 | FileCheck %s --check-prefix=META
+// RUN: ptoas --pto-arch=a5 --pto-backend=vpto --emit-vpto --enable-tile-op-expand %s -o - 2>/dev/null | FileCheck %s --check-prefix=VPTO
+
+// META-LABEL: func.func @TSELS_BF16
+// META: pto.tsels
+// META-SAME: candidates = [{
+// META-SAME: name = "template_tsels"
+// META-NOT: name = "template_tsels_1d"
+
+// META-LABEL: func.func @TSELS_BF16_1D
+// META: pto.tsels
+// META-SAME: candidates = [{
+// META-SAME: loop_depth = 1 : i64
+// META-SAME: name = "template_tsels_1d"
+// META-SAME: }, {
+// META-SAME: name = "template_tsels"
+
+// VPTO-LABEL: func.func @TSELS_BF16
+// VPTO-NOT: pto.tsels ins
+// VPTO: pto.vecscope
+// VPTO-DAG: pto.vdup {{.*}} : bf16, !pto.mask<b16> -> !pto.vreg<128xbf16>
+// VPTO-DAG: pto.plds {{.*}}, "US" : !pto.ptr<ui8, ub>, index -> !pto.mask<b8>
+// VPTO-DAG: pto.pbitcast {{.*}} : !pto.mask<b8> -> !pto.mask<b16>
+// VPTO-DAG: pto.vsel {{.*}} : !pto.vreg<128xbf16>, !pto.vreg<128xbf16>, !pto.mask<b16> -> !pto.vreg<128xbf16>
+// VPTO-DAG: pto.vsts {{.*}} : !pto.vreg<128xbf16>, !pto.ptr<bf16, ub>, !pto.mask<b16>
+
+// VPTO-LABEL: func.func @TSELS_BF16_1D
+// VPTO-NOT: pto.tsels ins
+// VPTO: pto.vdup {{.*}} : bf16, !pto.mask<b16> -> !pto.vreg<128xbf16>
+// VPTO: scf.for
+// VPTO: pto.plds {{.*}}, "US" : !pto.ptr<ui8, ub>, index -> !pto.mask<b8>
+// VPTO: pto.pbitcast {{.*}} : !pto.mask<b8> -> !pto.mask<b16>
+// VPTO: pto.vsel {{.*}} : !pto.vreg<128xbf16>, !pto.vreg<128xbf16>, !pto.mask<b16> -> !pto.vreg<128xbf16>
+// VPTO: pto.vsts {{.*}} : !pto.vreg<128xbf16>, !pto.ptr<bf16, ub>, !pto.mask<b16>
+
+module attributes {pto.kernel_kind = #pto.kernel_kind<vector>} {
+  func.func @TSELS_BF16() {
+    %mask = pto.alloc_tile
+      : !pto.tile_buf<loc=vec, dtype=i8, rows=8, cols=32, v_row=8, v_col=32,
+                      blayout=row_major, slayout=none_box, fractal=512, pad=0>
+    %src = pto.alloc_tile
+      : !pto.tile_buf<loc=vec, dtype=bf16, rows=8, cols=32, v_row=8, v_col=32,
+                      blayout=row_major, slayout=none_box, fractal=512, pad=0>
+    %tmp = pto.alloc_tile
+      : !pto.tile_buf<loc=vec, dtype=bf16, rows=1, cols=32, v_row=1, v_col=32,
+                      blayout=row_major, slayout=none_box, fractal=512, pad=0>
+    %dst = pto.alloc_tile
+      : !pto.tile_buf<loc=vec, dtype=bf16, rows=8, cols=32, v_row=8, v_col=32,
+                      blayout=row_major, slayout=none_box, fractal=512, pad=0>
+
+    %scalar = arith.constant 5.0 : bf16
+
+    pto.tsels ins(%mask, %src, %tmp, %scalar : !pto.tile_buf<loc=vec, dtype=i8, rows=8, cols=32, v_row=8, v_col=32,
+                              blayout=row_major, slayout=none_box, fractal=512, pad=0>,
+                          !pto.tile_buf<loc=vec, dtype=bf16, rows=8, cols=32, v_row=8, v_col=32,
+                              blayout=row_major, slayout=none_box, fractal=512, pad=0>,
+                          !pto.tile_buf<loc=vec, dtype=bf16, rows=1, cols=32, v_row=1, v_col=32,
+                              blayout=row_major, slayout=none_box, fractal=512, pad=0>,
+                          bf16)
+             outs(%dst : !pto.tile_buf<loc=vec, dtype=bf16, rows=8, cols=32, v_row=8, v_col=32,
+                                   blayout=row_major, slayout=none_box, fractal=512, pad=0>)
+    return
+  }
+
+  func.func @TSELS_BF16_1D() {
+    %mask = pto.alloc_tile
+      : !pto.tile_buf<loc=vec, dtype=i32, rows=4, cols=8, v_row=4, v_col=8,
+                      blayout=row_major, slayout=none_box, fractal=512, pad=0>
+    %src = pto.alloc_tile
+      : !pto.tile_buf<loc=vec, dtype=bf16, rows=4, cols=256, v_row=4, v_col=256,
+                      blayout=row_major, slayout=none_box, fractal=512, pad=0>
+    %tmp = pto.alloc_tile
+      : !pto.tile_buf<loc=vec, dtype=bf16, rows=1, cols=64, v_row=1, v_col=64,
+                      blayout=row_major, slayout=none_box, fractal=512, pad=0>
+    %dst = pto.alloc_tile
+      : !pto.tile_buf<loc=vec, dtype=bf16, rows=4, cols=256, v_row=4, v_col=256,
+                      blayout=row_major, slayout=none_box, fractal=512, pad=0>
+    %scalar = arith.constant 1.0 : bf16
+
+    pto.tsels ins(
+      %mask, %src, %tmp, %scalar
+        : !pto.tile_buf<loc=vec, dtype=i32, rows=4, cols=8, v_row=4, v_col=8,
+                        blayout=row_major, slayout=none_box, fractal=512, pad=0>,
+          !pto.tile_buf<loc=vec, dtype=bf16, rows=4, cols=256, v_row=4, v_col=256,
+                        blayout=row_major, slayout=none_box, fractal=512, pad=0>,
+          !pto.tile_buf<loc=vec, dtype=bf16, rows=1, cols=64, v_row=1, v_col=64,
+                        blayout=row_major, slayout=none_box, fractal=512, pad=0>,
+          bf16)
+      outs(
+        %dst
+          : !pto.tile_buf<loc=vec, dtype=bf16, rows=4, cols=256, v_row=4, v_col=256,
+                          blayout=row_major, slayout=none_box, fractal=512, pad=0>)
+    return
+  }
+}

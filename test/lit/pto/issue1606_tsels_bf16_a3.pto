@@ -1,0 +1,25 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+
+// issue #1606: the pto-isa A2A3 TSELS clause lists bfloat16_t among its 2-byte
+// types, so the A2/A3 verifier accepts bf16 just like the A5 one.
+// RUN: ptoas --pto-arch=a3 --emit-pto-ir %s 2>&1 | FileCheck %s
+
+module {
+  func.func private @tsels_bf16_a3(
+      %mask: !pto.tile_buf<vec, 8x32xi8>, %src: !pto.tile_buf<vec, 8x32xbf16>,
+      %tmp: !pto.tile_buf<vec, 1x32xbf16>, %scalar: bf16,
+      %dst: !pto.tile_buf<vec, 8x32xbf16>) {
+    pto.tsels ins(%mask, %src, %tmp, %scalar : !pto.tile_buf<vec, 8x32xi8>, !pto.tile_buf<vec, 8x32xbf16>, !pto.tile_buf<vec, 1x32xbf16>, bf16)
+              outs(%dst : !pto.tile_buf<vec, 8x32xbf16>)
+    return
+  }
+}
+
+// CHECK-LABEL: func.func private @tsels_bf16_a3
+// CHECK: pto.tsels

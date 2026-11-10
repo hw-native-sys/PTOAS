@@ -237,13 +237,16 @@ static LogicalResult verifyTSelSA2A3(TSelSOp op) {
       return failure();
     }
   }
-  bool ok = elem.isF16() || elem.isF32();
+  // pto-isa A2A3 TSELS lists bfloat16_t and the 2/4-byte integer forms
+  // (docs/isa/TSELS.md); the IntegerType branch below accepts both the signless
+  // and the unsigned spellings of those widths.
+  bool ok = elem.isF16() || elem.isBF16() || elem.isF32();
   if (auto it = mlir::dyn_cast<mlir::IntegerType>(elem)) {
       ok = (it.getWidth() == mlir::pto::kValue16 || it.getWidth() == mlir::pto::kValue32);
   }
   if (!ok) {
     return op.emitOpError(
-        "expects A2/A3 tsels src and dst element type to be i16, i32, f16, or f32");
+        "expects A2/A3 tsels src and dst element type to be a 2/4-byte integer or f16/bf16/f32");
   }
   return success();
 }
@@ -259,7 +262,10 @@ static LogicalResult verifyTSelSA5(TSelSOp op) {
     return op.emitOpError("expects mask, src, and dst to use row-major layout");
   }
   Type elem = *elemOr;
-  bool ok = elem.isF16() || elem.isF32();
+  // pto-isa A5 TSELS lists bfloat16_t in addition to the 1/2/4-byte integer
+  // forms (docs/isa/TSELS.md); the IntegerType branch below accepts both the
+  // signless and the unsigned spellings of those widths.
+  bool ok = elem.isF16() || elem.isBF16() || elem.isF32();
   if (auto it = mlir::dyn_cast<mlir::IntegerType>(elem)) {
       ok =
           (it.getWidth() == mlir::pto::kValue8 || it.getWidth() == mlir::pto::kValue16 ||
@@ -267,14 +273,15 @@ static LogicalResult verifyTSelSA5(TSelSOp op) {
   }
   if (!ok) {
     return op.emitOpError(
-        "expects A5 tsels src and dst element type to be i8, i16, i32, f16, or f32");
+        "expects A5 tsels src and dst element type to be a 1/2/4-byte integer or f16/bf16/f32");
   }
   return success();
 }
 
 mlir::LogicalResult mlir::pto::TSelSOp::verify() {
   // Constraints & Verification per PTO_IR_manual.md pto.tsels:
-  // - src and dst same element type; A2A3: i16/i32/f16/f32; A5: i8/i16/i32/f16/f32
+  // - src and dst same element type; A2A3: 2/4-byte integer, f16/bf16/f32;
+  //   A5: 1/2/4-byte integer, f16/bf16/f32
   // - src and dst row-major; src and dst same valid region
   auto verifyA2A3 = [this]() -> LogicalResult { return verifyTSelSA2A3(*this); };
   auto verifyA5 = [this]() -> LogicalResult { return verifyTSelSA5(*this); };

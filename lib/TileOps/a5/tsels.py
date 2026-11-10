@@ -39,7 +39,13 @@ _DTYPES = [
     ("i8", "f16", "f16", "f16", "f16"),
     ("i16", "f16", "f16", "f16", "f16"),
     ("i32", "f16", "f16", "f16", "f16"),
+    ("i8", "bf16", "bf16", "bf16", "bf16"),
+    ("i16", "bf16", "bf16", "bf16", "bf16"),
+    ("i32", "bf16", "bf16", "bf16", "bf16"),
 ]
+
+# 16-bit payloads use the packed predicate distribution and a b16 mask.
+_PACKED_16BIT_DTYPES = frozenset({"f16", "bf16", "i16"})
 
 
 def _tsels_shapes(
@@ -85,12 +91,12 @@ def _emit_tsels_linear(operands):
     total_elements = operands.total_elements
     lanes = pto.elements_per_vreg(dtype)
     remained = total_elements
-    is_f16 = str(dtype) in {"f16", "i16"}
+    is_b16 = str(dtype) in _PACKED_16BIT_DTYPES
     for offset in range(0, total_elements, lanes):
         pred, remained = pto.make_mask(dtype, remained)
-        dist = pto.PredicateDist.US if is_f16 else pto.PredicateDist.NORM
+        dist = pto.PredicateDist.US if is_b16 else pto.PredicateDist.NORM
         select_mask = pto.plds(mask_ptr, offset // 8, dist=dist)
-        if is_f16:
+        if is_b16:
             select_mask = pto.pbitcast(select_mask, pto.mask_b16)
         value = pto.vlds(src_ptr, offset)
         pto.vsts(pto.vsel(value, scalar_vec, select_mask), dst_ptr, offset, pred)
@@ -181,9 +187,10 @@ def _emit_tsels_2d_f32(mask, src, scalar, dst):
 
 
 @rewrite_jit_function
-def _emit_tsels_2d_narrow(mask, src, scalar, dst, packed):
-    """Emit per-row scalar-select stores for packed f16/i16 or byte i8 masks."""
+def _emit_tsels_2d_narrow(mask, src, scalar, dst):
+    """Emit per-row scalar-select stores for packed f16/bf16/i16 or byte i8 masks."""
     dtype = dst.dtype
+    packed = str(dtype) in _PACKED_16BIT_DTYPES
     valid_rows, valid_cols = dst.valid_shape
     lanes = pto.elements_per_vreg(dtype)
     mask_ptr = pto.castptr(mask.as_ptr(), pto.ptr(pto.ui8, "ub"))
@@ -213,7 +220,7 @@ def _emit_tsels_2d(mask, src, scalar, dst):
     if str(dtype) in {"f32", "i32"}:
         _emit_tsels_2d_f32(mask, src, scalar, dst)
     else:
-        _emit_tsels_2d_narrow(mask, src, scalar, dst, str(dtype) in {"f16", "i16"})
+        _emit_tsels_2d_narrow(mask, src, scalar, dst)
 
 
 def _register_tsels(*, name, traversal):

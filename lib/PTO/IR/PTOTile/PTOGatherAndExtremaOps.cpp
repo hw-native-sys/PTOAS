@@ -188,9 +188,9 @@ mlir::LogicalResult mlir::pto::TLReluOp::verify() {
 mlir::LogicalResult mlir::pto::TMaxOp::verify() {
   return verifyArithmeticBinaryTileOpWithArchDispatch(
       getOperation(), getSrc0().getType(), getSrc1().getType(), getDst().getType(),
-      /*allowInt8OnA5=*/true, /*allowBf16OnA5=*/false,
+      /*allowInt8OnA5=*/true, /*allowBf16OnA5=*/true,
       "expects A2/A3 tmax element type to be i32/i16/f16/f32",
-      "expects A5 tmax element type to be i32/i16/i8/f16/f32");
+      "expects A5 tmax element type to be i32/i16/i8/f16/bf16/f32");
 }
 
 mlir::LogicalResult mlir::pto::TMaxSOp::verify() {

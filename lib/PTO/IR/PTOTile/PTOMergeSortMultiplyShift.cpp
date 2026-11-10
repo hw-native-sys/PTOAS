@@ -194,9 +194,9 @@ mlir::LogicalResult mlir::pto::TMrgSortOp::verify() {
 mlir::LogicalResult mlir::pto::TMulOp::verify() {
   return verifyArithmeticBinaryTileOpWithArchDispatch(
       getOperation(), getSrc0().getType(), getSrc1().getType(), getDst().getType(),
-      /*allowInt8OnA5=*/false, /*allowBf16OnA5=*/false,
+      /*allowInt8OnA5=*/false, /*allowBf16OnA5=*/true,
       "expects A2/A3 tmul element type to be i32/i16/f16/f32",
-      "expects A5 tmul element type to be i32/i16/f16/f32");
+      "expects A5 tmul element type to be i32/i16/f16/bf16/f32");
 }
 
 mlir::LogicalResult mlir::pto::TMulSOp::verify() {
