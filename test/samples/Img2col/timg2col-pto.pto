@@ -15,23 +15,23 @@ module attributes {pto.target_arch = "a5"} {
             stride_h=1, stride_w=1, pad_value=0 : i32,
             channel_size=8, repeat_stride=0, repeat_time=1,
             repeat_mode=0, dst_stride=1, dst_mposition=0,
-            transpose=false>} : !pto.conv_tile_buf<mat, 1x1x3x4x8xf32>
+            transpose=false>} : !pto.conv_tile_buf<mat, 1x2x3x4x8xf32>
     pto.set_fmatrix %src {fmatrixMode = #pto.fmatrix_mode<b_manual>}
       : !pto.conv_tile_buf<
-          mat, 1x1x3x4x8xf32>
+          mat, 1x2x3x4x8xf32>
     pto.set_img2col_rpt %src {fmatrixMode = #pto.fmatrix_mode<b_manual>}
       : !pto.conv_tile_buf<
-          mat, 1x1x3x4x8xf32>
+          mat, 1x2x3x4x8xf32>
     pto.set_img2col_padding %src {fmatrixMode = #pto.fmatrix_mode<b_manual>}
       : !pto.conv_tile_buf<
-          mat, 1x1x3x4x8xf32>
+          mat, 1x2x3x4x8xf32>
     %c1 = arith.constant 1 : index
     %c8 = arith.constant 8 : index
     pto.timg2col %dst, %src, pos_m = %c1, pos_k = %c8
                              {fmatrixMode = #pto.fmatrix_mode<b_manual>}
       : !pto.tile_buf<left, 16x32xf32, valid=9x32, blayout=col_major, slayout=row_major, fractal=512>,
         !pto.conv_tile_buf<
-            mat, 1x1x3x4x8xf32>
+            mat, 1x2x3x4x8xf32>
     return
   }
 }

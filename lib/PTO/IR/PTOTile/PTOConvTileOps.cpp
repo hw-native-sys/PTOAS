@@ -188,6 +188,51 @@ static LogicalResult verifyTImg2colElemType(TImg2colOp op) {
   return success();
 }
 
+// A5: posK selects the first K position of the im2col expansion, and the
+// call covers FH*FW*C0 consecutive K positions starting there. A window
+// that starts past the fmap channel extent makes TIMG2COL walk the L1
+// conv tile out of range and fault the AICORE (observed as EZ9999 error
+// 143 on Ascend950PR with fmap C_in=16 and posK=8), so a constant posK
+// is range-checked against the fmap K extent. posM is left unchecked:
+// it offsets the M window over padded fmap rows, which the hardware
+// clamps. New code follows the repo .clang-format (Google, 4-space).
+static LogicalResult verifyTImg2colPosKWindow(TImg2colOp op) {
+    const bool isA5 =
+        getVerifierTargetArch(op.getOperation()) == VerifierTargetArch::A5;
+    if (!isA5 || !op.getPosK()) {
+        return success();
+    }
+    auto srcCT = dyn_cast<pto::ConvTileBufType>(op.getSrc().getType());
+    auto dstTB = dyn_cast<pto::TileBufType>(op.getDst().getType());
+    auto posK = mlir::getConstantIntValue(op.getPosK());
+    if (!srcCT || !dstTB || !posK || *posK <= 0 || srcCT.getShape().empty() ||
+        llvm::is_contained(srcCT.getShape(), ShapedType::kDynamic)) {
+        return success();
+    }
+    auto *defOp = op.getSrc().getDefiningOp();
+    auto allocOp = defOp ? dyn_cast<pto::AllocTileOp>(defOp) : nullptr;
+    auto cfg = allocOp ? allocOp.getConfig() : pto::ConvTileConfigAttr();
+    if (!cfg) {
+        return success();
+    }
+    // fmap channel extent: K_total = C1 * C0 * FH * FW (im2col K dim).
+    ArrayRef<int64_t> ctShape = srcCT.getShape();
+    const int64_t kTotal = ctShape[1] * ctShape[4] *
+                               cfg->getFilterH().getInt() *
+                               cfg->getFilterW().getInt();
+    // The dst left tile k-window spanned by this call.
+    auto dstValid = dstTB.getValidShape();
+    if (dstValid.size() == 2 && dstValid[1] >= 0 &&
+        *posK + dstValid[1] > kTotal) {
+        return op.emitOpError()
+               << "posK " << *posK << " + dst k-width " << dstValid[1]
+               << " exceeds the fmap K extent " << kTotal
+               << " (C1*C0*FH*FW); TIMG2COL would walk the L1 conv tile "
+                  "out of range and fault the AICORE";
+    }
+    return success();
+}
+
 LogicalResult mlir::pto::TImg2colOp::verify() {
   if (failed(verifyTileBufCommon(*this, getDst().getType(), "dst",
                                  /*allowLowPrecision=*/true))) {
@@ -222,6 +267,10 @@ LogicalResult mlir::pto::TImg2colOp::verify() {
     return failure();
   }
   if (getPosK() && failed(checkPos(getPosK(), "posK"))) {
+    return failure();
+  }
+
+  if (failed(verifyTImg2colPosKWindow(*this))) {
     return failure();
   }
 

@@ -1,0 +1,49 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. Do not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND
+// NON-INFRINGEMENT OF ANY OTHER KIND. See LICENSE in the root of the software repository for the full text of the License.
+
+// Guards the timg2col posK window verifier: the expansion covers
+// FH*FW*C_in consecutive K positions starting at posK, so a constant posK
+// whose window exceeds the fmap K extent (C1*C0*FH*FW) must be rejected --
+// on hardware it walks the L1 conv tile out of range and faults the AICORE
+// (EZ9999, error 143). Here fmap C1=1 gives K extent 1*8*2*2 = 32 while
+// posK=8 plus the dst left valid width 32 overflows by 8.
+//
+// RUN: not ptoas --pto-arch=a5 %s -o - 2>&1 | FileCheck %s
+
+module attributes {pto.target_arch = "a5"} {
+  func.func @timg2col_sample(
+      %dst: !pto.tile_buf<left, 16x32xf32, valid=9x32, blayout=col_major, slayout=row_major, fractal=512>) {
+    %src = pto.alloc_tile {config = #pto.conv_tile_config<
+            fmap_h=3, fmap_w=4, pad_list=1x0x1x0,
+            filter_h=2, filter_w=2, dilation_h=1, dilation_w=1,
+            stride_h=1, stride_w=1, pad_value=0 : i32,
+            channel_size=8, repeat_stride=0, repeat_time=1,
+            repeat_mode=0, dst_stride=1, dst_mposition=0,
+            transpose=false>} : !pto.conv_tile_buf<mat, 1x1x3x4x8xf32>
+    pto.set_fmatrix %src {fmatrixMode = #pto.fmatrix_mode<b_manual>}
+      : !pto.conv_tile_buf<
+          mat, 1x1x3x4x8xf32>
+    pto.set_img2col_rpt %src {fmatrixMode = #pto.fmatrix_mode<b_manual>}
+      : !pto.conv_tile_buf<
+          mat, 1x1x3x4x8xf32>
+    pto.set_img2col_padding %src {fmatrixMode = #pto.fmatrix_mode<b_manual>}
+      : !pto.conv_tile_buf<
+          mat, 1x1x3x4x8xf32>
+    %c1 = arith.constant 1 : index
+    %c8 = arith.constant 8 : index
+    pto.timg2col %dst, %src, pos_m = %c1, pos_k = %c8
+                             {fmatrixMode = #pto.fmatrix_mode<b_manual>}
+      : !pto.tile_buf<left, 16x32xf32, valid=9x32, blayout=col_major, slayout=row_major, fractal=512>,
+        !pto.conv_tile_buf<
+            mat, 1x1x3x4x8xf32>
+    return
+  }
+}
+
+
+// CHECK: 'pto.timg2col' op posK 8 + dst k-width 32 exceeds the fmap K extent 32
