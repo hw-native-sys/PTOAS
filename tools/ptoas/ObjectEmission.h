@@ -86,6 +86,13 @@ LogicalResult writeHostStubSource(llvm::StringRef stubSource,
                                   llvm::StringRef path,
                                   llvm::raw_ostream &diagOS);
 
+/// Install the merged, canonical pass-through list for this invocation. The
+/// driver renders every source into this list and writes the same tokens back
+/// as `pto.bisheng_args`, so object emission has one representation. The tokens
+/// are forwarded verbatim: PTOAS does not validate or reorder them, it only
+/// places them after its own arguments and before the per-variant tail.
+void setBishengArgs(llvm::ArrayRef<std::string> args);
+
 LogicalResult compileCppToDeviceObject(
     llvm::StringRef cppPath, llvm::StringRef outObjPath,
     ObjectEmissionDeviceTarget target, const CANNToolchain &toolchain,

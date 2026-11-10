@@ -1,0 +1,406 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+
+// The pass-through must reach every device translation unit argv, in the
+// documented position: after everything PTOAS derives, before the per-variant
+// scheduler tail. A stub CANN toolchain whose bisheng exits 1 makes the printed
+// "Command:" line the composed argv, so these cases check the argv itself and
+// not just the option parser. PTOAS does not curate these arguments: every token
+// is forwarded verbatim, and only placement is PTOAS' business.
+//
+// Spelling is bisheng's business, not ours: --cce-disable-vf-stack-reserved-ubuf
+// is a bisheng *driver* option and travels through -Xbisheng / --bisheng-arg /
+// the module attribute, while -cce-vf-stack-size=0 is an LLVM codegen option and
+// travels in the "-mllvm <option>" pair. Whether bisheng accepts either is
+// bisheng's contract; these cases assert only that the user's tokens reach the
+// composed command line, verbatim and in order.
+// RUN: split-file %s %t
+// RUN: mkdir -p %t.cann/bin %t.cann/tools/bisheng_compiler/bin %t.path
+// RUN: printf '#!/bin/sh\nexit 1\n' > %t.cann/bin/bisheng
+// RUN: chmod +x %t.cann/bin/bisheng
+// RUN: cp %t.cann/bin/bisheng %t.cann/bin/cce-ld
+// RUN: cp %t.cann/bin/bisheng %t.cann/bin/ld.lld
+// RUN: cp %t.cann/bin/bisheng %t.cann/tools/bisheng_compiler/bin/bisheng
+// The same failing bisheng on PATH makes the VPTO target-attribute probe print
+// its own argv, which must stay free of user arguments.
+// RUN: cp %t.cann/bin/bisheng %t.path/bisheng
+// RUN: chmod +x %t.path/bisheng
+// A CANN home whose device bisheng succeeds, so emission reaches the host stub.
+// RUN: mkdir -p %t.okcann/bin %t.okcann/tools/bisheng_compiler/bin
+// RUN: printf '#!/bin/sh\nexit 0\n' > %t.okcann/bin/bisheng
+// RUN: chmod +x %t.okcann/bin/bisheng
+// RUN: cp %t.okcann/bin/bisheng %t.okcann/bin/cce-ld
+// RUN: cp %t.okcann/bin/bisheng %t.okcann/bin/ld.lld
+// RUN: cp %t.cann/bin/bisheng %t.okcann/tools/bisheng_compiler/bin/bisheng
+// RUN: chmod +x %t.okcann/tools/bisheng_compiler/bin/bisheng
+
+// All three spellings are advertised, and each says which channel it feeds.
+// --help sorts options alphabetically, so the checks follow that order.
+// RUN: ptoas --help | FileCheck %s --check-prefix=HELP
+
+// --bisheng-vec-misched=on pins a single device compile per run, so the printed
+// argv is deterministic instead of one of the auto variants.
+// RUN: not env ASCEND_HOME_PATH=%t.cann ptoas --pto-arch=a5 --pto-backend=vpto --bisheng-vec-misched=on %t/kernel.pto -o %t.plain.o 2>&1 | FileCheck %s --check-prefix=PLAIN
+// The issue's driver flag, forwarded through each of its three spellings.
+// RUN: not env ASCEND_HOME_PATH=%t.cann ptoas --pto-arch=a5 --pto-backend=vpto --bisheng-vec-misched=on --bisheng-arg=--cce-disable-vf-stack-reserved-ubuf %t/kernel.pto -o %t.ubuf.o 2>&1 | FileCheck %s --check-prefix=UBUF
+// RUN: not env ASCEND_HOME_PATH=%t.cann ptoas --pto-arch=a5 --pto-backend=vpto --bisheng-vec-misched=on -Xbisheng --cce-disable-vf-stack-reserved-ubuf %t/kernel.pto -o %t.xbisheng.o 2>&1 | FileCheck %s --check-prefix=XBISHENG
+// RUN: not env ASCEND_HOME_PATH=%t.cann ptoas --pto-arch=a5 --pto-backend=vpto --bisheng-vec-misched=on %t/attr.pto -o %t.attr.o 2>&1 | FileCheck %s --check-prefix=ATTR
+// A genuine LLVM codegen option, through -mllvm. (Forwarding the literal
+// "-mllvm" token through the alias instead would just hand bisheng a dangling
+// prefix; the -mllvm spelling is the one that builds the pair.)
+// RUN: not env ASCEND_HOME_PATH=%t.cann ptoas --pto-arch=a5 --pto-backend=vpto --bisheng-vec-misched=on -mllvm -cce-vf-stack-size=0 %t/kernel.pto -o %t.mllvm.o 2>&1 | FileCheck %s --check-prefix=MLLVM
+// Forwarding a DRIVER flag through -mllvm is the user's own choice. The token
+// still lands after -mllvm, verbatim; whether bisheng accepts it is bisheng's
+// contract, not ours, so this case asserts argv only and never that bisheng
+// rejects it.
+// RUN: not env ASCEND_HOME_PATH=%t.cann ptoas --pto-arch=a5 --pto-backend=vpto --bisheng-vec-misched=on -mllvm --cce-disable-vf-stack-reserved-ubuf %t/kernel.pto -o %t.mllvmdriver.o 2>&1 | FileCheck %s --check-prefix=MLLVM-DRIVER
+
+// Ordering: user values come after PTOAS' own flags, so a user -O3 wins; mixed
+// spellings keep command-line order; the per-variant scheduler tail stays last.
+// RUN: not env ASCEND_HOME_PATH=%t.cann ptoas --pto-arch=a5 --pto-backend=vpto --bisheng-vec-misched=on -Xbisheng -O3 %t/kernel.pto -o %t.order.o 2>&1 | FileCheck %s --check-prefix=ORDER
+// RUN: not env ASCEND_HOME_PATH=%t.cann ptoas --pto-arch=a5 --pto-backend=vpto --bisheng-vec-misched=on -Xbisheng -O1 --bisheng-arg=-O2 -mllvm -cce-vf-stack-size=0 -Xbisheng -O3 %t/kernel.pto -o %t.mixedorder.o 2>&1 | FileCheck %s --check-prefix=MIXED-ORDER
+// The authored attribute comes first, then the CLI spellings in order.
+// RUN: not env ASCEND_HOME_PATH=%t.cann ptoas --pto-arch=a5 --pto-backend=vpto --bisheng-vec-misched=on -Xbisheng -O1 --bisheng-arg=-O2 %t/attr_order.pto -o %t.attrorder.o 2>&1 | FileCheck %s --check-prefix=ATTR-ORDER
+// The scheduler off variant appends its disabled flag after the user's, so the
+// policy keeps deciding the variant regardless of what the user forwarded.
+// RUN: not env ASCEND_HOME_PATH=%t.cann ptoas --pto-arch=a5 --pto-backend=vpto --bisheng-vec-misched=off -Xbisheng -O3 %t/kernel.pto -o %t.offtail.o 2>&1 | FileCheck %s --check-prefix=OFF-TAIL
+// Placement, not policy: a forwarded -o is passed through, but PTOAS' own -o
+// comes later in the fixed tail, so the object still goes where PTOAS was told.
+// RUN: not env ASCEND_HOME_PATH=%t.cann ptoas --pto-arch=a5 --pto-backend=vpto --bisheng-vec-misched=on --bisheng-arg=-o --bisheng-arg=%t.hijack.o %t/kernel.pto -o %t.win.o 2>&1 | FileCheck %s --check-prefix=HIJACK
+
+// Bare operand-taking tokens are the user's own doing, not a policy question:
+// each token is forwarded verbatim and, because it is inserted before the fixed
+// tail, it consumes the next token of that tail. That is the user's own doing;
+// PTOAS neither prevents it nor adds a diagnostic of its own, and whether
+// bisheng then accepts the command line is bisheng's business.
+// RUN: not env ASCEND_HOME_PATH=%t.cann ptoas --pto-arch=a5 --pto-backend=vpto --bisheng-vec-misched=on --bisheng-arg=-o %t/kernel.pto -o %t.bareo.o 2>&1 | FileCheck %s --check-prefix=BARE-O
+// RUN: not env ASCEND_HOME_PATH=%t.cann ptoas --pto-arch=a5 --pto-backend=vpto --bisheng-vec-misched=on --bisheng-arg=-x %t/kernel.pto -o %t.barex.o 2>&1 | FileCheck %s --check-prefix=BARE-X
+// RUN: not env ASCEND_HOME_PATH=%t.cann ptoas --pto-arch=a5 --pto-backend=vpto --bisheng-vec-misched=on --bisheng-arg=-mllvm %t/kernel.pto -o %t.barem.o 2>&1 | FileCheck %s --check-prefix=BARE-MLLVM
+// RUN: not env ASCEND_HOME_PATH=%t.cann ptoas --pto-arch=a5 --pto-backend=vpto --bisheng-vec-misched=on --bisheng-arg=-- %t/kernel.pto -o %t.baresep.o 2>&1 | FileCheck %s --check-prefix=BARE-SEP
+// A whitespace-only token is not empty, so it is forwarded like anything else.
+// grep (not FileCheck) because the proof is the extra space the forwarded token
+// leaves in the composed Command line: FileCheck canonicalizes whitespace, grep
+// does not.
+// RUN: not env ASCEND_HOME_PATH=%t.cann ptoas --pto-arch=a5 --pto-backend=vpto --bisheng-vec-misched=on '--bisheng-arg= ' %t/kernel.pto -o %t.ws.o > %t.ws.txt 2>&1
+// RUN: grep -q 'device LLVM compilation failed' %t.ws.txt
+// RUN: grep -q -- '--cce-simt-fpmath-combine=false   -c -x ir' %t.ws.txt
+
+// The merged, canonical state before it is stripped, and the text-mode warning
+// for a spelling that produced no device compile.
+// RUN: not env PTOAS_DEBUG_BISHENG_ARGS=1 ASCEND_HOME_PATH=%t.cann ptoas --pto-arch=a5 --pto-backend=vpto --bisheng-vec-misched=on -mllvm -cce-vf-stack-size=0 %t/kernel.pto -o %t.mergedstate.o 2>&1 | FileCheck %s --check-prefix=MERGED
+// RUN: not env PTOAS_DEBUG_BISHENG_ARGS=1 ASCEND_HOME_PATH=%t.cann ptoas --pto-arch=a5 --pto-backend=vpto --bisheng-vec-misched=on -Xbisheng -O1 --bisheng-arg=-O2 %t/attr_order.pto -o %t.mergedorder.o 2>&1 | FileCheck %s --check-prefix=MERGED-ORDER
+// RUN: env ASCEND_HOME_PATH=%t.cann ptoas --pto-arch=a5 --pto-backend=vpto --emit-vpto %t/attr.pto -o %t.attr.mlir 2>&1 | FileCheck %s --check-prefix=UNUSED
+// RUN: test -f %t.attr.mlir
+// RUN: not grep -q 'bisheng_args' %t.attr.mlir
+// RUN: env ASCEND_HOME_PATH=%t.cann ptoas --pto-arch=a5 --emit-pto-ir -Xbisheng -O3 %t/kernel.pto -o %t.cli.mlir 2>&1 | FileCheck %s --check-prefix=UNUSED
+// RUN: test -f %t.cli.mlir
+// RUN: not grep -q 'bisheng_args' %t.cli.mlir
+// RUN: env ASCEND_HOME_PATH=%t.cann ptoas --pto-arch=a5 --pto-backend=emitc --pto-level=level3 %t/attr_emitc.pto -o %t.attr.cpp 2>&1 | FileCheck %s --check-prefix=UNUSED
+// RUN: test -f %t.attr.cpp
+// RUN: not grep -q 'bisheng_args' %t.attr.cpp
+// RUN: env ASCEND_HOME_PATH=%t.cann ptoas --pto-arch=a5 --pto-backend=vpto --emit-vpto-llvm-ir %t/attr.pto -o %t.attr.ll 2>&1 | FileCheck %s --check-prefix=UNUSED
+// RUN: test -f %t.attr.ll
+// RUN: not grep -q 'bisheng_args' %t.attr.ll
+
+// A paired spelling that is the whole command line still gets a diagnostic, and
+// a ptoas option is never silently eaten by one (cliArchSpecified must come
+// from the parsed occurrences, not from a text scan).
+// RUN: not env ASCEND_HOME_PATH=%t.cann ptoas --pto-arch=a5 --pto-backend=vpto %t/kernel.pto -o %t.missing.o -mllvm 2>&1 | FileCheck %s --check-prefix=MISSING-MLLVM
+// RUN: not env ASCEND_HOME_PATH=%t.cann ptoas --pto-arch=a5 --pto-backend=vpto %t/kernel.pto -o %t.missing2.o -Xbisheng 2>&1 | FileCheck %s --check-prefix=MISSING-XBISHENG
+// RUN: not env ASCEND_HOME_PATH=%t.cann ptoas --pto-arch=a5 --pto-backend=vpto %t/kernel.pto -o %t.missing3.o --mllvm 2>&1 | FileCheck %s --check-prefix=MISSING-DOUBLE
+// RUN: env ASCEND_HOME_PATH=%t.cann ptoas --emit-pto-ir -mllvm --pto-arch=a5 %t/kernel.pto -o %t.s1.mlir
+// RUN: FileCheck %s --check-prefix=S1-ARCH --input-file=%t.s1.mlir
+
+// The emitc backend compiles its own device C++ (fatobj) inside ptoas, so the
+// same knob must reach that command line too.
+// RUN: not env ASCEND_HOME_PATH=%t.cann ptoas --pto-arch=a5 --bisheng-arg=--cce-disable-vf-stack-reserved-ubuf %t/mixed.pto -o %t.emitc.o 2>&1 | FileCheck %s --check-prefix=EMITC
+// RUN: not env ASCEND_HOME_PATH=%t.cann ptoas --pto-arch=a5 %t/attr_mixed.pto -o %t.attremitc.o 2>&1 | FileCheck %s --check-prefix=ATTR-EMITC
+
+// A bridge wrapper is one of the three live device translation units (with the
+// device LLVM object and the emitc fatobj): front-end options and the codegen
+// pair must reach its compile too. The fourth call site, the public emitc
+// device-object helper, has no in-tree caller and is untested.
+// RUN: not env ASCEND_HOME_PATH=%t.cann ptoas --pto-arch=a5 --pto-backend=vpto -Xbisheng -D__FOO__=1 -mllvm -cce-vf-stack-size=0 %t/bridge.pto -o %t.bridge.o 2>&1 | FileCheck %s --check-prefix=WRAPPER
+
+// The probe and the host stub are not device compiles; neither may inherit the
+// user's arguments.
+// RUN: not env PATH=%t.path:$PATH ASCEND_HOME_PATH=%t.cann ptoas --pto-arch=a5 --pto-backend=vpto --bisheng-vec-misched=on --bisheng-arg=--cce-disable-vf-stack-reserved-ubuf %t/kernel.pto -o %t.probe.o 2>&1 | FileCheck %s --check-prefix=PROBE
+// RUN: not env ASCEND_HOME_PATH=%t.okcann ptoas --pto-arch=a5 --pto-backend=vpto --bisheng-vec-misched=on --vpto-fix-vfsimt-size=off --bisheng-arg=--cce-disable-vf-stack-reserved-ubuf %t/kernel.pto -o %t.host.o 2>&1 | FileCheck %s --check-prefix=HOST
+
+// HELP: --Xbisheng=<driver-option>
+// HELP-SAME: clang's -Xclang convention
+// HELP: --bisheng-arg=<bisheng-arg>
+// HELP-SAME: Explicit long alias
+// HELP: --mllvm=<codegen-option>
+// HELP-SAME: LLVM codegen option parser
+
+// Baseline: the passthrough is off unless asked for.
+// PLAIN: Error: device LLVM compilation failed
+// PLAIN-NEXT: Command:
+// PLAIN-SAME: --cce-aicore-arch=dav-c310-vec
+// PLAIN-SAME: -O2
+// PLAIN-NOT: --cce-disable-vf-stack-reserved-ubuf
+// PLAIN-SAME: -c -x ir - -o
+
+// The issue's flag, forwarded verbatim and as the last device argument before
+// the fixed input/output tail.
+// UBUF: Command:
+// UBUF-SAME: --cce-disable-vf-stack-reserved-ubuf -c -x ir - -o
+
+// -Xbisheng forwards the operand alone: no -mllvm inserted in front of it.
+// XBISHENG: Command:
+// XBISHENG-SAME: -mllvm --cce-simt-fpmath-combine=false --cce-disable-vf-stack-reserved-ubuf -c -x ir - -o
+
+// The attribute form lands at the same position.
+// ATTR: Command:
+// ATTR-SAME: --cce-disable-vf-stack-reserved-ubuf -c -x ir - -o
+
+// -mllvm forwards bisheng's own two-token pairing, not a concatenated token.
+// MLLVM: Command:
+// MLLVM-SAME: -mllvm -cce-vf-stack-size=0 -c -x ir - -o
+// MLLVM-DRIVER: Command:
+// MLLVM-DRIVER-SAME: -mllvm --cce-disable-vf-stack-reserved-ubuf -c -x ir - -o
+
+// A flag PTOAS also sets (-O2): the user value is appended later and wins.
+// ORDER: Command:
+// ORDER-SAME: -O2 {{.*}}-O3 -c -x ir - -o
+
+// Mixed spellings keep command-line order, and -mllvm expands to two tokens at
+// its own position (-Xbisheng -O1, --bisheng-arg=-O2, -mllvm <opt>, -Xbisheng -O3).
+// MIXED-ORDER: Command:
+// MIXED-ORDER-SAME: -O1 -O2 -mllvm -cce-vf-stack-size=0 -O3 -c -x ir - -o
+
+// Attribute first, CLI second, so the CLI value is the later, winning one.
+// ATTR-ORDER: Command:
+// ATTR-ORDER-SAME: -O0 -O1 -O2 -c -x ir - -o
+
+// The scheduler policy is appended after the user's arguments, so the off
+// variant stays authoritative.
+// OFF-TAIL: Command:
+// OFF-TAIL-SAME: -O3 -mllvm --cce-aicore-vec-misched=0 -c -x ir - -o
+
+// HIJACK: Command:
+// HIJACK-SAME: -o {{[^ ]*}}hijack.o {{.*}}-c -x ir - -o {{.*}}ptoas-device
+
+// A bare operand-taking token eats the next token of the fixed tail; that is the
+// user's own doing, and the composed argv shows it plainly.
+// BARE-O: Command:
+// BARE-O-SAME: -o -c -x ir - -o
+// BARE-X: Command:
+// BARE-X-SAME: -x -c -x ir - -o
+// BARE-MLLVM: Command:
+// BARE-MLLVM-SAME: -mllvm -c -x ir - -o
+// BARE-SEP: Command:
+// BARE-SEP-SAME: -- -c -x ir - -o
+
+// The merged list is the canonical state: with no authored attribute, a -mllvm
+// spelling still renders into pto.bisheng_args before the emitter consumes it.
+// MERGED: // ----- pto.bisheng_args ----- //
+// MERGED-NEXT: pto.bisheng_args = ["-mllvm", "-cce-vf-stack-size=0"]
+// MERGED-ORDER: pto.bisheng_args = ["-O0", "-O1", "-O2"]
+
+// Text modes report the effective arguments as unused, whichever source they
+// came from, without blaming the attribute.
+// UNUSED: Warning: the requested Bisheng pass-through arguments (-mllvm / -Xbisheng / --bisheng-arg / pto.bisheng_args) were not used
+
+// A trailing paired spelling is cl's own check; all three spellings and both
+// dash styles report the same way.
+// MISSING-MLLVM: for the --mllvm option: requires a value!
+// MISSING-XBISHENG: for the --Xbisheng option: requires a value!
+// MISSING-DOUBLE: for the --mllvm option: requires a value!
+
+// A ptoas option wrapped in a paired spelling is consumed by bisheng, so the
+// driver must not treat it as given: the module's own arch (a5) survives.
+// S1-ARCH: module attributes {{.*}}pto.target_arch = "a5"
+
+// The emitc device compile appends the driver flag with no -mllvm prefix, after
+// its own -dc/-c, and keeps the input/output tail last.
+// EMITC: Error: C++ fatobj compilation failed
+// EMITC-NEXT: Command:
+// EMITC-SAME: -O2 -dc -c {{.*}}--cce-disable-vf-stack-reserved-ubuf {{.*}}-o
+// ATTR-EMITC: Error: C++ fatobj compilation failed
+// ATTR-EMITC-NEXT: Command:
+// ATTR-EMITC-SAME: -O2 -dc -c {{.*}}-O0 {{.*}}-o
+
+// The bridge wrapper device compile receives the front-end option and the
+// codegen pair, before its own source argument.
+// WRAPPER: Error: bridge wrapper bitcode compilation failed
+// WRAPPER-NEXT: Command:
+// WRAPPER-SAME: -DREGISTER_BASE{{.*}}-D__FOO__=1 -mllvm -cce-vf-stack-size=0 {{.*}}-o
+
+// Attribute-shape errors are about reading the attribute, not about policy: a
+// non-array, a non-string element, an empty entry and a nested declaration are
+// rejected; the values themselves are forwarded untouched.
+// RUN: not ptoas --emit-pto-ir %t/attr_string.pto -o - 2>&1 | FileCheck %s --check-prefix=ATTR-STRING
+// RUN: not ptoas --emit-pto-ir %t/attr_int.pto -o - 2>&1 | FileCheck %s --check-prefix=ATTR-INT
+// RUN: not ptoas --emit-pto-ir %t/attr_blank.pto -o - 2>&1 | FileCheck %s --check-prefix=ATTR-BLANK
+// RUN: not ptoas --emit-pto-ir %t/attr_nested.pto -o - 2>&1 | FileCheck %s --check-prefix=ATTR-NESTED
+// RUN: not ptoas --emit-pto-ir --bisheng-arg= %t/kernel.pto -o - 2>&1 | FileCheck %s --check-prefix=EMPTY
+
+// ATTR-STRING: Error: pto.bisheng_args must be an array of strings
+// ATTR-INT: Error: pto.bisheng_args element 1 is not a string
+// ATTR-BLANK: Error: a forwarded Bisheng argument is empty
+// ATTR-NESTED: Error: pto.bisheng_args is only honored on the top-level module
+// EMPTY: Error: a forwarded Bisheng argument is empty
+
+// The target-attribute probe keeps its own fixed argv.
+// PROBE: VPTO LLVM emission failed: bisheng target query failed
+// PROBE-NEXT: Command:
+// PROBE-SAME: -S -emit-llvm
+// PROBE-NOT: --cce-disable-vf-stack-reserved-ubuf
+// PROBE: falling back to configured default target attributes
+// PROBE: Command:
+// PROBE-SAME: --cce-disable-vf-stack-reserved-ubuf -c -x ir - -o
+
+// The host stub compiles host code with -cc1; device flags do not apply there.
+// HOST: Error: host stub compilation failed
+// HOST-NEXT: Command:
+// HOST-SAME: -cc1
+// HOST-NOT: --cce-disable-vf-stack-reserved-ubuf
+
+//--- kernel.pto
+module attributes {pto.target_arch = "a5", pto.kernel_kind = #pto.kernel_kind<vector>} {
+  func.func @copy(%src: !pto.ptr<f32, ub>, %dst: !pto.ptr<f32, ub>) attributes {pto.kernel} {
+    %c0 = arith.constant 0 : index
+    pto.vecscope {
+      %mask = pto.pset_b32 "PAT_ALL" : !pto.mask<b32>
+      %value = pto.vlds %src[%c0] {dist = "NORM"}
+          : !pto.ptr<f32, ub> -> !pto.vreg<64xf32>
+      pto.vsts %value, %dst[%c0], %mask : !pto.vreg<64xf32>, !pto.ptr<f32, ub>, !pto.mask<b32>
+    }
+    return
+  }
+}
+
+//--- attr.pto
+module attributes {pto.target_arch = "a5", pto.kernel_kind = #pto.kernel_kind<vector>,
+                   pto.bisheng_args = ["--cce-disable-vf-stack-reserved-ubuf"]} {
+  func.func @copy(%src: !pto.ptr<f32, ub>, %dst: !pto.ptr<f32, ub>) attributes {pto.kernel} {
+    %c0 = arith.constant 0 : index
+    pto.vecscope {
+      %mask = pto.pset_b32 "PAT_ALL" : !pto.mask<b32>
+      %value = pto.vlds %src[%c0] {dist = "NORM"}
+          : !pto.ptr<f32, ub> -> !pto.vreg<64xf32>
+      pto.vsts %value, %dst[%c0], %mask : !pto.vreg<64xf32>, !pto.ptr<f32, ub>, !pto.mask<b32>
+    }
+    return
+  }
+}
+
+//--- attr_order.pto
+module attributes {pto.target_arch = "a5", pto.kernel_kind = #pto.kernel_kind<vector>,
+                   pto.bisheng_args = ["-O0"]} {
+  func.func @copy(%src: !pto.ptr<f32, ub>, %dst: !pto.ptr<f32, ub>) attributes {pto.kernel} {
+    %c0 = arith.constant 0 : index
+    pto.vecscope {
+      %mask = pto.pset_b32 "PAT_ALL" : !pto.mask<b32>
+      %value = pto.vlds %src[%c0] {dist = "NORM"}
+          : !pto.ptr<f32, ub> -> !pto.vreg<64xf32>
+      pto.vsts %value, %dst[%c0], %mask : !pto.vreg<64xf32>, !pto.ptr<f32, ub>, !pto.mask<b32>
+    }
+    return
+  }
+}
+
+// A mixed container with an emitc child and a vpto child; the emitc child is
+// compiled first, so it is the command line that shows up.
+//--- mixed.pto
+module attributes {pto.target_arch = "a5"} {
+  module attributes {pto.backend = "emitc"} {
+    func.func @emitc_child() attributes {pto.aicore} {
+      return
+    }
+  }
+  module attributes {pto.backend = "vpto", pto.kernel_kind = #pto.kernel_kind<vector>} {
+    func.func @vpto_child() {
+      return
+    }
+  }
+}
+
+//--- attr_mixed.pto
+module attributes {pto.target_arch = "a5", pto.bisheng_args = ["-O0"]} {
+  module attributes {pto.backend = "emitc"} {
+    func.func @emitc_child() attributes {pto.aicore} {
+      return
+    }
+  }
+  module attributes {pto.backend = "vpto", pto.kernel_kind = #pto.kernel_kind<vector>} {
+    func.func @vpto_child() {
+      return
+    }
+  }
+}
+
+//--- attr_emitc.pto
+module attributes {pto.target_arch = "a5",
+                   pto.bisheng_args = ["--cce-disable-vf-stack-reserved-ubuf"]} {
+  func.func @emitc_kernel() attributes {pto.aicore} {
+    return
+  }
+}
+
+// Attribute-shape fixtures: reading the attribute, not judging its values.
+//--- attr_string.pto
+module attributes {pto.target_arch = "a5", pto.bisheng_args = "-mllvm"} {
+  func.func @k() {
+    return
+  }
+}
+
+//--- attr_int.pto
+module attributes {pto.target_arch = "a5", pto.bisheng_args = ["-O0", 42]} {
+  func.func @k() {
+    return
+  }
+}
+
+//--- attr_blank.pto
+module attributes {pto.target_arch = "a5", pto.bisheng_args = [""]} {
+  func.func @k() {
+    return
+  }
+}
+
+//--- attr_nested.pto
+module attributes {pto.target_arch = "a5"} {
+  module attributes {pto.backend = "vpto", pto.bisheng_args = ["-O0"]} {
+    func.func @k() {
+      return
+    }
+  }
+}
+
+// A pipe kernel, so WrapperGen produces a device bridge translation unit.
+//--- bridge.pto
+module attributes {pto.target_arch = "a5"} {
+  func.func @pipe_wrapper(%out: !pto.ptr<f32, gm>) {
+    %fifo_addr = arith.constant 0 : i32
+    pto.section.cube {
+      %pipe = pto.initialize_l2l_pipe{dir_mask = 1, slot_size = 1024, slot_num = 8, flag_base = 0, nosplit = false} (%fifo_addr : i32) -> !pto.pipe
+      %acc = pto.alloc_tile
+        : !pto.tile_buf<loc=acc, dtype=f32, rows=16, cols=16, v_row=16, v_col=16, blayout=col_major, slayout=row_major, fractal=1024, pad=0>
+      pto.tpush(%acc, %pipe : !pto.tile_buf<loc=acc, dtype=f32, rows=16, cols=16, v_row=16, v_col=16, blayout=col_major, slayout=row_major, fractal=1024, pad=0>, !pto.pipe) {split = 1}
+    }
+    pto.section.vector {
+      %c0 = arith.constant 0 : i64
+      %c1 = arith.constant 1 : i64
+      %c512 = arith.constant 512 : i64
+      %pipe = pto.initialize_l2l_pipe{dir_mask = 1, slot_size = 1024, slot_num = 8, flag_base = 0, nosplit = false} (%fifo_addr : i32) -> !pto.pipe
+      %tile = pto.declare_tile -> !pto.tile_buf<loc=vec, dtype=f32, rows=8, cols=16, v_row=8, v_col=16, blayout=row_major, slayout=none_box, fractal=512, pad=0>
+      pto.tpop(%tile, %pipe : !pto.tile_buf<loc=vec, dtype=f32, rows=8, cols=16, v_row=8, v_col=16, blayout=row_major, slayout=none_box, fractal=512, pad=0>, !pto.pipe) {split = 1}
+      %ub = pto.tile_buf_addr %tile
+        : !pto.tile_buf<loc=vec, dtype=f32, rows=8, cols=16, v_row=8, v_col=16, blayout=row_major, slayout=none_box, fractal=512, pad=0>
+       -> !pto.ptr<f32, ub>
+      pto.mte_ub_gm %ub, %out, %c512 nburst(%c1, %c0, %c0)
+        : !pto.ptr<f32, ub>, !pto.ptr<f32, gm>, i64, i64, i64, i64
+      pto.tfree(%pipe : !pto.pipe) {split = 1}
+    }
+    return
+  }
+}

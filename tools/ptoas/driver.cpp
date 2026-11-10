@@ -41,6 +41,7 @@
 #include "llvm/Support/MemoryBuffer.h"
 #include "llvm/Support/Path.h"
 #include "llvm/Support/PrettyStackTrace.h"
+#include "llvm/Support/Format.h"
 #include "llvm/Support/Process.h"
 #include "llvm/Support/Regex.h"
 #include "llvm/Support/Signals.h"
@@ -69,18 +70,6 @@ static llvm::cl::opt<std::string>
 
 static void printPTOASVersion(llvm::raw_ostream &os) {
   os << "ptoas " << kPTOASReleaseVersion << "\n";
-}
-
-static bool hasCLIOption(const std::vector<std::string> &args,
-                         llvm::StringRef option) {
-  const std::string optionWithValue = (option + "=").str();
-  for (size_t i = 1; i < args.size(); ++i) {
-    llvm::StringRef arg(args[i]);
-    if (arg == option || arg.starts_with(optionWithValue)) {
-      return true;
-    }
-  }
-  return false;
 }
 
 // Bridges a string-vector command line to the char** form the LLVM
@@ -1521,11 +1510,15 @@ parseDriverInvocation(const std::vector<std::string> &args,
   llvm::cl::ResetAllOptionOccurrences();
 
   DriverInvocationOptions options;
-  options.cliArchSpecified = hasCLIOption(args, "--pto-arch");
-  options.cliBackendSpecified = hasCLIOption(args, "--pto-backend");
   std::vector<const char *> argViews = toCommandLineViews(args);
   llvm::cl::ParseCommandLineOptions(static_cast<int>(argViews.size()),
                                     argViews.data(), "PTO Assembler (ptoas)\n");
+  // Ask the parser what it actually consumed. A paired -mllvm/-Xbisheng steals
+  // the following token even when that token looks like a ptoas option, so a raw
+  // text scan would report "--pto-arch was given" while the value went to
+  // bisheng -- and the driver would then force the default arch or backend.
+  options.cliArchSpecified = mlir::pto::ptoTargetArch.getNumOccurrences() != 0;
+  options.cliBackendSpecified = mlir::pto::ptoBackend.getNumOccurrences() != 0;
   bool newSchedulerOption = mlir::pto::bishengSchedulerMode.getNumOccurrences() != 0;
   bool oldSchedulerOption = mlir::pto::enableBishengVecMISched.getNumOccurrences() != 0;
   if (newSchedulerOption && oldSchedulerOption) {
@@ -1576,6 +1569,190 @@ loadDriverModule(PTOASContext &context, bool cliArchSpecified) {
     return {};
   context.setArch(std::move(arch));
   return module;
+}
+
+// Extra Bisheng arguments have four sources and one canonical form: the authored
+// pto.bisheng_args attribute and the three command-line spellings. They are
+// merged -- attribute first, CLI spellings in command-line order -- rendered back
+// into the pto.bisheng_args attribute as the single representation, and handed to
+// object emission as the one list every device argv appends. The tokens are
+// forwarded verbatim: the only rejection is an empty one, applied to the merged
+// list, so no source is told apart by its diagnostic.
+//
+// -mllvm and -Xbisheng are paired: the operand is the next token, as with
+// clang's -Xclang. -mllvm forwards the pair, because bisheng (like clang)
+// spells its LLVM codegen options that way and ptoas already emits that pairing
+// internally; -Xbisheng forwards the operand alone.
+static llvm::cl::list<std::string> mllvmBishengArgs(
+    "mllvm",
+    llvm::cl::desc(
+        "Forward the next token to the LLVM codegen option parser of the "
+        "Bisheng device compile, as bisheng's own -mllvm pairing (most common "
+        "spelling); repeatable and mixable with -Xbisheng and --bisheng-arg. "
+        "Use -Xbisheng for bisheng driver options, which -mllvm rejects"),
+    llvm::cl::value_desc("codegen-option"),
+    llvm::cl::ZeroOrMore);
+
+static llvm::cl::list<std::string> xBishengArgs(
+    "Xbisheng",
+    llvm::cl::desc(
+        "Forward the next bisheng driver option to the device compile, "
+        "following clang's -Xclang convention; repeatable and mixable with "
+        "-mllvm and --bisheng-arg. Use -mllvm for LLVM codegen options"),
+    llvm::cl::value_desc("driver-option"),
+    llvm::cl::ZeroOrMore);
+
+static llvm::cl::list<std::string> bishengArgAlias(
+    "bisheng-arg",
+    llvm::cl::desc(
+        "Explicit long alias of -mllvm/-Xbisheng: forward one Bisheng argument "
+        "per occurrence, e.g. --bisheng-arg=--cce-disable-vf-stack-reserved-ubuf"),
+    llvm::cl::value_desc("bisheng-arg"),
+    llvm::cl::ZeroOrMore);
+
+namespace {
+// One source, already rendered into the canonical token list, with the argv
+// index cl recorded for it so sources can be merged in command-line order.
+struct BishengArgSource {
+  unsigned position = 0;
+  std::vector<std::string> tokens;
+};
+} // namespace
+
+static FailureOr<std::vector<std::string>> mergeBishengArgs(ModuleOp module) {
+  constexpr llvm::StringLiteral kAttrName = "pto.bisheng_args";
+  std::vector<std::string> merged;
+  // Clear first: a failing early return must not leave the previous invocation's
+  // list installed for a direct library compile to pick up.
+  mlir::pto::setBishengArgs({});
+
+  // An authored attribute on a nested module would land on a compile unit no
+  // device argv is built from, so that is an error rather than a silent no-op.
+  bool nestedDeclaration = false;
+  module->walk([&](ModuleOp nested) {
+    if (nested != module && nested->hasAttr(kAttrName)) {
+      nestedDeclaration = true;
+    }
+  });
+  if (nestedDeclaration) {
+    llvm::errs() << "Error: " << kAttrName
+                 << " is only honored on the top-level module; move it to the "
+                    "outer module.\n";
+    return failure();
+  }
+
+  // 1. Authored attribute first: a command-line spelling is the later, and
+  //    therefore winning, value under the documented last-one-wins policy.
+  if (Attribute attribute = module->getAttr(kAttrName)) {
+    auto values = dyn_cast<ArrayAttr>(attribute);
+    if (!values) {
+      llvm::errs() << "Error: " << kAttrName
+                   << " must be an array of strings, for example "
+                      "[\"--cce-disable-vf-stack-reserved-ubuf\"] or "
+                      "[\"-mllvm\", \"-cce-vf-stack-size=0\"].\n";
+      return failure();
+    }
+    std::vector<std::string> tokens;
+    tokens.reserve(values.size());
+    for (unsigned index = 0; index < values.size(); ++index) {
+      auto text = dyn_cast<StringAttr>(values[index]);
+      if (!text) {
+        llvm::errs() << "Error: " << kAttrName << " element " << index
+                     << " is not a string; every entry must be a string.\n";
+        return failure();
+      }
+      tokens.push_back(text.getValue().str());
+    }
+    merged.insert(merged.end(), tokens.begin(), tokens.end());
+  }
+
+  // 2. Then the command-line spellings, merged in command-line order.
+  std::vector<BishengArgSource> sources;
+  auto collect = [&sources](llvm::cl::list<std::string> &list, bool forwardPair) {
+    for (unsigned index = 0; index < list.size(); ++index) {
+      std::string value = list[index];
+      BishengArgSource source;
+      source.position = list.getPosition(index);
+      if (forwardPair) {
+        source.tokens.emplace_back("-mllvm");
+      }
+      source.tokens.push_back(std::move(value));
+      sources.push_back(std::move(source));
+    }
+  };
+  collect(mllvmBishengArgs, /*forwardPair=*/true);
+  collect(xBishengArgs, /*forwardPair=*/false);
+  collect(bishengArgAlias, /*forwardPair=*/false);
+  llvm::sort(sources, [](const BishengArgSource &lhs,
+                         const BishengArgSource &rhs) {
+    return lhs.position < rhs.position;
+  });
+  for (const BishengArgSource &source : sources) {
+    merged.insert(merged.end(), source.tokens.begin(), source.tokens.end());
+  }
+
+  // An empty token forwards nothing, so it is a quoting accident rather than a
+  // request; that is the only thing rejected here. Everything else is passed to
+  // bisheng verbatim, including options PTOAS also sets: those lose to ours
+  // because our value comes later. What PTOAS controls is POSITION and its own
+  // fixed tail, not the shape of the forwarded tokens: a repeated option loses to
+  // ours, while a BARE operand-taking token consumes the next token of that tail,
+  // which is the user's own doing (ObjectEmission.cpp spells out both cases).
+  for (const std::string &token : merged) {
+    if (token.empty()) {
+      llvm::errs() << "Error: a forwarded Bisheng argument is empty; drop the "
+                      "occurrence or pass a non-empty token.\n";
+      return failure();
+    }
+  }
+
+  // 3. Canonical form: the merged list becomes pto.bisheng_args, so the state is
+  //    one representation whether the user authored it or not.
+  if (!merged.empty()) {
+    MLIRContext *context = module->getContext();
+    llvm::SmallVector<Attribute, mlir::pto::kValue8> tokens;
+    tokens.reserve(merged.size());
+    for (const std::string &token : merged) {
+      tokens.push_back(StringAttr::get(context, token));
+    }
+    module->setAttr(kAttrName, ArrayAttr::get(context, tokens));
+    // PTOAS_DEBUG_BISHENG_ARGS prints the merged, canonical list before it is
+    // stripped. It is a debugging aid for "which tokens did my four sources turn
+    // into", so it is off by default and never affects the compile.
+    if (llvm::sys::Process::GetEnv("PTOAS_DEBUG_BISHENG_ARGS")) {
+      llvm::errs() << "// ----- " << kAttrName << " ----- //\n" << kAttrName
+                   << " = [";
+      for (size_t index = 0; index < merged.size(); ++index) {
+        if (index != 0) {
+          llvm::errs() << ", ";
+        }
+        llvm::errs() << "\"";
+        for (char value : merged[index]) {
+          if (value == '"' || value == '\\') {
+            llvm::errs() << '\\' << value;
+          } else if (static_cast<unsigned char>(value) < 0x20) {
+            llvm::errs() << llvm::format_hex_no_prefix(
+                static_cast<unsigned char>(value), 2);
+          } else {
+            llvm::errs() << value;
+          }
+        }
+        llvm::errs() << "\"";
+      }
+      llvm::errs() << "]\n";
+    }
+  }
+
+  // 4. One consumer: object emission appends exactly this list, through one
+  //    helper, at four call sites (three live device translation units plus the
+  //    untested public emitc device-object helper).
+  mlir::pto::setBishengArgs(merged);
+
+  // 5. A compilation input, not part of the emitted IR: removed before any
+  //    backend runs, so no artifact (LLVM IR, translated C++, fatobj) can carry
+  //    it. The canonical list above is what every emitter uses.
+  module->removeAttr(kAttrName);
+  return merged;
 }
 
 static LogicalResult configureDriverBackend(PTOASContext &context,
@@ -1644,13 +1821,33 @@ static int runPTOASDriver(const std::vector<std::string> &args,
       createDriverContext(registry, borrowedContext, *options);
   OwningOpRef<ModuleOp> module =
       loadDriverModule(*context, options->cliArchSpecified);
-  if (!module || failed(configureDriverBackend(
-                     *context, module.get(), options->cliBackendSpecified))) {
+  if (!module) {
+    return 1;
+  }
+  FailureOr<std::vector<std::string>> bishengArgs =
+      mergeBishengArgs(module.get());
+  if (failed(bishengArgs) ||
+      failed(configureDriverBackend(*context, module.get(),
+                                    options->cliBackendSpecified))) {
     return 1;
   }
   mlir::pto::PTOASCompileResult result;
   if (failed(runPTOASJobs(module, *context, result))) {
     return 1;
+  }
+  // Requested device flags that never got used are worse than a complaint: text
+  // modes emit source or IR for the user to compile, so no Bisheng device
+  // compile ran. Worded for the effective arguments, not for one source, so it
+  // is correct for a CLI spelling too.
+  if (result.kind == mlir::pto::PTOASCompileResultKind::Text &&
+      !bishengArgs->empty()) {
+    llvm::errs() << "Warning: the requested Bisheng pass-through arguments "
+                    "(-mllvm / -Xbisheng / --bisheng-arg / pto.bisheng_args) "
+                    "were not used: this invocation emitted text, not an "
+                    "object, so no Bisheng device compile ran. They apply only "
+                    "when ptoas runs that compile itself (--pto-backend=vpto, "
+                    "or a mixed fatobj with -o <file>.o); otherwise pass the "
+                    "same options to Bisheng directly.\n";
   }
   return finishDriverResult(result, context->getOutputPath());
 }

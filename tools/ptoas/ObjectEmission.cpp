@@ -63,6 +63,41 @@ static llvm::cl::opt<BishengVFAutoSyncMode> bishengVFAutoSyncMode(
                                 "Use Bisheng global VF auto-sync")),
     llvm::cl::init(BishengVFAutoSyncMode::Off));
 
+// The one canonical pass-through representation for this invocation. The driver
+// renders every source -- the authored `pto.bisheng_args` attribute and the
+// -mllvm / -Xbisheng / --bisheng-arg spellings -- into a single token list,
+// writes that list back as the module attribute, and hands the same list here.
+// Object emission therefore has one representation and never looks at a
+// spelling, so no spelling can behave differently per backend.
+//
+// Three live device translation units consume it through appendBishengExtraArgs():
+// the device LLVM object compile, the emitc fatobj and the VPTO bridge wrapper
+// bitcode compile. A fourth call site, the public emitc device-object helper
+// (compileCppDeviceSourceToObject), has no in-tree caller and is untested.
+// The target-attribute probe in
+// lib/PTO/Transforms/VPTO/VPTOLLVMEmitterHelper.cpp and the host stub compiles
+// deliberately do not: see the comments there.
+static llvm::SmallVector<std::string, mlir::pto::kValue8> mergedBishengArgs;
+
+// The one helper every device argv composition calls with the list the driver
+// already merged (module attribute first, then the CLI spellings in
+// command-line order). PTOAS forwards these tokens verbatim: it does not curate
+// bisheng's option taxonomy and it does not reorder anything. What it does
+// control is placement -- the tokens go after PTOAS' own arguments and before
+// the fixed tail -- so a forwarded token that merely repeats one of our options
+// (for example a paired -o <path>) loses to ours.
+//
+// A forwarded token that TAKES an operand is the user's own doing: a bare -o,
+// -x, -mllvm or -- inserted here consumes the next token of the fixed tail, and
+// bisheng then reports its own error against the composed command line. PTOAS
+// does not second-guess that.
+//
+// Keep the call sites in sync: a new device compile that does not call this is a
+// silent feature hole.
+void appendBishengExtraArgs(llvm::SmallVectorImpl<std::string> &args) {
+  args.append(mergedBishengArgs.begin(), mergedBishengArgs.end());
+}
+
 static bool runCommandWithStderr(llvm::StringRef program,
                                  llvm::ArrayRef<std::string> ownedArgs,
                                  llvm::StringRef stderrPath,
@@ -405,6 +440,11 @@ static bool compileBridgeWrapperToBitcode(
   for (const std::string &includeDir : toolchain.cppIncludeDirs) {
     args.push_back("-I" + includeDir);
   }
+  // This is a device translation unit, so front-end options (-D, -I) and
+  // bitcode-stage codegen options belong here too. The linked result is later
+  // recompiled by compileDeviceLLVMToObject, which appends the same list again,
+  // so a driver-level option reaches codegen through that compile.
+  appendBishengExtraArgs(args);
   args.push_back(sourcePath);
   args.push_back("-o");
   args.push_back(outBitcodePath);
@@ -826,6 +866,11 @@ buildDeviceCompileArgs(llvm::StringRef targetCPU, llvm::StringRef bishengPath,
     if (needsPrintSupport) {
         appendCcePrintFlags(args);
     }
+    // User --bisheng-arg entries come last here, so where PTOAS has no opinion
+    // the later value wins (e.g. a user -O3 over PTOAS' -O2). The per-variant
+    // scheduler tail is appended by the caller after this and keeps deciding
+    // the compile variant.
+    appendBishengExtraArgs(args);
     return args;
 }
 
@@ -897,6 +942,10 @@ static bool compileCppDeviceSourceToObject(
   for (const std::string &includeDir : toolchain.cppIncludeDirs) {
     args.push_back("-I" + includeDir);
   }
+  // No in-tree caller reaches this helper today (the live emitc path is
+  // compileCppDeviceSourceToFatobj), so this append site is untested. Keep it in
+  // sync anyway: it is part of the public ObjectEmission API.
+  appendBishengExtraArgs(args);
   args.push_back("-c");
   args.push_back(cppPath.str());
   args.push_back("-o");
@@ -931,6 +980,7 @@ static bool compileCppDeviceSourceToFatobj(
   for (const std::string &includeDir : toolchain.cppIncludeDirs) {
     args.push_back("-I" + includeDir);
   }
+  appendBishengExtraArgs(args);
   args.push_back(cppPath.str());
   args.push_back("-o");
   args.push_back(outObjPath.str());
@@ -1147,6 +1197,10 @@ static bool linkFatobjFiles(llvm::ArrayRef<std::string> fatobjPaths,
 }
 
 } // namespace
+
+void mlir::pto::setBishengArgs(llvm::ArrayRef<std::string> args) {
+  mergedBishengArgs.assign(args.begin(), args.end());
+}
 
 mlir::pto::TempFileRegistry::~TempFileRegistry() { cleanup(); }
 
