@@ -27,14 +27,14 @@ from ._expand_binary import (
 from SoftOps import div_i32_soft
 
 
-def _divide_i16(lhs, rhs, mask, f32_mask):
+def _divide_i16(lhs, rhs, mask, even_mask, odd_mask):
     lhs_even = pto.vcvt(lhs, pto.f32, mask, part=pto.VcvtPartMode.EVEN)
     rhs_even = pto.vcvt(rhs, pto.f32, mask, part=pto.VcvtPartMode.EVEN)
-    divided_even = pto.vdiv(lhs_even, rhs_even, f32_mask)
+    divided_even = pto.vdiv(lhs_even, rhs_even, even_mask)
     result_even = pto.vcvt(
         divided_even,
         pto.i16,
-        f32_mask,
+        even_mask,
         rnd=pto.VcvtRoundMode.Z,
         sat=pto.VcvtSatMode.NOSAT,
         part=pto.VcvtPartMode.EVEN,
@@ -42,11 +42,11 @@ def _divide_i16(lhs, rhs, mask, f32_mask):
 
     lhs_odd = pto.vcvt(lhs, pto.f32, mask, part=pto.VcvtPartMode.ODD)
     rhs_odd = pto.vcvt(rhs, pto.f32, mask, part=pto.VcvtPartMode.ODD)
-    divided_odd = pto.vdiv(lhs_odd, rhs_odd, f32_mask)
+    divided_odd = pto.vdiv(lhs_odd, rhs_odd, odd_mask)
     result_odd = pto.vcvt(
         divided_odd,
         pto.i16,
-        f32_mask,
+        odd_mask,
         rnd=pto.VcvtRoundMode.Z,
         sat=pto.VcvtSatMode.NOSAT,
         part=pto.VcvtPartMode.ODD,

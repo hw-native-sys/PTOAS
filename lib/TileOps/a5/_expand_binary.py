@@ -442,8 +442,8 @@ def _emit_row_expand_body(src0, src1, dst, vector_op):
 def _emit_column_expand_loop(src0, src1, dst, apply_op):
     """Shared column-expand loop.
 
-    ``apply_op(lhs, rhs, mask, remained)`` receives the two operands in the authored
-    order ``src0, src1`` and returns the result vector of the current column chunk.
+    ``apply_op(lhs, rhs, mask, remaining_cols)`` receives the two operands in the
+    authored order and the remaining column count before consuming this chunk.
     """
     dtype = dst.dtype
     valid_rows, valid_cols = dst.valid_shape
@@ -457,15 +457,16 @@ def _emit_column_expand_loop(src0, src1, dst, apply_op):
         col_loop = pto.for_(0, valid_cols, step=lanes).carry(remained=valid_cols)
         with col_loop:
             col = col_loop.iv
-            mask, remained = pto.make_mask(dtype, col_loop.remained)
+            remaining_cols = col_loop.remained
+            mask, next_remaining_cols = pto.make_mask(dtype, remaining_cols)
             full_vec = pto.vlds(full[row, col:])
             broadcast_vec = pto.vlds(broadcast_row[0, col:])
             if src0_is_full:
-                result = apply_op(full_vec, broadcast_vec, mask, remained)
+                result = apply_op(full_vec, broadcast_vec, mask, remaining_cols)
             else:
-                result = apply_op(broadcast_vec, full_vec, mask, remained)
+                result = apply_op(broadcast_vec, full_vec, mask, remaining_cols)
             pto.vsts(result, dst[row, col:], mask)
-            col_loop.update(remained=remained)
+            col_loop.update(remained=next_remaining_cols)
 
 
 def _emit_column_expand_body(src0, src1, dst, vector_op):
@@ -478,10 +479,14 @@ def _emit_column_expand_body(src0, src1, dst, vector_op):
 def _emit_column_expand_integer_div(src0, src1, dst, divide_i16, divide_i32):
     """Column expand for the integer division templates (i16 via f32, i32 in software)."""
 
-    def _apply(lhs, rhs, mask, remained):
+    def _apply(lhs, rhs, mask, remaining_cols):
         if str(dst.dtype) == "i16":
-            f32_mask, _ = pto.make_mask(pto.f32, (remained + 1) // 2)
-            return divide_i16(lhs, rhs, mask, f32_mask)
+            # Each f32 mask is capped at one register by make_mask. An odd
+            # tail has one more even lane than odd lanes.
+            odd_cols = remaining_cols // 2
+            even_mask, _ = pto.make_mask(pto.f32, remaining_cols - odd_cols)
+            odd_mask, _ = pto.make_mask(pto.f32, odd_cols)
+            return divide_i16(lhs, rhs, mask, even_mask, odd_mask)
         return divide_i32(lhs, rhs, mask)
 
     _emit_column_expand_loop(src0, src1, dst, _apply)
