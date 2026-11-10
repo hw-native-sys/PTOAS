@@ -33,9 +33,9 @@
 
 module {
   func.func @f32_fp8_f32_roundtrip(
-      %src: !pto.ptr<bf16, ub> {pto.alignment = 32 : i64},
+      %src: !pto.ptr<bf16, ub>,
       %scale: bf16,
-      %dst: !pto.ptr<bf16, ub> {pto.alignment = 32 : i64}) {
+      %dst: !pto.ptr<bf16, ub>) {
     %c0 = arith.constant 0 : index
     %c256 = arith.constant 256 : index
     %mask = pto.vmi.create_mask %c256
@@ -64,9 +64,9 @@ module {
   }
 
   func.func @bf16_f16_bf16_roundtrip(
-      %src: !pto.ptr<bf16, ub> {pto.alignment = 32 : i64},
+      %src: !pto.ptr<bf16, ub>,
       %scale: bf16,
-      %dst: !pto.ptr<bf16, ub> {pto.alignment = 32 : i64}) {
+      %dst: !pto.ptr<bf16, ub>) {
     %c0 = arith.constant 0 : index
     %c256 = arith.constant 256 : index
     %mask = pto.vmi.create_mask %c256
@@ -95,9 +95,9 @@ module {
   }
 
   func.func @f32_f16_f32_roundtrip(
-      %src: !pto.ptr<f32, ub> {pto.alignment = 32 : i64},
-      %dst16: !pto.ptr<f16, ub> {pto.alignment = 32 : i64},
-      %dst: !pto.ptr<f32, ub> {pto.alignment = 32 : i64}) {
+      %src: !pto.ptr<f32, ub>,
+      %dst16: !pto.ptr<f16, ub>,
+      %dst: !pto.ptr<f32, ub>) {
     %c0 = arith.constant 0 : index
     %c128 = arith.constant 128 : index
     %mask = pto.vmi.create_mask %c128
@@ -117,8 +117,8 @@ module {
   }
 
   func.func @si32_si16_si32_roundtrip(
-      %src: !pto.ptr<si32, ub> {pto.alignment = 32 : i64},
-      %dst: !pto.ptr<si32, ub> {pto.alignment = 32 : i64}) {
+      %src: !pto.ptr<si32, ub>,
+      %dst: !pto.ptr<si32, ub>) {
     %c0 = arith.constant 0 : index
     %c64 = arith.constant 64 : index
     %mask = pto.vmi.create_mask %c64
@@ -136,9 +136,9 @@ module {
   }
 
   func.func @ui32_ui8_ui32_roundtrip(
-      %src: !pto.ptr<ui32, ub> {pto.alignment = 32 : i64},
-      %dst8: !pto.ptr<ui8, ub> {pto.alignment = 32 : i64},
-      %dst: !pto.ptr<ui32, ub> {pto.alignment = 32 : i64}) {
+      %src: !pto.ptr<ui32, ub>,
+      %dst8: !pto.ptr<ui8, ub>,
+      %dst: !pto.ptr<ui32, ub>) {
     %c0 = arith.constant 0 : index
     %c64 = arith.constant 64 : index
     %mask = pto.vmi.create_mask %c64

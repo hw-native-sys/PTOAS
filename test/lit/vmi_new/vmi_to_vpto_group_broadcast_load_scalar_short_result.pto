@@ -19,7 +19,7 @@
 
 module {
   // i8, VL 8: gb(1,4) sub-block scalar broadcast, compact group store.
-  func.func @gbl_scalar_short_i8(%src: !pto.ptr<i8, ub> {pto.alignment = 32 : i64}, %dst: !pto.ptr<i8, ub> {pto.alignment = 32 : i64}) {
+  func.func @gbl_scalar_short_i8(%src: !pto.ptr<i8, ub>, %dst: !pto.ptr<i8, ub>) {
     %c0 = arith.constant 0 : index
     %lane = pto.vmi.vload %src[%c0]
         : !pto.ptr<i8, ub> -> !pto.vmi.vreg<1xi8>
@@ -31,7 +31,7 @@ module {
   }
 
   // i16, VL 8: gb(1,2) sub-block scalar broadcast.
-  func.func @gbl_scalar_short_i16(%src: !pto.ptr<i16, ub> {pto.alignment = 32 : i64}, %dst: !pto.ptr<i16, ub> {pto.alignment = 32 : i64}) {
+  func.func @gbl_scalar_short_i16(%src: !pto.ptr<i16, ub>, %dst: !pto.ptr<i16, ub>) {
     %c0 = arith.constant 0 : index
     %lane = pto.vmi.vload %src[%c0]
         : !pto.ptr<i16, ub> -> !pto.vmi.vreg<1xi16>
@@ -44,7 +44,7 @@ module {
 
   // i32, VL 8: gb(1) scalar broadcast whose result does not fill a physical
   // part, so the per-group merge form has no whole part to assemble.
-  func.func @gbl_scalar_short_i32(%src: !pto.ptr<i32, ub> {pto.alignment = 32 : i64}, %dst: !pto.ptr<i32, ub> {pto.alignment = 32 : i64}) {
+  func.func @gbl_scalar_short_i32(%src: !pto.ptr<i32, ub>, %dst: !pto.ptr<i32, ub>) {
     %c0 = arith.constant 0 : index
     %lane = pto.vmi.vload %src[%c0]
         : !pto.ptr<i32, ub> -> !pto.vmi.vreg<1xi32>
@@ -58,7 +58,7 @@ module {
   // i8, VL 128: a 128-lane 8-bit single-group broadcast is a gb(4) group (half
   // a 256-lane part); the dense 128-element store prefers the lane_stride = 2
   // carrier.
-  func.func @gbl_scalar_i8_half_part(%src: !pto.ptr<i8, ub> {pto.alignment = 32 : i64}, %dst: !pto.ptr<i8, ub> {pto.alignment = 32 : i64}) {
+  func.func @gbl_scalar_i8_half_part(%src: !pto.ptr<i8, ub>, %dst: !pto.ptr<i8, ub>) {
     %c0 = arith.constant 0 : index
     %lane = pto.vmi.vload %src[%c0]
         : !pto.ptr<i8, ub> -> !pto.vmi.vreg<1xi8>
@@ -72,8 +72,8 @@ module {
   // gb(1,2) scalar broadcast whose source_group_stride is dynamic: the single
   // group's base is offset + stride * 0, so any stride value reads the same
   // element and the BRC load keeps addressing the original offset.
-  func.func @gbl_scalar_dynamic_stride(%src: !pto.ptr<i16, ub> {pto.alignment = 32 : i64},
-                                       %dst: !pto.ptr<i16, ub> {pto.alignment = 32 : i64},
+  func.func @gbl_scalar_dynamic_stride(%src: !pto.ptr<i16, ub>,
+                                       %dst: !pto.ptr<i16, ub>,
                                        %stride: index) {
     %c0 = arith.constant 0 : index
     %r = pto.vmi.group_broadcast_load %src[%c0], %stride {num_groups = 1 : i64}

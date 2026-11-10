@@ -11,9 +11,9 @@
 
 module {
   func.func @vmi_layout_assignment_widen_f16_store_reduce(
-      %src: !pto.ptr<f16, ub> {pto.alignment = 32 : i64},
-      %sum: !pto.ptr<f32, ub> {pto.alignment = 32 : i64},
-      %dense: !pto.ptr<f32, ub> {pto.alignment = 32 : i64},
+      %src: !pto.ptr<f16, ub>,
+      %sum: !pto.ptr<f32, ub>,
+      %dense: !pto.ptr<f32, ub>,
       %off: index) {
     %c1 = arith.constant 1 : index
     %c16 = arith.constant 16 : index

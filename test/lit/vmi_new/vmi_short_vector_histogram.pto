@@ -26,7 +26,7 @@ module {
     return %h : !pto.vmi.vreg<128xui16>
   }
 
-  func.func @dhist_ui8_vl8(%src: !pto.ptr<ui8, ub> {pto.alignment = 32 : i64},
+  func.func @dhist_ui8_vl8(%src: !pto.ptr<ui8, ub>,
                            %acc: !pto.vmi.vreg<256xui16>)
       -> !pto.vmi.vreg<256xui16> {
     %c0 = arith.constant 0 : index
@@ -41,7 +41,7 @@ module {
 
   // Beyond the {1,2,4,8} the old alias could express: 32 ui8 is still one
   // 32-byte block, so it lowers through the same leg.
-  func.func @chist_ui8_vl32(%src: !pto.ptr<ui8, ub> {pto.alignment = 32 : i64},
+  func.func @chist_ui8_vl32(%src: !pto.ptr<ui8, ub>,
                             %acc: !pto.vmi.vreg<256xui16>)
       -> !pto.vmi.vreg<256xui16> {
     %c0 = arith.constant 0 : index

@@ -13,8 +13,8 @@
 // of 16 lanes is included because it is not one of the four lane counts the old
 // alias enumerated: the bound is 16 bytes, well inside one VCG block.
 module {
-  func.func @cast_f16_8_to_f32_4(%src: !pto.ptr<f16, ub> {pto.alignment = 32 : i64},
-                                 %dst: !pto.ptr<f32, ub> {pto.alignment = 32 : i64}) {
+  func.func @cast_f16_8_to_f32_4(%src: !pto.ptr<f16, ub>,
+                                 %dst: !pto.ptr<f32, ub>) {
     %c0 = arith.constant 0 : index
     %v = pto.vmi.vload %src[%c0] : !pto.ptr<f16, ub> -> !pto.vmi.vreg<8xf16>
     %r = pto.vmi.vinterpret_cast %v
@@ -23,8 +23,8 @@ module {
     return
   }
 
-  func.func @cast_f32_4_to_f16_8(%src: !pto.ptr<f32, ub> {pto.alignment = 32 : i64},
-                                 %dst: !pto.ptr<f16, ub> {pto.alignment = 32 : i64}) {
+  func.func @cast_f32_4_to_f16_8(%src: !pto.ptr<f32, ub>,
+                                 %dst: !pto.ptr<f16, ub>) {
     %c0 = arith.constant 0 : index
     %v = pto.vmi.vload %src[%c0] : !pto.ptr<f32, ub> -> !pto.vmi.vreg<4xf32>
     %r = pto.vmi.vinterpret_cast %v
@@ -33,8 +33,8 @@ module {
     return
   }
 
-  func.func @cast_i8_16_to_i32_4(%src: !pto.ptr<i8, ub> {pto.alignment = 32 : i64},
-                                 %dst: !pto.ptr<i32, ub> {pto.alignment = 32 : i64}) {
+  func.func @cast_i8_16_to_i32_4(%src: !pto.ptr<i8, ub>,
+                                 %dst: !pto.ptr<i32, ub>) {
     %c0 = arith.constant 0 : index
     %v = pto.vmi.vload %src[%c0] : !pto.ptr<i8, ub> -> !pto.vmi.vreg<16xi8>
     %r = pto.vmi.vinterpret_cast %v

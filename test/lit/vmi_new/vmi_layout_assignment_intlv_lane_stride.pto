@@ -13,8 +13,8 @@
 
 module {
   func.func @f16_ls2(
-      %src0: !pto.ptr<f16, ub> {pto.alignment = 32 : i64}, %src1: !pto.ptr<f16, ub> {pto.alignment = 32 : i64},
-      %dst0: !pto.ptr<f16, ub> {pto.alignment = 32 : i64}, %dst1: !pto.ptr<f16, ub> {pto.alignment = 32 : i64}, %off: index) {
+      %src0: !pto.ptr<f16, ub>, %src1: !pto.ptr<f16, ub>,
+      %dst0: !pto.ptr<f16, ub>, %dst1: !pto.ptr<f16, ub>, %off: index) {
     %c16 = arith.constant 16 : index
     %c64 = arith.constant 64 : index
     %aligned_off = arith.muli %off, %c16 : index
@@ -39,8 +39,8 @@ module {
   }
 
   func.func @f8_ls2(
-      %src0: !pto.ptr<f8E4M3FN, ub> {pto.alignment = 32 : i64}, %src1: !pto.ptr<f8E4M3FN, ub> {pto.alignment = 32 : i64},
-      %dst0: !pto.ptr<f8E4M3FN, ub> {pto.alignment = 32 : i64}, %dst1: !pto.ptr<f8E4M3FN, ub> {pto.alignment = 32 : i64},
+      %src0: !pto.ptr<f8E4M3FN, ub>, %src1: !pto.ptr<f8E4M3FN, ub>,
+      %dst0: !pto.ptr<f8E4M3FN, ub>, %dst1: !pto.ptr<f8E4M3FN, ub>,
       %off: index) {
     %c32 = arith.constant 32 : index
     %c128 = arith.constant 128 : index
@@ -66,8 +66,8 @@ module {
   }
 
   func.func @ui8_ls4(
-      %src0: !pto.ptr<ui8, ub> {pto.alignment = 32 : i64}, %src1: !pto.ptr<ui8, ub> {pto.alignment = 32 : i64},
-      %dst0: !pto.ptr<ui8, ub> {pto.alignment = 32 : i64}, %dst1: !pto.ptr<ui8, ub> {pto.alignment = 32 : i64}, %off: index) {
+      %src0: !pto.ptr<ui8, ub>, %src1: !pto.ptr<ui8, ub>,
+      %dst0: !pto.ptr<ui8, ub>, %dst1: !pto.ptr<ui8, ub>, %off: index) {
     %c32 = arith.constant 32 : index
     %c64 = arith.constant 64 : index
     %aligned_off = arith.muli %off, %c32 : index

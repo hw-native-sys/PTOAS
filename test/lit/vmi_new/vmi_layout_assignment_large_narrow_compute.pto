@@ -16,7 +16,7 @@
 // rule read the other way: the narrow source is c(ls2) and the wide result d(2).
 
 module attributes {pto.target_arch = "a5", pto.kernel_kind = #pto.kernel_kind<vector>} {
-  func.func @si32_to_si8_large_L128(%a: !pto.ptr<si32, ub> {pto.alignment = 32 : i64}, %b: !pto.ptr<si8, ub> {pto.alignment = 32 : i64}) attributes {pto.kernel} {
+  func.func @si32_to_si8_large_L128(%a: !pto.ptr<si32, ub>, %b: !pto.ptr<si8, ub>) attributes {pto.kernel} {
     %c0 = arith.constant 0 : index
     pto.vecscope {
       %v = pto.vmi.vload %a[%c0] : !pto.ptr<si32, ub> -> !pto.vmi.vreg<128xsi32>
@@ -27,7 +27,7 @@ module attributes {pto.target_arch = "a5", pto.kernel_kind = #pto.kernel_kind<ve
     return
   }
 
-  func.func @si32_to_si8_large_L256(%a: !pto.ptr<si32, ub> {pto.alignment = 32 : i64}, %b: !pto.ptr<si8, ub> {pto.alignment = 32 : i64}) attributes {pto.kernel} {
+  func.func @si32_to_si8_large_L256(%a: !pto.ptr<si32, ub>, %b: !pto.ptr<si8, ub>) attributes {pto.kernel} {
     %c0 = arith.constant 0 : index
     pto.vecscope {
       %v = pto.vmi.vload %a[%c0] : !pto.ptr<si32, ub> -> !pto.vmi.vreg<256xsi32>
@@ -38,7 +38,7 @@ module attributes {pto.target_arch = "a5", pto.kernel_kind = #pto.kernel_kind<ve
     return
   }
 
-  func.func @si16_to_si8_large_L256(%a: !pto.ptr<si16, ub> {pto.alignment = 32 : i64}, %b: !pto.ptr<si8, ub> {pto.alignment = 32 : i64}) attributes {pto.kernel} {
+  func.func @si16_to_si8_large_L256(%a: !pto.ptr<si16, ub>, %b: !pto.ptr<si8, ub>) attributes {pto.kernel} {
     %c0 = arith.constant 0 : index
     pto.vecscope {
       %v = pto.vmi.vload %a[%c0] : !pto.ptr<si16, ub> -> !pto.vmi.vreg<256xsi16>
@@ -49,7 +49,7 @@ module attributes {pto.target_arch = "a5", pto.kernel_kind = #pto.kernel_kind<ve
     return
   }
 
-  func.func @si8_to_si32_large_L128(%src: !pto.ptr<si8, ub> {pto.alignment = 32 : i64}, %dst: !pto.ptr<si32, ub> {pto.alignment = 32 : i64}) attributes {pto.kernel} {
+  func.func @si8_to_si32_large_L128(%src: !pto.ptr<si8, ub>, %dst: !pto.ptr<si32, ub>) attributes {pto.kernel} {
     %c0 = arith.constant 0 : index
     pto.vecscope {
       %v = pto.vmi.vload %src[%c0] : !pto.ptr<si8, ub> -> !pto.vmi.vreg<128xsi8>

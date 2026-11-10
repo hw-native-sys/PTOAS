@@ -1,18 +1,19 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+
+
 // RUN: pto-test-opt %s -vmi-lower-unified-to-legacy -vmi-mask-granularity-assignment -vmi-layout-assignment -vmi-to-vpto | FileCheck %s
 
+// Frontend contracts prove the exact pointer; later offsets still need proof.
+// Unannotated arguments retain the existing address-space ABI contract.
 module {
   func.func @annotated(%addr: i64) -> !pto.vmi.vreg<8xf32> {
     %p = pto.castptr %addr {pto.alignment = 32 : i64} : i64 -> !pto.ptr<f32, ub>
-    %z = arith.constant 0 : index
-    %v = pto.vmi.vload %p[%z] : !pto.ptr<f32, ub> -> !pto.vmi.vreg<8xf32>
-    return %v : !pto.vmi.vreg<8xf32>
-  }
-  func.func @select_equal(%cond: i1) -> !pto.vmi.vreg<8xf32> {
-    %a = arith.constant 1024 : i64
-    %b = arith.constant 2048 : i64
-    %x = pto.castptr %a : i64 -> !pto.ptr<f32, ub>
-    %y = pto.castptr %b : i64 -> !pto.ptr<f32, ub>
-    %p = arith.select %cond, %x, %y : !pto.ptr<f32, ub>
     %z = arith.constant 0 : index
     %v = pto.vmi.vload %p[%z] : !pto.ptr<f32, ub> -> !pto.vmi.vreg<8xf32>
     return %v : !pto.vmi.vreg<8xf32>
@@ -23,38 +24,7 @@ module {
     %v = pto.vmi.vload %p[%one] : !pto.ptr<f32, ub> -> !pto.vmi.vreg<8xf32>
     return %v : !pto.vmi.vreg<8xf32>
   }
-  func.func @loop_step_one(%addr: i64, %dst: !pto.ptr<f32, ub> {pto.alignment = 32 : i64}) {
-    %p = pto.castptr %addr {pto.alignment = 32 : i64} : i64 -> !pto.ptr<f32, ub>
-    %z = arith.constant 0 : index
-    %one = arith.constant 1 : index
-    %two = arith.constant 2 : index
-    %r = scf.for %i = %z to %two step %one iter_args(%q = %p) -> (!pto.ptr<f32, ub>) {
-      %v = pto.vmi.vload %q[%z] : !pto.ptr<f32, ub> -> !pto.vmi.vreg<8xf32>
-      pto.vmi.vstore %v, %dst[%z] : !pto.vmi.vreg<8xf32>, !pto.ptr<f32, ub>
-      %n = pto.addptr %q, %one : !pto.ptr<f32, ub> -> !pto.ptr<f32, ub>
-      scf.yield %n : !pto.ptr<f32, ub>
-    }
-    return
-  }
   func.func @argument(%p: !pto.ptr<f32, ub> {pto.alignment = 32 : i64}) -> !pto.vmi.vreg<8xf32> {
-    %z = arith.constant 0 : index
-    %v = pto.vmi.vload %p[%z] : !pto.ptr<f32, ub> -> !pto.vmi.vreg<8xf32>
-    return %v : !pto.vmi.vreg<8xf32>
-  }
-  func.func @integer_select_nonzero(%c: i1) -> !pto.vmi.vreg<8xf32> {
-    %a = arith.constant 1028 : i64
-    %b = arith.constant 2052 : i64
-    %i = arith.select %c, %a, %b : i64
-    %p = pto.castptr %i : i64 -> !pto.ptr<f32, ub>
-    %seven = arith.constant 7 : index
-    %v = pto.vmi.vload %p[%seven] : !pto.ptr<f32, ub> -> !pto.vmi.vreg<8xf32>
-    return %v : !pto.vmi.vreg<8xf32>
-  }
-  func.func @integer_select_mixed(%c: i1) -> !pto.vmi.vreg<8xf32> {
-    %a = arith.constant 1024 : i64
-    %b = arith.constant 2052 : i64
-    %i = arith.select %c, %a, %b : i64
-    %p = pto.castptr %i : i64 -> !pto.ptr<f32, ub>
     %z = arith.constant 0 : index
     %v = pto.vmi.vload %p[%z] : !pto.ptr<f32, ub> -> !pto.vmi.vreg<8xf32>
     return %v : !pto.vmi.vreg<8xf32>
@@ -71,335 +41,12 @@ module {
     %v = pto.vmi.vload %p[%n] : !pto.ptr<f32, ub> -> !pto.vmi.vreg<8xf32>
     return %v : !pto.vmi.vreg<8xf32>
   }
-
-  func.func @narrow_cast(%n: i4) -> !pto.vmi.vreg<8xf32> {
-    %sixteen = arith.constant 16 : i64
-    %extended = arith.extui %n : i4 to i64
-    %addr = arith.muli %extended, %sixteen : i64
-    %p = pto.castptr %addr : i64 -> !pto.ptr<f32, ub>
-    %z = arith.constant 0 : index
-    %v = pto.vmi.vload %p[%z] : !pto.ptr<f32, ub> -> !pto.vmi.vreg<8xf32>
-    return %v : !pto.vmi.vreg<8xf32>
-  }
-  func.func @cast_chain(%addr: i64) -> !pto.vmi.vreg<8xf32> {
-    %p0 = pto.castptr %addr {pto.alignment = 32 : i64} : i64 -> !pto.ptr<f32, ub>
-    %p1 = pto.castptr %p0 : !pto.ptr<f32, ub> -> !pto.ptr<i8, ub>
-    %p2 = pto.castptr %p1 : !pto.ptr<i8, ub> -> !pto.ptr<f32, ub>
-    %p3 = pto.castptr %p2 : !pto.ptr<f32, ub> -> !pto.ptr<i8, ub>
-    %p4 = pto.castptr %p3 : !pto.ptr<i8, ub> -> !pto.ptr<f32, ub>
-    %p5 = pto.castptr %p4 : !pto.ptr<f32, ub> -> !pto.ptr<i8, ub>
-    %p6 = pto.castptr %p5 : !pto.ptr<i8, ub> -> !pto.ptr<f32, ub>
-    %p7 = pto.castptr %p6 : !pto.ptr<f32, ub> -> !pto.ptr<i8, ub>
-    %p8 = pto.castptr %p7 : !pto.ptr<i8, ub> -> !pto.ptr<f32, ub>
-    %p9 = pto.castptr %p8 : !pto.ptr<f32, ub> -> !pto.ptr<i8, ub>
-    %p10 = pto.castptr %p9 : !pto.ptr<i8, ub> -> !pto.ptr<f32, ub>
-    %p11 = pto.castptr %p10 : !pto.ptr<f32, ub> -> !pto.ptr<i8, ub>
-    %p12 = pto.castptr %p11 : !pto.ptr<i8, ub> -> !pto.ptr<f32, ub>
-    %p13 = pto.castptr %p12 : !pto.ptr<f32, ub> -> !pto.ptr<i8, ub>
-    %p14 = pto.castptr %p13 : !pto.ptr<i8, ub> -> !pto.ptr<f32, ub>
-    %p15 = pto.castptr %p14 : !pto.ptr<f32, ub> -> !pto.ptr<i8, ub>
-    %p16 = pto.castptr %p15 : !pto.ptr<i8, ub> -> !pto.ptr<f32, ub>
-    %z = arith.constant 0 : index
-    %v = pto.vmi.vload %p16[%z] : !pto.ptr<f32, ub> -> !pto.vmi.vreg<8xf32>
-    return %v : !pto.vmi.vreg<8xf32>
-  }
-  func.func @budget_exhausted(%addr: i64) -> !pto.vmi.vreg<8xf32> {
-    %p0 = pto.castptr %addr {pto.alignment = 32 : i64} : i64 -> !pto.ptr<f32, ub>
-    %p1 = pto.castptr %p0 : !pto.ptr<f32, ub> -> !pto.ptr<i8, ub>
-    %p2 = pto.castptr %p1 : !pto.ptr<i8, ub> -> !pto.ptr<f32, ub>
-    %p3 = pto.castptr %p2 : !pto.ptr<f32, ub> -> !pto.ptr<i8, ub>
-    %p4 = pto.castptr %p3 : !pto.ptr<i8, ub> -> !pto.ptr<f32, ub>
-    %p5 = pto.castptr %p4 : !pto.ptr<f32, ub> -> !pto.ptr<i8, ub>
-    %p6 = pto.castptr %p5 : !pto.ptr<i8, ub> -> !pto.ptr<f32, ub>
-    %p7 = pto.castptr %p6 : !pto.ptr<f32, ub> -> !pto.ptr<i8, ub>
-    %p8 = pto.castptr %p7 : !pto.ptr<i8, ub> -> !pto.ptr<f32, ub>
-    %p9 = pto.castptr %p8 : !pto.ptr<f32, ub> -> !pto.ptr<i8, ub>
-    %p10 = pto.castptr %p9 : !pto.ptr<i8, ub> -> !pto.ptr<f32, ub>
-    %p11 = pto.castptr %p10 : !pto.ptr<f32, ub> -> !pto.ptr<i8, ub>
-    %p12 = pto.castptr %p11 : !pto.ptr<i8, ub> -> !pto.ptr<f32, ub>
-    %p13 = pto.castptr %p12 : !pto.ptr<f32, ub> -> !pto.ptr<i8, ub>
-    %p14 = pto.castptr %p13 : !pto.ptr<i8, ub> -> !pto.ptr<f32, ub>
-    %p15 = pto.castptr %p14 : !pto.ptr<f32, ub> -> !pto.ptr<i8, ub>
-    %p16 = pto.castptr %p15 : !pto.ptr<i8, ub> -> !pto.ptr<f32, ub>
-    %p17 = pto.castptr %p16 : !pto.ptr<f32, ub> -> !pto.ptr<i8, ub>
-    %p18 = pto.castptr %p17 : !pto.ptr<i8, ub> -> !pto.ptr<f32, ub>
-    %p19 = pto.castptr %p18 : !pto.ptr<f32, ub> -> !pto.ptr<i8, ub>
-    %p20 = pto.castptr %p19 : !pto.ptr<i8, ub> -> !pto.ptr<f32, ub>
-    %p21 = pto.castptr %p20 : !pto.ptr<f32, ub> -> !pto.ptr<i8, ub>
-    %p22 = pto.castptr %p21 : !pto.ptr<i8, ub> -> !pto.ptr<f32, ub>
-    %p23 = pto.castptr %p22 : !pto.ptr<f32, ub> -> !pto.ptr<i8, ub>
-    %p24 = pto.castptr %p23 : !pto.ptr<i8, ub> -> !pto.ptr<f32, ub>
-    %p25 = pto.castptr %p24 : !pto.ptr<f32, ub> -> !pto.ptr<i8, ub>
-    %p26 = pto.castptr %p25 : !pto.ptr<i8, ub> -> !pto.ptr<f32, ub>
-    %p27 = pto.castptr %p26 : !pto.ptr<f32, ub> -> !pto.ptr<i8, ub>
-    %p28 = pto.castptr %p27 : !pto.ptr<i8, ub> -> !pto.ptr<f32, ub>
-    %p29 = pto.castptr %p28 : !pto.ptr<f32, ub> -> !pto.ptr<i8, ub>
-    %p30 = pto.castptr %p29 : !pto.ptr<i8, ub> -> !pto.ptr<f32, ub>
-    %p31 = pto.castptr %p30 : !pto.ptr<f32, ub> -> !pto.ptr<i8, ub>
-    %p32 = pto.castptr %p31 : !pto.ptr<i8, ub> -> !pto.ptr<f32, ub>
-    %p33 = pto.castptr %p32 : !pto.ptr<f32, ub> -> !pto.ptr<i8, ub>
-    %p34 = pto.castptr %p33 : !pto.ptr<i8, ub> -> !pto.ptr<f32, ub>
-    %p35 = pto.castptr %p34 : !pto.ptr<f32, ub> -> !pto.ptr<i8, ub>
-    %p36 = pto.castptr %p35 : !pto.ptr<i8, ub> -> !pto.ptr<f32, ub>
-    %p37 = pto.castptr %p36 : !pto.ptr<f32, ub> -> !pto.ptr<i8, ub>
-    %p38 = pto.castptr %p37 : !pto.ptr<i8, ub> -> !pto.ptr<f32, ub>
-    %p39 = pto.castptr %p38 : !pto.ptr<f32, ub> -> !pto.ptr<i8, ub>
-    %p40 = pto.castptr %p39 : !pto.ptr<i8, ub> -> !pto.ptr<f32, ub>
-    %p41 = pto.castptr %p40 : !pto.ptr<f32, ub> -> !pto.ptr<i8, ub>
-    %p42 = pto.castptr %p41 : !pto.ptr<i8, ub> -> !pto.ptr<f32, ub>
-    %p43 = pto.castptr %p42 : !pto.ptr<f32, ub> -> !pto.ptr<i8, ub>
-    %p44 = pto.castptr %p43 : !pto.ptr<i8, ub> -> !pto.ptr<f32, ub>
-    %p45 = pto.castptr %p44 : !pto.ptr<f32, ub> -> !pto.ptr<i8, ub>
-    %p46 = pto.castptr %p45 : !pto.ptr<i8, ub> -> !pto.ptr<f32, ub>
-    %p47 = pto.castptr %p46 : !pto.ptr<f32, ub> -> !pto.ptr<i8, ub>
-    %p48 = pto.castptr %p47 : !pto.ptr<i8, ub> -> !pto.ptr<f32, ub>
-    %p49 = pto.castptr %p48 : !pto.ptr<f32, ub> -> !pto.ptr<i8, ub>
-    %p50 = pto.castptr %p49 : !pto.ptr<i8, ub> -> !pto.ptr<f32, ub>
-    %p51 = pto.castptr %p50 : !pto.ptr<f32, ub> -> !pto.ptr<i8, ub>
-    %p52 = pto.castptr %p51 : !pto.ptr<i8, ub> -> !pto.ptr<f32, ub>
-    %p53 = pto.castptr %p52 : !pto.ptr<f32, ub> -> !pto.ptr<i8, ub>
-    %p54 = pto.castptr %p53 : !pto.ptr<i8, ub> -> !pto.ptr<f32, ub>
-    %p55 = pto.castptr %p54 : !pto.ptr<f32, ub> -> !pto.ptr<i8, ub>
-    %p56 = pto.castptr %p55 : !pto.ptr<i8, ub> -> !pto.ptr<f32, ub>
-    %p57 = pto.castptr %p56 : !pto.ptr<f32, ub> -> !pto.ptr<i8, ub>
-    %p58 = pto.castptr %p57 : !pto.ptr<i8, ub> -> !pto.ptr<f32, ub>
-    %p59 = pto.castptr %p58 : !pto.ptr<f32, ub> -> !pto.ptr<i8, ub>
-    %p60 = pto.castptr %p59 : !pto.ptr<i8, ub> -> !pto.ptr<f32, ub>
-    %p61 = pto.castptr %p60 : !pto.ptr<f32, ub> -> !pto.ptr<i8, ub>
-    %p62 = pto.castptr %p61 : !pto.ptr<i8, ub> -> !pto.ptr<f32, ub>
-    %p63 = pto.castptr %p62 : !pto.ptr<f32, ub> -> !pto.ptr<i8, ub>
-    %p64 = pto.castptr %p63 : !pto.ptr<i8, ub> -> !pto.ptr<f32, ub>
-    %p65 = pto.castptr %p64 : !pto.ptr<f32, ub> -> !pto.ptr<i8, ub>
-    %p66 = pto.castptr %p65 : !pto.ptr<i8, ub> -> !pto.ptr<f32, ub>
-    %p67 = pto.castptr %p66 : !pto.ptr<f32, ub> -> !pto.ptr<i8, ub>
-    %p68 = pto.castptr %p67 : !pto.ptr<i8, ub> -> !pto.ptr<f32, ub>
-    %p69 = pto.castptr %p68 : !pto.ptr<f32, ub> -> !pto.ptr<i8, ub>
-    %p70 = pto.castptr %p69 : !pto.ptr<i8, ub> -> !pto.ptr<f32, ub>
-    %p71 = pto.castptr %p70 : !pto.ptr<f32, ub> -> !pto.ptr<i8, ub>
-    %p72 = pto.castptr %p71 : !pto.ptr<i8, ub> -> !pto.ptr<f32, ub>
-    %p73 = pto.castptr %p72 : !pto.ptr<f32, ub> -> !pto.ptr<i8, ub>
-    %p74 = pto.castptr %p73 : !pto.ptr<i8, ub> -> !pto.ptr<f32, ub>
-    %p75 = pto.castptr %p74 : !pto.ptr<f32, ub> -> !pto.ptr<i8, ub>
-    %p76 = pto.castptr %p75 : !pto.ptr<i8, ub> -> !pto.ptr<f32, ub>
-    %p77 = pto.castptr %p76 : !pto.ptr<f32, ub> -> !pto.ptr<i8, ub>
-    %p78 = pto.castptr %p77 : !pto.ptr<i8, ub> -> !pto.ptr<f32, ub>
-    %p79 = pto.castptr %p78 : !pto.ptr<f32, ub> -> !pto.ptr<i8, ub>
-    %p80 = pto.castptr %p79 : !pto.ptr<i8, ub> -> !pto.ptr<f32, ub>
-    %p81 = pto.castptr %p80 : !pto.ptr<f32, ub> -> !pto.ptr<i8, ub>
-    %p82 = pto.castptr %p81 : !pto.ptr<i8, ub> -> !pto.ptr<f32, ub>
-    %p83 = pto.castptr %p82 : !pto.ptr<f32, ub> -> !pto.ptr<i8, ub>
-    %p84 = pto.castptr %p83 : !pto.ptr<i8, ub> -> !pto.ptr<f32, ub>
-    %p85 = pto.castptr %p84 : !pto.ptr<f32, ub> -> !pto.ptr<i8, ub>
-    %p86 = pto.castptr %p85 : !pto.ptr<i8, ub> -> !pto.ptr<f32, ub>
-    %p87 = pto.castptr %p86 : !pto.ptr<f32, ub> -> !pto.ptr<i8, ub>
-    %p88 = pto.castptr %p87 : !pto.ptr<i8, ub> -> !pto.ptr<f32, ub>
-    %p89 = pto.castptr %p88 : !pto.ptr<f32, ub> -> !pto.ptr<i8, ub>
-    %p90 = pto.castptr %p89 : !pto.ptr<i8, ub> -> !pto.ptr<f32, ub>
-    %p91 = pto.castptr %p90 : !pto.ptr<f32, ub> -> !pto.ptr<i8, ub>
-    %p92 = pto.castptr %p91 : !pto.ptr<i8, ub> -> !pto.ptr<f32, ub>
-    %p93 = pto.castptr %p92 : !pto.ptr<f32, ub> -> !pto.ptr<i8, ub>
-    %p94 = pto.castptr %p93 : !pto.ptr<i8, ub> -> !pto.ptr<f32, ub>
-    %p95 = pto.castptr %p94 : !pto.ptr<f32, ub> -> !pto.ptr<i8, ub>
-    %p96 = pto.castptr %p95 : !pto.ptr<i8, ub> -> !pto.ptr<f32, ub>
-    %p97 = pto.castptr %p96 : !pto.ptr<f32, ub> -> !pto.ptr<i8, ub>
-    %p98 = pto.castptr %p97 : !pto.ptr<i8, ub> -> !pto.ptr<f32, ub>
-    %p99 = pto.castptr %p98 : !pto.ptr<f32, ub> -> !pto.ptr<i8, ub>
-    %p100 = pto.castptr %p99 : !pto.ptr<i8, ub> -> !pto.ptr<f32, ub>
-    %p101 = pto.castptr %p100 : !pto.ptr<f32, ub> -> !pto.ptr<i8, ub>
-    %p102 = pto.castptr %p101 : !pto.ptr<i8, ub> -> !pto.ptr<f32, ub>
-    %p103 = pto.castptr %p102 : !pto.ptr<f32, ub> -> !pto.ptr<i8, ub>
-    %p104 = pto.castptr %p103 : !pto.ptr<i8, ub> -> !pto.ptr<f32, ub>
-    %p105 = pto.castptr %p104 : !pto.ptr<f32, ub> -> !pto.ptr<i8, ub>
-    %p106 = pto.castptr %p105 : !pto.ptr<i8, ub> -> !pto.ptr<f32, ub>
-    %p107 = pto.castptr %p106 : !pto.ptr<f32, ub> -> !pto.ptr<i8, ub>
-    %p108 = pto.castptr %p107 : !pto.ptr<i8, ub> -> !pto.ptr<f32, ub>
-    %p109 = pto.castptr %p108 : !pto.ptr<f32, ub> -> !pto.ptr<i8, ub>
-    %p110 = pto.castptr %p109 : !pto.ptr<i8, ub> -> !pto.ptr<f32, ub>
-    %p111 = pto.castptr %p110 : !pto.ptr<f32, ub> -> !pto.ptr<i8, ub>
-    %p112 = pto.castptr %p111 : !pto.ptr<i8, ub> -> !pto.ptr<f32, ub>
-    %p113 = pto.castptr %p112 : !pto.ptr<f32, ub> -> !pto.ptr<i8, ub>
-    %p114 = pto.castptr %p113 : !pto.ptr<i8, ub> -> !pto.ptr<f32, ub>
-    %p115 = pto.castptr %p114 : !pto.ptr<f32, ub> -> !pto.ptr<i8, ub>
-    %p116 = pto.castptr %p115 : !pto.ptr<i8, ub> -> !pto.ptr<f32, ub>
-    %p117 = pto.castptr %p116 : !pto.ptr<f32, ub> -> !pto.ptr<i8, ub>
-    %p118 = pto.castptr %p117 : !pto.ptr<i8, ub> -> !pto.ptr<f32, ub>
-    %p119 = pto.castptr %p118 : !pto.ptr<f32, ub> -> !pto.ptr<i8, ub>
-    %p120 = pto.castptr %p119 : !pto.ptr<i8, ub> -> !pto.ptr<f32, ub>
-    %p121 = pto.castptr %p120 : !pto.ptr<f32, ub> -> !pto.ptr<i8, ub>
-    %p122 = pto.castptr %p121 : !pto.ptr<i8, ub> -> !pto.ptr<f32, ub>
-    %p123 = pto.castptr %p122 : !pto.ptr<f32, ub> -> !pto.ptr<i8, ub>
-    %p124 = pto.castptr %p123 : !pto.ptr<i8, ub> -> !pto.ptr<f32, ub>
-    %p125 = pto.castptr %p124 : !pto.ptr<f32, ub> -> !pto.ptr<i8, ub>
-    %p126 = pto.castptr %p125 : !pto.ptr<i8, ub> -> !pto.ptr<f32, ub>
-    %p127 = pto.castptr %p126 : !pto.ptr<f32, ub> -> !pto.ptr<i8, ub>
-    %p128 = pto.castptr %p127 : !pto.ptr<i8, ub> -> !pto.ptr<f32, ub>
-    %p129 = pto.castptr %p128 : !pto.ptr<f32, ub> -> !pto.ptr<i8, ub>
-    %p130 = pto.castptr %p129 : !pto.ptr<i8, ub> -> !pto.ptr<f32, ub>
-    %p131 = pto.castptr %p130 : !pto.ptr<f32, ub> -> !pto.ptr<i8, ub>
-    %p132 = pto.castptr %p131 : !pto.ptr<i8, ub> -> !pto.ptr<f32, ub>
-    %p133 = pto.castptr %p132 : !pto.ptr<f32, ub> -> !pto.ptr<i8, ub>
-    %p134 = pto.castptr %p133 : !pto.ptr<i8, ub> -> !pto.ptr<f32, ub>
-    %p135 = pto.castptr %p134 : !pto.ptr<f32, ub> -> !pto.ptr<i8, ub>
-    %p136 = pto.castptr %p135 : !pto.ptr<i8, ub> -> !pto.ptr<f32, ub>
-    %p137 = pto.castptr %p136 : !pto.ptr<f32, ub> -> !pto.ptr<i8, ub>
-    %p138 = pto.castptr %p137 : !pto.ptr<i8, ub> -> !pto.ptr<f32, ub>
-    %p139 = pto.castptr %p138 : !pto.ptr<f32, ub> -> !pto.ptr<i8, ub>
-    %p140 = pto.castptr %p139 : !pto.ptr<i8, ub> -> !pto.ptr<f32, ub>
-    %p141 = pto.castptr %p140 : !pto.ptr<f32, ub> -> !pto.ptr<i8, ub>
-    %p142 = pto.castptr %p141 : !pto.ptr<i8, ub> -> !pto.ptr<f32, ub>
-    %p143 = pto.castptr %p142 : !pto.ptr<f32, ub> -> !pto.ptr<i8, ub>
-    %p144 = pto.castptr %p143 : !pto.ptr<i8, ub> -> !pto.ptr<f32, ub>
-    %p145 = pto.castptr %p144 : !pto.ptr<f32, ub> -> !pto.ptr<i8, ub>
-    %p146 = pto.castptr %p145 : !pto.ptr<i8, ub> -> !pto.ptr<f32, ub>
-    %p147 = pto.castptr %p146 : !pto.ptr<f32, ub> -> !pto.ptr<i8, ub>
-    %p148 = pto.castptr %p147 : !pto.ptr<i8, ub> -> !pto.ptr<f32, ub>
-    %p149 = pto.castptr %p148 : !pto.ptr<f32, ub> -> !pto.ptr<i8, ub>
-    %p150 = pto.castptr %p149 : !pto.ptr<i8, ub> -> !pto.ptr<f32, ub>
-    %p151 = pto.castptr %p150 : !pto.ptr<f32, ub> -> !pto.ptr<i8, ub>
-    %p152 = pto.castptr %p151 : !pto.ptr<i8, ub> -> !pto.ptr<f32, ub>
-    %p153 = pto.castptr %p152 : !pto.ptr<f32, ub> -> !pto.ptr<i8, ub>
-    %p154 = pto.castptr %p153 : !pto.ptr<i8, ub> -> !pto.ptr<f32, ub>
-    %p155 = pto.castptr %p154 : !pto.ptr<f32, ub> -> !pto.ptr<i8, ub>
-    %p156 = pto.castptr %p155 : !pto.ptr<i8, ub> -> !pto.ptr<f32, ub>
-    %p157 = pto.castptr %p156 : !pto.ptr<f32, ub> -> !pto.ptr<i8, ub>
-    %p158 = pto.castptr %p157 : !pto.ptr<i8, ub> -> !pto.ptr<f32, ub>
-    %p159 = pto.castptr %p158 : !pto.ptr<f32, ub> -> !pto.ptr<i8, ub>
-    %p160 = pto.castptr %p159 : !pto.ptr<i8, ub> -> !pto.ptr<f32, ub>
-    %p161 = pto.castptr %p160 : !pto.ptr<f32, ub> -> !pto.ptr<i8, ub>
-    %p162 = pto.castptr %p161 : !pto.ptr<i8, ub> -> !pto.ptr<f32, ub>
-    %p163 = pto.castptr %p162 : !pto.ptr<f32, ub> -> !pto.ptr<i8, ub>
-    %p164 = pto.castptr %p163 : !pto.ptr<i8, ub> -> !pto.ptr<f32, ub>
-    %p165 = pto.castptr %p164 : !pto.ptr<f32, ub> -> !pto.ptr<i8, ub>
-    %p166 = pto.castptr %p165 : !pto.ptr<i8, ub> -> !pto.ptr<f32, ub>
-    %p167 = pto.castptr %p166 : !pto.ptr<f32, ub> -> !pto.ptr<i8, ub>
-    %p168 = pto.castptr %p167 : !pto.ptr<i8, ub> -> !pto.ptr<f32, ub>
-    %p169 = pto.castptr %p168 : !pto.ptr<f32, ub> -> !pto.ptr<i8, ub>
-    %p170 = pto.castptr %p169 : !pto.ptr<i8, ub> -> !pto.ptr<f32, ub>
-    %p171 = pto.castptr %p170 : !pto.ptr<f32, ub> -> !pto.ptr<i8, ub>
-    %p172 = pto.castptr %p171 : !pto.ptr<i8, ub> -> !pto.ptr<f32, ub>
-    %p173 = pto.castptr %p172 : !pto.ptr<f32, ub> -> !pto.ptr<i8, ub>
-    %p174 = pto.castptr %p173 : !pto.ptr<i8, ub> -> !pto.ptr<f32, ub>
-    %p175 = pto.castptr %p174 : !pto.ptr<f32, ub> -> !pto.ptr<i8, ub>
-    %p176 = pto.castptr %p175 : !pto.ptr<i8, ub> -> !pto.ptr<f32, ub>
-    %p177 = pto.castptr %p176 : !pto.ptr<f32, ub> -> !pto.ptr<i8, ub>
-    %p178 = pto.castptr %p177 : !pto.ptr<i8, ub> -> !pto.ptr<f32, ub>
-    %p179 = pto.castptr %p178 : !pto.ptr<f32, ub> -> !pto.ptr<i8, ub>
-    %p180 = pto.castptr %p179 : !pto.ptr<i8, ub> -> !pto.ptr<f32, ub>
-    %p181 = pto.castptr %p180 : !pto.ptr<f32, ub> -> !pto.ptr<i8, ub>
-    %p182 = pto.castptr %p181 : !pto.ptr<i8, ub> -> !pto.ptr<f32, ub>
-    %p183 = pto.castptr %p182 : !pto.ptr<f32, ub> -> !pto.ptr<i8, ub>
-    %p184 = pto.castptr %p183 : !pto.ptr<i8, ub> -> !pto.ptr<f32, ub>
-    %p185 = pto.castptr %p184 : !pto.ptr<f32, ub> -> !pto.ptr<i8, ub>
-    %p186 = pto.castptr %p185 : !pto.ptr<i8, ub> -> !pto.ptr<f32, ub>
-    %p187 = pto.castptr %p186 : !pto.ptr<f32, ub> -> !pto.ptr<i8, ub>
-    %p188 = pto.castptr %p187 : !pto.ptr<i8, ub> -> !pto.ptr<f32, ub>
-    %p189 = pto.castptr %p188 : !pto.ptr<f32, ub> -> !pto.ptr<i8, ub>
-    %p190 = pto.castptr %p189 : !pto.ptr<i8, ub> -> !pto.ptr<f32, ub>
-    %p191 = pto.castptr %p190 : !pto.ptr<f32, ub> -> !pto.ptr<i8, ub>
-    %p192 = pto.castptr %p191 : !pto.ptr<i8, ub> -> !pto.ptr<f32, ub>
-    %p193 = pto.castptr %p192 : !pto.ptr<f32, ub> -> !pto.ptr<i8, ub>
-    %p194 = pto.castptr %p193 : !pto.ptr<i8, ub> -> !pto.ptr<f32, ub>
-    %p195 = pto.castptr %p194 : !pto.ptr<f32, ub> -> !pto.ptr<i8, ub>
-    %p196 = pto.castptr %p195 : !pto.ptr<i8, ub> -> !pto.ptr<f32, ub>
-    %p197 = pto.castptr %p196 : !pto.ptr<f32, ub> -> !pto.ptr<i8, ub>
-    %p198 = pto.castptr %p197 : !pto.ptr<i8, ub> -> !pto.ptr<f32, ub>
-    %p199 = pto.castptr %p198 : !pto.ptr<f32, ub> -> !pto.ptr<i8, ub>
-    %p200 = pto.castptr %p199 : !pto.ptr<i8, ub> -> !pto.ptr<f32, ub>
-    %p201 = pto.castptr %p200 : !pto.ptr<f32, ub> -> !pto.ptr<i8, ub>
-    %p202 = pto.castptr %p201 : !pto.ptr<i8, ub> -> !pto.ptr<f32, ub>
-    %p203 = pto.castptr %p202 : !pto.ptr<f32, ub> -> !pto.ptr<i8, ub>
-    %p204 = pto.castptr %p203 : !pto.ptr<i8, ub> -> !pto.ptr<f32, ub>
-    %p205 = pto.castptr %p204 : !pto.ptr<f32, ub> -> !pto.ptr<i8, ub>
-    %p206 = pto.castptr %p205 : !pto.ptr<i8, ub> -> !pto.ptr<f32, ub>
-    %p207 = pto.castptr %p206 : !pto.ptr<f32, ub> -> !pto.ptr<i8, ub>
-    %p208 = pto.castptr %p207 : !pto.ptr<i8, ub> -> !pto.ptr<f32, ub>
-    %p209 = pto.castptr %p208 : !pto.ptr<f32, ub> -> !pto.ptr<i8, ub>
-    %p210 = pto.castptr %p209 : !pto.ptr<i8, ub> -> !pto.ptr<f32, ub>
-    %p211 = pto.castptr %p210 : !pto.ptr<f32, ub> -> !pto.ptr<i8, ub>
-    %p212 = pto.castptr %p211 : !pto.ptr<i8, ub> -> !pto.ptr<f32, ub>
-    %p213 = pto.castptr %p212 : !pto.ptr<f32, ub> -> !pto.ptr<i8, ub>
-    %p214 = pto.castptr %p213 : !pto.ptr<i8, ub> -> !pto.ptr<f32, ub>
-    %p215 = pto.castptr %p214 : !pto.ptr<f32, ub> -> !pto.ptr<i8, ub>
-    %p216 = pto.castptr %p215 : !pto.ptr<i8, ub> -> !pto.ptr<f32, ub>
-    %p217 = pto.castptr %p216 : !pto.ptr<f32, ub> -> !pto.ptr<i8, ub>
-    %p218 = pto.castptr %p217 : !pto.ptr<i8, ub> -> !pto.ptr<f32, ub>
-    %p219 = pto.castptr %p218 : !pto.ptr<f32, ub> -> !pto.ptr<i8, ub>
-    %p220 = pto.castptr %p219 : !pto.ptr<i8, ub> -> !pto.ptr<f32, ub>
-    %p221 = pto.castptr %p220 : !pto.ptr<f32, ub> -> !pto.ptr<i8, ub>
-    %p222 = pto.castptr %p221 : !pto.ptr<i8, ub> -> !pto.ptr<f32, ub>
-    %p223 = pto.castptr %p222 : !pto.ptr<f32, ub> -> !pto.ptr<i8, ub>
-    %p224 = pto.castptr %p223 : !pto.ptr<i8, ub> -> !pto.ptr<f32, ub>
-    %p225 = pto.castptr %p224 : !pto.ptr<f32, ub> -> !pto.ptr<i8, ub>
-    %p226 = pto.castptr %p225 : !pto.ptr<i8, ub> -> !pto.ptr<f32, ub>
-    %p227 = pto.castptr %p226 : !pto.ptr<f32, ub> -> !pto.ptr<i8, ub>
-    %p228 = pto.castptr %p227 : !pto.ptr<i8, ub> -> !pto.ptr<f32, ub>
-    %p229 = pto.castptr %p228 : !pto.ptr<f32, ub> -> !pto.ptr<i8, ub>
-    %p230 = pto.castptr %p229 : !pto.ptr<i8, ub> -> !pto.ptr<f32, ub>
-    %p231 = pto.castptr %p230 : !pto.ptr<f32, ub> -> !pto.ptr<i8, ub>
-    %p232 = pto.castptr %p231 : !pto.ptr<i8, ub> -> !pto.ptr<f32, ub>
-    %p233 = pto.castptr %p232 : !pto.ptr<f32, ub> -> !pto.ptr<i8, ub>
-    %p234 = pto.castptr %p233 : !pto.ptr<i8, ub> -> !pto.ptr<f32, ub>
-    %p235 = pto.castptr %p234 : !pto.ptr<f32, ub> -> !pto.ptr<i8, ub>
-    %p236 = pto.castptr %p235 : !pto.ptr<i8, ub> -> !pto.ptr<f32, ub>
-    %p237 = pto.castptr %p236 : !pto.ptr<f32, ub> -> !pto.ptr<i8, ub>
-    %p238 = pto.castptr %p237 : !pto.ptr<i8, ub> -> !pto.ptr<f32, ub>
-    %p239 = pto.castptr %p238 : !pto.ptr<f32, ub> -> !pto.ptr<i8, ub>
-    %p240 = pto.castptr %p239 : !pto.ptr<i8, ub> -> !pto.ptr<f32, ub>
-    %p241 = pto.castptr %p240 : !pto.ptr<f32, ub> -> !pto.ptr<i8, ub>
-    %p242 = pto.castptr %p241 : !pto.ptr<i8, ub> -> !pto.ptr<f32, ub>
-    %p243 = pto.castptr %p242 : !pto.ptr<f32, ub> -> !pto.ptr<i8, ub>
-    %p244 = pto.castptr %p243 : !pto.ptr<i8, ub> -> !pto.ptr<f32, ub>
-    %p245 = pto.castptr %p244 : !pto.ptr<f32, ub> -> !pto.ptr<i8, ub>
-    %p246 = pto.castptr %p245 : !pto.ptr<i8, ub> -> !pto.ptr<f32, ub>
-    %p247 = pto.castptr %p246 : !pto.ptr<f32, ub> -> !pto.ptr<i8, ub>
-    %p248 = pto.castptr %p247 : !pto.ptr<i8, ub> -> !pto.ptr<f32, ub>
-    %p249 = pto.castptr %p248 : !pto.ptr<f32, ub> -> !pto.ptr<i8, ub>
-    %p250 = pto.castptr %p249 : !pto.ptr<i8, ub> -> !pto.ptr<f32, ub>
-    %p251 = pto.castptr %p250 : !pto.ptr<f32, ub> -> !pto.ptr<i8, ub>
-    %p252 = pto.castptr %p251 : !pto.ptr<i8, ub> -> !pto.ptr<f32, ub>
-    %p253 = pto.castptr %p252 : !pto.ptr<f32, ub> -> !pto.ptr<i8, ub>
-    %p254 = pto.castptr %p253 : !pto.ptr<i8, ub> -> !pto.ptr<f32, ub>
-    %p255 = pto.castptr %p254 : !pto.ptr<f32, ub> -> !pto.ptr<i8, ub>
-    %p256 = pto.castptr %p255 : !pto.ptr<i8, ub> -> !pto.ptr<f32, ub>
-    %p257 = pto.castptr %p256 : !pto.ptr<f32, ub> -> !pto.ptr<i8, ub>
-    %p258 = pto.castptr %p257 : !pto.ptr<i8, ub> -> !pto.ptr<f32, ub>
-    %p259 = pto.castptr %p258 : !pto.ptr<f32, ub> -> !pto.ptr<i8, ub>
-    %p260 = pto.castptr %p259 : !pto.ptr<i8, ub> -> !pto.ptr<f32, ub>
-    %z = arith.constant 0 : index
-    %v = pto.vmi.vload %p260[%z] : !pto.ptr<f32, ub> -> !pto.vmi.vreg<8xf32>
-    return %v : !pto.vmi.vreg<8xf32>
-  }
-
   func.func @insufficient_alignment(%addr: i64) -> !pto.vmi.vreg<8xf32> {
     %p = pto.castptr %addr {pto.alignment = 16 : i64} : i64 -> !pto.ptr<f32, ub>
     %z = arith.constant 0 : index
     %v = pto.vmi.vload %p[%z] : !pto.ptr<f32, ub> -> !pto.vmi.vreg<8xf32>
     return %v : !pto.vmi.vreg<8xf32>
   }
-  func.func @unknown_select(%c: i1, %addr: i64) -> !pto.vmi.vreg<8xf32> {
-    %a = arith.constant 1024 : i64
-    %x = pto.castptr %a : i64 -> !pto.ptr<f32, ub>
-    %y = pto.castptr %addr : i64 -> !pto.ptr<f32, ub>
-    %p = arith.select %c, %x, %y : !pto.ptr<f32, ub>
-    %z = arith.constant 0 : index
-    %v = pto.vmi.vload %p[%z] : !pto.ptr<f32, ub> -> !pto.vmi.vreg<8xf32>
-    return %v : !pto.vmi.vreg<8xf32>
-  }
-  func.func @loop_step_eight(%addr: i64, %dst: !pto.ptr<f32, ub> {pto.alignment = 32 : i64}) {
-    %p = pto.castptr %addr {pto.alignment = 32 : i64} : i64 -> !pto.ptr<f32, ub>
-    %z = arith.constant 0 : index
-    %one = arith.constant 1 : index
-    %two = arith.constant 2 : index
-    %eight = arith.constant 8 : index
-    %r = scf.for %i = %z to %two step %one iter_args(%q = %p) -> (!pto.ptr<f32, ub>) {
-      %v = pto.vmi.vload %q[%z] : !pto.ptr<f32, ub> -> !pto.vmi.vreg<8xf32>
-      pto.vmi.vstore %v, %dst[%z] : !pto.vmi.vreg<8xf32>, !pto.ptr<f32, ub>
-      %n = pto.addptr %q, %eight : !pto.ptr<f32, ub> -> !pto.ptr<f32, ub>
-      scf.yield %n : !pto.ptr<f32, ub>
-    }
-    return
-  }
-
   func.func @combined_one(%addr: i64) -> !pto.vmi.vreg<8xf32> {
     %p = pto.castptr %addr {pto.alignment = 32 : i64} : i64 -> !pto.ptr<f32, ub>
     %one = arith.constant 1 : index
@@ -427,17 +74,6 @@ module {
     %v = pto.vmi.vload %r[%seven] : !pto.ptr<f32, ub> -> !pto.vmi.vreg<8xf32>
     return %v : !pto.vmi.vreg<8xf32>
   }
-  func.func @pointer_select_nonzero(%c: i1) -> !pto.vmi.vreg<8xf32> {
-    %a = arith.constant 1028 : i64
-    %b = arith.constant 2052 : i64
-    %x = pto.castptr %a : i64 -> !pto.ptr<f32, ub>
-    %y = pto.castptr %b : i64 -> !pto.ptr<f32, ub>
-    %p = arith.select %c, %x, %y : !pto.ptr<f32, ub>
-    %seven = arith.constant 7 : index
-    %v = pto.vmi.vload %p[%seven] : !pto.ptr<f32, ub> -> !pto.vmi.vreg<8xf32>
-    return %v : !pto.vmi.vreg<8xf32>
-  }
-
   func.func @opaque_projection_proved(%m: memref<64xf32>) -> !pto.vmi.vreg<8xf32> {
     %idx = memref.extract_aligned_pointer_as_index %m : memref<64xf32> -> index
     %addr = arith.index_cast %idx : index to i64
@@ -460,52 +96,31 @@ module {
     pto.vmi.vstore %value, %p[%z], %mask : !pto.vmi.vreg<64xf32>, !pto.ptr<f32, ub>, !pto.vmi.mask<64xb32>
     return
   }
-
   func.func @byte_load_proved(%addr: i64) -> !pto.vmi.vreg<8xui8> {
     %p = pto.castptr %addr {pto.alignment = 32 : i64} : i64 -> !pto.ptr<ui8, ub>
     %z = arith.constant 0 : index
     %v = pto.vmi.vload %p[%z] : !pto.ptr<ui8, ub> -> !pto.vmi.vreg<8xui8>
     return %v : !pto.vmi.vreg<8xui8>
   }
-
+  func.func @legacy_argument(%p: !pto.ptr<f32, ub>) -> !pto.vmi.vreg<8xf32> {
+    %z = arith.constant 0 : index
+    %v = pto.vmi.vload %p[%z] : !pto.ptr<f32, ub> -> !pto.vmi.vreg<8xf32>
+    return %v : !pto.vmi.vreg<8xf32>
+  }
 }
 // CHECK-LABEL: func.func @annotated
-// CHECK: pto.vsldb
-// CHECK-LABEL: func.func @select_equal
 // CHECK: pto.vsldb
 // CHECK-LABEL: func.func @offset_one
 // CHECK: pto.vldas
 // CHECK: pto.vldus
-// CHECK-LABEL: func.func @loop_step_one
-// CHECK: pto.vldas
-// CHECK: pto.vldus
 // CHECK-LABEL: func.func @argument
 // CHECK: pto.vsldb
-// CHECK-LABEL: func.func @integer_select_nonzero
-// CHECK: pto.vsldb
-// CHECK-LABEL: func.func @integer_select_mixed
-// CHECK: pto.vldas
-// CHECK: pto.vldus
 // CHECK-LABEL: func.func @offset_multiple
 // CHECK: pto.vsldb
 // CHECK-LABEL: func.func @offset_runtime
 // CHECK: pto.vldas
 // CHECK: pto.vldus
-// CHECK-LABEL: func.func @narrow_cast
-// CHECK: pto.vldas
-// CHECK: pto.vldus
-// CHECK-LABEL: func.func @cast_chain
-// CHECK: pto.vsldb
-// CHECK-LABEL: func.func @budget_exhausted
-// CHECK: pto.vldas
-// CHECK: pto.vldus
 // CHECK-LABEL: func.func @insufficient_alignment
-// CHECK: pto.vldas
-// CHECK: pto.vldus
-// CHECK-LABEL: func.func @unknown_select
-// CHECK: pto.vldas
-// CHECK: pto.vldus
-// CHECK-LABEL: func.func @loop_step_eight
 // CHECK: pto.vldas
 // CHECK: pto.vldus
 // CHECK-LABEL: func.func @combined_one
@@ -515,8 +130,6 @@ module {
 // CHECK: pto.vsldb
 // CHECK-LABEL: func.func @combined_dynamic
 // CHECK: pto.vsldb
-// CHECK-LABEL: func.func @pointer_select_nonzero
-// CHECK: pto.vsldb
 // CHECK-LABEL: func.func @opaque_projection_proved
 // CHECK: pto.vsldb
 // CHECK-LABEL: func.func @opaque_projection_unknown
@@ -525,4 +138,6 @@ module {
 // CHECK-LABEL: func.func @masked_store_proved
 // CHECK: pto.vsts
 // CHECK-LABEL: func.func @byte_load_proved
+// CHECK: pto.vsldb
+// CHECK-LABEL: func.func @legacy_argument
 // CHECK: pto.vsldb

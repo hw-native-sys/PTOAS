@@ -22,7 +22,7 @@
 module {
   func.func @trunci_ui32_d2_to_ui8_lane_stride(
       %input: !pto.vmi.vreg<128xui32, #pto.vmi.layout<deinterleaved = 2>>,
-      %dst: !pto.ptr<ui8, ub> {pto.alignment = 32 : i64},
+      %dst: !pto.ptr<ui8, ub>,
       %off: index) {
     %c32 = arith.constant 32 : index
     %aligned_off = arith.muli %off, %c32 : index

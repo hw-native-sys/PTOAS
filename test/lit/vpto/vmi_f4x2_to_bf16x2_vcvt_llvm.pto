@@ -11,8 +11,8 @@
 
 module attributes {pto.target_arch = "a5", pto.kernel_kind = #pto.kernel_kind<vector>} {
   func.func @f4x2_to_bf16x2_vcvt_store(
-      %src: !pto.ptr<!pto.f4E1M2x2, ub> {pto.alignment = 32 : i64},
-      %dst: !pto.ptr<!pto.bf16x2, ub> {pto.alignment = 32 : i64}) attributes {pto.kernel} {
+      %src: !pto.ptr<!pto.f4E1M2x2, ub>,
+      %dst: !pto.ptr<!pto.bf16x2, ub>) attributes {pto.kernel} {
     %c0 = arith.constant 0 : index
     pto.vecscope {
       %packed = pto.vmi.vload %src[%c0]
@@ -33,8 +33,8 @@ module attributes {pto.target_arch = "a5", pto.kernel_kind = #pto.kernel_kind<ve
   // intrinsic, so the tree lowers to the <64 x i32> intrinsic (bf16x2 is a
   // 32-bit packed pair at the LLVM ABI; vintlv is a bit-level lane shuffle).
   func.func @f4x2_to_bf16x2_d4_vcvt_store(
-      %src: !pto.ptr<!pto.f4E1M2x2, ub> {pto.alignment = 32 : i64},
-      %dst: !pto.ptr<!pto.bf16x2, ub> {pto.alignment = 32 : i64}) attributes {pto.kernel} {
+      %src: !pto.ptr<!pto.f4E1M2x2, ub>,
+      %dst: !pto.ptr<!pto.bf16x2, ub>) attributes {pto.kernel} {
     %c0 = arith.constant 0 : index
     pto.vecscope {
       %packed = pto.vmi.vload %src[%c0]

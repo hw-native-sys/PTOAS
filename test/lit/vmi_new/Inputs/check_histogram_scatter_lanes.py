@@ -64,7 +64,7 @@ for n in LANES:
             src = f"!pto.vmi.vreg<{n}xui8>"
             mask = f"!pto.vmi.mask<{n}xpred>"
             out = compile_ir(f"{op}_{bins}_{n}", f"""module {{
-  func.func @probe(%p: !pto.ptr<ui8, ub> {{pto.alignment = 32 : i64}}, %a: {acc}, %m: {mask}) -> {acc} {{
+  func.func @probe(%p: !pto.ptr<ui8, ub>, %a: {acc}, %m: {mask}) -> {acc} {{
     %c0 = arith.constant 0 : index
     %s = pto.vmi.vload %p[%c0] : !pto.ptr<ui8, ub> -> {src}
     %r = pto.vmi.{op} %a, %s, %m : {acc}, {src}, {mask} -> {acc}

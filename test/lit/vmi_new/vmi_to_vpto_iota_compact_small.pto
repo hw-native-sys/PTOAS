@@ -9,7 +9,7 @@
 // RUN: pto-test-opt %s -vmi-lower-unified-to-legacy -vmi-mask-granularity-assignment -vmi-layout-assignment -vmi-to-vpto | FileCheck %s
 
 module {
-  func.func @compact_f16_vl8(%base: f16, %dst: !pto.ptr<f16, ub> {pto.alignment = 32 : i64}) {
+  func.func @compact_f16_vl8(%base: f16, %dst: !pto.ptr<f16, ub>) {
     %c0 = arith.constant 0 : index
     %idx = pto.vmi.vci %base
         : f16 -> !pto.vmi.vreg<8xf16>

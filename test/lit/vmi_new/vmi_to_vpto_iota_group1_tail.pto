@@ -17,7 +17,7 @@ module {
   func.func @vmi_to_vpto_iota_group1_tail(
       %base: i32, %offset: i32,
       %mask: !pto.vmi.mask<100xb32, #pto.vmi.layout<contiguous>>,
-      %dst: !pto.ptr<i32, ub> {pto.alignment = 32 : i64}) {
+      %dst: !pto.ptr<i32, ub>) {
     %c0 = arith.constant 0 : index
     %value = pto.vmi.vci %base {group = 1 : i64}
         : i32 -> !pto.vmi.vreg<100xi32, #pto.vmi.layout<contiguous>>
@@ -34,7 +34,7 @@ module {
   func.func @vmi_to_vpto_iota_group1_full_vl(
       %base: i32, %offset: i32,
       %mask: !pto.vmi.mask<64xb32, #pto.vmi.layout<contiguous>>,
-      %dst: !pto.ptr<i32, ub> {pto.alignment = 32 : i64}) {
+      %dst: !pto.ptr<i32, ub>) {
     %c0 = arith.constant 0 : index
     %value = pto.vmi.vci %base {group = 1 : i64}
         : i32 -> !pto.vmi.vreg<64xi32, #pto.vmi.layout<contiguous>>

@@ -34,7 +34,7 @@
 
 module {
   func.func @spine_without_bitcast(
-      %src: !pto.ptr<ui16, ub> {pto.alignment = 32 : i64}, %dst: !pto.ptr<ui16, ub> {pto.alignment = 32 : i64}) {
+      %src: !pto.ptr<ui16, ub>, %dst: !pto.ptr<ui16, ub>) {
     %c0 = arith.constant 0 : index
     %x = pto.vmi.vload %src[%c0]
         : !pto.ptr<ui16, ub> -> !pto.vmi.vreg<128xui16>
@@ -52,7 +52,7 @@ module {
   }
 
   func.func @spine_across_equal_width_bitcast(
-      %src: !pto.ptr<ui16, ub> {pto.alignment = 32 : i64}, %dst: !pto.ptr<ui16, ub> {pto.alignment = 32 : i64}) {
+      %src: !pto.ptr<ui16, ub>, %dst: !pto.ptr<ui16, ub>) {
     %c0 = arith.constant 0 : index
     %x = pto.vmi.vload %src[%c0]
         : !pto.ptr<ui16, ub> -> !pto.vmi.vreg<128xui16>

@@ -12,7 +12,7 @@ module {
   func.func @vmi_to_vpto_masked_store_deint_tail(
       %value: !pto.vmi.vreg<4xf32, #pto.vmi.layout<deinterleaved = 2>>,
       %mask: !pto.vmi.mask<4xb32, #pto.vmi.layout<deinterleaved = 2>>,
-      %dst: !pto.ptr<f32, ub> {pto.alignment = 32 : i64},
+      %dst: !pto.ptr<f32, ub>,
       %offset: index) {
     %c8 = arith.constant 8 : index
     %aligned_offset = arith.muli %offset, %c8 : index

@@ -16,7 +16,7 @@
 // register.  Before that bridge existed the layout contract rejected the pair.
 
 module attributes {pto.target_arch = "a5", pto.kernel_kind = #pto.kernel_kind<vector>} {
-  func.func @short_narrow_store_f16_L2(%src: !pto.ptr<f32, ub> {pto.alignment = 32 : i64}, %dst: !pto.ptr<f16, ub> {pto.alignment = 32 : i64}, %off: index) attributes {pto.kernel} {
+  func.func @short_narrow_store_f16_L2(%src: !pto.ptr<f32, ub>, %dst: !pto.ptr<f16, ub>, %off: index) attributes {pto.kernel} {
     %c16 = arith.constant 16 : index
     %aoff = arith.muli %off, %c16 : index
     pto.vecscope {
@@ -27,7 +27,7 @@ module attributes {pto.target_arch = "a5", pto.kernel_kind = #pto.kernel_kind<ve
     return
   }
 
-  func.func @short_narrow_store_f16_L4(%src: !pto.ptr<f32, ub> {pto.alignment = 32 : i64}, %dst: !pto.ptr<f16, ub> {pto.alignment = 32 : i64}, %off: index) attributes {pto.kernel} {
+  func.func @short_narrow_store_f16_L4(%src: !pto.ptr<f32, ub>, %dst: !pto.ptr<f16, ub>, %off: index) attributes {pto.kernel} {
     %c16 = arith.constant 16 : index
     %aoff = arith.muli %off, %c16 : index
     pto.vecscope {
@@ -38,7 +38,7 @@ module attributes {pto.target_arch = "a5", pto.kernel_kind = #pto.kernel_kind<ve
     return
   }
 
-  func.func @short_narrow_store_f16_L8(%src: !pto.ptr<f32, ub> {pto.alignment = 32 : i64}, %dst: !pto.ptr<f16, ub> {pto.alignment = 32 : i64}, %off: index) attributes {pto.kernel} {
+  func.func @short_narrow_store_f16_L8(%src: !pto.ptr<f32, ub>, %dst: !pto.ptr<f16, ub>, %off: index) attributes {pto.kernel} {
     %c16 = arith.constant 16 : index
     %aoff = arith.muli %off, %c16 : index
     pto.vecscope {
@@ -49,7 +49,7 @@ module attributes {pto.target_arch = "a5", pto.kernel_kind = #pto.kernel_kind<ve
     return
   }
 
-  func.func @short_narrow_store_f16_L8_masked(%src: !pto.ptr<f32, ub> {pto.alignment = 32 : i64}, %dst: !pto.ptr<f16, ub> {pto.alignment = 32 : i64}, %off: index) attributes {pto.kernel} {
+  func.func @short_narrow_store_f16_L8_masked(%src: !pto.ptr<f32, ub>, %dst: !pto.ptr<f16, ub>, %off: index) attributes {pto.kernel} {
     %c16 = arith.constant 16 : index
     %aoff = arith.muli %off, %c16 : index
     pto.vecscope {

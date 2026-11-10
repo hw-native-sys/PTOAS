@@ -12,7 +12,7 @@
 module {
   func.func @vmi_layout_fold_store_deint4(
       %value: !pto.vmi.vreg<256xf32, #pto.vmi.layout<deinterleaved = 4>>,
-      %dst: !pto.ptr<f32, ub> {pto.alignment = 32 : i64},
+      %dst: !pto.ptr<f32, ub>,
       %offset: index) {
     %c8 = arith.constant 8 : index
     %aligned_offset = arith.muli %offset, %c8 : index
@@ -28,7 +28,7 @@ module {
   func.func @vmi_layout_fold_masked_store_deint4(
       %value: !pto.vmi.vreg<256xf32, #pto.vmi.layout<deinterleaved = 4>>,
       %mask: !pto.vmi.mask<256xb32, #pto.vmi.layout<deinterleaved = 4>>,
-      %dst: !pto.ptr<f32, ub> {pto.alignment = 32 : i64},
+      %dst: !pto.ptr<f32, ub>,
       %offset: index) {
     %c8 = arith.constant 8 : index
     %aligned_offset = arith.muli %offset, %c8 : index

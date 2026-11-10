@@ -19,7 +19,7 @@ module {
   }
 
   func.func @partial_group_slots_2(
-      %src: !pto.ptr<f32, ub> {pto.alignment = 32 : i64}, %off: index) -> !pto.vmi.vreg<64xf32> {
+      %src: !pto.ptr<f32, ub>, %off: index) -> !pto.vmi.vreg<64xf32> {
     // Eight f32 elements are one 32B block.
     %c8 = arith.constant 8 : index
     %loadOff = arith.muli %off, %c8 : index
@@ -31,7 +31,7 @@ module {
   }
 
   func.func @partial_group_slots_4(
-      %src: !pto.ptr<f32, ub> {pto.alignment = 32 : i64}, %off: index) -> !pto.vmi.vreg<64xf32> {
+      %src: !pto.ptr<f32, ub>, %off: index) -> !pto.vmi.vreg<64xf32> {
     // Eight f32 elements are one 32B block.
     %c8 = arith.constant 8 : index
     %loadOff = arith.muli %off, %c8 : index

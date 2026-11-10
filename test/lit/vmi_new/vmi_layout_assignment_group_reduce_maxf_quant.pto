@@ -11,9 +11,9 @@
 
 module {
   func.func @vmi_layout_assignment_group_reduce_maxf_quant(
-      %src: !pto.ptr<f32, ub> {pto.alignment = 32 : i64},
-      %scale_out: !pto.ptr<f32, ub> {pto.alignment = 32 : i64},
-      %out8: !pto.ptr<f8E4M3FN, ub> {pto.alignment = 32 : i64},
+      %src: !pto.ptr<f32, ub>,
+      %scale_out: !pto.ptr<f32, ub>,
+      %out8: !pto.ptr<f8E4M3FN, ub>,
       %off: index) {
     %c8 = arith.constant 8 : index
     %c32 = arith.constant 32 : index

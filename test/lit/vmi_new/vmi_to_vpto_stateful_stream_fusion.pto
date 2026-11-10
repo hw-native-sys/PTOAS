@@ -117,7 +117,7 @@ module {
     }
     return
   }
-  func.func @keep_store_loop_with_aliasing_load(%value: !pto.vmi.vreg<64xf32, #pto.vmi.layout<contiguous>>, %dst: !pto.ptr<f32, ub> {pto.alignment = 32 : i64}) -> !pto.vmi.vreg<64xf32, #pto.vmi.layout<contiguous>> {
+  func.func @keep_store_loop_with_aliasing_load(%value: !pto.vmi.vreg<64xf32, #pto.vmi.layout<contiguous>>, %dst: !pto.ptr<f32, ub>) -> !pto.vmi.vreg<64xf32, #pto.vmi.layout<contiguous>> {
     %c0 = arith.constant 0 : index
     %c1 = arith.constant 1 : index
     %c4 = arith.constant 4 : index

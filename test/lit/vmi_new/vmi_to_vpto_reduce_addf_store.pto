@@ -13,8 +13,8 @@ module {
   func.func @vmi_to_vpto_reduce_addf_store(
       %source: !pto.vmi.vreg<64xf32>,
       %rhs: !pto.vmi.vreg<64xf32>,
-      %dst_bf16: !pto.ptr<bf16, ub> {pto.alignment = 32 : i64},
-      %dst: !pto.ptr<f32, ub> {pto.alignment = 32 : i64},
+      %dst_bf16: !pto.ptr<bf16, ub>,
+      %dst: !pto.ptr<f32, ub>,
       %offset: index) {
     %c16 = arith.constant 16 : index
     %c64 = arith.constant 64 : index

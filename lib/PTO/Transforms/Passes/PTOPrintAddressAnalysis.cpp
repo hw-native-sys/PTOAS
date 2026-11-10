@@ -218,28 +218,6 @@ struct PTOPrintAddressAnalysisPass
     os << "address-analysis @" << function.getSymName() << "\n";
     function.walk([&os](Operation *operation) {
       printAddressSemantics(os, operation);
-      auto semantics = dyn_cast<pto::VPTOAddressSemanticsOpInterface>(operation);
-      if (!semantics)
-        return;
-      for (const pto::VPTOAddressAccess &access :
-           semantics.getVPTOAddressSemantics().currentAccesses) {
-        Value base = access.baseOperand->get();
-        auto ptr = dyn_cast<pto::PtrType>(base.getType());
-        if (!ptr || !access.offset ||
-            access.offset->unit != pto::VPTOAddressUnit::Element)
-          continue;
-        os << "  remainder-bytes";
-        for (int64_t modulus : {int64_t{16}, int64_t{32}, int64_t{64}}) {
-          auto remainder = pto::getKnownAddressRemainderBytes(
-              base, access.offset->operand->get(), ptr.getElementType(), modulus);
-          os << " " << modulus << "=";
-          if (remainder)
-            os << *remainder;
-          else
-            os << "unknown";
-        }
-        os << "\n";
-      }
     });
     function.walk([&](scf::ForOp loop) {
       os << " loop\n";

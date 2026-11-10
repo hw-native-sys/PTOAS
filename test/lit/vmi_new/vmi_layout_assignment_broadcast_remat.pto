@@ -13,7 +13,7 @@ module {
   func.func @vmi_layout_assignment_broadcast_remat(
       %scalar: f32,
       %src: !pto.vmi.vreg<128xf16>,
-      %dst: !pto.ptr<f32, ub> {pto.alignment = 32 : i64},
+      %dst: !pto.ptr<f32, ub>,
       %offset: index) -> !pto.vmi.vreg<128xf32> {
     %c8 = arith.constant 8 : index
     %aligned_offset = arith.muli %offset, %c8 : index

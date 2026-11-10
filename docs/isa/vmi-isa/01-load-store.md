@@ -75,19 +75,19 @@
     unproven read. With `load-safety=error`, the complete physical read range
     must be proven safe, and a raw pointer alone cannot provide that extent.
 
-  Address proofs use explicit `pto.alignment` contracts on function pointer
-  arguments; callers must satisfy that contract. An arbitrary
-  integer cast to a pointer does not establish alignment. A producer may attach
+  Address proofs retain the existing address-space ABI alignment contract for
+  pointer block arguments; callers must satisfy that contract. An arbitrary
+  integer cast to a pointer does not establish alignment. A frontend that has
+  already ensured alignment may additionally attach
   `pto.alignment = N : i64` to an integer-to-pointer `pto.castptr`, or to a
   pointer function argument, to guarantee that exact address is divisible by
   positive power-of-two N bytes. The producer or caller is responsible for
   the claim; verification rejects malformed or provably contradictory claims.
-  Later pointer and access offsets are checked separately. No general numeric
-  alignment guarantee is inferred for arbitrary function or region arguments.
-  A static identity-layout memref may instead use `memref.assume_alignment`
-  when that operation dominates every use of the memref; its caller or producer
-  must satisfy the claim. Other memref layouts and late or conditional
-  assumptions remain unknown.
+  This guarantee bypasses pointer-origin tracing, for example after an opaque
+  integer projection from AscendNPU-IR. Later pointer and access offsets are
+  checked separately. Inputs without the attribute use the existing alignment
+  proof logic unchanged. The attribute does not establish a readable allocation
+  extent or add a runtime alignment check.
 
   Limiting an access to one block does not remove its address alignment
   requirement. A consumer mask does not shorten the physical read range.

@@ -9,7 +9,7 @@
 // RUN: pto-test-opt %s -vmi-lower-unified-to-legacy -vmi-to-vpto | FileCheck %s
 
 module {
-  func.func @vmi_to_vpto_load_deint2(%src: !pto.ptr<f32, ub> {pto.alignment = 32 : i64}, %offset: index)
+  func.func @vmi_to_vpto_load_deint2(%src: !pto.ptr<f32, ub>, %offset: index)
       -> (!pto.vreg<64xf32>, !pto.vreg<64xf32>) {
     %c8 = arith.constant 8 : index
     %c64 = arith.constant 64 : index
@@ -34,7 +34,7 @@ module {
     return %p0, %p1 : !pto.vreg<64xf32>, !pto.vreg<64xf32>
   }
 
-  func.func @vmi_to_vpto_load_deint4(%src: !pto.ptr<f32, ub> {pto.alignment = 32 : i64}, %offset: index)
+  func.func @vmi_to_vpto_load_deint4(%src: !pto.ptr<f32, ub>, %offset: index)
       -> (!pto.vreg<64xf32>, !pto.vreg<64xf32>, !pto.vreg<64xf32>, !pto.vreg<64xf32>) {
     %c8 = arith.constant 8 : index
     %c128 = arith.constant 128 : index

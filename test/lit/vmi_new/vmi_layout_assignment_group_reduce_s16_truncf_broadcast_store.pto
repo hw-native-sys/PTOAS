@@ -13,7 +13,7 @@ module {
   func.func @vmi_layout_assignment_group_reduce_s16_truncf_broadcast_store(
       %source: !pto.vmi.vreg<128xf32>,
       %mask: !pto.vmi.mask<128xpred>,
-      %dst: !pto.ptr<f16, ub> {pto.alignment = 32 : i64},
+      %dst: !pto.ptr<f16, ub>,
       %off: index) {
     %c16 = arith.constant 16 : index
     %aligned_off = arith.muli %off, %c16 : index

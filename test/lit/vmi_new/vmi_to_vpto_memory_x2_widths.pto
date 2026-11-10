@@ -10,7 +10,7 @@
 
 module {
   func.func @vmi_to_vpto_load_deint2_f16(
-      %src: !pto.ptr<f16, ub> {pto.alignment = 32 : i64}, %offset: index)
+      %src: !pto.ptr<f16, ub>, %offset: index)
       -> (!pto.vreg<128xf16>, !pto.vreg<128xf16>) {
     %c16 = arith.constant 16 : index
     %aligned_offset = arith.muli %offset, %c16 : index
@@ -38,7 +38,7 @@ module {
   func.func @vmi_to_vpto_store_deint2_i8(
       %lo: !pto.vmi.vreg<256xi8, #pto.vmi.layout<contiguous>>,
       %hi: !pto.vmi.vreg<256xi8, #pto.vmi.layout<contiguous>>,
-      %dst: !pto.ptr<i8, ub> {pto.alignment = 32 : i64}, %offset: index) {
+      %dst: !pto.ptr<i8, ub>, %offset: index) {
     %c32 = arith.constant 32 : index
     %c256 = arith.constant 256 : index
     %aligned_offset = arith.muli %offset, %c32 : index

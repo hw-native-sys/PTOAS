@@ -30,7 +30,7 @@
 
 module {
   func.func @group_broadcast_load_four_group_bf16_layout_assigned(
-      %src: !pto.ptr<bf16, ub> {pto.alignment = 32 : i64}, %dst: !pto.ptr<bf16, ub> {pto.alignment = 32 : i64}, %off: index) {
+      %src: !pto.ptr<bf16, ub>, %dst: !pto.ptr<bf16, ub>, %off: index) {
     %c1 = arith.constant 1 : index
     %c16 = arith.constant 16 : index
     %aligned_off = arith.muli %off, %c16 : index
@@ -44,7 +44,7 @@ module {
   }
 
   func.func @group_broadcast_load_four_group_f32_layout_assigned(
-      %src: !pto.ptr<f32, ub> {pto.alignment = 32 : i64}, %dst: !pto.ptr<f32, ub> {pto.alignment = 32 : i64}, %off: index) {
+      %src: !pto.ptr<f32, ub>, %dst: !pto.ptr<f32, ub>, %off: index) {
     %c1 = arith.constant 1 : index
     %c8 = arith.constant 8 : index
     %aligned_off = arith.muli %off, %c8 : index

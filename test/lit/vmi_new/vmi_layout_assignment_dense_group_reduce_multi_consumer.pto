@@ -11,9 +11,9 @@
 
 module {
   func.func @vmi_layout_assignment_dense_group_reduce_multi_consumer(
-      %src: !pto.ptr<f32, ub> {pto.alignment = 32 : i64},
-      %sum_out: !pto.ptr<f32, ub> {pto.alignment = 32 : i64},
-      %copy_out: !pto.ptr<f32, ub> {pto.alignment = 32 : i64},
+      %src: !pto.ptr<f32, ub>,
+      %sum_out: !pto.ptr<f32, ub>,
+      %copy_out: !pto.ptr<f32, ub>,
       %off: index) {
     %c1 = arith.constant 1 : index
     %c8 = arith.constant 8 : index

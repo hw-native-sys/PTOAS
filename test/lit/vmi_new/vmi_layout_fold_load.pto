@@ -11,7 +11,7 @@
 
 module {
   func.func @vmi_layout_fold_load_all_ensures(
-      %src: !pto.ptr<f32, ub> {pto.alignment = 32 : i64}, %off: index)
+      %src: !pto.ptr<f32, ub>, %off: index)
       -> (!pto.vmi.vreg<128xf32, #pto.vmi.layout<deinterleaved = 2>>,
           !pto.vmi.vreg<128xf32, #pto.vmi.layout<deinterleaved = 2>>) {
     %c8 = arith.constant 8 : index
@@ -31,7 +31,7 @@ module {
   }
 
   func.func @vmi_layout_fold_load_keeps_mixed_use(
-      %src: !pto.ptr<f32, ub> {pto.alignment = 32 : i64}, %off: index)
+      %src: !pto.ptr<f32, ub>, %off: index)
       -> (!pto.vmi.vreg<128xf32, #pto.vmi.layout<contiguous>>,
           !pto.vmi.vreg<128xf32, #pto.vmi.layout<deinterleaved = 2>>) {
     %c8 = arith.constant 8 : index

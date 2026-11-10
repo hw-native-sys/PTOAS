@@ -67,7 +67,7 @@ module {
       %source: !pto.vmi.vreg<64xf32>,
       %reduce_mask: !pto.vmi.mask<64xpred>,
       %store_mask: !pto.vmi.mask<1xpred>,
-      %dst: !pto.ptr<f32, ub> {pto.alignment = 32 : i64}, %off: index) {
+      %dst: !pto.ptr<f32, ub>, %off: index) {
     %c8 = arith.constant 8 : index
     %aligned_off = arith.muli %off, %c8 : index
     %sum = pto.vmi.vcadd %source, %reduce_mask {reassoc}

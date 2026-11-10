@@ -14,7 +14,7 @@ module attributes {pto.target_arch = "a5"} {
         %cond: i1,
         %lhs: f32,
         %rhs: f32,
-        %dst: !pto.ptr<f32, ub> {pto.alignment = 32 : i64},
+        %dst: !pto.ptr<f32, ub>,
         %offset: index) {
       %c8 = arith.constant 8 : index
       %aligned_offset = arith.muli %offset, %c8 : index

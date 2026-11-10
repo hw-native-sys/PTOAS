@@ -12,7 +12,7 @@
 module {
   func.func @vmi_to_vpto_truncf_fp8_128_lane_stride(
       %input: !pto.vmi.vreg<128xf32>,
-      %dst: !pto.ptr<f8E4M3FN, ub> {pto.alignment = 32 : i64},
+      %dst: !pto.ptr<f8E4M3FN, ub>,
       %off: index) {
     %c32 = arith.constant 32 : index
     %aligned_off = arith.muli %off, %c32 : index

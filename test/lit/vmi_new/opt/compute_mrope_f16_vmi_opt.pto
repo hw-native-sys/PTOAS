@@ -17,9 +17,9 @@
 
 module attributes {pto.target_arch = "a5", pto.kernel_kind = #pto.kernel_kind<vector>} {
   func.func @ComputeMropeF16(
-      %x_ub_u: !pto.ptr<ui16, ub> {pto.alignment = 32 : i64},
-      %y_ub_u: !pto.ptr<ui16, ub> {pto.alignment = 32 : i64},
-      %cs_ub_u: !pto.ptr<ui16, ub> {pto.alignment = 32 : i64},
+      %x_ub_u: !pto.ptr<ui16, ub>,
+      %y_ub_u: !pto.ptr<ui16, ub>,
+      %cs_ub_u: !pto.ptr<ui16, ub>,
       %curTokens: i32,
       %num_heads: i32,
       %num_heads_max: i32,

@@ -12,9 +12,9 @@
 
 module {
   func.func @vmi_surface_load_extui_zero_gap(
-      %src8: !pto.ptr<ui8, ub> {pto.alignment = 32 : i64}, %src16: !pto.ptr<ui16, ub> {pto.alignment = 32 : i64},
-      %dst16: !pto.ptr<ui16, ub> {pto.alignment = 32 : i64}, %dst32a: !pto.ptr<ui32, ub> {pto.alignment = 32 : i64},
-      %dst32b: !pto.ptr<ui32, ub> {pto.alignment = 32 : i64}, %off: index) {
+      %src8: !pto.ptr<ui8, ub>, %src16: !pto.ptr<ui16, ub>,
+      %dst16: !pto.ptr<ui16, ub>, %dst32a: !pto.ptr<ui32, ub>,
+      %dst32b: !pto.ptr<ui32, ub>, %off: index) {
     %c32 = arith.constant 32 : index
     %aligned_off = arith.muli %off, %c32 : index
     %a = pto.vmi.load %src8[%aligned_off]

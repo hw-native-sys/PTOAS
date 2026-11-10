@@ -15,7 +15,7 @@
 
 module {
   func.func @trunci_lane_stride_interleave(
-      %src: !pto.ptr<si32, ub> {pto.alignment = 32 : i64}, %dst: !pto.ptr<si8, ub> {pto.alignment = 32 : i64}) {
+      %src: !pto.ptr<si32, ub>, %dst: !pto.ptr<si8, ub>) {
     %c0 = arith.constant 0 : index
     pto.vecscope {
       %v = pto.vmi.load %src[%c0] : !pto.ptr<si32, ub> -> !pto.vmi.vreg<256xsi32, #pto.vmi.layout<deinterleaved = 2>>

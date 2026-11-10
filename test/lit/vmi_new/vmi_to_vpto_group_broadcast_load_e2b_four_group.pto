@@ -18,7 +18,7 @@
 
 module {
   func.func @group_broadcast_load_e2b_four_group_bf16(
-      %src: !pto.ptr<bf16, ub> {pto.alignment = 32 : i64}, %off: index)
+      %src: !pto.ptr<bf16, ub>, %off: index)
       -> !pto.vmi.vreg<128xbf16, #pto.vmi.layout<deinterleaved = 2>> {
     %c1 = arith.constant 1 : index
     %c16 = arith.constant 16 : index

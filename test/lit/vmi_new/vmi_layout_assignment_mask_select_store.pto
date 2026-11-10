@@ -11,10 +11,10 @@
 
 module {
   func.func @vmi_layout_assignment_mask_select_store(
-      %src: !pto.ptr<f32, ub> {pto.alignment = 32 : i64},
-      %rhs: !pto.ptr<f32, ub> {pto.alignment = 32 : i64},
-      %dense: !pto.ptr<f32, ub> {pto.alignment = 32 : i64},
-      %masked: !pto.ptr<f32, ub> {pto.alignment = 32 : i64},
+      %src: !pto.ptr<f32, ub>,
+      %rhs: !pto.ptr<f32, ub>,
+      %dense: !pto.ptr<f32, ub>,
+      %masked: !pto.ptr<f32, ub>,
       %off: index) {
     %c8 = arith.constant 8 : index
     %c48 = arith.constant 48 : index

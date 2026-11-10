@@ -14,7 +14,7 @@
 
 module {
   func.func @vmi_to_vpto_iota_signed_base_64(
-      %base: si32, %dst: !pto.ptr<si32, ub> {pto.alignment = 32 : i64}) {
+      %base: si32, %dst: !pto.ptr<si32, ub>) {
     %c0 = arith.constant 0 : index
     %idx = pto.vmi.vci %base : si32 -> !pto.vmi.vreg<64xsi32>
     pto.vmi.vstore %idx, %dst[%c0]
@@ -23,7 +23,7 @@ module {
   }
 
   func.func @vmi_to_vpto_iota_signed_base_split(
-      %base: si32, %dst: !pto.ptr<si32, ub> {pto.alignment = 32 : i64}) {
+      %base: si32, %dst: !pto.ptr<si32, ub>) {
     %c0 = arith.constant 0 : index
     %idx = pto.vmi.vci %base : si32 -> !pto.vmi.vreg<128xsi32>
     pto.vmi.vstore %idx, %dst[%c0]
@@ -32,7 +32,7 @@ module {
   }
 
   func.func @vmi_to_vpto_iota_signed_base_desc_split(
-      %base: si32, %dst: !pto.ptr<si32, ub> {pto.alignment = 32 : i64}) {
+      %base: si32, %dst: !pto.ptr<si32, ub>) {
     %c0 = arith.constant 0 : index
     %idx = pto.vmi.vci %base {order = "DESC"}
         : si32 -> !pto.vmi.vreg<128xsi32>
@@ -42,7 +42,7 @@ module {
   }
 
   func.func @vmi_to_vpto_iota_signed_base_256(
-      %base: si32, %dst: !pto.ptr<si32, ub> {pto.alignment = 32 : i64}) {
+      %base: si32, %dst: !pto.ptr<si32, ub>) {
     %c0 = arith.constant 0 : index
     %idx = pto.vmi.vci %base : si32 -> !pto.vmi.vreg<256xsi32>
     pto.vmi.vstore %idx, %dst[%c0]
@@ -51,7 +51,7 @@ module {
   }
 
   func.func @vmi_to_vpto_iota_unsigned_base_256(
-      %base: ui32, %dst: !pto.ptr<ui32, ub> {pto.alignment = 32 : i64}) {
+      %base: ui32, %dst: !pto.ptr<ui32, ub>) {
     %c0 = arith.constant 0 : index
     %idx = pto.vmi.vci %base : ui32 -> !pto.vmi.vreg<256xui32>
     pto.vmi.vstore %idx, %dst[%c0]

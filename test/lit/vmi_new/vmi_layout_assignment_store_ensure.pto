@@ -12,7 +12,7 @@
 module {
   func.func @vmi_layout_assignment_store_ensure(
       %src: !pto.vmi.vreg<128xf16>,
-      %dst: !pto.ptr<f32, ub> {pto.alignment = 32 : i64},
+      %dst: !pto.ptr<f32, ub>,
       %offset: index) {
     %c8 = arith.constant 8 : index
     %aligned_offset = arith.muli %offset, %c8 : index

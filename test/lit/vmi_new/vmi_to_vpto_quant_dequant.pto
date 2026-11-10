@@ -10,9 +10,9 @@
 
 module {
   func.func @vmi_to_vpto_dequant_matrix_f16_to_f32(
-      %src: !pto.ptr<f16, ub> {pto.alignment = 32 : i64},
+      %src: !pto.ptr<f16, ub>,
       %scale: f32,
-      %dst: !pto.ptr<f32, ub> {pto.alignment = 32 : i64},
+      %dst: !pto.ptr<f32, ub>,
       %rows: index,
       %full_blocks: index,
       %tail: index,
@@ -67,9 +67,9 @@ module {
   }
 
   func.func @vmi_to_vpto_quant_matrix_f32_to_f16(
-      %src: !pto.ptr<f32, ub> {pto.alignment = 32 : i64},
+      %src: !pto.ptr<f32, ub>,
       %inv_scale: f32,
-      %dst: !pto.ptr<f16, ub> {pto.alignment = 32 : i64},
+      %dst: !pto.ptr<f16, ub>,
       %rows: index,
       %full_blocks: index,
       %tail: index,
@@ -124,9 +124,9 @@ module {
   }
 
   func.func @vmi_to_vpto_dequant_matrix_fp8_to_f32(
-      %src: !pto.ptr<f8E4M3FN, ub> {pto.alignment = 32 : i64},
+      %src: !pto.ptr<f8E4M3FN, ub>,
       %scale: f32,
-      %dst: !pto.ptr<f32, ub> {pto.alignment = 32 : i64},
+      %dst: !pto.ptr<f32, ub>,
       %rows: index,
       %full_blocks: index,
       %tail: index,
@@ -181,9 +181,9 @@ module {
   }
 
   func.func @vmi_to_vpto_quant_matrix_f32_to_fp8(
-      %src: !pto.ptr<f32, ub> {pto.alignment = 32 : i64},
+      %src: !pto.ptr<f32, ub>,
       %inv_scale: f32,
-      %dst: !pto.ptr<f8E4M3FN, ub> {pto.alignment = 32 : i64},
+      %dst: !pto.ptr<f8E4M3FN, ub>,
       %rows: index,
       %full_blocks: index,
       %tail: index,

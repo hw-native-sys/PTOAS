@@ -14,7 +14,6 @@ module {
       %mask: !pto.vmi.mask<100xb32, #pto.vmi.layout<contiguous>>,
       %passthru: !pto.vmi.vreg<100xf32, #pto.vmi.layout<contiguous>>)
       -> (!pto.vreg<64xf32>, !pto.vreg<64xf32>) {
-    memref.assume_alignment %src, 32 : memref<128xf32, #pto.address_space<vec>>
     %c0 = arith.constant 0 : index
     %loaded = pto.vmi.vload %src[%c0]
         : memref<128xf32, #pto.address_space<vec>>
@@ -35,7 +34,6 @@ module {
       %mask: !pto.vmi.mask<100xb32, #pto.vmi.layout<contiguous>>,
       %passthru: !pto.vmi.vreg<100xf32, #pto.vmi.layout<contiguous>>)
       -> (!pto.vreg<64xf32>, !pto.vreg<64xf32>) {
-    memref.assume_alignment %src, 32 : memref<136xf32, #pto.address_space<vec>>
     %c4 = arith.constant 4 : index
     %loaded = pto.vmi.vload %src[%c4]
         : memref<136xf32, #pto.address_space<vec>>

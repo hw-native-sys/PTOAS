@@ -12,7 +12,6 @@ module {
   func.func @vmi_to_vpto_load_nonfull(
       %src: memref<64xf32, #pto.address_space<vec>>)
       -> (!pto.vreg<64xf32>) {
-    memref.assume_alignment %src, 32 : memref<64xf32, #pto.address_space<vec>>
     %c0 = arith.constant 0 : index
     %value = pto.vmi.vload %src[%c0]
         : memref<64xf32, #pto.address_space<vec>>

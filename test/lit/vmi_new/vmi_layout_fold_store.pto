@@ -13,8 +13,8 @@ module {
   func.func @vmi_layout_fold_store(
       %src: !pto.vmi.vreg<128xf16>,
       %scale: f32,
-      %out1: !pto.ptr<f32, ub> {pto.alignment = 32 : i64},
-      %out2: !pto.ptr<f32, ub> {pto.alignment = 32 : i64},
+      %out1: !pto.ptr<f32, ub>,
+      %out2: !pto.ptr<f32, ub>,
       %offset: index) {
     %c8 = arith.constant 8 : index
     %aligned_offset = arith.muli %offset, %c8 : index

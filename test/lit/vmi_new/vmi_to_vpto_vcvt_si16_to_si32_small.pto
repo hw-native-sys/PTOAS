@@ -18,7 +18,7 @@
 // the failure this case pins.
 
 module attributes {pto.target_arch = "a5", pto.kernel_kind = #pto.kernel_kind<vector>} {
-  func.func @si16_extend_store_si32_mul_L2(%src: !pto.ptr<si16, ub> {pto.alignment = 32 : i64}, %dst: !pto.ptr<si32, ub> {pto.alignment = 32 : i64}, %off: index) attributes {pto.kernel} {
+  func.func @si16_extend_store_si32_mul_L2(%src: !pto.ptr<si16, ub>, %dst: !pto.ptr<si32, ub>, %off: index) attributes {pto.kernel} {
     %c16 = arith.constant 16 : index
     %aoff = arith.muli %off, %c16 : index
     pto.vecscope {
@@ -31,7 +31,7 @@ module attributes {pto.target_arch = "a5", pto.kernel_kind = #pto.kernel_kind<ve
     }
     return
   }
-  func.func @si16_extend_store_si32_mul_L4(%src: !pto.ptr<si16, ub> {pto.alignment = 32 : i64}, %dst: !pto.ptr<si32, ub> {pto.alignment = 32 : i64}, %off: index) attributes {pto.kernel} {
+  func.func @si16_extend_store_si32_mul_L4(%src: !pto.ptr<si16, ub>, %dst: !pto.ptr<si32, ub>, %off: index) attributes {pto.kernel} {
     %c16 = arith.constant 16 : index
     %aoff = arith.muli %off, %c16 : index
     pto.vecscope {
@@ -44,7 +44,7 @@ module attributes {pto.target_arch = "a5", pto.kernel_kind = #pto.kernel_kind<ve
     }
     return
   }
-  func.func @si16_extend_store_si32_mul_L8(%src: !pto.ptr<si16, ub> {pto.alignment = 32 : i64}, %dst: !pto.ptr<si32, ub> {pto.alignment = 32 : i64}, %off: index) attributes {pto.kernel} {
+  func.func @si16_extend_store_si32_mul_L8(%src: !pto.ptr<si16, ub>, %dst: !pto.ptr<si32, ub>, %off: index) attributes {pto.kernel} {
     %c16 = arith.constant 16 : index
     %aoff = arith.muli %off, %c16 : index
     pto.vecscope {
