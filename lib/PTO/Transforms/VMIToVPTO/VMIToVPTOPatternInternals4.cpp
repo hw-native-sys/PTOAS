@@ -876,6 +876,110 @@ private:
     return *zeroCopyPlan;
   }
 
+  bool hasStaticAllActiveMask(SourceOp op) const {
+    auto lhsType = cast<VMIVRegType>(op.getLhs().getType());
+    return isStaticAllActiveMask(op.getMask(), lhsType.getElementCount());
+  }
+
+  // The hardware interleave/deinterleave ops carry no predicate operand.  Convert
+  // the VMI mask to each result layout, then select the lowered result against
+  // a zero vector so inactive lanes are zero in both outputs.
+  FailureOr<SmallVector<Value>> convertInterleaveMaskParts(
+      SourceOp op, ValueRange maskParts, ArrayRef<Type> resultTypes,
+      VMILayoutAttr resultLayout, VMILayoutAttr maskLayout,
+      OneToNPatternRewriter &rewriter) const {
+    SmallVector<Type> maskTypes;
+    maskTypes.reserve(resultTypes.size());
+    for (Type resultType : resultTypes) {
+      auto vregType = dyn_cast<VRegType>(resultType);
+      if (!vregType) {
+        return rewriter.notifyMatchFailure(
+            op, "interleave result mask requires a physical vreg part");
+      }
+      FailureOr<MaskType> maskType =
+          getMaskTypeForVReg(vregType, rewriter.getContext());
+      if (failed(maskType)) {
+        return rewriter.notifyMatchFailure(
+            op, "failed to derive interleave result mask type");
+      }
+      maskTypes.push_back(*maskType);
+    }
+    auto sourceMaskType = cast<VMIMaskType>(op.getMask().getType());
+    auto resultMaskType = VMIMaskType::get(
+        rewriter.getContext(), sourceMaskType.getElementCount(),
+        sourceMaskType.getGranularity(), resultLayout);
+    FailureOr<std::optional<SmallVector<Value>>> converted =
+        materializeMaskGranularityCastLayoutFallback(
+            op.getOperation(), sourceMaskType, resultMaskType, maskParts,
+            maskTypes, maskLayout, resultLayout, rewriter);
+    if (failed(converted) || !converted->has_value()) {
+      return rewriter.notifyMatchFailure(
+          op, "failed to materialize interleave result mask layout");
+    }
+    return std::move(**converted);
+  }
+
+  LogicalResult zeroInactivePart(SourceOp op, Value &result, Value mask,
+                                 Type resultType,
+                                 OneToNPatternRewriter &rewriter) const {
+    auto vregType = dyn_cast<VRegType>(resultType);
+    if (!vregType) {
+      return rewriter.notifyMatchFailure(
+          op, "interleave result mask requires a physical vreg part");
+    }
+    FailureOr<Value> zero = createZeroVector(op.getLoc(), vregType, rewriter);
+    if (failed(zero)) {
+      return rewriter.notifyMatchFailure(
+          op, "failed to materialize interleave zero vector");
+    }
+    result =
+        rewriter.create<VselOp>(op.getLoc(), vregType, result, *zero, mask);
+    return success();
+  }
+
+  LogicalResult zeroInactiveResults(SourceOp op,
+                                    SmallVectorImpl<Value> &results,
+                                    ArrayRef<Type> lowTypes,
+                                    ArrayRef<Type> highTypes,
+                                    ValueRange maskParts,
+                                    const VMIInterleaveLayoutFact &fact,
+                                    OneToNPatternRewriter &rewriter) const {
+    if (hasStaticAllActiveMask(op) || maskParts.empty()) {
+      return success();
+    }
+    const size_t lowCount = lowTypes.size();
+    const size_t highCount = highTypes.size();
+    bool invalidArity = results.size() != lowCount + highCount;
+    if (invalidArity) {
+      return rewriter.notifyMatchFailure(
+          op, "interleave result arity mismatch");
+    }
+    FailureOr<SmallVector<Value>> lowMasks = convertInterleaveMaskParts(
+        op, maskParts, lowTypes, fact.lowLayout, fact.maskLayout, rewriter);
+    FailureOr<SmallVector<Value>> highMasks = convertInterleaveMaskParts(
+        op, maskParts, highTypes, fact.highLayout, fact.maskLayout, rewriter);
+    bool invalidMasks = failed(lowMasks) || failed(highMasks) ||
+                        lowMasks->size() != lowCount ||
+                        highMasks->size() != highCount;
+    if (invalidMasks) {
+      return rewriter.notifyMatchFailure(
+          op, "failed to materialize interleave result predicates");
+    }
+    for (size_t i = 0; i < lowCount; ++i) {
+      if (failed(zeroInactivePart(op, results[i], (*lowMasks)[i], lowTypes[i],
+                                  rewriter))) {
+        return failure();
+      }
+    }
+    for (size_t i = 0; i < highCount; ++i) {
+      if (failed(zeroInactivePart(op, results[lowCount + i], (*highMasks)[i],
+                                  highTypes[i], rewriter))) {
+        return failure();
+      }
+    }
+    return success();
+  }
+
   LogicalResult lowerInterleaveByLayout(
       SourceOp op, OneToNPatternRewriter &rewriter, ValueRange lhsParts,
       ValueRange rhsParts, ValueRange maskParts, ArrayRef<Type> lowTypes,
@@ -888,16 +992,21 @@ private:
     }
     if (plan->kind == InterleaveLoweringKind::LaneStride) {
       return lowerLaneStrideInterleave(op, rewriter, lhsParts, rhsParts,
-                                       lowTypes, highTypes, elementType, fact);
+                                       maskParts, lowTypes, highTypes,
+                                       elementType, fact);
     }
     if (plan->kind == InterleaveLoweringKind::Contiguous) {
       return lowerContiguous(op, rewriter, lhsParts, rhsParts, maskParts,
-                             lowTypes, highTypes);
+                             lowTypes, highTypes, fact);
     }
     FailureOr<SmallVector<Value>> results = materializeZeroCopyResults(
         op, lhsParts, rhsParts, lowTypes, highTypes, plan->inputFactor,
         plan->outputFactor, plan->zeroCopyVintlv, rewriter);
     if (failed(results)) {
+      return failure();
+    }
+    if (failed(zeroInactiveResults(op, *results, lowTypes, highTypes,
+                                   maskParts, fact, rewriter))) {
       return failure();
     }
     replaceOpWithFlatConvertedValues(rewriter, op, *results,
@@ -907,8 +1016,9 @@ private:
 
   LogicalResult lowerLaneStrideInterleave(
       SourceOp op, OneToNPatternRewriter &rewriter, ValueRange lhsParts,
-      ValueRange rhsParts, TypeRange lowTypes, TypeRange highTypes,
-      Type elementType, const VMIInterleaveLayoutFact &fact) const {
+      ValueRange rhsParts, ValueRange maskParts, ArrayRef<Type> lowTypes,
+      ArrayRef<Type> highTypes, Type elementType,
+      const VMIInterleaveLayoutFact &fact) const {
     bool invalidArity = lhsParts.size() != 1 || rhsParts.size() != 1 ||
                         lowTypes.size() != 1 || highTypes.size() != 1;
     if (invalidArity) {
@@ -934,6 +1044,10 @@ private:
       return failure();
     }
     SmallVector<Value, kPairResultCount> results = {pair->first, pair->second};
+    if (failed(zeroInactiveResults(op, results, lowTypes, highTypes,
+                                   maskParts, fact, rewriter))) {
+      return failure();
+    }
     return lowerBinaryPhysicalResults(op, results, rewriter,
                                       *this->getTypeConverter());
   }
@@ -1038,7 +1152,8 @@ private:
   LogicalResult lowerContiguous(
       SourceOp op, OneToNPatternRewriter &rewriter, ValueRange lhsParts,
       ValueRange rhsParts, ValueRange maskParts, ArrayRef<Type> lowTypes,
-      ArrayRef<Type> highTypes) const {
+      ArrayRef<Type> highTypes,
+      const VMIInterleaveLayoutFact &fact) const {
     bool singleChunk = lhsParts.size() == 1 && rhsParts.size() == 1 &&
                        lowTypes.size() == 1 && highTypes.size() == 1;
     if (!singleChunk) {
@@ -1065,6 +1180,10 @@ private:
         rhsParts.front());
     SmallVector<Value, kPairResultCount> results = {interleave.getLow(),
                                                    interleave.getHigh()};
+    if (failed(zeroInactiveResults(op, results, lowTypes, highTypes,
+                                   maskParts, fact, rewriter))) {
+      return failure();
+    }
     return lowerBinaryPhysicalResults(op, results, rewriter,
                                       *this->getTypeConverter());
   }

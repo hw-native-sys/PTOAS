@@ -70,7 +70,9 @@ module {
 // CHECK-NOT: pto.vldsx2
 // CHECK: %[[LOAD:[^,]+]], %{{[^,]+}}, %{{[^ ]+}} = pto.vldus
 // CHECK: %[[LOW:.*]], %[[HIGH:.*]] = pto.vdintlv %[[LOAD]], %[[LOAD]]
-// CHECK: return %[[LOW]], %[[HIGH]]
+// CHECK: %[[LOWV:.*]] = pto.vsel %[[LOW]], {{.*}}
+// CHECK: %[[HIGHV:.*]] = pto.vsel %[[HIGH]], {{.*}}
+// CHECK: return %[[LOWV]], %[[HIGHV]]
 // CHECK-NOT: pto.vmi.
 // CHECK-NOT: !pto.vmi.
 // CHECK-NOT: unrealized_conversion_cast

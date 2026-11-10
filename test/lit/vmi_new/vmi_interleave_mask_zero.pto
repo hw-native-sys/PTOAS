@@ -1,0 +1,206 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+
+// Masked vintlv/vdintlv zero every inactive lane of both results.  The
+// predicated selections are emitted by the lowering, so PyPTO no longer needs
+// its own vsel workaround.  A statically all-active mask keeps the direct form.
+
+// RUN: pto-test-opt %s -vmi-mask-granularity-assignment -vmi-layout-assignment -vmi-to-vpto | FileCheck %s
+
+module {
+  func.func @vintlv_partial_mask_f32(
+      %a: !pto.vmi.vreg<64xf32>, %b: !pto.vmi.vreg<64xf32>)
+      -> (!pto.vmi.vreg<64xf32>, !pto.vmi.vreg<64xf32>) {
+    %c32 = arith.constant 32 : index
+    %mask = pto.vmi.create_mask %c32 : index -> !pto.vmi.mask<64xpred>
+    %lo, %hi = pto.vmi.vintlv %a, %b, %mask
+        : !pto.vmi.vreg<64xf32>, !pto.vmi.vreg<64xf32>, !pto.vmi.mask<64xpred>
+        -> !pto.vmi.vreg<64xf32>, !pto.vmi.vreg<64xf32>
+    return %lo, %hi : !pto.vmi.vreg<64xf32>, !pto.vmi.vreg<64xf32>
+  }
+
+  func.func @vdintlv_partial_mask_f32(
+      %a: !pto.vmi.vreg<64xf32>, %b: !pto.vmi.vreg<64xf32>)
+      -> (!pto.vmi.vreg<64xf32>, !pto.vmi.vreg<64xf32>) {
+    %c32 = arith.constant 32 : index
+    %mask = pto.vmi.create_mask %c32 : index -> !pto.vmi.mask<64xpred>
+    %even, %odd = pto.vmi.vdintlv %a, %b, %mask
+        : !pto.vmi.vreg<64xf32>, !pto.vmi.vreg<64xf32>, !pto.vmi.mask<64xpred>
+        -> !pto.vmi.vreg<64xf32>, !pto.vmi.vreg<64xf32>
+    return %even, %odd : !pto.vmi.vreg<64xf32>, !pto.vmi.vreg<64xf32>
+  }
+
+  func.func @vintlv_empty_mask_f32(
+      %a: !pto.vmi.vreg<64xf32>, %b: !pto.vmi.vreg<64xf32>)
+      -> (!pto.vmi.vreg<64xf32>, !pto.vmi.vreg<64xf32>) {
+    %c0 = arith.constant 0 : index
+    %mask = pto.vmi.create_mask %c0 : index -> !pto.vmi.mask<64xpred>
+    %lo, %hi = pto.vmi.vintlv %a, %b, %mask
+        : !pto.vmi.vreg<64xf32>, !pto.vmi.vreg<64xf32>, !pto.vmi.mask<64xpred>
+        -> !pto.vmi.vreg<64xf32>, !pto.vmi.vreg<64xf32>
+    return %lo, %hi : !pto.vmi.vreg<64xf32>, !pto.vmi.vreg<64xf32>
+  }
+
+  func.func @vdintlv_empty_mask_f32(
+      %a: !pto.vmi.vreg<64xf32>, %b: !pto.vmi.vreg<64xf32>)
+      -> (!pto.vmi.vreg<64xf32>, !pto.vmi.vreg<64xf32>) {
+    %c0 = arith.constant 0 : index
+    %mask = pto.vmi.create_mask %c0 : index -> !pto.vmi.mask<64xpred>
+    %even, %odd = pto.vmi.vdintlv %a, %b, %mask
+        : !pto.vmi.vreg<64xf32>, !pto.vmi.vreg<64xf32>, !pto.vmi.mask<64xpred>
+        -> !pto.vmi.vreg<64xf32>, !pto.vmi.vreg<64xf32>
+    return %even, %odd : !pto.vmi.vreg<64xf32>, !pto.vmi.vreg<64xf32>
+  }
+
+  func.func @vintlv_full_mask_f32(
+      %a: !pto.vmi.vreg<64xf32>, %b: !pto.vmi.vreg<64xf32>)
+      -> (!pto.vmi.vreg<64xf32>, !pto.vmi.vreg<64xf32>) {
+    %c64 = arith.constant 64 : index
+    %mask = pto.vmi.create_mask %c64 : index -> !pto.vmi.mask<64xpred>
+    %lo, %hi = pto.vmi.vintlv %a, %b, %mask
+        : !pto.vmi.vreg<64xf32>, !pto.vmi.vreg<64xf32>, !pto.vmi.mask<64xpred>
+        -> !pto.vmi.vreg<64xf32>, !pto.vmi.vreg<64xf32>
+    return %lo, %hi : !pto.vmi.vreg<64xf32>, !pto.vmi.vreg<64xf32>
+  }
+
+  func.func @vdintlv_full_mask_f32(
+      %a: !pto.vmi.vreg<64xf32>, %b: !pto.vmi.vreg<64xf32>)
+      -> (!pto.vmi.vreg<64xf32>, !pto.vmi.vreg<64xf32>) {
+    %c64 = arith.constant 64 : index
+    %mask = pto.vmi.create_mask %c64 : index -> !pto.vmi.mask<64xpred>
+    %even, %odd = pto.vmi.vdintlv %a, %b, %mask
+        : !pto.vmi.vreg<64xf32>, !pto.vmi.vreg<64xf32>, !pto.vmi.mask<64xpred>
+        -> !pto.vmi.vreg<64xf32>, !pto.vmi.vreg<64xf32>
+    return %even, %odd : !pto.vmi.vreg<64xf32>, !pto.vmi.vreg<64xf32>
+  }
+
+  func.func @vintlv_partial_mask_bf16(
+      %a: !pto.vmi.vreg<64xbf16>, %b: !pto.vmi.vreg<64xbf16>)
+      -> (!pto.vmi.vreg<64xbf16>, !pto.vmi.vreg<64xbf16>) {
+    %c32 = arith.constant 32 : index
+    %mask = pto.vmi.create_mask %c32 : index -> !pto.vmi.mask<64xpred>
+    %lo, %hi = pto.vmi.vintlv %a, %b, %mask
+        : !pto.vmi.vreg<64xbf16>, !pto.vmi.vreg<64xbf16>, !pto.vmi.mask<64xpred>
+        -> !pto.vmi.vreg<64xbf16>, !pto.vmi.vreg<64xbf16>
+    return %lo, %hi : !pto.vmi.vreg<64xbf16>, !pto.vmi.vreg<64xbf16>
+  }
+
+  func.func @vdintlv_partial_mask_bf16(
+      %a: !pto.vmi.vreg<64xbf16>, %b: !pto.vmi.vreg<64xbf16>)
+      -> (!pto.vmi.vreg<64xbf16>, !pto.vmi.vreg<64xbf16>) {
+    %c32 = arith.constant 32 : index
+    %mask = pto.vmi.create_mask %c32 : index -> !pto.vmi.mask<64xpred>
+    %even, %odd = pto.vmi.vdintlv %a, %b, %mask
+        : !pto.vmi.vreg<64xbf16>, !pto.vmi.vreg<64xbf16>, !pto.vmi.mask<64xpred>
+        -> !pto.vmi.vreg<64xbf16>, !pto.vmi.vreg<64xbf16>
+    return %even, %odd : !pto.vmi.vreg<64xbf16>, !pto.vmi.vreg<64xbf16>
+  }
+
+  func.func @vintlv_partial_mask_f32x128(
+      %a: !pto.vmi.vreg<128xf32>, %b: !pto.vmi.vreg<128xf32>)
+      -> (!pto.vmi.vreg<128xf32>, !pto.vmi.vreg<128xf32>) {
+    %c64 = arith.constant 64 : index
+    %mask = pto.vmi.create_mask %c64 : index -> !pto.vmi.mask<128xpred>
+    %lo, %hi = pto.vmi.vintlv %a, %b, %mask
+        : !pto.vmi.vreg<128xf32>, !pto.vmi.vreg<128xf32>, !pto.vmi.mask<128xpred>
+        -> !pto.vmi.vreg<128xf32>, !pto.vmi.vreg<128xf32>
+    return %lo, %hi : !pto.vmi.vreg<128xf32>, !pto.vmi.vreg<128xf32>
+  }
+
+  func.func @vdintlv_partial_mask_f32x128(
+      %a: !pto.vmi.vreg<128xf32>, %b: !pto.vmi.vreg<128xf32>)
+      -> (!pto.vmi.vreg<128xf32>, !pto.vmi.vreg<128xf32>) {
+    %c64 = arith.constant 64 : index
+    %mask = pto.vmi.create_mask %c64 : index -> !pto.vmi.mask<128xpred>
+    %even, %odd = pto.vmi.vdintlv %a, %b, %mask
+        : !pto.vmi.vreg<128xf32>, !pto.vmi.vreg<128xf32>, !pto.vmi.mask<128xpred>
+        -> !pto.vmi.vreg<128xf32>, !pto.vmi.vreg<128xf32>
+    return %even, %odd : !pto.vmi.vreg<128xf32>, !pto.vmi.vreg<128xf32>
+  }
+
+  // Small-VL mask zeroing is covered here.  The separate small-VL data
+  // placement failure tracked by #1659 is not changed by this pattern.
+  func.func @vintlv_partial_mask_f32x8(
+      %a: !pto.vmi.vreg<8xf32>, %b: !pto.vmi.vreg<8xf32>)
+      -> (!pto.vmi.vreg<8xf32>, !pto.vmi.vreg<8xf32>) {
+    %c4 = arith.constant 4 : index
+    %mask = pto.vmi.create_mask %c4 : index -> !pto.vmi.mask<8xpred>
+    %lo, %hi = pto.vmi.vintlv %a, %b, %mask
+        : !pto.vmi.vreg<8xf32>, !pto.vmi.vreg<8xf32>, !pto.vmi.mask<8xpred>
+        -> !pto.vmi.vreg<8xf32>, !pto.vmi.vreg<8xf32>
+    return %lo, %hi : !pto.vmi.vreg<8xf32>, !pto.vmi.vreg<8xf32>
+  }
+
+  func.func @vdintlv_partial_mask_f32x8(
+      %a: !pto.vmi.vreg<8xf32>, %b: !pto.vmi.vreg<8xf32>)
+      -> (!pto.vmi.vreg<8xf32>, !pto.vmi.vreg<8xf32>) {
+    %c4 = arith.constant 4 : index
+    %mask = pto.vmi.create_mask %c4 : index -> !pto.vmi.mask<8xpred>
+    %even, %odd = pto.vmi.vdintlv %a, %b, %mask
+        : !pto.vmi.vreg<8xf32>, !pto.vmi.vreg<8xf32>, !pto.vmi.mask<8xpred>
+        -> !pto.vmi.vreg<8xf32>, !pto.vmi.vreg<8xf32>
+    return %even, %odd : !pto.vmi.vreg<8xf32>, !pto.vmi.vreg<8xf32>
+  }
+}
+
+// CHECK-LABEL: func.func @vintlv_partial_mask_f32
+// CHECK: pto.vintlv
+// CHECK-COUNT-2: pto.vsel
+// CHECK-NOT: pto.vmi.
+
+// CHECK-LABEL: func.func @vdintlv_partial_mask_f32
+// CHECK: pto.vdintlv
+// CHECK-COUNT-2: pto.vsel
+// CHECK-NOT: pto.vmi.
+
+// CHECK-LABEL: func.func @vintlv_empty_mask_f32
+// CHECK: pto.vintlv
+// CHECK-COUNT-2: pto.vsel
+// CHECK-NOT: pto.vmi.
+
+// CHECK-LABEL: func.func @vdintlv_empty_mask_f32
+// CHECK: pto.vdintlv
+// CHECK-COUNT-2: pto.vsel
+// CHECK-NOT: pto.vmi.
+
+// CHECK-LABEL: func.func @vintlv_full_mask_f32
+// CHECK: pto.vintlv
+// CHECK-NOT: pto.vsel
+
+// CHECK-LABEL: func.func @vdintlv_full_mask_f32
+// CHECK: pto.vdintlv
+// CHECK-NOT: pto.vsel
+
+// CHECK-LABEL: func.func @vintlv_partial_mask_bf16
+// CHECK: pto.vintlv
+// CHECK-COUNT-2: pto.vsel {{.*}} : !pto.vreg<128xbf16>, !pto.vreg<128xbf16>, !pto.mask<b16> -> !pto.vreg<128xbf16>
+// CHECK-NOT: pto.vmi.
+
+// CHECK-LABEL: func.func @vdintlv_partial_mask_bf16
+// CHECK: pto.vdintlv
+// CHECK-COUNT-2: pto.vsel {{.*}} : !pto.vreg<128xbf16>, !pto.vreg<128xbf16>, !pto.mask<b16> -> !pto.vreg<128xbf16>
+// CHECK-NOT: pto.vmi.
+
+// CHECK-LABEL: func.func @vintlv_partial_mask_f32x128
+// CHECK-COUNT-4: pto.vsel
+// CHECK-NOT: pto.vmi.
+
+// CHECK-LABEL: func.func @vdintlv_partial_mask_f32x128
+// CHECK: pto.vdintlv
+// CHECK-COUNT-4: pto.vsel
+// CHECK-NOT: pto.vmi.
+
+// CHECK-LABEL: func.func @vintlv_partial_mask_f32x8
+// CHECK: pto.vintlv
+// CHECK-COUNT-2: pto.vsel {{.*}} : !pto.vreg<64xf32>, !pto.vreg<64xf32>, !pto.mask<b32> -> !pto.vreg<64xf32>
+// CHECK-NOT: pto.vmi.
+
+// CHECK-LABEL: func.func @vdintlv_partial_mask_f32x8
+// CHECK: pto.vdintlv
+// CHECK-COUNT-2: pto.vsel {{.*}} : !pto.vreg<64xf32>, !pto.vreg<64xf32>, !pto.mask<b32> -> !pto.vreg<64xf32>
+// CHECK-NOT: pto.vmi.
