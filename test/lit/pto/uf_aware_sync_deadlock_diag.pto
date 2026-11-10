@@ -1,0 +1,62 @@
+// RUN: pto-test-opt --pto-insert-sync --verify-diagnostics %s -o /dev/null
+// RUN: ptoas --pto-arch=a5 --enable-insert-sync --emit-pto-ir %s 2>&1 | FileCheck %s --check-prefixes=CLI,IR
+
+// CLI-DAG: warning: TSTORE with STPhase::Partial follows a TMATMUL with AccPhase::Partial
+// CLI-DAG: warning: conditional unit-flag consume
+// CLI-DAG: warning: conditional unit-flag publish
+
+!left = !pto.tile_buf<loc=left, dtype=f16, rows=32, cols=32, v_row=32, v_col=32, blayout=col_major, slayout=row_major, fractal=512, pad=0>
+!right = !pto.tile_buf<loc=right, dtype=f16, rows=32, cols=32, v_row=32, v_col=32, blayout=row_major, slayout=col_major, fractal=512, pad=0>
+!acc = !pto.tile_buf<loc=acc, dtype=f32, rows=32, cols=32, v_row=32, v_col=32, blayout=col_major, slayout=row_major, fractal=1024, pad=0>
+!out = !pto.partition_tensor_view<32x32xf32>
+
+module attributes {pto.target_arch = "a5"} {
+  // The documented Partial+Partial pairing: the fixpipe checks a flag that no
+  // MAD ever publishes, so the kernel hangs on hardware.
+  func.func @partial_partial(%out: !out) {
+    %lhs = pto.alloc_tile : !left
+    %rhs = pto.alloc_tile : !right
+    %acc = pto.alloc_tile : !acc
+    pto.tmatmul ins(%lhs, %rhs : !left, !right) outs(%acc : !acc)
+      {accPhase = #pto<acc_phase partial>}
+    // expected-warning @+1 {{TSTORE with STPhase::Partial follows a TMATMUL with AccPhase::Partial}}
+    pto.tstore ins(%acc : !acc) outs(%out : !out)
+      {stPhase = #pto<st_phase partial>}
+    return
+  }
+
+  // A consume that only runs on one path leaves the token set on the other.
+  func.func @conditional_consume(%out: !out, %cond: i1) {
+    %lhs = pto.alloc_tile : !left
+    %rhs = pto.alloc_tile : !right
+    %acc = pto.alloc_tile : !acc
+    pto.tmatmul ins(%lhs, %rhs : !left, !right) outs(%acc : !acc)
+      {accPhase = #pto<acc_phase final>}
+    // expected-warning @+1 {{conditional unit-flag consume}}
+    scf.if %cond {
+      pto.tstore ins(%acc : !acc) outs(%out : !out)
+        {stPhase = #pto<st_phase final>}
+    }
+    return
+  }
+
+  // A publish that only runs on one path leaves the fixpipe waiting on the
+  // other.
+  func.func @conditional_publish(%cond: i1) {
+    %lhs = pto.alloc_tile : !left
+    %rhs = pto.alloc_tile : !right
+    %acc = pto.alloc_tile : !acc
+    // expected-warning @+1 {{conditional unit-flag publish}}
+    scf.if %cond {
+      pto.tmatmul ins(%lhs, %rhs : !left, !right) outs(%acc : !acc)
+        {accPhase = #pto<acc_phase final>}
+    }
+    return
+  }
+}
+
+// A Partial+Partial pair has no Final action, so no unit-flag coverage applies
+// and the explicit M->FIX event stays.
+// IR-LABEL: func.func @partial_partial
+// IR: pto.set_flag[<PIPE_M>, <PIPE_FIX>
+// IR: pto.wait_flag[<PIPE_M>, <PIPE_FIX>

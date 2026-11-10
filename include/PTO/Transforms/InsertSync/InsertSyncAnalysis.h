@@ -16,8 +16,11 @@
  
 #include "PTO/Transforms/InsertSync/SyncCommon.h"
 #include "PTO/Transforms/InsertSync/MemoryDependentAnalyzer.h"
+#include "PTO/Transforms/InsertSync/UFTokenModel.h"
 #include "mlir/Dialect/Func/IR/FuncOps.h"
+#include "llvm/ADT/DenseSet.h"
 #include <array>
+#include <memory>
  
 namespace mlir {
 namespace pto {
@@ -29,6 +32,12 @@ struct SyncRecord {
   // appears transiently in intermediate states.
   std::array<bool, static_cast<unsigned>(PipelineType::PIPE_LAST) + 1U>
       alreadySync{false};
+
+  // Pipes whose ordering was provided by a unit-flag handshake rather than an
+  // inserted event. Kept apart from `alreadySync` so event-id reuse never
+  // mistakes a hardware handshake for an allocated event.
+  std::array<bool, static_cast<unsigned>(PipelineType::PIPE_LAST) + 1U>
+      alreadySyncByUF{false};
 
   // Record the pairing status of set/wait within a syncIndex.
   llvm::DenseMap<int, bool> syncFinder;
@@ -62,7 +71,13 @@ private:
   SyncOperations &syncOperations_;
   func::FuncOp func_;
   SyncAnalysisMode syncAnalysisMode_;
-  
+  std::unique_ptr<UFTokenModel> ufTokenModel_;
+  // Compounds whose ACC hand-off is proven before dependency traversal. A same-element
+  // back-edge pair has no event left to read from pipeAfter/pipeBefore, so this
+  // set restores the transitive suppression that event insertion used to give.
+  llvm::DenseSet<unsigned> ufOrderedCompounds_;
+
+  void InitializeUFOrderedCompounds();
   // 全局同步索引计数
   unsigned syncIndex_{0};
  
@@ -168,10 +183,19 @@ private:
 
   /// Drop dependency pairs whose ACC portion is already ordered by a UF phase;
   /// any remaining pair keeps the group's event synchronization.
+  void DropUFOrderedSelfDeps(const CompoundInstanceElement *compound,
+                             DepBaseMemInfoPairVec &depVec) const;
+
   void DropUFCoveredDeps(CompoundInstanceElement *nowCompound,
                          CompoundInstanceElement *frontCompound,
                          DepBaseMemInfoPairVec &depVec,
                          const std::optional<unsigned> &forEndIndex) const;
+
+  /// Record a fully UF-covered pair in the traversal's sync record. The mark is
+  /// tagged as unit-flag coverage so event-id reuse never counts it as an event.
+  void MarkUFCovered(const CompoundInstanceElement *nowCompound,
+                     const CompoundInstanceElement *frontCompound,
+                     SyncRecordList &syncRecordList);
 
   /// True when any request event id (1..N-1) already has a recorded sync.
   bool IsAlreadySyncedForAnyEventId(

@@ -1,0 +1,108 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+
+// RUN: ptoas --pto-arch=a5 --enable-insert-sync --emit-pto-ir %s 2>&1 | FileCheck %s
+
+!left = !pto.tile_buf<loc=left, dtype=f16, rows=32, cols=32, v_row=32, v_col=32, blayout=row_major, slayout=row_major, fractal=512, pad=0>
+!right = !pto.tile_buf<loc=right, dtype=f16, rows=32, cols=32, v_row=32, v_col=32, blayout=row_major, slayout=col_major, fractal=512, pad=0>
+!acc = !pto.tile_buf<loc=acc, dtype=f32, rows=32, cols=32, v_row=32, v_col=32, blayout=col_major, slayout=row_major, fractal=1024, pad=0>
+!out = !pto.partition_tensor_view<32x32xf32>
+
+module attributes {pto.target_arch = "a5"} {
+  func.func private @opaque()
+  // Calls may publish or consume a flag even without explicit memory operands.
+  func.func @uf_opaque_call(%out: !out, %cond: i1) {
+    %lhs = pto.alloc_tile : !left
+    %rhs = pto.alloc_tile : !right
+    %acc = pto.alloc_tile : !acc
+    pto.tmatmul ins(%lhs, %rhs : !left, !right) outs(%acc : !acc)
+      {accPhase = #pto<acc_phase final>}
+    func.call @opaque() : () -> ()
+    pto.tstore ins(%acc : !acc) outs(%out : !out)
+      {stPhase = #pto<st_phase final>}
+    return
+  }
+  // Equal net counts cannot merge Clear->Clear with Set->Set.
+  func.func @uf_conflicting_branch_inputs(%out: !out, %cond: i1) {
+    %lhs = pto.alloc_tile : !left
+    %rhs = pto.alloc_tile : !right
+    %acc = pto.alloc_tile : !acc
+    scf.if %cond {
+      pto.tmatmul ins(%lhs, %rhs : !left, !right) outs(%acc : !acc)
+        {accPhase = #pto<acc_phase final>}
+      pto.tstore ins(%acc : !acc) outs(%out : !out)
+        {stPhase = #pto<st_phase final>}
+    } else {
+      pto.tstore ins(%acc : !acc) outs(%out : !out)
+        {stPhase = #pto<st_phase final>}
+      pto.tmatmul ins(%lhs, %rhs : !left, !right) outs(%acc : !acc)
+        {accPhase = #pto<acc_phase final>}
+    }
+    pto.tmatmul ins(%lhs, %rhs : !left, !right) outs(%acc : !acc)
+      {accPhase = #pto<acc_phase final>}
+    pto.tstore ins(%acc : !acc) outs(%out : !out)
+      {stPhase = #pto<st_phase final>}
+    return
+  }
+  // The same mismatch must make the enclosing loop unusable.
+  func.func @uf_loop_branch_input_mismatch(%out: !out, %cond: i1) {
+    %lhs = pto.alloc_tile : !left
+    %rhs = pto.alloc_tile : !right
+    %acc = pto.alloc_tile : !acc
+    %c0 = arith.constant 0 : index
+    %c1 = arith.constant 1 : index
+    %c4 = arith.constant 4 : index
+    scf.for %i = %c0 to %c4 step %c1 {
+      scf.if %cond {
+        pto.tmatmul ins(%lhs, %rhs : !left, !right) outs(%acc : !acc)
+          {accPhase = #pto<acc_phase final>}
+        pto.tstore ins(%acc : !acc) outs(%out : !out)
+          {stPhase = #pto<st_phase final>}
+      } else {
+        pto.tstore ins(%acc : !acc) outs(%out : !out)
+          {stPhase = #pto<st_phase final>}
+        pto.tmatmul ins(%lhs, %rhs : !left, !right) outs(%acc : !acc)
+          {accPhase = #pto<acc_phase final>}
+      }
+      pto.tmatmul ins(%lhs, %rhs : !left, !right) outs(%acc : !acc)
+        {accPhase = #pto<acc_phase final>}
+      pto.tstore ins(%acc : !acc) outs(%out : !out)
+        {stPhase = #pto<st_phase final>}
+    }
+    return
+  }
+  // A balanced conditional region still imposes a Clear entry precondition.
+  func.func @uf_neutral_region_precondition(%out: !out, %cond: i1) {
+    %lhs = pto.alloc_tile : !left
+    %rhs = pto.alloc_tile : !right
+    %acc = pto.alloc_tile : !acc
+    pto.tmatmul ins(%lhs, %rhs : !left, !right) outs(%acc : !acc)
+      {accPhase = #pto<acc_phase final>}
+    scf.if %cond {
+      pto.tmatmul ins(%lhs, %rhs : !left, !right) outs(%acc : !acc)
+        {accPhase = #pto<acc_phase final>}
+      pto.tstore ins(%acc : !acc) outs(%out : !out)
+        {stPhase = #pto<st_phase final>}
+    }
+    pto.tstore ins(%acc : !acc) outs(%out : !out)
+      {stPhase = #pto<st_phase final>}
+    return
+  }
+}
+
+// CHECK-LABEL: func.func @uf_opaque_call
+// CHECK: pto.set_flag[<PIPE_M>, <PIPE_FIX>
+// CHECK: pto.wait_flag[<PIPE_M>, <PIPE_FIX>
+// CHECK-LABEL: func.func @uf_conflicting_branch_inputs
+// CHECK: pto.set_flag[<PIPE_M>, <PIPE_FIX>
+// CHECK: pto.wait_flag[<PIPE_M>, <PIPE_FIX>
+// CHECK-LABEL: func.func @uf_loop_branch_input_mismatch
+// CHECK: pto.set_flag[<PIPE_M>, <PIPE_FIX>
+// CHECK: pto.wait_flag[<PIPE_M>, <PIPE_FIX>
+// CHECK-LABEL: func.func @uf_neutral_region_precondition
+// CHECK: pto.set_flag[<PIPE_M>, <PIPE_FIX>

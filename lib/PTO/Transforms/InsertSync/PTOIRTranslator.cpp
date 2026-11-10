@@ -21,6 +21,7 @@
 #include "mlir/IR/AsmState.h"
 #include "mlir/IR/Matchers.h"
 #include "mlir/Interfaces/LoopLikeInterface.h"
+#include "mlir/Interfaces/CallInterfaces.h"
 #include "llvm/ADT/StringSwitch.h"
 #include "llvm/Support/Debug.h"
 #include "llvm/Support/FormatVariadic.h"
@@ -201,19 +202,24 @@ static void appendUniqueAccAccesses(
 }
 
 static void populateUFInfo(Operation *op, CompoundInstanceElement &compound) {
-  if (auto matmul = dyn_cast<pto::TMatmulOp>(op)) {
+  // Every op that can carry a phase is visible to the token model; otherwise an
+  // unrecognized publisher would look transparent and the analysis could pair a
+  // consumer with the wrong publication. The `handoffEligible` flag keeps the
+  // removable-hand-off set at the original three matmuls plus TSTORE for now.
+  auto markProducer = [&](pto::AccPhase phase, bool eligible) {
     compound.ufInfo.role = UFRole::MatmulProducer;
-    compound.ufInfo.accPhase = matmul.getAccPhase();
-  } else if (auto matmul = dyn_cast<pto::TMatmulAccOp>(op)) {
-    compound.ufInfo.role = UFRole::MatmulProducer;
-    compound.ufInfo.accPhase = matmul.getAccPhase();
-  } else if (auto matmul = dyn_cast<pto::TMatmulBiasOp>(op)) {
-    compound.ufInfo.role = UFRole::MatmulProducer;
-    compound.ufInfo.accPhase = matmul.getAccPhase();
-  } else if (auto store = dyn_cast<pto::TStoreOp>(op)) {
-    if (isAccValue(store.getSrc())) {
+    compound.ufInfo.accPhase = phase;
+    compound.ufInfo.handoffEligible = eligible;
+  };
+
+  if (auto producer = dyn_cast<pto::UFAccProducerOpInterface>(op)) {
+    markProducer(producer.getAccPhase(),
+                 isa<pto::TMatmulOp, pto::TMatmulAccOp, pto::TMatmulBiasOp>(op));
+  } else if (auto consumer = dyn_cast<pto::UFAccConsumerOpInterface>(op)) {
+    if (isAccValue(consumer.getSrc())) {
       compound.ufInfo.role = UFRole::AccStore;
-      compound.ufInfo.stPhase = store.getStPhase();
+      compound.ufInfo.stPhase = consumer.getStPhase();
+      compound.ufInfo.handoffEligible = isa<pto::TStoreOp>(op);
     }
   }
 
@@ -878,8 +884,14 @@ PTOIRTranslator::dispatchControlAndComputeOp(Operation *op) {
     UpdateYieldOpInfo(yieldOp);
   } else if (getSyncMacroModel(op)) {
     UpdateMacroOpInfo(op);
-  } else if (auto callOp = dyn_cast<func::CallOp>(op)) {
-    UpdateHelperCallInfo(callOp);
+  } else if (isa<CallOpInterface>(op)) {
+    // A modeled helper already carries the call in its compound node.
+    auto callOp = dyn_cast<func::CallOp>(op);
+    if (!callOp || !UpdateHelperCallInfo(callOp)) {
+      auto opaqueCall = std::make_unique<PlaceHolderInstanceElement>(index++, 0);
+      opaqueCall->elementOp = op;
+      syncIR_.emplace_back(std::move(opaqueCall));
+    }
   } else if (isa<pto::OpPipeInterface>(op)) {
     // --- Case D: 带有 OpPipeInterface 的计算/搬运指令 ---
     UpdatePTOOpInfo(op);
@@ -1183,15 +1195,15 @@ void PTOIRTranslator::UpdateMacroOpInfo(Operation *op) {
   }
 }
 
-void PTOIRTranslator::UpdateHelperCallInfo(func::CallOp callOp) {
+bool PTOIRTranslator::UpdateHelperCallInfo(func::CallOp callOp) {
   func::FuncOp callee = lookupSyncHelper(callOp);
   if (!callee) {
-    return;
+    return false;
   }
 
   std::optional<pto::PipelineType> pipe = getSyncHelperPipe(callee);
   if (!pipe || *pipe == pto::PipelineType::PIPE_UNASSIGNED) {
-    return;
+    return false;
   }
 
   SmallVector<const BaseMemInfo *> defVec;
@@ -1218,7 +1230,7 @@ void PTOIRTranslator::UpdateHelperCallInfo(func::CallOp callOp) {
   }
 
   if (defVec.empty() && useVec.empty()) {
-    return;
+    return false;
   }
 
   auto compoundElement = std::make_unique<CompoundInstanceElement>(
@@ -1227,6 +1239,7 @@ void PTOIRTranslator::UpdateHelperCallInfo(func::CallOp callOp) {
   compoundElement->compoundCoreType = getSyncHelperCoreType(*pipe);
   syncIR_.emplace_back(std::move(compoundElement));
   index++;
+  return true;
 }
 
 // ============================================================================

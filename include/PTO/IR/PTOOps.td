@@ -826,6 +826,7 @@ def TStoreOp: PTO_TOp<"tstore", [
   AttrSizedOperandSegments,
   PTO_DpsInitOpInterface,
   OpPipeInterface,
+  UFAccConsumerOpInterface,
   DeclareOpInterfaceMethods<MemoryEffectsOpInterface>
 ]> {
   let summary = "PTO data store operation (TileBuf -> PartitionView).";
@@ -989,6 +990,7 @@ def TTransOp : PTO_TOp<"ttrans", [
 def TMatmulBiasOp : PTO_TOp<"tmatmul.bias", [
   PTO_DpsInitOpInterface,
   OpPipeInterface,
+  UFAccProducerOpInterface,
   DeclareOpInterfaceMethods<MemoryEffectsOpInterface>
 ]> {
   let summary = "Matmul with bias add (tile world, ins/outs).";
@@ -1029,6 +1031,7 @@ def TMatmulBiasOp : PTO_TOp<"tmatmul.bias", [
 def TMatmulMxOp : PTO_TOp<"tmatmul.mx", [
     PTO_DpsInitOpInterface,
     OpPipeInterface,
+  UFAccProducerOpInterface,
     DeclareOpInterfaceMethods<MemoryEffectsOpInterface>
   ]> {
   let summary = "Matmul mx (tile world, ins/outs).";
@@ -1065,6 +1068,7 @@ def TMatmulMxOp : PTO_TOp<"tmatmul.mx", [
 def TMatmulMxAccOp : PTO_TOp<"tmatmul.mx.acc", [
   PTO_DpsInitOpInterface,
   OpPipeInterface,
+  UFAccProducerOpInterface,
   DeclareOpInterfaceMethods<MemoryEffectsOpInterface>
 ]> {
   let summary = "Matmul mx accumulate (tile world, ins/outs).";
@@ -1102,6 +1106,7 @@ def TMatmulMxAccOp : PTO_TOp<"tmatmul.mx.acc", [
 def TMatmulMxBiasOp : PTO_TOp<"tmatmul.mx.bias",[
   PTO_DpsInitOpInterface,
   OpPipeInterface,
+  UFAccProducerOpInterface,
   DeclareOpInterfaceMethods<MemoryEffectsOpInterface>
 ]> {
   let summary = "Matmul mx with bias (tile world, ins/outs).";
@@ -1112,7 +1117,8 @@ def TMatmulMxBiasOp : PTO_TOp<"tmatmul.mx.bias",[
     PTODpsType:$b,
     PTODpsType:$b_scale,
     PTODpsType:$bias,
-    PTODpsType:$dst);
+    PTODpsType:$dst,
+    DefaultValuedAttr<PTO_AccPhaseAttr, "::mlir::pto::AccPhase::Unspecified">:$accPhase);
 
   let results = (outs Optional<AnyRankedTensor>:$result);
   let hasVerifier = 1;
@@ -1136,6 +1142,7 @@ def TMatmulMxBiasOp : PTO_TOp<"tmatmul.mx.bias",[
 def TMatmulOp : PTO_TOp<"tmatmul", [
   PTO_DpsInitOpInterface,
   OpPipeInterface,
+  UFAccProducerOpInterface,
   DeclareOpInterfaceMethods<MemoryEffectsOpInterface>
 ]> {
   let summary = "PTO matrix multiplication operation (optional bias), destination-style (DPS) in tile world.";
@@ -1173,6 +1180,7 @@ def TMatmulOp : PTO_TOp<"tmatmul", [
 def TMatmulAccOp : PTO_TOp<"tmatmul.acc", [
   PTO_DpsInitOpInterface,
   OpPipeInterface,
+  UFAccProducerOpInterface,
   DeclareOpInterfaceMethods<MemoryEffectsOpInterface>
 ]> {
   let summary = "PTO matrix multiplication accumulate operation, destination-style (DPS, no bias).";
@@ -1210,6 +1218,7 @@ def TMatmulAccOp : PTO_TOp<"tmatmul.acc", [
 def TGemvOp : PTO_TOp<"tgemv", [
   PTO_DpsInitOpInterface,
   OpPipeInterface,
+  UFAccProducerOpInterface,
   DeclareOpInterfaceMethods<MemoryEffectsOpInterface>
 ]> {
   let summary = "PTO matrix-vector multiplication operation (optional bias), destination-style (DPS) in tile world.";
@@ -1246,6 +1255,7 @@ def TGemvOp : PTO_TOp<"tgemv", [
 def TGemvAccOp : PTO_TOp<"tgemv.acc", [
   PTO_DpsInitOpInterface,
   OpPipeInterface,
+  UFAccProducerOpInterface,
   DeclareOpInterfaceMethods<MemoryEffectsOpInterface>
 ]> {
   let summary = "PTO matrix-vector multiplication accumulate operation, destination-style (DPS, no bias).";
@@ -1282,6 +1292,7 @@ def TGemvAccOp : PTO_TOp<"tgemv.acc", [
 def TGemvBiasOp : PTO_TOp<"tgemv.bias", [
   PTO_DpsInitOpInterface,
   OpPipeInterface,
+  UFAccProducerOpInterface,
   DeclareOpInterfaceMethods<MemoryEffectsOpInterface>
 ]> {
   let summary = "GEMV with bias add (tile world, ins/outs).";
@@ -1317,6 +1328,7 @@ def TGemvBiasOp : PTO_TOp<"tgemv.bias", [
 def TGemvMxOp : PTO_TOp<"tgemv.mx", [
   PTO_DpsInitOpInterface,
   OpPipeInterface,
+  UFAccProducerOpInterface,
   DeclareOpInterfaceMethods<MemoryEffectsOpInterface>
 ]> {
   let summary = "Mixed-precision GEMV with scale tiles (tile world, ins/outs).";
@@ -1351,6 +1363,7 @@ def TGemvMxOp : PTO_TOp<"tgemv.mx", [
 def TGemvMxAccOp : PTO_TOp<"tgemv.mx.acc", [
   PTO_DpsInitOpInterface,
   OpPipeInterface,
+  UFAccProducerOpInterface,
   DeclareOpInterfaceMethods<MemoryEffectsOpInterface>
 ]> {
   let summary = "Mixed-precision GEMV accumulate with scale tiles (tile world, ins/outs).";
@@ -1386,6 +1399,7 @@ def TGemvMxAccOp : PTO_TOp<"tgemv.mx.acc", [
 def TGemvMxBiasOp : PTO_TOp<"tgemv.mx.bias", [
   PTO_DpsInitOpInterface,
   OpPipeInterface,
+  UFAccProducerOpInterface,
   DeclareOpInterfaceMethods<MemoryEffectsOpInterface>
 ]> {
   let summary = "Mixed-precision GEMV with bias and scale tiles (tile world, ins/outs).";
@@ -1396,7 +1410,8 @@ def TGemvMxBiasOp : PTO_TOp<"tgemv.mx.bias", [
     PTODpsType:$b,
     PTODpsType:$b_scale,
     PTODpsType:$bias,
-    PTODpsType:$dst
+    PTODpsType:$dst,
+    DefaultValuedAttr<PTO_AccPhaseAttr, "::mlir::pto::AccPhase::Unspecified">:$accPhase
   );
 
   let results = (outs Optional<AnyRankedTensor>:$result);
@@ -1421,6 +1436,7 @@ def TMovOp  : PTO_TOp<"tmov", [
   AttrSizedOperandSegments,
   PTO_DpsInitOpInterface,
   OpPipeInterface,
+  UFAccConsumerOpInterface,
   DeclareOpInterfaceMethods<MemoryEffectsOpInterface>
 ]> {
   let summary = "Move data between domains (DPS version).";
@@ -1432,6 +1448,7 @@ def TMovOp  : PTO_TOp<"tmov", [
     Optional<I64>:$preQuantScalar,
     OptionalAttr<PTO_AccToVecModeAttr>:$accToVecMode,
     DefaultValuedAttr<PTO_ReluPreModeAttr, "::mlir::pto::ReluPreMode::NoRelu">:$reluPreMode,
+    DefaultValuedAttr<PTO_STPhaseAttr, "::mlir::pto::STPhase::Unspecified">:$stPhase,
     OptionalAttr<PTO_MxGroupAxisAttr>:$grpAxis
   );
 

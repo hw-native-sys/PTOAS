@@ -1,0 +1,302 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+
+// RUN: ptoas --pto-arch=a5 --enable-insert-sync --emit-pto-ir %s 2>&1 | FileCheck %s
+
+!left = !pto.tile_buf<loc=left, dtype=f16, rows=32, cols=32, v_row=32, v_col=32, blayout=col_major, slayout=row_major, fractal=512, pad=0>
+!right = !pto.tile_buf<loc=right, dtype=f16, rows=32, cols=32, v_row=32, v_col=32, blayout=row_major, slayout=col_major, fractal=512, pad=0>
+!acc = !pto.tile_buf<loc=acc, dtype=f32, rows=32, cols=32, v_row=32, v_col=32, blayout=col_major, slayout=row_major, fractal=1024, pad=0>
+!out = !pto.partition_tensor_view<32x32xf32>
+
+module attributes {pto.target_arch = "a5"} {
+  // #1694: a closed producer/consumer loop. The unit flag covers the
+  // intra-iteration RAW (B), the loop-carried WAR (A), and leaves no priming or
+  // drain event behind. Phase B removes all six ACC-chain syncs.
+  func.func @uf_loop_closed(%out: !out) {
+    %c0 = arith.constant 0 : index
+    %c128 = arith.constant 128 : index
+    %c1 = arith.constant 1 : index
+    %lhs = pto.alloc_tile : !left
+    %rhs = pto.alloc_tile : !right
+    %acc = pto.alloc_tile : !acc
+    scf.for %i = %c0 to %c128 step %c1 {
+      pto.tmatmul ins(%lhs, %rhs : !left, !right) outs(%acc : !acc)
+        {accPhase = #pto<acc_phase final>}
+      pto.tstore ins(%acc : !acc) outs(%out : !out)
+        {stPhase = #pto<st_phase final>}
+    }
+    return
+  }
+
+  // Rotate the same balanced cycle to consume/publish order. The first
+  // self comparison must see the handoff even before pair traversal reaches it.
+  func.func @uf_loop_rotated(%out: !out) {
+    %c0 = arith.constant 0 : index
+    %c128 = arith.constant 128 : index
+    %c1 = arith.constant 1 : index
+    %lhs = pto.alloc_tile : !left
+    %rhs = pto.alloc_tile : !right
+    %acc = pto.alloc_tile : !acc
+    pto.tmatmul ins(%lhs, %rhs : !left, !right) outs(%acc : !acc)
+      {accPhase = #pto<acc_phase final>}
+    scf.for %i = %c0 to %c128 step %c1 {
+      pto.tstore ins(%acc : !acc) outs(%out : !out)
+        {stPhase = #pto<st_phase final>}
+      pto.tmatmul ins(%lhs, %rhs : !left, !right) outs(%acc : !acc)
+        {accPhase = #pto<acc_phase final>}
+    }
+    pto.tstore ins(%acc : !acc) outs(%out : !out)
+      {stPhase = #pto<st_phase final>}
+    return
+  }
+
+  // Two Final publishers in one iteration: the body is not token-balanced, so
+  // the token state across iterations is not provable and every ACC event stays.
+  func.func @uf_loop_two_producers(%out: !out) {
+    %c0 = arith.constant 0 : index
+    %c4 = arith.constant 4 : index
+    %c1 = arith.constant 1 : index
+    %lhs = pto.alloc_tile : !left
+    %rhs = pto.alloc_tile : !right
+    %acc0 = pto.alloc_tile : !acc
+    %acc1 = pto.alloc_tile : !acc
+    scf.for %i = %c0 to %c4 step %c1 {
+      pto.tmatmul ins(%lhs, %rhs : !left, !right) outs(%acc0 : !acc)
+        {accPhase = #pto<acc_phase final>}
+      pto.tmatmul ins(%lhs, %rhs : !left, !right) outs(%acc1 : !acc)
+        {accPhase = #pto<acc_phase final>}
+      pto.tstore ins(%acc1 : !acc) outs(%out : !out)
+        {stPhase = #pto<st_phase final>}
+    }
+    return
+  }
+
+  // An extra Final store: same unbalanced-body rejection as above.
+  func.func @uf_loop_extra_store(%out: !out) {
+    %c0 = arith.constant 0 : index
+    %c4 = arith.constant 4 : index
+    %c1 = arith.constant 1 : index
+    %lhs = pto.alloc_tile : !left
+    %rhs = pto.alloc_tile : !right
+    %acc = pto.alloc_tile : !acc
+    scf.for %i = %c0 to %c4 step %c1 {
+      pto.tmatmul ins(%lhs, %rhs : !left, !right) outs(%acc : !acc)
+        {accPhase = #pto<acc_phase final>}
+      pto.tstore ins(%acc : !acc) outs(%out : !out)
+        {stPhase = #pto<st_phase final>}
+      pto.tstore ins(%acc : !acc) outs(%out : !out)
+        {stPhase = #pto<st_phase final>}
+    }
+    return
+  }
+
+  // The store is conditional and the matmul is not: the two ends are in
+  // different control-flow contexts and were never a pairable hand-off.
+  func.func @uf_loop_store_in_if(%out: !out, %cond: i1) {
+    %c0 = arith.constant 0 : index
+    %c4 = arith.constant 4 : index
+    %c1 = arith.constant 1 : index
+    %lhs = pto.alloc_tile : !left
+    %rhs = pto.alloc_tile : !right
+    %acc = pto.alloc_tile : !acc
+    scf.for %i = %c0 to %c4 step %c1 {
+      pto.tmatmul ins(%lhs, %rhs : !left, !right) outs(%acc : !acc)
+        {accPhase = #pto<acc_phase final>}
+      scf.if %cond {
+        pto.tstore ins(%acc : !acc) outs(%out : !out)
+          {stPhase = #pto<st_phase final>}
+      }
+    }
+    return
+  }
+
+  // Two independent hand-offs under the same scf.if. Different accumulators keep
+  // the generic dependency analysis from adding cross-branch events, so the only
+  // ACC syncs that could remain are the ones the token model decides on. Both
+  // branches are neutral, so both pairs are provable without looking at the
+  // other arm.
+  func.func @uf_if_both_branches(%out0: !out, %out1: !out, %cond: i1) {
+    %lhs = pto.alloc_tile : !left
+    %rhs = pto.alloc_tile : !right
+    %acc0 = pto.alloc_tile : !acc
+    %acc1 = pto.alloc_tile : !acc
+    scf.if %cond {
+      pto.tmatmul ins(%lhs, %rhs : !left, !right) outs(%acc0 : !acc)
+        {accPhase = #pto<acc_phase final>}
+      pto.tstore ins(%acc0 : !acc) outs(%out0 : !out)
+        {stPhase = #pto<st_phase final>}
+    } else {
+      pto.tmatmul ins(%lhs, %rhs : !left, !right) outs(%acc1 : !acc)
+        {accPhase = #pto<acc_phase final>}
+      pto.tstore ins(%acc1 : !acc) outs(%out1 : !out)
+        {stPhase = #pto<st_phase final>}
+    }
+    return
+  }
+
+  // Missing else arm: the empty path is neutral, so the then arm is still a
+  // complete hand-off. Deleting the else arm must not change the then verdict.
+  func.func @uf_if_then_only(%out: !out, %cond: i1) {
+    %lhs = pto.alloc_tile : !left
+    %rhs = pto.alloc_tile : !right
+    %acc = pto.alloc_tile : !acc
+    scf.if %cond {
+      pto.tmatmul ins(%lhs, %rhs : !left, !right) outs(%acc : !acc)
+        {accPhase = #pto<acc_phase final>}
+      pto.tstore ins(%acc : !acc) outs(%out : !out)
+        {stPhase = #pto<st_phase final>}
+    }
+    return
+  }
+
+  // A conditional consume with the publish outside: the store's check may run in
+  // an iteration where no publish happened, so the pair must stay conservative.
+  func.func @uf_if_cond_consume(%out: !out, %cond: i1) {
+    %lhs = pto.alloc_tile : !left
+    %rhs = pto.alloc_tile : !right
+    %acc = pto.alloc_tile : !acc
+    pto.tmatmul ins(%lhs, %rhs : !left, !right) outs(%acc : !acc)
+      {accPhase = #pto<acc_phase final>}
+    scf.if %cond {
+      pto.tstore ins(%acc : !acc) outs(%out : !out)
+        {stPhase = #pto<st_phase final>}
+    }
+    return
+  }
+
+  // Branch effects disagree (publish vs neutral): no pair inside the scf.if may
+  // be treated as a complete hand-off.
+  func.func @uf_if_mismatch(%out0: !out, %out1: !out, %cond: i1) {
+    %lhs = pto.alloc_tile : !left
+    %rhs = pto.alloc_tile : !right
+    %acc0 = pto.alloc_tile : !acc
+    %acc1 = pto.alloc_tile : !acc
+    scf.if %cond {
+      pto.tmatmul ins(%lhs, %rhs : !left, !right) outs(%acc0 : !acc)
+        {accPhase = #pto<acc_phase final>}
+    } else {
+      pto.tmatmul ins(%lhs, %rhs : !left, !right) outs(%acc1 : !acc)
+        {accPhase = #pto<acc_phase final>}
+      pto.tstore ins(%acc1 : !acc) outs(%out1 : !out)
+        {stPhase = #pto<st_phase final>}
+    }
+    return
+  }
+
+  // A loop whose body is one neutral scf.if. The circular back-edge proof walks
+  // the taken arm only, so the else arm's events do not block the then pair.
+  // This follows C1.2 row 6; the C phase supersedes B1.2 item 4 because the
+  // structured region model proves both arms net-neutral.
+  func.func @uf_loop_if_both(%out0: !out, %out1: !out, %cond: i1) {
+    %c0 = arith.constant 0 : index
+    %c4 = arith.constant 4 : index
+    %c1 = arith.constant 1 : index
+    %lhs = pto.alloc_tile : !left
+    %rhs = pto.alloc_tile : !right
+    %acc0 = pto.alloc_tile : !acc
+    %acc1 = pto.alloc_tile : !acc
+    scf.for %i = %c0 to %c4 step %c1 {
+      scf.if %cond {
+        pto.tmatmul ins(%lhs, %rhs : !left, !right) outs(%acc0 : !acc)
+          {accPhase = #pto<acc_phase final>}
+        pto.tstore ins(%acc0 : !acc) outs(%out0 : !out)
+          {stPhase = #pto<st_phase final>}
+      } else {
+        pto.tmatmul ins(%lhs, %rhs : !left, !right) outs(%acc1 : !acc)
+          {accPhase = #pto<acc_phase final>}
+        pto.tstore ins(%acc1 : !acc) outs(%out1 : !out)
+          {stPhase = #pto<st_phase final>}
+      }
+    }
+    return
+  }
+
+  // Zero-trip loop: no back-edge event is created, so there must be no unpaired
+  // set_flag/wait_flag left at the loop boundary.
+  func.func @uf_loop_zero_trip(%out: !out) {
+    %c0 = arith.constant 0 : index
+    %c1 = arith.constant 1 : index
+    %lhs = pto.alloc_tile : !left
+    %rhs = pto.alloc_tile : !right
+    %acc = pto.alloc_tile : !acc
+    scf.for %i = %c0 to %c0 step %c1 {
+      pto.tmatmul ins(%lhs, %rhs : !left, !right) outs(%acc : !acc)
+        {accPhase = #pto<acc_phase final>}
+      pto.tstore ins(%acc : !acc) outs(%out : !out)
+        {stPhase = #pto<st_phase final>}
+    }
+    return
+  }
+}
+
+// The closed loop and the neutral-branch loop carry no M/FIX event at all.
+// CHECK-LABEL: func.func @uf_loop_closed
+// CHECK-NOT: pto.set_flag[<PIPE_M>, <PIPE_FIX>
+// CHECK-NOT: pto.set_flag[<PIPE_FIX>, <PIPE_M>
+// CHECK-NOT: pto.wait_flag[<PIPE_M>, <PIPE_FIX>
+// CHECK-NOT: pto.wait_flag[<PIPE_FIX>, <PIPE_M>
+// CHECK-NOT: pto.barrier <PIPE_M>
+// CHECK-NOT: pto.barrier <PIPE_FIX>
+
+// Consume-first with a prologue/epilogue eliminates RAW across the back edge
+// and WAR within the iteration.
+// CHECK-LABEL: func.func @uf_loop_rotated
+// CHECK-NOT: pto.set_flag[<PIPE_M>, <PIPE_FIX>
+// CHECK-NOT: pto.wait_flag[<PIPE_M>, <PIPE_FIX>
+// CHECK-NOT: pto.set_flag[<PIPE_FIX>, <PIPE_M>
+// CHECK-NOT: pto.wait_flag[<PIPE_FIX>, <PIPE_M>
+// CHECK-NOT: pto.barrier <PIPE_M>
+// The GM WAW between the loop drain and epilogue may retain a FIX barrier.
+
+// Unbalanced bodies keep both directions.
+// CHECK-LABEL: func.func @uf_loop_two_producers
+// CHECK: pto.set_flag[<PIPE_M>, <PIPE_FIX>
+// CHECK: pto.set_flag[<PIPE_FIX>, <PIPE_M>
+// CHECK: pto.wait_flag[<PIPE_FIX>, <PIPE_M>
+
+// CHECK-LABEL: func.func @uf_loop_extra_store
+// CHECK: pto.set_flag[<PIPE_M>, <PIPE_FIX>
+// CHECK: pto.set_flag[<PIPE_FIX>, <PIPE_M>
+
+// Different control-flow contexts are never a pairable hand-off.
+// CHECK-LABEL: func.func @uf_loop_store_in_if
+// CHECK: pto.set_flag[<PIPE_M>, <PIPE_FIX>
+// CHECK: pto.set_flag[<PIPE_FIX>, <PIPE_M>
+
+// A neutral if inside a loop keeps the whole hand-off covered.
+// CHECK-LABEL: func.func @uf_if_both_branches
+// CHECK-NOT: pto.set_flag[<PIPE_M>, <PIPE_FIX>
+// CHECK-NOT: pto.set_flag[<PIPE_FIX>, <PIPE_M>
+// CHECK-NOT: pto.wait_flag[<PIPE_M>, <PIPE_FIX>
+// CHECK-NOT: pto.wait_flag[<PIPE_FIX>, <PIPE_M>
+
+// CHECK-LABEL: func.func @uf_if_then_only
+// CHECK-NOT: pto.set_flag[<PIPE_M>, <PIPE_FIX>
+// CHECK-NOT: pto.set_flag[<PIPE_FIX>, <PIPE_M>
+
+// Conditional consume: keep the pair.
+// CHECK-LABEL: func.func @uf_if_cond_consume
+// CHECK: pto.set_flag[<PIPE_M>, <PIPE_FIX>
+// CHECK: pto.wait_flag[<PIPE_M>, <PIPE_FIX>
+
+// Branch effects differ: keep the pair.
+// CHECK-LABEL: func.func @uf_if_mismatch
+// CHECK: pto.set_flag[<PIPE_M>, <PIPE_FIX>
+// CHECK: pto.wait_flag[<PIPE_M>, <PIPE_FIX>
+
+// CHECK-LABEL: func.func @uf_loop_if_both
+// CHECK-NOT: pto.set_flag[<PIPE_M>, <PIPE_FIX>
+// CHECK-NOT: pto.set_flag[<PIPE_FIX>, <PIPE_M>
+// CHECK-NOT: pto.wait_flag[<PIPE_M>, <PIPE_FIX>
+// CHECK-NOT: pto.wait_flag[<PIPE_FIX>, <PIPE_M>
+
+// CHECK-LABEL: func.func @uf_loop_zero_trip
+// CHECK-NOT: pto.set_flag[<PIPE_M>, <PIPE_FIX>
+// CHECK-NOT: pto.set_flag[<PIPE_FIX>, <PIPE_M>
+// CHECK-NOT: pto.wait_flag[<PIPE_M>, <PIPE_FIX>
+// CHECK-NOT: pto.wait_flag[<PIPE_FIX>, <PIPE_M>

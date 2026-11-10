@@ -164,8 +164,10 @@ struct PTOTGemvMXBiasToTGEMV_MX
     Value bias    = adaptor.getBias();
     Value dst     = adaptor.getDst();
 
+    ArrayAttr templateArgs =
+        buildAccPhaseTemplateArgs(rewriter, op.getAccPhase());
     replaceOrEraseWithOpaqueCallAndReturnDst(op.getOperation(), dst, "TGEMV_MX",
-                                             {dst, a, aScale, b, bScale, bias}, ArrayAttr{},
+                                             {dst, a, aScale, b, bScale, bias}, templateArgs,
                                              rewriter);
     return success();
   }
@@ -246,8 +248,10 @@ struct PTOTMatmulMXBiasToTMATMUL_MX_BIAS
     Value bias    = adaptor.getBias();
     Value dst     = adaptor.getDst();
 
+    ArrayAttr templateArgs =
+        buildAccPhaseTemplateArgs(rewriter, op.getAccPhase());
     replaceOrEraseWithOpaqueCallAndReturnDst(op.getOperation(), dst, "TMATMUL_MX",
-                                             {dst, a, aScale, b, bScale, bias}, ArrayAttr{},
+                                             {dst, a, aScale, b, bScale, bias}, templateArgs,
                                              rewriter);
     return success();
   }

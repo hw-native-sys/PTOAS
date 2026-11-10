@@ -55,8 +55,9 @@ module attributes {pto.target_arch = "a5"} {
     return
   }
 
-  // Inside a loop the back-edge event is needed anyway and the intra-iteration
-  // drop buys nothing, so the M->FIX event stays exactly as before.
+  // A closed producer/consumer loop: the unit flag covers both the
+  // intra-iteration RAW and the loop-carried WAR, so the ACC chain needs no
+  // event and no priming/drain pair.
   func.func @uf_loop_pair(%out: !out) {
     %c0 = arith.constant 0 : index
     %c4 = arith.constant 4 : index
@@ -79,9 +80,11 @@ module attributes {pto.target_arch = "a5"} {
 // CHECK-LABEL: func.func @uf_m_to_fix
 // CHECK-NOT: pto.set_flag[<PIPE_M>, <PIPE_FIX>
 // CHECK-NOT: pto.wait_flag[<PIPE_M>, <PIPE_FIX>
+// CHECK-NOT: pto.barrier <PIPE_M>
 // CHECK-LABEL: func.func @uf_fix_to_m
 // CHECK-NOT: pto.set_flag[<PIPE_FIX>, <PIPE_M>
 // CHECK-NOT: pto.wait_flag[<PIPE_FIX>, <PIPE_M>
+// CHECK-NOT: pto.barrier <PIPE_FIX>
 // CHECK-LABEL: func.func @uf_unspecified
 // CHECK: pto.set_flag[<PIPE_M>, <PIPE_FIX>
 // CHECK: pto.wait_flag[<PIPE_M>, <PIPE_FIX>
@@ -89,6 +92,9 @@ module attributes {pto.target_arch = "a5"} {
 // CHECK: pto.set_flag[<PIPE_M>, <PIPE_FIX>
 // CHECK: pto.wait_flag[<PIPE_M>, <PIPE_FIX>
 // CHECK-LABEL: func.func @uf_loop_pair
-// CHECK: pto.set_flag[<PIPE_M>, <PIPE_FIX>
-// CHECK: pto.wait_flag[<PIPE_M>, <PIPE_FIX>
+// CHECK-NOT: pto.set_flag[<PIPE_M>, <PIPE_FIX>
+// CHECK-NOT: pto.set_flag[<PIPE_FIX>, <PIPE_M>
+// CHECK-NOT: pto.wait_flag[<PIPE_M>, <PIPE_FIX>
+// CHECK-NOT: pto.wait_flag[<PIPE_FIX>, <PIPE_M>
 // CHECK-NOT: pto.barrier <PIPE_M>
+// CHECK-NOT: pto.barrier <PIPE_FIX>

@@ -719,13 +719,15 @@ def tstore(tile, part, *, fp=None):
     )
 
 
-def tmov(src, dst, *, fp=None, mode=None):
+def tmov(src, dst, *, fp=None, mode=None, st_phase=None):
     """``pto.tmov ins(src) outs(dst)`` – move data between tile domains."""
     kwargs = {}
     if fp is not None:
         kwargs["fp"] = unwrap_surface_value(fp)
     if mode is not None:
         kwargs["accToVecMode"] = _normalize_acc_to_vec_mode(mode, context="tmov(..., mode=...)")
+    if st_phase is not None:
+        kwargs["stPhase"] = st_phase
     _pto.TMovOp(None, unwrap_surface_value(src), unwrap_surface_value(dst), **kwargs)
 
 
@@ -842,7 +844,7 @@ def tmatmul_mx_acc(acc_in, lhs, lhs_scale, rhs, rhs_scale, dst, *, acc_phase=Non
     )
 
 
-def tmatmul_mx_bias(lhs, lhs_scale, rhs, rhs_scale, bias, dst):
+def tmatmul_mx_bias(lhs, lhs_scale, rhs, rhs_scale, bias, dst, *, acc_phase=None):
     """``pto.tmatmul.mx.bias ins(lhs, lhs_scale, rhs, rhs_scale, bias) outs(dst)``."""
     _pto.TMatmulMxBiasOp(
         None,
@@ -852,6 +854,7 @@ def tmatmul_mx_bias(lhs, lhs_scale, rhs, rhs_scale, bias, dst):
         unwrap_surface_value(rhs_scale),
         unwrap_surface_value(bias),
         unwrap_surface_value(dst),
+        accPhase=acc_phase,
     )
 
 
@@ -916,7 +919,7 @@ def tgemv_mx_acc(acc_in, lhs, lhs_scale, rhs, rhs_scale, dst, *, acc_phase=None)
     )
 
 
-def tgemv_mx_bias(lhs, lhs_scale, rhs, rhs_scale, bias, dst):
+def tgemv_mx_bias(lhs, lhs_scale, rhs, rhs_scale, bias, dst, *, acc_phase=None):
     """``pto.tgemv.mx.bias ins(lhs, lhs_scale, rhs, rhs_scale, bias) outs(dst)``."""
     _pto.TGemvMxBiasOp(
         None,
@@ -926,6 +929,7 @@ def tgemv_mx_bias(lhs, lhs_scale, rhs, rhs_scale, bias, dst):
         unwrap_surface_value(rhs_scale),
         unwrap_surface_value(bias),
         unwrap_surface_value(dst),
+        accPhase=acc_phase,
     )
 
 

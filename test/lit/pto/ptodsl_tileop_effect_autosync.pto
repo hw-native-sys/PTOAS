@@ -8,6 +8,15 @@
 
 // RUN: ptoas --pto-arch=a5 --emit-pto-ir --enable-insert-sync --pto-insert-sync-debug=2 %s -o - 2>&1 | FileCheck %s
 
+// Exactly one helper compound, with consecutive indices and no placeholder.
+// RUN: ptoas --pto-arch=a5 --emit-pto-ir --enable-insert-sync --pto-insert-sync-debug=2 %s -o /dev/null 2>&1 | FileCheck %s --check-prefix=NODES
+// NODES: After Translator
+// NODES: [   0] COMPOUND pto.tload
+// NODES: [   1] COMPOUND func.call
+// NODES: [   2] COMPOUND pto.tstore
+// NODES-NOT: PLACE_HOLDER
+// NODES: After Analysis
+
 module attributes {pto.target_arch = "a5"} {
   func.func @tileop_effect_autosync(%src_ptr: !pto.ptr<f32>,
                                     %dst_ptr: !pto.ptr<f32>) {

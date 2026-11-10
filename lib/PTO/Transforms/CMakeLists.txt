@@ -304,6 +304,7 @@ add_mlir_dialect_library(PTOTransforms
   InsertSync/SyncMacroModel.cpp
   InsertSync/SyncCommon.cpp
   InsertSync/InsertSyncAnalysis.cpp
+  InsertSync/UFTokenModel.cpp
   InsertSync/MemoryDependentAnalyzer.cpp
   InsertSync/MoveSyncState.cpp
   InsertSync/RemoveRedundantSync.cpp

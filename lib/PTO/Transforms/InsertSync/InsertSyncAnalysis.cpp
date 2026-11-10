@@ -12,6 +12,7 @@
 // See LICENSE in the root of the software repository for the full text of the License.
 
 #include "PTO/Transforms/InsertSync/InsertSyncAnalysis.h"
+#include "PTO/Transforms/InsertSync/InsertSyncDebug.h"
 #include "PTO/IR/PTO.h"
 #include "PTO/IR/PTOMultiBuffer.h"
 #include "PTO/IR/PTOTypeUtils.h"
@@ -273,6 +274,13 @@ static bool isTLoadToTLoadWAWExempt(const CompoundInstanceElement *nowCompound,
 
 void InsertSyncAnalysis::Run(bool insertBarAllAtLast) {
   syncIndex_ = syncOperations_.size();
+
+  // The unit-flag model is structural and does not change while the insertion
+  // runs; build it once so every dependency query shares the same region tree.
+  ufTokenModel_ = std::make_unique<UFTokenModel>(syncIR_);
+  ufTokenModel_->build();
+  InitializeUFOrderedCompounds();
+  ufTokenModel_->emitDeadlockDiagnostics();
 
   for (auto &nowElement : syncIR_) {
     if (auto *nowCompound =
@@ -555,6 +563,24 @@ static scf::ForOp carryingForOf(const SyncIRs &syncIR, const std::optional<unsig
     return {};
   }
   return dyn_cast<scf::ForOp>(loopEl->elementOp);
+}
+
+/// True when the back edge denoted by `forEndIndex` can take part in the UF
+/// proof. `scf.for` and `scf.while` both qualify; the token model checks the
+/// while body's before/after summaries and exit-state consistency.
+static bool isUFSupportedCarryingLoop(
+    const SyncIRs &syncIR, const std::optional<unsigned> &forEndIndex) {
+  const bool invalidIndex =
+      !forEndIndex.has_value() || forEndIndex.value() >= syncIR.size();
+  if (invalidIndex) {
+    return false;
+  }
+  const auto *loopEl =
+      dyn_cast_or_null<LoopInstanceElement>(syncIR[forEndIndex.value()].get());
+  if (!loopEl || !loopEl->elementOp) {
+    return false;
+  }
+  return isa<scf::ForOp, scf::WhileOp>(loopEl->elementOp);
 }
 
 /// `v` as a compile-time constant index, or nullopt.
@@ -947,6 +973,30 @@ static void dropCarriedDisjointDeps(
                depVec.end());
 }
 
+void InsertSyncAnalysis::DropUFOrderedSelfDeps(
+    const CompoundInstanceElement *compound, DepBaseMemInfoPairVec &depVec) const
+{
+    const bool orderedByUF = ufOrderedCompounds_.count(compound->GetIndex()) != 0;
+    if (!orderedByUF) {
+        return;
+    }
+    // UF orders ACC reuse; preserve scratch and bias dependencies.
+    depVec.erase(std::remove_if(depVec.begin(), depVec.end(), [&](const auto &dependency) {
+        if (!dependency.first || !dependency.second) {
+            return false;
+        }
+        if (dependency.first->scope == AddressSpace::ACC && dependency.second->scope == AddressSpace::ACC) {
+            return true;
+        }
+        // Consecutive drains on FIX issue their GM writes in order. Do not
+        // confuse that WAW with a scratch read or a bias input dependency.
+        return compound->ufInfo.role == UFRole::AccStore &&
+               dependency.first == dependency.second && dependency.first->scope == AddressSpace::GM &&
+               llvm::is_contained(compound->defVec, dependency.first) &&
+               !llvm::is_contained(compound->useVec, dependency.first);
+    }), depVec.end());
+}
+
 void InsertSyncAnalysis::MemAnalyze(
     CompoundInstanceElement *nowCompound, CompoundInstanceElement *frontCompound,
     SyncRecordList &syncRecordList,
@@ -959,6 +1009,13 @@ void InsertSyncAnalysis::MemAnalyze(
     DepBaseMemInfoPairVec depVec;
     if (!IsMemInfoHasDependency(nowCompound, frontCompound, depVec)) {
         return;
+    }
+
+    if (nowCompound == frontCompound) {
+        DropUFOrderedSelfDeps(nowCompound, depVec);
+        if (depVec.empty()) {
+            return;
+        }
     }
 
     // Same-iter (forward) deps: drop pairs that the affine analysis proves
@@ -989,6 +1046,10 @@ void InsertSyncAnalysis::MemAnalyze(
     // accesses still receives the required event synchronization.
     DropUFCoveredDeps(nowCompound, frontCompound, depVec, forEndIndex);
     if (depVec.empty()) {
+        // Record the hand-off before returning. Without this record the next
+        // traversal believes the pair was never synchronized and falls back to a
+        // same-pipe barrier every iteration (issue #1694, phase A3).
+        MarkUFCovered(nowCompound, frontCompound, syncRecordList);
         return;
     }
 
@@ -1010,6 +1071,42 @@ void InsertSyncAnalysis::MemAnalyze(
     UpdateSyncRecordInfo(frontCompound, syncRecordList);
 }
 
+// Establish membership from canonical SyncIR before inserting any events.
+// Self comparisons therefore do not depend on which UF pair was visited first.
+void InsertSyncAnalysis::InitializeUFOrderedCompounds() {
+  ufOrderedCompounds_.clear();
+  SmallVector<CompoundInstanceElement *> endpoints;
+  for (const auto &element : syncIR_) {
+    auto *compound = dyn_cast<CompoundInstanceElement>(element.get());
+    if (compound && compound->ufInfo.role != UFRole::None) {
+      endpoints.push_back(compound);
+    }
+  }
+  for (auto *front : endpoints) {
+    for (auto *now : endpoints) {
+      if (front == now || front->ufInfo.role == now->ufInfo.role) {
+        continue;
+      }
+      std::optional<unsigned> loopEnd;
+      const bool wrapsLoop = front->GetIndex() > now->GetIndex();
+      if (wrapsLoop) {
+        loopEnd = ufTokenModel_->enclosingLoopEnd(now->GetIndex());
+        if (!loopEnd) {
+          continue;
+        }
+      }
+      DepBaseMemInfoPairVec dependencies;
+      IsMemInfoHasDependency(now, front, dependencies);
+      if (llvm::any_of(dependencies, [&](const auto &dependency) {
+            return IsUFCoveredDependency(now, front, dependency, loopEnd);
+          })) {
+        ufOrderedCompounds_.insert(front->GetIndex());
+        ufOrderedCompounds_.insert(now->GetIndex());
+      }
+    }
+  }
+}
+
 void InsertSyncAnalysis::DropUFCoveredDeps(
     CompoundInstanceElement *nowCompound,
     CompoundInstanceElement *frontCompound,
@@ -1021,6 +1118,23 @@ void InsertSyncAnalysis::DropUFCoveredDeps(
                                        forEndIndex);
         }),
         depVec.end());
+}
+
+void InsertSyncAnalysis::MarkUFCovered(
+    const CompoundInstanceElement *nowCompound,
+    const CompoundInstanceElement *frontCompound,
+    SyncRecordList &syncRecordList) {
+    const PipelineType frontPipe = frontCompound->kPipeValue;
+    if (isValidPipeIndex(frontPipe)) {
+      for (SyncRecord &record : syncRecordList) {
+        record.alreadySyncByUF[static_cast<unsigned>(frontPipe)] = true;
+      }
+    }
+    if (isInsertSyncDebugEnabled(InsertSyncDebugLevel::Trace)) {
+      llvm::errs() << "[UF] covered " << frontCompound->opName.getStringRef()
+                   << " -> " << nowCompound->opName.getStringRef() << " (pipe "
+                   << static_cast<unsigned>(frontPipe) << ")\n";
+    }
 }
 
 bool InsertSyncAnalysis::IsAlreadySyncedForAnyEventId(
@@ -1042,31 +1156,6 @@ static bool hasUFAccAccess(const CompoundInstanceElement *compound,
                            const BaseMemInfo *access) {
   return compound && access &&
          llvm::is_contained(compound->ufInfo.accAccesses, access);
-}
-
-static bool sameUFControlFlowContext(Operation *lhs, Operation *rhs) {
-  if (!lhs || !rhs) {
-    return false;
-  }
-  using ControlContext = std::pair<Operation *, Region *>;
-  SmallVector<ControlContext, 4> lhsContext;
-  SmallVector<ControlContext, 4> rhsContext;
-  auto collectContext = [](Operation *element,
-                            SmallVectorImpl<ControlContext> &context) {
-    Region *region = element->getParentRegion();
-    Operation *op = element->getParentOp();
-    for (; op; op = op->getParentOp()) {
-      if (isa<scf::IfOp, scf::ForOp, scf::WhileOp>(op)) {
-        context.emplace_back(op, region);
-      }
-      if (op->getParentRegion()) {
-        region = op->getParentRegion();
-      }
-    }
-  };
-  collectContext(lhs, lhsContext);
-  collectContext(rhs, rhsContext);
-  return lhsContext == rhsContext;
 }
 
 static bool sameUFAccRegion(const CompoundInstanceElement *nowCompound,
@@ -1093,6 +1182,8 @@ static bool sameUFAccRegion(const CompoundInstanceElement *nowCompound,
 
 // A Final-phase matmul produces the accumulator that a subsequent ACC store
 // writes out: the unit flag orders exactly this PIPE_M -> PIPE_FIX hand-off.
+// Only the ops in the hand-off-eligible set may be removed here; newly visible
+// phased ops still block the token proof but are not optimized yet.
 static bool isUFMatmulToAccStore(const CompoundInstanceElement *matmul,
                                  const CompoundInstanceElement *store) {
   return matmul && store &&
@@ -1100,6 +1191,7 @@ static bool isUFMatmulToAccStore(const CompoundInstanceElement *matmul,
          store->kPipeValue == PipelineType::PIPE_FIX &&
          matmul->ufInfo.role == UFRole::MatmulProducer &&
          store->ufInfo.role == UFRole::AccStore &&
+         matmul->ufInfo.handoffEligible && store->ufInfo.handoffEligible &&
          matmul->ufInfo.accPhase &&
          *matmul->ufInfo.accPhase == pto::AccPhase::Final &&
          store->ufInfo.stPhase &&
@@ -1115,6 +1207,7 @@ static bool isUFAccStoreToMatmul(const CompoundInstanceElement *store,
          matmul->kPipeValue == PipelineType::PIPE_M &&
          store->ufInfo.role == UFRole::AccStore &&
          matmul->ufInfo.role == UFRole::MatmulProducer &&
+         store->ufInfo.handoffEligible && matmul->ufInfo.handoffEligible &&
          store->ufInfo.stPhase &&
          *store->ufInfo.stPhase == pto::STPhase::Final &&
          matmul->ufInfo.accPhase &&
@@ -1129,85 +1222,32 @@ static bool isUFAccStoreToMatmul(const CompoundInstanceElement *store,
 // `frontCompound` is the publication `nowCompound` observes. Two Final matmuls
 // publish the same token, and a store that follows both can pass its check on
 // the first publication while the second producer is still writing.
-enum class UFTokenAction { None, Publish, Consume };
-
-static UFTokenAction getUFTokenAction(const CompoundInstanceElement &compound) {
-  const UFInfo &ufInfo = compound.ufInfo;
-  if (ufInfo.role == UFRole::MatmulProducer && ufInfo.accPhase &&
-      *ufInfo.accPhase == pto::AccPhase::Final) {
-    return UFTokenAction::Publish;
-  }
-  if (ufInfo.role == UFRole::AccStore && ufInfo.stPhase &&
-      *ufInfo.stPhase == pto::STPhase::Final) {
-    return UFTokenAction::Consume;
-  }
-  return UFTokenAction::None;
-}
-
-// True when the token state proves that `frontCompound` is the hand-off
-// counterpart of `nowCompound`: nothing may publish or consume between the
-// pair, and walking back from the producer the nearest publish/consume must be
-// the opposite action, i.e. the token is clean when the producer publishes (or,
-// for the reverse direction, published when the store consumes). Reaching the
-// start of the region means no stale token state can be pending. Phased
-// operations that only observe the token (Partial phases) leave the state
-// alone and do not break the hand-off.
-static bool isUFHandoffAdjacent(const SyncIRs &syncIR,
-                                const CompoundInstanceElement &frontCompound,
-                                const CompoundInstanceElement &nowCompound) {
-  const unsigned frontIndex = frontCompound.GetIndex();
-  const unsigned nowIndex = nowCompound.GetIndex();
-  if (frontIndex >= nowIndex || nowIndex >= syncIR.size()) {
-    return false;
-  }
-  const UFTokenAction frontAction = getUFTokenAction(frontCompound);
-  if (frontAction == UFTokenAction::None) {
-    return false;
-  }
-  for (unsigned index = frontIndex + 1; index < nowIndex; ++index) {
-    auto *compound =
-        dyn_cast_or_null<CompoundInstanceElement>(syncIR[index].get());
-    const bool mutatesToken =
-        compound && getUFTokenAction(*compound) != UFTokenAction::None;
-    if (mutatesToken) {
-      return false;
-    }
-  }
-  for (unsigned index = frontIndex; index > 0; --index) {
-    auto *compound =
-        dyn_cast_or_null<CompoundInstanceElement>(syncIR[index - 1].get());
-    if (!compound) {
-      continue;
-    }
-    const UFTokenAction action = getUFTokenAction(*compound);
-    if (action != UFTokenAction::None) {
-      return action != frontAction;
-    }
-  }
-  return true;
-}
+//
+// The structural proof lives in UFTokenModel: it bounds both the backward and
+// forward walks to the region the pair actually shares, and wraps the backward
+// walk around a loop body instead of walking out of the loop.
+//
+// No architecture gate is needed here. PTOAS only accepts a2/a3/a5, and
+// pto-isa forwards the phase to the hardware on both the a2a3 and a5 backends
+// (a2a3/TMatmul.hpp and a5/TMatmul.hpp both pass static_cast<uint8_t>(Phase)
+// to mad). Targets that accept a phase but silently drop it (kirin9050, a6)
+// are not supported by PTOAS and must not reach this path.
 
 bool InsertSyncAnalysis::IsUFCoveredDependency(
     const CompoundInstanceElement *nowCompound,
     const CompoundInstanceElement *frontCompound,
     const std::pair<const BaseMemInfo *, const BaseMemInfo *> &dependency,
     const std::optional<unsigned> &forEndIndex) const {
-  if (!nowCompound || !frontCompound || forEndIndex.has_value()) {
+  if (!nowCompound || !frontCompound) {
     return false;
   }
-  if (nowCompound->kPipeValue == frontCompound->kPipeValue ||
-      !sameUFControlFlowContext(nowCompound->elementOp,
-                                frontCompound->elementOp)) {
-    return false;
+  const bool eligibleBoundary = frontCompound->ufInfo.handoffEligible &&
+      nowCompound->ufInfo.handoffEligible;
+  if (eligibleBoundary && ufTokenModel_ && !forEndIndex &&
+      ufTokenModel_->isPipelineBoundaryOrdered(frontCompound->GetIndex(), nowCompound->GetIndex())) {
+    return sameUFAccRegion(nowCompound, frontCompound, dependency.first, dependency.second);
   }
-  // Inside a loop the forward pair is still joined by the back-edge event that
-  // the loop itself needs, and dropping the intra-iteration dependency changes
-  // the sync-record bookkeeping enough to add a PIPE_M barrier per iteration
-  // without saving any event. Keep the explicit sync there and take the UF
-  // proof on straight-line code only.
-  const bool outsideLoops = isOutsideLoops(frontCompound->elementOp) &&
-                            isOutsideLoops(nowCompound->elementOp);
-  if (!outsideLoops) {
+  if (nowCompound->kPipeValue == frontCompound->kPipeValue) {
     return false;
   }
   const bool matmulThenStore =
@@ -1217,7 +1257,30 @@ bool InsertSyncAnalysis::IsUFCoveredDependency(
   if (!matmulThenStore && !storeThenMatmul) {
     return false;
   }
-  if (!isUFHandoffAdjacent(syncIR_, *frontCompound, *nowCompound)) {
+
+  // InsertBackForSync runs two scans with forEndIndex set: the copied slice is
+  // still a same-iteration body, while only the original consumer represents
+  // the loop-carried pairing. Distinguishing them keeps the same-iteration
+  // proof (A phase) working inside loops without letting the copied slice pay
+  // the loop-body balance requirement.
+  const bool nowIsOriginal =
+      nowCompound->GetIndex() < syncIR_.size() &&
+      syncIR_[nowCompound->GetIndex()].get() == nowCompound;
+  const bool backEdge = forEndIndex.has_value() && nowIsOriginal;
+  // A publish-first body carries WAR; a consume-first body carries RAW.
+  // The circular token span decides coverage in either direction.
+  // The loop-carried proof is defined for both `scf.for` and `scf.while`; the
+  // token model checks the while body's before/after summaries and the exit
+  // state. An unsupported loop kind keeps the explicit event.
+  if (backEdge && !isUFSupportedCarryingLoop(syncIR_, forEndIndex)) {
+    return false;
+  }
+  if (!ufTokenModel_ || !ufTokenModel_->isBuilt()) {
+    return false;
+  }
+  if (!ufTokenModel_->isHandoffAdjacent(frontCompound->GetIndex(),
+                                        nowCompound->GetIndex(), backEdge,
+                                        forEndIndex.value_or(0))) {
     return false;
   }
   return sameUFAccRegion(nowCompound, frontCompound, dependency.first,
@@ -1489,8 +1552,16 @@ bool InsertSyncAnalysis::isAlreadySync(
   if (!isValidPipeIndex(frontPipe)) {
     return false;
   }
-  return syncRecordList[recordListIndex]
-      .alreadySync[static_cast<unsigned>(frontPipe)];
+  if (syncRecordList[recordListIndex]
+          .alreadySync[static_cast<unsigned>(frontPipe)]) {
+    return true;
+  }
+  // Unit-flag coverage is consulted only for the top-level "is this front
+  // already ordered" question. Event-id reuse (recordListIndex >= 1) must not
+  // treat a hardware handshake as an allocated event.
+  return recordListIndex == 0 &&
+         syncRecordList[recordListIndex]
+             .alreadySyncByUF[static_cast<unsigned>(frontPipe)];
 }
 
 void InsertSyncAnalysis::UpdateAlreadySync(const SyncOps &syncVector,

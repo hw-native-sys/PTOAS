@@ -1,0 +1,123 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+
+// RUN: pto-uf-token-model-test
+// RUN: pto-test-opt --pto-insert-sync --verify-diagnostics %s -o /dev/null
+// RUN: ptoas --pto-arch=a5 --enable-insert-sync --emit-pto-ir %s 2>&1 | FileCheck %s
+
+!left = !pto.tile_buf<loc=left, dtype=f16, rows=32, cols=32, v_row=32, v_col=32, blayout=col_major, slayout=row_major, fractal=512, pad=0>
+!right = !pto.tile_buf<loc=right, dtype=f16, rows=32, cols=32, v_row=32, v_col=32, blayout=row_major, slayout=col_major, fractal=512, pad=0>
+!acc = !pto.tile_buf<loc=acc, dtype=f32, rows=32, cols=32, v_row=32, v_col=32, blayout=col_major, slayout=row_major, fractal=1024, pad=0>
+!out = !pto.partition_tensor_view<32x32xf32>
+
+module attributes {pto.target_arch = "a5"} {
+  func.func @missing_prologue(%out: !out) {
+    %lhs = pto.alloc_tile : !left
+    %rhs = pto.alloc_tile : !right
+    %acc = pto.alloc_tile : !acc
+    %c0 = arith.constant 0 : index
+    %c1 = arith.constant 1 : index
+    %c4 = arith.constant 4 : index
+    // expected-warning @+1 {{consume-first unit-flag loop has no preceding publish}}
+    scf.for %i = %c0 to %c4 step %c1 {
+      pto.tstore ins(%acc : !acc) outs(%out : !out)
+        {stPhase = #pto<st_phase final>}
+      pto.tmatmul ins(%lhs, %rhs : !left, !right) outs(%acc : !acc)
+        {accPhase = #pto<acc_phase final>}
+    }
+    return
+  }
+  func.func @branch_publish(%out: !out, %cond: i1) {
+    %lhs = pto.alloc_tile : !left
+    %rhs = pto.alloc_tile : !right
+    %acc = pto.alloc_tile : !acc
+    scf.if %cond {
+      pto.tmatmul ins(%lhs, %rhs : !left, !right) outs(%acc : !acc)
+        {accPhase = #pto<acc_phase final>}
+    } else {
+      pto.tmatmul ins(%lhs, %rhs : !left, !right) outs(%acc : !acc)
+        {accPhase = #pto<acc_phase final>}
+    }
+    pto.tstore ins(%acc : !acc) outs(%out : !out)
+        {stPhase = #pto<st_phase final>}
+    return
+  }
+  func.func @branch_consume(%out: !out, %cond: i1) {
+    %lhs = pto.alloc_tile : !left
+    %rhs = pto.alloc_tile : !right
+    %acc = pto.alloc_tile : !acc
+    pto.tmatmul ins(%lhs, %rhs : !left, !right) outs(%acc : !acc)
+        {accPhase = #pto<acc_phase final>}
+    scf.if %cond {
+      pto.tstore ins(%acc : !acc) outs(%out : !out)
+        {stPhase = #pto<st_phase final>}
+    } else {
+      pto.tstore ins(%acc : !acc) outs(%out : !out)
+        {stPhase = #pto<st_phase final>}
+    }
+    return
+  }
+  func.func @exclusive_arms(%out: !out, %cond: i1) {
+    %lhs = pto.alloc_tile : !left
+    %rhs = pto.alloc_tile : !right
+    %acc = pto.alloc_tile : !acc
+    // expected-warning @+1 {{the two branches leave the unit-flag token in different states}}
+    scf.if %cond {
+      pto.tmatmul ins(%lhs, %rhs : !left, !right) outs(%acc : !acc)
+        {accPhase = #pto<acc_phase final>}
+    } else {
+      pto.tstore ins(%acc : !acc) outs(%out : !out)
+        {stPhase = #pto<st_phase final>}
+    }
+    return
+  }
+  func.func @shared_acc_branches(%out: !out, %cond: i1) {
+    %lhs = pto.alloc_tile : !left
+    %rhs = pto.alloc_tile : !right
+    %acc = pto.alloc_tile : !acc
+    scf.if %cond {
+      pto.tmatmul ins(%lhs, %rhs : !left, !right) outs(%acc : !acc)
+        {accPhase = #pto<acc_phase final>}
+      pto.tstore ins(%acc : !acc) outs(%out : !out)
+        {stPhase = #pto<st_phase final>}
+    } else {
+      pto.tmatmul ins(%lhs, %rhs : !left, !right) outs(%acc : !acc)
+        {accPhase = #pto<acc_phase final>}
+      pto.tstore ins(%acc : !acc) outs(%out : !out)
+        {stPhase = #pto<st_phase final>}
+    }
+    return
+  }
+}
+
+// CHECK-LABEL: func.func @missing_prologue
+// CHECK: pto.set_flag[<PIPE_M>, <PIPE_FIX>
+// CHECK: pto.set_flag[<PIPE_FIX>, <PIPE_M>
+// CHECK-LABEL: func.func @branch_publish
+// CHECK-NOT: pto.set_flag[<PIPE_M>, <PIPE_FIX>
+// CHECK-NOT: pto.wait_flag[<PIPE_M>, <PIPE_FIX>
+// CHECK-LABEL: func.func @branch_consume
+// CHECK-NOT: pto.set_flag[<PIPE_M>, <PIPE_FIX>
+// CHECK-NOT: pto.wait_flag[<PIPE_M>, <PIPE_FIX>
+// Mutually exclusive arms are never paired by the UF model. Existing branch
+// traversal already avoids a same-iteration event between these two leaves.
+// CHECK-LABEL: func.func @exclusive_arms
+// CHECK: scf.if
+// CHECK: pto.tmatmul
+// CHECK: } else {
+// CHECK: pto.tstore
+// CHECK-LABEL: func.func @shared_acc_branches
+// CHECK-NOT: pto.set_flag[<PIPE_M>, <PIPE_FIX>
+// CHECK: scf.if
+// CHECK: pto.tmatmul
+// CHECK-NOT: pto.set_flag[<PIPE_M>, <PIPE_FIX>
+// CHECK: pto.tstore
+// CHECK: } else {
+// CHECK: pto.tmatmul
+// CHECK-NOT: pto.set_flag[<PIPE_M>, <PIPE_FIX>
+// CHECK: pto.tstore

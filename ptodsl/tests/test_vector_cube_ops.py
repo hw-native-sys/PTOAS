@@ -1633,6 +1633,19 @@ class VectorCubeSurfaceTest(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "unsupported tile mask pattern"):
             pto.tile.gather(src, dst, mask_pattern="PAT_ALL", axis="row")
 
+    def test_tile_unit_flag_phase_forwarding(self):
+        src, dst, phase = object(), object(), object()
+        with patch_ops("unwrap_surface_value", side_effect=_identity), \
+             patch.object(pto_dialect, "TMovOp") as mov_op, \
+             patch.object(pto_dialect, "TMatmulMxBiasOp") as matmul_op, \
+             patch.object(pto_dialect, "TGemvMxBiasOp") as gemv_op:
+            pto.tile.mov(src, dst, st_phase=phase)
+            _ops_tile.tmatmul_mx_bias(src, src, src, src, src, dst, acc_phase=phase)
+            pto.tile.gemv_mx_bias(src, src, src, src, src, dst, acc_phase=phase)
+        self.assertIs(mov_op.call_args.kwargs["stPhase"], phase)
+        self.assertIs(matmul_op.call_args.kwargs["accPhase"], phase)
+        self.assertIs(gemv_op.call_args.kwargs["accPhase"], phase)
+
     def test_tile_mov_accepts_acc_to_vec_mode(self):
         src = object()
         dst = object()

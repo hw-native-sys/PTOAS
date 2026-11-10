@@ -1,0 +1,33 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+
+// RUN: pto-test-opt --pto-insert-sync --pto-insert-sync-debug=2 %s -o /dev/null 2>&1 | FileCheck %s
+
+module attributes {pto.target_arch = "a5"} {
+  func.func private @modeled(!pto.tile_buf<vec, 16x16xf32>)
+      attributes {pto.tileop.helper, pto.tileop.kind = "vector", pto.tileop.effects = ["read"]}
+  func.func private @empty() attributes {pto.tileop.helper, pto.tileop.kind = "vector"}
+  func.func private @opaque()
+
+  func.func @call_nodes(%tile: !pto.tile_buf<vec, 16x16xf32>, %callee: () -> ()) {
+    func.call @modeled(%tile) : (!pto.tile_buf<vec, 16x16xf32>) -> ()
+    func.call @empty() : () -> ()
+    func.call @opaque() : () -> ()
+    func.call_indirect %callee() : () -> ()
+    return
+  }
+}
+
+// A modeled helper is one compound; all unmodeled call kinds remain opaque.
+// CHECK: After Translator
+// CHECK: [   0] COMPOUND func.call [PIPE_V]
+// CHECK: [   1] PLACE_HOLDER
+// CHECK-NEXT: [   2] PLACE_HOLDER
+// CHECK-NEXT: [   3] PLACE_HOLDER
+// CHECK-NOT: [   4]
+// CHECK: After Analysis

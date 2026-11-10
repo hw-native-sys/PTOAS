@@ -1,0 +1,32 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+
+// RUN: pto-test-opt %S/../../samples/UFSyncLoop/uf_sync_loop.pto -o /dev/null
+// RUN: ptoas --pto-arch=a5 --pto-level=level3 --enable-insert-sync %S/../../samples/UFSyncLoop/uf_sync_loop.pto | FileCheck %s
+
+// CHECK-LABEL: AICORE void uf_sync_loop(
+// CHECK-NOT: set_flag(PIPE_FIX, PIPE_M
+// CHECK: Tile<TileType::Mat, half, 32, 32, BLayout::ColMajor, 32, 32, SLayout::RowMajor
+// CHECK: Tile<TileType::Mat, half, 32, 32, BLayout::ColMajor, 32, 32, SLayout::RowMajor
+// CHECK: set_flag(PIPE_MTE2, PIPE_MTE1
+// CHECK: wait_flag(PIPE_MTE2, PIPE_MTE1
+// CHECK: set_flag(PIPE_MTE1, PIPE_M
+// CHECK: wait_flag(PIPE_MTE1, PIPE_M
+// CHECK-NOT: set_flag(PIPE_FIX, PIPE_M
+// CHECK-NOT: wait_flag(PIPE_FIX, PIPE_M
+// CHECK-NOT: set_flag(PIPE_M, PIPE_FIX
+// CHECK-NOT: wait_flag(PIPE_M, PIPE_FIX
+// CHECK-NOT: pipe_barrier(PIPE_M)
+// CHECK: TMATMUL<pto::AccPhase::Final>
+// CHECK-NOT: set_flag(PIPE_M, PIPE_FIX
+// CHECK-NOT: wait_flag(PIPE_M, PIPE_FIX
+// CHECK-NOT: pipe_barrier(PIPE_M)
+// CHECK: TSTORE<STPhase::Final>
+// CHECK-NOT: set_flag(PIPE_FIX, PIPE_M
+// CHECK-NOT: wait_flag(PIPE_FIX, PIPE_M
+// CHECK-NOT: pipe_barrier(PIPE_M)

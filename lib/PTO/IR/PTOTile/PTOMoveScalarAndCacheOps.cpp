@@ -35,6 +35,18 @@ static LogicalResult verifyTMovImpl(TMovOp op, bool isA5) {
 }
 
 mlir::LogicalResult mlir::pto::TMovOp::verify() {
+  // The store phase selects the unit-flag action of the fixpipe that drains ACC.
+  // Any other source is an MTE move that never touches that token, so a
+  // non-default phase there is meaningless and dangerous.
+  const bool hasStorePhase = getStPhase() != STPhase::Unspecified;
+  if (hasStorePhase) {
+    const std::optional<pto::AddressSpace> srcSpace =
+        getPTOMemorySpaceEnum(getSrc().getType());
+    if (!srcSpace || *srcSpace != pto::AddressSpace::ACC) {
+      return emitOpError(
+          "a non-Unspecified stPhase requires an ACC source tile");
+    }
+  }
   auto verifyA2A3 = [this]() -> LogicalResult {
     return verifyTMovImpl(*this, /*isA5=*/false);
   };

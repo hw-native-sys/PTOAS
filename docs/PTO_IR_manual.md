@@ -1704,6 +1704,7 @@ Reads outside the valid source rows in this pseudocode produce zero padding.
 | `preQuantScalar` | `i64` | Optional scalar pre-quant parameter used by scalar-quant TMOV forms |
 | `accToVecMode` | `pto.acc_to_vec_mode` | Optional acc-to-vec mode template parameter |
 | `reluPreMode` | `pto.relu_pre_mode` | Optional relu mode template parameter, default is `NoRelu` |
+| `stPhase` | `pto.st_phase` | Unit-flag store phase: `unspecified` (default), `partial`, or `final`. Non-default phases require an ACC source. |
 | `grpAxis` | `#pto.mx_group_axis` | Optional X-to-ZZ grouping axis: `axis0` (DN) or `axis1` (ND). It is invalid on plain and scaling-FP forms. |
 
 **Results:** None. Writes into `dst` via DPS pattern. ND X-to-ZZ also writes
@@ -1714,6 +1715,9 @@ temporary tile.
 
 - `pto.tmov ins(%src) outs(%dst)`
   - maps to `TMOV(dst, src)`
+- `pto.tmov ins(%src) outs(%dst) {stPhase = #pto<st_phase final>}`
+  - waits for a published accumulator and releases the flag after the transfer completes.
+  - non-default `stPhase` requires an ACC source.
 - `pto.tmov ins(%src) outs(%dst) {reluPreMode = ...}`
   - maps to `TMOV<..., ReluPreMode>(dst, src)`
 - `pto.tmov ins(%src) outs(%dst) {accToVecMode = ..., reluPreMode = ...}`
@@ -2149,6 +2153,7 @@ dst = (lhs * rhs) + bias   // scaling tiles configure target-defined behavior
 | `rhs_scale` | `pto.tile_buf` | Right scaling tile |
 | `bias` | `pto.tile_buf` | Bias tile |
 | `dst` | `pto.tile_buf` | Destination |
+| `accPhase` | `pto.acc_phase` | Optional unit-flag phase (`Partial` / `Final`) |
 
 **Results:** None. Writes into `dst` via DPS pattern.
 
@@ -2161,6 +2166,9 @@ dst = (lhs * rhs) + bias   // scaling tiles configure target-defined behavior
   - Runtime: `m/k/n` must be in `[1, 4095]`.
 - **Bias form**:
   - `bias` must use element type `f32`, `loc=bias`, `rows=1`, and `blayout=row_major`.
+- **Unit flag**:
+  - `accPhase = final` publishes the core-wide ACC unit flag after the
+    accumulator is produced; `partial` leaves the token unchanged.
 
 **Hardware Mapping:**
 
@@ -2175,6 +2183,16 @@ pto.tmatmul.mx.bias ins(%a, %a_scale, %b, %b_scale, %bias : !pto.tile_buf<...>, 
 ```
 
 ---
+
+UF-aware synchronization is available with `--enable-insert-sync` on a2/a3/a5.
+For proven ACC handoffs, a Final producer waits for the previous Final drain
+before reusing ACC, and a phased drain waits for the producer. A Final drain
+releases the unit flag after the transfer completes; a Partial drain retains it
+for further reads. Balanced loops and branches can use this handshake in place
+of explicit M/FIX events. Dependencies outside the proven ACC handoff retain
+ordinary synchronization. `--enable-unified-sync` does not perform this UF
+optimization. Programs must balance publications and final drains on every
+executed path; skipping a drain can stall the next producer indefinitely.
 
 ##### `pto.tgemv` - Matrix-Vector Multiply
 
@@ -2454,6 +2472,12 @@ dst = gemv(a, b) + bias
 ```
 
 **Arguments:** `a, a_scale, b, b_scale, bias, dst`
+
+**Attributes:** `accPhase` accepts `#pto<acc_phase partial>`,
+`#pto<acc_phase final>`, or `#pto<acc_phase unspecified>` (the default).
+`final` publishes the core-wide ACC unit flag after producing the accumulator;
+`partial` leaves the token unchanged. Omission preserves the default phase behavior.
+The Python API exposes this attribute as the keyword-only `acc_phase` argument.
 
 **Constraints & Verification:**
 

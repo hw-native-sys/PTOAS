@@ -37,6 +37,22 @@ def OpPipeInterface : OpInterface<"OpPipeInterface"> {
   ];
 }
 
+// Explicit phase-bearing operation contracts keep token visibility in sync
+// with ODS rather than a hand-maintained list in the synchronization analysis.
+def UFAccProducerOpInterface : OpInterface<"UFAccProducerOpInterface"> {
+  let cppNamespace = "::mlir::pto";
+  let methods = [InterfaceMethod<"Return the accumulator unit-flag phase.",
+                                 "::mlir::pto::AccPhase", "getAccPhase">];
+}
+
+def UFAccConsumerOpInterface : OpInterface<"UFAccConsumerOpInterface"> {
+  let cppNamespace = "::mlir::pto";
+  let methods = [InterfaceMethod<"Return the drain unit-flag phase.",
+                                 "::mlir::pto::STPhase", "getStPhase">,
+                 InterfaceMethod<"Return the drain source.",
+                                 "::mlir::Value", "getSrc">];
+}
+
 // Instruction-class marker interfaces. These categories are independent from
 // OpPipeInterface: a pipe describes where an operation executes, while these
 // markers describe the operation's abstraction level and instruction family.

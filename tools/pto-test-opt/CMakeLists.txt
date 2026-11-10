@@ -80,3 +80,11 @@ add_llvm_executable(pto-bisheng-scheduler-test
 )
 
 target_link_libraries(pto-bisheng-scheduler-test PRIVATE PTOASBishengScheduler)
+
+add_llvm_executable(pto-uf-token-model-test
+  pto-uf-token-model-test.cpp
+  PARTIAL_SOURCES_INTENDED
+)
+
+target_link_libraries(pto-uf-token-model-test PRIVATE PTOTransforms PTOIR MLIRIR MLIRSupport)
+add_dependencies(pto-uf-token-model-test PTOOpsIncGen PTOPassesIncGen)

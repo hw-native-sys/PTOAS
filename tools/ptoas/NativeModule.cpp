@@ -37,6 +37,7 @@ int runPTOAS(const std::vector<std::string> &args,
 
 #include "mlir/Bindings/Python/PybindAdaptors.h"
 #include "mlir/CAPI/IR.h"
+#include "mlir/IR/Diagnostics.h"
 
 #include "pybind11/pybind11.h"
 #include "pybind11/stl.h"
@@ -202,6 +203,20 @@ int runPTOASFromPython(const std::vector<std::string> &arguments) {
   py::object contextOwner =
       py::module_::import("ptoas.mlir.ir").attr("Context")();
   MlirContext rawContext = py::cast<MlirContext>(contextOwner);
+
+  // This entry point owns the CLI context. Compiler passes must leave an
+  // embedding application's diagnostic handlers intact.
+  mlir::ScopedDiagnosticHandler diagnostics(
+      unwrap(rawContext), [](mlir::Diagnostic &diagnostic) {
+        const bool isWarning =
+            diagnostic.getSeverity() == mlir::DiagnosticSeverity::Warning;
+        if (!isWarning) {
+          return mlir::failure();
+        }
+        llvm::errs() << diagnostic.getLocation() << ": warning: "
+                     << diagnostic << '\n';
+        return mlir::success();
+      });
 
   int result;
   {

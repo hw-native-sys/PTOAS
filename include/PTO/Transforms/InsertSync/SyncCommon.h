@@ -533,6 +533,11 @@ struct UFInfo {
   UFRole role{UFRole::None};
   std::optional<pto::AccPhase> accPhase;
   std::optional<pto::STPhase> stPhase;
+  // Every phased op is visible to the token model, but only a subset is
+  // currently allowed to be one end of a removable hand-off. Keeping the two
+  // sets separate lets a new phased op participate in the token bookkeeping
+  // (soundness) without silently widening the optimization surface.
+  bool handoffEligible{false};
   SmallVector<const BaseMemInfo *, 4> accAccesses;
 };
  

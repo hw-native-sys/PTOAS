@@ -1,0 +1,119 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+
+// RUN: pto-test-opt %s -o /dev/null
+// RUN: ptoas --pto-arch=a5 --enable-insert-sync --emit-pto-ir %s 2>&1 | FileCheck %s
+
+!lhs32 = !pto.tile_buf<loc=left, dtype=f16, rows=32, cols=32, v_row=32, v_col=32, blayout=col_major, slayout=row_major, fractal=512, pad=0>
+!rhs32 = !pto.tile_buf<loc=right, dtype=f16, rows=32, cols=32, v_row=32, v_col=32, blayout=row_major, slayout=col_major, fractal=512, pad=0>
+!acc32 = !pto.tile_buf<loc=acc, dtype=f32, rows=32, cols=32, v_row=32, v_col=32, blayout=col_major, slayout=row_major, fractal=1024, pad=0>
+!mat32 = !pto.tile_buf<loc=mat, dtype=f32, rows=32, cols=32, v_row=32, v_col=32, blayout=row_major, slayout=none_box, fractal=512, pad=0>
+!out = !pto.partition_tensor_view<32x32xf32>
+
+!vlhs = !pto.tile_buf<loc=left, dtype=f16, rows=1, cols=128, v_row=1, v_col=128, blayout=col_major, slayout=row_major, fractal=512, pad=0>
+!vrhs = !pto.tile_buf<loc=right, dtype=f16, rows=128, cols=16, v_row=128, v_col=16, blayout=row_major, slayout=col_major, fractal=512, pad=0>
+!vacc = !pto.tile_buf<loc=acc, dtype=f32, rows=1, cols=16, v_row=1, v_col=16, blayout=col_major, slayout=row_major, fractal=1024, pad=0>
+
+!ma = !pto.tile_buf<loc=left, dtype=f8E4M3FN, rows=16, cols=512, v_row=16, v_col=512, blayout=col_major, slayout=row_major, fractal=512, pad=0>
+!mb = !pto.tile_buf<loc=right, dtype=f8E4M3FN, rows=512, cols=16, v_row=512, v_col=16, blayout=row_major, slayout=col_major, fractal=512, pad=0>
+!mas = !pto.tile_buf<loc=scaling, dtype=f16, rows=16, cols=16, v_row=16, v_col=16, blayout=row_major, slayout=row_major, fractal=32, pad=0>
+!mbs = !pto.tile_buf<loc=scaling, dtype=f16, rows=16, cols=16, v_row=16, v_col=16, blayout=col_major, slayout=col_major, fractal=32, pad=0>
+!macc = !pto.tile_buf<loc=acc, dtype=f32, rows=16, cols=16, v_row=16, v_col=16, blayout=col_major, slayout=row_major, fractal=512, pad=0>
+
+!gma = !pto.tile_buf<loc=left, dtype=f8E4M3FN, rows=1, cols=512, v_row=1, v_col=512, blayout=col_major, slayout=row_major, fractal=512, pad=0>
+!gmas = !pto.tile_buf<loc=scaling, dtype=f16, rows=1, cols=16, v_row=1, v_col=16, blayout=row_major, slayout=row_major, fractal=32, pad=0>
+!gmacc = !pto.tile_buf<loc=acc, dtype=f32, rows=1, cols=16, v_row=1, v_col=16, blayout=col_major, slayout=row_major, fractal=512, pad=0>
+!gbias = !pto.tile_buf<loc=bias, dtype=f32, rows=1, cols=16, v_row=1, v_col=16, blayout=row_major, slayout=none_box, fractal=512, pad=0>
+
+module attributes {pto.target_arch = "a5"} {
+  // O2: a phased GEMV between the matmul and the store publishes the core-wide
+  // unit flag. Before O2 it looked transparent and the M->FIX event was
+  // incorrectly removed.
+  func.func @uf_gemv_between(%out: !out) attributes {pto.kernel_kind = #pto.kernel_kind<cube>} {
+    %lhs = pto.alloc_tile : !lhs32
+    %rhs = pto.alloc_tile : !rhs32
+    %acc = pto.alloc_tile : !acc32
+    %vlhs = pto.alloc_tile : !vlhs
+    %vrhs = pto.alloc_tile : !vrhs
+    %vacc = pto.alloc_tile : !vacc
+    pto.tmatmul ins(%lhs, %rhs : !lhs32, !rhs32) outs(%acc : !acc32)
+      {accPhase = #pto<acc_phase final>}
+    pto.tgemv ins(%vlhs, %vrhs : !vlhs, !vrhs) outs(%vacc : !vacc)
+      {accPhase = #pto<acc_phase final>}
+    pto.tstore ins(%acc : !acc32) outs(%out : !out)
+      {stPhase = #pto<st_phase final>}
+    return
+  }
+
+  // O2: the same for a phased MX matmul publisher.
+  func.func @uf_mx_between(%out: !out) attributes {pto.kernel_kind = #pto.kernel_kind<cube>} {
+    %lhs = pto.alloc_tile : !lhs32
+    %rhs = pto.alloc_tile : !rhs32
+    %acc = pto.alloc_tile : !acc32
+    %ma = pto.alloc_tile : !ma
+    %mas = pto.alloc_tile : !mas
+    %mb = pto.alloc_tile : !mb
+    %mbs = pto.alloc_tile : !mbs
+    %macc = pto.alloc_tile : !macc
+    pto.tmatmul ins(%lhs, %rhs : !lhs32, !rhs32) outs(%acc : !acc32)
+      {accPhase = #pto<acc_phase final>}
+    pto.tmatmul.mx ins(%ma, %mas, %mb, %mbs : !ma, !mas, !mb, !mbs) outs(%macc : !macc)
+      {accPhase = #pto<acc_phase final>}
+    pto.tstore ins(%acc : !acc32) outs(%out : !out)
+      {stPhase = #pto<st_phase final>}
+    return
+  }
+
+  // O2: the same for a phased MX GEMV bias publisher.
+  func.func @uf_gemv_mx_bias_between(%out: !out) attributes {pto.kernel_kind = #pto.kernel_kind<cube>} {
+    %lhs = pto.alloc_tile : !lhs32
+    %rhs = pto.alloc_tile : !rhs32
+    %acc = pto.alloc_tile : !acc32
+    %ma = pto.alloc_tile : !gma
+    %mas = pto.alloc_tile : !gmas
+    %mb = pto.alloc_tile : !mb
+    %mbs = pto.alloc_tile : !mbs
+    %macc = pto.alloc_tile : !gmacc
+    %bias = pto.alloc_tile : !gbias
+    pto.tmatmul ins(%lhs, %rhs : !lhs32, !rhs32) outs(%acc : !acc32)
+      {accPhase = #pto<acc_phase final>}
+    pto.tgemv.mx.bias ins(%ma, %mas, %mb, %mbs, %bias : !gma, !gmas, !mb, !mbs, !gbias) outs(%macc : !gmacc)
+      {accPhase = #pto<acc_phase final>}
+    pto.tstore ins(%acc : !acc32) outs(%out : !out)
+      {stPhase = #pto<st_phase final>}
+    return
+  }
+
+  // O2: an ACC-source TMOV is a second consumer between the pair.
+  func.func @uf_tmov_between(%out: !out) attributes {pto.kernel_kind = #pto.kernel_kind<cube>} {
+    %lhs = pto.alloc_tile : !lhs32
+    %rhs = pto.alloc_tile : !rhs32
+    %acc = pto.alloc_tile : !acc32
+    %matdst = pto.alloc_tile : !mat32
+    pto.tmatmul ins(%lhs, %rhs : !lhs32, !rhs32) outs(%acc : !acc32)
+      {accPhase = #pto<acc_phase final>}
+    pto.tmov ins(%acc : !acc32) outs(%matdst : !mat32)
+      {stPhase = #pto<st_phase final>}
+    pto.tstore ins(%acc : !acc32) outs(%out : !out)
+      {stPhase = #pto<st_phase final>}
+    return
+  }
+}
+
+// CHECK-LABEL: func.func @uf_gemv_between
+// CHECK: pto.set_flag[<PIPE_M>, <PIPE_FIX>
+// CHECK: pto.wait_flag[<PIPE_M>, <PIPE_FIX>
+// CHECK-LABEL: func.func @uf_mx_between
+// CHECK: pto.set_flag[<PIPE_M>, <PIPE_FIX>
+// CHECK: pto.wait_flag[<PIPE_M>, <PIPE_FIX>
+// CHECK-LABEL: func.func @uf_gemv_mx_bias_between
+// CHECK: pto.set_flag[<PIPE_M>, <PIPE_FIX>
+// CHECK: pto.wait_flag[<PIPE_M>, <PIPE_FIX>
+// CHECK-LABEL: func.func @uf_tmov_between
+// CHECK: pto.set_flag[<PIPE_M>, <PIPE_FIX>
+// CHECK: pto.wait_flag[<PIPE_M>, <PIPE_FIX>
