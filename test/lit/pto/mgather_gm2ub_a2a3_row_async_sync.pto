@@ -1,0 +1,188 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under
+// the terms and conditions of CANN Open Software License Agreement Version 2.0
+// (the "License"). You may refer to the License for details. You shall not use
+// this file except in compliance with the License. THIS SOFTWARE IS PROVIDED
+// ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR
+// IMPLIED, INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY OR
+// FITNESS FOR A PARTICULAR PURPOSE. See LICENSE in the root of the software
+// repository for the full text of the License.
+
+// A2/A3 GM -> UB Row gather with the GatherOOB::Undefined valid-index contract
+// lowers to the pto-isa async overload (issue #1674 / pto-isa #380): the macro
+// no longer drains its row-DMA loop on the Vector/MTE3 queues, so Vector work
+// on a disjoint UB allocation only waits for its own inputs, while a
+// same-slot consumer (work aliased onto the gathered tile) still waits for
+// gather completion.
+
+// RUN: ptoas --pto-arch=a3 --pto-level=level3 --enable-insert-sync %s -o - 2>&1 | FileCheck %s --check-prefix=DISJOINT
+// RUN: ptoas --pto-arch=a3 --pto-level=level3 --enable-insert-sync %s -o - 2>&1 | FileCheck %s --check-prefix=SAMESLOT
+// RUN: ptoas --pto-arch=a3 --pto-level=level3 --enable-unified-sync --enable-unified-sync-debug %s 2>&1 >/dev/null | FileCheck %s --check-prefix=SEEDED
+// RUN: ptoas --pto-arch=a3 --pto-level=level3 %s -o - 2>&1 | FileCheck %s --check-prefix=NOSYNC
+// RUN: ptoas --pto-arch=a3 --pto-level=level3 --enable-insert-sync %s -o - 2>&1 | FileCheck %s --check-prefix=HANDWRITTEN
+// RUN: ptoas --pto-arch=a3 --pto-level=level3 --enable-insert-sync %s -o - 2>&1 | FileCheck %s --check-prefix=ESCAPE
+// RUN: ptoas --pto-arch=a3 --pto-level=level3 --enable-unified-sync --emit-pto-ir %s 2>&1 | FileCheck %s --check-prefix=PRINTSTRIP
+
+!idx = !pto.tile_buf<loc=vec, dtype=i32, rows=1, cols=64, v_row=1, v_col=64, blayout=row_major, slayout=none_box, fractal=512, pad=0>
+!gathered = !pto.tile_buf<loc=vec, dtype=bf16, rows=64, cols=512, v_row=64, v_col=512, blayout=row_major, slayout=none_box, fractal=512, pad=0>
+!work = !pto.tile_buf<loc=vec, dtype=f32, rows=1, cols=64, v_row=1, v_col=64, blayout=row_major, slayout=none_box, fractal=512, pad=0>
+!index_gm = !pto.partition_tensor_view<1x64xi32>
+!table_gm = !pto.partition_tensor_view<256x512xbf16>
+!gathered_gm = !pto.partition_tensor_view<64x512xbf16>
+!work_gm = !pto.partition_tensor_view<1x64xf32>
+
+module attributes {pto.target_arch = "a2a3"} {
+  // DISJOINT-LABEL: AICORE void independent_vector_after_row_gather(
+  // Indices [0,256), gathered payload [256,65792), work [65792,66048).
+  func.func @independent_vector_after_row_gather(
+      %table: !table_gm, %indices: !index_gm, %input: !work_gm,
+      %out_work: !work_gm, %out_gather: !gathered_gm)
+      attributes {pto.kernel_kind = #pto.kernel_kind<vector>} {
+    %a0 = arith.constant 0 : i64
+    %a256 = arith.constant 256 : i64
+    %a65792 = arith.constant 65792 : i64
+    %one = arith.constant 1.0 : f32
+    %idx = pto.alloc_tile addr = %a0 : !idx
+    %gathered = pto.alloc_tile addr = %a256 : !gathered
+    %work = pto.alloc_tile addr = %a65792 : !work
+    pto.tload ins(%input : !work_gm) outs(%work : !work)
+    pto.tload ins(%indices : !index_gm) outs(%idx : !idx)
+    pto.mgather ins(%table, %idx : !table_gm, !idx) outs(%gathered : !gathered)
+      {coalesce = #pto<coalesce row>, __pto.emitc.mgather_async_row}
+    pto.tadds ins(%work, %one : !work, f32) outs(%work : !work)
+    pto.tstore ins(%work : !work) outs(%out_work : !work_gm)
+    pto.tstore ins(%gathered : !gathered) outs(%out_gather : !gathered_gm)
+    return
+  }
+
+  // ESCAPE-LABEL: AICORE void escape_via_plain_call(
+  // The destination escapes into an ordinary func.call (no pto.tileop.helper
+  // annotation), so the function-level dependency analysis cannot model its
+  // consumers; the gather must keep the Default macro and its internal
+  // fences even though the sync pass ran here.
+  func.func @escape_via_plain_call(
+      %table: !table_gm, %indices: !index_gm, %out_gather: !gathered_gm)
+      attributes {pto.kernel_kind = #pto.kernel_kind<vector>} {
+    %a0 = arith.constant 0 : i64
+    %a256 = arith.constant 256 : i64
+    %idx = pto.alloc_tile addr = %a0 : !idx
+    %gathered = pto.alloc_tile addr = %a256 : !gathered
+    pto.tload ins(%indices : !index_gm) outs(%idx : !idx)
+    pto.mgather ins(%table, %idx : !table_gm, !idx) outs(%gathered : !gathered)
+      {coalesce = #pto<coalesce row>}
+    func.call @plain_consume(%gathered) : (!gathered) -> ()
+    return
+  }
+
+  func.func private @plain_consume(%t: !gathered) {
+    return
+  }
+
+  // HANDWRITTEN-LABEL: AICORE void handwritten_sync_row_gather(
+  // Hand-written sync ops make InsertSync skip the whole function (see
+  // hasExplicitSyncOps): nothing takes over the gather completion the async
+  // macro would drop, so the gather must keep the Default macro and its
+  // internal fences even though --enable-insert-sync is on.
+  func.func @handwritten_sync_row_gather(
+      %table: !table_gm, %indices: !index_gm, %input: !work_gm,
+      %out_work: !work_gm, %out_gather: !gathered_gm)
+      attributes {pto.kernel_kind = #pto.kernel_kind<vector>} {
+    %a0 = arith.constant 0 : i64
+    %a256 = arith.constant 256 : i64
+    %a65792 = arith.constant 65792 : i64
+    %idx = pto.alloc_tile addr = %a0 : !idx
+    %gathered = pto.alloc_tile addr = %a256 : !gathered
+    %work = pto.alloc_tile addr = %a65792 : !work
+    pto.tload ins(%input : !work_gm) outs(%work : !work)
+    pto.tload ins(%indices : !index_gm) outs(%idx : !idx)
+    pto.record_event [#pto.pipe_event_type<TLOAD>, #pto.pipe_event_type<TVEC>, #pto.event<EVENT_ID0>]
+    pto.wait_event [#pto.pipe_event_type<TLOAD>, #pto.pipe_event_type<TVEC>, #pto.event<EVENT_ID0>]
+    pto.mgather ins(%table, %idx : !table_gm, !idx) outs(%gathered : !gathered)
+      {coalesce = #pto<coalesce row>}
+    pto.tstore ins(%gathered : !gathered) outs(%out_gather : !gathered_gm)
+    return
+  }
+
+  // SAMESLOT-LABEL: AICORE void same_slot_vector_after_row_gather(
+  // Negative control from issue #1674: only the work tile's UB base changes
+  // (65792 -> 256), overlapping the gathered tile. TADDS reads bytes the
+  // gather overwrites, so its MTE2 -> V wait must stay between MGATHER and
+  // TADDS.
+  func.func @same_slot_vector_after_row_gather(
+      %table: !table_gm, %indices: !index_gm, %input: !work_gm,
+      %out_work: !work_gm, %out_gather: !gathered_gm)
+      attributes {pto.kernel_kind = #pto.kernel_kind<vector>} {
+    %a0 = arith.constant 0 : i64
+    %a256 = arith.constant 256 : i64
+    %one = arith.constant 1.0 : f32
+    %idx = pto.alloc_tile addr = %a0 : !idx
+    %gathered = pto.alloc_tile addr = %a256 : !gathered
+    %work = pto.alloc_tile addr = %a256 : !work
+    pto.tload ins(%input : !work_gm) outs(%work : !work)
+    pto.tload ins(%indices : !index_gm) outs(%idx : !idx)
+    pto.mgather ins(%table, %idx : !table_gm, !idx) outs(%gathered : !gathered)
+      {coalesce = #pto<coalesce row>}
+    pto.tadds ins(%work, %one : !work, f32) outs(%work : !work)
+    pto.tstore ins(%work : !work) outs(%out_work : !work_gm)
+    pto.tstore ins(%gathered : !gathered) outs(%out_gather : !gathered_gm)
+    return
+  }
+}
+
+// Both kernels take the async overload: index readiness before the macro, and
+// gather completion only in front of the real consumers.
+
+// DISJOINT: TLOAD(
+// DISJOINT-NEXT: set_flag(PIPE_MTE2, PIPE_V, EVENT_ID0);
+// DISJOINT-NEXT: TLOAD(
+// DISJOINT-NEXT: set_flag(PIPE_MTE2, PIPE_S, EVENT_ID0);
+// DISJOINT-NEXT: wait_flag(PIPE_MTE2, PIPE_S, EVENT_ID0);
+// DISJOINT-NEXT: MGATHER<pto::Coalesce::Row, pto::GatherOOB::Undefined, pto::GatherSync::Async>(
+// DISJOINT-NEXT: set_flag(PIPE_MTE2, PIPE_MTE3, EVENT_ID0);
+// The Vector consumer only waits for its own input readiness event; nothing
+// orders it behind the gather row-DMAs any more.
+// DISJOINT-NEXT: wait_flag(PIPE_MTE2, PIPE_V, EVENT_ID0);
+// DISJOINT-NEXT: TADDS(
+// Gather completion reaches its MTE3 consumer before the store.
+// DISJOINT: wait_flag(PIPE_MTE2, PIPE_MTE3, EVENT_ID0);
+// DISJOINT-NEXT: TSTORE(
+
+// SAMESLOT: TLOAD(
+// SAMESLOT-NEXT: TLOAD(
+// SAMESLOT-NEXT: set_flag(PIPE_MTE2, PIPE_S, EVENT_ID0);
+// SAMESLOT-NEXT: wait_flag(PIPE_MTE2, PIPE_S, EVENT_ID0);
+// The work TLOAD and the gather destination overlap in UB, so the solver
+// orders the two MTE2 writes with a pipe barrier.
+// SAMESLOT-NEXT: pipe_barrier(PIPE_MTE2);
+// SAMESLOT-NEXT: MGATHER<pto::Coalesce::Row, pto::GatherOOB::Undefined, pto::GatherSync::Async>(
+// Same-slot RAW: the gather overwrites the bytes TADDS reads, so completion
+// ordering stays compiler-emitted between the macro and the Vector op.
+// SAMESLOT-NEXT: set_flag(PIPE_MTE2, PIPE_V, EVENT_ID0);
+// SAMESLOT-NEXT: wait_flag(PIPE_MTE2, PIPE_V, EVENT_ID0);
+// SAMESLOT-NEXT: TADDS(
+
+// The async macro still fences its leading index-readiness waits (V/MTE3 ->
+// S) and its internal S -> MTE2 handshake, so exactly three hidden pairs stay
+// reserved per kernel; the dropped completion fences also free EVENT_ID0 on
+// the MTE2 -> V/MTE3 and S -> V/MTE3 directions for compiler hazards.
+// SEEDED: [unified-sync coloring] interval coloring: {{.*}}hidden_reserved=3
+
+// Without an automatic sync pass the async overload must not be emitted:
+// gather completion would be left unsynchronized (review P1).
+// NOSYNC: MGATHER<pto::Coalesce::Row>(
+// NOSYNC-NOT: MGATHER<pto::Coalesce::Row, pto::GatherOOB::Undefined, pto::GatherSync::Async>
+
+// The skipped function keeps the two-argument Default form; its hand-written
+// record/wait pair lowers to the set/wait_flag pair verbatim.
+// HANDWRITTEN: set_flag(PIPE_MTE2, PIPE_V, EVENT_ID0);
+// HANDWRITTEN-NOT: MGATHER<pto::Coalesce::Row, pto::GatherOOB::Undefined, pto::GatherSync::Async>
+// HANDWRITTEN: MGATHER<pto::Coalesce::Row>(
+
+// Consumers behind an unmodelled plain call keep the Default macro.
+// ESCAPE-NOT: MGATHER<pto::Coalesce::Row, pto::GatherOOB::Undefined, pto::GatherSync::Async>
+// ESCAPE: MGATHER<pto::Coalesce::Row>(
+
+// The compiler-private mark never prints into the textual IR, even after the
+// pass set it (the forged copy in the input was stripped at parse).
+// PRINTSTRIP-NOT: __pto.emitc.mgather_async_row
+// PRINTSTRIP: pto.mgather

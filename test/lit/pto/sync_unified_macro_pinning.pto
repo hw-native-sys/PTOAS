@@ -22,6 +22,13 @@
 // `seedHiddenMacroEvents` reserves those (direction, id) pairs over the macro's span,
 // padded one SyncIR index each side, and the colourer treats a reservation as
 // occupancy. `checkMacroHiddenEventCollisions` checks the result on every run.
+//
+// The gather below pins gather_oob = clamp on purpose: Coalesce::Row with the
+// default GatherOOB::Undefined now lowers to the pto-isa async overload
+// (issue #1674 / pto-isa #380), whose macro only fences V/MTE3 -> S and
+// S -> MTE2, so only those three pairs stay reserved (see
+// mgather_gm2ub_a2a3_row_async_sync.pto). clamp keeps this test on the
+// Default macro with the full seven reservations.
 
 // THE FIX: the kernel compiles, and the collision is gone.
 // RUN: ptoas --pto-arch=a3 --pto-level=level3 --enable-unified-sync %s 2>&1 >/dev/null | FileCheck %s --check-prefix=CLEAN --allow-empty
@@ -69,7 +76,7 @@ module attributes {pto.target_arch = "a2a3"} {
         : !pto.partition_tensor_view<64x32xf16>,
           !pto.tile_buf<loc=vec, dtype=i32, rows=1, cols=16, v_row=?, v_col=?, blayout=row_major, slayout=none_box, fractal=512, pad=0>)
       outs(%dst : !pto.tile_buf<loc=vec, dtype=f16, rows=16, cols=32, v_row=?, v_col=?, blayout=row_major, slayout=none_box, fractal=512, pad=0>)
-      {coalesce = #pto<coalesce row>}
+      {coalesce = #pto<coalesce row>, gatherOob = #pto<gather_oob clamp>}
     %out_pview = pto.partition_view %out_view, offsets = [%c0_index, %c0_index], sizes = [%c16_index, %c32_index] : !pto.tensor_view<?x?xf16> -> !pto.partition_tensor_view<16x32xf16>
     pto.tstore ins(%dst : !pto.tile_buf<loc=vec, dtype=f16, rows=16, cols=32, v_row=?, v_col=?, blayout=row_major, slayout=none_box, fractal=512, pad=0>)
                outs(%out_pview : !pto.partition_tensor_view<16x32xf16>)

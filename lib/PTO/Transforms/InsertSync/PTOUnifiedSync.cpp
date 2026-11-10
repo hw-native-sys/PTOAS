@@ -165,19 +165,7 @@ static bool skipUnifiedSync(func::FuncOp func) {
   }
 
   // Do not run on functions that already carry explicit synchronization.
-  bool hasExplicitSync = false;
-  func.walk([&](Operation *op) {
-    if (isa<pto::SetFlagOp, pto::WaitFlagOp, pto::RecordEventOp, pto::WaitEventOp>(op)) {
-      hasExplicitSync = true;
-      return WalkResult::interrupt();
-    }
-    return WalkResult::advance();
-  });
-  if (hasExplicitSync) {
-    return true;
-  }
-
-  return false;
+  return hasExplicitSyncOps(func);
 }
 
 /// Executes one unified allocation pipeline; analysis ownership is local to the
@@ -889,6 +877,11 @@ struct PTOUnifiedSyncPass : public mlir::pto::impl::PTOUnifiedSyncBase<PTOUnifie
     if (skipUnifiedSync(func)) {
       return;
     }
+
+    // This pass now owns this function's automatic synchronization, so its
+    // gathers may use the async overload whose completion it will emit.
+    markAsyncA2A3RowMGathers(func);
+
     if (failed(UnifiedSyncExecutor(func, bufidCapacity, forceMechanism, checkAddrReuse, debugEnabled).run())) {
       signalPassFailure();
     }

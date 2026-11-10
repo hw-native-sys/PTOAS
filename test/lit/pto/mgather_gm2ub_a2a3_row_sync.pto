@@ -46,7 +46,7 @@ module attributes {pto.target_arch = "a2a3"} {
 // CHECK: TLOAD(
 // CHECK-NEXT: set_flag(PIPE_MTE2, PIPE_S, EVENT_ID0);
 // CHECK: wait_flag(PIPE_MTE2, PIPE_S, EVENT_ID0);
-// CHECK-NEXT: MGATHER<pto::Coalesce::Row>(
-// CHECK-NEXT: set_flag(PIPE_MTE2, PIPE_MTE3, EVENT_ID1);
-// CHECK: wait_flag(PIPE_MTE2, PIPE_MTE3, EVENT_ID1);
+// CHECK-NEXT: MGATHER<pto::Coalesce::Row, pto::GatherOOB::Undefined, pto::GatherSync::Async>(
+// CHECK-NEXT: set_flag(PIPE_MTE2, PIPE_MTE3, EVENT_ID0);
+// CHECK: wait_flag(PIPE_MTE2, PIPE_MTE3, EVENT_ID0);
 // CHECK-NEXT: TSTORE(

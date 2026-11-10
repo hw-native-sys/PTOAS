@@ -1590,24 +1590,9 @@ mlir::LogicalResult mlir::pto::emitFatobjLLVMWithRuntime(
   if (!artifacts.emitStubSource(stubSource, diagOS)) {
     return failure();
   }
-  if (!artifacts.initCommandLogs(diagOS)) {
-    return failure();
-  }
-
-  if (!artifacts.compileBridgeWrappers(bridgeWrappers, cubeModule != nullptr,
-                                       vectorModule != nullptr, *toolchain,
-                                       diagOS)) {
-    return failure();
-  }
-  if (!artifacts.emitCubeObject(cubeModule, *toolchain, schedulerMode, diagOS)) {
-    return failure();
-  }
-  if (!artifacts.emitVectorObject(vectorModule, *toolchain,
-                                  vfsimtSizeFixMode, schedulerMode, diagOS)) {
-    return failure();
-  }
-
-  if (!artifacts.mergeDeviceObjects(*toolchain, diagOS)) {
+  if (!artifacts.emitDeviceObjects(cubeModule, vectorModule, *toolchain,
+                                   vfsimtSizeFixMode, schedulerMode,
+                                   bridgeWrappers, diagOS)) {
     return failure();
   }
 

@@ -255,6 +255,15 @@ inline constexpr llvm::StringLiteral kLegacyHACCEntryAttrName = "hacc.entry";
 inline constexpr llvm::StringLiteral kPTOKernelAttrName = "pto.kernel";
 inline constexpr llvm::StringLiteral kLegacyPTOAICoreAttrName = "pto.aicore";
 inline constexpr llvm::StringLiteral kPTOSimtEntryAttrName = "pto.simt_entry";
+
+/// Internal mark the automatic synchronization passes (insert/unified/
+/// barrier-all) set on pto.mgather ops whose output completion they emit; it
+/// selects the pto-isa A2/A3 async row-gather overload in the EmitC lowering
+/// and the InsertSync macro model. It is compiler-private: the PTO custom
+/// assembly neither prints nor parses it, and the driver strips it from any
+/// input, so it can only arrive from a pass in the same compilation.
+inline constexpr llvm::StringLiteral kMGatherAsyncRowAttrName =
+    "__pto.emitc.mgather_async_row";
 inline constexpr llvm::StringLiteral kPTOSimtMaxThreadsAttrName =
     "pto.simt_max_threads";
 inline constexpr llvm::StringLiteral kPTOSimtMaxRegistersAttrName =

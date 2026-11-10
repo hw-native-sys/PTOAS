@@ -11,6 +11,7 @@
 #include "PTO/Transforms/Passes.h"
 #include "PTO/IR/PTO.h"
 #include "PTO/Transforms/InsertSync/SyncCommon.h"
+#include "PTO/Transforms/InsertSync/SyncMacroModel.h"
 #include "PTO/Transforms/InsertSync/MemoryDependentAnalyzer.h"
 #include "PTO/Transforms/InsertSync/PTOIRTranslator.h"
 #include "PTO/Transforms/InsertSync/InsertSyncAnalysis.h"
@@ -69,22 +70,9 @@ struct PTOInsertSyncPass : public mlir::pto::impl::PTOInsertSyncBase<PTOInsertSy
       return true;
     }
 
-    // If the function already contains explicit synchronization ops (either
-    // low-level pipe flags or the higher-level record/wait events), do not run
-    // the automatic insertion pass again. Re-inserting on top of manual sync
-    // can introduce duplicated/mismatched event dependencies that may lead to
-    // runtime failures on NPU.
-    //
-    bool hasExplicitSync = false;
-    func.walk([&](Operation *op) {
-      if (isa<pto::SetFlagOp, pto::WaitFlagOp, pto::RecordEventOp,
-              pto::WaitEventOp>(op)) {
-        hasExplicitSync = true;
-        return WalkResult::interrupt();
-      }
-      return WalkResult::advance();
-    });
-    return hasExplicitSync;
+    // If the function already contains explicit synchronization ops, do not
+    // run the automatic insertion pass again (see hasExplicitSyncOps).
+    return hasExplicitSyncOps(func);
   }
 
   void runOnOperation() override {
@@ -92,6 +80,10 @@ struct PTOInsertSyncPass : public mlir::pto::impl::PTOInsertSyncBase<PTOInsertSy
     if (shouldSkip(func)) {
       return;
     }
+
+    // This pass now owns this function's automatic synchronization, so its
+    // gathers may use the async overload whose completion it will emit.
+    markAsyncA2A3RowMGathers(func);
 
     // 0. 数据结构准备
     MemoryDependentAnalyzer memAnalyzer;

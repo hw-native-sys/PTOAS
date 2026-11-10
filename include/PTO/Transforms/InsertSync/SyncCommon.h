@@ -16,6 +16,8 @@
  
 #include <cstddef>
 #include <utility>
+
+#include "mlir/Dialect/Func/IR/FuncOps.h"
 #include <deque>
 #include <string>
 #include <map>
@@ -595,6 +597,12 @@ using OpAccessMemInfos = llvm::SmallVector<std::unique_ptr<BaseMemInfo>>;
  
 // Utilities
 bool checkAllParentLoopsAreForLoops(Operation *op);
+
+/// Whether the function already carries explicit synchronization ops
+/// (pto.set_flag / pto.wait_flag / pto.record_event / pto.wait_event). The
+/// automatic sync passes skip such functions: re-inserting on top of manual
+/// sync can duplicate or mismatch event dependencies and fail on NPU.
+bool hasExplicitSyncOps(func::FuncOp func);
 void checkSyncIRIndex(const SyncIRs &syncIR, int index);
 void checkCondition(bool condition, const std::string &message);
  

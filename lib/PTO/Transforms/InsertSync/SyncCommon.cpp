@@ -397,4 +397,17 @@ void checkCondition(bool condition, const std::string &message) {
   }
 }
 
+bool hasExplicitSyncOps(func::FuncOp func) {
+  bool hasExplicitSync = false;
+  func.walk([&](Operation *op) {
+    if (isa<pto::SetFlagOp, pto::WaitFlagOp, pto::RecordEventOp,
+            pto::WaitEventOp>(op)) {
+      hasExplicitSync = true;
+      return WalkResult::interrupt();
+    }
+    return WalkResult::advance();
+  });
+  return hasExplicitSync;
+}
+
 } // namespace mlir::pto

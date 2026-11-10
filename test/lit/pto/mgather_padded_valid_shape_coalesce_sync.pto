@@ -74,7 +74,7 @@ module attributes {pto.target_arch = "a2a3"} {
 // CHECK-LABEL: AICORE void row_major_valid_1xr_is_row
 // CHECK:      set_flag(PIPE_MTE2, PIPE_S
 // CHECK:      wait_flag(PIPE_MTE2, PIPE_S
-// CHECK-NEXT: MGATHER<pto::Coalesce::Row>
+// CHECK-NEXT: MGATHER<pto::Coalesce::Row, pto::GatherOOB::Undefined, pto::GatherSync::Async>
 // CHECK-NEXT: set_flag(PIPE_MTE2, PIPE_MTE3
 // CHECK:      wait_flag(PIPE_MTE2, PIPE_MTE3
 // CHECK-LABEL: AICORE void row_major_valid_rx1_is_elem

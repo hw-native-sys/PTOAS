@@ -11,6 +11,7 @@
 
 #include "PTO/Transforms/Passes.h"
 #include "PTO/IR/PTO.h"
+#include "PTO/Transforms/InsertSync/SyncMacroModel.h"
 #include "mlir/Dialect/Func/IR/FuncOps.h"
 #include "mlir/IR/Builders.h"
 #include "mlir/Interfaces/SideEffectInterfaces.h"
@@ -70,6 +71,12 @@ struct PTOInjectBarrierAllSyncPass
           PTOInjectBarrierAllSyncPass> {
   void runOnOperation() override {
     func::FuncOp func = getOperation();
+
+    // The injected PIPE_ALL barriers order every memory-effecting pipe op
+    // against its neighbours, which covers gather-output completion, so this
+    // pass may take ownership of the async row-gather as well.
+    markAsyncA2A3RowMGathers(func);
+
     SmallVector<Operation *> insertionPoints;
     SmallVector<func::ReturnOp> tailInsertionPoints;
     bool sawMemoryEffectingPipeOp = false;

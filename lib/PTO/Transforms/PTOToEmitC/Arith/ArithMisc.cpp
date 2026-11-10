@@ -9,6 +9,7 @@
 //===----------------------------------------------------------------------===//
 
 #include "../PTOToEmitCEmitters.h"
+#include "PTO/Transforms/InsertSync/SyncMacroModel.h"
 #include "ArithInternal.h"
 
 using namespace mlir;
@@ -365,6 +366,21 @@ struct PTOMGatherToMGATHER : public OpConversionPattern<pto::MGatherOp> {
     SmallVector<Attribute> templateArgVec;
     templateArgVec.push_back(
         emitc::OpaqueAttr::get(ctx, coalesceTok(coalescePropAttr.getValue())));
+    // The pto-isa A2/A3 async row-gather overload is a fixed three-parameter
+    // template (Coalesce, GatherOOB, GatherSync), so the GatherOOB argument
+    // cannot stay elided on that path. Default paths keep the existing
+    // elision below.
+    // The mark is set by the automatic synchronization passes on the gathers
+    // whose output completion they emit; unmarked ops keep the Default macro
+    // with its internal completion fences. The helper re-verifies eligibility
+    // so a forged or stale mark cannot retarget a clamp/A5/Elem gather.
+    if (mlir::pto::hasAsyncA2A3RowMGatherMark(op)) {
+      templateArgVec.push_back(
+          emitc::OpaqueAttr::get(ctx, gatherOobTok(pto::GatherOOB::Undefined)));
+      templateArgVec.push_back(
+          emitc::OpaqueAttr::get(ctx, "pto::GatherSync::Async"));
+      return rewriter.getArrayAttr(templateArgVec);
+    }
     if (op.getGatherOob() != pto::GatherOOB::Undefined) {
       templateArgVec.push_back(
           emitc::OpaqueAttr::get(ctx, gatherOobTok(gatherOob)));

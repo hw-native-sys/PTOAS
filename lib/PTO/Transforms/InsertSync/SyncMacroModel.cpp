@@ -367,20 +367,32 @@ static SyncMacroModel buildMGatherA2A3Gm2UbModel(pto::MGatherOp op,
              ValueRange{op.getIdx()});
     addPhase(model, PipelineType::PIPE_MTE2, ValueRange{op.getDst()},
              ValueRange{op.getMem()});
+    // Leading index-readiness waits (V/MTE3 -> S) and the internal S -> MTE2
+    // handshake stay inside the macro in both sync modes.
     addHiddenEvent(model, PipelineType::PIPE_V, PipelineType::PIPE_S,
                    ArrayRef<unsigned>{0});
     addHiddenEvent(model, PipelineType::PIPE_MTE3, PipelineType::PIPE_S,
                    ArrayRef<unsigned>{0});
     addHiddenEvent(model, PipelineType::PIPE_S, PipelineType::PIPE_MTE2,
                    ArrayRef<unsigned>{0});
-    addHiddenEvent(model, PipelineType::PIPE_MTE2, PipelineType::PIPE_V,
-                   ArrayRef<unsigned>{0});
-    addHiddenEvent(model, PipelineType::PIPE_MTE2, PipelineType::PIPE_MTE3,
-                   ArrayRef<unsigned>{0});
-    addHiddenEvent(model, PipelineType::PIPE_S, PipelineType::PIPE_V,
-                   ArrayRef<unsigned>{0});
-    addHiddenEvent(model, PipelineType::PIPE_S, PipelineType::PIPE_MTE3,
-                   ArrayRef<unsigned>{0});
+    // The default macro additionally drains the whole row-DMA loop on the
+    // Vector and MTE3 queues (MTE2/S -> V/MTE3). The async variant
+    // (GatherSync::Async, issue #1674 / pto-isa #380) drops those completion
+    // fences: dst completion is emitted by InsertSync at the actual consumers
+    // (the MTE2: def dst phase above), matching the pto-isa expansion, which
+    // only fences S -> MTE2 in async mode. Gated on the IR mark the sync
+    // passes set, so skipped functions (hand-written sync) model the Default
+    // macro and stay in sync with what EmitC actually emits.
+    if (!hasAsyncA2A3RowMGatherMark(op.getOperation())) {
+      addHiddenEvent(model, PipelineType::PIPE_MTE2, PipelineType::PIPE_V,
+                     ArrayRef<unsigned>{0});
+      addHiddenEvent(model, PipelineType::PIPE_MTE2, PipelineType::PIPE_MTE3,
+                     ArrayRef<unsigned>{0});
+      addHiddenEvent(model, PipelineType::PIPE_S, PipelineType::PIPE_V,
+                     ArrayRef<unsigned>{0});
+      addHiddenEvent(model, PipelineType::PIPE_S, PipelineType::PIPE_MTE3,
+                     ArrayRef<unsigned>{0});
+    }
   } else {
     SmallVector<Value> sUses;
     sUses.push_back(op.getIdx());
@@ -430,6 +442,35 @@ std::optional<SyncMacroModel> getMGatherSyncMacroModel(pto::MGatherOp op) {
 
 } // namespace
 
+bool mlir::pto::useAsyncA2A3RowMGather(pto::MGatherOp op) {
+  // The pto-isa async row-gather overload (GatherSync::Async) only exists for
+  // the A2/A3 GM -> UB ND path with the valid-index contract: Coalesce::Row,
+  // GatherOOB::Undefined (or the elided default), and a non-MAT destination.
+  // Its static_asserts additionally reject NZ tables and every other mode.
+  // Pure op-level eligibility: actual use additionally requires the
+  // kMGatherAsyncRowAttrName mark set by a sync pass that ran on the
+  // enclosing function (see markAsyncA2A3RowMGathers).
+  //
+  // Note the three-parameter async overload is currently NPU-arch guarded in
+  // pto-isa, so CPU-simulation builds of async output need the pto-isa CPU
+  // forwarding support first.
+  auto coalesceAttr = op.getCoalesceAttr();
+  if (!coalesceAttr || coalesceAttr.getValue() != pto::Coalesce::Row) {
+    return false;
+  }
+  auto gatherOobAttr =
+      dyn_cast_or_null<pto::GatherOOBAttr>(op.getProperties().gatherOob);
+  if (gatherOobAttr && gatherOobAttr.getValue() != pto::GatherOOB::Undefined) {
+    return false;
+  }
+  if (getTargetArch(op.getOperation()) != PTOArch::A3) {
+    return false;
+  }
+  auto dstSpace = getMGatherOperandAddressSpace(op.getDst().getType());
+  const bool isGm2L1 = dstSpace && *dstSpace == pto::AddressSpace::MAT;
+  return !isGm2L1;
+}
+
 std::optional<SyncMacroModel> mlir::pto::getSyncMacroModel(Operation *op) {
   if (auto model = getP2PCommSyncMacroModel(op)) {
     return model;
@@ -477,4 +518,32 @@ std::optional<std::pair<unsigned, unsigned>> mlir::pto::getSyncMacroSpan(const S
     return std::nullopt;
   }
   return std::make_pair(begin, end);
+}
+
+void mlir::pto::markAsyncA2A3RowMGathers(func::FuncOp func) {
+  func.walk([](pto::MGatherOp op) {
+    if (!useAsyncA2A3RowMGather(op)) {
+      return;
+    }
+    // The function-level dependency analysis only models calls into
+    // sync-annotated helpers (UpdateHelperCallInfo); a gather whose
+    // destination escapes into an ordinary func.call has consumers the
+    // solver cannot see, so it must keep the Default macro whose internal
+    // fences order those consumers (review P1).
+    for (Operation *user : op.getDst().getUsers()) {
+      if (isa<func::CallOp>(user)) {
+        return;
+      }
+    }
+    op->setAttr(kMGatherAsyncRowAttrName, UnitAttr::get(op.getContext()));
+  });
+}
+
+bool mlir::pto::hasAsyncA2A3RowMGatherMark(Operation *op) {
+  // Re-verify eligibility instead of trusting the attribute alone: a forged
+  // or stale mark on a clamp/A5/Elem/GM->L1 gather must not lower it to the
+  // Undefined/Async overload.
+  auto mgather = dyn_cast<pto::MGatherOp>(op);
+  return mgather && mgather->hasAttr(kMGatherAsyncRowAttrName) &&
+         useAsyncA2A3RowMGather(mgather);
 }

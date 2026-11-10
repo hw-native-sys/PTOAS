@@ -213,6 +213,14 @@ parseTextualModule(std::unique_ptr<llvm::MemoryBuffer> inputBuffer,
     return module;
   }
   mlir::pto::applyTextualNameHintsToModule(*module, parserState);
+
+  // Compiler-private marks may not arrive from textual input (including the
+  // generic form, whose parse bypasses the PTO custom parsers): strip the
+  // async-row-gather mark so only a sync pass running in this compilation can
+  // set it.
+  module->walk([](mlir::pto::MGatherOp op) {
+    op->removeAttr(mlir::pto::kMGatherAsyncRowAttrName);
+  });
   return module;
 }
 
@@ -1061,11 +1069,20 @@ private:
   ArrayRef<std::string> fatobjPaths;
 };
 
-LogicalResult EmitCBackendJob::run(PTOASContext &context) {
-  OwningOpRef<ModuleOp> singleChildJobModule;
+// PTODSL emits a backend-partitioned outer container even when there is only
+// one child module.  For object compilation, the actual compile unit is the
+// normalized child job module with outer attributes/imports folded in.
+// Keep user-visible IR output modes on the original container so dump flags
+// still reflect the input module structure the user asked to inspect.
+// On success returns the compile unit (either the original module or the
+// folded child stored in singleChildJobModule), tagged with `backendName`.
+static FailureOr<OwningOpRef<ModuleOp> *>
+resolveBackendCompileUnit(OwningOpRef<ModuleOp> &module,
+                          OwningOpRef<ModuleOp> &singleChildJobModule,
+                          llvm::StringRef backendName) {
   OwningOpRef<ModuleOp> *compileUnit = &module;
   ModuleOp op = module.get();
-  op->setAttr("pto.backend", StringAttr::get(op.getContext(), "emitc"));
+  op->setAttr("pto.backend", StringAttr::get(op.getContext(), backendName));
 
   SmallVector<ModuleOp, mlir::pto::kValue4> children(op.getOps<ModuleOp>());
   if (!isUserVisibleIROutputRequested() && children.size() == 1 &&
@@ -1078,9 +1095,21 @@ LogicalResult EmitCBackendJob::run(PTOASContext &context) {
     singleChildJobModule = std::move(*jobModuleOr);
     singleChildJobModule.get()->setAttr(
         "pto.backend",
-        StringAttr::get(singleChildJobModule.get()->getContext(), "emitc"));
+        StringAttr::get(singleChildJobModule.get()->getContext(),
+                        backendName));
     compileUnit = &singleChildJobModule;
   }
+  return compileUnit;
+}
+
+LogicalResult EmitCBackendJob::run(PTOASContext &context) {
+  OwningOpRef<ModuleOp> singleChildJobModule;
+  FailureOr<OwningOpRef<ModuleOp> *> compileUnitOr =
+      resolveBackendCompileUnit(module, singleChildJobModule, "emitc");
+  if (failed(compileUnitOr)) {
+    return failure();
+  }
+  OwningOpRef<ModuleOp> *compileUnit = *compileUnitOr;
 
   if (mlir::pto::compilePTOASModule(*compileUnit, context,
                                     mlir::pto::PTOBackend::EmitC, result,
@@ -1110,30 +1139,13 @@ static LogicalResult emitVPTOObjectOutput(
 
 LogicalResult VPTOBackendJob::run(PTOASContext &context) {
   OwningOpRef<ModuleOp> singleChildJobModule;
-  OwningOpRef<ModuleOp> *compileUnit = &module;
-  ModuleOp op = module.get();
-  op->setAttr("pto.backend", StringAttr::get(op.getContext(), "vpto"));
-
-  SmallVector<ModuleOp, mlir::pto::kValue4> children(op.getOps<ModuleOp>());
-  // PTODSL emits a backend-partitioned outer container even when there is only
-  // one child module.  For object compilation, the actual VPTO compile unit is
-  // the normalized child job module with outer attributes/imports folded in.
-  // Keep user-visible IR output modes on the original container so dump flags
-  // still reflect the input module structure the user asked to inspect.
-  if (!isUserVisibleIROutputRequested() && children.size() == 1 &&
-      isBackendPartitionedContainer(op)) {
-    FailureOr<OwningOpRef<ModuleOp>> jobModuleOr =
-        buildBackendChildCompileUnit(op, children.front());
-    if (failed(jobModuleOr)) {
-      return failure();
-    }
-    singleChildJobModule = std::move(*jobModuleOr);
-    singleChildJobModule.get()->setAttr(
-        "pto.backend",
-        StringAttr::get(singleChildJobModule.get()->getContext(), "vpto"));
-    compileUnit = &singleChildJobModule;
-    op = singleChildJobModule.get();
+  FailureOr<OwningOpRef<ModuleOp> *> compileUnitOr =
+      resolveBackendCompileUnit(module, singleChildJobModule, "vpto");
+  if (failed(compileUnitOr)) {
+    return failure();
   }
+  OwningOpRef<ModuleOp> *compileUnit = *compileUnitOr;
+  ModuleOp op = compileUnit->get();
 
   // Device-object mode never packages a host stub (issue #1726), so the stub
   // source is not collected either.
@@ -1374,6 +1386,24 @@ static LogicalResult validateDeviceObjectMode(
   return success();
 }
 
+// Mixed pto.backend fatobj mode: debug IR dumps are not supported and the
+// fatobj link requires an explicit output path.
+static LogicalResult validateMixedBackendOutput(llvm::StringRef outputFilename) {
+  if (mlir::pto::emitMlirIR || mlir::pto::emitVPTO ||
+      mlir::pto::emitVPTOLLVMDialect ||
+      mlir::pto::ptoPrintSeamIR || !mlir::pto::ptoSeamIRFile.empty()) {
+    llvm::errs() << "Error: mixed pto.backend fatobj mode does not support "
+                    "debug IR output flags.\n";
+    return failure();
+  }
+  if (outputFilename.empty() || outputFilename == "-") {
+    llvm::errs() << "Error: mixed pto.backend fatobj mode requires an "
+                    "explicit file path passed with -o.\n";
+    return failure();
+  }
+  return success();
+}
+
 static LogicalResult buildBackendInfo(ModuleOp module, bool cliBackendSpecified,
                                       mlir::pto::BackendInfo &backendInfo) {
   backendInfo = mlir::pto::BackendInfo();
@@ -1410,16 +1440,7 @@ static LogicalResult buildBackendInfo(ModuleOp module, bool cliBackendSpecified,
     return success();
   }
 
-  if (mlir::pto::emitMlirIR || mlir::pto::emitVPTO ||
-      mlir::pto::emitVPTOLLVMDialect ||
-      mlir::pto::ptoPrintSeamIR || !mlir::pto::ptoSeamIRFile.empty()) {
-    llvm::errs() << "Error: mixed pto.backend fatobj mode does not support "
-                    "debug IR output flags.\n";
-    return failure();
-  }
-  if (outputFilename.empty() || outputFilename == "-") {
-    llvm::errs() << "Error: mixed pto.backend fatobj mode requires an "
-                    "explicit file path passed with -o.\n";
+  if (failed(validateMixedBackendOutput(outputFilename))) {
     return failure();
   }
 

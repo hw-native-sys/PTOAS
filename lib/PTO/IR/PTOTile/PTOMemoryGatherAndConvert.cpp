@@ -183,6 +183,10 @@ ParseResult mlir::pto::MGatherOp::parse(OpAsmParser &parser,
     return failure();
   }
 
+  // The async-row mark is compiler-private state written by the sync passes;
+  // a stale or hand-written copy in the input must not survive parsing.
+  result.attributes.erase(kMGatherAsyncRowAttrName);
+
   if (failed(resolveMGatherOperands(parser, result, insOperands, insTypes, dst,
                                     dstTy))) {
     return failure();
@@ -205,8 +209,8 @@ void mlir::pto::MGatherOp::print(OpAsmPrinter &p) {
   }
   p << ") outs(" << getDst() << " : " << getDst().getType() << ")";
 
-  NamedAttrList attrs =
-      getNonInherentAttrs(getOperation(), {"coalesce", "gatherOob"});
+  NamedAttrList attrs = getNonInherentAttrs(
+      getOperation(), {"coalesce", "gatherOob", kMGatherAsyncRowAttrName});
   if (auto coalesceAttr = getMGatherCoalesceAttrIfPresent(*this)) {
     attrs.append("coalesce", coalesceAttr);
   }

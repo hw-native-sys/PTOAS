@@ -64,6 +64,8 @@ module attributes {pto.target_arch = "a3"} {
 }
 
 // CHECK-LABEL: AICORE void mgather_emitc_base(
+// Without an automatic sync pass the Default overload and its internal
+// completion fences must stay.
 // CHECK: MGATHER<pto::Coalesce::Row>({{[_A-Za-z][_A-Za-z0-9]*}}, {{[_A-Za-z][_A-Za-z0-9]*}}, {{[_A-Za-z][_A-Za-z0-9]*}});
 
 // CHECK-LABEL: AICORE void mscatter_emitc_base(
