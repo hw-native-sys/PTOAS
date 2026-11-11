@@ -1,0 +1,41 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software; you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may obtain a copy of the License at
+// https://www.hiascend.com/document/detail/en/CANNCommunityEdition/82RC1alpha001/licensedoc/licensedoc_0001.html
+// Unless required by applicable law or agreed to in writing, software distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, EITHER EXPRESS OR IMPLIED.
+// See the License for the specific language governing permissions and limitations under the License.
+
+// Dynamic MX subviews must pass both logical dimensions to the 2D constructors.
+// RUN: ptoas --pto-arch=a5 --pto-level=level2 %s -o - | FileCheck %s
+
+module {
+  func.func @dynamic_mx_subview(
+      %base: memref<?x!pto.f8E8M0, #pto.address_space<gm>>,
+      %cols: index)
+      -> memref<16x?x!pto.f8E8M0, strided<[?, 1], offset: ?>,
+                 #pto.address_space<gm>> {
+    %c0 = arith.constant 0 : index
+    %c1 = arith.constant 1 : index
+    %view = memref.reinterpret_cast %base to
+      offset: [0], sizes: [16, %cols], strides: [%cols, %c1]
+      {layout = #pto.layout<mx_a_nd>}
+      : memref<?x!pto.f8E8M0, #pto.address_space<gm>> to
+        memref<16x?x!pto.f8E8M0, strided<[?, 1], offset: ?>,
+                #pto.address_space<gm>>
+    %part = memref.subview %view[%c0, %c0] [16, %cols] [1, 1]
+        {layout = #pto.layout<mx_a_nd>}
+      : memref<16x?x!pto.f8E8M0, strided<[?, 1], offset: ?>,
+          #pto.address_space<gm>> to
+        memref<16x?x!pto.f8E8M0, strided<[?, 1], offset: ?>,
+          #pto.address_space<gm>>
+    return %part : memref<16x?x!pto.f8E8M0, strided<[?, 1], offset: ?>,
+                           #pto.address_space<gm>>
+  }
+}
+
+// CHECK-LABEL: dynamic_mx_subview(
+// CHECK: TileShape2D<float8_e8m0_t, 16, -1, pto::Layout::MX_A_ND> {{.*}}([[ROWS:[^,]+]], [[COLS:[^)]+]])
+// CHECK: BaseShape2D<float8_e8m0_t, 16, -1, pto::Layout::MX_A_ND> {{.*}}([[ROWS]], [[COLS]])
+// CHECK: PTOAS__GLOBAL_TENSOR_DATA(

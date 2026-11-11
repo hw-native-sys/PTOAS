@@ -295,8 +295,11 @@ static void registerPTOEnums3(py::module_ &m) {
       .value("NZ", MlirPTOLayout::NZ)
       .value("MX_A_ZZ", MlirPTOLayout::MX_A_ZZ)
       .value("MX_B_NN", MlirPTOLayout::MX_B_NN)
+      .value("MX_A_ND", MlirPTOLayout::MX_A_ND)
+      .value("MX_A_DN", MlirPTOLayout::MX_A_DN)
+      .value("MX_B_ND", MlirPTOLayout::MX_B_ND)
+      .value("MX_B_DN", MlirPTOLayout::MX_B_DN)
       .export_values();
-
 
     py::enum_<MlirPTOAccToVecMode>(m, "AccToVecMode")
       .value("SingleModeVec0", MlirPTOAccToVecMode::SingleModeVec0)

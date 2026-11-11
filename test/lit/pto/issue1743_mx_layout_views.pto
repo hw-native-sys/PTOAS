@@ -1,0 +1,44 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+
+// MX views retain their logical rank and explicit source layout through
+// canonicalization. Their packed dimensions are validated by the view verifier.
+
+// RUN: ptoas --pto-arch=a5 --emit-pto-ir %s -o - | FileCheck %s --check-prefix=IR
+
+module attributes {pto.target_arch = "a5", pto.kernel_kind = #pto.kernel_kind<cube>} {
+  func.func @mx_a_nd_view(%src: !pto.ptr<!pto.f8E8M0, gm>) attributes {pto.kernel_kind = #pto.kernel_kind<cube>} {
+    %c0 = arith.constant 0 : index
+    %c1 = arith.constant 1 : index
+    %c2 = arith.constant 2 : index
+    %c4 = arith.constant 4 : index
+    %c16 = arith.constant 16 : index
+    %c128 = arith.constant 128 : index
+    %view = pto.make_tensor_view %src, shape = [%c128, %c16], strides = [%c16, %c1] {layout = #pto.layout<mx_a_nd>} : !pto.tensor_view<?x?x!pto.f8E8M0>
+    %part = pto.partition_view %view, offsets = [%c0, %c2], sizes = [%c128, %c4] : !pto.tensor_view<?x?x!pto.f8E8M0> -> !pto.partition_tensor_view<128x4x!pto.f8E8M0>
+    %tile = pto.alloc_tile : !pto.tile_buf<mat, 128x4x!pto.f8E8M0, blayout=row_major, slayout=row_major, fractal=32>
+    pto.tload ins(%part : !pto.partition_tensor_view<128x4x!pto.f8E8M0>) outs(%tile : !pto.tile_buf<mat, 128x4x!pto.f8E8M0, blayout=row_major, slayout=row_major, fractal=32>)
+    return
+  }
+
+// IR: pto.make_tensor_view {{.*}} shape = [{{%[^,]+}}, {{%[^]]+}}], strides = [{{%[^,]+}}, {{%[^]]+}}] {layout = #pto.layout<mx_a_nd>} : !pto.tensor_view<?x?x!pto.f8E8M0, #pto.layout<mx_a_nd>>
+
+  func.func @mx_dims(%src: !pto.ptr<!pto.f8E8M0, gm>, %rows: index, %cols: index) -> (index, index) {
+    %c0 = arith.constant 0 : index
+    %c1 = arith.constant 1 : index
+    %view = pto.make_tensor_view %src, shape = [%rows, %cols], strides = [%cols, %c1] {layout = #pto.layout<mx_a_nd>} : !pto.tensor_view<?x?x!pto.f8E8M0>
+    %rows_out = pto.get_tensor_view_dim %view, %c0 : !pto.tensor_view<?x?x!pto.f8E8M0> -> index
+    %cols_out = pto.get_tensor_view_dim %view, %c1 : !pto.tensor_view<?x?x!pto.f8E8M0> -> index
+    return %rows_out, %cols_out : index, index
+  }
+}
+// IR-LABEL: func.func @mx_dims
+// IR-DAG: %[[ZERO:[^ ]+]] = arith.constant 0 : index
+// IR-DAG: %[[ONE:[^ ]+]] = arith.constant 1 : index
+// IR: pto.get_tensor_view_dim {{.*}}, %[[ZERO]]
+// IR: pto.get_tensor_view_dim {{.*}}, %[[ONE]]

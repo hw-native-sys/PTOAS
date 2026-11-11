@@ -67,6 +67,16 @@ static SmallVector<int64_t> getConstantOrDynamicValues(ValueRange values)
     return result;
 }
 
+static bool matchesIndexValue(Value lhs, Value rhs)
+{
+    if (lhs == rhs) {
+        return true;
+    }
+    auto lhsConstant = getConstIndexValue(lhs);
+    auto rhsConstant = getConstIndexValue(rhs);
+    return lhsConstant && rhsConstant && *lhsConstant == *rhsConstant;
+}
+
 static SmallVector<int64_t> getResolvedMakeTensorViewShape(
     mlir::pto::MakeTensorViewOp op, mlir::pto::TensorViewType resultType)
 {
@@ -80,6 +90,68 @@ static SmallVector<int64_t> getResolvedMakeTensorViewShape(
         }
     }
     return shape;
+}
+
+static LogicalResult verifyMxContiguousStrides(mlir::pto::MakeTensorViewOp op, Layout layout)
+{
+    bool columnMajor = layout == Layout::MX_A_DN || layout == Layout::MX_B_DN;
+    unsigned unitStrideDim = columnMajor ? 0 : 1;
+    unsigned majorStrideDim = columnMajor ? 1 : 0;
+    auto oneConstant = getConstIndexValue(op.getStrides()[unitStrideDim]);
+    bool hasUnitStride = oneConstant && *oneConstant == 1;
+    bool hasMajorStride = matchesIndexValue(op.getStrides()[majorStrideDim], op.getShape()[columnMajor ? 0 : 1]);
+    if (!hasUnitStride || !hasMajorStride) {
+        return op.emitOpError() << "MX layout=" << stringifyLayout(layout) << " requires a contiguous "
+                                << (columnMajor ? "column-major" : "row-major") << " view";
+    }
+    return success();
+}
+
+static LogicalResult verifyMxLayout(mlir::pto::MakeTensorViewOp op,
+                                    mlir::pto::TensorViewType resultType,
+                                    Layout layout, ArrayRef<int64_t> shape)
+{
+    bool isA5Target = getTargetArch(op.getOperation()) == PTOArch::A5;
+    if (!isA5Target) {
+        return op.emitOpError("MX layouts require target architecture a5");
+    }
+    bool isRankTwo = resultType.getRank() == 2;
+    if (!isRankTwo) {
+        return op.emitOpError() << "MX layout=" << stringifyLayout(layout)
+                                << " requires a rank-2 logical view";
+    }
+    bool hasScaleElementType = isPTOF8E8M0Type(resultType.getElementType());
+    if (!hasScaleElementType) {
+        return op.emitOpError() << "MX layout=" << stringifyLayout(layout)
+                                << " requires f8E8M0 scale elements";
+    }
+
+    bool isPackedOnSecondDim = layout == Layout::MX_A_ND ||
+                               layout == Layout::MX_A_DN ||
+                               layout == Layout::MX_A_ZZ;
+    unsigned packedDim = isPackedOnSecondDim ? 1 : 0;
+    int64_t packedExtent = shape[packedDim];
+    bool isPackedExtentStatic = !ShapedType::isDynamic(packedExtent);
+    if (isPackedExtentStatic && packedExtent % 2 != 0) {
+        return op.emitOpError() << "MX layout=" << stringifyLayout(layout)
+                                << " requires packed dimension " << packedDim
+                                << " to be divisible by 2";
+    }
+
+    // Fractal MX descriptors divide this dimension by 16 at runtime.
+    // Require the same alignment for static descriptors instead of rounding.
+    if (layout == Layout::MX_A_ZZ || layout == Layout::MX_B_NN) {
+        unsigned alignedDim = layout == Layout::MX_A_ZZ ? 0 : 1;
+        int64_t extent = shape[alignedDim];
+        bool isMisaligned = !ShapedType::isDynamic(extent) && extent % 16 != 0;
+        if (isMisaligned) {
+            return op.emitOpError() << "MX layout=" << stringifyLayout(layout)
+                                    << " requires dimension " << alignedDim
+                                    << " to be divisible by 16";
+        }
+    }
+
+    return verifyMxContiguousStrides(op, layout);
 }
 
 static LogicalResult verifyMakeTensorViewLayout(
@@ -100,6 +172,13 @@ static LogicalResult verifyMakeTensorViewLayout(
     SmallVector<int64_t> shape = getResolvedMakeTensorViewShape(op, resultType);
     SmallVector<int64_t> strides = getConstantOrDynamicValues(op.getStrides());
     Layout layout = layoutAttr.getLayout();
+    bool isMx = pto::isMxLayout(layout);
+    if (isMx) {
+        LogicalResult mxLayoutResult = verifyMxLayout(op, resultType, layout, shape);
+        if (failed(mxLayoutResult)) {
+            return failure();
+        }
+    }
     unsigned storageElemBytes = getElemByteSize(resultType.getElementType());
     if (pto::isLayoutCompatible5D(layout, shape, strides, storageElemBytes)) {
         return success();
@@ -148,7 +227,30 @@ struct PartitionSourceInfo {
     Type elementType;
     int64_t rank;
     SmallVector<int64_t> shape;
+    mlir::pto::LayoutAttr layout;
 };
+
+static mlir::pto::LayoutAttr getViewLayoutAttr(Value value)
+{
+    if (auto viewType = dyn_cast<TensorViewType>(value.getType())) {
+        if (auto layout = viewType.getLayoutAttr()) {
+            return layout;
+        }
+    } else if (auto viewType = dyn_cast<PartitionTensorViewType>(value.getType())) {
+        if (auto layout = viewType.getLayoutAttr()) {
+            return layout;
+        }
+    }
+
+    Operation* def = value.getDefiningOp();
+    if (auto makeView = dyn_cast_or_null<MakeTensorViewOp>(def)) {
+        return makeView.getLayoutAttr();
+    }
+    if (auto partition = dyn_cast_or_null<PartitionViewOp>(def)) {
+        return getViewLayoutAttr(partition.getSource());
+    }
+    return {};
+}
 
 static FailureOr<PartitionSourceInfo> getPartitionSourceInfo(mlir::pto::PartitionViewOp op)
 {
@@ -165,6 +267,7 @@ static FailureOr<PartitionSourceInfo> getPartitionSourceInfo(mlir::pto::Partitio
         op.emitOpError("expects tensor_view or partition_tensor_view source");
         return failure();
     }
+    info.layout = getViewLayoutAttr(op.getSource());
 
     SmallVector<int64_t> logicalShape;
     if (getLogicalViewShape(op.getSource(), logicalShape)) {
@@ -180,6 +283,11 @@ static LogicalResult verifyPartitionSignature(mlir::pto::PartitionViewOp op,
     if (source.elementType != resultType.getElementType()) {
         return op.emitOpError() << "element type mismatch between source and result: src=" << source.elementType
                                 << " result=" << resultType.getElementType();
+    }
+    mlir::pto::LayoutAttr resultLayout = resultType.getLayoutAttr();
+    if (source.layout && resultLayout && source.layout != resultLayout) {
+        return op.emitOpError() << "layout mismatch between source and result: src=" << source.layout
+                                << " result=" << resultLayout;
     }
     if (static_cast<int64_t>(op.getOffsets().size()) != source.rank) {
         return op.emitOpError() << "offset count (" << op.getOffsets().size() << ") must match source rank ("

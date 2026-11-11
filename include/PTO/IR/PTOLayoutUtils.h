@@ -19,6 +19,8 @@ namespace mlir::pto {
 
 inline constexpr unsigned kPTOLayoutRank = 5;
 
+bool isMxLayout(Layout layout);
+
 std::optional<std::string>
 getNZViewCompatibilityError(ArrayRef<int64_t> shape5D,
                             ArrayRef<int64_t> stride5D,

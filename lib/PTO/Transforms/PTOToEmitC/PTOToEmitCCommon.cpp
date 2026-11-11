@@ -1208,22 +1208,49 @@ std::optional<mlir::pto::Layout> getLayoutAttrFromViewType(Type type) {
 }
 
 emitc::OpaqueType getRuntimeGlobalTensorOpaqueType(
-    MLIRContext *ctx, Type elemTy, ArrayRef<int64_t> shape,
-    StringRef layoutEnum) {
-  SmallVector<int64_t> shape5D(kGlobalTensorRank, 1);
-  SmallVector<int64_t> stride5D(kGlobalTensorRank, -1);
-  int64_t shift = kGlobalTensorRank - static_cast<int64_t>(shape.size());
-  for (auto [index, dim] : llvm::enumerate(shape))
-    shape5D[shift + static_cast<int64_t>(index)] =
-        ShapedType::isDynamic(dim) ? -1 : dim;
+    MLIRContext* ctx, Type elemTy, ArrayRef<int64_t> shape, StringRef layoutEnum)
+{
+    bool isRank2Shape = shape.size() == 2;
+    bool hasMxLayout = layoutEnum.starts_with("pto::Layout::MX_");
+    if (isRank2Shape && hasMxLayout) {
+        std::string elemTypeStr = getElemTypeStringForGT(elemTy);
+        std::string dims = elemTypeStr + ", -1, -1, " + layoutEnum.str();
+        std::string strideType = getRuntimeMxStrideType(elemTy, layoutEnum);
+        if (!strideType.empty()) {
+            return emitc::OpaqueType::get(
+                ctx, "GlobalTensor<" + elemTypeStr + ", TileShape2D<" + dims + ">, " + strideType + ", " +
+                         layoutEnum.str() + ">");
+        }
+    }
 
-  std::string elemTypeStr = getElemTypeStringForGT(elemTy);
-  std::string shapeType = "pto::Shape<" + joinIntTemplateParams(shape5D) + ">";
-  std::string strideType =
-      "pto::Stride<" + joinIntTemplateParams(stride5D) + ">";
-  return emitc::OpaqueType::get(
-      ctx, "GlobalTensor<" + elemTypeStr + ", " + shapeType + ", " +
-               strideType + ", " + layoutEnum.str() + ">");
+    SmallVector<int64_t> shape5D(kGlobalTensorRank, 1);
+    SmallVector<int64_t> stride5D(kGlobalTensorRank, -1);
+    int64_t shift = kGlobalTensorRank - static_cast<int64_t>(shape.size());
+    for (auto [index, dim] : llvm::enumerate(shape)) {
+        shape5D[shift + static_cast<int64_t>(index)] = ShapedType::isDynamic(dim) ? -1 : dim;
+    }
+
+    std::string elemTypeStr = getElemTypeStringForGT(elemTy);
+    std::string shapeType = "pto::Shape<" + joinIntTemplateParams(shape5D) + ">";
+    std::string strideType = "pto::Stride<" + joinIntTemplateParams(stride5D) + ">";
+    return emitc::OpaqueType::get(
+        ctx, "GlobalTensor<" + elemTypeStr + ", " + shapeType + ", " + strideType + ", " + layoutEnum.str() + ">");
+}
+
+std::string getRuntimeMxStrideType(Type elemTy, StringRef layoutEnum)
+{
+    bool hasExplicitMxStride = layoutEnum.ends_with("MX_A_ND") || layoutEnum.ends_with("MX_A_DN") ||
+                               layoutEnum.ends_with("MX_B_ND") || layoutEnum.ends_with("MX_B_DN");
+    if (hasExplicitMxStride) {
+        return "pto::Stride<-1, -1, -1, 2, 1>";
+    }
+    bool hasBaseMxShape = layoutEnum.ends_with("MX_A_ZZ") || layoutEnum.ends_with("MX_B_NN");
+    if (hasBaseMxShape) {
+        std::string elemTypeStr = getElemTypeStringForGT(elemTy);
+        std::string dims = elemTypeStr + ", -1, -1, " + layoutEnum.str();
+        return "BaseShape2D<" + dims + ">";
+    }
+    return {};
 }
 
 emitc::OpaqueType getSignedIntOpaqueType(MLIRContext *ctx,
@@ -1254,46 +1281,60 @@ Value getSourceEmitCVariable(Value value) {
   return {};
 }
 
-std::optional<SpecialGlobalTensorTypeSpec>
-getSpecialGlobalTensorTypeSpecForLayout(std::optional<mlir::pto::Layout> layout,
-                                        ArrayRef<int64_t> shape, Type elemTy) {
-  if (!layout || !isF8E8M0ElemType(elemTy) || shape.size() != kTileRank) {
-    return std::nullopt;
-  }
+std::optional<SpecialGlobalTensorTypeSpec> getSpecialGlobalTensorTypeSpecForLayout(
+    std::optional<mlir::pto::Layout> layout, ArrayRef<int64_t> shape, Type elemTy)
+{
+    bool hasScaleElementType = isF8E8M0ElemType(elemTy);
+    size_t shapeRank = shape.size();
+    if (!layout || !hasScaleElementType || shapeRank != kTileRank) {
+        return std::nullopt;
+    }
 
-  auto alignUp = [](int64_t value, int64_t align) -> int64_t {
-    if (value < 0 || align == 0)
-      return value;
-    return ((value + align - 1) / align) * align;
-  };
+    // PTO-ISA uses -1, not ShapedType::kDynamic, for runtime dimensions.
+    constexpr int64_t ptoDynamic = -1;
+    int64_t logicalRows = ShapedType::isDynamic(shape[0]) ? ptoDynamic : shape[0];
+    int64_t logicalCols = ShapedType::isDynamic(shape[1]) ? ptoDynamic : shape[1];
 
-  std::string elemTypeStr = getEmitCScalarTypeToken(elemTy);
-  switch (*layout) {
-  case mlir::pto::Layout::MX_A_ZZ: {
-    int64_t rows = alignUp(shape[0], mlir::pto::kValue16);
-    int64_t cols = alignUp(shape[1], mlir::pto::kValue2);
-    return SpecialGlobalTensorTypeSpec{
-        "TileShape2D<" + elemTypeStr + ", " + std::to_string(rows) + ", " +
-            std::to_string(cols) + ", pto::Layout::MX_A_ZZ>",
-        "BaseShape2D<" + elemTypeStr + ", " + std::to_string(rows) + ", " +
-            std::to_string(cols) + ", pto::Layout::MX_A_ZZ>",
-        "pto::Layout::MX_A_ZZ",
-    };
-  }
-  case mlir::pto::Layout::MX_B_NN: {
-    int64_t rows = alignUp(shape[0], mlir::pto::kValue2);
-    int64_t cols = alignUp(shape[1], mlir::pto::kValue16);
-    return SpecialGlobalTensorTypeSpec{
-        "TileShape2D<" + elemTypeStr + ", " + std::to_string(rows) + ", " +
-            std::to_string(cols) + ", pto::Layout::MX_B_NN>",
-        "BaseShape2D<" + elemTypeStr + ", " + std::to_string(rows) + ", " +
-            std::to_string(cols) + ", pto::Layout::MX_B_NN>",
-        "pto::Layout::MX_B_NN",
-    };
-  }
-  default:
-    return std::nullopt;
-  }
+    std::string elemTypeStr = getEmitCScalarTypeToken(elemTy);
+    switch (*layout) {
+        case mlir::pto::Layout::MX_A_ZZ: {
+            int64_t rows = logicalRows;
+            int64_t cols = logicalCols;
+            return SpecialGlobalTensorTypeSpec{
+                "TileShape2D<" + elemTypeStr + ", " + std::to_string(rows) + ", " + std::to_string(cols) +
+                    ", pto::Layout::MX_A_ZZ>",
+                "BaseShape2D<" + elemTypeStr + ", " + std::to_string(rows) + ", " + std::to_string(cols) +
+                    ", pto::Layout::MX_A_ZZ>",
+                "pto::Layout::MX_A_ZZ",
+            };
+        }
+        case mlir::pto::Layout::MX_B_NN: {
+            int64_t rows = logicalRows;
+            int64_t cols = logicalCols;
+            return SpecialGlobalTensorTypeSpec{
+                "TileShape2D<" + elemTypeStr + ", " + std::to_string(rows) + ", " + std::to_string(cols) +
+                    ", pto::Layout::MX_B_NN>",
+                "BaseShape2D<" + elemTypeStr + ", " + std::to_string(rows) + ", " + std::to_string(cols) +
+                    ", pto::Layout::MX_B_NN>",
+                "pto::Layout::MX_B_NN",
+            };
+        }
+        case mlir::pto::Layout::MX_A_ND:
+        case mlir::pto::Layout::MX_A_DN:
+        case mlir::pto::Layout::MX_B_ND:
+        case mlir::pto::Layout::MX_B_DN: {
+            std::string layoutName = layoutToEmitCString(*layout);
+            return SpecialGlobalTensorTypeSpec{
+                "TileShape2D<" + elemTypeStr + ", " + std::to_string(logicalRows) + ", " + std::to_string(logicalCols) +
+                    ", " + layoutName + ">",
+                "BaseShape2D<" + elemTypeStr + ", " + std::to_string(logicalRows) + ", " + std::to_string(logicalCols) +
+                    ", " + layoutName + ">",
+                layoutName,
+            };
+        }
+        default:
+            return std::nullopt;
+    }
 }
 
 std::optional<SpecialGlobalTensorTypeSpec>
@@ -1622,22 +1663,30 @@ std::string joinIntTemplateParams(ArrayRef<int64_t> values) {
   return result;
 }
 
-std::string layoutToEmitCString(mlir::pto::Layout layout) {
-  switch (layout) {
-  case mlir::pto::Layout::ND:
+std::string layoutToEmitCString(mlir::pto::Layout layout)
+{
+    switch (layout) {
+        case mlir::pto::Layout::ND:
+            return "pto::Layout::ND";
+        case mlir::pto::Layout::DN:
+            return "pto::Layout::DN";
+        case mlir::pto::Layout::NZ:
+            return "pto::Layout::NZ";
+        case mlir::pto::Layout::MX_A_ZZ:
+            return "pto::Layout::MX_A_ZZ";
+        case mlir::pto::Layout::MX_B_NN:
+            return "pto::Layout::MX_B_NN";
+        case mlir::pto::Layout::MX_A_ND:
+            return "pto::Layout::MX_A_ND";
+        case mlir::pto::Layout::MX_A_DN:
+            return "pto::Layout::MX_A_DN";
+        case mlir::pto::Layout::MX_B_ND:
+            return "pto::Layout::MX_B_ND";
+        case mlir::pto::Layout::MX_B_DN:
+            return "pto::Layout::MX_B_DN";
+    }
     return "pto::Layout::ND";
-  case mlir::pto::Layout::DN:
-    return "pto::Layout::DN";
-  case mlir::pto::Layout::NZ:
-    return "pto::Layout::NZ";
-  case mlir::pto::Layout::MX_A_ZZ:
-    return "pto::Layout::MX_A_ZZ";
-  case mlir::pto::Layout::MX_B_NN:
-    return "pto::Layout::MX_B_NN";
-  }
-  return "pto::Layout::ND";
 }
-
 
 Value loadEmitCVariableIfNeeded(const OpBuilder& builder, Location loc, Value value)
 {

@@ -1,0 +1,86 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+
+// RUN: ptoas --pto-arch=a5 --emit-pto-ir %s -o - | FileCheck %s --check-prefix=IR
+// RUN: ptoas --pto-arch=a5 --pto-level=level2 %s -o - | FileCheck %s --check-prefix=CPP
+// RUN: ptoas --pto-arch=a5 --pto-level=level2 %s -o - | FileCheck %s --check-prefix=STRIDE
+
+module attributes {pto.target_arch = "a5", pto.kernel_kind = #pto.kernel_kind<cube>} {
+  func.func @mx_layout_views(
+      %a_nd_ptr: !pto.ptr<!pto.f8E8M0, gm>,
+      %a_dn_ptr: !pto.ptr<!pto.f8E8M0, gm>,
+      %a_zz_ptr: !pto.ptr<!pto.f8E8M0, gm>,
+      %b_nd_ptr: !pto.ptr<!pto.f8E8M0, gm>,
+      %b_dn_ptr: !pto.ptr<!pto.f8E8M0, gm>,
+      %b_nn_ptr: !pto.ptr<!pto.f8E8M0, gm>) attributes {pto.kernel} {
+    %c0 = arith.constant 0 : index
+    %c1 = arith.constant 1 : index
+    %c2 = arith.constant 2 : index
+    %c4 = arith.constant 4 : index
+    %c16 = arith.constant 16 : index
+    %c128 = arith.constant 128 : index
+
+    %a_nd = pto.make_tensor_view %a_nd_ptr, shape = [%c128, %c16], strides = [%c16, %c1] {layout = #pto.layout<mx_a_nd>} : !pto.tensor_view<?x?x!pto.f8E8M0>
+    %a_dn = pto.make_tensor_view %a_dn_ptr, shape = [%c128, %c4], strides = [%c1, %c128] {layout = #pto.layout<mx_a_dn>} : !pto.tensor_view<?x?x!pto.f8E8M0>
+    %a_zz = pto.make_tensor_view %a_zz_ptr, shape = [%c128, %c4], strides = [%c4, %c1] {layout = #pto.layout<mx_a_zz>} : !pto.tensor_view<?x?x!pto.f8E8M0>
+    %b_nd = pto.make_tensor_view %b_nd_ptr, shape = [%c128, %c4], strides = [%c4, %c1] {layout = #pto.layout<mx_b_nd>} : !pto.tensor_view<?x?x!pto.f8E8M0>
+    %b_dn = pto.make_tensor_view %b_dn_ptr, shape = [%c128, %c4], strides = [%c1, %c128] {layout = #pto.layout<mx_b_dn>} : !pto.tensor_view<?x?x!pto.f8E8M0>
+    %b_nn = pto.make_tensor_view %b_nn_ptr, shape = [%c4, %c128], strides = [%c128, %c1] {layout = #pto.layout<mx_b_nn>} : !pto.tensor_view<?x?x!pto.f8E8M0>
+
+    %a_nd_part = pto.partition_view %a_nd, offsets = [%c0, %c2], sizes = [%c128, %c4] : !pto.tensor_view<?x?x!pto.f8E8M0> -> !pto.partition_tensor_view<128x4x!pto.f8E8M0>
+    %a_dn_part = pto.partition_view %a_dn, offsets = [%c0, %c0], sizes = [%c128, %c4] : !pto.tensor_view<?x?x!pto.f8E8M0> -> !pto.partition_tensor_view<128x4x!pto.f8E8M0>
+    %a_zz_part = pto.partition_view %a_zz, offsets = [%c0, %c0], sizes = [%c128, %c4] : !pto.tensor_view<?x?x!pto.f8E8M0> -> !pto.partition_tensor_view<128x4x!pto.f8E8M0>
+    %b_nd_part = pto.partition_view %b_nd, offsets = [%c0, %c0], sizes = [%c128, %c4] : !pto.tensor_view<?x?x!pto.f8E8M0> -> !pto.partition_tensor_view<128x4x!pto.f8E8M0>
+    %b_dn_part = pto.partition_view %b_dn, offsets = [%c0, %c0], sizes = [%c128, %c4] : !pto.tensor_view<?x?x!pto.f8E8M0> -> !pto.partition_tensor_view<128x4x!pto.f8E8M0>
+    %b_nn_part = pto.partition_view %b_nn, offsets = [%c0, %c0], sizes = [%c4, %c128] : !pto.tensor_view<?x?x!pto.f8E8M0> -> !pto.partition_tensor_view<4x128x!pto.f8E8M0>
+
+    %a_nd_tile = pto.alloc_tile : !pto.tile_buf<mat, 128x4x!pto.f8E8M0, blayout=row_major, slayout=row_major, fractal=32>
+    %a_dn_tile = pto.alloc_tile : !pto.tile_buf<mat, 128x4x!pto.f8E8M0, blayout=row_major, slayout=row_major, fractal=32>
+    %a_zz_tile = pto.alloc_tile : !pto.tile_buf<mat, 128x4x!pto.f8E8M0, blayout=row_major, slayout=row_major, fractal=32>
+    %b_nd_tile = pto.alloc_tile : !pto.tile_buf<mat, 128x4x!pto.f8E8M0, blayout=col_major, slayout=col_major, fractal=32>
+    %b_dn_tile = pto.alloc_tile : !pto.tile_buf<mat, 128x4x!pto.f8E8M0, blayout=col_major, slayout=col_major, fractal=32>
+    %b_nn_tile = pto.alloc_tile : !pto.tile_buf<mat, 4x128x!pto.f8E8M0, blayout=col_major, slayout=col_major, fractal=32>
+
+    pto.tload ins(%a_nd_part : !pto.partition_tensor_view<128x4x!pto.f8E8M0>) outs(%a_nd_tile : !pto.tile_buf<mat, 128x4x!pto.f8E8M0, blayout=row_major, slayout=row_major, fractal=32>)
+    pto.tload ins(%a_dn_part : !pto.partition_tensor_view<128x4x!pto.f8E8M0>) outs(%a_dn_tile : !pto.tile_buf<mat, 128x4x!pto.f8E8M0, blayout=row_major, slayout=row_major, fractal=32>)
+    pto.tload ins(%a_zz_part : !pto.partition_tensor_view<128x4x!pto.f8E8M0>) outs(%a_zz_tile : !pto.tile_buf<mat, 128x4x!pto.f8E8M0, blayout=row_major, slayout=row_major, fractal=32>)
+    pto.tload ins(%b_nd_part : !pto.partition_tensor_view<128x4x!pto.f8E8M0>) outs(%b_nd_tile : !pto.tile_buf<mat, 128x4x!pto.f8E8M0, blayout=col_major, slayout=col_major, fractal=32>)
+    pto.tload ins(%b_dn_part : !pto.partition_tensor_view<128x4x!pto.f8E8M0>) outs(%b_dn_tile : !pto.tile_buf<mat, 128x4x!pto.f8E8M0, blayout=col_major, slayout=col_major, fractal=32>)
+    pto.tload ins(%b_nn_part : !pto.partition_tensor_view<4x128x!pto.f8E8M0>) outs(%b_nn_tile : !pto.tile_buf<mat, 4x128x!pto.f8E8M0, blayout=col_major, slayout=col_major, fractal=32>)
+    return
+  }
+}
+
+// IR: pto.make_tensor_view {{.*}} {layout = #pto.layout<mx_a_nd>} : !pto.tensor_view<?x?x!pto.f8E8M0, #pto.layout<mx_a_nd>>
+// IR: pto.make_tensor_view {{.*}} {layout = #pto.layout<mx_a_dn>} : !pto.tensor_view<?x?x!pto.f8E8M0, #pto.layout<mx_a_dn>>
+// IR: pto.make_tensor_view {{.*}} {layout = #pto.layout<mx_a_zz>} : !pto.tensor_view<?x?x!pto.f8E8M0, #pto.layout<mx_a_zz>>
+// IR: pto.make_tensor_view {{.*}} {layout = #pto.layout<mx_b_nd>} : !pto.tensor_view<?x?x!pto.f8E8M0, #pto.layout<mx_b_nd>>
+// IR: pto.make_tensor_view {{.*}} {layout = #pto.layout<mx_b_dn>} : !pto.tensor_view<?x?x!pto.f8E8M0, #pto.layout<mx_b_dn>>
+// IR: pto.make_tensor_view {{.*}} {layout = #pto.layout<mx_b_nn>} : !pto.tensor_view<?x?x!pto.f8E8M0, #pto.layout<mx_b_nn>>
+// IR: pto.tload ins({{.*}} : !pto.partition_tensor_view<128x4x!pto.f8E8M0, #pto.layout<mx_a_nd>>)
+// IR: pto.tload ins({{.*}} : !pto.partition_tensor_view<128x4x!pto.f8E8M0, #pto.layout<mx_a_dn>>)
+// IR: pto.tload ins({{.*}} : !pto.partition_tensor_view<128x4x!pto.f8E8M0, #pto.layout<mx_a_zz>>)
+// IR: pto.tload ins({{.*}} : !pto.partition_tensor_view<128x4x!pto.f8E8M0, #pto.layout<mx_b_nd>>)
+// IR: pto.tload ins({{.*}} : !pto.partition_tensor_view<128x4x!pto.f8E8M0, #pto.layout<mx_b_dn>>)
+// IR: pto.tload ins({{.*}} : !pto.partition_tensor_view<4x128x!pto.f8E8M0, #pto.layout<mx_b_nn>>)
+// CPP-DAG: GlobalTensor<float8_e8m0_t, TileShape2D<float8_e8m0_t, -1, -1, pto::Layout::MX_A_ND>, pto::Stride<-1, -1, -1, 2, 1>, pto::Layout::MX_A_ND>
+// CPP-DAG: GlobalTensor<float8_e8m0_t, TileShape2D<float8_e8m0_t, -1, -1, pto::Layout::MX_A_DN>, pto::Stride<-1, -1, -1, 2, 1>, pto::Layout::MX_A_DN>
+// CPP-DAG: GlobalTensor<float8_e8m0_t, TileShape2D<float8_e8m0_t, -1, -1, pto::Layout::MX_A_ZZ>, BaseShape2D<float8_e8m0_t, -1, -1, pto::Layout::MX_A_ZZ>, pto::Layout::MX_A_ZZ>
+// CPP-DAG: GlobalTensor<float8_e8m0_t, TileShape2D<float8_e8m0_t, -1, -1, pto::Layout::MX_B_ND>, pto::Stride<-1, -1, -1, 2, 1>, pto::Layout::MX_B_ND>
+// CPP-DAG: GlobalTensor<float8_e8m0_t, TileShape2D<float8_e8m0_t, -1, -1, pto::Layout::MX_B_DN>, pto::Stride<-1, -1, -1, 2, 1>, pto::Layout::MX_B_DN>
+// CPP-DAG: GlobalTensor<float8_e8m0_t, TileShape2D<float8_e8m0_t, -1, -1, pto::Layout::MX_B_NN>, BaseShape2D<float8_e8m0_t, -1, -1, pto::Layout::MX_B_NN>, pto::Layout::MX_B_NN>
+// CPP-COUNT-6: TLOAD(
+
+// STRIDE-DAG: const int64_t [[COLS:v[0-9]+]] = 4;
+// STRIDE-DAG: const int64_t [[ROWS:v[0-9]+]] = 128;
+// STRIDE: TileShape2D<float8_e8m0_t, -1, -1, pto::Layout::MX_A_DN> {{.*}}([[ROWS]], [[COLS]])
+// STRIDE: const int64_t [[A_PAIR:v[0-9]+]] = 2;
+// STRIDE: pto::Stride<-1, -1, -1, 2, 1> {{.*}}({{[^,]+}}, {{[^,]+}}, [[ROWS]] * [[A_PAIR]],
+// STRIDE: TileShape2D<float8_e8m0_t, -1, -1, pto::Layout::MX_B_ND> {{.*}}([[ROWS]], [[COLS]])
+// STRIDE: const int64_t [[B_PAIR:v[0-9]+]] = 2;
+// STRIDE: pto::Stride<-1, -1, -1, 2, 1> {{.*}}({{[^,]+}}, {{[^,]+}}, [[COLS]] * [[B_PAIR]],

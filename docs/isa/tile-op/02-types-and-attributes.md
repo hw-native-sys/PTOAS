@@ -155,6 +155,12 @@ Global tensor layout attribute for `tensor_view` and `partition_tensor_view`. Ti
 | `ND` | 0 | `nd` | Row-major (Normal-Dimension). |
 | `DN` | 1 | `dn` | Column-major (Dimension-Normal). |
 | `NZ` | 2 | `nz` | Fractal / blocked layout. |
+| `MX_A_ZZ` | 3 | `mx_a_zz` | A-side MX scale, blocked 16-by-2 layout. |
+| `MX_B_NN` | 4 | `mx_b_nn` | B-side MX scale, blocked 2-by-16 layout. |
+| `MX_A_ND` | 5 | `mx_a_nd` | A-side MX scale, row-major with adjacent scale pairs along columns. |
+| `MX_A_DN` | 6 | `mx_a_dn` | A-side MX scale, column-major with scale pairs along columns. |
+| `MX_B_ND` | 7 | `mx_b_nd` | B-side MX scale, row-major with scale pairs along rows. |
+| `MX_B_DN` | 8 | `mx_b_dn` | B-side MX scale, column-major with adjacent scale pairs along rows. |
 
 **Attribute syntax:** `#pto.layout<nd>`
 

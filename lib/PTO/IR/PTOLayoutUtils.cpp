@@ -154,6 +154,21 @@ static std::string expectedActual(StringRef name, int64_t expected,
 
 } // namespace
 
+bool mlir::pto::isMxLayout(Layout layout)
+{
+  switch (layout) {
+  case Layout::MX_A_ND:
+  case Layout::MX_A_DN:
+  case Layout::MX_A_ZZ:
+  case Layout::MX_B_ND:
+  case Layout::MX_B_DN:
+  case Layout::MX_B_NN:
+    return true;
+  default:
+    return false;
+  }
+}
+
 static std::optional<int64_t>
 getNZC0StorageElems(unsigned storageElemBytes) {
   if (storageElemBytes == 0 || kNZBlockBytes % storageElemBytes != 0) {
@@ -306,6 +321,10 @@ bool mlir::pto::isLayoutCompatible5D(Layout layout, ArrayRef<int64_t> shape,
     return true;
   case Layout::MX_A_ZZ:
   case Layout::MX_B_NN:
+  case Layout::MX_A_ND:
+  case Layout::MX_A_DN:
+  case Layout::MX_B_ND:
+  case Layout::MX_B_DN:
     return true;
   case Layout::NZ: {
     auto padded = rightAlignTo5D(shape, stride);

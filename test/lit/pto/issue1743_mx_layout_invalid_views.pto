@@ -1,0 +1,115 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may obtain a copy of the License at
+// https://www.hiascend.com/document/detail/en/CANNCommunityEdition/82RC1alpha001/licensedoc/licensedoc_0001.html
+// Unless required by applicable law or agreed to in writing, software distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, EITHER EXPRESS OR IMPLIED.
+// See the License for the specific language governing permissions and limitations under the License.
+
+// RUN: split-file %s %t
+// RUN: not ptoas --pto-arch=a5 --emit-pto-ir %t/rank.pto 2>&1 | FileCheck %s --check-prefix=RANK
+// RUN: not ptoas --pto-arch=a5 --emit-pto-ir %t/element.pto 2>&1 | FileCheck %s --check-prefix=ELEMENT
+// RUN: not ptoas --pto-arch=a5 --emit-pto-ir %t/packed.pto 2>&1 | FileCheck %s --check-prefix=PACKED
+// RUN: not ptoas --pto-arch=a5 --emit-pto-ir %t/stride.pto 2>&1 | FileCheck %s --check-prefix=STRIDE
+// RUN: not ptoas --pto-arch=a5 --emit-pto-ir %t/layout_mismatch.pto 2>&1 | FileCheck %s --check-prefix=LAYOUT
+
+// RUN: not ptoas --pto-arch=a3 --emit-pto-ir %t/arch.pto 2>&1 | FileCheck %s --check-prefix=ARCH
+// RUN: not ptoas --pto-arch=a2 --emit-pto-ir %t/arch.pto 2>&1 | FileCheck %s --check-prefix=ARCH
+// RUN: not ptoas --pto-arch=a5 --emit-pto-ir %t/a_zz_alignment.pto 2>&1 | FileCheck %s --check-prefix=A-ZZ
+// RUN: not ptoas --pto-arch=a5 --emit-pto-ir %t/b_nn_alignment.pto 2>&1 | FileCheck %s --check-prefix=B-NN
+// ARCH: MX layouts require target architecture a5
+// A-ZZ: MX layout=mx_a_zz requires dimension 0 to be divisible by 16
+// B-NN: MX layout=mx_b_nn requires dimension 1 to be divisible by 16
+
+// RANK: MX layout=mx_a_nd requires a rank-2 logical view
+// ELEMENT: MX layout=mx_a_nd requires f8E8M0 scale elements
+// PACKED: MX layout=mx_a_nd requires packed dimension 1 to be divisible by 2
+// STRIDE: MX layout=mx_a_nd requires a contiguous row-major view
+// LAYOUT: layout mismatch between source and result
+
+//--- rank.pto
+module {
+  func.func @rank(%ptr: !pto.ptr<!pto.f8E8M0, gm>) {
+    %c4 = arith.constant 4 : index
+    %view = pto.make_tensor_view %ptr, shape = [%c4, %c4, %c4], strides = [%c4, %c4, %c4] {layout = #pto.layout<mx_a_nd>} : !pto.tensor_view<?x?x?x!pto.f8E8M0>
+    return
+  }
+}
+
+//--- element.pto
+module {
+  func.func @element(%ptr: !pto.ptr<f16, gm>) {
+    %c1 = arith.constant 1 : index
+    %c4 = arith.constant 4 : index
+    %view = pto.make_tensor_view %ptr, shape = [%c4, %c4], strides = [%c4, %c1] {layout = #pto.layout<mx_a_nd>} : !pto.tensor_view<?x?xf16>
+    return
+  }
+}
+
+//--- packed.pto
+module {
+  func.func @packed(%ptr: !pto.ptr<!pto.f8E8M0, gm>) {
+    %c1 = arith.constant 1 : index
+    %c3 = arith.constant 3 : index
+    %c4 = arith.constant 4 : index
+    %view = pto.make_tensor_view %ptr, shape = [%c4, %c3], strides = [%c3, %c1] {layout = #pto.layout<mx_a_nd>} : !pto.tensor_view<4x3x!pto.f8E8M0>
+    return
+  }
+}
+
+//--- stride.pto
+module {
+  func.func @stride(%ptr: !pto.ptr<!pto.f8E8M0, gm>) {
+    %c1 = arith.constant 1 : index
+    %c4 = arith.constant 4 : index
+    %c5 = arith.constant 5 : index
+    %view = pto.make_tensor_view %ptr, shape = [%c4, %c4], strides = [%c5, %c1] {layout = #pto.layout<mx_a_nd>} : !pto.tensor_view<4x4x!pto.f8E8M0>
+    return
+  }
+}
+
+//--- layout_mismatch.pto
+module {
+  func.func @layout_mismatch(%ptr: !pto.ptr<!pto.f8E8M0, gm>) {
+    %c0 = arith.constant 0 : index
+    %c1 = arith.constant 1 : index
+    %c4 = arith.constant 4 : index
+    %view = pto.make_tensor_view %ptr, shape = [%c4, %c4], strides = [%c4, %c1] {layout = #pto.layout<mx_a_nd>} : !pto.tensor_view<?x?x!pto.f8E8M0>
+    %part = pto.partition_view %view, offsets = [%c0, %c0], sizes = [%c4, %c4] : !pto.tensor_view<?x?x!pto.f8E8M0> -> !pto.partition_tensor_view<4x4x!pto.f8E8M0, #pto.layout<nd>>
+    return
+  }
+}
+
+//--- arch.pto
+module {
+  func.func @arch(%ptr: !pto.ptr<!pto.f8E8M0, gm>) {
+    %c1 = arith.constant 1 : index
+    %rows = arith.constant 4 : index
+    %cols = arith.constant 4 : index
+    %view = pto.make_tensor_view %ptr, shape = [%rows, %cols], strides = [%cols, %c1] {layout = #pto.layout<mx_a_nd>} : !pto.tensor_view<?x?x!pto.f8E8M0>
+    return
+  }
+}
+
+//--- a_zz_alignment.pto
+module {
+  func.func @a_zz_alignment(%ptr: !pto.ptr<!pto.f8E8M0, gm>) {
+    %c1 = arith.constant 1 : index
+    %rows = arith.constant 17 : index
+    %cols = arith.constant 4 : index
+    %view = pto.make_tensor_view %ptr, shape = [%rows, %cols], strides = [%cols, %c1] {layout = #pto.layout<mx_a_zz>} : !pto.tensor_view<?x?x!pto.f8E8M0>
+    return
+  }
+}
+
+//--- b_nn_alignment.pto
+module {
+  func.func @b_nn_alignment(%ptr: !pto.ptr<!pto.f8E8M0, gm>) {
+    %c1 = arith.constant 1 : index
+    %rows = arith.constant 4 : index
+    %cols = arith.constant 17 : index
+    %view = pto.make_tensor_view %ptr, shape = [%rows, %cols], strides = [%cols, %c1] {layout = #pto.layout<mx_b_nn>} : !pto.tensor_view<?x?x!pto.f8E8M0>
+    return
+  }
+}

@@ -449,8 +449,7 @@ static std::optional<Layout> inferMakeTensorViewLayout(
     bool &isAmbiguous) {
   auto pref = collectPreferredLayoutFromConsumers(op.getResult());
   if (!pref.conflict && pref.preferred &&
-      (*pref.preferred == Layout::MX_A_ZZ ||
-       *pref.preferred == Layout::MX_B_NN)) {
+      isMxLayout(*pref.preferred)) {
     return pref.preferred;
   }
   std::optional<Layout> preferredForAmbiguous = std::nullopt;

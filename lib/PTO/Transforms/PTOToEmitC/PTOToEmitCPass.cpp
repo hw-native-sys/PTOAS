@@ -797,10 +797,12 @@ struct EmitPTOManualPass
       if (isa<mlir::pto::TensorViewType>(init.getGmAddr().getType()))
         flags.globalTensorData = true;
     }
-    if (isa<mlir::pto::PartitionViewOp>(op))
-      flags.globalTensorData = true;
+    bool mayExtractGlobalTensorData = isa<mlir::pto::PartitionViewOp, memref::SubViewOp, memref::ReinterpretCastOp>(op);
+    if (mayExtractGlobalTensorData) {
+        flags.globalTensorData = true;
+    }
     if (auto load = dyn_cast<mlir::pto::TLoadOp>(op))
-      setTLoadHelperFlags(load, flags);
+        setTLoadHelperFlags(load, flags);
     if (auto alloc = dyn_cast<mlir::pto::AllocTileOp>(op)) {
       if (isa<mlir::pto::ConvTileBufType>(alloc.getResult().getType()))
         flags.convTileInit = true;
@@ -1177,6 +1179,16 @@ static AICORE inline To ptoas_bitcast(From from) {
     if (isFoldableBridgeCast(output, inTy, outTy, typeConverter)) {
       output.replaceAllUsesWith(input);
       return success();
+    }
+
+    // A GlobalTensor is a descriptor, not a pointer-convertible object.
+    bool extractsGlobalTensorData = isEmitCGlobalTensorLikeType(inTy) && isEmitCPointerLikeType(outTy);
+    if (extractsGlobalTensorData) {
+        OpBuilder builder(cast);
+        auto extracted = builder.create<emitc::CallOpaqueOp>(
+            cast.getLoc(), outTy, "PTOAS__GLOBAL_TENSOR_DATA", ArrayAttr{}, ArrayAttr{}, ValueRange{input});
+        output.replaceAllUsesWith(extracted.getResult(0));
+        return success();
     }
 
     // Tile-backed pointer extraction must lower via PTOAS__TILE_DATA.

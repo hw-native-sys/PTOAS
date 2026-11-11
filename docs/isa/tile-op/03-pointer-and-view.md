@@ -84,13 +84,18 @@ These instructions build the address, view, and tile-buffer metadata that later 
 | `%ptr` | `AnyType` | Source pointer (must be `!pto.ptr<T>` with element type matching the result). |
 | `shape` | `Variadic<Index>` | Dynamic shape dimensions. |
 | `strides` | `Variadic<Index>` | Dynamic strides. |
-| `layout` | `LayoutAttr` (optional) | `nd` / `dn` / `nz` hint. |
+| `layout` | `LayoutAttr` (optional) | `nd`, `dn`, `nz`, or an MX layout from §2.8. |
 
 **Constraints:**
 
 - `ptr` element type must match the result element type.
 - `shape` and `strides` operand counts must match the tensor_view rank.
 - If `layout` is provided with static shapes/strides, it must be consistent with the inferred layout.
+- MX layouts are available only on A5 and require a rank-2 view of `!pto.f8E8M0` scale elements. Shapes and strides are measured in scale elements, not quantized data elements.
+- MX ND layouts require contiguous row-major strides `[cols, 1]`; MX DN layouts require contiguous column-major strides `[1, rows]`. MX ZZ/NN views use `[cols, 1]` for their logical shape.
+- MX A layouts require an even column count; MX B layouts require an even row count. Additionally, `mx_a_zz` requires rows divisible by 16, and `mx_b_nn` requires columns divisible by 16. Dynamic dimensions must satisfy the same constraints at runtime.
+- Runtime dimensions, element counts (`rows * cols`), and packed strides (including stride times two) must fit the signed index range and the backing global-memory allocation.
+- A partition inherits the source layout; an explicitly different result layout is invalid. Dimension queries on MX views use logical dimension indices 0 and 1.
 
 **Example:**
 

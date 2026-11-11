@@ -266,6 +266,66 @@ FailureOr<Value> buildRuntimeGlobalTensor(
       runtimeStrides.size() != staticShape.size())
     return failure();
 
+  if (layoutEnum.starts_with("pto::Layout::MX_")) {
+      bool isRank2Shape = staticShape.size() == 2;
+      if (!isRank2Shape) {
+          return failure();
+      }
+
+      std::string elemTypeStr = getElemTypeStringForGT(elemTy);
+      std::string dims = elemTypeStr + ", -1, -1, " + layoutEnum.str();
+      std::string shapeType = "TileShape2D<" + dims + ">";
+      std::string strideType = getRuntimeMxStrideType(elemTy, layoutEnum);
+      if (strideType.empty()) {
+          return failure();
+      }
+      SmallVector<Value, 2> logicalShape(runtimeShape.begin(), runtimeShape.end());
+
+      Value shape = rewriter
+                        .create<emitc::CallOpaqueOp>(
+                            loc, emitc::OpaqueType::get(rewriter.getContext(), shapeType), shapeType, ArrayAttr{},
+                            ArrayAttr{}, logicalShape)
+                        .getResult(0);
+      SmallVector<Value, 5> strideValues;
+      bool hasExplicitMxStride = layoutEnum.ends_with("MX_A_ND") || layoutEnum.ends_with("MX_A_DN") ||
+                                 layoutEnum.ends_with("MX_B_ND") || layoutEnum.ends_with("MX_B_DN");
+      if (hasExplicitMxStride) {
+          Value rows = castViewIndexToEmitC(rewriter, loc, runtimeShape[0]);
+          Value cols = castViewIndexToEmitC(rewriter, loc, runtimeShape[1]);
+          Value rowStride = castViewIndexToEmitC(rewriter, loc, runtimeStrides[0]);
+          Value colStride = castViewIndexToEmitC(rewriter, loc, runtimeStrides[1]);
+          // Runtime dimensions/strides must describe a valid GM allocation:
+          // rows * cols and packed strides must fit the signed index range.
+          // Keep this caller precondition identical to PTO-ISA's constructors.
+          Value totalElements = rewriter.create<emitc::MulOp>(loc, rows.getType(), rows, cols).getResult();
+          Value two = makeViewIndexConstant(rewriter, loc, 2);
+          Value one = makeViewIndexConstant(rewriter, loc, 1);
+          Value packedStride;
+          if (layoutEnum.ends_with("MX_A_ND")) {
+              packedStride = rowStride;
+          } else if (layoutEnum.ends_with("MX_A_DN")) {
+              packedStride = rewriter.create<emitc::MulOp>(loc, rowStride.getType(), colStride, two).getResult();
+          } else if (layoutEnum.ends_with("MX_B_ND")) {
+              packedStride = rewriter.create<emitc::MulOp>(loc, rowStride.getType(), rowStride, two).getResult();
+          } else {
+              packedStride = colStride;
+          }
+          strideValues = {totalElements, totalElements, packedStride, two, one};
+      } else {
+          strideValues.assign(logicalShape.begin(), logicalShape.end());
+      }
+      Value stride = rewriter
+                         .create<emitc::CallOpaqueOp>(
+                             loc, emitc::OpaqueType::get(rewriter.getContext(), strideType), strideType, ArrayAttr{},
+                             ArrayAttr{}, strideValues)
+                         .getResult(0);
+      auto resultType = getRuntimeGlobalTensorOpaqueType(rewriter.getContext(), elemTy, staticShape, layoutEnum);
+      return rewriter
+          .create<emitc::CallOpaqueOp>(
+              loc, resultType, resultType.getValue(), ArrayAttr{}, ArrayAttr{}, ValueRange{ptr, shape, stride})
+          .getResult(0);
+  }
+
   SmallVector<int64_t, mlir::pto::kValue5> shape5D(mlir::pto::kValue5, 1);
   SmallVector<int64_t, mlir::pto::kValue5> stride5D(mlir::pto::kValue5, -1);
   int64_t shift = 5 - static_cast<int64_t>(staticShape.size());

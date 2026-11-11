@@ -470,7 +470,9 @@ struct SubviewToEmitCPattern : public OpConversionPattern<memref::SubViewOp> {
 
     return emitGlobalTensorObjects(op, rewriter, elemTypeStr,
                                     types.shapeCppType, types.strideCppType,
-                                    types.layoutEnum, adaptor, newPtr,
+                                    types.layoutEnum,
+                                    types.useDynamicMx2DConstructor,
+                                    adaptor, newPtr,
                                     types.dims);
   }
 
@@ -481,7 +483,21 @@ struct SubviewToEmitCPattern : public OpConversionPattern<memref::SubViewOp> {
     std::string shapeCppType;
     std::string strideCppType;
     std::string layoutEnum;
+    bool useDynamicMx2DConstructor = false;
   };
+
+  void resolveGlobalTensorDescriptorTypes(memref::SubViewOp op, MemRefType resTy, GlobalTensorTypes& out) const
+  {
+      auto resolvedLayout = resolveLayoutForGlobalTensor(op, op.getSource());
+      auto specialScaleSpec =
+          getSpecialGlobalTensorTypeSpecForLayout(resolvedLayout, resTy.getShape(), resTy.getElementType());
+      out.useDynamicMx2DConstructor =
+          specialScaleSpec && llvm::any_of(resTy.getShape(), [](int64_t dim) { return ShapedType::isDynamic(dim); });
+      out.shapeCppType = specialScaleSpec ? specialScaleSpec->shapeTypeExpr :
+                                            "pto::Shape<" + joinIntTemplateParams(out.dims.shape) + ">";
+      out.strideCppType = specialScaleSpec ? specialScaleSpec->strideTypeExpr :
+                                             "pto::Stride<" + joinIntTemplateParams(out.dims.stride) + ">";
+  }
 
   // Resolve the Shape/Stride C++ types (with special scaling-layout
   // spellings) and right-align the subview to 5 dims.
@@ -528,21 +544,7 @@ struct SubviewToEmitCPattern : public OpConversionPattern<memref::SubViewOp> {
     out.dims = buildRightAligned5DDims(
         rewriter, loc, mkIndex, rank, shapeParamsVec, strideTemplateVec,
         sizeValues, strideValues);
-    const auto &finalShape = out.dims.shape;
-    const auto &finalStride = out.dims.stride;
-
-    std::string shapeParams = joinIntTemplateParams(finalShape);
-    std::string strideParams = joinIntTemplateParams(finalStride);
-
-    auto resolvedLayout = resolveLayoutForGlobalTensor(op, op.getSource());
-    auto specialScaleSpec = getSpecialGlobalTensorTypeSpecForLayout(
-        resolvedLayout, resTy.getShape(), resTy.getElementType());
-    out.shapeCppType =
-        specialScaleSpec ? specialScaleSpec->shapeTypeExpr
-                         : "pto::Shape<" + shapeParams + ">";
-    out.strideCppType =
-        specialScaleSpec ? specialScaleSpec->strideTypeExpr
-                         : "pto::Stride<" + strideParams + ">";
+    resolveGlobalTensorDescriptorTypes(op, resTy, out);
     out.layoutEnum = resolveSubviewLayoutEnum(op, shapeParamsVec,
                                               strideTemplateVec, resTy);
     return success();
@@ -553,15 +555,24 @@ struct SubviewToEmitCPattern : public OpConversionPattern<memref::SubViewOp> {
       memref::SubViewOp op, ConversionPatternRewriter &rewriter,
       const std::string &elemTypeStr, const std::string &shapeCppType,
       const std::string &strideCppType, const std::string &layoutEnum,
-      OpAdaptor adaptor, Value newPtr, const Aligned5DDims &dims) const {
+      bool useDynamicMx2DConstructor, OpAdaptor adaptor, Value newPtr,
+      const Aligned5DDims &dims) const {
     auto loc = op.getLoc();
     auto *ctx = rewriter.getContext();
 
     // A. Instantiate Shape object.
     auto shapeTypeOpaque = emitc::OpaqueType::get(ctx, shapeCppType);
     SmallVector<Value> shapeArgs;
-    for (Value dynSize : adaptor.getSizes())
-      shapeArgs.push_back(dynSize);
+    // MX 2D constructors take both logical dimensions when either is dynamic.
+    if (useDynamicMx2DConstructor) {
+      for (int i = kGlobalTensorRank - kTileRank; i < kGlobalTensorRank; ++i) {
+        shapeArgs.push_back(dims.shapeValues[i]);
+      }
+    } else {
+      for (Value dynSize : adaptor.getSizes()) {
+        shapeArgs.push_back(dynSize);
+      }
+    }
 
     auto shapeInstOp = rewriter.create<emitc::CallOpaqueOp>(
         loc, shapeTypeOpaque, shapeCppType,
@@ -574,9 +585,13 @@ struct SubviewToEmitCPattern : public OpConversionPattern<memref::SubViewOp> {
     auto strideTypeOpaque = emitc::OpaqueType::get(ctx, strideCppType);
     SmallVector<Value> strideCtorArgs;
     strideCtorArgs.reserve(kGlobalTensorRank);
-    for (int i = kZeroIndexValue; i < kGlobalTensorRank; ++i) {
-      if (dims.stride[i] == kPtoDynamicValue) {
-        strideCtorArgs.push_back(dims.strideValues[i]);
+    if (useDynamicMx2DConstructor) {
+      strideCtorArgs.append(shapeArgs.begin(), shapeArgs.end());
+    } else {
+      for (int i = kZeroIndexValue; i < kGlobalTensorRank; ++i) {
+        if (dims.stride[i] == kPtoDynamicValue) {
+          strideCtorArgs.push_back(dims.strideValues[i]);
+        }
       }
     }
     auto strideInstOp = rewriter.create<emitc::CallOpaqueOp>(

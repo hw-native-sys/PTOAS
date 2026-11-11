@@ -185,6 +185,10 @@ enum class MlirPTOLayout {
   NZ = 2,
   MX_A_ZZ = 3,
   MX_B_NN = 4,
+  MX_A_ND = 5,
+  MX_A_DN = 6,
+  MX_B_ND = 7,
+  MX_B_DN = 8,
 };
 
 enum class MlirPTOConvLayout {

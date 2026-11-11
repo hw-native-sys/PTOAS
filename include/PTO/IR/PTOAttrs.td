@@ -640,6 +640,10 @@ def PTO_Layout_DN : I32EnumAttrCase<"DN", 1, "dn">;
 def PTO_Layout_NZ : I32EnumAttrCase<"NZ", 2, "nz">;
 def PTO_Layout_MX_A_ZZ : I32EnumAttrCase<"MX_A_ZZ", 3, "mx_a_zz">;
 def PTO_Layout_MX_B_NN : I32EnumAttrCase<"MX_B_NN", 4, "mx_b_nn">;
+def PTO_Layout_MX_A_ND : I32EnumAttrCase<"MX_A_ND", 5, "mx_a_nd">;
+def PTO_Layout_MX_A_DN : I32EnumAttrCase<"MX_A_DN", 6, "mx_a_dn">;
+def PTO_Layout_MX_B_ND : I32EnumAttrCase<"MX_B_ND", 7, "mx_b_nd">;
+def PTO_Layout_MX_B_DN : I32EnumAttrCase<"MX_B_DN", 8, "mx_b_dn">;
 
 def PTO_LayoutEnum : PTO_I32Enum<
   "Layout", "Global tensor layout (row/col/fractal)", [
@@ -647,16 +651,20 @@ def PTO_LayoutEnum : PTO_I32Enum<
     PTO_Layout_DN,
     PTO_Layout_NZ,
     PTO_Layout_MX_A_ZZ,
-    PTO_Layout_MX_B_NN
+    PTO_Layout_MX_B_NN,
+    PTO_Layout_MX_A_ND,
+    PTO_Layout_MX_A_DN,
+    PTO_Layout_MX_B_ND,
+    PTO_Layout_MX_B_DN
   ]>;
 
 def PTO_LayoutAttr : PTO_Attr<"Layout", "layout"> {
   let parameters = (ins EnumParameter<PTO_LayoutEnum>:$layout);
   let assemblyFormat = "`<` params `>`";
   let description = [{
-    Layout inferred from shape/stride for GlobalTensor:
+    GlobalTensor source layout:
       ND (row-major), DN (col-major), NZ (fractal),
-      MX_A_ZZ (A-side MX scale), MX_B_NN (B-side MX scale).
+      MX_A_ND/DN/ZZ (A-side MX scale), MX_B_ND/DN/NN (B-side MX scale).
   }];
 }
 
