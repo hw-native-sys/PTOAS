@@ -1922,7 +1922,14 @@ def _infer_aicore_arch(kernel_text: str, soc_version: str) -> str:
     #
     # IMPORTANT: the default arch depends on the Ascend SoC.
     has_mix_macros = "__DAV_CUBE__" in kernel_text and "__DAV_VEC__" in kernel_text
-    has_intra_block_sync = "set_intra_block(" in kernel_text or "wait_intra_block(" in kernel_text
+    has_pipe_macro_sync = any(
+        tok in kernel_text for tok in ("TPUSH<", "TPOP<", "TFREE<", "TALLOC<")
+    )
+    has_intra_block_sync = (
+        "set_intra_block(" in kernel_text
+        or "wait_intra_block(" in kernel_text
+        or has_pipe_macro_sync
+    )
     has_mixed_section_sync = has_mix_macros and has_intra_block_sync
     cube_markers = (
         "TileType::Mat",
@@ -2571,7 +2578,19 @@ def generate_testcase(
     has_packed_pred_mask = re.search(r"\bTCMPS?\s*\(", raw_kernel_for_analysis) is not None
     has_dav_cube = "__DAV_CUBE__" in raw_kernel
     has_dav_vec = "__DAV_VEC__" in raw_kernel
-    has_intra_block_sync = "set_intra_block(" in raw_kernel or "wait_intra_block(" in raw_kernel
+    # Cross-core pipe ops (TPUSH/TPOP/TFREE/TALLOC) expand to intra-block sync
+    # inside pto-isa headers; the macro token in the emitted kernel is the only
+    # kernel-text signal for that dependency. Without it, mixed cube/vec pipe
+    # kernels fall into the historical vec-arch+forced-macro path whose
+    # set_flag legality whitelist rejects MTE1/MTE2 pairs.
+    has_pipe_macro_sync = any(
+        tok in raw_kernel for tok in ("TPUSH<", "TPOP<", "TFREE<", "TALLOC<")
+    )
+    has_intra_block_sync = (
+        "set_intra_block(" in raw_kernel
+        or "wait_intra_block(" in raw_kernel
+        or has_pipe_macro_sync
+    )
     has_mixed_section_sync = has_dav_cube and has_dav_vec and has_intra_block_sync
     has_cube_only_section = has_dav_cube and not has_dav_vec
     has_vec_only_section = has_dav_vec and not has_dav_cube
