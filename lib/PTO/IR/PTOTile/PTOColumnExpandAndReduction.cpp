@@ -103,17 +103,28 @@ LogicalResult pto::TColMaxOp::verify() {
 }
 
 static LogicalResult verifyTColArgReductionOp(Operation *op, Type srcTy,
-                                              Value tmp, Type dstTy) {
+                                              Value tmp, Type dstIdxTy,
+                                              Type dstValTy,
+                                              bool indexOnly) {
   if (!tmp)
-    return verifyTColArgReductionNoTmp(op, srcTy, dstTy);
-  auto verifyA2A3 = [op, srcTy, tmp, dstTy]() { return verifyTColArgReductionOpA2A3(op, srcTy, tmp.getType(), dstTy); };
-  auto verifyA5 = [op, srcTy, tmp, dstTy]() { return verifyTColArgReductionOpA5(op, srcTy, tmp.getType(), dstTy); };
+    return verifyTColArgReductionNoTmp(op, srcTy, dstIdxTy, dstValTy,
+                                       indexOnly);
+  auto verifyA2A3 = [op, srcTy, tmp, dstIdxTy, dstValTy, indexOnly]() {
+    return verifyTColArgReductionOpA2A3(op, srcTy, tmp.getType(), dstIdxTy,
+                                        dstValTy, indexOnly);
+  };
+  auto verifyA5 = [op, srcTy, tmp, dstIdxTy, dstValTy, indexOnly]() {
+    return verifyTColArgReductionOpA5(op, srcTy, tmp.getType(), dstIdxTy,
+                                      dstValTy, indexOnly);
+  };
   return dispatchVerifierByArch(op, verifyA2A3, verifyA5);
 }
 
 LogicalResult pto::TColArgMaxOp::verify() {
+  Value dstVal = getDstVal();
   return verifyTColArgReductionOp(getOperation(), getSrc().getType(), getTmp(),
-                                  getDst().getType());
+                                  getDstIdx().getType(),
+                                  dstVal ? dstVal.getType() : Type(), !dstVal);
 }
 
 LogicalResult pto::TColMinOp::verify() {
@@ -126,8 +137,10 @@ LogicalResult pto::TColMinOp::verify() {
 }
 
 LogicalResult pto::TColArgMinOp::verify() {
+  Value dstVal = getDstVal();
   return verifyTColArgReductionOp(getOperation(), getSrc().getType(), getTmp(),
-                                  getDst().getType());
+                                  getDstIdx().getType(),
+                                  dstVal ? dstVal.getType() : Type(), !dstVal);
 }
 
 static ParseResult resolveRequiredOperand(

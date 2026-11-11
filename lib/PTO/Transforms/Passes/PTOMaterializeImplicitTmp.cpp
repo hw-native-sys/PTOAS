@@ -24,6 +24,7 @@
 
 #include <cassert>
 #include <limits>
+#include <type_traits>
 
 using namespace mlir;
 
@@ -905,8 +906,21 @@ static LogicalResult replaceRowReductionWithTmp(OpTy op,
     return failure();
   }
 
-  rebuildWithOperands(op.getOperation(), {op.getSrc(), *tmp, op.getDst()},
-                      ArrayRef<int32_t>{1, 1, 1});
+  if constexpr (std::is_same_v<OpTy, pto::TRowArgMaxOp> ||
+                std::is_same_v<OpTy, pto::TRowArgMinOp> ||
+                std::is_same_v<OpTy, pto::TColArgMaxOp> ||
+                std::is_same_v<OpTy, pto::TColArgMinOp>) {
+    SmallVector<Value> operands{op.getSrc(), *tmp, op.getDstIdx()};
+    Value dstVal = op.getDstVal();
+    if (dstVal) {
+      operands.push_back(dstVal);
+    }
+    rebuildWithOperands(op.getOperation(), operands,
+                        ArrayRef<int32_t>{1, 1, 1, dstVal ? 1 : 0});
+  } else {
+    rebuildWithOperands(op.getOperation(), {op.getSrc(), *tmp, op.getDst()},
+                        ArrayRef<int32_t>{1, 1, 1});
+  }
   return success();
 }
 

@@ -323,17 +323,18 @@ Reductions collapse one dimension of a 2D tile, producing a tile with one row or
 #### `pto.tile.rowmax(src: Tile, dst: Tile, *, tmp: Tile | None = None) -> None`
 #### `pto.tile.rowmin(src: Tile, dst: Tile, *, tmp: Tile | None = None) -> None`
 #### `pto.tile.rowprod(src: Tile, dst: Tile, *, tmp: Tile | None = None) -> None`
-#### `pto.tile.rowargmax(src: Tile, dst: Tile, *, tmp: Tile | None = None) -> None`
-#### `pto.tile.rowargmin(src: Tile, dst: Tile, *, tmp: Tile | None = None) -> None`
+#### `pto.tile.rowargmax(src: Tile, dst_idx: Tile, dst_val: Tile | None = None, *, tmp: Tile | None = None) -> None`
+#### `pto.tile.rowargmin(src: Tile, dst_idx: Tile, dst_val: Tile | None = None, *, tmp: Tile | None = None) -> None`
 
-**Description**: For each row `i`, reduce across columns: `dst[i, 0] = <reduce>_j src[i, j]`. `tile.rowargmax`/`tile.rowargmin` return the column index of the extremum. In the public PTODSL wrapper, `tmp` is optional; when omitted, PTODSL allocates a matching scratch tile automatically.
+**Description**: For each row `i`, `dst_idx[i, 0]` receives the column index of the extremum. If `dst_val` is supplied, it also receives the maximum or minimum value. Omitting `dst_val` preserves index-only behavior. `tmp` is keyword-only and optional; when omitted, the compiler supplies the required scratch tile.
 
 **Parameters**:
 
 | Parameter | Type | Description |
 |-----------|------|-------------|
 | `src` | `Tile` | Source tile (`[rows, cols]`) |
-| `dst` | `Tile` | Destination tile (`[rows, 1]`) |
+| `dst_idx` | `Tile` | Index destination (`[rows, 1]`, with `i32` or `ui32` elements) |
+| `dst_val` | `Tile` or `None` | Optional value destination (`[rows, 1]`, with the same element type as `src`) |
 | `tmp` | `Tile | None` | Optional scratch tile for intermediate reduction state; when omitted, PTODSL synthesizes a matching scratch tile automatically |
 
 **Returns**: None.
@@ -346,8 +347,10 @@ Reductions collapse one dimension of a 2D tile, producing a tile with one row or
 #### `pto.tile.colmax(src: Tile, dst: Tile) -> None`
 #### `pto.tile.colmin(src: Tile, dst: Tile) -> None`
 #### `pto.tile.colprod(src: Tile, dst: Tile) -> None`
+#### `pto.tile.colargmax(src: Tile, dst_idx: Tile, dst_val: Tile | None = None, *, tmp: Tile | None = None) -> None`
+#### `pto.tile.colargmin(src: Tile, dst_idx: Tile, dst_val: Tile | None = None, *, tmp: Tile | None = None) -> None`
 
-**Description**: For each column `j`, reduce across rows: `dst[0, j] = <reduce>_i src[i, j]`.
+**Description**: `colsum`, `colmax`, `colmin`, and `colprod` reduce each column to `dst[0, j]`. `colargmax` and `colargmin` write the row index to `dst_idx[0, j]`, and also write the extremum value when `dst_val` is supplied. Omitting `dst_val` preserves index-only behavior. For arg reductions, `tmp` is keyword-only and optional; the compiler supplies the required scratch tile when it is omitted.
 
 **Parameters**:
 
@@ -355,6 +358,11 @@ Reductions collapse one dimension of a 2D tile, producing a tile with one row or
 |-----------|------|-------------|
 | `src` | `Tile` | Source tile (`[rows, cols]`) |
 | `dst` | `Tile` | Destination tile (`[1, cols]`) |
+| `dst_idx` | `Tile` | Arg-reduction index destination (`[1, cols]`) |
+| `dst_val` | `Tile` or `None` | Optional arg-reduction value destination (`[1, cols]`) |
+| `tmp` | `Tile` or `None` | Optional scratch tile for arg reductions |
+
+For column arg reductions, index-only mode uses `i32` or `ui32` indices. Value-and-index mode supports `f16`, `f32`, `ui16`, and `ui32` sources; the index width matches the source element width, and `dst_val` has the source element type.
 
 **Returns**: None.
 

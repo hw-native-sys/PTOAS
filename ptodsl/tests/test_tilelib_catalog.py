@@ -44,8 +44,8 @@ CATALOG = {
     "pto.tcolexpandmin": ("template_tcolexpandmin", "pto.vmin", ("src0", "src1", "dst"), "f32"),
     "pto.tcolexpandmul": ("template_tcolexpandmul", "pto.vmul", ("src0", "src1", "dst"), "f32"),
     "pto.tcolexpandsub": ("template_tcolexpandsub", "pto.vsub", ("src0", "src1", "dst"), "f32"),
-    "pto.tcolargmax": ("template_tcolargmax_f32_to_i32", "pto.vcmp", ("src", "tmp", "dst"), "f32"),
-    "pto.tcolargmin": ("template_tcolargmin_f32_to_i32", "pto.vcmp", ("src", "tmp", "dst"), "f32"),
+    "pto.tcolargmax": ("template_tcolargmax_f32_to_i32", "pto.vcmp", ("src", "tmp", "dst_idx", "dst_val"), "f32"),
+    "pto.tcolargmin": ("template_tcolargmin_f32_to_i32", "pto.vcmp", ("src", "tmp", "dst_idx", "dst_val"), "f32"),
     "pto.tcolmax": ("template_tcolmax", "pto.vmax", ("src", "dst"), "f32"),
     "pto.tcolmin": ("template_tcolmin", "pto.vmin", ("src", "dst"), "f32"),
     "pto.tcolprod": ("template_tcolprod", "pto.vmul", ("src", "dst"), "f32"),
@@ -139,8 +139,8 @@ CATALOG = {
     "pto.trem": ("template_trem_1d", "pto.vtrc", ("src0", "src1", "tmp", "dst"), "f32"),
     "pto.trems": ("template_trems_1d", "pto.vtrc", ("src", "scalar", "tmp", "dst"), "f32"),
     "pto.trsqrt": ("template_trsqrt_1d", "pto.vsqrt", ("src", "dst"), "f32"),
-    "pto.trowargmax": ("template_trowargmax", "pto.vdintlv", ("src", "tmp", "dst"), "f32"),
-    "pto.trowargmin": ("template_trowargmin", "pto.vdintlv", ("src", "tmp", "dst"), "f32"),
+    "pto.trowargmax": ("template_trowargmax", "pto.vdintlv", ("src", "tmp", "dst_idx", "dst_val"), "f32"),
+    "pto.trowargmin": ("template_trowargmin", "pto.vdintlv", ("src", "tmp", "dst_idx", "dst_val"), "f32"),
     "pto.trowexpand": ("template_trowexpand", "pto.vdup", ("src", "dst"), "f32"),
     "pto.trowexpandadd": ("template_trowexpandadd", "pto.vadd", ("src0", "src1", "dst"), "f32"),
     "pto.trowexpanddiv": ("template_trowexpanddiv", "pto.vdiv", ("src0", "src1", "dst"), "f32"),
@@ -220,6 +220,7 @@ ROW_REDUCTIONS = {
     "pto.trowprod",
     "pto.trowsum",
 }
+ARG_ROW_REDUCTIONS = {"pto.trowargmax", "pto.trowargmin"}
 SPECIAL_VALID_SHAPES = {
     ("pto.tcolexpand", "src"): (1, 64),
     ("pto.trowexpand", "src"): (8, 1),
@@ -340,8 +341,10 @@ SPECIAL_OPERAND_DTYPES = {
     ("pto.tcmps", "dst"): "ui8",
     ("pto.trandom", "dst"): "ui32",
     ("pto.tsort32", "idx"): "ui32",
-    ("pto.trowargmax", "dst"): "i32",
-    ("pto.trowargmin", "dst"): "i32",
+    ("pto.trowargmax", "dst_idx"): "i32",
+    ("pto.trowargmin", "dst_idx"): "i32",
+    ("pto.tcolargmax", "dst_idx"): "i32",
+    ("pto.tcolargmin", "dst_idx"): "i32",
     ("pto.tdequant", "scale"): "f32",
     ("pto.tdequant", "offset"): "f32",
     ("pto.tdequant", "dst"): "f32",
@@ -447,12 +450,13 @@ def _specs(op, parameter_names, dtype_name):
         valid_shape = SPECIAL_VALID_SHAPES.get((op, name), (8, 64))
         if op in COLUMN_REDUCTIONS and name == "dst":
             valid_shape = (1, 64)
-        if op in ARG_COLUMN_REDUCTIONS and name == "dst":
-            operand_dtype = "i32"
+        if op in ARG_COLUMN_REDUCTIONS and name in {"dst_idx", "dst_val"}:
             valid_shape = (1, 64)
         if op == "pto.tcvt" and name == "dst":
             operand_dtype = "i32"
-        if op in ROW_REDUCTIONS and name == "dst":
+        if op in ARG_ROW_REDUCTIONS and name in {"dst_idx", "dst_val"}:
+            valid_shape = (8, 1)
+        elif op in ROW_REDUCTIONS and name == "dst":
             valid_shape = (8, 1)
         specs[name] = _tile_spec_for(op, name, operand_dtype)
         if valid_shape != specs[name].valid_shape:
@@ -486,9 +490,11 @@ def _declared_signature_specs(op, parameter_names, signature):
         valid_shape = SPECIAL_VALID_SHAPES.get((op, operand), (8, 64))
         if op in COLUMN_REDUCTIONS and operand == "dst":
             valid_shape = (1, 64)
-        if op in ARG_COLUMN_REDUCTIONS and operand == "dst":
+        if op in ARG_COLUMN_REDUCTIONS and operand in {"dst", "dst_idx", "dst_val"}:
             valid_shape = (1, 64)
-        if op in ROW_REDUCTIONS and operand == "dst":
+        if op in ARG_ROW_REDUCTIONS and operand in {"dst_idx", "dst_val"}:
+            valid_shape = (8, 1)
+        elif op in ROW_REDUCTIONS and operand == "dst":
             valid_shape = (8, 1)
         if (op, operand) in VIEW_OPERANDS:
             specs[operand] = _view_spec_for(op, operand, dtype_name)
@@ -745,12 +751,13 @@ class TileLibCatalogTest(unittest.TestCase):
             descriptor = select(op, "a5", first_specs, candidate_id=candidate_id)
             for signature in descriptor.metadata.dtypes:
                 with self.subTest(op=op, signature=signature):
-                    specs = _declared_signature_specs(op, parameter_names, signature)
-                    selected = select(op, "a5", specs, candidate_id=candidate_id)
-                    self.assertEqual(selected.name, descriptor.name)
-                    mlir = selected.specialize(**specs).mlir_text()
-                    self.assertIn(_expected_rendered_op(op, signature), mlir)
-                    self._assert_unsigned_expand_division(op, signature, mlir)
+                    self._assert_declared_signature_selectable(
+                        op,
+                        parameter_names,
+                        signature,
+                        candidate_id,
+                        descriptor.name,
+                    )
 
     def test_simple_elementwise_vec_smoke_shapes_render(self):
         cases = (
@@ -1330,15 +1337,7 @@ class TileLibCatalogTest(unittest.TestCase):
     def test_colarg_additional_dtype_versions_render(self):
         for op in ("pto.tcolargmax", "pto.tcolargmin"):
             for dtype in ("f16", "ui16", "i8", "ui8"):
-                with self.subTest(op=op, dtype=dtype):
-                    specs = {
-                        "src": TileSpec(shape=(8, 64), dtype=ScalarType(dtype)),
-                        "tmp": TileSpec(shape=(8, 64), dtype=ScalarType(dtype)),
-                        "dst": TileSpec(shape=(8, 64), dtype=ScalarType("i32"), valid_shape=(1, 64)),
-                    }
-                    selected = select(op, "a5", specs)
-                    self.assertIn(dtype, selected.name)
-                    self.assertIn("pto.vcmp", selected.specialize(**specs).mlir_text())
+                self._assert_colarg_dtype_version_renders(op, dtype)
 
     def test_colarg_full_dtype_matrix_renders(self):
         # Every src dtype must pair with both i32 and ui32 index outputs
@@ -1350,12 +1349,26 @@ class TileLibCatalogTest(unittest.TestCase):
                     specs = {
                         "src": TileSpec(shape=(8, 64), dtype=ScalarType(src_dtype)),
                         "tmp": TileSpec(shape=(8, 64), dtype=ScalarType(src_dtype)),
-                        "dst": TileSpec(shape=(8, 64), dtype=ScalarType(index_dtype), valid_shape=(1, 64)),
+                        "dst_idx": TileSpec(
+                            shape=(8, 64),
+                            dtype=ScalarType(index_dtype),
+                            valid_shape=(1, 64),
+                        ),
                     }
                     selected = select(op, "a5", specs)
                     mlir = selected.specialize(**specs).mlir_text()
                     self.assertIn("pto.vcmp", mlir)
                     self.assertIn("pto.vsel", mlir)
+
+    def test_colarg_value_output_uses_source_width_index(self):
+        cases = product(
+            ("pto.tcolargmax", "pto.tcolargmin"),
+            ("f16", "ui16"),
+            ("i16", "ui16", "i32", "ui32"),
+        )
+        for op, src_dtype, index_dtype in cases:
+            with self.subTest(op=op, src=src_dtype, index=index_dtype):
+                self._assert_colarg_value_output_case(op, src_dtype, index_dtype)
 
     def test_tload_versions_render(self):
         cases = (
@@ -2014,12 +2027,67 @@ class TileLibCatalogTest(unittest.TestCase):
                 self.assertEqual(selected.name, expected_name)
                 self.assertIn("pto.vmul", selected.specialize(**specs).mlir_text())
 
+    def _assert_declared_signature_selectable(
+        self, op, parameter_names, signature, candidate_id, expected_name
+    ):
+        specs = _declared_signature_specs(op, parameter_names, signature)
+        selected = select(op, "a5", specs, candidate_id=candidate_id)
+        self.assertEqual(selected.name, expected_name)
+        mlir = selected.specialize(**specs).mlir_text()
+        self.assertIn(_expected_rendered_op(op, signature), mlir)
+        self._assert_unsigned_expand_division(op, signature, mlir)
+
+    def _assert_colarg_value_output_case(self, op, src_dtype, index_dtype):
+        specs = {
+            "src": TileSpec(shape=(8, 64), dtype=ScalarType(src_dtype)),
+            "tmp": TileSpec(shape=(8, 64), dtype=ScalarType(src_dtype)),
+            "dst_idx": TileSpec(
+                shape=(8, 64),
+                dtype=ScalarType(index_dtype),
+                valid_shape=(1, 64),
+            ),
+            "dst_val": TileSpec(
+                shape=(8, 64),
+                dtype=ScalarType(src_dtype),
+                valid_shape=(1, 64),
+            ),
+        }
+        if index_dtype in {"i16", "ui16"}:
+            selected = select(op, "a5", specs)
+            self.assertIn("f16_ui16", selected.name)
+            self.assertIn("pto.vcmp", selected.specialize(**specs).mlir_text())
+            return
+
+        with self.assertRaises(tilelib.NoMatchingTemplate):
+            select(op, "a5", specs)
+
     def _assert_unsigned_expand_division(self, op, signature, mlir):
         if op in {"pto.trowexpanddiv", "pto.tcolexpanddiv"} and signature[0] in {
             "ui8", "ui16", "ui32"
         }:
             self.assertIn("pto.vsel", mlir)
             self.assertNotIn("pto.vdiv", mlir)
+
+    def _assert_colarg_dtype_version_renders(self, op, dtype):
+        with self.subTest(op=op, dtype=dtype):
+            specs = {
+                "src": TileSpec(shape=(8, 64), dtype=ScalarType(dtype)),
+                "tmp": TileSpec(shape=(8, 64), dtype=ScalarType(dtype)),
+                "dst_idx": TileSpec(
+                    shape=(8, 64),
+                    dtype=ScalarType("i16" if dtype in {"f16", "ui16"} else "i32"),
+                    valid_shape=(1, 64),
+                ),
+            }
+            if dtype in {"f16", "ui16"}:
+                specs["dst_val"] = TileSpec(
+                    shape=(8, 64),
+                    dtype=ScalarType(dtype),
+                    valid_shape=(1, 64),
+                )
+            selected = select(op, "a5", specs)
+            self.assertIn(dtype, selected.name)
+            self.assertIn("pto.vcmp", selected.specialize(**specs).mlir_text())
 
 if __name__ == "__main__":
     unittest.main()

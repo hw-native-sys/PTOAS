@@ -103,10 +103,23 @@ PTO_DEFINE_UNARY_EFFECTS(TColMaxOp, getSrcMutable(), getDstMutable())
 PTO_DEFINE_UNARY_EFFECTS(TColMinOp, getSrcMutable(), getDstMutable())
 PTO_DEFINE_UNARY_EFFECTS(TColProdOp, getSrcMutable(), getDstMutable())
 
-PTO_DEFINE_UNARY_SCRATCH_EFFECTS(TColArgMaxOp, getSrcMutable(),
-                                 getTmpMutable(), getDstMutable())
-PTO_DEFINE_UNARY_SCRATCH_EFFECTS(TColArgMinOp, getSrcMutable(),
-                                 getTmpMutable(), getDstMutable())
+void TColArgMaxOp::getEffects(
+    SmallVectorImpl<SideEffects::EffectInstance<MemoryEffects::Effect>> &effects) {
+  PTO_ADD_READ(effects, getSrcMutable());
+  addA2A3ScratchEffects(effects, getOperation(), getTmpMutable());
+  PTO_ADD_WRITE(effects, getDstIdxMutable());
+  addOptionalEffects(effects, getDstValMutable(), /*read=*/false,
+                     /*write=*/true);
+}
+
+void TColArgMinOp::getEffects(
+    SmallVectorImpl<SideEffects::EffectInstance<MemoryEffects::Effect>> &effects) {
+  PTO_ADD_READ(effects, getSrcMutable());
+  addA2A3ScratchEffects(effects, getOperation(), getTmpMutable());
+  PTO_ADD_WRITE(effects, getDstIdxMutable());
+  addOptionalEffects(effects, getDstValMutable(), /*read=*/false,
+                     /*write=*/true);
+}
 
 void TColSumOp::getEffects(
     SmallVectorImpl<SideEffects::EffectInstance<MemoryEffects::Effect>> &effects) {

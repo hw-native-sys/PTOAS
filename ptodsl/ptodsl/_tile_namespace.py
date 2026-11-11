@@ -169,19 +169,25 @@ class _TileNamespace:
         return _ops.trowprod(src, _resolve_row_reduction_tmp(src, tmp), dst)
 
     @staticmethod
-    def rowargmax(src, dst, *, tmp=None):
-        return _ops.trowargmax(src, _resolve_row_reduction_tmp(src, tmp), dst)
+    def rowargmax(src, dst_idx, dst_val=None, *, tmp=None):
+        return _ops.trowargmax(src, dst_idx, dst_val, tmp=tmp)
 
     @staticmethod
-    def rowargmin(src, dst, *, tmp=None):
-        return _ops.trowargmin(src, _resolve_row_reduction_tmp(src, tmp), dst)
+    def rowargmin(src, dst_idx, dst_val=None, *, tmp=None):
+        return _ops.trowargmin(src, dst_idx, dst_val, tmp=tmp)
 
     colsum = staticmethod(_ops.tcolsum)
     colmax = staticmethod(_ops.tcolmax)
     colmin = staticmethod(_ops.tcolmin)
     colprod = staticmethod(_ops.tcolprod)
-    colargmax = staticmethod(_ops.tcolargmax)
-    colargmin = staticmethod(_ops.tcolargmin)
+
+    @staticmethod
+    def colargmax(src, dst_idx, dst_val=None, *, tmp=None):
+        return _ops.tcolargmax(src, dst_idx, dst_val, tmp=tmp)
+
+    @staticmethod
+    def colargmin(src, dst_idx, dst_val=None, *, tmp=None):
+        return _ops.tcolargmin(src, dst_idx, dst_val, tmp=tmp)
 
     cmp = staticmethod(_ops.tcmp)
     cmps = staticmethod(_ops.tcmps)

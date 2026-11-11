@@ -88,7 +88,9 @@ void TRowArgMaxOp::getEffects(
   // scratch write inflates local-memory planning and can trigger false
   // vec-overflow diagnostics, mirroring the fixed A5 TPRELU issue.
   addA2A3ScratchEffects(effects, getOperation(), getTmpMutable());
-  PTO_ADD_WRITE(effects, getDstMutable());
+  PTO_ADD_WRITE(effects, getDstIdxMutable());
+  addOptionalEffects(effects, getDstValMutable(), /*read=*/false,
+                     /*write=*/true);
 }
 
 PTO_DEFINE_UNARY_SCRATCH_EFFECTS(TRowMinOp, getSrcMutable(), getTmpMutable(),
@@ -101,7 +103,9 @@ void TRowArgMinOp::getEffects(
   // scratch write inflates local-memory planning and can trigger false
   // vec-overflow diagnostics, mirroring the fixed A5 TPRELU issue.
   addA2A3ScratchEffects(effects, getOperation(), getTmpMutable());
-  PTO_ADD_WRITE(effects, getDstMutable());
+  PTO_ADD_WRITE(effects, getDstIdxMutable());
+  addOptionalEffects(effects, getDstValMutable(), /*read=*/false,
+                     /*write=*/true);
 }
 
 PTO_DEFINE_UNARY_SCRATCH_EFFECTS(TRowSumOp, getSrcMutable(), getTmpMutable(),

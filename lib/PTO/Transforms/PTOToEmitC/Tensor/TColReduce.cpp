@@ -41,19 +41,10 @@ struct PTOColArgMaxToEmitC : public OpConversionPattern<pto::TColArgMaxOp> {
 
   LogicalResult matchAndRewrite(pto::TColArgMaxOp op, OpAdaptor adaptor,
                                 ConversionPatternRewriter &rewriter) const override {
-    auto loc = op.getLoc();
-    Value src = adaptor.getSrc();
-    Value tmp = adaptor.getTmp();
-    Value dst = adaptor.getDst();
-
-    rewriter.create<emitc::CallOpaqueOp>(
-        loc, TypeRange{}, "TCOLARGMAX",
-        /*args=*/ArrayAttr{},
-        /*templateArgs=*/ArrayAttr{},
-        /*operands=*/ValueRange{dst, src, tmp});
-
-    rewriter.eraseOp(op);
-    return success();
+      createArgReductionOpaqueCall(
+          rewriter, op, "TCOLARGMAX", adaptor.getDstVal(), adaptor.getDstIdx(), adaptor.getSrc(), adaptor.getTmp());
+      rewriter.eraseOp(op);
+      return success();
   }
 };
 
@@ -79,19 +70,10 @@ struct PTOColArgMinToEmitC : public OpConversionPattern<pto::TColArgMinOp> {
 
   LogicalResult matchAndRewrite(pto::TColArgMinOp op, OpAdaptor adaptor,
                                 ConversionPatternRewriter &rewriter) const override {
-    auto loc = op.getLoc();
-    Value src = adaptor.getSrc();
-    Value tmp = adaptor.getTmp();
-    Value dst = adaptor.getDst();
-
-    rewriter.create<emitc::CallOpaqueOp>(
-        loc, TypeRange{}, "TCOLARGMIN",
-        /*args=*/ArrayAttr{},
-        /*templateArgs=*/ArrayAttr{},
-        /*operands=*/ValueRange{dst, src, tmp});
-
-    rewriter.eraseOp(op);
-    return success();
+      createArgReductionOpaqueCall(
+          rewriter, op, "TCOLARGMIN", adaptor.getDstVal(), adaptor.getDstIdx(), adaptor.getSrc(), adaptor.getTmp());
+      rewriter.eraseOp(op);
+      return success();
   }
 };
 

@@ -56,6 +56,7 @@
 #include "PTO/Transforms/TileLibService.h"
 #include "PTO/Transforms/TileOpExpansionUtils.h"
 #include "Utils.h"
+#include "ArgReductionTemplateUtils.h"
 
 namespace mlir {
 namespace pto {
@@ -955,14 +956,19 @@ static std::optional<OperandTypeInfo> buildOperandTypeInfo(Value value) {
   return buildScalarOperandTypeInfo(value, ty);
 }
 
+static SmallVector<Value, 4> getTileLibOperands(Operation *op) {
+  return pto::detail::getArgReductionTemplateOperands(op);
+}
+
 
 static FailureOr<SpecKey> buildSpecKey(Operation *op) {
   SpecKey key;
   key.opName = getTileOpName(op).str();
   key.targetArch = getTargetArchString(op);
 
-  for (unsigned i = 0; i < op->getNumOperands(); ++i) {
-    auto info = buildOperandTypeInfo(op->getOperand(i));
+  SmallVector<Value, 4> operands = getTileLibOperands(op);
+  for (Value operand : operands) {
+    auto info = buildOperandTypeInfo(operand);
     if (!info) {
       op->emitError("ExpandTileOp: cannot build specialization key for this "
                     "operand schema");
@@ -1451,15 +1457,15 @@ LogicalResult ExpandState::expandTileOpsInFunction(func::FuncOp func,
     // partition_tensor_view), insert an unrealized_conversion_cast bridge.
     // FoldTileBufIntrinsics will later resolve these casts.
     builder.setInsertionPoint(op);
-    SmallVector<Value> operands;
+    SmallVector<Value, 4> operands = getTileLibOperands(op);
     auto fnArgTypes = dslFn.getArgumentTypes();
-    for (unsigned i = 0; i < op->getNumOperands(); ++i) {
-      Value operand = op->getOperand(i);
+    for (unsigned i = 0; i < operands.size(); ++i) {
+      Value operand = operands[i];
       if (i < fnArgTypes.size() && operand.getType() != fnArgTypes[i]) {
         operand = bridgeOperandToType(builder, op->getLoc(), operand,
                                       fnArgTypes[i]);
       }
-      operands.push_back(operand);
+      operands[i] = operand;
     }
     builder.create<func::CallOp>(op->getLoc(), dslFn, operands);
     op->erase();

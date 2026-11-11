@@ -1330,25 +1330,25 @@ class VectorCubeSurfaceTest(unittest.TestCase):
         self.assertEqual(mode, "#pto<quant_pre_mode no_convert>")
 
     def test_tile_selection_surface_exposes_optional_tmp(self):
-        for func, expected in [
+        for operation, expected in [
             (_ops.tsel, ["mask", "src0", "src1", "dst", "tmp"]),
             (_ops.tsels, ["mask", "src", "scalar", "dst", "tmp"]),
             (pto.tile.sel, ["mask", "src0", "src1", "dst", "tmp"]),
             (pto.tile.sels, ["mask", "src", "scalar", "dst", "tmp"]),
         ]:
-            with self.subTest(func=func):
-                signature = inspect.signature(func)
+            with self.subTest(operation=operation):
+                signature = inspect.signature(operation)
                 self.assertEqual(list(signature.parameters.keys()), expected)
                 self.assertEqual(signature.parameters["tmp"].kind, inspect.Parameter.KEYWORD_ONLY)
                 self.assertIsNone(signature.parameters["tmp"].default)
 
     def test_tile_remainder_surface_exposes_optional_tmp(self):
-        for func, expected in [
+        for operation, expected in [
             (pto.tile.rem, ["src0", "src1", "dst", "tmp", "precision"]),
             (pto.tile.rems, ["src", "scalar", "dst", "tmp"]),
         ]:
-            with self.subTest(func=func):
-                signature = inspect.signature(func)
+            with self.subTest(operation=operation):
+                signature = inspect.signature(operation)
                 self.assertEqual(list(signature.parameters), expected)
                 self.assertEqual(signature.parameters["tmp"].kind, inspect.Parameter.KEYWORD_ONLY)
                 self.assertIsNone(signature.parameters["tmp"].default)
@@ -1386,12 +1386,12 @@ class VectorCubeSurfaceTest(unittest.TestCase):
             pto.tile.rowexpanddiv: "div_precision",
             pto.tile.colexpanddiv: "div_precision",
         }
-        for func, legacy_keyword in legacy_keywords.items():
-            with self.subTest(func=func):
-                self.assertIn("precision", inspect.signature(func).parameters)
-                self.assertIn(legacy_keyword, inspect.signature(func).parameters)
+        for operation, legacy_keyword in legacy_keywords.items():
+            with self.subTest(operation=operation):
+                self.assertIn("precision", inspect.signature(operation).parameters)
+                self.assertIn(legacy_keyword, inspect.signature(operation).parameters)
                 self.assertIs(
-                    inspect.signature(func).parameters[legacy_keyword].default,
+                    inspect.signature(operation).parameters[legacy_keyword].default,
                     _ops._UNSET,
                 )
 
@@ -1546,28 +1546,20 @@ class VectorCubeSurfaceTest(unittest.TestCase):
                 _ops.tsels(mask, src, scalar, dst, tmp=tmp)
             tsels_op.assert_called_once_with(mask, src, coerced_scalar, dst, tmp=tmp)
 
-    def test_tile_row_reductions_expose_optional_tmp_and_synthesize_one(self):
+    def test_tile_non_arg_row_reductions_expose_optional_tmp(self):
         src = SimpleNamespace(type="src_ty")
         dst = object()
         tmp = object()
         synthesized_tmp = object()
 
-        row_cases = [
+        for name, low_level_name in (
             ("rowsum", "trowsum"),
             ("rowmax", "trowmax"),
             ("rowmin", "trowmin"),
             ("rowprod", "trowprod"),
-            ("rowargmax", "trowargmax"),
-            ("rowargmin", "trowargmin"),
-        ]
-
-        for name, low_level_name in row_cases:
+        ):
             with self.subTest(func=name):
-                signature = inspect.signature(getattr(pto.tile, name))
-                self.assertEqual(list(signature.parameters.keys()), ["src", "dst", "tmp"])
-                self.assertEqual(signature.parameters["tmp"].kind, inspect.Parameter.KEYWORD_ONLY)
-                self.assertIsNone(signature.parameters["tmp"].default)
-
+                self._assert_row_reduction_signature(name, ["src", "dst", "tmp"])
                 with patch_ops("unwrap_surface_value", side_effect=_identity), \
                      patch_ops("alloc_tile", return_value=synthesized_tmp) as alloc_tile, \
                      patch_ops(low_level_name) as low_level_op:
@@ -1718,10 +1710,10 @@ class VectorCubeSurfaceTest(unittest.TestCase):
              patch.object(_ops._pto, "sync_set") as sync_set_op, \
              patch.object(_ops._pto, "sync_wait") as sync_wait_op:
             for case in cases:
-                func, args, kwargs, context, *expected_range = case
-                with self.subTest(func=func.__name__, event_id=kwargs.get("event_id", args[-1])):
+                operation, args, kwargs, context, *expected_range = case
+                with self.subTest(operation=operation.__name__, event_id=kwargs.get("event_id", args[-1])):
                     with self.assertRaises(ValueError) as exc:
-                        func(*args, **kwargs)
+                        operation(*args, **kwargs)
                     message = str(exc.exception)
                     self.assertIn(context, message)
                     self.assertIn(expected_range[0] if expected_range else "[0, 7]", message)
@@ -1767,10 +1759,10 @@ class VectorCubeSurfaceTest(unittest.TestCase):
 
         with patch.object(_ops._pto, "sync_set") as sync_set_op, \
              patch.object(_ops._pto, "sync_wait") as sync_wait_op:
-            for func, args, context, expected, actual in cases:
-                with self.subTest(func=func.__name__, pipe=args[0]):
+            for operation, args, context, expected, actual in cases:
+                with self.subTest(operation=operation.__name__, pipe=args[0]):
                     with self.assertRaises(ValueError) as exc:
-                        func(*args)
+                        operation(*args)
                     message = str(exc.exception)
                     self.assertIn(context, message)
                     self.assertIn(expected, message)
@@ -2238,6 +2230,14 @@ class VectorCubeSurfaceTest(unittest.TestCase):
         # M = 6x6 = 36 -> repeat_source_stride = ceil(36/16) = 3 16-row blocks.
         self.assertEqual(operands[20], "mte_l1_l0a_3d repeat_source_stride:3")
         self.assertEqual(operands[21], "mte_l1_l0a_3d dst_stride:4")
+
+    def _assert_row_reduction_signature(self, name, parameters):
+        signature = inspect.signature(getattr(pto.tile, name))
+        self.assertEqual(list(signature.parameters), parameters)
+        self.assertEqual(
+            signature.parameters["tmp"].kind, inspect.Parameter.KEYWORD_ONLY
+        )
+        self.assertIsNone(signature.parameters["tmp"].default)
 
 
 if __name__ == "__main__":

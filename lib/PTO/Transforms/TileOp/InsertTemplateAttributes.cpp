@@ -11,6 +11,7 @@
 #include "PTO/IR/PTOTypeUtils.h"
 #include "PTO/Transforms/Passes.h"
 #include "PTO/Transforms/TileOpExpansionUtils.h"
+#include "ArgReductionTemplateUtils.h"
 
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/Func/IR/FuncOps.h"
@@ -817,8 +818,11 @@ static bool appendOperandSpecJson(std::string &json, Value operand,
 
 static std::optional<std::string>
 buildOperandSpecsJson(Operation *operation) {
+  SmallVector<Value, 4> operands =
+      pto::detail::getArgReductionTemplateOperands(operation);
+
   std::string json = "[";
-  for (auto [index, operand] : llvm::enumerate(operation->getOperands())) {
+  for (auto [index, operand] : llvm::enumerate(operands)) {
     if (index != 0) {
       json += ",";
     }

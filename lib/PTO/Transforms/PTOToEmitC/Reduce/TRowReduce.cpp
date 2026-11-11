@@ -49,18 +49,10 @@ struct PTORowArgMaxToEmitC
 
   LogicalResult matchAndRewrite(pto::TRowArgMaxOp op, OpAdaptor adaptor,
                                 ConversionPatternRewriter &rewriter) const override {
-    auto loc = op.getLoc();
-    Value src = adaptor.getSrc();
-    Value tmp = adaptor.getTmp();
-    Value dst = adaptor.getDst();
-
-    rewriter.create<emitc::CallOpaqueOp>(
-        loc, TypeRange{}, "TROWARGMAX",
-        /*args=*/ArrayAttr{}, /*templateArgs=*/ArrayAttr{},
-        /*operands=*/ValueRange{dst, src, tmp});
-
-    rewriter.eraseOp(op);
-    return success();
+      createArgReductionOpaqueCall(
+          rewriter, op, "TROWARGMAX", adaptor.getDstVal(), adaptor.getDstIdx(), adaptor.getSrc(), adaptor.getTmp());
+      rewriter.eraseOp(op);
+      return success();
   }
 };
 
@@ -71,18 +63,10 @@ struct PTORowArgMinToEmitC
 
   LogicalResult matchAndRewrite(pto::TRowArgMinOp op, OpAdaptor adaptor,
                                 ConversionPatternRewriter &rewriter) const override {
-    auto loc = op.getLoc();
-    Value src = adaptor.getSrc();
-    Value tmp = adaptor.getTmp();
-    Value dst = adaptor.getDst();
-
-    rewriter.create<emitc::CallOpaqueOp>(
-        loc, TypeRange{}, "TROWARGMIN",
-        /*args=*/ArrayAttr{}, /*templateArgs=*/ArrayAttr{},
-        /*operands=*/ValueRange{dst, src, tmp});
-
-    rewriter.eraseOp(op);
-    return success();
+      createArgReductionOpaqueCall(
+          rewriter, op, "TROWARGMIN", adaptor.getDstVal(), adaptor.getDstIdx(), adaptor.getSrc(), adaptor.getTmp());
+      rewriter.eraseOp(op);
+      return success();
   }
 };
 

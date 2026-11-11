@@ -233,7 +233,8 @@ static LogicalResult verifyTColArgTmpA2A3(Operation* op, Type srcTy, Type tmpTy)
 }
 
 static LogicalResult verifyColArgReductionTypes(Operation *op, Type srcTy,
-                                                Type dstTy,
+                                                Type dstIdxTy,
+                                                bool indexOnly,
                                                 StringRef srcTypeError) {
   Type srcElemTy = getElemTy(srcTy);
   unsigned srcElemBits =
@@ -241,52 +242,115 @@ static LogicalResult verifyColArgReductionTypes(Operation *op, Type srcTy,
   if (!(mlir::isa<IntegerType, FloatType>(srcElemTy) &&
         (srcElemBits == mlir::pto::kValue8 ||
          srcElemBits == mlir::pto::kValue16 ||
-         srcElemBits == mlir::pto::kValue32)))
+         srcElemBits == mlir::pto::kValue32))) {
     return op->emitOpError(srcTypeError);
-  auto dstInt = dyn_cast<IntegerType>(getElemTy(dstTy));
-  if (!dstInt || dstInt.getWidth() != mlir::pto::kValue32)
-    return op->emitOpError("expects dst element type to be i32 or ui32");
+  }
+  auto dstInt = dyn_cast<IntegerType>(getElemTy(dstIdxTy));
+  unsigned expectedIndexBits = indexOnly ? mlir::pto::kValue32 : srcElemBits;
+  bool invalidIndexType = !dstInt || dstInt.getWidth() != expectedIndexBits;
+  if (invalidIndexType) {
+    return op->emitOpError()
+           << "expects dstIdx element type to be i" << expectedIndexBits
+           << " or ui" << expectedIndexBits;
+  }
+  if (!indexOnly) {
+    auto srcInt = dyn_cast<IntegerType>(srcElemTy);
+    bool supportedSource = srcElemTy.isF16() || srcElemTy.isF32() ||
+                           (srcInt && srcInt.isUnsigned() &&
+                            (srcInt.getWidth() == mlir::pto::kValue16 ||
+                             srcInt.getWidth() == mlir::pto::kValue32));
+    if (!supportedSource) {
+      return op->emitOpError(
+          "value+index mode supports f16/f32/ui16/ui32 source elements");
+    }
+  }
   return success();
 }
 
 static LogicalResult verifyColArgReductionTail(Operation *op, Type srcTy,
-                                               Type dstTy,
+                                               Type dstIdxTy,
+                                               bool indexOnly,
                                                StringRef srcTypeError) {
   if (failed(verifyColReductionValidRegion(
-          op, srcTy, dstTy, /*requireNonZeroSrc=*/true)))
+          op, srcTy, dstIdxTy, /*requireNonZeroSrc=*/true))) {
     return failure();
-  return verifyColArgReductionTypes(op, srcTy, dstTy, srcTypeError);
+  }
+  return verifyColArgReductionTypes(op, srcTy, dstIdxTy, indexOnly,
+                                    srcTypeError);
 }
 
-static LogicalResult verifyTColArgReductionOpA2A3(Operation* op, Type srcTy, Type tmpTy, Type dstTy)
-{
-    if (failed(verifyNDStyleVecTile(op, srcTy, "src")) || failed(verifyTColArgTmpA2A3(op, srcTy, tmpTy)) ||
-        failed(verifyColArgReductionDstLayout(op, dstTy, "dst"))) {
-        return failure();
-    }
-    return verifyColArgReductionTail(
-        op, srcTy, dstTy,
-        "expects src/tmp element type to be 1, 2, or 4 bytes wide");
+static LogicalResult verifyColArgReductionValueDst(Operation *op, Type srcTy,
+                                                   Type dstValTy,
+                                                   bool indexOnly) {
+  if (indexOnly) {
+    return success();
+  }
+  if (failed(verifyNDStyleVecTile(op, dstValTy, "dstVal"))) {
+    return failure();
+  }
+  bool elementTypeMismatch = getElemTy(srcTy) != getElemTy(dstValTy);
+  if (elementTypeMismatch) {
+    return op->emitOpError("expects dstVal element type to match src");
+  }
+  return verifyColReductionValidRegion(op, srcTy, dstValTy,
+                                       /*requireNonZeroSrc=*/true);
 }
 
-static LogicalResult verifyTColArgReductionNoTmp(Operation* op, Type srcTy, Type dstTy)
-{
-    if (failed(verifyNDStyleVecTile(op, srcTy, "src")) ||
-        failed(verifyColArgReductionDstLayout(op, dstTy, "dst"))) {
-        return failure();
-    }
-    return verifyColArgReductionTail(
-        op, srcTy, dstTy,
-        "expects src element type to be 1, 2, or 4 bytes wide");
+static LogicalResult verifyTColArgReductionOutputs(
+    Operation *op, Type srcTy, Type dstIdxTy, Type dstValTy,
+    bool indexOnly, StringRef srcTypeError) {
+  if (failed(verifyColArgReductionTail(op, srcTy, dstIdxTy, indexOnly,
+                                      srcTypeError)) ||
+      failed(verifyColArgReductionValueDst(op, srcTy, dstValTy, indexOnly))) {
+    return failure();
+  }
+  return success();
 }
 
-static LogicalResult verifyTColArgReductionOpA5(Operation* op, Type srcTy, Type tmpTy, Type dstTy)
-{
-    if (failed(verifyNDStyleVecTile(op, srcTy, "src")) || failed(verifyVecTileCommon(op, tmpTy, "tmp")) ||
-        failed(verifyColArgReductionDstLayout(op, dstTy, "dst"))) {
-        return failure();
-    }
-    return verifyColArgReductionTail(
-        op, srcTy, dstTy,
-        "expects src element type to be 1, 2, or 4 bytes wide");
+static LogicalResult verifyTColArgReductionOpA2A3(
+    Operation *op, Type srcTy, Type tmpTy, Type dstIdxTy, Type dstValTy,
+    bool indexOnly) {
+  if (failed(verifyNDStyleVecTile(op, srcTy, "src"))) {
+    return failure();
+  }
+  if (failed(verifyTColArgTmpA2A3(op, srcTy, tmpTy))) {
+    return failure();
+  }
+  if (failed(verifyColArgReductionDstLayout(op, dstIdxTy, "dstIdx"))) {
+    return failure();
+  }
+  return verifyTColArgReductionOutputs(
+      op, srcTy, dstIdxTy, dstValTy, indexOnly,
+      "expects src/tmp element type to be 1, 2, or 4 bytes wide");
+}
+
+static LogicalResult verifyTColArgReductionNoTmp(
+    Operation *op, Type srcTy, Type dstIdxTy, Type dstValTy,
+    bool indexOnly) {
+  if (failed(verifyNDStyleVecTile(op, srcTy, "src"))) {
+    return failure();
+  }
+  if (failed(verifyColArgReductionDstLayout(op, dstIdxTy, "dstIdx"))) {
+    return failure();
+  }
+  return verifyTColArgReductionOutputs(
+      op, srcTy, dstIdxTy, dstValTy, indexOnly,
+      "expects src element type to be 1, 2, or 4 bytes wide");
+}
+
+static LogicalResult verifyTColArgReductionOpA5(
+    Operation *op, Type srcTy, Type tmpTy, Type dstIdxTy, Type dstValTy,
+    bool indexOnly) {
+  if (failed(verifyNDStyleVecTile(op, srcTy, "src"))) {
+    return failure();
+  }
+  if (failed(verifyVecTileCommon(op, tmpTy, "tmp"))) {
+    return failure();
+  }
+  if (failed(verifyColArgReductionDstLayout(op, dstIdxTy, "dstIdx"))) {
+    return failure();
+  }
+  return verifyTColArgReductionOutputs(
+      op, srcTy, dstIdxTy, dstValTy, indexOnly,
+      "expects src element type to be 1, 2, or 4 bytes wide");
 }

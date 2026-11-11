@@ -272,6 +272,25 @@ Value createFFTSMsg(ConversionPatternRewriter &rewriter, Location loc, Value eve
 void createOpaqueCall(ConversionPatternRewriter &rewriter, Location loc,
                       TypeRange resultTypes, StringRef callee, ArrayAttr args,
                       ArrayAttr templateArgs, ValueRange operands);
+inline void createArgReductionOpaqueCall(
+    ConversionPatternRewriter& rewriter, Operation* op, StringRef callee, Value dstVal, Value dstIdx, Value src,
+    Value tmp)
+{
+    constexpr unsigned kArgReductionMaxOperands = 4;
+    SmallVector<Value, kArgReductionMaxOperands> operands;
+    if (dstVal) {
+        operands.push_back(dstVal);
+    }
+    operands.push_back(dstIdx);
+    operands.push_back(src);
+    if (tmp) {
+        operands.push_back(tmp);
+    }
+    rewriter.create<emitc::CallOpaqueOp>(
+        op->getLoc(), TypeRange{}, callee,
+        /*args=*/ArrayAttr{}, /*templateArgs=*/ArrayAttr{},
+        /*operands=*/operands);
+}
 void createLastUseAwareOpaqueCall(
     ConversionPatternRewriter &rewriter, Operation *op, TypeRange resultTypes,
     StringRef callee, ValueRange operands, ArrayAttr args = ArrayAttr{},

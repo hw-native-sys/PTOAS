@@ -10,7 +10,20 @@ module {
                    outs(%dst : !pto.tile_buf<loc=vec, dtype=ui32, rows=1, cols=32, v_row=1, v_col=32, blayout=row_major, slayout=none_box, fractal=512, pad=0>)
     return
   }
+
+  func.func @tcolargmax_dual_emitc() {
+    %src = pto.alloc_tile : !pto.tile_buf<loc=vec, dtype=f16, rows=16, cols=32, v_row=16, v_col=32, blayout=row_major, slayout=none_box, fractal=512, pad=0>
+    %tmp = pto.alloc_tile : !pto.tile_buf<loc=vec, dtype=f16, rows=16, cols=32, v_row=16, v_col=32, blayout=row_major, slayout=none_box, fractal=512, pad=0>
+    %dst_idx = pto.alloc_tile : !pto.tile_buf<loc=vec, dtype=ui16, rows=1, cols=32, v_row=1, v_col=32, blayout=row_major, slayout=none_box, fractal=512, pad=0>
+    %dst_val = pto.alloc_tile : !pto.tile_buf<loc=vec, dtype=f16, rows=1, cols=32, v_row=1, v_col=32, blayout=row_major, slayout=none_box, fractal=512, pad=0>
+
+    pto.tcolargmax ins(%src, %tmp : !pto.tile_buf<loc=vec, dtype=f16, rows=16, cols=32, v_row=16, v_col=32, blayout=row_major, slayout=none_box, fractal=512, pad=0>, !pto.tile_buf<loc=vec, dtype=f16, rows=16, cols=32, v_row=16, v_col=32, blayout=row_major, slayout=none_box, fractal=512, pad=0>)
+                   outs(%dst_idx, %dst_val : !pto.tile_buf<loc=vec, dtype=ui16, rows=1, cols=32, v_row=1, v_col=32, blayout=row_major, slayout=none_box, fractal=512, pad=0>, !pto.tile_buf<loc=vec, dtype=f16, rows=1, cols=32, v_row=1, v_col=32, blayout=row_major, slayout=none_box, fractal=512, pad=0>)
+    return
+  }
 }
 
 // A3-LABEL: AICORE void tcolargmax_emitc()
-// A3: TCOLARGMAX(
+// A3: TCOLARGMAX({{[^,]+}}, {{[^,]+}}, {{[^)]+}});
+// A3-LABEL: AICORE void tcolargmax_dual_emitc()
+// A3: TCOLARGMAX({{[^,]+}}, {{[^,]+}}, {{[^,]+}}, {{[^)]+}});

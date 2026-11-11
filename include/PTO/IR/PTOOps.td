@@ -4378,16 +4378,18 @@ def TColMaxOp : PTO_TOp<"tcolmax", [
 }
 
 def TColArgMaxOp : PTO_TOp<"tcolargmax", [
+  AttrSizedOperandSegments,
   PTO_DpsInitOpInterface,
   OpPipeInterface,
   DeclareOpInterfaceMethods<MemoryEffectsOpInterface>
 ]> {
-  let summary = "Reduce each column to the row index of the maximum element ";
+  let summary = "Write the row index where each column's maximum occurs and optionally that value";
 
   let arguments = (ins
     PTODpsType:$src,
     Optional<PTODpsType>:$tmp,
-    PTODpsType:$dst
+    PTODpsType:$dstIdx,
+    Optional<PTODpsType>:$dstVal
   );
 
   let results = (outs);
@@ -4396,7 +4398,10 @@ def TColArgMaxOp : PTO_TOp<"tcolargmax", [
 
   let extraClassDeclaration = [{
     ::mlir::pto::PIPE getPipe() { return ::mlir::pto::PIPE::PIPE_V; }
-    ::mlir::MutableOperandRange getDpsInitsMutable() { return getDstMutable(); }
+    ::mlir::MutableOperandRange getDpsInitsMutable() {
+      return ::mlir::MutableOperandRange(getOperation(), getTmp() ? 2 : 1,
+                                         getDstVal() ? 2 : 1);
+    }
   }];
 
   let hasCustomAssemblyFormat = 1;
@@ -4431,16 +4436,18 @@ def TColMinOp : PTO_TOp<"tcolmin", [
 }
 
 def TColArgMinOp : PTO_TOp<"tcolargmin", [
+  AttrSizedOperandSegments,
   PTO_DpsInitOpInterface,
   OpPipeInterface,
   DeclareOpInterfaceMethods<MemoryEffectsOpInterface>
 ]> {
-  let summary = "Reduce each column to the row index of the minimum element ";
+  let summary = "Write the row index where each column's minimum occurs and optionally that value";
 
   let arguments = (ins
     PTODpsType:$src,
     Optional<PTODpsType>:$tmp,
-    PTODpsType:$dst
+    PTODpsType:$dstIdx,
+    Optional<PTODpsType>:$dstVal
   );
 
   let results = (outs);
@@ -4449,7 +4456,10 @@ def TColArgMinOp : PTO_TOp<"tcolargmin", [
 
   let extraClassDeclaration = [{
     ::mlir::pto::PIPE getPipe() { return ::mlir::pto::PIPE::PIPE_V; }
-    ::mlir::MutableOperandRange getDpsInitsMutable() { return getDstMutable(); }
+    ::mlir::MutableOperandRange getDpsInitsMutable() {
+      return ::mlir::MutableOperandRange(getOperation(), getTmp() ? 2 : 1,
+                                         getDstVal() ? 2 : 1);
+    }
   }];
 
   let hasCustomAssemblyFormat = 1;
@@ -6346,16 +6356,18 @@ def TRowMaxOp: PTO_TOp<"trowmax", [
 }
 
 def TRowArgMaxOp: PTO_TOp<"trowargmax", [
+  AttrSizedOperandSegments,
   PTO_DpsInitOpInterface,
   OpPipeInterface,
   DeclareOpInterfaceMethods<MemoryEffectsOpInterface>
 ]> {
-  let summary = "TROWARGMAX: Reduce each row to the column index of the maximum element.";
+  let summary = "TROWARGMAX: Write the column index where each row's maximum occurs and optionally that value.";
 
   let arguments = (ins
     PTODpsType:$src,
     Optional<PTODpsType>:$tmp,
-    PTODpsType:$dst
+    PTODpsType:$dstIdx,
+    Optional<PTODpsType>:$dstVal
   );
 
   let results = (outs);
@@ -6366,7 +6378,10 @@ def TRowArgMaxOp: PTO_TOp<"trowargmax", [
 
   let extraClassDeclaration = [{
     ::mlir::pto::PIPE getPipe() { return ::mlir::pto::PIPE::PIPE_V; }
-    ::mlir::MutableOperandRange getDpsInitsMutable() { return getDstMutable(); }
+    ::mlir::MutableOperandRange getDpsInitsMutable() {
+      return ::mlir::MutableOperandRange(getOperation(), getTmp() ? 2 : 1,
+                                         getDstVal() ? 2 : 1);
+    }
   }];
 }
 //===----------------------------------------------------------------------===//
@@ -6399,16 +6414,18 @@ def TRowMinOp: PTO_TOp<"trowmin", [
 }
 
 def TRowArgMinOp: PTO_TOp<"trowargmin", [
+  AttrSizedOperandSegments,
   PTO_DpsInitOpInterface,
   OpPipeInterface,
   DeclareOpInterfaceMethods<MemoryEffectsOpInterface>
 ]> {
-  let summary = "TROWARGMIN: Reduce each row to the column index of the minimum element.";
+  let summary = "TROWARGMIN: Write the column index where each row's minimum occurs and optionally that value.";
 
   let arguments = (ins
     PTODpsType:$src,
     Optional<PTODpsType>:$tmp,
-    PTODpsType:$dst
+    PTODpsType:$dstIdx,
+    Optional<PTODpsType>:$dstVal
   );
 
   let results = (outs);
@@ -6419,7 +6436,10 @@ def TRowArgMinOp: PTO_TOp<"trowargmin", [
 
   let extraClassDeclaration = [{
     ::mlir::pto::PIPE getPipe() { return ::mlir::pto::PIPE::PIPE_V; }
-    ::mlir::MutableOperandRange getDpsInitsMutable() { return getDstMutable(); }
+    ::mlir::MutableOperandRange getDpsInitsMutable() {
+      return ::mlir::MutableOperandRange(getOperation(), getTmp() ? 2 : 1,
+                                         getDstVal() ? 2 : 1);
+    }
   }];
 }
 //===----------------------------------------------------------------------===//

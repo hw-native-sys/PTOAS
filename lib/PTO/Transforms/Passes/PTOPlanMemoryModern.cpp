@@ -152,7 +152,8 @@ static bool isIgnoredA5TmpOperandUse(OpOperand &use) {
   }
 
   if (isNameIn(name, {"pto.trowargmax", "pto.trowargmin", "pto.trowmax",
-                     "pto.trowmin", "pto.trowsum", "pto.trowprod"})) {
+                     "pto.trowmin", "pto.trowsum", "pto.trowprod",
+                     "pto.tcolargmax", "pto.tcolargmin"})) {
     return operandNo == 1;
   }
 
@@ -1144,7 +1145,8 @@ struct PlannerAnalysis {
 
         if (auto allocTile = dyn_cast<pto::AllocTileOp>(op)) {
           if (!allocTile.getAddr()) {
-            if (isA5IgnoredTmpAlloc(allocTile)) {
+            bool isIgnoredTmp = isA5IgnoredTmpAlloc(allocTile);
+            if (isIgnoredTmp) {
               continue;
             }
             registerRootAlloc(op, allocTile.getResult(), index);
@@ -1844,7 +1846,8 @@ static LogicalResult verifyNoUnplannedAllocTile(func::FuncOp func) {
     if (op->use_empty()) {
       return;
     }
-    if (isA5IgnoredTmpAlloc(op)) {
+    bool isIgnoredTmp = isA5IgnoredTmpAlloc(op);
+    if (isIgnoredTmp) {
       return;
     }
     op.emitError("PTOPlanMemory failed to assign an address to pto.alloc_tile");

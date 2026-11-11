@@ -4808,14 +4808,14 @@ Reduce along rows or columns of a tile. All execute on the **Vector pipeline** (
 | `pto.trowsum` | `dst[i,0] = sum_j src[i,j]` (requires tmp) |
 | `pto.trowprod` | `dst[i,0] = prod_j src[i,j]` (requires tmp) |
 | `pto.trowmax` | `dst[i,0] = max_j src[i,j]` (requires tmp) |
-| `pto.trowargmax` | `dst[i,0] = argmax_j src[i,j]` (requires tmp) |
+| `pto.trowargmax` | Writes the column index of each row's maximum value to `dstIdx[i,0]` and optionally the value to `dstVal[i,0]` |
 | `pto.trowmin` | `dst[i,0] = min_j src[i,j]` (requires tmp) |
-| `pto.trowargmin` | `dst[i,0] = argmin_j src[i,j]` (requires tmp) |
+| `pto.trowargmin` | Writes the column index of each row's minimum value to `dstIdx[i,0]` and optionally the value to `dstVal[i,0]` |
 | `pto.tcolsum` | `dst[0,j] = sum_i src[i,j]` (requires tmp, optional isBinary) |
 | `pto.tcolmax` | `dst[0,j] = max_i src[i,j]` |
-| `pto.tcolargmax` | `dst[0,j] = argmax_i src[i,j]` (requires tmp) |
+| `pto.tcolargmax` | Writes the row index of each column's maximum value to `dstIdx[0,j]` and optionally the value to `dstVal[0,j]` |
 | `pto.tcolmin` | `dst[0,j] = min_i src[i,j]` |
-| `pto.tcolargmin` | `dst[0,j] = argmin_i src[i,j]` (requires tmp) |
+| `pto.tcolargmin` | Writes the row index of each column's minimum value to `dstIdx[0,j]` and optionally the value to `dstVal[0,j]` |
 | `pto.thistogram` | `dst[i, idx[i,0]] = histogram_update(dst[i, idx[i,0]], src[i,:])` (A5 only) |
 
 ---
@@ -4955,13 +4955,14 @@ pto.trowmax ins(%src, %tmp : !pto.tile_buf<loc=vec, dtype=f16, rows=16, cols=16,
 
 ##### `pto.trowargmax` - Row-wise ArgMax Reduction
 
-**Summary:** Reduces each row to the column index of its maximum element. Requires a temporary buffer.
+**Summary:** Writes the column index of each row's maximum value to `dstIdx[i, 0]` and optionally the value to `dstVal[i, 0]`.
 
 **Semantics:**
 
 ```
 For each row i:
-    dst[i, 0] = argmax over j of src[i, j]
+    dstIdx[i, 0] = argmax over j of src[i, j]
+    dstVal[i, 0] = max over j of src[i, j]  # when dstVal is supplied
 ```
 
 **Arguments:**
@@ -4970,21 +4971,28 @@ For each row i:
 |------|------|-------------|
 | `src` | `pto.tile_buf` | Source tile buffer |
 | `tmp` | `pto.tile_buf` | A2/A3 reduction workspace tile. On A5 this operand is kept for ABI compatibility and is not used by the instruction. |
-| `dst` | `pto.tile_buf` | Destination tile buffer containing row-wise indices |
+| `dstIdx` | `pto.tile_buf` | Destination tile buffer containing row-wise indices (`i32` or `ui32`) |
+| `dstVal` | `pto.tile_buf` | Optional value destination; its element type matches `src` and its valid region matches `dstIdx` |
 
-**Results:** None. Writes into `dst` via DPS pattern.
+**Results:** None. Writes `dstIdx` and writes `dstVal` via DPS when it is supplied.
 
 **Assembly Format:**
 
 ```
-pto.trowargmax ins(<src>, <tmp> : <src_type>, <tmp_type>)
-               outs(<dst> : <dst_type>)
+pto.trowargmax ins(<src> : <src_type>) outs(<dstIdx> : <dstIdx_type>)
+pto.trowargmax ins(<src> : <src_type>) outs(<dstIdx>, <dstVal> : <dstIdx_type>, <dstVal_type>)
+pto.trowargmax ins(<src>, <tmp> : <src_type>, <tmp_type>) outs(<dstIdx> : <dstIdx_type>)
+pto.trowargmax ins(<src>, <tmp> : <src_type>, <tmp_type>) outs(<dstIdx>, <dstVal> : <dstIdx_type>, <dstVal_type>)
 ```
+
+`dstVal` is optional in the IR. Omitting it writes only `dstIdx`; supplying it
+writes both outputs. The PTODSL API accepts either `tile.rowargmax(src, dstIdx)`
+or `tile.rowargmax(src, dstIdx, dstVal)`, with `tmp` supplied by keyword.
 
 **Constraints & Verification:**
 
 - **Implementation checks (A2A3)**
-  - `src`, `tmp`, and `dst` must use `loc=vec`.
+  - `src`, `tmp`, and `dstIdx` must use `loc=vec`; supplied `dstVal` must also use `loc=vec`.
   - `src` must use ND-style tile layout (`blayout=row_major`, `slayout=none_box`).
   - `tmp` must have the same element type as `src`.
   - `elementPerRepeat = 2048 / bitwidth(src element type)`.
@@ -4995,19 +5003,21 @@ pto.trowargmax ins(<src>, <tmp> : <src_type>, <tmp_type>)
     - an ND tile with `tmp.validRow >= src.validRow` and `tmp.validCol >= 2`.
   - For `src.validCol > elementPerRepeat`, `tmp.validRow >= src.validRow`, and if the physical row count is statically known it must match `src.rows`.
   - In the large-column path, the minimum required `tmp.validCol` is `stride`, where `repeats = ceil(src.validCol / elementPerRepeat)` and `stride = (ceil(repeats * 2 / elementPerBlock) + ceil(repeats / elementPerBlock)) * elementPerBlock`.
-  - `dst` must use `slayout=none_box` and either:
+  - `dstIdx` must use `slayout=none_box` and either:
     - a DN-style column vector tile (`blayout=col_major`, `cols=1`), or
     - a legacy ND-style tile with `valid column == 1`.
   - `src` element type must be `i16`, `i32`, `f16`, or `f32`.
-  - `dst` element type must be `i32` or `ui32`.
+  - `dstIdx` element type must be `i32` or `ui32`.
+  - In value-and-index mode, `dstVal` must match the source element type and valid region.
   - Runtime valid checks:
     - `src valid row != 0` and `src valid column != 0`
-    - `src valid row == dst valid row`
-    - `dst valid column == 1`
+    - `src valid row == dstIdx valid row`
+    - `dstIdx valid column == 1`
 - **Implementation checks (A5)**
-  - `src` and `dst` follow the A2/A3 layout and valid-region rules.
-  - A5 additionally accepts `bf16` sources with `i32` or `ui32` indices. The VPTO template widens `bf16` to `f32` before reduction and preserves the original column indices.
-  - `tmp` is not used by the A5 implementation. PTO IR still requires it to be a row-major `loc=vec` tile, but no shape or valid-shape relation with `src/dst` is required.
+  - `src` and `dstIdx` follow the A2/A3 layout and valid-region rules. A5 also accepts `bf16` sources.
+  - In value-and-index mode, `dstVal` matches the source element type and valid region.
+  - For `bf16` input, the VPTO template widens to `f32` for reduction and preserves the original column indices.
+  - A5 does not use `tmp`. If supplied, it must be a row-major `loc=vec` tile; no shape or valid-shape relation with `src`, `dstIdx`, or `dstVal` is required.
 
 **Hardware Mapping:**
 
@@ -5023,7 +5033,9 @@ pto.trowargmax ins(%src, %tmp : !pto.tile_buf<loc=vec, dtype=f16, rows=16, cols=
                    !pto.tile_buf<loc=vec, dtype=f16, rows=16, cols=2,
                    v_row=16, v_col=2, blayout=row_major, slayout=none_box,
                    fractal=512, pad=0>)
-               outs(%dst : !pto.tile_buf<loc=vec, dtype=ui32, rows=16, cols=1,
+               outs(%dst_idx, %dst_val : !pto.tile_buf<loc=vec, dtype=ui32, rows=16, cols=1,
+                   v_row=16, v_col=1, blayout=col_major, slayout=none_box,
+                   fractal=512, pad=0>, !pto.tile_buf<loc=vec, dtype=f16, rows=16, cols=1,
                    v_row=16, v_col=1, blayout=col_major, slayout=none_box,
                    fractal=512, pad=0>)
 ```
@@ -5099,13 +5111,14 @@ pto.trowmin ins(%src, %tmp : !pto.tile_buf<loc=vec, dtype=f16, rows=16, cols=16,
 
 ##### `pto.trowargmin` - Row-wise ArgMin Reduction
 
-**Summary:** Reduces each row to the column index of its minimum element. Requires a temporary buffer.
+**Summary:** Writes the column index of each row's minimum value to `dstIdx[i, 0]` and optionally the value to `dstVal[i, 0]`.
 
 **Semantics:**
 
 ```
 For each row i:
-    dst[i, 0] = argmin over j of src[i, j]
+    dstIdx[i, 0] = argmin over j of src[i, j]
+    dstVal[i, 0] = min over j of src[i, j]  # when dstVal is supplied
 ```
 
 **Arguments:**
@@ -5114,21 +5127,28 @@ For each row i:
 |------|------|-------------|
 | `src` | `pto.tile_buf` | Source tile buffer |
 | `tmp` | `pto.tile_buf` | A2/A3 reduction workspace tile. On A5 this operand is kept for ABI compatibility and is not used by the instruction. |
-| `dst` | `pto.tile_buf` | Destination tile buffer containing row-wise indices |
+| `dstIdx` | `pto.tile_buf` | Destination tile buffer containing row-wise indices (`i32` or `ui32`) |
+| `dstVal` | `pto.tile_buf` | Optional value destination; its element type matches `src` and its valid region matches `dstIdx` |
 
-**Results:** None. Writes into `dst` via DPS pattern.
+**Results:** None. Writes `dstIdx` and writes `dstVal` via DPS when it is supplied.
 
 **Assembly Format:**
 
 ```
-pto.trowargmin ins(<src>, <tmp> : <src_type>, <tmp_type>)
-               outs(<dst> : <dst_type>)
+pto.trowargmin ins(<src> : <src_type>) outs(<dstIdx> : <dstIdx_type>)
+pto.trowargmin ins(<src> : <src_type>) outs(<dstIdx>, <dstVal> : <dstIdx_type>, <dstVal_type>)
+pto.trowargmin ins(<src>, <tmp> : <src_type>, <tmp_type>) outs(<dstIdx> : <dstIdx_type>)
+pto.trowargmin ins(<src>, <tmp> : <src_type>, <tmp_type>) outs(<dstIdx>, <dstVal> : <dstIdx_type>, <dstVal_type>)
 ```
+
+`dstVal` is optional in the IR. Omitting it writes only `dstIdx`; supplying it
+writes both outputs. PTODSL accepts either `tile.rowargmin(src, dstIdx)` or
+`tile.rowargmin(src, dstIdx, dstVal)`; `tmp` is keyword-only.
 
 **Constraints & Verification:**
 
 - **Implementation checks (A2A3)**
-  - `src`, `tmp`, and `dst` must use `loc=vec`.
+  - `src`, `tmp`, and `dstIdx` must use `loc=vec`; supplied `dstVal` must also use `loc=vec`.
   - `src` must use ND-style tile layout (`blayout=row_major`, `slayout=none_box`).
   - `tmp` must have the same element type as `src`.
   - `elementPerRepeat = 2048 / bitwidth(src element type)`.
@@ -5139,19 +5159,21 @@ pto.trowargmin ins(<src>, <tmp> : <src_type>, <tmp_type>)
     - an ND tile with `tmp.validRow >= src.validRow` and `tmp.validCol >= 2`.
   - For `src.validCol > elementPerRepeat`, `tmp.validRow >= src.validRow`, and if the physical row count is statically known it must match `src.rows`.
   - In the large-column path, the minimum required `tmp.validCol` is `stride`, where `repeats = ceil(src.validCol / elementPerRepeat)` and `stride = (ceil(repeats * 2 / elementPerBlock) + ceil(repeats / elementPerBlock)) * elementPerBlock`.
-  - `dst` must use `slayout=none_box` and either:
+  - `dstIdx` must use `slayout=none_box` and either:
     - a DN-style column vector tile (`blayout=col_major`, `cols=1`), or
     - a legacy ND-style tile with `valid column == 1`.
   - `src` element type must be `i16`, `i32`, `f16`, or `f32`.
-  - `dst` element type must be `i32` or `ui32`.
+  - `dstIdx` element type must be `i32` or `ui32`.
+  - In value-and-index mode, `dstVal` must match the source element type and valid region.
   - Runtime valid checks:
     - `src valid row != 0` and `src valid column != 0`
-    - `src valid row == dst valid row`
-    - `dst valid column == 1`
+    - `src valid row == dstIdx valid row`
+    - `dstIdx valid column == 1`
 - **Implementation checks (A5)**
-  - `src` and `dst` follow the A2/A3 layout and valid-region rules.
-  - A5 additionally accepts `bf16` sources with `i32` or `ui32` indices. The VPTO template widens `bf16` to `f32` before reduction and preserves the original column indices.
-  - `tmp` is not used by the A5 implementation. PTO IR still requires it to be a row-major `loc=vec` tile, but no shape or valid-shape relation with `src/dst` is required.
+  - `src` and `dstIdx` follow the A2/A3 layout and valid-region rules. A5 also accepts `bf16` sources.
+  - In value-and-index mode, `dstVal` matches the source element type and valid region.
+  - For `bf16` input, the VPTO template widens to `f32` for reduction and preserves the original column indices.
+  - A5 does not use `tmp`. If supplied, it must be a row-major `loc=vec` tile; no shape or valid-shape relation with `src`, `dstIdx`, or `dstVal` is required.
 
 **Hardware Mapping:**
 
@@ -5167,7 +5189,9 @@ pto.trowargmin ins(%src, %tmp : !pto.tile_buf<loc=vec, dtype=f32, rows=16, cols=
                    !pto.tile_buf<loc=vec, dtype=f32, rows=16, cols=2,
                    v_row=16, v_col=2, blayout=row_major, slayout=none_box,
                    fractal=512, pad=0>)
-               outs(%dst : !pto.tile_buf<loc=vec, dtype=i32, rows=16, cols=1,
+               outs(%dst_idx, %dst_val : !pto.tile_buf<loc=vec, dtype=i32, rows=16, cols=1,
+                   v_row=16, v_col=1, blayout=col_major, slayout=none_box,
+                   fractal=512, pad=0>, !pto.tile_buf<loc=vec, dtype=f32, rows=16, cols=1,
                    v_row=16, v_col=1, blayout=col_major, slayout=none_box,
                    fractal=512, pad=0>)
 ```
@@ -5458,13 +5482,14 @@ pto.tcolmax ins(%src : !pto.tile_buf<loc=vec, dtype=f16, rows=16, cols=16,
 
 ##### `pto.tcolargmax` - Column-wise ArgMax Reduction
 
-**Summary:** Reduces each column to the row index of its maximum element. Requires a temporary buffer.
+**Summary:** Writes the row index of each column's maximum value to `dstIdx[0, j]` and optionally the value to `dstVal[0, j]`.
 
 **Semantics:**
 
 ```
 For each column j:
-    dst[0, j] = argmax over i of src[i, j]
+    dstIdx[0, j] = argmax over i of src[i, j]
+    dstVal[0, j] = max over i of src[i, j]  # when dstVal is supplied
 ```
 
 **Arguments:**
@@ -5473,37 +5498,45 @@ For each column j:
 |------|------|-------------|
 | `src` | `pto.tile_buf` | Source tile buffer |
 | `tmp` | `pto.tile_buf` | A2/A3 reduction workspace tile. On A5 this operand is kept for ABI compatibility and is not used by the instruction. |
-| `dst` | `pto.tile_buf` | Destination tile buffer containing column-wise indices |
+| `dstIdx` | `pto.tile_buf` | Destination tile buffer containing column-wise indices |
+| `dstVal` | `pto.tile_buf` | Optional value destination; its element type matches `src` and its valid region matches `dstIdx` |
 
-**Results:** None. Writes into `dst` via DPS pattern.
+**Results:** None. Writes `dstIdx` and writes `dstVal` via DPS when it is supplied.
 
 **Assembly Format:**
 
 ```
-pto.tcolargmax ins(<src>, <tmp> : <src_type>, <tmp_type>)
-               outs(<dst> : <dst_type>)
+pto.tcolargmax ins(<src> : <src_type>) outs(<dstIdx> : <dstIdx_type>)
+pto.tcolargmax ins(<src> : <src_type>) outs(<dstIdx>, <dstVal> : <dstIdx_type>, <dstVal_type>)
+pto.tcolargmax ins(<src>, <tmp> : <src_type>, <tmp_type>) outs(<dstIdx> : <dstIdx_type>)
+pto.tcolargmax ins(<src>, <tmp> : <src_type>, <tmp_type>) outs(<dstIdx>, <dstVal> : <dstIdx_type>, <dstVal_type>)
 ```
+
+`dstVal` is optional in the IR. Omitting it writes only `dstIdx`; supplying it
+writes both outputs. The PTODSL API accepts either `tile.colargmax(src, dstIdx)`
+or `tile.colargmax(src, dstIdx, dstVal)`; `tmp` is keyword-only.
 
 **Constraints & Verification:**
 
 - **Implementation checks (A2A3)**
-  - `src`, `tmp`, and `dst` must use `loc=vec`.
-  - `src` and `dst` must use ND-style tile layout (`blayout=row_major`, `slayout=none_box`).
+  - `src`, `tmp`, and `dstIdx` must use `loc=vec`; supplied `dstVal` must also use `loc=vec`.
+  - `src` and `dstIdx` must use ND-style tile layout (`blayout=row_major`, `slayout=none_box`); supplied `dstVal` must use the same layout.
   - `tmp` must be a row-major `loc=vec` tile and must have the same element type as `src`.
   - `elementPerRepeat = 2048 / bitwidth(src element type)`.
   - `elementPerBlock = 256 / bitwidth(src element type)`.
   - PTO IR accepts either a legacy `tmp` whose known `valid_shape` exactly matches `src`, or a smaller workspace tile.
   - For the workspace form, `tmp.validRow >= 1`.
   - The minimum required `tmp.validCol` is `stride`, where `repeats = ceil(src.validCol / elementPerRepeat)` and `stride = (ceil(repeats * 2 / elementPerBlock) + ceil(repeats / elementPerBlock)) * elementPerBlock`.
-  - `src` element type must be `f16` or `f32`.
-  - `dst` element type must be `i32` or `ui32`.
+  - Index-only mode accepts the existing source types and uses `i32` or `ui32` for `dstIdx`.
+  - Value-and-index mode supports `f16`, `f32`, `ui16`, and `ui32` sources. `dstIdx` uses the source bit width, and `dstVal` matches the source element type.
   - Runtime valid checks:
     - `src valid row != 0` and `src valid column != 0`
-    - `dst valid row == 1`
-    - `src valid column == dst valid column`
+    - `dstIdx valid row == 1`
+    - `src valid column == dstIdx valid column`
 - **Implementation checks (A5)**
-  - `src` and `dst` follow the same layout, element-type, and valid-region rules as A2/A3.
-  - `tmp` is not used by the A5 implementation. PTO IR still requires it to be a row-major `loc=vec` tile, but no shape or valid-shape relation with `src/dst` is required.
+  - `src` and `dstIdx` follow the same layout and valid-region rules as A2/A3.
+  - Value-and-index mode supports `f16`, `f32`, `ui16`, and `ui32`; `dstIdx` matches source width and `dstVal` matches source type and valid region.
+  - A5 does not use `tmp`. If supplied, it must be a row-major `loc=vec` tile; no shape or valid-shape relation with `src`, `dstIdx`, or `dstVal` is required.
 
 **Hardware Mapping:**
 
@@ -5519,7 +5552,9 @@ pto.tcolargmax ins(%src, %tmp : !pto.tile_buf<loc=vec, dtype=f16, rows=16, cols=
                    !pto.tile_buf<loc=vec, dtype=f16, rows=1, cols=32,
                    v_row=1, v_col=32, blayout=row_major, slayout=none_box,
                    fractal=512, pad=0>)
-               outs(%dst : !pto.tile_buf<loc=vec, dtype=ui32, rows=1, cols=32,
+               outs(%dst_idx, %dst_val : !pto.tile_buf<loc=vec, dtype=i16, rows=1, cols=32,
+                   v_row=1, v_col=32, blayout=row_major, slayout=none_box,
+                   fractal=512, pad=0>, !pto.tile_buf<loc=vec, dtype=f16, rows=1, cols=32,
                    v_row=1, v_col=32, blayout=row_major, slayout=none_box,
                    fractal=512, pad=0>)
 ```
@@ -5585,13 +5620,14 @@ pto.tcolmin ins(%src : !pto.tile_buf<loc=vec, dtype=f16, rows=16, cols=16,
 
 ##### `pto.tcolargmin` - Column-wise ArgMin Reduction
 
-**Summary:** Reduces each column to the row index of its minimum element. Requires a temporary buffer.
+**Summary:** Writes the row index of each column's minimum value to `dstIdx[0, j]` and optionally the value to `dstVal[0, j]`.
 
 **Semantics:**
 
 ```
 For each column j:
-    dst[0, j] = argmin over i of src[i, j]
+    dstIdx[0, j] = argmin over i of src[i, j]
+    dstVal[0, j] = min over i of src[i, j]  # when dstVal is supplied
 ```
 
 **Arguments:**
@@ -5600,37 +5636,45 @@ For each column j:
 |------|------|-------------|
 | `src` | `pto.tile_buf` | Source tile buffer |
 | `tmp` | `pto.tile_buf` | A2/A3 reduction workspace tile. On A5 this operand is kept for ABI compatibility and is not used by the instruction. |
-| `dst` | `pto.tile_buf` | Destination tile buffer containing column-wise indices |
+| `dstIdx` | `pto.tile_buf` | Destination tile buffer containing column-wise indices |
+| `dstVal` | `pto.tile_buf` | Optional value destination; its element type matches `src` and its valid region matches `dstIdx` |
 
-**Results:** None. Writes into `dst` via DPS pattern.
+**Results:** None. Writes `dstIdx` and writes `dstVal` via DPS when it is supplied.
 
 **Assembly Format:**
 
 ```
-pto.tcolargmin ins(<src>, <tmp> : <src_type>, <tmp_type>)
-               outs(<dst> : <dst_type>)
+pto.tcolargmin ins(<src> : <src_type>) outs(<dstIdx> : <dstIdx_type>)
+pto.tcolargmin ins(<src> : <src_type>) outs(<dstIdx>, <dstVal> : <dstIdx_type>, <dstVal_type>)
+pto.tcolargmin ins(<src>, <tmp> : <src_type>, <tmp_type>) outs(<dstIdx> : <dstIdx_type>)
+pto.tcolargmin ins(<src>, <tmp> : <src_type>, <tmp_type>) outs(<dstIdx>, <dstVal> : <dstIdx_type>, <dstVal_type>)
 ```
+
+`dstVal` is optional in the IR. Omitting it writes only `dstIdx`; supplying it
+writes both outputs. PTODSL accepts either `tile.colargmin(src, dstIdx)` or
+`tile.colargmin(src, dstIdx, dstVal)`; `tmp` is keyword-only.
 
 **Constraints & Verification:**
 
 - **Implementation checks (A2A3)**
-  - `src`, `tmp`, and `dst` must use `loc=vec`.
-  - `src` and `dst` must use ND-style tile layout (`blayout=row_major`, `slayout=none_box`).
+  - `src`, `tmp`, and `dstIdx` must use `loc=vec`; supplied `dstVal` must also use `loc=vec`.
+  - `src` and `dstIdx` must use ND-style tile layout (`blayout=row_major`, `slayout=none_box`); supplied `dstVal` must use the same layout.
   - `tmp` must be a row-major `loc=vec` tile and must have the same element type as `src`.
   - `elementPerRepeat = 2048 / bitwidth(src element type)`.
   - `elementPerBlock = 256 / bitwidth(src element type)`.
   - PTO IR accepts either a legacy `tmp` whose known `valid_shape` exactly matches `src`, or a smaller workspace tile.
   - For the workspace form, `tmp.validRow >= 1`.
   - The minimum required `tmp.validCol` is `stride`, where `repeats = ceil(src.validCol / elementPerRepeat)` and `stride = (ceil(repeats * 2 / elementPerBlock) + ceil(repeats / elementPerBlock)) * elementPerBlock`.
-  - `src` element type must be `f16` or `f32`.
-  - `dst` element type must be `i32` or `ui32`.
+  - Index-only mode uses `i32` or `ui32` for `dstIdx`.
+  - Value-and-index mode supports `f16`, `f32`, `ui16`, and `ui32` sources; `dstIdx` has the source bit width and `dstVal` matches the source type.
   - Runtime valid checks:
     - `src valid row != 0` and `src valid column != 0`
-    - `dst valid row == 1`
-    - `src valid column == dst valid column`
+    - `dstIdx valid row == 1`
+    - `src valid column == dstIdx valid column`
 - **Implementation checks (A5)**
-  - `src` and `dst` follow the same layout, element-type, and valid-region rules as A2/A3.
-  - `tmp` is not used by the A5 implementation. PTO IR still requires it to be a row-major `loc=vec` tile, but no shape or valid-shape relation with `src/dst` is required.
+  - `src` and `dstIdx` follow the same layout and valid-region rules as A2/A3.
+  - Value-and-index mode supports `f16`, `f32`, `ui16`, and `ui32`; `dstIdx` matches source width and `dstVal` matches source type and valid region.
+  - A5 does not use `tmp`. If supplied, it must be a row-major `loc=vec` tile; no shape or valid-shape relation with `src`, `dstIdx`, or `dstVal` is required.
 
 **Hardware Mapping:**
 
@@ -5646,7 +5690,9 @@ pto.tcolargmin ins(%src, %tmp : !pto.tile_buf<loc=vec, dtype=f32, rows=16, cols=
                    !pto.tile_buf<loc=vec, dtype=f32, rows=1, cols=32,
                    v_row=1, v_col=32, blayout=row_major, slayout=none_box,
                    fractal=512, pad=0>)
-               outs(%dst : !pto.tile_buf<loc=vec, dtype=i32, rows=1, cols=32,
+               outs(%dst_idx, %dst_val : !pto.tile_buf<loc=vec, dtype=i32, rows=1, cols=32,
+                   v_row=1, v_col=32, blayout=row_major, slayout=none_box,
+                   fractal=512, pad=0>, !pto.tile_buf<loc=vec, dtype=f32, rows=1, cols=32,
                    v_row=1, v_col=32, blayout=row_major, slayout=none_box,
                    fractal=512, pad=0>)
 ```

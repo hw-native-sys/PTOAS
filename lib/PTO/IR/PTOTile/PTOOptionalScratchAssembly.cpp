@@ -46,6 +46,111 @@ static void printOptionalTmpFixedDpsOp(OpAsmPrinter &p, Operation *op,
                           /*elidedAttrs=*/{"operandSegmentSizes"});
 }
 
+struct OptionalOperandAsmSegment {
+    OpAsmParser::UnresolvedOperand first;
+    OpAsmParser::UnresolvedOperand second;
+    Type firstType;
+    Type secondType;
+    bool hasSecond = false;
+};
+
+static ParseResult parseOptionalOperandAsmSegment(
+    OpAsmParser& parser, StringRef keyword, OptionalOperandAsmSegment& segment)
+{
+    if (parser.parseKeyword(keyword)) {
+        return failure();
+    }
+    if (parser.parseLParen()) {
+        return failure();
+    }
+    if (parser.parseOperand(segment.first)) {
+        return failure();
+    }
+    segment.hasSecond = succeeded(parser.parseOptionalComma());
+    if (segment.hasSecond && parser.parseOperand(segment.second)) {
+        return failure();
+    }
+    if (parser.parseColonType(segment.firstType)) {
+        return failure();
+    }
+    if (segment.hasSecond && parser.parseComma()) {
+        return failure();
+    }
+    if (segment.hasSecond && parser.parseType(segment.secondType)) {
+        return failure();
+    }
+    if (parser.parseRParen()) {
+        return failure();
+    }
+    return success();
+}
+
+static ParseResult resolveOptionalOperandAsmSegment(
+    OpAsmParser& parser, OperationState& result, const OptionalOperandAsmSegment& segment)
+{
+    if (parser.resolveOperand(segment.first, segment.firstType, result.operands)) {
+        return failure();
+    }
+    if (segment.hasSecond && parser.resolveOperand(segment.second, segment.secondType, result.operands)) {
+        return failure();
+    }
+    return success();
+}
+
+static ParseResult parseOptionalTmpArgReductionOp(OpAsmParser& parser, OperationState& result)
+{
+    OptionalOperandAsmSegment inputs;
+    OptionalOperandAsmSegment outputs;
+    if (failed(parseOptionalOperandAsmSegment(parser, "ins", inputs))) {
+        return failure();
+    }
+    if (failed(parseOptionalOperandAsmSegment(parser, "outs", outputs))) {
+        return failure();
+    }
+    if (parser.parseOptionalAttrDict(result.attributes)) {
+        return failure();
+    }
+    if (result.attributes.get("operandSegmentSizes")) {
+        return parser.emitError(parser.getCurrentLocation())
+               << "operandSegmentSizes is inferred from the ins/outs operands";
+    }
+    if (failed(resolveOptionalOperandAsmSegment(parser, result, inputs))) {
+        return failure();
+    }
+    if (failed(resolveOptionalOperandAsmSegment(parser, result, outputs))) {
+        return failure();
+    }
+
+    result.addAttribute(
+        "operandSegmentSizes",
+        parser.getBuilder().getDenseI32ArrayAttr({1, inputs.hasSecond ? 1 : 0, 1, outputs.hasSecond ? 1 : 0}));
+    return success();
+}
+
+static void printOptionalTmpArgReductionOp(OpAsmPrinter &p, Operation *op,
+                                           Value src, Value tmp, Value dstIdx,
+                                           Value dstVal) {
+  p << " ins(" << src;
+  if (tmp) {
+    p << ", " << tmp;
+  }
+  p << " : " << src.getType();
+  if (tmp) {
+    p << ", " << tmp.getType();
+  }
+  p << ") outs(" << dstIdx;
+  if (dstVal) {
+    p << ", " << dstVal;
+  }
+  p << " : " << dstIdx.getType();
+  if (dstVal) {
+    p << ", " << dstVal.getType();
+  }
+  p << ")";
+  p.printOptionalAttrDict(op->getAttrs(),
+                          /*elidedAttrs=*/{"operandSegmentSizes"});
+}
+
 ParseResult mlir::pto::TTransOp::parse(OpAsmParser &parser,
                                        OperationState &result) {
     return parseOptionalTmpFixedDpsOp(parser, result, 1, mlir::pto::kValue2, {1, 0, 1}, {1, 1, 1});
@@ -140,22 +245,22 @@ void mlir::pto::TSelSOp::print(OpAsmPrinter &p) {
 
 ParseResult mlir::pto::TColArgMaxOp::parse(OpAsmParser &parser,
                                            OperationState &result) {
-  return parseOptionalTmpRowReductionOp(parser, result);
+  return parseOptionalTmpArgReductionOp(parser, result);
 }
 
 void mlir::pto::TColArgMaxOp::print(OpAsmPrinter &p) {
-  printOptionalTmpRowReductionOp(p, getOperation(), getSrc(), getTmp(),
-                                 getDst());
+  printOptionalTmpArgReductionOp(p, getOperation(), getSrc(), getTmp(),
+                                 getDstIdx(), getDstVal());
 }
 
 ParseResult mlir::pto::TColArgMinOp::parse(OpAsmParser &parser,
                                            OperationState &result) {
-  return parseOptionalTmpRowReductionOp(parser, result);
+  return parseOptionalTmpArgReductionOp(parser, result);
 }
 
 void mlir::pto::TColArgMinOp::print(OpAsmPrinter &p) {
-  printOptionalTmpRowReductionOp(p, getOperation(), getSrc(), getTmp(),
-                                 getDst());
+  printOptionalTmpArgReductionOp(p, getOperation(), getSrc(), getTmp(),
+                                 getDstIdx(), getDstVal());
 }
 
 ParseResult mlir::pto::TRowMaxOp::parse(OpAsmParser &parser,
@@ -170,12 +275,12 @@ void mlir::pto::TRowMaxOp::print(OpAsmPrinter &p) {
 
 ParseResult mlir::pto::TRowArgMaxOp::parse(OpAsmParser &parser,
                                            OperationState &result) {
-  return parseOptionalTmpRowReductionOp(parser, result);
+  return parseOptionalTmpArgReductionOp(parser, result);
 }
 
 void mlir::pto::TRowArgMaxOp::print(OpAsmPrinter &p) {
-  printOptionalTmpRowReductionOp(p, getOperation(), getSrc(), getTmp(),
-                                 getDst());
+  printOptionalTmpArgReductionOp(p, getOperation(), getSrc(), getTmp(),
+                                 getDstIdx(), getDstVal());
 }
 
 ParseResult mlir::pto::TRowMinOp::parse(OpAsmParser &parser,
@@ -190,12 +295,12 @@ void mlir::pto::TRowMinOp::print(OpAsmPrinter &p) {
 
 ParseResult mlir::pto::TRowArgMinOp::parse(OpAsmParser &parser,
                                            OperationState &result) {
-  return parseOptionalTmpRowReductionOp(parser, result);
+  return parseOptionalTmpArgReductionOp(parser, result);
 }
 
 void mlir::pto::TRowArgMinOp::print(OpAsmPrinter &p) {
-  printOptionalTmpRowReductionOp(p, getOperation(), getSrc(), getTmp(),
-                                 getDst());
+  printOptionalTmpArgReductionOp(p, getOperation(), getSrc(), getTmp(),
+                                 getDstIdx(), getDstVal());
 }
 
 ParseResult mlir::pto::TRowSumOp::parse(OpAsmParser &parser,
@@ -243,11 +348,20 @@ static LogicalResult verifyTRowExtremeReductionOp(Operation *op, Type srcTy,
 }
 
 static LogicalResult verifyTRowArgReductionOp(Operation *op, Type srcTy,
-                                              Value tmp, Type dstTy) {
+                                              Value tmp, Type dstIdxTy,
+                                              Type dstValTy,
+                                              bool indexOnly) {
   if (!tmp)
-    return verifyTRowArgReductionNoTmp(op, srcTy, dstTy);
-  auto verifyA2A3 = [op, srcTy, tmp, dstTy]() { return verifyTRowArgReductionOpA2A3(op, srcTy, tmp.getType(), dstTy); };
-  auto verifyA5 = [op, srcTy, tmp, dstTy]() { return verifyTRowArgReductionOpA5(op, srcTy, tmp.getType(), dstTy); };
+    return verifyTRowArgReductionNoTmp(op, srcTy, dstIdxTy, dstValTy,
+                                       indexOnly);
+  auto verifyA2A3 = [op, srcTy, tmp, dstIdxTy, dstValTy, indexOnly]() {
+    return verifyTRowArgReductionOpA2A3(op, srcTy, tmp.getType(), dstIdxTy,
+                                        dstValTy, indexOnly);
+  };
+  auto verifyA5 = [op, srcTy, tmp, dstIdxTy, dstValTy, indexOnly]() {
+    return verifyTRowArgReductionOpA5(op, srcTy, tmp.getType(), dstIdxTy,
+                                      dstValTy, indexOnly);
+  };
   return dispatchVerifierByArch(op, verifyA2A3, verifyA5);
 }
 
@@ -264,8 +378,10 @@ mlir::LogicalResult mlir::pto::TRowMaxOp::verify() {
 }
 
 mlir::LogicalResult mlir::pto::TRowArgMaxOp::verify() {
+  Value dstVal = getDstVal();
   return verifyTRowArgReductionOp(getOperation(), getSrc().getType(), getTmp(),
-                                  getDst().getType());
+                                  getDstIdx().getType(),
+                                  dstVal ? dstVal.getType() : Type(), !dstVal);
 }
 
 
@@ -282,8 +398,10 @@ mlir::LogicalResult mlir::pto::TRowMinOp::verify() {
 }
 
 mlir::LogicalResult mlir::pto::TRowArgMinOp::verify() {
+  Value dstVal = getDstVal();
   return verifyTRowArgReductionOp(getOperation(), getSrc().getType(), getTmp(),
-                                  getDst().getType());
+                                  getDstIdx().getType(),
+                                  dstVal ? dstVal.getType() : Type(), !dstVal);
 }
 
 

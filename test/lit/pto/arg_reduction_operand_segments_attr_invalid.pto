@@ -1,0 +1,14 @@
+// RUN: not ptoas --pto-arch=a5 %s -o /dev/null 2>&1 | FileCheck %s
+
+module {
+  func.func @arg_reduction_operand_segments_attr_invalid(
+      %src: !pto.tile_buf<vec, 8x16xf32>,
+      %dst_idx: !pto.tile_buf<vec, 8x16xi32>) {
+    pto.trowargmax ins(%src : !pto.tile_buf<vec, 8x16xf32>)
+                   outs(%dst_idx : !pto.tile_buf<vec, 8x16xi32>)
+                   {operandSegmentSizes = array<i32: 1, 0, 1, 0>}
+    return
+  }
+}
+
+// CHECK: operandSegmentSizes is inferred from the ins/outs operands

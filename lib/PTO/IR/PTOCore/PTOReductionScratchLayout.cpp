@@ -125,7 +125,7 @@ static LogicalResult verifyTRowArgTmpA2A3(Operation* op, Type srcTy, Type tmpTy)
 }
 
 static LogicalResult verifyRowArgReductionTypes(Operation *op, Type srcTy,
-                                                Type dstTy) {
+                                                Type dstIdxTy) {
   Type srcElem = getElemTy(srcTy);
   bool isA5 = isTargetArchA5(op);
   if (!isSupportedRowReductionElemType(srcElem) && !(isA5 && srcElem.isBF16())) {
@@ -133,45 +133,89 @@ static LogicalResult verifyRowArgReductionTypes(Operation *op, Type srcTy,
                                ? "expects src element type to be i16/i32/f16/bf16/f32"
                                : "expects src element type to be i16/i32/f16/f32");
   }
-  auto dstInt = dyn_cast<IntegerType>(getElemTy(dstTy));
+  auto dstInt = dyn_cast<IntegerType>(getElemTy(dstIdxTy));
   if (!dstInt || dstInt.getWidth() != mlir::pto::kValue32)
-    return op->emitOpError("expects dst element type to be i32 or ui32");
+    return op->emitOpError("expects dstIdx element type to be i32 or ui32");
   return success();
 }
 
 static LogicalResult verifyRowArgReductionTail(Operation *op, Type srcTy,
-                                               Type dstTy) {
+                                               Type dstIdxTy) {
   if (failed(verifyRowReductionValidRegion(
-          op, srcTy, dstTy, /*allowEmptyMarker=*/false)))
+          op, srcTy, dstIdxTy, /*allowEmptyMarker=*/false))) {
     return failure();
-  return verifyRowArgReductionTypes(op, srcTy, dstTy);
+  }
+  return verifyRowArgReductionTypes(op, srcTy, dstIdxTy);
 }
 
-static LogicalResult verifyTRowArgReductionOpA2A3(Operation* op, Type srcTy, Type tmpTy, Type dstTy)
-{
-    if (failed(verifyRowReductionSrcLayout(op, srcTy, "src")) || failed(verifyTRowArgTmpA2A3(op, srcTy, tmpTy)) ||
-        failed(verifyRowReductionDstLayout(op, dstTy, "dst"))) {
-        return failure();
-    }
-    return verifyRowArgReductionTail(op, srcTy, dstTy);
+static LogicalResult verifyRowArgReductionValueDst(Operation *op, Type srcTy,
+                                                   Type dstValTy,
+                                                   bool indexOnly) {
+  if (indexOnly) {
+    return success();
+  }
+  if (failed(verifyRowReductionDstLayout(op, dstValTy, "dstVal"))) {
+    return failure();
+  }
+  bool elementTypeMismatch = getElemTy(srcTy) != getElemTy(dstValTy);
+  if (elementTypeMismatch) {
+    return op->emitOpError("expects dstVal element type to match src");
+  }
+  return verifyRowReductionValidRegion(op, srcTy, dstValTy,
+                                       /*allowEmptyMarker=*/false);
 }
 
-static LogicalResult verifyTRowArgReductionNoTmp(Operation* op, Type srcTy, Type dstTy)
+static LogicalResult verifyTRowArgReductionDsts(Operation* op, Type srcTy, Type dstIdxTy, Type dstValTy, bool indexOnly)
 {
-    if (failed(verifyRowReductionSrcLayout(op, srcTy, "src")) ||
-        failed(verifyRowReductionDstLayout(op, dstTy, "dst"))) {
+    if (failed(verifyRowReductionDstLayout(op, dstIdxTy, "dstIdx"))) {
         return failure();
     }
-    return verifyRowArgReductionTail(op, srcTy, dstTy);
+    if (failed(verifyRowArgReductionTail(op, srcTy, dstIdxTy))) {
+        return failure();
+    }
+    return verifyRowArgReductionValueDst(op, srcTy, dstValTy, indexOnly);
 }
 
-static LogicalResult verifyTRowArgReductionOpA5(Operation* op, Type srcTy, Type tmpTy, Type dstTy)
-{
-    if (failed(verifyRowReductionSrcLayout(op, srcTy, "src")) || failed(verifyVecTileCommon(op, tmpTy, "tmp")) ||
-        failed(verifyRowReductionDstLayout(op, dstTy, "dst"))) {
-        return failure();
-    }
-    return verifyRowArgReductionTail(op, srcTy, dstTy);
+static LogicalResult verifyTRowArgReductionOpA2A3(
+    Operation *op, Type srcTy, Type tmpTy, Type dstIdxTy, Type dstValTy,
+    bool indexOnly) {
+  if (failed(verifyRowReductionSrcLayout(op, srcTy, "src"))) {
+    return failure();
+  }
+  if (failed(verifyTRowArgTmpA2A3(op, srcTy, tmpTy))) {
+    return failure();
+  }
+  if (failed(verifyTRowArgReductionDsts(op, srcTy, dstIdxTy, dstValTy, indexOnly))) {
+      return failure();
+  }
+  return success();
+}
+
+static LogicalResult verifyTRowArgReductionNoTmp(
+    Operation *op, Type srcTy, Type dstIdxTy, Type dstValTy,
+    bool indexOnly) {
+  if (failed(verifyRowReductionSrcLayout(op, srcTy, "src"))) {
+    return failure();
+  }
+  if (failed(verifyTRowArgReductionDsts(op, srcTy, dstIdxTy, dstValTy, indexOnly))) {
+      return failure();
+  }
+  return success();
+}
+
+static LogicalResult verifyTRowArgReductionOpA5(
+    Operation *op, Type srcTy, Type tmpTy, Type dstIdxTy, Type dstValTy,
+    bool indexOnly) {
+  if (failed(verifyRowReductionSrcLayout(op, srcTy, "src"))) {
+    return failure();
+  }
+  if (failed(verifyVecTileCommon(op, tmpTy, "tmp"))) {
+    return failure();
+  }
+  if (failed(verifyTRowArgReductionDsts(op, srcTy, dstIdxTy, dstValTy, indexOnly))) {
+      return failure();
+  }
+  return success();
 }
 
 static LogicalResult verifyNDStyleVecTile(Operation* op, Type ty, StringRef name, bool allowLowPrecision)

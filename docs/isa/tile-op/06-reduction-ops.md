@@ -3,7 +3,7 @@
 > **Category:** Tile-local VEC reductions
 > **Pipeline:** PIPE_V
 
-This chapter documents the TileLib reduction families. These ops reduce one or more source dimensions into smaller destination tiles and are organized into row-reduction and column-reduction groups.
+This chapter documents the TileLib reduction families. These ops reduce one or more source dimensions into smaller destination tiles and are organized into row-reduction and column-reduction groups. Arg reductions write an index destination and may also write the selected value.
 
 ---
 
@@ -24,8 +24,8 @@ pto.<op> ins(%src, %tmp : !pto.tile_buf<...>, !pto.tile_buf<...>)
 | `pto.trowprod` | `dst[i, 0] = prod_j src[i, j]` |
 | `pto.trowmax` | `dst[i, 0] = max_j src[i, j]` |
 | `pto.trowmin` | `dst[i, 0] = min_j src[i, j]` |
-| `pto.trowargmax` | `dst[i, 0] = argmax_j src[i, j]` |
-| `pto.trowargmin` | `dst[i, 0] = argmin_j src[i, j]` |
+| `pto.trowargmax` | `dstIdx[i, 0] = argmax_j src[i, j]`; optionally `dstVal[i, 0] = max_j src[i, j]` |
+| `pto.trowargmin` | `dstIdx[i, 0] = argmin_j src[i, j]`; optionally `dstVal[i, 0] = min_j src[i, j]` |
 
 **Parameter Table:**
 
@@ -40,7 +40,8 @@ pto.<op> ins(%src, %tmp : !pto.tile_buf<...>, !pto.tile_buf<...>)
 - `dst.v_row` should match `src.v_row`.
 - `dst.v_col` should be `1`.
 - For `pto.trowsum`, `pto.trowprod`, `pto.trowmax`, and `pto.trowmin`, PTO IR keeps `%tmp` for ABI/workspace plumbing but does not impose extra `%tmp` element-type, shape, or layout constraints beyond requiring a `loc=vec` tile.
-- `pto.trowargmax` and `pto.trowargmin` require an integer destination element type for the row-local index result.
+- `pto.trowargmax` and `pto.trowargmin` use an integer `dstIdx` for the row-local index result. In value-and-index mode, `dstVal` has the source element type and the same valid region as `dstIdx`.
+- Row arg reductions write the extremum's column index to `dstIdx[i, 0]` and optionally its value to `dstVal[i, 0]`.
 - Numeric widening / narrowing inside the reduction is target-defined by the selected template (e.g. `trowsum` may widen `i16` accumulation internally before storing to `dst`).
 - On A5, `pto.trowmax` and `pto.trowmin` additionally accept 8-bit integer sources (`i8`/`si8`/`ui8`); the A5 TileLib template widens each 8-bit row losslessly to 16 bits for the vector reduction, so the stored `dst` result is exact for min/max. `pto.trowsum` and `pto.trowprod` still require 16/32-bit integers, `f16`, or `f32` sources.
 
@@ -70,12 +71,15 @@ pto.<op> ins(%src : !pto.tile_buf<...>)
 | `pto.tcolprod` | `dst[0, j] = prod_i src[i, j]` |
 | `pto.tcolmax` | `dst[0, j] = max_i src[i, j]` |
 | `pto.tcolmin` | `dst[0, j] = min_i src[i, j]` |
+| `pto.tcolargmax` | `dstIdx[0, j] = argmax_i src[i, j]`; optionally `dstVal[0, j] = max_i src[i, j]` |
+| `pto.tcolargmin` | `dstIdx[0, j] = argmin_i src[i, j]`; optionally `dstVal[0, j] = min_i src[i, j]` |
 
 **Constraints:**
 
 - `dst.v_row` should be `1`.
 - `dst.v_col` should match `src.v_col`.
 - Templates assume prefix-aligned valid regions and row-major VEC tiles.
+- Column arg reductions write the extremum's row index to `dstIdx[0, j]` and optionally its value to `dstVal[0, j]`.
 
 **Example:**
 

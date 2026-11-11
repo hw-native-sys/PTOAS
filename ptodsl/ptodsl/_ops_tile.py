@@ -1438,21 +1438,23 @@ def trowprod(src, tmp, dst):
     )
 
 
-def trowargmax(src, tmp, dst):
-    """``pto.trowargmax ins(src, tmp) outs(dst)``."""
+def trowargmax(src, dst_idx, dst_val=None, *, tmp=None):
+    """Write row-wise argmax indexes and, when requested, maximum values."""
     _pto.trowargmax(
         unwrap_surface_value(src),
-        unwrap_surface_value(dst),
-        tmp=unwrap_surface_value(tmp),
+        unwrap_surface_value(dst_idx),
+        tmp=None if tmp is None else unwrap_surface_value(tmp),
+        dst_val=None if dst_val is None else unwrap_surface_value(dst_val),
     )
 
 
-def trowargmin(src, tmp, dst):
-    """``pto.trowargmin ins(src, tmp) outs(dst)``."""
+def trowargmin(src, dst_idx, dst_val=None, *, tmp=None):
+    """Write row-wise argmin indexes and, when requested, minimum values."""
     _pto.trowargmin(
         unwrap_surface_value(src),
-        unwrap_surface_value(dst),
-        tmp=unwrap_surface_value(tmp),
+        unwrap_surface_value(dst_idx),
+        tmp=None if tmp is None else unwrap_surface_value(tmp),
+        dst_val=None if dst_val is None else unwrap_surface_value(dst_val),
     )
 
 
@@ -1490,21 +1492,23 @@ def tcolprod(src, dst):
     )
 
 
-def tcolargmax(src, tmp, dst):
-    """``pto.tcolargmax ins(src, tmp) outs(dst)``."""
+def tcolargmax(src, dst_idx, dst_val=None, *, tmp=None):
+    """Write column-wise argmax indexes and optional maximum values."""
     _pto.tcolargmax(
         unwrap_surface_value(src),
-        unwrap_surface_value(dst),
-        tmp=unwrap_surface_value(tmp),
+        unwrap_surface_value(dst_idx),
+        tmp=None if tmp is None else unwrap_surface_value(tmp),
+        dst_val=None if dst_val is None else unwrap_surface_value(dst_val),
     )
 
 
-def tcolargmin(src, tmp, dst):
-    """``pto.tcolargmin ins(src, tmp) outs(dst)``."""
+def tcolargmin(src, dst_idx, dst_val=None, *, tmp=None):
+    """Write column-wise argmin indexes and optional minimum values."""
     _pto.tcolargmin(
         unwrap_surface_value(src),
-        unwrap_surface_value(dst),
-        tmp=unwrap_surface_value(tmp),
+        unwrap_surface_value(dst_idx),
+        tmp=None if tmp is None else unwrap_surface_value(tmp),
+        dst_val=None if dst_val is None else unwrap_surface_value(dst_val),
     )
 
 
