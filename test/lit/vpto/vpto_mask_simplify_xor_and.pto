@@ -1,0 +1,160 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+
+// RUN: pto-test-opt %s -vpto-mask-simplify | FileCheck %s
+module {
+  func.func @fuse_lhs(%a: !pto.mask<b32>, %b: !pto.mask<b32>, %m: !pto.mask<b32>) -> !pto.mask<b32> {
+    %all = pto.pset_b32 "PAT_ALL" : !pto.mask<b32>
+    %x = pto.pxor %a, %b, %all : !pto.mask<b32>, !pto.mask<b32>, !pto.mask<b32> -> !pto.mask<b32>
+    %r = pto.pand %x, %m, %all : !pto.mask<b32>, !pto.mask<b32>, !pto.mask<b32> -> !pto.mask<b32>
+    return %r : !pto.mask<b32>
+  }
+  // CHECK-LABEL: func.func @fuse_lhs
+  // CHECK: %[[R:.*]] = pto.pxor %arg0, %arg1, %arg2
+  // CHECK-NOT: pto.pand
+  // CHECK: return %[[R]]
+  func.func @fuse_rhs(%a: !pto.mask<b32>, %b: !pto.mask<b32>, %m: !pto.mask<b32>) -> !pto.mask<b32> {
+    %all = pto.pset_b32 "PAT_ALL" : !pto.mask<b32>
+    %x = pto.pxor %a, %b, %all : !pto.mask<b32>, !pto.mask<b32>, !pto.mask<b32> -> !pto.mask<b32>
+    %r = pto.pand %m, %x, %all : !pto.mask<b32>, !pto.mask<b32>, !pto.mask<b32> -> !pto.mask<b32>
+    return %r : !pto.mask<b32>
+  }
+  // CHECK-LABEL: func.func @fuse_rhs
+  // CHECK: %[[R:.*]] = pto.pxor %arg0, %arg1, %arg2
+  // CHECK-NOT: pto.pand
+  // CHECK: return %[[R]]
+  func.func @keep_gated_xor(%a: !pto.mask<b32>, %b: !pto.mask<b32>, %m: !pto.mask<b32>, %seed: !pto.mask<b32>) -> !pto.mask<b32> {
+    %all = pto.pset_b32 "PAT_ALL" : !pto.mask<b32>
+    %x = pto.pxor %a, %b, %seed : !pto.mask<b32>, !pto.mask<b32>, !pto.mask<b32> -> !pto.mask<b32>
+    %r = pto.pand %x, %m, %all : !pto.mask<b32>, !pto.mask<b32>, !pto.mask<b32> -> !pto.mask<b32>
+    return %r : !pto.mask<b32>
+  }
+  // CHECK-LABEL: func.func @keep_gated_xor
+  // CHECK: pto.pxor %arg0, %arg1, %arg3
+  // CHECK: pto.pand
+  func.func @keep_gated_and(%a: !pto.mask<b32>, %b: !pto.mask<b32>, %m: !pto.mask<b32>, %seed: !pto.mask<b32>) -> !pto.mask<b32> {
+    %all = pto.pset_b32 "PAT_ALL" : !pto.mask<b32>
+    %x = pto.pxor %a, %b, %all : !pto.mask<b32>, !pto.mask<b32>, !pto.mask<b32> -> !pto.mask<b32>
+    %r = pto.pand %x, %m, %seed : !pto.mask<b32>, !pto.mask<b32>, !pto.mask<b32> -> !pto.mask<b32>
+    return %r : !pto.mask<b32>
+  }
+  // CHECK-LABEL: func.func @keep_gated_and
+  // CHECK: pto.pxor
+  // CHECK: pto.pand {{.*}}, %arg2, %arg3
+  func.func @keep_shared_xor(%a: !pto.mask<b32>, %b: !pto.mask<b32>, %m: !pto.mask<b32>) -> (!pto.mask<b32>, !pto.mask<b32>) {
+    %all = pto.pset_b32 "PAT_ALL" : !pto.mask<b32>
+    %x = pto.pxor %a, %b, %all : !pto.mask<b32>, !pto.mask<b32>, !pto.mask<b32> -> !pto.mask<b32>
+    %r = pto.pand %x, %m, %all : !pto.mask<b32>, !pto.mask<b32>, !pto.mask<b32> -> !pto.mask<b32>
+    return %x, %r : !pto.mask<b32>, !pto.mask<b32>
+  }
+  // CHECK-LABEL: func.func @keep_shared_xor
+  // CHECK: pto.pxor
+  // CHECK: pto.pand
+  func.func @keep_mixed_xor_lhs(%a: !pto.mask<b16>, %b: !pto.mask<b32>, %m: !pto.mask<b32>) -> !pto.mask<b32> {
+    %xm = pto.pset_b32 "PAT_ALL" : !pto.mask<b32>
+    %am = pto.pset_b32 "PAT_ALL" : !pto.mask<b32>
+    %x = pto.pxor %a, %b, %xm : !pto.mask<b16>, !pto.mask<b32>, !pto.mask<b32> -> !pto.mask<b32>
+    %r = pto.pand %x, %m, %am : !pto.mask<b32>, !pto.mask<b32>, !pto.mask<b32> -> !pto.mask<b32>
+    return %r : !pto.mask<b32>
+  }
+  // CHECK-LABEL: func.func @keep_mixed_xor_lhs
+  // CHECK: pto.pxor
+  // CHECK: pto.pand
+  func.func @keep_mixed_xor_rhs(%a: !pto.mask<b32>, %b: !pto.mask<b16>, %m: !pto.mask<b32>) -> !pto.mask<b32> {
+    %xm = pto.pset_b32 "PAT_ALL" : !pto.mask<b32>
+    %am = pto.pset_b32 "PAT_ALL" : !pto.mask<b32>
+    %x = pto.pxor %a, %b, %xm : !pto.mask<b32>, !pto.mask<b16>, !pto.mask<b32> -> !pto.mask<b32>
+    %r = pto.pand %x, %m, %am : !pto.mask<b32>, !pto.mask<b32>, !pto.mask<b32> -> !pto.mask<b32>
+    return %r : !pto.mask<b32>
+  }
+  // CHECK-LABEL: func.func @keep_mixed_xor_rhs
+  // CHECK: pto.pxor
+  // CHECK: pto.pand
+  func.func @keep_mixed_xor_mask(%a: !pto.mask<b32>, %b: !pto.mask<b32>, %m: !pto.mask<b32>) -> !pto.mask<b32> {
+    %xm = pto.pset_b16 "PAT_ALL" : !pto.mask<b16>
+    %am = pto.pset_b32 "PAT_ALL" : !pto.mask<b32>
+    %x = pto.pxor %a, %b, %xm : !pto.mask<b32>, !pto.mask<b32>, !pto.mask<b16> -> !pto.mask<b32>
+    %r = pto.pand %x, %m, %am : !pto.mask<b32>, !pto.mask<b32>, !pto.mask<b32> -> !pto.mask<b32>
+    return %r : !pto.mask<b32>
+  }
+  // CHECK-LABEL: func.func @keep_mixed_xor_mask
+  // CHECK: pto.pxor
+  // CHECK: pto.pand
+  func.func @keep_mixed_xor_result(%a: !pto.mask<b32>, %b: !pto.mask<b32>, %m: !pto.mask<b32>) -> !pto.mask<b32> {
+    %xm = pto.pset_b32 "PAT_ALL" : !pto.mask<b32>
+    %am = pto.pset_b32 "PAT_ALL" : !pto.mask<b32>
+    %x = pto.pxor %a, %b, %xm : !pto.mask<b32>, !pto.mask<b32>, !pto.mask<b32> -> !pto.mask<b16>
+    %r = pto.pand %x, %m, %am : !pto.mask<b16>, !pto.mask<b32>, !pto.mask<b32> -> !pto.mask<b32>
+    return %r : !pto.mask<b32>
+  }
+  // CHECK-LABEL: func.func @keep_mixed_xor_result
+  // CHECK: pto.pxor
+  // CHECK: pto.pand
+  func.func @keep_mixed_and_other(%a: !pto.mask<b32>, %b: !pto.mask<b32>, %m: !pto.mask<b16>) -> !pto.mask<b32> {
+    %xm = pto.pset_b32 "PAT_ALL" : !pto.mask<b32>
+    %am = pto.pset_b32 "PAT_ALL" : !pto.mask<b32>
+    %x = pto.pxor %a, %b, %xm : !pto.mask<b32>, !pto.mask<b32>, !pto.mask<b32> -> !pto.mask<b32>
+    %r = pto.pand %x, %m, %am : !pto.mask<b32>, !pto.mask<b16>, !pto.mask<b32> -> !pto.mask<b32>
+    return %r : !pto.mask<b32>
+  }
+  // CHECK-LABEL: func.func @keep_mixed_and_other
+  // CHECK: pto.pxor
+  // CHECK: pto.pand
+  func.func @keep_mixed_and_mask(%a: !pto.mask<b32>, %b: !pto.mask<b32>, %m: !pto.mask<b32>) -> !pto.mask<b32> {
+    %xm = pto.pset_b32 "PAT_ALL" : !pto.mask<b32>
+    %am = pto.pset_b16 "PAT_ALL" : !pto.mask<b16>
+    %x = pto.pxor %a, %b, %xm : !pto.mask<b32>, !pto.mask<b32>, !pto.mask<b32> -> !pto.mask<b32>
+    %r = pto.pand %x, %m, %am : !pto.mask<b32>, !pto.mask<b32>, !pto.mask<b16> -> !pto.mask<b32>
+    return %r : !pto.mask<b32>
+  }
+  // CHECK-LABEL: func.func @keep_mixed_and_mask
+  // CHECK: pto.pxor
+  // CHECK: pto.pand
+  func.func @keep_mixed_and_result(%a: !pto.mask<b32>, %b: !pto.mask<b32>, %m: !pto.mask<b32>) -> !pto.mask<b16> {
+    %xm = pto.pset_b32 "PAT_ALL" : !pto.mask<b32>
+    %am = pto.pset_b32 "PAT_ALL" : !pto.mask<b32>
+    %x = pto.pxor %a, %b, %xm : !pto.mask<b32>, !pto.mask<b32>, !pto.mask<b32> -> !pto.mask<b32>
+    %r = pto.pand %x, %m, %am : !pto.mask<b32>, !pto.mask<b32>, !pto.mask<b32> -> !pto.mask<b16>
+    return %r : !pto.mask<b16>
+  }
+  // CHECK-LABEL: func.func @keep_mixed_and_result
+  // CHECK: pto.pxor
+  // CHECK: pto.pand
+  func.func @fuse_b8(%a: !pto.mask<b8>, %b: !pto.mask<b8>, %m: !pto.mask<b8>) -> !pto.mask<b8> {
+    %all = pto.pset_b8 "PAT_ALL" : !pto.mask<b8>
+    %x = pto.pxor %a, %b, %all : !pto.mask<b8>, !pto.mask<b8>, !pto.mask<b8> -> !pto.mask<b8>
+    %r = pto.pand %x, %m, %all : !pto.mask<b8>, !pto.mask<b8>, !pto.mask<b8> -> !pto.mask<b8>
+    return %r : !pto.mask<b8>
+  }
+  // CHECK-LABEL: func.func @fuse_b8
+  // CHECK: %[[R:.*]] = pto.pxor %arg0, %arg1, %arg2
+  // CHECK-NOT: pto.pand
+  // CHECK: return %[[R]]
+  func.func @fuse_b16(%a: !pto.mask<b16>, %b: !pto.mask<b16>, %m: !pto.mask<b16>) -> !pto.mask<b16> {
+    %all = pto.pset_b16 "PAT_ALL" : !pto.mask<b16>
+    %x = pto.pxor %a, %b, %all : !pto.mask<b16>, !pto.mask<b16>, !pto.mask<b16> -> !pto.mask<b16>
+    %r = pto.pand %x, %m, %all : !pto.mask<b16>, !pto.mask<b16>, !pto.mask<b16> -> !pto.mask<b16>
+    return %r : !pto.mask<b16>
+  }
+  // CHECK-LABEL: func.func @fuse_b16
+  // CHECK: %[[R:.*]] = pto.pxor %arg0, %arg1, %arg2
+  // CHECK-NOT: pto.pand
+  // CHECK: return %[[R]]
+  // The XOR is uniformly b32; the consuming AND has a b16 result and mask.
+  func.func @keep_b32_xor_b16_and(%a: !pto.mask<b32>, %b: !pto.mask<b32>, %m: !pto.mask<b16>) -> !pto.mask<b16> {
+    %all32 = pto.pset_b32 "PAT_ALL" : !pto.mask<b32>
+    %all16 = pto.pset_b16 "PAT_ALL" : !pto.mask<b16>
+    %x = pto.pxor %a, %b, %all32 : !pto.mask<b32>, !pto.mask<b32>, !pto.mask<b32> -> !pto.mask<b32>
+    %r = pto.pand %x, %m, %all16 : !pto.mask<b32>, !pto.mask<b16>, !pto.mask<b16> -> !pto.mask<b16>
+    return %r : !pto.mask<b16>
+  }
+  // CHECK-LABEL: func.func @keep_b32_xor_b16_and
+  // CHECK: %[[X:.*]] = pto.pxor %arg0, %arg1, {{.*}} : !pto.mask<b32>, !pto.mask<b32>, !pto.mask<b32> -> !pto.mask<b32>
+  // CHECK: %[[A:.*]] = pto.pand %[[X]], %arg2, {{.*}} : !pto.mask<b32>, !pto.mask<b16>, !pto.mask<b16> -> !pto.mask<b16>
+  // CHECK: return %[[A]] : !pto.mask<b16>
+}

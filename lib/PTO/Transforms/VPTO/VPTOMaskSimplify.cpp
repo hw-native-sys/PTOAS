@@ -280,6 +280,37 @@ struct SimplifyPandAllTrueOperand : OpRewritePattern<PandOp> {
     }
 };
 
+// (a XOR b) AND m can use PXOR's governing predicate directly. Keep
+// both original governing masks unless they are known identities.
+struct FuseXorAndPredicate : OpRewritePattern<PandOp> {
+    using OpRewritePattern<PandOp>::OpRewritePattern;
+
+    LogicalResult matchAndRewrite(PandOp op, PatternRewriter& rewriter) const override
+    {
+        // Predicate ops accept mixed granularities. Do not move a predicate
+        // across either op unless every operand and result has one mask type.
+        Type maskType = op.getResult().getType();
+        if (op.getSrc0().getType() != maskType || op.getSrc1().getType() != maskType ||
+            op.getMask().getType() != maskType || !isAllTrueMask(op.getMask())) {
+            return failure();
+        }
+        for (unsigned side = 0; side < 2; ++side) {
+            Value value = side == 0 ? op.getSrc0() : op.getSrc1();
+            Value predicate = side == 0 ? op.getSrc1() : op.getSrc0();
+            auto xorOp = value.getDefiningOp<PxorOp>();
+            if (!xorOp || !xorOp.getResult().hasOneUse() || xorOp.getResult().getType() != maskType ||
+                xorOp.getSrc0().getType() != maskType || xorOp.getSrc1().getType() != maskType ||
+                xorOp.getMask().getType() != maskType || !isAllTrueMask(xorOp.getMask())) {
+                continue;
+            }
+            rewriter.replaceOpWithNewOp<PxorOp>(
+                op, op.getResult().getType(), xorOp.getSrc0(), xorOp.getSrc1(), predicate);
+            return success();
+        }
+        return failure();
+    }
+};
+
 // por(src0, src1, mask) = mask ? (src0 | src1) : 0. An all-true operand already
 // saturates the result under an all-true governing mask.
 struct SimplifyPorAllTrueOperand : OpRewritePattern<PorOp> {
@@ -440,7 +471,7 @@ struct VPTOMaskSimplifyPass : public pto::impl::VPTOMaskSimplifyBase<VPTOMaskSim
         patterns.add<
             SimplifyVselAllTrueMask, SimplifyAllFalseGoverningMask<PandOp>, SimplifyAllFalseGoverningMask<PorOp>,
             SimplifyAllFalseGoverningMask<PxorOp>, SimplifyAllFalseGoverningMask<PnotOp>, SimplifyPandAllFalseOperand,
-            SimplifyStaticPrefixAnd, SimplifyStaticPrefixOr, SimplifyPandAllTrueOperand, SimplifyPorAllTrueOperand,
+            FuseXorAndPredicate, SimplifyStaticPrefixAnd, SimplifyStaticPrefixOr, SimplifyPandAllTrueOperand, SimplifyPorAllTrueOperand,
             SimplifyPnotAllTrueInput, SimplifyPnotAllFalseInput, SimplifyIdempotentPredicate<PandOp>,
             SimplifyIdempotentPredicate<PorOp>, SimplifyPxorSameOperand, SimplifyAllTruePredicateReorder<PintlvB8Op>,
             SimplifyAllTruePredicateReorder<PintlvB16Op>, SimplifyAllTruePredicateReorder<PintlvB32Op>,
