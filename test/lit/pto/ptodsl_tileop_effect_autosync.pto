@@ -54,9 +54,9 @@ module attributes {pto.target_arch = "a5"} {
       : !pto.tile_buf<vec, 16x16xf32> -> !pto.ptr<f32, ub>
     %mask = pto.pset_b32 "PAT_ALL" : !pto.mask<b32>
     %value = pto.vlds %input_ptr[%c0]
-      : !pto.ptr<f32, ub> -> !pto.vreg<64xf32>
+      : !pto.ptr<f32, ub>, index -> !pto.vreg<64xf32>
     pto.vsts %value, %output_ptr[%c0], %mask
-      : !pto.vreg<64xf32>, !pto.ptr<f32, ub>, !pto.mask<b32>
+      : !pto.vreg<64xf32>, !pto.ptr<f32, ub>, index, !pto.mask<b32>
     return
   }
 }

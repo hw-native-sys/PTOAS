@@ -9,9 +9,26 @@ Vector loads move data from Unified Buffer (UB) to vector registers (`vreg`). Ve
 
 - `%source` / `%dest` is the base address operand in SSA form. The base pointer
   MUST address the Vector tile buffer / UB space.
-- `%offset` is the displacement operand in SSA form. The exact encoding is
-  instruction-specific, but the effective address and any post-update behavior
-  MUST match the selected instruction form.
+- `%offset` is the displacement operand in SSA form. Its unit and sign are
+  part of each instruction's contract:
+  - `pto.vlds`, `pto.vldsx2`, `pto.vsts`, `pto.vstsx2` and `pto.uvld`
+    count **elements** and take a **signed** displacement: positive values
+    advance the base pointer, negative values move it toward lower addresses.
+  - `pto.plds` / `pto.psts` count **bytes** and `pto.pldi` / `pto.psti`
+    count **alignment units**, both signed.
+  - `pto.vstas` and `pto.vstus` take an **unsigned** byte count: a length in
+    bytes to write, never a displacement toward lower addresses.
+  - **Type:** an offset is written either with the platform `index` type or
+    with a signless integer of explicit width (`i32`, `i64`), declared in the
+    type list right after the base operand's type, as in
+    `%src[%off] : !pto.ptr<f32, ub>, index -> !pto.vreg<64xf32>`. The declared
+    type selects the interpretation, so an unsigned instruction takes an
+    unsigned integer offset.
+  - **Post-update:** the updated base advances by the displacement the
+    instruction applied, in the same unit and sign.
+  - **Bounds:** these ops perform no bounds checking. A displacement that
+    leaves the object addressed by the base pointer is undefined at this level
+    and is the caller's responsibility.
 - `%mask` is the predicate operand for predicated memory families. For memory
   families,
   inactive lanes or inactive blocks MUST NOT issue memory requests unless the
@@ -111,11 +128,11 @@ DMA **`TLOAD` / `TSTORE`** (global memory ↔ UB) use **MTE** pipes, not `RV_VLD
 
 ### `pto.vlds`
 
-- **syntax:** `%result = pto.vlds %source[%offset] {dist = "DIST"} : !pto.ptr<T, ub> -> !pto.vreg<NxT>`
+- **syntax:** `%result = pto.vlds %source[%offset] {dist = "DIST"} : !pto.ptr<T, ub>, index -> !pto.vreg<NxT>`
 
   Post-update form:
 
-  `%result, %updated_base = pto.vlds %source[%offset] {dist = "DIST"} : !pto.ptr<T, ub> -> !pto.vreg<NxT>, !pto.ptr<T, ub>`
+  `%result, %updated_base = pto.vlds %source[%offset] {dist = "DIST"} : !pto.ptr<T, ub>, index -> !pto.vreg<NxT>, !pto.ptr<T, ub>`
 - **semantics:** Vector load with distribution mode.
 - **inputs:**
   `%source` is the UB base address, `%offset` is the load displacement, and
@@ -156,12 +173,12 @@ deinterleave forms.
 
 **Example — Contiguous load:**
 ```mlir
-%v = pto.vlds %ub[%offset] {dist = "NORM"} : !pto.ptr<f32, ub> -> !pto.vreg<64xf32>
+%v = pto.vlds %ub[%offset] {dist = "NORM"} : !pto.ptr<f32, ub>, index -> !pto.vreg<64xf32>
 ```
 
 **Example — Broadcast scalar to all lanes:**
 ```mlir
-%v = pto.vlds %ub[%c0] {dist = "BRC_B32"} : !pto.ptr<f32, ub> -> !pto.vreg<64xf32>
+%v = pto.vlds %ub[%c0] {dist = "BRC_B32"} : !pto.ptr<f32, ub>, index -> !pto.vreg<64xf32>
 ```
 
 ---
@@ -421,8 +438,8 @@ for (int blk = 0; blk < VL / 32; ++blk) {
 
 ### `pto.vsts`
 
-- **syntax:** `pto.vsts %value, %dest[%offset], %mask {dist = "DIST"} : !pto.vreg<NxT>, !pto.ptr<T, ub>, !pto.mask<G>`
-- **post-update syntax:** `%updated_dest = pto.vsts %value, %dest[%offset], %mask {dist = "DIST"} : !pto.vreg<NxT>, !pto.ptr<T, ub>, !pto.mask<G> -> !pto.ptr<T, ub>`
+- **syntax:** `pto.vsts %value, %dest[%offset], %mask {dist = "DIST"} : !pto.vreg<NxT>, !pto.ptr<T, ub>, index, !pto.mask<G>`
+- **post-update syntax:** `%updated_dest = pto.vsts %value, %dest[%offset], %mask {dist = "DIST"} : !pto.vreg<NxT>, !pto.ptr<T, ub>, index, !pto.mask<G> -> !pto.ptr<T, ub>`
 - **semantics:** Vector store with distribution mode.
 - **inputs:**
   `%value` is the source vector, `%dest` is the UB base pointer, `%offset` is
@@ -455,7 +472,7 @@ for (int blk = 0; blk < VL / 32; ++blk) {
 
 **Example — Contiguous store:**
 ```mlir
-pto.vsts %v, %ub[%offset], %mask {dist = "NORM_B32"} : !pto.vreg<64xf32>, !pto.ptr<f32, ub>, !pto.mask<G>
+pto.vsts %v, %ub[%offset], %mask {dist = "NORM_B32"} : !pto.vreg<64xf32>, !pto.ptr<f32, ub>, index, !pto.mask<G>
 ```
 
 ---

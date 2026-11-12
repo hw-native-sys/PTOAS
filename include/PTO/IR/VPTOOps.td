@@ -176,7 +176,7 @@ def PTOLoadOp : PTO_ScalarOp<"load", [
 
   let arguments = (ins
     PTO_BufferLikeType:$ptr,
-    Index:$offset
+    PTO_ElementOffset:$offset
   );
 
   let results = (outs AnyType:$value);
@@ -188,7 +188,7 @@ def PTOLoadOp : PTO_ScalarOp<"load", [
   }];
 
   let assemblyFormat = [{
-    $ptr `[` $offset `]` attr-dict `:` type($ptr) `->` type($value)
+    $ptr `[` $offset `]` attr-dict `:` type($ptr) `,` type($offset) `->` type($value)
   }];
 }
 
@@ -200,7 +200,7 @@ def PTOStoreOp : PTO_ScalarOp<"store", [
 
   let arguments = (ins
     PTO_BufferLikeType:$ptr,
-    Index:$offset,
+    PTO_ElementOffset:$offset,
     AnyType:$value
   );
 
@@ -213,7 +213,7 @@ def PTOStoreOp : PTO_ScalarOp<"store", [
   }];
 
   let assemblyFormat = [{
-    $value `,` $ptr `[` $offset `]` attr-dict `:` type($ptr) `,` type($value)
+    $value `,` $ptr `[` $offset `]` attr-dict `:` type($ptr) `,` type($offset) `,` type($value)
   }];
 }
 
@@ -239,7 +239,7 @@ def PTOLdgOp : PTO_SimtOp<"ldg", [
 
   let arguments = (ins
     PTO_BufferType:$ptr,
-    Index:$offset,
+    PTO_ElementOffset:$offset,
     OptionalAttr<PTO_L1CacheAttr>:$l1cache,
     OptionalAttr<PTO_LdL2CacheAttr>:$l2cache
   );
@@ -250,7 +250,7 @@ def PTOLdgOp : PTO_SimtOp<"ldg", [
 
   let assemblyFormat = [{
     $ptr `[` $offset `]` custom<L1Cache>($l1cache)
-    custom<LdL2Cache>($l2cache) attr-dict `:` type($ptr) `->` type($value)
+    custom<LdL2Cache>($l2cache) attr-dict `:` type($ptr) `,` type($offset) `->` type($value)
   }];
 }
 
@@ -267,7 +267,7 @@ def PTOStgOp : PTO_SimtOp<"stg", [
 
   let arguments = (ins
     PTO_BufferType:$ptr,
-    Index:$offset,
+    PTO_ElementOffset:$offset,
     AnyType:$value,
     OptionalAttr<PTO_L1CacheAttr>:$l1cache,
     OptionalAttr<PTO_StL2CacheAttr>:$l2cache
@@ -279,7 +279,7 @@ def PTOStgOp : PTO_SimtOp<"stg", [
 
   let assemblyFormat = [{
     $value `,` $ptr `[` $offset `]` custom<L1Cache>($l1cache)
-    custom<StL2Cache>($l2cache) attr-dict `:` type($ptr) `,` type($value)
+    custom<StL2Cache>($l2cache) attr-dict `:` type($ptr) `,` type($offset) `,` type($value)
   }];
 }
 
@@ -297,7 +297,7 @@ def PTOLdDevOp : PTO_MicroOp<"ld_dev", [
 
   let arguments = (ins
     PTO_BufferType:$ptr,
-    Index:$offset
+    PTO_ElementOffset:$offset
   );
 
   let results = (outs PTO_DevScalarValueType:$value);
@@ -305,7 +305,7 @@ def PTOLdDevOp : PTO_MicroOp<"ld_dev", [
   let hasVerifier = 1;
 
   let assemblyFormat = [{
-    $ptr `[` $offset `]` attr-dict `:` type($ptr) `->` type($value)
+    $ptr `[` $offset `]` attr-dict `:` type($ptr) `,` type($offset) `->` type($value)
   }];
 
   let extraClassDeclaration = [{
@@ -328,7 +328,7 @@ def PTOStDevOp : PTO_MicroOp<"st_dev", [
   let arguments = (ins
     PTO_DevScalarValueType:$value,
     PTO_BufferType:$ptr,
-    Index:$offset
+    PTO_ElementOffset:$offset
   );
 
   let results = (outs);
@@ -336,7 +336,7 @@ def PTOStDevOp : PTO_MicroOp<"st_dev", [
   let hasVerifier = 1;
 
   let assemblyFormat = [{
-    $value `,` $ptr `[` $offset `]` attr-dict `:` type($ptr) `,` type($value)
+    $value `,` $ptr `[` $offset `]` attr-dict `:` type($ptr) `,` type($offset) `,` type($value)
   }];
 
   let extraClassDeclaration = [{
@@ -1624,7 +1624,7 @@ def PTO_VldsOp : PTO_VectorMicroOp<"vlds", [
   ]> {
   let arguments = (ins
     PTO_BufferLikeType:$source,
-    Index:$offset,
+    PTO_ElementOffset:$offset,
     OptionalAttr<StrAttr>:$dist
   );
 
@@ -1634,7 +1634,7 @@ def PTO_VldsOp : PTO_VectorMicroOp<"vlds", [
   let hasVerifier = 1;
 
   let assemblyFormat = [{
-    $source `[` $offset `]` attr-dict `:` type($source) `->` type($result)
+    $source `[` $offset `]` attr-dict `:` type($source) `,` type($offset) `->` type($result)
     (`,` type($updated_base)^)?
   }];
 }
@@ -1645,7 +1645,7 @@ def PTO_Vldsx2Op : PTO_VectorMicroOp<"vldsx2", [
   ]> {
   let arguments = (ins
     PTO_BufferLikeType:$source,
-    Index:$offset,
+    PTO_ElementOffset:$offset,
     StrAttr:$dist
   );
   let results = (outs PTO_VectorType:$low,
@@ -1770,7 +1770,7 @@ def PTO_UvldOp : PTO_VectorMicroOp<"uvld", [
   ]> {
   let arguments = (ins
     PTO_BufferLikeType:$source,
-    Index:$offset
+    PTO_ElementOffset:$offset
   );
 
   let results = (outs PTO_VectorType:$result);
@@ -1778,7 +1778,7 @@ def PTO_UvldOp : PTO_VectorMicroOp<"uvld", [
   let hasVerifier = 1;
 
   let assemblyFormat = [{
-    $source `[` $offset `]` attr-dict `:` type($source) `->` type($result)
+    $source `[` $offset `]` attr-dict `:` type($source) `,` type($offset) `->` type($result)
   }];
 }
 
@@ -2045,13 +2045,17 @@ def PTO_PxorOp : PTO_VectorMicroOp<"pxor", [Pure]> {
   }];
 }
 
-def PTO_PldsOp : PTO_VectorMicroOp<"plds", [
+// A predicate load moves one predicate from UB into a predicate register; a
+// predicate store moves one back. Both take an element offset whose unit (bytes
+// or alignment units) and signedness are fixed by the instruction form, so they
+// share one operand and assembly contract and differ only in their mnemonic.
+class PTO_PredicateLoadOp<string mnemonic> : PTO_VectorMicroOp<mnemonic, [
     DeclareOpInterfaceMethods<MemoryEffectsOpInterface>,
     VPTOAddressSemanticsOpInterface
   ]> {
   let arguments = (ins
     PTO_BufferLikeType:$source,
-    Index:$offset,
+    PTO_ElementOffset:$offset,
     StrAttr:$dist
   );
   let results = (outs PTO_MaskTypeConstraint:$result,
@@ -2065,34 +2069,14 @@ def PTO_PldsOp : PTO_VectorMicroOp<"plds", [
   }];
 }
 
-def PTO_PldiOp : PTO_VectorMicroOp<"pldi", [
-    DeclareOpInterfaceMethods<MemoryEffectsOpInterface>,
-    VPTOAddressSemanticsOpInterface
-  ]> {
-  let arguments = (ins
-    PTO_BufferLikeType:$source,
-    Index:$offset,
-    StrAttr:$dist
-  );
-  let results = (outs PTO_MaskTypeConstraint:$result,
-                      Optional<PTO_BufferLikeType>:$updated_base);
-
-  let hasVerifier = 1;
-
-  let assemblyFormat = [{
-    $source `[` $offset `]` `,` $dist attr-dict `:` type($source) `,` type($offset) `->` type($result)
-    (`,` type($updated_base)^)?
-  }];
-}
-
-def PTO_PstiOp : PTO_VectorMicroOp<"psti", [
+class PTO_PredicateStoreOp<string mnemonic> : PTO_VectorMicroOp<mnemonic, [
     DeclareOpInterfaceMethods<MemoryEffectsOpInterface>,
     VPTOAddressSemanticsOpInterface
   ]> {
   let arguments = (ins
     PTO_MaskTypeConstraint:$value,
     PTO_BufferLikeType:$destination,
-    Index:$offset,
+    PTO_ElementOffset:$offset,
     StrAttr:$dist
   );
   let results = (outs Optional<PTO_BufferLikeType>:$updated_base);
@@ -2104,6 +2088,10 @@ def PTO_PstiOp : PTO_VectorMicroOp<"psti", [
     (`->` type($updated_base)^)?
   }];
 }
+
+def PTO_PldsOp : PTO_PredicateLoadOp<"plds">;
+def PTO_PldiOp : PTO_PredicateLoadOp<"pldi">;
+def PTO_PstiOp : PTO_PredicateStoreOp<"psti">;
 
 def PTO_VabsOp : PTO_VectorMicroOp<"vabs", [Pure]> {
   let arguments = (ins
@@ -3052,7 +3040,7 @@ def PTO_VstsOp : PTO_VectorMicroOp<"vsts", [
   let arguments = (ins
     PTO_VectorType:$value,
     PTO_BufferLikeType:$destination,
-    Index:$offset,
+    PTO_ElementOffset:$offset,
     OptionalAttr<StrAttr>:$dist,
     PTO_MaskTypeConstraint:$mask
   );
@@ -3062,7 +3050,7 @@ def PTO_VstsOp : PTO_VectorMicroOp<"vsts", [
   let hasVerifier = 1;
 
   let assemblyFormat = [{
-    $value `,` $destination `[` $offset `]` `,` $mask attr-dict `:` type($value) `,` type($destination) `,` type($mask)
+    $value `,` $destination `[` $offset `]` `,` $mask attr-dict `:` type($value) `,` type($destination) `,` type($offset) `,` type($mask)
     (`->` type($updated_base)^)?
   }];
 }
@@ -3086,26 +3074,8 @@ def PTO_VscatterOp : PTO_VectorMicroOp<"vscatter", [
   }];
 }
 
-def PTO_PstsOp : PTO_VectorMicroOp<"psts", [
-    DeclareOpInterfaceMethods<MemoryEffectsOpInterface>,
-    VPTOAddressSemanticsOpInterface
-  ]> {
-  let arguments = (ins
-    PTO_MaskTypeConstraint:$value,
-    PTO_BufferLikeType:$destination,
-    Index:$offset,
-    StrAttr:$dist
-  );
+def PTO_PstsOp : PTO_PredicateStoreOp<"psts">;
 
-  let results = (outs Optional<PTO_BufferLikeType>:$updated_base);
-
-  let hasVerifier = 1;
-
-  let assemblyFormat = [{
-    $value `,` $destination `[` $offset `]` `,` $dist attr-dict `:` type($value) `,` type($destination) `,` type($offset)
-    (`->` type($updated_base)^)?
-  }];
-}
 
 def PTO_CopyUbufToGmOp : PTO_MteOp<"copy_ubuf_to_gm", [
     DeclareOpInterfaceMethods<MemoryEffectsOpInterface>
@@ -4020,7 +3990,7 @@ def PTO_Vstsx2Op : PTO_VectorMicroOp<"vstsx2", [
     PTO_VectorType:$low,
     PTO_VectorType:$high,
     PTO_BufferLikeType:$destination,
-    Index:$offset,
+    PTO_ElementOffset:$offset,
     StrAttr:$dist,
     PTO_MaskTypeConstraint:$mask
   );

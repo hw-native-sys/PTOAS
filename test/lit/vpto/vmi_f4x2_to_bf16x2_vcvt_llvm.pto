@@ -51,10 +51,10 @@ module attributes {pto.target_arch = "a5", pto.kernel_kind = #pto.kernel_kind<ve
 }
 
 // VPTO-LABEL: func.func @f4x2_to_bf16x2_vcvt_store
-// VPTO: pto.vlds {{.*}} : !pto.ptr<!pto.f4E1M2x2, ub> -> !pto.vreg<256x!pto.f4E1M2x2>
+// VPTO: pto.vlds {{.*}} : !pto.ptr<!pto.f4E1M2x2, ub>, index -> !pto.vreg<256x!pto.f4E1M2x2>
 // VPTO: pto.vcvt {{.*}} {part = "P0"} : !pto.vreg<256x!pto.f4E1M2x2>, !pto.mask<b8> -> !pto.vreg<128xbf16>
 // VPTO: pto.vbitcast {{.*}} : !pto.vreg<128xbf16> -> !pto.vreg<64x!pto.bf16x2>
-// VPTO: pto.vsts {{.*}} : !pto.vreg<64x!pto.bf16x2>, !pto.ptr<!pto.bf16x2, ub>, !pto.mask<b32>
+// VPTO: pto.vsts {{.*}} : !pto.vreg<64x!pto.bf16x2>, !pto.ptr<!pto.bf16x2, ub>, index, !pto.mask<b32>
 // VPTO-NOT: pto.vmi.
 // VPTO-NOT: !pto.vmi.
 

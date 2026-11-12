@@ -61,7 +61,7 @@ module attributes {pto.target_arch = "a5", pto.kernel_kind = #pto.kernel_kind<ve
           %dynamic_offset = arith.muli %i64, %c32_i64 : i64
           %offset = arith.addi %base, %dynamic_offset : i64
           %index = arith.index_cast %offset : i64 to index
-          pto.store %minus_one, %dst[%index] : !pto.ptr<i32, ub>, i32
+          pto.store %minus_one, %dst[%index] : !pto.ptr<i32, ub>, index, i32
         }
       }
     }

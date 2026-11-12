@@ -13,7 +13,7 @@ module {
   func.func @get_l2_cache_offset_kernel(%dst: !pto.ptr<i64, gm>) attributes {pto.entry} {
     %c0 = arith.constant 0 : index
     %offset = pto.get_l2_cache_offset
-    pto.store %offset, %dst[%c0] : !pto.ptr<i64, gm>, i64
+    pto.store %offset, %dst[%c0] : !pto.ptr<i64, gm>, index, i64
     return
   }
 }

@@ -24,7 +24,7 @@ module attributes {pto.target_arch = "a5", pto.kernel_kind = #pto.kernel_kind<ve
       scf.for %iv = %c0 to %c1024 step %c1 {
         %in_bounds = arith.cmpi slt, %iv, %c1024 : index
         scf.if %in_bounds {
-          pto.store %laneid, %dst[%iv] : !pto.ptr<i32, ub>, i32
+          pto.store %laneid, %dst[%iv] : !pto.ptr<i32, ub>, index, i32
         }
       }
     }

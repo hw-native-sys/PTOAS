@@ -26,15 +26,15 @@ KERNEL_SOURCE = (
     'dex\n    %c4 = arith.constant 4 : index\n    %c5 = arith.constant 5 : index\n    %c6 = arith.constant 6 : in'
     'dex\n    %c7 = arith.constant 7 : index\n    %c16 = arith.constant 16 : index\n    %c17 = arith.constant 17 '
     ': index\n    %c18 = arith.constant 18 : index\n    %c19 = arith.constant 19 : index\n    %v5 = arith.constan'
-    't 5 : i32\n\n    %ptr0 = pto.addptr %arg0, %c0 : !pto.ptr<i32, gm> -> !pto.ptr<i32, gm>\n    %old0 = pto.ato'
+    't 5 : i32\n\n    %ptr0 = pto.addptr %arg0, %c0 : !pto.ptr<i32, gm>, index -> !pto.ptr<i32, gm>\n    %old0 = pto.ato'
     'mic_add %ptr0, %v5 l2cache(nmfv) : !pto.ptr<i32, gm>, i32 -> i32\n    %ptr1 = pto.addptr %arg0, %c1 : !pto.p'
-    'tr<i32, gm> -> !pto.ptr<i32, gm>\n    %old1 = pto.atomic_add %ptr1, %v5 l2cache(naci) : !pto.ptr<i32, gm>, i'
-    '32 -> i32\n    %ptr2 = pto.addptr %arg0, %c2 : !pto.ptr<i32, gm> -> !pto.ptr<i32, gm>\n    %old2 = pto.atomi'
+    'tr<i32, gm>, index -> !pto.ptr<i32, gm>\n    %old1 = pto.atomic_add %ptr1, %v5 l2cache(naci) : !pto.ptr<i32, gm>, i'
+    '32 -> i32\n    %ptr2 = pto.addptr %arg0, %c2 : !pto.ptr<i32, gm>, index -> !pto.ptr<i32, gm>\n    %old2 = pto.atomi'
     'c_add %ptr2, %v5 l2cache(wbhred) : !pto.ptr<i32, gm>, i32 -> i32\n    %ptr3 = pto.addptr %arg0, %c3 : !pto.p'
-    'tr<i32, gm> -> !pto.ptr<i32, gm>\n    %old3 = pto.atomic_add %ptr3, %v5 l2cache(wtsred) : !pto.ptr<i32, gm>,'
-    ' i32 -> i32\n\n    pto.store %old0, %arg0[%c16] : !pto.ptr<i32, gm>, i32\n    pto.store %old1, %arg0[%c17] :'
-    ' !pto.ptr<i32, gm>, i32\n    pto.store %old2, %arg0[%c18] : !pto.ptr<i32, gm>, i32\n    pto.store %old3, %ar'
-    'g0[%c19] : !pto.ptr<i32, gm>, i32\n    pto.barrier #pto.pipe<PIPE_ALL>\n    return\n  }\n}\n'
+    'tr<i32, gm>, index -> !pto.ptr<i32, gm>\n    %old3 = pto.atomic_add %ptr3, %v5 l2cache(wtsred) : !pto.ptr<i32, gm>,'
+    ' i32 -> i32\n\n    pto.store %old0, %arg0[%c16] : !pto.ptr<i32, gm>, index, i32\n    pto.store %old1, %arg0[%c17] :'
+    ' !pto.ptr<i32, gm>, index, i32\n    pto.store %old2, %arg0[%c18] : !pto.ptr<i32, gm>, index, i32\n    pto.store %old3, %ar'
+    'g0[%c19] : !pto.ptr<i32, gm>, index, i32\n    pto.barrier #pto.pipe<PIPE_ALL>\n    return\n  }\n}\n'
 )
 
 def _golden_scope():

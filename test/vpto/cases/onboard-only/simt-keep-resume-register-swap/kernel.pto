@@ -77,10 +77,10 @@ module attributes {pto.target_arch = "a5", pto.kernel_kind = #pto.kernel_kind<ve
     %idx1 = arith.addi %idx0, %c1 : i32
     %idx0_i = arith.index_castui %idx0 : i32 to index
     %idx1_i = arith.index_castui %idx1 : i32 to index
-    pto.store %swapped0, %gm32[%idx0_i] : !pto.ptr<i32, gm>, i32
-    pto.store %swapped1, %gm32[%idx1_i] : !pto.ptr<i32, gm>, i32
-    pto.store %swapped64_0, %gm64[%idx0_i] : !pto.ptr<i64, gm>, i64
-    pto.store %swapped64_1, %gm64[%idx1_i] : !pto.ptr<i64, gm>, i64
+    pto.store %swapped0, %gm32[%idx0_i] : !pto.ptr<i32, gm>, index, i32
+    pto.store %swapped1, %gm32[%idx1_i] : !pto.ptr<i32, gm>, index, i32
+    pto.store %swapped64_0, %gm64[%idx0_i] : !pto.ptr<i64, gm>, index, i64
+    pto.store %swapped64_1, %gm64[%idx1_i] : !pto.ptr<i64, gm>, index, i64
     return
   }
 }

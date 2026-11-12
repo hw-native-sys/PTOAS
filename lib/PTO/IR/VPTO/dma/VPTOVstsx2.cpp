@@ -40,8 +40,8 @@ LogicalResult Vstsx2Op::verify() {
   if (classifyMemoryRole(getDestination().getType()) == MemoryRole::GM) {
     return emitOpError("requires a UB-backed destination");
   }
-  if (!getOffset().getType().isIndex()) {
-    return emitOpError("requires index offset");
+  if (!isElementOffsetType(getOffset().getType())) {
+    return emitOpError("requires an index or signless integer element offset");
   }
   if (!isSupportedVstsx2DistToken(getDist())) {
     return emitOpError("requires a supported x2 store distribution token");

@@ -21,7 +21,7 @@ module attributes {pto.target_arch = "a5", pto.kernel_kind = #pto.kernel_kind<ve
       %c3_i32 = arith.constant 3 : i32
       %lane3 = llvm.extractelement %value[%c3_i32 : i32] : vector<4xf32>
       %c0 = arith.constant 0 : index
-      pto.store %lane3, %dst[%c0] : !pto.ptr<f32, ub>, f32
+      pto.store %lane3, %dst[%c0] : !pto.ptr<f32, ub>, index, f32
     }
     return
   }

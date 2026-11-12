@@ -43,7 +43,7 @@ module attributes {pto.target_arch = "a5", pto.kernel_kind = #pto.kernel_kind<ve
       scf.for %iv = %c0 to %c1024 step %c64
           iter_args(%rs = %c4_i16, %remaining = %c1024_i32) -> (i16, i32) {
         %mask, %next_rem = pto.plt_b16 %remaining : i32 -> !pto.mask<b16>, i32
-        %vec = pto.vlds %ub_in[%iv] {dist = "NORM"} : !pto.ptr<f16, ub> -> !pto.vreg<128xf16>
+        %vec = pto.vlds %ub_in[%iv] {dist = "NORM"} : !pto.ptr<f16, ub>, index -> !pto.vreg<128xf16>
         pto.vsstb %vec, %ub_out, %c2_i16, %rs, %mask : !pto.vreg<128xf16>, !pto.ptr<f16, ub>, i16, i16, !pto.mask<b16>
         %next_rs = arith.addi %rs, %c3_i16 : i16
         scf.yield %next_rs, %next_rem : i16, i32

@@ -14,12 +14,12 @@ module attributes {pto.target_arch = "a5", pto.kernel_kind = #pto.kernel_kind<ve
       %rhs_ptr: !pto.ptr<f32, gm>,
       %dst: !pto.ptr<f32, gm>) attributes {pto.aicore} {
     %c0 = arith.constant 0 : index
-    %lhs = pto.load %lhs_ptr[%c0] : !pto.ptr<f32, gm> -> f32
-    %rhs = pto.load %rhs_ptr[%c0] : !pto.ptr<f32, gm> -> f32
+    %lhs = pto.load %lhs_ptr[%c0] : !pto.ptr<f32, gm>, index -> f32
+    %rhs = pto.load %rhs_ptr[%c0] : !pto.ptr<f32, gm>, index -> f32
     %max = arith.maxnumf %lhs, %rhs : f32
     %min = arith.minnumf %lhs, %rhs : f32
     %sum = arith.addf %max, %min : f32
-    pto.store %sum, %dst[%c0] : !pto.ptr<f32, gm>, f32
+    pto.store %sum, %dst[%c0] : !pto.ptr<f32, gm>, index, f32
     return
   }
 }

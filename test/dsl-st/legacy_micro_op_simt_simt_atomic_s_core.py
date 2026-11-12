@@ -45,15 +45,15 @@ KERNEL_SOURCE = (
     '60 : i32\n    %out_max_idx = arith.index_castui %out_max : i32 to index\n    %out_cas = arith.addi %laneid, '
     '%c192 : i32\n    %out_cas_idx = arith.index_castui %out_cas : i32 to index\n    %out_and = arith.addi %lanei'
     'd, %c224 : i32\n    %out_and_idx = arith.index_castui %out_and : i32 to index\n\n    %ptr0 = pto.addptr %s, '
-    '%idx_add : !pto.ptr<i32, ub> -> !pto.ptr<i32, ub>\n    %old_add = pto.atomic_add %ptr0, %v5 l2cache(nmfv) : '
-    '!pto.ptr<i32, ub>, i32 -> i32\n    %ptr1 = pto.addptr %s, %idx_max : !pto.ptr<i32, ub> -> !pto.ptr<i32, ub>'
+    '%idx_add : !pto.ptr<i32, ub>, index -> !pto.ptr<i32, ub>\n    %old_add = pto.atomic_add %ptr0, %v5 l2cache(nmfv) : '
+    '!pto.ptr<i32, ub>, i32 -> i32\n    %ptr1 = pto.addptr %s, %idx_max : !pto.ptr<i32, ub>, index -> !pto.ptr<i32, ub>'
     '\n    %old_max = pto.atomic_max %ptr1, %v7 l2cache(nmfv) signed : !pto.ptr<i32, ub>, i32 -> i32\n    %ptr2 ='
-    ' pto.addptr %s, %idx_cas : !pto.ptr<i32, ub> -> !pto.ptr<i32, ub>\n    %old_cas = pto.atomic_cas %ptr2, %v10'
+    ' pto.addptr %s, %idx_cas : !pto.ptr<i32, ub>, index -> !pto.ptr<i32, ub>\n    %old_cas = pto.atomic_cas %ptr2, %v10'
     ', %v42 l2cache(nmfv) : !pto.ptr<i32, ub>, i32 -> i32\n    %ptr3 = pto.addptr %s, %idx_and : !pto.ptr<i32, ub'
-    '> -> !pto.ptr<i32, ub>\n    %old_and = pto.atomic_and %ptr3, %v7 l2cache(nmfv) : !pto.ptr<i32, ub>, i32 -> i'
-    '32\n\n    pto.store %old_add, %out[%out_add_idx] : !pto.ptr<i32, ub>, i32\n    pto.store %old_max, %out[%out'
-    '_max_idx] : !pto.ptr<i32, ub>, i32\n    pto.store %old_cas, %out[%out_cas_idx] : !pto.ptr<i32, ub>, i32\n   '
-    ' pto.store %old_and, %out[%out_and_idx] : !pto.ptr<i32, ub>, i32\n    return\n  }\n}\n'
+    '>, index -> !pto.ptr<i32, ub>\n    %old_and = pto.atomic_and %ptr3, %v7 l2cache(nmfv) : !pto.ptr<i32, ub>, i32 -> i'
+    '32\n\n    pto.store %old_add, %out[%out_add_idx] : !pto.ptr<i32, ub>, index, i32\n    pto.store %old_max, %out[%out'
+    '_max_idx] : !pto.ptr<i32, ub>, index, i32\n    pto.store %old_cas, %out[%out_cas_idx] : !pto.ptr<i32, ub>, index, i32\n   '
+    ' pto.store %old_and, %out[%out_and_idx] : !pto.ptr<i32, ub>, index, i32\n    return\n  }\n}\n'
 )
 
 def _golden_scope():

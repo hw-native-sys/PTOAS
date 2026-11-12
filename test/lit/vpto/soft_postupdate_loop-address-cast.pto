@@ -83,7 +83,7 @@ module {
           iter_args(%addr16 = %c0_i16) -> i16 {
         %offset = arith.index_castui %addr16 : i16 to index
         %value = pto.vlds %base[%offset]
-          : !pto.ptr<ui8, ub> -> !pto.vreg<256xui8>
+          : !pto.ptr<ui8, ub>, index -> !pto.vreg<256xui8>
         %next = arith.addi %addr16, %c32_i16 : i16
         scf.yield %next : i16
       }
@@ -102,7 +102,7 @@ module {
           iter_args(%addr8 = %cm32_i8) -> i8 {
         %offset = arith.index_castui %addr8 : i8 to index
         %value = pto.vlds %base[%offset]
-          : !pto.ptr<ui8, ub> -> !pto.vreg<256xui8>
+          : !pto.ptr<ui8, ub>, index -> !pto.vreg<256xui8>
         %next = arith.addi %addr8, %c32_i8 : i8
         scf.yield %next : i8
       }
@@ -121,7 +121,7 @@ module {
           iter_args(%addr8 = %c0_i8) -> i8 {
         %offset = arith.index_castui %addr8 : i8 to index
         %value = pto.vlds %base[%offset]
-          : !pto.ptr<ui8, ub> -> !pto.vreg<256xui8>
+          : !pto.ptr<ui8, ub>, index -> !pto.vreg<256xui8>
         %next = arith.addi %addr8, %c32_i8 : i8
         scf.yield %next : i8
       }
@@ -140,7 +140,7 @@ module {
           iter_args(%addr32 = %c0_i32) -> i32 {
         %offset = arith.index_castui %addr32 : i32 to index
         %value = pto.vlds %base[%offset]
-          : !pto.ptr<ui8, ub> -> !pto.vreg<256xui8>
+          : !pto.ptr<ui8, ub>, index -> !pto.vreg<256xui8>
         %next = arith.addi %addr32, %c32_i32 : i32
         scf.yield %next : i32
       }
@@ -159,7 +159,7 @@ module {
           iter_args(%addr16 = %cm32_i16) -> i16 {
         %offset = arith.index_castui %addr16 : i16 to index
         %value = pto.vlds %base[%offset]
-          : !pto.ptr<ui8, ub> -> !pto.vreg<256xui8>
+          : !pto.ptr<ui8, ub>, index -> !pto.vreg<256xui8>
         %next = arith.addi %addr16, %c32_i16 : i16
         scf.yield %next : i16
       }
@@ -178,7 +178,7 @@ module {
           iter_args(%addr16 = %c32_i16) -> i16 {
         %offset = arith.index_castui %addr16 : i16 to index
         %value = pto.vlds %base[%offset]
-          : !pto.ptr<ui8, ub> -> !pto.vreg<256xui8>
+          : !pto.ptr<ui8, ub>, index -> !pto.vreg<256xui8>
         %next = arith.subi %addr16, %c1_i16 : i16
         scf.yield %next : i16
       }
@@ -197,9 +197,9 @@ module {
           iter_args(%offset_i8 = %c3_i8) -> i8 {
         %offset = arith.index_castui %offset_i8 : i8 to index
         %address = pto.addptr %base, %offset
-            : !pto.ptr<ui8, ub> -> !pto.ptr<ui8, ub>
+            : !pto.ptr<ui8, ub>, index -> !pto.ptr<ui8, ub>
         %value = pto.vlds %address[%c0]
-            : !pto.ptr<ui8, ub> -> !pto.vreg<256xui8>
+            : !pto.ptr<ui8, ub>, index -> !pto.vreg<256xui8>
         %next = arith.subi %offset_i8, %c1_i8 : i8
         scf.yield %next : i8
       }
@@ -214,7 +214,7 @@ module {
     pto.vecscope {
       scf.for %iv = %c0 to %c2 step %c1 {
         %value = pto.vlds %base[%c0]
-            : !pto.ptr<ui8, ub> -> !pto.vreg<256xui8>
+            : !pto.ptr<ui8, ub>, index -> !pto.vreg<256xui8>
       }
     }
     return
@@ -230,19 +230,19 @@ module {
       scf.for %iv = %c0 to %c2 step %c1 {
         %wrapping_add = arith.addi %iv, %cmax : index
         %add_address = pto.addptr %base, %wrapping_add
-            : !pto.ptr<ui8, ub> -> !pto.ptr<ui8, ub>
+            : !pto.ptr<ui8, ub>, index -> !pto.ptr<ui8, ub>
         %add_value = pto.vlds %add_address[%c0]
-            : !pto.ptr<ui8, ub> -> !pto.vreg<256xui8>
+            : !pto.ptr<ui8, ub>, index -> !pto.vreg<256xui8>
         %wrapping_sub = arith.subi %cmin, %iv : index
         %sub_address = pto.addptr %base, %wrapping_sub
-            : !pto.ptr<ui8, ub> -> !pto.ptr<ui8, ub>
+            : !pto.ptr<ui8, ub>, index -> !pto.ptr<ui8, ub>
         %sub_value = pto.vlds %sub_address[%c0]
-            : !pto.ptr<ui8, ub> -> !pto.vreg<256xui8>
+            : !pto.ptr<ui8, ub>, index -> !pto.vreg<256xui8>
         %wrapping_mul = arith.muli %iv, %cmax : index
         %mul_address = pto.addptr %base, %wrapping_mul
-            : !pto.ptr<ui8, ub> -> !pto.ptr<ui8, ub>
+            : !pto.ptr<ui8, ub>, index -> !pto.ptr<ui8, ub>
         %mul_value = pto.vlds %mul_address[%c0]
-            : !pto.ptr<ui8, ub> -> !pto.vreg<256xui8>
+            : !pto.ptr<ui8, ub>, index -> !pto.vreg<256xui8>
       }
     }
     return
@@ -257,9 +257,9 @@ module {
       scf.for %iv = %c0 to %c2 step %c1 {
         %scaled = arith.muli %iv, %c32 : index
         %address = pto.addptr %base, %scaled
-            : !pto.ptr<ui8, ub> -> !pto.ptr<ui8, ub>
+            : !pto.ptr<ui8, ub>, index -> !pto.ptr<ui8, ub>
         %value = pto.vlds %address[%c0]
-            : !pto.ptr<ui8, ub> -> !pto.vreg<256xui8>
+            : !pto.ptr<ui8, ub>, index -> !pto.vreg<256xui8>
       }
     }
     return

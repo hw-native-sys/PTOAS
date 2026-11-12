@@ -23,11 +23,12 @@ static constexpr int64_t kBlockSizeBytes = 32;
 
 static VPTOAddressAccess oneAccess(OpOperand &base, OpOperand &offset,
                                    VPTOAddressUnit unit,
-                                   Value elementTypeSource = {}) {
+                                   Value elementTypeSource = {},
+                                   bool isSigned = true) {
   if (!elementTypeSource) {
     elementTypeSource = base.get();
   }
-  return {&base, VPTOAddressOffset{&offset, unit, elementTypeSource}};
+  return {&base, VPTOAddressOffset{&offset, unit, isSigned, elementTypeSource}};
 }
 
 static VPTOAddressAccess baseOnly(OpOperand &base) {
@@ -37,22 +38,24 @@ static VPTOAddressAccess baseOnly(OpOperand &base) {
 static VPTOAddressAccess currentAccess(OpOperand &base, OpOperand &offset,
                                        VPTOAddressUnit unit,
                                        Value updatedBase,
-                                       Value elementTypeSource = {}) {
+                                       Value elementTypeSource = {},
+                                       bool isSigned = true) {
   // In post-update form the offset is the after-access advance. The current
   // address has already been materialized in base by the producer/transform.
   return updatedBase ? baseOnly(base)
-                     : oneAccess(base, offset, unit, elementTypeSource);
+                     : oneAccess(base, offset, unit, elementTypeSource, isSigned);
 }
 
 static VPTOPostUpdateSemantics postUpdate(
     OpOperand &base, OpOperand *advance, VPTOAddressUnit unit,
     Value updatedBase,
     VPTOAdvanceConstraint constraint = VPTOAdvanceConstraint::Dynamic,
-    Value elementTypeSource = {}) {
+    Value elementTypeSource = {}, bool isSigned = true) {
   if (!elementTypeSource) {
     elementTypeSource = base.get();
   }
-  return {&base, advance, unit, constraint, updatedBase, elementTypeSource};
+  return {&base, advance, unit, constraint, updatedBase, elementTypeSource,
+          isSigned};
 }
 
 static OpOperand *getOptionalOperand(MutableOperandRange operands) {
@@ -85,9 +88,11 @@ static std::optional<int64_t> getElementBytes(Value source) {
 // base with a single (offset|stride) operand advanced after the access.
 static VPTOAddressSemantics offsetPostUpdate(
     OpOperand &base, OpOperand &offset, VPTOAddressUnit unit, Value updatedBase,
-    VPTOAdvanceConstraint constraint = VPTOAdvanceConstraint::Dynamic) {
+    VPTOAdvanceConstraint constraint = VPTOAdvanceConstraint::Dynamic,
+    bool isSigned = true) {
   return VPTOAddressSemantics{
-      {currentAccess(base, offset, unit, updatedBase)},
+      {currentAccess(base, offset, unit, updatedBase, /*elementTypeSource=*/{},
+                     isSigned)},
       postUpdate(base, &offset, unit, updatedBase, constraint)};
 }
 
@@ -112,13 +117,15 @@ static VPTOAddressSemantics vldusSemantics(VldusOp op) {
                  VPTOAdvanceConstraint::Dynamic, op.getResult())};
 }
 
+// VSTUS `Sm` counts how many of the least significant bytes are stored: an
+// unsigned length rather than a signed displacement.
 static VPTOAddressSemantics vstusSemantics(VstusOp op) {
   OpOperand &base = op.getBaseMutable();
   return VPTOAddressSemantics{
       {baseOnly(base)},
       postUpdate(base, &op.getOffsetMutable(), VPTOAddressUnit::Element,
                  op.getBaseOut(), VPTOAdvanceConstraint::Dynamic,
-                 op.getValue())};
+                 op.getValue(), /*isSigned=*/false)};
 }
 
 static VPTOAddressSemantics pldsSemantics(PldsOp op) {
@@ -159,9 +166,12 @@ static VPTOAddressSemantics sprstiSemantics(SprstiOp op) {
                           VPTOAdvanceConstraint::SignedI8);
 }
 
+// VSTAS `Sm` is a 32-bit UNSIGNED byte offset (see the vector ISA manual),
+// unlike the signed offsets of the aligned and predicate families.
 static VPTOAddressSemantics vstasSemantics(VstasOp op) {
   return offsetPostUpdate(op.getDestinationMutable(), op.getOffsetMutable(),
-                          VPTOAddressUnit::Element, op.getUpdatedBase());
+                          VPTOAddressUnit::Element, op.getUpdatedBase(),
+                          VPTOAdvanceConstraint::Dynamic, /*isSigned=*/false);
 }
 
 static VPTOAddressSemantics vsldbSemantics(VsldbOp op) {
@@ -242,3 +252,24 @@ StringRef mlir::pto::stringifyVPTOAdvanceConstraint(
   }
   return "unknown";
 }
+
+bool mlir::pto::isSignedVPTOOffset(Operation *operation) {
+  if (!operation) {
+    return true;
+  }
+  if (auto iface = dyn_cast<VPTOAddressSemanticsOpInterface>(operation)) {
+    VPTOAddressSemantics semantics = iface.getVPTOAddressSemantics();
+    for (const VPTOAddressAccess &access : semantics.currentAccesses) {
+      if (access.offset) {
+        return access.offset->isSigned;
+      }
+    }
+    if (semantics.postUpdate) {
+      return semantics.postUpdate->isSigned;
+    }
+  }
+  // Operations that do not declare addressing semantics use the contract of the
+  // pointer-based memory ops and of pto.addptr: a signed element displacement.
+  return true;
+}
+

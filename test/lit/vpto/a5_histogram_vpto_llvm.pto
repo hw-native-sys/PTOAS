@@ -17,7 +17,7 @@ module attributes {pto.target_arch = "a5", pto.kernel_kind = #pto.kernel_kind<ve
       %store_mask = pto.pset_b16 "PAT_ALL" : !pto.mask<b16>
       %chist = pto.chistv2 %acc, %src, %mask, %bin : !pto.vreg<128xui16>, !pto.vreg<256xui8>, !pto.mask<b8>, i32 -> !pto.vreg<128xui16>
       %dhist = pto.dhistv2 %chist, %src, %mask, %bin : !pto.vreg<128xui16>, !pto.vreg<256xui8>, !pto.mask<b8>, i32 -> !pto.vreg<128xui16>
-      pto.vsts %dhist, %dst[%c0], %store_mask : !pto.vreg<128xui16>, !pto.ptr<ui16, ub>, !pto.mask<b16>
+      pto.vsts %dhist, %dst[%c0], %store_mask : !pto.vreg<128xui16>, !pto.ptr<ui16, ub>, index, !pto.mask<b16>
     }
     return
   }

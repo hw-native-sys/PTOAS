@@ -19,7 +19,7 @@ module attributes {pto.target_arch = "a5", pto.kernel_kind = #pto.kernel_kind<ve
     pto.section.simt<<<64, 1, 1>>> {
       %one = arith.constant 1.000000e+00 : f32
       %c0 = arith.constant 0 : index
-      pto.store %one, %dst[%c0] : !pto.ptr<f32, ub>, f32
+      pto.store %one, %dst[%c0] : !pto.ptr<f32, ub>, index, f32
     }
     return
   }

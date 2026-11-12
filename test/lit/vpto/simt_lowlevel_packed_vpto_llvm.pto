@@ -86,22 +86,22 @@ module attributes {pto.target_arch = "a5", pto.kernel_kind = #pto.kernel_kind<ve
     %b2_to_f32_bits = llvm.bitcast %b2_to_f32 : vector<2xf32> to i64
     %hif8_to_f32_bits = llvm.bitcast %hif8_to_f32 : vector<2xf32> to i64
 
-    pto.store %shfl_bits, %ub_i32[%c0] : !pto.ptr<i32, ub>, i32
-    pto.store %sqrt_h2_bits, %ub_i32[%c1] : !pto.ptr<i32, ub>, i32
-    pto.store %abs_h2_bits, %ub_i32[%c2] : !pto.ptr<i32, ub>, i32
-    pto.store %exp_h2_bits, %ub_i32[%c3] : !pto.ptr<i32, ub>, i32
-    pto.store %log_h2_bits, %ub_i32[%c4] : !pto.ptr<i32, ub>, i32
-    pto.store %min_h2_bits, %ub_i32[%c5] : !pto.ptr<i32, ub>, i32
-    pto.store %pow_h2_bits, %ub_i32[%c6] : !pto.ptr<i32, ub>, i32
-    pto.store %fma_h2_bits, %ub_i32[%c7] : !pto.ptr<i32, ub>, i32
-    pto.store %f32_to_h2_bits, %ub_i32[%c8] : !pto.ptr<i32, ub>, i32
-    pto.store %abs_b2_bits, %ub_i32[%c9] : !pto.ptr<i32, ub>, i32
-    pto.store %max_b2_bits, %ub_i32[%c10] : !pto.ptr<i32, ub>, i32
-    pto.store %fma_b2_bits, %ub_i32[%c11] : !pto.ptr<i32, ub>, i32
-    pto.store %f32_to_b2_bits, %ub_i32[%c12] : !pto.ptr<i32, ub>, i32
-    pto.store %h2_to_f32_bits, %ub_i64[%f2_off0] : !pto.ptr<i64, ub>, i64
-    pto.store %b2_to_f32_bits, %ub_i64[%f2_off1] : !pto.ptr<i64, ub>, i64
-    pto.store %hif8_to_f32_bits, %ub_i64[%c10] : !pto.ptr<i64, ub>, i64
+    pto.store %shfl_bits, %ub_i32[%c0] : !pto.ptr<i32, ub>, index, i32
+    pto.store %sqrt_h2_bits, %ub_i32[%c1] : !pto.ptr<i32, ub>, index, i32
+    pto.store %abs_h2_bits, %ub_i32[%c2] : !pto.ptr<i32, ub>, index, i32
+    pto.store %exp_h2_bits, %ub_i32[%c3] : !pto.ptr<i32, ub>, index, i32
+    pto.store %log_h2_bits, %ub_i32[%c4] : !pto.ptr<i32, ub>, index, i32
+    pto.store %min_h2_bits, %ub_i32[%c5] : !pto.ptr<i32, ub>, index, i32
+    pto.store %pow_h2_bits, %ub_i32[%c6] : !pto.ptr<i32, ub>, index, i32
+    pto.store %fma_h2_bits, %ub_i32[%c7] : !pto.ptr<i32, ub>, index, i32
+    pto.store %f32_to_h2_bits, %ub_i32[%c8] : !pto.ptr<i32, ub>, index, i32
+    pto.store %abs_b2_bits, %ub_i32[%c9] : !pto.ptr<i32, ub>, index, i32
+    pto.store %max_b2_bits, %ub_i32[%c10] : !pto.ptr<i32, ub>, index, i32
+    pto.store %fma_b2_bits, %ub_i32[%c11] : !pto.ptr<i32, ub>, index, i32
+    pto.store %f32_to_b2_bits, %ub_i32[%c12] : !pto.ptr<i32, ub>, index, i32
+    pto.store %h2_to_f32_bits, %ub_i64[%f2_off0] : !pto.ptr<i64, ub>, index, i64
+    pto.store %b2_to_f32_bits, %ub_i64[%f2_off1] : !pto.ptr<i64, ub>, index, i64
+    pto.store %hif8_to_f32_bits, %ub_i64[%c10] : !pto.ptr<i64, ub>, index, i64
     return
   }
 }

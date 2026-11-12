@@ -29,8 +29,8 @@ module attributes {pto.target_arch = "a5", pto.kernel_kind = #pto.kernel_kind<ve
       scf.for %iv = %c0 to %c4 step %c1 {
         %row = memref.subview %src[%iv, 0] [1, 64] [1, 1] : memref<4x64xf32, #pto.address_space<vec>> to memref<64xf32, strided<[1], offset: ?>, #pto.address_space<vec>>
         %cast = memref.cast %row : memref<64xf32, strided<[1], offset: ?>, #pto.address_space<vec>> to memref<?xf32, strided<[1], offset: ?>, #pto.address_space<vec>>
-        %value = pto.vlds %cast[%c0] : memref<?xf32, strided<[1], offset: ?>, #pto.address_space<vec>> -> !pto.vreg<64xf32>
-        pto.vsts %value, %cast[%c0], %mask : !pto.vreg<64xf32>, memref<?xf32, strided<[1], offset: ?>, #pto.address_space<vec>>, !pto.mask<b32>
+        %value = pto.vlds %cast[%c0] : memref<?xf32, strided<[1], offset: ?>, #pto.address_space<vec>>, index -> !pto.vreg<64xf32>
+        pto.vsts %value, %cast[%c0], %mask : !pto.vreg<64xf32>, memref<?xf32, strided<[1], offset: ?>, #pto.address_space<vec>>, index, !pto.mask<b32>
         scf.yield
       }
     }

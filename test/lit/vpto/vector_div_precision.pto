@@ -45,7 +45,7 @@ module attributes {pto.target_arch = "a5", pto.kernel_kind = #pto.kernel_kind<ve
     %quotient = pto.vdiv %lhs, %rhs, %mask {precisionType = #pto<div_precision precision_0ulp_ftz_true>} :
       !pto.vreg<64xf32>, !pto.vreg<64xf32>, !pto.mask<b32> -> !pto.vreg<64xf32>
     pto.vsts %quotient, %dst[%c0], %mask :
-      !pto.vreg<64xf32>, !pto.ptr<f32, ub>, !pto.mask<b32>
+      !pto.vreg<64xf32>, !pto.ptr<f32, ub>, index, !pto.mask<b32>
     return
   }
 }

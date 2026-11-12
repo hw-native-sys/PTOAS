@@ -36,7 +36,7 @@ KERNEL_SOURCE = (
     '4 = arith.constant 128 : i64\n    %cst = arith.constant 7 : i32\n\n    %ub_out = pto.castptr %c0_i64 : i64 -'
     '> !pto.ptr<i32, ub>\n\n    pto.vecscope {\n      %active = pto.pset_b32 "PAT_ALL" : !pto.mask<b32>\n      sc'
     'f.for %offset = %c0 to %c1024 step %c64 {\n        %vec = pto.vbr %cst : i32 -> !pto.vreg<64xi32>\n        p'
-    'to.vsts %vec, %ub_out[%offset], %active : !pto.vreg<64xi32>, !pto.ptr<i32, ub>, !pto.mask<b32>\n      }\n   '
+    'to.vsts %vec, %ub_out[%offset], %active : !pto.vreg<64xi32>, !pto.ptr<i32, ub>, index, !pto.mask<b32>\n      }\n   '
     ' }\n\n    pto.set_flag["PIPE_V", "PIPE_MTE3", "EVENT_ID0"]\n    pto.wait_flag["PIPE_V", "PIPE_MTE3", "EVENT_'
     'ID0"]\n    pto.mte_ub_gm %ub_out, %arg0, %c128_i64\n      nburst(%c32_i64, %c128_i64, %c128_i64)\n      : !p'
     'to.ptr<i32, ub>, !pto.ptr<i32, gm>, i64, i64, i64, i64\n    pto.barrier #pto.pipe<PIPE_ALL>\n    return\n  }'

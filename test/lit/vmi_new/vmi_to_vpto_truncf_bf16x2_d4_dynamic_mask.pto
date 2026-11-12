@@ -75,4 +75,4 @@ module {
 // LOWER: %[[STORE_NONNEG:.*]] = arith.maxsi %[[STORE_ACTIVE_I32]], {{.*}} : i32
 // LOWER: %[[STORE_CLAMPED:.*]] = arith.minui %[[STORE_NONNEG]], {{.*}} : i32
 // LOWER: %[[STORE_M:.*]], %{{.*}} = pto.plt_b8 %[[STORE_CLAMPED]] : i32 -> !pto.mask<b8>, i32
-// LOWER: pto.vsts %[[PACKED]], %[[DST]][%[[ALIGNED_OFF]]], %[[STORE_M]] : !pto.vreg<256x!pto.f4E1M2x2>, !pto.ptr<!pto.f4E1M2x2, ub>, !pto.mask<b8>
+// LOWER: pto.vsts %[[PACKED]], %[[DST]][%[[ALIGNED_OFF]]], %[[STORE_M]] : !pto.vreg<256x!pto.f4E1M2x2>, !pto.ptr<!pto.f4E1M2x2, ub>, index, !pto.mask<b8>

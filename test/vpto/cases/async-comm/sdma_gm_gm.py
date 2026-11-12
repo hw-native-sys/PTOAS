@@ -105,8 +105,8 @@ OFFSET_SOURCE = f"""module attributes {{pto.target_arch = "a5", pto.kernel_kind 
       attributes {{pto.kernel}} {{
     %sess = pto.session_init %sess_gm : !pto.ptr<i8, gm> -> {_SESSION_TYPE}
     %off = arith.index_castui %offset : i64 to index
-    %win_src = pto.addptr %src, %off : !pto.ptr<i8, gm> -> !pto.ptr<i8, gm>
-    %win_dst = pto.addptr %dst, %off : !pto.ptr<i8, gm> -> !pto.ptr<i8, gm>
+    %win_src = pto.addptr %src, %off : !pto.ptr<i8, gm>, index -> !pto.ptr<i8, gm>
+    %win_dst = pto.addptr %dst, %off : !pto.ptr<i8, gm>, index -> !pto.ptr<i8, gm>
     %rec = pto.sdma_gm_gm %win_dst, %win_src, %nbytes session(%sess) {{soft_put}}
       : !pto.ptr<i8, gm>, !pto.ptr<i8, gm>, i64, {_SESSION_TYPE}
         -> !pto.ptr<i64, gm>
@@ -126,8 +126,8 @@ MULTICORE_SOURCE = f"""module attributes {{pto.target_arch = "a5", pto.kernel_ki
     %bid = pto.get_block_idx
     %byte_off = arith.muli %bid, %chunk : i64
     %off = arith.index_castui %byte_off : i64 to index
-    %core_src = pto.addptr %src, %off : !pto.ptr<i8, gm> -> !pto.ptr<i8, gm>
-    %core_dst = pto.addptr %dst, %off : !pto.ptr<i8, gm> -> !pto.ptr<i8, gm>
+    %core_src = pto.addptr %src, %off : !pto.ptr<i8, gm>, index -> !pto.ptr<i8, gm>
+    %core_dst = pto.addptr %dst, %off : !pto.ptr<i8, gm>, index -> !pto.ptr<i8, gm>
     %rec = pto.sdma_gm_gm %core_dst, %core_src, %chunk session(%sess) {{soft_put}}
       : !pto.ptr<i8, gm>, !pto.ptr<i8, gm>, i64, {_SESSION_TYPE}
         -> !pto.ptr<i64, gm>

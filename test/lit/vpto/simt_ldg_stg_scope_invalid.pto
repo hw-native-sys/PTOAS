@@ -17,8 +17,8 @@
 module attributes {pto.target_arch = "a5", pto.kernel_kind = #pto.kernel_kind<vector>} {
   func.func @invalid_ldg(%gm: !pto.ptr<i32, gm>) attributes {pto.aicore} {
     %c0 = arith.constant 0 : index
-    %value = pto.ldg %gm[%c0] : !pto.ptr<i32, gm> -> i32
-    pto.st_dev %value, %gm[%c0] : !pto.ptr<i32, gm>, i32
+    %value = pto.ldg %gm[%c0] : !pto.ptr<i32, gm>, index -> i32
+    pto.st_dev %value, %gm[%c0] : !pto.ptr<i32, gm>, index, i32
     return
   }
 }
@@ -28,7 +28,7 @@ module attributes {pto.target_arch = "a5", pto.kernel_kind = #pto.kernel_kind<ve
   func.func @invalid_stg(%gm: !pto.ptr<i32, gm>) attributes {pto.aicore} {
     %c0 = arith.constant 0 : index
     %value = arith.constant 1 : i32
-    pto.stg %value, %gm[%c0] : !pto.ptr<i32, gm>, i32
+    pto.stg %value, %gm[%c0] : !pto.ptr<i32, gm>, index, i32
     return
   }
 }

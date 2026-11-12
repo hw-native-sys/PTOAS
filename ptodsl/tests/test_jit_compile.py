@@ -5463,7 +5463,7 @@ def _check_simt_fp8_pointer_types(simt_full_text):
             f"SIMT FP8 extension should preserve !pto.ptr<{fp8_vec}, gm>",
         )
         expect(
-            f"!pto.ptr<{fp8_vec}, gm>, {fp8_vec}" in simt_full_text,
+            f"!pto.ptr<{fp8_vec}, gm>, index, {fp8_vec}" in simt_full_text,
             f"SIMT FP8 extension stg should accept exact {fp8_vec} payload",
         )
 
@@ -8632,12 +8632,16 @@ def main() -> None:
         "addptr(...) should lower one PTO addptr op per authored pointer-advance call",
     )
     expect(
-        "pto.index_cast" in addptr_surface_text,
-        "addptr(ptr, i32-value) should coerce integer runtime scalars to index",
+        "pto.index_cast" not in addptr_surface_text,
+        "addptr(ptr, i32-value) should keep integer runtime scalars in their own width",
     )
     expect(
         "pto.constant 2 : index" in addptr_surface_text,
         "addptr(ptr, 2) should accept a Python int offset and lower it as an index element offset",
+    )
+    expect(
+        re.search(r"pto\.addptr %\d+, %\d+ : <i32, ub>, i32 -> <i32, ub>", addptr_surface_text) is not None,
+        "addptr(ptr, pto.i32(...)) should declare the i32 element offset in its own width",
     )
     expect(
         re.search(r"pto\.addptr %\d+, %\d+", addptr_surface_text) is not None,
@@ -8709,8 +8713,12 @@ def main() -> None:
     shared_index_coercion_text = shared_index_coercion_probe.compile().mlir_text()
     expect_parse_roundtrip_and_verify(shared_index_coercion_text, "shared index coercion specialization")
     expect(
-        shared_index_coercion_text.count("pto.index_cast") >= 2,
-        "shared index coercion should cast i32 values through addptr and event id paths",
+        re.search(r"pto\.addptr %\d+, %\d+ : <i32, ub>, i32 -> <i32, ub>", shared_index_coercion_text) is not None,
+        "shared index coercion should keep an i32 pointer offset in its own width through addptr",
+    )
+    expect(
+        re.search(r"pto\.index_cast %\d+ signed : i32 -> index", shared_index_coercion_text) is not None,
+        "shared index coercion should still adapt an i32 event id to index",
     )
     expect("scf.for" in shared_index_coercion_text, "shared index coercion should lower i32 loop bounds to scf.for")
     expect("pto.addptr" in shared_index_coercion_text, "shared index coercion should lower i32 pointer offsets")

@@ -19,20 +19,20 @@ module attributes {pto.target_arch = "a5", pto.kernel_kind = #pto.kernel_kind<ve
     %c0 = arith.constant 0 : index
     pto.vecscope {
       %value8 = pto.vlds %src8[%c0]
-          : !pto.ptr<ui8, ub> -> !pto.vreg<256xui8>
+          : !pto.ptr<ui8, ub>, index -> !pto.vreg<256xui8>
       %value16 = pto.vlds %src16[%c0]
-          : !pto.ptr<ui16, ub> -> !pto.vreg<128xui16>
+          : !pto.ptr<ui16, ub>, index -> !pto.vreg<128xui16>
       %value32 = pto.vlds %src32[%c0]
-          : !pto.ptr<ui32, ub> -> !pto.vreg<64xui32>
+          : !pto.ptr<ui32, ub>, index -> !pto.vreg<64xui32>
       %mask8 = pto.pset_b8 "PAT_ALL" : !pto.mask<b8>
       %mask16 = pto.pge_b16 "PAT_ALL" : !pto.mask<b16>
       %mask32 = pto.pset_b32 "PAT_ALL" : !pto.mask<b32>
       pto.vsts %value8, %dst8[%c0], %mask8 {dist = "1PT_B8"}
-          : !pto.vreg<256xui8>, !pto.ptr<ui8, ub>, !pto.mask<b8>
+          : !pto.vreg<256xui8>, !pto.ptr<ui8, ub>, index, !pto.mask<b8>
       pto.vsts %value16, %dst16[%c0], %mask16 {dist = "1PT_B16"}
-          : !pto.vreg<128xui16>, !pto.ptr<ui16, ub>, !pto.mask<b16>
+          : !pto.vreg<128xui16>, !pto.ptr<ui16, ub>, index, !pto.mask<b16>
       pto.vsts %value32, %dst32[%c0], %mask32 {dist = "1PT_B32"}
-          : !pto.vreg<64xui32>, !pto.ptr<ui32, ub>, !pto.mask<b32>
+          : !pto.vreg<64xui32>, !pto.ptr<ui32, ub>, index, !pto.mask<b32>
     }
     return
   }
@@ -43,12 +43,12 @@ module attributes {pto.target_arch = "a5", pto.kernel_kind = #pto.kernel_kind<ve
     %c0 = arith.constant 0 : index
     pto.vecscope {
       %value = pto.vlds %src[%c0]
-          : !pto.ptr<ui32, ub> -> !pto.vreg<64xui32>
+          : !pto.ptr<ui32, ub>, index -> !pto.vreg<64xui32>
       %mask = pto.pset_b32 "PAT_ALL" : !pto.mask<b32>
       pto.vsts %value, %dst[%c0], %mask {dist = "1PT_B32"}
-          : !pto.vreg<64xui32>, !pto.ptr<ui32, ub>, !pto.mask<b32>
+          : !pto.vreg<64xui32>, !pto.ptr<ui32, ub>, index, !pto.mask<b32>
       pto.vsts %value, %dst[%c0], %mask {dist = "NORM_B32"}
-          : !pto.vreg<64xui32>, !pto.ptr<ui32, ub>, !pto.mask<b32>
+          : !pto.vreg<64xui32>, !pto.ptr<ui32, ub>, index, !pto.mask<b32>
     }
     return
   }

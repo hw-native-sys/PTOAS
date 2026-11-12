@@ -183,6 +183,6 @@ module {
 // LOWER-NEXT: %[[VAL_79:[a-zA-Z0-9_.$-]+]] = pto.vcgadd %[[VAL_76]], %[[VAL_60]] : !pto.vreg<64xf32>, !pto.mask<b32> -> !pto.vreg<64xf32>
 // LOWER-NEXT: %[[VAL_80:[a-zA-Z0-9_.$-]+]] = pto.vadd %[[VAL_78]], %[[VAL_79]], %[[VAL_77]] : !pto.vreg<64xf32>, !pto.vreg<64xf32>, !pto.mask<b32> -> !pto.vreg<64xf32>
 // LOWER-NEXT: %[[VAL_81:[a-zA-Z0-9_.$-]+]] = pto.pset_b32 "PAT_VL8" : !pto.mask<b32>
-// LOWER-NEXT: pto.vsts %[[VAL_80]], %[[VAL_6]]{{\[}}%[[VAL_16]]], %[[VAL_81]] : !pto.vreg<64xf32>, !pto.ptr<f32, ub>, !pto.mask<b32>
+// LOWER-NEXT: pto.vsts %[[VAL_80]], %[[VAL_6]]{{\[}}%[[VAL_16]]], %[[VAL_81]] : !pto.vreg<64xf32>, !pto.ptr<f32, ub>, index, !pto.mask<b32>
 // LOWER-NEXT: return
 // LOWER-NEXT: }

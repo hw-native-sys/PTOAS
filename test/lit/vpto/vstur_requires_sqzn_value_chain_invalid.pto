@@ -21,7 +21,7 @@ module attributes {pto.target_arch = "a5", pto.kernel_kind = #pto.kernel_kind<ve
       %sqz = pto.vsqz %value, %mask
           : !pto.vreg<64xf32>, !pto.mask<b32> -> !pto.vreg<64xf32>
       pto.vsts %sqz, %dst[%c0], %mask
-          : !pto.vreg<64xf32>, !pto.ptr<f32, ub>, !pto.mask<b32>
+          : !pto.vreg<64xf32>, !pto.ptr<f32, ub>, index, !pto.mask<b32>
       %align = pto.init_align : !pto.align
       %next = pto.vstur %align, %value, %dst, "NO_POST_UPDATE"
           : !pto.align, !pto.vreg<64xf32>, !pto.ptr<f32, ub> -> !pto.align

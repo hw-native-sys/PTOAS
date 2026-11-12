@@ -24,7 +24,7 @@ module attributes {pto.target_arch = "a5", pto.kernel_kind = #pto.kernel_kind<ve
     %tid = pto.get_tid_x : i32
     pto.barrier #pto.pipe<PIPE_ALL>
     %idx = pto.index_cast %tid signed : i32 -> index
-    pto.stg %tid, %dst[%idx] l1cache(cache) l2cache(nmfv) : !pto.ptr<i32, gm>, i32
+    pto.stg %tid, %dst[%idx] l1cache(cache) l2cache(nmfv) : !pto.ptr<i32, gm>, index, i32
     return
   }
 }

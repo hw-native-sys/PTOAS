@@ -30,9 +30,9 @@ module attributes {pto.target_arch = "a5", pto.kernel_kind = #pto.kernel_kind<ve
         %next = arith.addi %i, %c1 : index
         %read_offset = arith.muli %next, %c64 : index
         %write_offset = arith.muli %i, %c64 : index
-        %lookahead = pto.vlds %ub[%read_offset] : !pto.ptr<f32, ub> -> !pto.vreg<64xf32>
-        pto.vsts %value, %ub[%write_offset], %mask : !pto.vreg<64xf32>, !pto.ptr<f32, ub>, !pto.mask<b32>
-        pto.vsts %lookahead, %sink[%write_offset], %mask : !pto.vreg<64xf32>, !pto.ptr<f32, ub>, !pto.mask<b32>
+        %lookahead = pto.vlds %ub[%read_offset] : !pto.ptr<f32, ub>, index -> !pto.vreg<64xf32>
+        pto.vsts %value, %ub[%write_offset], %mask : !pto.vreg<64xf32>, !pto.ptr<f32, ub>, index, !pto.mask<b32>
+        pto.vsts %lookahead, %sink[%write_offset], %mask : !pto.vreg<64xf32>, !pto.ptr<f32, ub>, index, !pto.mask<b32>
       }
     }
     return

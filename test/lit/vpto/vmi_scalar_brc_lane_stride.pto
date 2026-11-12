@@ -20,10 +20,10 @@ module {
 
 // CHECK-LABEL: func.func @scalar_brc_ls2_i8(
 // CHECK-SAME: %[[SRC_i8:.*]]: !pto.ptr<i8, ub>, %[[OFF_i8:.*]]: index,
-// CHECK: %[[BRC_i8_0:.*]] = pto.vlds %[[SRC_i8]][%[[OFF_i8]]] {dist = "BRC_B8"} : !pto.ptr<i8, ub> -> !pto.vreg<256xi8>
-// CHECK-NEXT: %[[BRC_i8_1:.*]] = pto.vlds %[[SRC_i8]][%[[OFF_i8]]] {dist = "BRC_B8"} : !pto.ptr<i8, ub> -> !pto.vreg<256xi8>
-// CHECK-NEXT: %[[BRC_i8_2:.*]] = pto.vlds %[[SRC_i8]][%[[OFF_i8]]] {dist = "BRC_B8"} : !pto.ptr<i8, ub> -> !pto.vreg<256xi8>
-// CHECK-NEXT: %[[BRC_i8_3:.*]] = pto.vlds %[[SRC_i8]][%[[OFF_i8]]] {dist = "BRC_B8"} : !pto.ptr<i8, ub> -> !pto.vreg<256xi8>
+// CHECK: %[[BRC_i8_0:.*]] = pto.vlds %[[SRC_i8]][%[[OFF_i8]]] {dist = "BRC_B8"} : !pto.ptr<i8, ub>, index -> !pto.vreg<256xi8>
+// CHECK-NEXT: %[[BRC_i8_1:.*]] = pto.vlds %[[SRC_i8]][%[[OFF_i8]]] {dist = "BRC_B8"} : !pto.ptr<i8, ub>, index -> !pto.vreg<256xi8>
+// CHECK-NEXT: %[[BRC_i8_2:.*]] = pto.vlds %[[SRC_i8]][%[[OFF_i8]]] {dist = "BRC_B8"} : !pto.ptr<i8, ub>, index -> !pto.vreg<256xi8>
+// CHECK-NEXT: %[[BRC_i8_3:.*]] = pto.vlds %[[SRC_i8]][%[[OFF_i8]]] {dist = "BRC_B8"} : !pto.ptr<i8, ub>, index -> !pto.vreg<256xi8>
 // CHECK-NEXT: return %[[BRC_i8_0]], %[[BRC_i8_1]], %[[BRC_i8_2]], %[[BRC_i8_3]] : !pto.vreg<256xi8>, !pto.vreg<256xi8>, !pto.vreg<256xi8>, !pto.vreg<256xi8>
 
   func.func @scalar_brc_ls2_f16(%src: !pto.ptr<f16, ub>, %off: index,
@@ -35,10 +35,10 @@ module {
 
 // CHECK-LABEL: func.func @scalar_brc_ls2_f16(
 // CHECK-SAME: %[[SRC_f16:.*]]: !pto.ptr<f16, ub>, %[[OFF_f16:.*]]: index,
-// CHECK: %[[BRC_f16_0:.*]] = pto.vlds %[[SRC_f16]][%[[OFF_f16]]] {dist = "BRC_B16"} : !pto.ptr<f16, ub> -> !pto.vreg<128xf16>
-// CHECK-NEXT: %[[BRC_f16_1:.*]] = pto.vlds %[[SRC_f16]][%[[OFF_f16]]] {dist = "BRC_B16"} : !pto.ptr<f16, ub> -> !pto.vreg<128xf16>
-// CHECK-NEXT: %[[BRC_f16_2:.*]] = pto.vlds %[[SRC_f16]][%[[OFF_f16]]] {dist = "BRC_B16"} : !pto.ptr<f16, ub> -> !pto.vreg<128xf16>
-// CHECK-NEXT: %[[BRC_f16_3:.*]] = pto.vlds %[[SRC_f16]][%[[OFF_f16]]] {dist = "BRC_B16"} : !pto.ptr<f16, ub> -> !pto.vreg<128xf16>
+// CHECK: %[[BRC_f16_0:.*]] = pto.vlds %[[SRC_f16]][%[[OFF_f16]]] {dist = "BRC_B16"} : !pto.ptr<f16, ub>, index -> !pto.vreg<128xf16>
+// CHECK-NEXT: %[[BRC_f16_1:.*]] = pto.vlds %[[SRC_f16]][%[[OFF_f16]]] {dist = "BRC_B16"} : !pto.ptr<f16, ub>, index -> !pto.vreg<128xf16>
+// CHECK-NEXT: %[[BRC_f16_2:.*]] = pto.vlds %[[SRC_f16]][%[[OFF_f16]]] {dist = "BRC_B16"} : !pto.ptr<f16, ub>, index -> !pto.vreg<128xf16>
+// CHECK-NEXT: %[[BRC_f16_3:.*]] = pto.vlds %[[SRC_f16]][%[[OFF_f16]]] {dist = "BRC_B16"} : !pto.ptr<f16, ub>, index -> !pto.vreg<128xf16>
 // CHECK-NEXT: return %[[BRC_f16_0]], %[[BRC_f16_1]], %[[BRC_f16_2]], %[[BRC_f16_3]] : !pto.vreg<128xf16>, !pto.vreg<128xf16>, !pto.vreg<128xf16>, !pto.vreg<128xf16>
 
   func.func @scalar_brc_ls2_f32(%src: !pto.ptr<f32, ub>, %off: index,
@@ -50,10 +50,10 @@ module {
 
 // CHECK-LABEL: func.func @scalar_brc_ls2_f32(
 // CHECK-SAME: %[[SRC_f32:.*]]: !pto.ptr<f32, ub>, %[[OFF_f32:.*]]: index,
-// CHECK: %[[BRC_f32_0:.*]] = pto.vlds %[[SRC_f32]][%[[OFF_f32]]] {dist = "BRC_B32"} : !pto.ptr<f32, ub> -> !pto.vreg<64xf32>
-// CHECK-NEXT: %[[BRC_f32_1:.*]] = pto.vlds %[[SRC_f32]][%[[OFF_f32]]] {dist = "BRC_B32"} : !pto.ptr<f32, ub> -> !pto.vreg<64xf32>
-// CHECK-NEXT: %[[BRC_f32_2:.*]] = pto.vlds %[[SRC_f32]][%[[OFF_f32]]] {dist = "BRC_B32"} : !pto.ptr<f32, ub> -> !pto.vreg<64xf32>
-// CHECK-NEXT: %[[BRC_f32_3:.*]] = pto.vlds %[[SRC_f32]][%[[OFF_f32]]] {dist = "BRC_B32"} : !pto.ptr<f32, ub> -> !pto.vreg<64xf32>
+// CHECK: %[[BRC_f32_0:.*]] = pto.vlds %[[SRC_f32]][%[[OFF_f32]]] {dist = "BRC_B32"} : !pto.ptr<f32, ub>, index -> !pto.vreg<64xf32>
+// CHECK-NEXT: %[[BRC_f32_1:.*]] = pto.vlds %[[SRC_f32]][%[[OFF_f32]]] {dist = "BRC_B32"} : !pto.ptr<f32, ub>, index -> !pto.vreg<64xf32>
+// CHECK-NEXT: %[[BRC_f32_2:.*]] = pto.vlds %[[SRC_f32]][%[[OFF_f32]]] {dist = "BRC_B32"} : !pto.ptr<f32, ub>, index -> !pto.vreg<64xf32>
+// CHECK-NEXT: %[[BRC_f32_3:.*]] = pto.vlds %[[SRC_f32]][%[[OFF_f32]]] {dist = "BRC_B32"} : !pto.ptr<f32, ub>, index -> !pto.vreg<64xf32>
 // CHECK-NEXT: return %[[BRC_f32_0]], %[[BRC_f32_1]], %[[BRC_f32_2]], %[[BRC_f32_3]] : !pto.vreg<64xf32>, !pto.vreg<64xf32>, !pto.vreg<64xf32>, !pto.vreg<64xf32>
 
 }

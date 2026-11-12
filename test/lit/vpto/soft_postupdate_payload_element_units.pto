@@ -37,9 +37,9 @@ module attributes {pto.target_arch = "a5", pto.kernel_kind = #pto.kernel_kind<ve
     pto.vecscope {
       scf.for %iv = %c0 to %c384 step %c128 {
         %ptr = pto.addptr %base, %iv
-            : !pto.ptr<ui16, ub> -> !pto.ptr<ui16, ub>
+            : !pto.ptr<ui16, ub>, index -> !pto.ptr<ui16, ub>
         %value = pto.vlds %ptr[%c0]
-            : !pto.ptr<ui16, ub> -> !pto.vreg<256xui8>
+            : !pto.ptr<ui16, ub>, index -> !pto.vreg<256xui8>
       }
     }
     return
@@ -52,7 +52,7 @@ module attributes {pto.target_arch = "a5", pto.kernel_kind = #pto.kernel_kind<ve
     pto.vecscope {
       scf.for %iv = %c0 to %c384 step %c128 {
         %ptr = pto.addptr %base, %iv
-            : !pto.ptr<ui16, ub> -> !pto.ptr<ui16, ub>
+            : !pto.ptr<ui16, ub>, index -> !pto.ptr<ui16, ub>
         %low, %high = pto.vldsx2 %ptr[%c0], "DINTLV_B8"
             : !pto.ptr<ui16, ub>, index
                 -> !pto.vreg<256xui8>, !pto.vreg<256xui8>
@@ -70,7 +70,7 @@ module attributes {pto.target_arch = "a5", pto.kernel_kind = #pto.kernel_kind<ve
       scf.for %iv = %c0 to %c384 step %c128
           iter_args(%state = %align) -> !pto.align {
         %ptr = pto.addptr %base, %iv
-            : !pto.ptr<ui16, ub> -> !pto.ptr<ui16, ub>
+            : !pto.ptr<ui16, ub>, index -> !pto.ptr<ui16, ub>
         %value, %next_align = pto.vldus %ptr, %state
             : !pto.ptr<ui16, ub>, !pto.align
                 -> !pto.vreg<256xui8>, !pto.align
@@ -95,7 +95,7 @@ module attributes {pto.target_arch = "a5", pto.kernel_kind = #pto.kernel_kind<ve
             : !pto.align, i32, !pto.vreg<256xui8>, !pto.ptr<ui16, ub>
                 -> !pto.align
         %next_ptr = pto.addptr %ptr, %c128
-            : !pto.ptr<ui16, ub> -> !pto.ptr<ui16, ub>
+            : !pto.ptr<ui16, ub>, index -> !pto.ptr<ui16, ub>
         scf.yield %next_ptr, %next_align
             : !pto.ptr<ui16, ub>, !pto.align
       }

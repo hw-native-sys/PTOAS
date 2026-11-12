@@ -44,7 +44,7 @@ module attributes {pto.target_arch = "a5", pto.kernel_kind = #pto.kernel_kind<ve
           iter_args(%dst_ptr = %dst) -> (!pto.ptr<ui32, ub>) {
         pto.sprsti "AR", %dst_ptr[%c0] : !pto.ptr<ui32, ub>, i32
         %next_dst = pto.addptr %dst_ptr, %c4_index
-            : !pto.ptr<ui32, ub> -> !pto.ptr<ui32, ub>
+            : !pto.ptr<ui32, ub>, index -> !pto.ptr<ui32, ub>
         scf.yield %next_dst : !pto.ptr<ui32, ub>
       }
     }
@@ -76,7 +76,7 @@ module attributes {pto.target_arch = "a5", pto.kernel_kind = #pto.kernel_kind<ve
           iter_args(%dst_ptr = %dst) -> (!pto.ptr<ui32, ub>) {
         pto.sprsti "AR", %dst_ptr[%c0] : !pto.ptr<ui32, ub>, i32
         %next_dst = pto.addptr %dst_ptr, %c1
-            : !pto.ptr<ui32, ub> -> !pto.ptr<ui32, ub>
+            : !pto.ptr<ui32, ub>, index -> !pto.ptr<ui32, ub>
         scf.yield %next_dst : !pto.ptr<ui32, ub>
       }
     }
@@ -94,7 +94,7 @@ module attributes {pto.target_arch = "a5", pto.kernel_kind = #pto.kernel_kind<ve
       scf.for %iv = %c0_index to %c4_index step %c1_index {
         %scaled = arith.muli %iv, %c128_index : index
         %dst_at = pto.addptr %dst, %scaled
-            : !pto.ptr<ui32, ub> -> !pto.ptr<ui32, ub>
+            : !pto.ptr<ui32, ub>, index -> !pto.ptr<ui32, ub>
         pto.sprsti "AR", %dst_at[%c0] : !pto.ptr<ui32, ub>, i32
       }
     }

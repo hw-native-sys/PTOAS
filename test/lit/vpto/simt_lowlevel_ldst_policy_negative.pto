@@ -13,10 +13,10 @@ module attributes {pto.target_arch = "a5", pto.kernel_kind = #pto.kernel_kind<ve
     %c0 = arith.constant 0 : index
     %val = arith.constant 42 : i32
     // stg requires GM pointer — UB pointer must fail.
-    pto.stg %val, %ub_i32[%c0] l1cache(cache) l2cache(nmfv) : !pto.ptr<i32, ub>, i32
+    pto.stg %val, %ub_i32[%c0] l1cache(cache) l2cache(nmfv) : !pto.ptr<i32, ub>, index, i32
     // ldg requires GM pointer — UB pointer must fail.
-    %bad_ldg = pto.ldg %ub_i32[%c0] l1cache(cache) l2cache(nmfv) : !pto.ptr<i32, ub> -> i32
-    pto.store %bad_ldg, %ub_i32[%c0] : !pto.ptr<i32, ub>, i32
+    %bad_ldg = pto.ldg %ub_i32[%c0] l1cache(cache) l2cache(nmfv) : !pto.ptr<i32, ub>, index -> i32
+    pto.store %bad_ldg, %ub_i32[%c0] : !pto.ptr<i32, ub>, index, i32
     return
   }
 }

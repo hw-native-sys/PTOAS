@@ -295,7 +295,7 @@ for (int i = 0; i < N; i++)
 
 ```mlir
 // Softmax with fused expdiff
-%max_broadcast = pto.vlds %ub_max[%c0] {dist = "BRC_B32"} : !pto.ptr<f32, ub> -> !pto.vreg<64xf32>
+%max_broadcast = pto.vlds %ub_max[%c0] {dist = "BRC_B32"} : !pto.ptr<f32, ub>, index -> !pto.vreg<64xf32>
 %exp_stable = pto.vexpdif %logits, %max_broadcast, %mask, "ODD" : !pto.vreg<64xf32>, !pto.vreg<64xf32>, !pto.mask<b32> -> !pto.vreg<64xf32>
 
 // Leaky ReLU activation

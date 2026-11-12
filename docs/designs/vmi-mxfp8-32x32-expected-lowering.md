@@ -81,10 +81,10 @@ module attributes {pto.backend = "vpto", pto.target_arch = "a5"} {
           %elem_off_128 = arith.addi %elem_off, %c128 : index
           %elem_off_192 = arith.addi %elem_off, %c192 : index
 
-          %x0 = pto.vlds %ub_src[%elem_off] : !pto.ptr<f32, ub> -> !pto.vreg<64xf32>
-          %x1 = pto.vlds %ub_src[%elem_off_64] : !pto.ptr<f32, ub> -> !pto.vreg<64xf32>
-          %x2 = pto.vlds %ub_src[%elem_off_128] : !pto.ptr<f32, ub> -> !pto.vreg<64xf32>
-          %x3 = pto.vlds %ub_src[%elem_off_192] : !pto.ptr<f32, ub> -> !pto.vreg<64xf32>
+          %x0 = pto.vlds %ub_src[%elem_off] : !pto.ptr<f32, ub>, index -> !pto.vreg<64xf32>
+          %x1 = pto.vlds %ub_src[%elem_off_64] : !pto.ptr<f32, ub>, index -> !pto.vreg<64xf32>
+          %x2 = pto.vlds %ub_src[%elem_off_128] : !pto.ptr<f32, ub>, index -> !pto.vreg<64xf32>
+          %x3 = pto.vlds %ub_src[%elem_off_192] : !pto.ptr<f32, ub>, index -> !pto.vreg<64xf32>
 
           %d0, %d1 = pto.vdintlv %x0, %x1 : !pto.vreg<64xf32>, !pto.vreg<64xf32> -> !pto.vreg<64xf32>, !pto.vreg<64xf32>
           %d2, %d3 = pto.vdintlv %x2, %x3 : !pto.vreg<64xf32>, !pto.vreg<64xf32> -> !pto.vreg<64xf32>, !pto.vreg<64xf32>
@@ -159,7 +159,7 @@ module attributes {pto.backend = "vpto", pto.target_arch = "a5"} {
           %scale_slot = arith.divui %row, %c8 : index
           %scale_ub_off = arith.muli %scale_slot, %c32 : index
           %scale8_b8 = pto.pge_b8 "PAT_VL8" : !pto.mask<b8>
-          pto.vsts %scale_u8, %ub_out_e8m0[%scale_ub_off], %scale8_b8 {dist = "NORM_B8"} : !pto.vreg<256xui8>, !pto.ptr<ui8, ub>, !pto.mask<b8>
+          pto.vsts %scale_u8, %ub_out_e8m0[%scale_ub_off], %scale8_b8 {dist = "NORM_B8"} : !pto.vreg<256xui8>, !pto.ptr<ui8, ub>, index, !pto.mask<b8>
 
           %scale_exp = pto.vsub %scale_exp_bias, %e8m0_payload_i32, %all_b32 : !pto.vreg<64xi32>, !pto.vreg<64xi32>, !pto.mask<b32> -> !pto.vreg<64xi32>
           %scale_bits = pto.vshl %scale_exp, %shift, %all_b32 : !pto.vreg<64xi32>, !pto.vreg<64xi32>, !pto.mask<b32> -> !pto.vreg<64xi32>
@@ -188,7 +188,7 @@ module attributes {pto.backend = "vpto", pto.target_arch = "a5"} {
           %q01 = pto.vor %q0, %q1, %all_b8 : !pto.vreg<256xf8E4M3FN>, !pto.vreg<256xf8E4M3FN>, !pto.mask<b8> -> !pto.vreg<256xf8E4M3FN>
           %q012 = pto.vor %q01, %q2, %all_b8 : !pto.vreg<256xf8E4M3FN>, !pto.vreg<256xf8E4M3FN>, !pto.mask<b8> -> !pto.vreg<256xf8E4M3FN>
           %q = pto.vor %q012, %q3, %all_b8 : !pto.vreg<256xf8E4M3FN>, !pto.vreg<256xf8E4M3FN>, !pto.mask<b8> -> !pto.vreg<256xf8E4M3FN>
-          pto.vsts %q, %ub_out_fp8_f8[%elem_off], %all_b8 : !pto.vreg<256xf8E4M3FN>, !pto.ptr<f8E4M3FN, ub>, !pto.mask<b8>
+          pto.vsts %q, %ub_out_fp8_f8[%elem_off], %all_b8 : !pto.vreg<256xf8E4M3FN>, !pto.ptr<f8E4M3FN, ub>, index, !pto.mask<b8>
         }
       }
 

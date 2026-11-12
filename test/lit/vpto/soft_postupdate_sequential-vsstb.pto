@@ -35,11 +35,11 @@ module attributes {pto.target_arch = "a5", pto.kernel_kind = #pto.kernel_kind<ve
     %c32 = arith.constant 32 : index
     %off1 = arith.muli %k_idx, %c16 : index
     %off2 = arith.muli %k_idx, %c32 : index
-    %base1 = pto.addptr %dst, %off1 : !pto.ptr<f32, ub> -> !pto.ptr<f32, ub>
-    %base2 = pto.addptr %dst, %off2 : !pto.ptr<f32, ub> -> !pto.ptr<f32, ub>
+    %base1 = pto.addptr %dst, %off1 : !pto.ptr<f32, ub>, index -> !pto.ptr<f32, ub>
+    %base2 = pto.addptr %dst, %off2 : !pto.ptr<f32, ub>, index -> !pto.ptr<f32, ub>
     pto.vecscope {
       %mask = pto.pset_b32 "PAT_ALL" : !pto.mask<b32>
-      %vec = pto.vlds %src[%c0] : !pto.ptr<f32, ub> -> !pto.vreg<64xf32>
+      %vec = pto.vlds %src[%c0] : !pto.ptr<f32, ub>, index -> !pto.vreg<64xf32>
       pto.vsstb %vec, %dst, %c2_i16, %c0_i16, %mask : !pto.vreg<64xf32>, !pto.ptr<f32, ub>, i16, i16, !pto.mask<b32>
       pto.vsstb %vec, %base1, %c2_i16, %c0_i16, %mask : !pto.vreg<64xf32>, !pto.ptr<f32, ub>, i16, i16, !pto.mask<b32>
       pto.vsstb %vec, %base2, %c2_i16, %c0_i16, %mask : !pto.vreg<64xf32>, !pto.ptr<f32, ub>, i16, i16, !pto.mask<b32>
@@ -53,11 +53,11 @@ module attributes {pto.target_arch = "a5", pto.kernel_kind = #pto.kernel_kind<ve
     %c2_i16 = arith.constant 2 : i16
     %c4 = arith.constant 4 : index
     %c8 = arith.constant 8 : index
-    %base1 = pto.addptr %dst, %c4 : !pto.ptr<f32, ub> -> !pto.ptr<f32, ub>
-    %base2 = pto.addptr %dst, %c8 : !pto.ptr<f32, ub> -> !pto.ptr<f32, ub>
+    %base1 = pto.addptr %dst, %c4 : !pto.ptr<f32, ub>, index -> !pto.ptr<f32, ub>
+    %base2 = pto.addptr %dst, %c8 : !pto.ptr<f32, ub>, index -> !pto.ptr<f32, ub>
     pto.vecscope {
       %mask = pto.pset_b32 "PAT_ALL" : !pto.mask<b32>
-      %vec = pto.vlds %src[%c0] : !pto.ptr<f32, ub> -> !pto.vreg<64xf32>
+      %vec = pto.vlds %src[%c0] : !pto.ptr<f32, ub>, index -> !pto.vreg<64xf32>
       pto.vsstb %vec, %dst, %c2_i16, %c0_i16, %mask : !pto.vreg<64xf32>, !pto.ptr<f32, ub>, i16, i16, !pto.mask<b32>
       pto.vsstb %vec, %base1, %c2_i16, %c0_i16, %mask : !pto.vreg<64xf32>, !pto.ptr<f32, ub>, i16, i16, !pto.mask<b32>
       pto.vsstb %vec, %base2, %c2_i16, %c0_i16, %mask : !pto.vreg<64xf32>, !pto.ptr<f32, ub>, i16, i16, !pto.mask<b32>

@@ -146,9 +146,9 @@ module {
 // LOWER: %[[COUNT:.*]] = arith.constant 128 : i32
 // LOWER: %[[ZERO:.*]] = arith.constant 0 : index
 // LOWER-NOT: pto.vlds
-// LOWER: %[[R:.*]] = pto.vlds %[[SRC]][%[[ZERO]]] {dist = "BRC_B8"} : !pto.ptr<i8, ub> -> !pto.vreg<256xi8>
+// LOWER: %[[R:.*]] = pto.vlds %[[SRC]][%[[ZERO]]] {dist = "BRC_B8"} : !pto.ptr<i8, ub>, index -> !pto.vreg<256xi8>
 // LOWER-NEXT: %[[MASK:.*]], %{{.*}} = pto.plt_b8 %[[COUNT]] : i32 -> !pto.mask<b8>, i32
-// LOWER-NEXT: pto.vsts %[[R]], %[[DST]][%[[ZERO]]], %[[MASK]] : !pto.vreg<256xi8>, !pto.ptr<i8, ub>, !pto.mask<b8>
+// LOWER-NEXT: pto.vsts %[[R]], %[[DST]][%[[ZERO]]], %[[MASK]] : !pto.vreg<256xi8>, !pto.ptr<i8, ub>, index, !pto.mask<b8>
 // LOWER-NEXT: return
 // LOWER-NOT: pto.vlds
 

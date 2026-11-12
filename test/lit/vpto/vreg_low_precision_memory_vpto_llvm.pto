@@ -18,12 +18,12 @@ module attributes {pto.target_arch = "a5", pto.kernel_kind = #pto.kernel_kind<ve
     %c0 = arith.constant 0 : index
     pto.vecscope {
       %mask = pto.pset_b8 "PAT_ALL" : !pto.mask<b8>
-      %f8e4 = pto.vlds %f8e4_src[%c0] : !pto.ptr<f8E4M3FN, ub> -> !pto.vreg<256xf8E4M3FN>
-      %f8e5 = pto.vlds %f8e5_src[%c0] : !pto.ptr<f8E5M2, ub> -> !pto.vreg<256xf8E5M2>
-      %hif8 = pto.vlds %hif8_src[%c0] : !pto.ptr<!pto.hif8, ub> -> !pto.vreg<256x!pto.hif8>
-      pto.vsts %f8e4, %f8e4_dst[%c0], %mask : !pto.vreg<256xf8E4M3FN>, !pto.ptr<f8E4M3FN, ub>, !pto.mask<b8>
-      pto.vsts %f8e5, %f8e5_dst[%c0], %mask : !pto.vreg<256xf8E5M2>, !pto.ptr<f8E5M2, ub>, !pto.mask<b8>
-      pto.vsts %hif8, %hif8_dst[%c0], %mask : !pto.vreg<256x!pto.hif8>, !pto.ptr<!pto.hif8, ub>, !pto.mask<b8>
+      %f8e4 = pto.vlds %f8e4_src[%c0] : !pto.ptr<f8E4M3FN, ub>, index -> !pto.vreg<256xf8E4M3FN>
+      %f8e5 = pto.vlds %f8e5_src[%c0] : !pto.ptr<f8E5M2, ub>, index -> !pto.vreg<256xf8E5M2>
+      %hif8 = pto.vlds %hif8_src[%c0] : !pto.ptr<!pto.hif8, ub>, index -> !pto.vreg<256x!pto.hif8>
+      pto.vsts %f8e4, %f8e4_dst[%c0], %mask : !pto.vreg<256xf8E4M3FN>, !pto.ptr<f8E4M3FN, ub>, index, !pto.mask<b8>
+      pto.vsts %f8e5, %f8e5_dst[%c0], %mask : !pto.vreg<256xf8E5M2>, !pto.ptr<f8E5M2, ub>, index, !pto.mask<b8>
+      pto.vsts %hif8, %hif8_dst[%c0], %mask : !pto.vreg<256x!pto.hif8>, !pto.ptr<!pto.hif8, ub>, index, !pto.mask<b8>
     }
     return
   }
@@ -70,8 +70,8 @@ module attributes {pto.target_arch = "a5", pto.kernel_kind = #pto.kernel_kind<ve
     %c0 = arith.constant 0 : index
     pto.vecscope {
       %mask = pto.pset_b8 "PAT_ALL" : !pto.mask<b8>
-      %u = pto.uvld %src[%c0] : !pto.ptr<f8E4M3FN, ub> -> !pto.vreg<256xf8E4M3FN>
-      pto.vsts %u, %dst[%c0], %mask : !pto.vreg<256xf8E4M3FN>, !pto.ptr<f8E4M3FN, ub>, !pto.mask<b8>
+      %u = pto.uvld %src[%c0] : !pto.ptr<f8E4M3FN, ub>, index -> !pto.vreg<256xf8E4M3FN>
+      pto.vsts %u, %dst[%c0], %mask : !pto.vreg<256xf8E4M3FN>, !pto.ptr<f8E4M3FN, ub>, index, !pto.mask<b8>
     }
     return
   }
@@ -84,7 +84,7 @@ module attributes {pto.target_arch = "a5", pto.kernel_kind = #pto.kernel_kind<ve
     %c0 = arith.constant 0 : index
     %c0_i32 = arith.constant 0 : i32
     pto.vecscope {
-      %loaded = pto.vlds %src[%c0] : !pto.ptr<!pto.hif8, ub> -> !pto.vreg<256x!pto.hif8>
+      %loaded = pto.vlds %src[%c0] : !pto.ptr<!pto.hif8, ub>, index -> !pto.vreg<256x!pto.hif8>
       %full = pto.pset_b32 "PAT_ALL" : !pto.mask<b32>
       // VSTUR reads its length from SPR SQZN.  A low-precision VREG cannot be
       // squeezed directly (pto.vsqz rejects low-precision operands), so define

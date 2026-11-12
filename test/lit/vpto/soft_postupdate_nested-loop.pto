@@ -30,12 +30,12 @@ module attributes {pto.target_arch = "a5", pto.kernel_kind = #pto.kernel_kind<ve
     pto.vecscope {
       scf.for %ivo = %c0 to %c256 step %c64 iter_args(%remo = %c1024_i32) -> (i32) {
         %masko, %nro = pto.plt_b32 %remo : i32 -> !pto.mask<b32>, i32
-        %veco = pto.vlds %ub_in[%ivo] {dist = "NORM"} : !pto.ptr<f32, ub> -> !pto.vreg<64xf32>
-        pto.vsts %veco, %ub_out[%ivo], %masko : !pto.vreg<64xf32>, !pto.ptr<f32, ub>, !pto.mask<b32>
+        %veco = pto.vlds %ub_in[%ivo] {dist = "NORM"} : !pto.ptr<f32, ub>, index -> !pto.vreg<64xf32>
+        pto.vsts %veco, %ub_out[%ivo], %masko : !pto.vreg<64xf32>, !pto.ptr<f32, ub>, index, !pto.mask<b32>
         %inner = scf.for %ivi = %c0 to %c256 step %c64 iter_args(%remi = %c1024_i32) -> (i32) {
           %maski, %nri = pto.plt_b32 %remi : i32 -> !pto.mask<b32>, i32
-          %veci = pto.vlds %ub_in[%ivi] {dist = "NORM"} : !pto.ptr<f32, ub> -> !pto.vreg<64xf32>
-          pto.vsts %veci, %ub_out[%ivi], %maski : !pto.vreg<64xf32>, !pto.ptr<f32, ub>, !pto.mask<b32>
+          %veci = pto.vlds %ub_in[%ivi] {dist = "NORM"} : !pto.ptr<f32, ub>, index -> !pto.vreg<64xf32>
+          pto.vsts %veci, %ub_out[%ivi], %maski : !pto.vreg<64xf32>, !pto.ptr<f32, ub>, index, !pto.mask<b32>
           scf.yield %nri : i32
         }
         scf.yield %inner : i32

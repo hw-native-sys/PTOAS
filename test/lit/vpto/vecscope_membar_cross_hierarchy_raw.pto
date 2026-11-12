@@ -35,10 +35,10 @@ module attributes {pto.target_arch = "a5", pto.kernel_kind = #pto.kernel_kind<ve
           %j_stride = arith.muli %j, %c100 : index
           %row = arith.addi %next, %j_stride : index
           %store_offset = arith.muli %row, %c64 : index
-          pto.vsts %seed, %ub[%store_offset], %mask : !pto.vreg<64xf32>, !pto.ptr<f32, ub>, !pto.mask<b32>
+          pto.vsts %seed, %ub[%store_offset], %mask : !pto.vreg<64xf32>, !pto.ptr<f32, ub>, index, !pto.mask<b32>
         }
-        %reload = pto.vlds %ub[%load_offset] : !pto.ptr<f32, ub> -> !pto.vreg<64xf32>
-        pto.vsts %reload, %sink[%load_offset], %mask : !pto.vreg<64xf32>, !pto.ptr<f32, ub>, !pto.mask<b32>
+        %reload = pto.vlds %ub[%load_offset] : !pto.ptr<f32, ub>, index -> !pto.vreg<64xf32>
+        pto.vsts %reload, %sink[%load_offset], %mask : !pto.vreg<64xf32>, !pto.ptr<f32, ub>, index, !pto.mask<b32>
       }
     }
     return

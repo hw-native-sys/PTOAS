@@ -12,6 +12,7 @@
 from ._ops_imports import *  # noqa: F401,F403
 
 from ._ops_common import (
+    _coerce_element_offset,
     _coerce_i64,
     _normalize_enum_attr,
     _coerce_index,
@@ -632,7 +633,7 @@ def ld_dev(ptr_value, offset=0):
         _pto.PTOLdDevOp(
             elem_type,
             raw_ptr,
-            _coerce_index(offset, context="ld_dev(offset)"),
+            _coerce_element_offset(offset, context="ld_dev(offset)"),
         ).value
     )
 
@@ -646,7 +647,7 @@ def st_dev(ptr_value, offset, value):
     _pto.PTOStDevOp(
         raw_value,
         raw_ptr,
-        _coerce_index(offset, context="st_dev(offset)"),
+        _coerce_element_offset(offset, context="st_dev(offset)"),
     )
 
 

@@ -32,8 +32,8 @@ LogicalResult Vldsx2Op::verify() {
   if (classifyMemoryRole(getSource().getType()) == MemoryRole::GM) {
     return emitOpError("requires a UB-backed source");
   }
-  if (!getOffset().getType().isIndex()) {
-    return emitOpError("requires index offset");
+  if (!isElementOffsetType(getOffset().getType())) {
+    return emitOpError("requires an index or signless integer element offset");
   }
   if (failed(verifyVRegTypeLike(*this, getLow().getType(), "low result type")) ||
       failed(verifyVRegTypeLike(*this, getHigh().getType(), "high result type"))) {

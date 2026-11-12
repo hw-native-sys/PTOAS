@@ -74,13 +74,13 @@ module {
 // LOWER-LABEL: func.func @vmi_lane_stride2_masked_store_f16(
 // LOWER-SAME: %[[VALUE:[^,]+]]: !pto.vreg<128xf16>
 // LOWER-SAME: %[[MASK:[^,]+]]: !pto.mask<b32>
-// LOWER: pto.vsts %[[VALUE]], {{.*}}, %[[MASK]] {dist = "PK_B32"} : !pto.vreg<128xf16>, !pto.ptr<f16, ub>, !pto.mask<b32>
+// LOWER: pto.vsts %[[VALUE]], {{.*}}, %[[MASK]] {dist = "PK_B32"} : !pto.vreg<128xf16>, !pto.ptr<f16, ub>, index, !pto.mask<b32>
 // LOWER-NOT: pto.vmi.
 // LOWER-NOT: !pto.vmi.
 
 // LOWER-LABEL: func.func @vmi_lane_stride4_masked_store_ui8(
 // LOWER-SAME: %[[VALUE:[^,]+]]: !pto.vreg<256xui8>
 // LOWER-SAME: %[[MASK:[^,]+]]: !pto.mask<b32>
-// LOWER: pto.vsts %[[VALUE]], {{.*}}, %[[MASK]] {dist = "PK4_B32"} : !pto.vreg<256xui8>, !pto.ptr<ui8, ub>, !pto.mask<b32>
+// LOWER: pto.vsts %[[VALUE]], {{.*}}, %[[MASK]] {dist = "PK4_B32"} : !pto.vreg<256xui8>, !pto.ptr<ui8, ub>, index, !pto.mask<b32>
 // LOWER-NOT: pto.vmi.
 // LOWER-NOT: !pto.vmi.

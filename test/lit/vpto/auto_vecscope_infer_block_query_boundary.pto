@@ -25,9 +25,9 @@ module attributes {pto.target_arch = "a5"} {
         %index = arith.index_cast %quotient : i64 to index
         %in_bounds = arith.cmpi slt, %index, %c43 : index
         scf.if %in_bounds {
-          %value = pto.vlds %ub[%c0] : !pto.ptr<bf16, ub> -> !pto.vreg<128xbf16>
+          %value = pto.vlds %ub[%c0] : !pto.ptr<bf16, ub>, index -> !pto.vreg<128xbf16>
           %mask = pto.pset_b16 "PAT_ALL" : !pto.mask<b16>
-          pto.vsts %value, %ub[%c0], %mask : !pto.vreg<128xbf16>, !pto.ptr<bf16, ub>, !pto.mask<b16>
+          pto.vsts %value, %ub[%c0], %mask : !pto.vreg<128xbf16>, !pto.ptr<bf16, ub>, index, !pto.mask<b16>
         }
       }
       return
@@ -41,9 +41,9 @@ module attributes {pto.target_arch = "a5"} {
       %block_num = pto.get_block_num
       %has_blocks = arith.cmpi sge, %block_num, %c1_i64 : i64
       scf.if %has_blocks {
-        %value = pto.vlds %ub[%c0] : !pto.ptr<bf16, ub> -> !pto.vreg<128xbf16>
+        %value = pto.vlds %ub[%c0] : !pto.ptr<bf16, ub>, index -> !pto.vreg<128xbf16>
         %mask = pto.pset_b16 "PAT_ALL" : !pto.mask<b16>
-        pto.vsts %value, %ub[%c0], %mask : !pto.vreg<128xbf16>, !pto.ptr<bf16, ub>, !pto.mask<b16>
+        pto.vsts %value, %ub[%c0], %mask : !pto.vreg<128xbf16>, !pto.ptr<bf16, ub>, index, !pto.mask<b16>
       }
       return
     }

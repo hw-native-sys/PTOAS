@@ -27,7 +27,7 @@ module {
 }
 
 // CHECK-LABEL: func.func @vmi_to_vpto_stride_load(
-// CHECK: %[[BASE:.*]] = pto.addptr %arg0, %arg1 : <f8E4M3FN, ub> -> <f8E4M3FN, ub>
+// CHECK: %[[BASE:.*]] = pto.addptr %arg0, %arg1 : <f8E4M3FN, ub>, index -> <f8E4M3FN, ub>
 // CHECK: %[[LOAD:.*]] = pto.vsldb %[[BASE]], %c1{{[^,]*}}, %c0_i16, %arg2 : !pto.ptr<f8E4M3FN, ub>, i16, i16, !pto.mask<b8> -> !pto.vreg<256xf8E4M3FN>
 // CHECK: return %[[LOAD]] : !pto.vreg<256xf8E4M3FN>
 // CHECK-NOT: pto.vmi.

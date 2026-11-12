@@ -19,8 +19,8 @@ module attributes {pto.target_arch = "a5", pto.kernel_kind = #pto.kernel_kind<ve
     %ub = pto.castptr %c0_i64 : i64 -> !pto.ptr<f32, ub>
     %mask = pto.pset_b32 "PAT_ALL" : !pto.mask<b32>
     // load@ub0 -> store@ub0 is WAR (VLD -> VST). Not handled.
-    %vec0 = pto.vlds %ub[%c0] : !pto.ptr<f32, ub> -> !pto.vreg<64xf32>
-    pto.vsts %vec0, %ub[%c0], %mask : !pto.vreg<64xf32>, !pto.ptr<f32, ub>, !pto.mask<b32>
+    %vec0 = pto.vlds %ub[%c0] : !pto.ptr<f32, ub>, index -> !pto.vreg<64xf32>
+    pto.vsts %vec0, %ub[%c0], %mask : !pto.vreg<64xf32>, !pto.ptr<f32, ub>, index, !pto.mask<b32>
     return
   }
 }

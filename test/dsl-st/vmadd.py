@@ -50,11 +50,11 @@ VMADD_SOURCE = """module attributes {pto.target_arch = "a5", pto.kernel_kind = #
     pto.vecscope {
       %mask = pto.pset_b32 "PAT_ALL" : !pto.mask<b32>
       scf.for %offset = %c0 to %c1024 step %c64 {
-        %acc = pto.vlds %ub_f_acc[%offset] : !pto.ptr<f32, ub> -> !pto.vreg<64xf32>
-        %lhs = pto.vlds %ub_f_lhs[%offset] : !pto.ptr<f32, ub> -> !pto.vreg<64xf32>
-        %rhs = pto.vlds %ub_f_rhs[%offset] : !pto.ptr<f32, ub> -> !pto.vreg<64xf32>
+        %acc = pto.vlds %ub_f_acc[%offset] : !pto.ptr<f32, ub>, index -> !pto.vreg<64xf32>
+        %lhs = pto.vlds %ub_f_lhs[%offset] : !pto.ptr<f32, ub>, index -> !pto.vreg<64xf32>
+        %rhs = pto.vlds %ub_f_rhs[%offset] : !pto.ptr<f32, ub>, index -> !pto.vreg<64xf32>
         %vmadd = pto.vmadd %acc, %lhs, %rhs, %mask : !pto.vreg<64xf32>, !pto.vreg<64xf32>, !pto.vreg<64xf32>, !pto.mask<b32> -> !pto.vreg<64xf32>
-        pto.vsts %vmadd, %ub_f_vmadd[%offset], %mask : !pto.vreg<64xf32>, !pto.ptr<f32, ub>, !pto.mask<b32>
+        pto.vsts %vmadd, %ub_f_vmadd[%offset], %mask : !pto.vreg<64xf32>, !pto.ptr<f32, ub>, index, !pto.mask<b32>
       }
     }
     pto.set_flag["PIPE_V", "PIPE_MTE3", "EVENT_ID0"]

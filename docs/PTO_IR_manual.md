@@ -588,10 +588,10 @@ changes only the pointer's element interpretation; it does not move data.
 **Basic Example:**
 
 ```mlir
-%p64_off = pto.addptr %p64, %idx : !pto.ptr<ui64> -> !pto.ptr<ui64>
+%p64_off = pto.addptr %p64, %idx : !pto.ptr<ui64>, index -> !pto.ptr<ui64>
 %addr = pto.castptr %p64_off : !pto.ptr<ui64> -> i64
 %p32 = pto.castptr %addr : i64 -> !pto.ptr<ui32>
-%val = pto.load %p32[%c0] : !pto.ptr<ui32> -> ui32
+%val = pto.load %p32[%c0] : !pto.ptr<ui32>, index -> ui32
 ```
 
 ##### `pto.addptr` - Add Element Offset to Pointer
@@ -625,7 +625,7 @@ result = ptr + offset   // offset is in elements, not bytes
 **Basic Example:**
 
 ```mlir
-%ptr_off = pto.addptr %base, %offset : !pto.ptr<f32> -> !pto.ptr<f32>
+%ptr_off = pto.addptr %base, %offset : !pto.ptr<f32>, index -> !pto.ptr<f32>
 ```
 
 ##### `pto.castptr` - Explicit Pointer Cast
@@ -1611,7 +1611,7 @@ value = ptr[offset]
 **Basic Example:**
 
 ```mlir
-%val = pto.load %ptr[%offset] : !pto.ptr<f32> -> f32
+%val = pto.load %ptr[%offset] : !pto.ptr<f32>, index -> f32
 ```
 
 ---
@@ -1648,7 +1648,7 @@ ptr[offset] = value
 **Basic Example:**
 
 ```mlir
-pto.store %val, %ptr[%offset] : !pto.ptr<f32>, f32
+pto.store %val, %ptr[%offset] : !pto.ptr<f32>, index, f32
 ```
 
 ---

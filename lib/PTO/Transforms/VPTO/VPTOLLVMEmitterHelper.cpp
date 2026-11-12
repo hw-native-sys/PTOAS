@@ -19,6 +19,7 @@
 
 #include "PTO/IR/PTO.h"
 #include "PTO/IR/PTOTypeUtils.h"
+#include "PTO/IR/VPTOAddressSemantics.h"
 
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/ControlFlow/IR/ControlFlowOps.h"
@@ -437,6 +438,63 @@ static Value materializeFullIndexAddress(
       loc, baseType, rewriter.getI8Type(), base, ValueRange{byteOffset});
 }
 
+// Bring a signless integer offset into the platform index type. Signedness is
+// an operation contract, not a property of a signless type: a signed offset
+// uses a sign-extending cast and an unsigned one a zero-extending cast, because
+// the GEP index rule only sign-extends. Constant offsets are re-materialized as
+// index constants so the immediate-encoding path below still recognizes them.
+static Value convertElementOffsetToIndex(Operation *anchor, Value offset,
+                                        bool isSigned,
+                                        ConversionPatternRewriter &rewriter) {
+  if (offset.getType().isIndex()) {
+    return offset;
+  }
+  if (!offset.getType().isSignlessInteger()) {
+    return Value();
+  }
+  if (std::optional<int64_t> constant = getConstantIntValue(offset)) {
+    return rewriter.create<arith::ConstantIndexOp>(anchor->getLoc(), *constant);
+  }
+
+  Type indexType = rewriter.getIndexType();
+  if (isSigned) {
+    return rewriter.create<arith::IndexCastOp>(anchor->getLoc(), indexType,
+                                               offset);
+  }
+  return rewriter.create<arith::IndexCastUIOp>(anchor->getLoc(), indexType,
+                                              offset);
+}
+
+// An element type that the LLVM dialect can index with directly: builtin scalar
+// integers and floats, whose allocation size equals their size, so an
+// element-type GEP performs exactly the element-to-byte scaling.
+static bool isDirectGEPElementType(Type type) {
+  return type.isIntOrFloat() && !type.isIndex();
+}
+
+// A signed element offset narrower than the pointer index width needs no cast
+// and no explicit i64 multiply: an element-type GEP scales the index by the
+// element size and sign-extends the narrow index itself, so the address
+// arithmetic keeps the offset's own width.
+static FailureOr<VPTOLoweredAddressOffset> lowerSignedIntegerElementOffset(
+    Operation *anchor, Value base, Value elementOffset, Type elementType,
+    bool isPostUpdate, ConversionPatternRewriter &rewriter) {
+  auto baseType = dyn_cast<LLVM::LLVMPointerType>(base.getType());
+  if (!baseType || !isDirectGEPElementType(elementType)) {
+    return failure();
+  }
+
+  Location loc = anchor->getLoc();
+  Value adjustedBase = rewriter.create<LLVM::GEPOp>(
+      loc, baseType, elementType, base, ValueRange{elementOffset});
+  Value encodedZero =
+      rewriter.create<arith::ConstantIntOp>(loc, 0, kI32BitWidth);
+  if (isPostUpdate) {
+    return VPTOLoweredAddressOffset{base, encodedZero, adjustedBase};
+  }
+  return VPTOLoweredAddressOffset{adjustedBase, encodedZero, Value()};
+}
+
 static FailureOr<VPTOLoweredAddressOffset> lowerVPTOIndexOffsetForIntrinsic(
     Operation *anchor, Value base, Value offset, int64_t addressUnitBytes,
     int64_t intrinsicScale, bool isPostUpdate,
@@ -479,17 +537,28 @@ lowerVPTOElementOffsetForIntrinsic(
     return failure();
   }
 
-  Location loc = anchor->getLoc();
-  int64_t elementBytes = elementBits / kBitsPerByte;
+  const int64_t elementBytes = elementBits / kBitsPerByte;
+  const bool isSigned = isSignedVPTOOffset(anchor);
   if (!elementOffset.getType().isIndex()) {
-    if (!elementOffset.getType().isInteger(kI32BitWidth)) {
+    // A constant is resolved by value in the index path below, which encodes a
+    // fitting constant as the instruction offset and otherwise materializes the
+    // full address. A dynamic signed offset keeps its own width through an
+    // element-type GEP, while a dynamic unsigned offset is zero-extended into
+    // the index type because the GEP index rule is signed.
+    if (isSigned && !getConstantIntValue(elementOffset)) {
+      FailureOr<VPTOLoweredAddressOffset> signedOffset =
+          lowerSignedIntegerElementOffset(anchor, base, elementOffset,
+                                          elementType, isPostUpdate, rewriter);
+      if (succeeded(signedOffset)) {
+        return signedOffset;
+      }
+    }
+    Value asIndex =
+        convertElementOffsetToIndex(anchor, elementOffset, isSigned, rewriter);
+    if (!asIndex) {
       return failure();
     }
-    Value scale =
-        rewriter.create<arith::ConstantIntOp>(loc, elementBytes, kI32BitWidth);
-    Value encoded =
-        rewriter.create<arith::MulIOp>(loc, elementOffset, scale);
-    return VPTOLoweredAddressOffset{base, encoded, Value()};
+    elementOffset = asIndex;
   }
 
   return lowerVPTOIndexOffsetForIntrinsic(
@@ -513,6 +582,15 @@ lowerVPTOPredicateOffsetForIntrinsic(
     return failure();
   }
 
+  if (!offset.getType().isIndex()) {
+    Value asIndex =
+        convertElementOffsetToIndex(anchor, offset, isSignedVPTOOffset(anchor),
+                                    rewriter);
+    if (!asIndex) {
+      return failure();
+    }
+    offset = asIndex;
+  }
   return lowerVPTOIndexOffsetForIntrinsic(
       anchor, base, offset, addressUnitBytes, /*intrinsicScale=*/1,
       isPostUpdate, rewriter);

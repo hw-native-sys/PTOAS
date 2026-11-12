@@ -92,7 +92,7 @@ module {
         %next = pto.vsstb %v, %ptr, %bs, %rs, %mask
           : !pto.vreg<128xbf16>, !pto.ptr<bf16, ub>, i16, i16, !pto.mask<b16>
           -> !pto.ptr<bf16, ub>
-        %next2 = pto.addptr %next, %advance : <bf16, ub> -> <bf16, ub>
+        %next2 = pto.addptr %next, %advance : <bf16, ub>, index -> <bf16, ub>
         scf.yield %next2 : !pto.ptr<bf16, ub>
       }
     }

@@ -16,7 +16,7 @@ module attributes {pto.target_arch = "a5", pto.kernel_kind = #pto.kernel_kind<ve
     pto.vecscope {
       %mask = pto.pset_b16 "PAT_ALL" : !pto.mask<b16>
       %value = pto.vsldb %src, %c1_i16, %c0_i16, %mask : !pto.ptr<bf16, ub>, i16, i16, !pto.mask<b16> -> !pto.vreg<128xbf16>
-      pto.vsts %value, %src[%c0], %mask : !pto.vreg<128xbf16>, !pto.ptr<bf16, ub>, !pto.mask<b16>
+      pto.vsts %value, %src[%c0], %mask : !pto.vreg<128xbf16>, !pto.ptr<bf16, ub>, index, !pto.mask<b16>
     }
     return
   }
@@ -28,7 +28,7 @@ module attributes {pto.target_arch = "a5", pto.kernel_kind = #pto.kernel_kind<ve
     pto.vecscope {
       %mask = pto.pset_b8 "PAT_ALL" : !pto.mask<b8>
       %value = pto.vsldb %src, %c1_i16, %c0_i16, %mask : !pto.ptr<!pto.hif8, ub>, i16, i16, !pto.mask<b8> -> !pto.vreg<256x!pto.hif8>
-      pto.vsts %value, %src[%c0], %mask : !pto.vreg<256x!pto.hif8>, !pto.ptr<!pto.hif8, ub>, !pto.mask<b8>
+      pto.vsts %value, %src[%c0], %mask : !pto.vreg<256x!pto.hif8>, !pto.ptr<!pto.hif8, ub>, index, !pto.mask<b8>
     }
     return
   }
@@ -40,7 +40,7 @@ module attributes {pto.target_arch = "a5", pto.kernel_kind = #pto.kernel_kind<ve
     pto.vecscope {
       %mask = pto.pset_b8 "PAT_ALL" : !pto.mask<b8>
       %value = pto.vsldb %src, %c1_i16, %c0_i16, %mask : !pto.ptr<f8E4M3FN, ub>, i16, i16, !pto.mask<b8> -> !pto.vreg<256xf8E4M3FN>
-      pto.vsts %value, %src[%c0], %mask : !pto.vreg<256xf8E4M3FN>, !pto.ptr<f8E4M3FN, ub>, !pto.mask<b8>
+      pto.vsts %value, %src[%c0], %mask : !pto.vreg<256xf8E4M3FN>, !pto.ptr<f8E4M3FN, ub>, index, !pto.mask<b8>
     }
     return
   }

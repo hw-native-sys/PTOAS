@@ -1,0 +1,87 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+
+// Element offsets of the pointer-based memory ops and of pto.addptr may be
+// written with a signless integer instead of the platform index type. The offset
+// type is declared in the type list like the type of every other operand. The
+// displacement stays signed - negative values address lower addresses - and is
+// sign-extended explicitly instead of relying on the backend index-extension
+// rule. Vector offsets whose scaled value fits the signed 32-bit instruction
+// field are encoded directly; larger ones move the base pointer and pass a zero
+// instruction offset.
+//
+// RUN: ( mkdir -p %T && ptoas --pto-arch=a5 --pto-backend=vpto %s -o %t --mlir-print-ir-after=convert-func-to-llvm 2>&1 || true ) | FileCheck %s
+
+module attributes {pto.target_arch = "a5", pto.kernel_kind = #pto.kernel_kind<vector>} {
+  func.func @scalar_integer_offsets(%gm: !pto.ptr<i32, gm>, %ub: !pto.ptr<i32, ub>, %i32_off: i32, %i64_off: i64) attributes {pto.kernel} {
+    %neg32 = arith.constant -8 : i32
+    %v0 = pto.load %gm[%i32_off] : !pto.ptr<i32, gm>, i32 -> i32
+    pto.store %v0, %ub[%neg32] : !pto.ptr<i32, ub>, i32, i32
+    %p = pto.addptr %gm, %i64_off : !pto.ptr<i32, gm>, i64 -> !pto.ptr<i32, gm>
+    %v1 = pto.load %p[%neg32] : !pto.ptr<i32, gm>, i32 -> i32
+    pto.store %v1, %gm[%neg32] : !pto.ptr<i32, gm>, i32, i32
+    return
+  }
+
+  func.func @index_offsets_still_parse(%gm: !pto.ptr<f32, gm>, %ub: !pto.ptr<f32, ub>) attributes {pto.kernel} {
+    %c0 = arith.constant 0 : index
+    %v = pto.load %gm[%c0] : !pto.ptr<f32, gm>, index -> f32
+    pto.store %v, %ub[%c0] : !pto.ptr<f32, ub>, index, f32
+    %p = pto.addptr %gm, %c0 : !pto.ptr<f32, gm>, index -> !pto.ptr<f32, gm>
+    return
+  }
+
+  func.func @vector_integer_offsets(%src: !pto.ptr<f32, ub>, %dst: !pto.ptr<f32, ub>, %i32_off: i32) attributes {pto.kernel} {
+    %c_small = arith.constant 8 : i32
+    %c_huge = arith.constant 4294967296 : i64
+    pto.vecscope {
+      %mask = pto.pset_b32 "PAT_ALL" : !pto.mask<b32>
+      %v0 = pto.vlds %src[%c_small] {dist = "NORM"} : !pto.ptr<f32, ub>, i32 -> !pto.vreg<64xf32>
+      %v1 = pto.vlds %src[%c_huge] {dist = "NORM"} : !pto.ptr<f32, ub>, i64 -> !pto.vreg<64xf32>
+      %v2 = pto.vlds %src[%i32_off] {dist = "NORM"} : !pto.ptr<f32, ub>, i32 -> !pto.vreg<64xf32>
+      pto.vsts %v0, %dst[%c_small], %mask : !pto.vreg<64xf32>, !pto.ptr<f32, ub>, i32, !pto.mask<b32>
+      pto.vsts %v1, %dst[%c_huge], %mask : !pto.vreg<64xf32>, !pto.ptr<f32, ub>, i64, !pto.mask<b32>
+      pto.vsts %v2, %dst[%i32_off], %mask : !pto.vreg<64xf32>, !pto.ptr<f32, ub>, i32, !pto.mask<b32>
+    }
+    return
+  }
+}
+
+// The scalar element displacement keeps its own width: an i32 offset reaches
+// the element-type GEP as an i32 index, which LLVM sign-extends itself, so no
+// i64 conversion is forced on the address arithmetic.
+// CHECK-LABEL: llvm.func @scalar_integer_offsets_mix_aiv
+// CHECK: llvm.getelementptr %{{.*}}[%{{.*}}] : (!llvm.ptr<{{[0-9]+}}>, i32) -> !llvm.ptr<{{[0-9]+}}>, i32
+// CHECK: llvm.load %{{.*}} : !llvm.ptr<1> -> i32
+
+// Index offsets keep the platform index type.
+// CHECK-LABEL: llvm.func @index_offsets_still_parse_mix_aiv
+// CHECK: llvm.load
+
+// A constant vector offset that fits the signed 32-bit instruction field (8 f32
+// elements -> 32 bytes) is encoded directly and leaves the base pointer alone.
+// CHECK-LABEL: llvm.func @vector_integer_offsets_mix_aiv
+// CHECK: %[[SMALL:.*]] = llvm.mlir.constant(32 : i32)
+// CHECK: llvm.call @llvm.hivm.vldsx1.v64f32(%arg0, %[[SMALL]],
+
+// An offset whose scaled value does not fit the field (2^32 f32 elements ->
+// 2^34 bytes) moves the base pointer and passes a zero instruction offset.
+// CHECK: %[[BYTES:.*]] = llvm.mul %{{.*}}, %{{.*}} : i64
+// CHECK: %[[ADJUSTED:.*]] = llvm.getelementptr %arg0[%[[BYTES]]]
+// CHECK: llvm.call @llvm.hivm.vldsx1.v64f32(%[[ADJUSTED]],
+
+// A dynamic signed offset is scaled by an element-type GEP indexed with the
+// offset's own type: no cast and no explicit multiply, and the narrow index is
+// sign-extended by the GEP rule.
+// CHECK: llvm.getelementptr %arg0[%arg2] : (!llvm.ptr<6>, i32) -> !llvm.ptr<6>, f32
+// CHECK: llvm.call @llvm.hivm.vldsx1.v64f32(
+
+// The same holds for a dynamic integer store offset.
+// CHECK: llvm.getelementptr %arg1[%arg2] : (!llvm.ptr<6>, i32) -> !llvm.ptr<6>, f32
+// CHECK: llvm.call @llvm.hivm.vstsx1.v64f32(
+

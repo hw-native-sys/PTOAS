@@ -173,7 +173,7 @@ mem_bar(barrier_type);
 ```mlir
 pto.vsts %v0, %ub[%c0] : !pto.vreg<64xf32>, !pto.ptr<f32, ub>
 pto.mem_bar "VST_VLD"
-%v1 = pto.vlds %ub[%c0] : !pto.ptr<f32, ub> -> !pto.vreg<64xf32>
+%v1 = pto.vlds %ub[%c0] : !pto.ptr<f32, ub>, index -> !pto.vreg<64xf32>
 ```
 
 **Scope and provision of barriers.** `pto.mem_bar` only orders operations inside a single `__VEC_SCOPE__` region. Making one vecscope's UB writes visible to a later sibling vecscope is a cross-region ordering concern and must be managed with `pto.set_flag` / `pto.wait_flag` (or `pto.get_buf` / `pto.rls_buf`); a `pto.mem_bar` cannot express it.
@@ -373,10 +373,10 @@ pto.set_flag["PIPE_MTE2", "PIPE_V", "EVENT_ID0"]
 pto.wait_flag["PIPE_MTE2", "PIPE_V", "EVENT_ID0"]
 
 pto.vecscope {
-  %v   = pto.vlds %ub_ptr[%lane] : !pto.ptr<f32, ub> -> !pto.vreg<64xf32>
+  %v   = pto.vlds %ub_ptr[%lane] : !pto.ptr<f32, ub>, index -> !pto.vreg<64xf32>
   %mask = pto.pset_b32 "PAT_ALL" : !pto.mask<b32>
   %abs = pto.vabs %v, %mask : !pto.vreg<64xf32>, !pto.mask<b32> -> !pto.vreg<64xf32>
-  pto.vsts %abs, %ub_out[%lane], %mask : !pto.vreg<64xf32>, !pto.ptr<f32, ub>, !pto.mask<b32>
+  pto.vsts %abs, %ub_out[%lane], %mask : !pto.vreg<64xf32>, !pto.ptr<f32, ub>, index, !pto.mask<b32>
 }
 
 // Vector signals: "UB output is ready for MTE3"
@@ -413,9 +413,9 @@ pto.get_buf "PIPE_V", %bufid_ub_out, %c0 : i64, i64
 
 pto.vecscope {
   %mask = pto.pset_b32 "PAT_ALL" : !pto.mask<b32>
-  %v   = pto.vlds %ub_ptr[%lane] : !pto.ptr<f32, ub> -> !pto.vreg<64xf32>
+  %v   = pto.vlds %ub_ptr[%lane] : !pto.ptr<f32, ub>, index -> !pto.vreg<64xf32>
   %abs = pto.vabs %v, %mask : !pto.vreg<64xf32>, !pto.mask<b32> -> !pto.vreg<64xf32>
-  pto.vsts %abs, %ub_out[%lane], %mask : !pto.vreg<64xf32>, !pto.ptr<f32, ub>, !pto.mask<b32>
+  pto.vsts %abs, %ub_out[%lane], %mask : !pto.vreg<64xf32>, !pto.ptr<f32, ub>, index, !pto.mask<b32>
 }
 
 // Vector done reading ub_ptr — release so MTE2 can reuse it in next iteration
@@ -489,10 +489,10 @@ scf.for %i = %c0 to %N step %c1 {
   // WAR: wait for MTE3 to finish reading buf_out[i%2] from iteration i-2
   pto.wait_flag["PIPE_MTE3", "PIPE_V", "EVT_OUT_REV_{pp}"]
   scf.for %dummy = %c0 to %c1 step %c1 {
-    %v   = pto.vlds %ub_in[%pp][%lane] : !pto.ptr<f32, ub> -> !pto.vreg<64xf32>
+    %v   = pto.vlds %ub_in[%pp][%lane] : !pto.ptr<f32, ub>, index -> !pto.vreg<64xf32>
     %mask = pto.pset_b32 "PAT_ALL" : !pto.mask<b32>
     %abs = pto.vabs %v, %mask : !pto.vreg<64xf32>, !pto.mask<b32> -> !pto.vreg<64xf32>
-    pto.vsts %abs, %ub_out[%pp][%lane], %mask : !pto.vreg<64xf32>, !pto.ptr<f32, ub>, !pto.mask<b32>
+    pto.vsts %abs, %ub_out[%pp][%lane], %mask : !pto.vreg<64xf32>, !pto.ptr<f32, ub>, index, !pto.mask<b32>
   } {llvm.loop.aivector_scope}
   // WAR: tell MTE2 "done reading buf_in[i%2]"
   pto.set_flag["PIPE_V", "PIPE_MTE2", "EVT_IN_REV_{pp}"]
@@ -541,10 +541,10 @@ scf.for %i = %c0 to %N step %c1 {
   pto.get_buf "PIPE_V", %bufid_buf[%pp], %c0 : i64, i64
   pto.get_buf "PIPE_V", %bufid_out[%pp], %c0 : i64, i64
   scf.for %dummy = %c0 to %c1 step %c1 {
-    %v   = pto.vlds %ub_buf[%pp][%lane] : !pto.ptr<f32, ub> -> !pto.vreg<64xf32>
+    %v   = pto.vlds %ub_buf[%pp][%lane] : !pto.ptr<f32, ub>, index -> !pto.vreg<64xf32>
     %mask = pto.pset_b32 "PAT_ALL" : !pto.mask<b32>
     %abs = pto.vabs %v, %mask : !pto.vreg<64xf32>, !pto.mask<b32> -> !pto.vreg<64xf32>
-    pto.vsts %abs, %ub_out[%pp][%lane], %mask : !pto.vreg<64xf32>, !pto.ptr<f32, ub>, !pto.mask<b32>
+    pto.vsts %abs, %ub_out[%pp][%lane], %mask : !pto.vreg<64xf32>, !pto.ptr<f32, ub>, index, !pto.mask<b32>
   } {llvm.loop.aivector_scope}
   // Release buf[i%2] — MTE2 can reuse in iteration i+2 (WAR resolved)
   pto.rls_buf "PIPE_V", %bufid_buf[%pp], %c0 : i64, i64

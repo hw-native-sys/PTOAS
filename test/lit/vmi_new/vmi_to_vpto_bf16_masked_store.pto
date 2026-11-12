@@ -36,6 +36,6 @@ module {
 // CHECK: %[[WIDE:.*]] = pto.vpack %[[CARRIER]], "LOWER" : !pto.vreg<64xui32> -> !pto.vreg<128xui16>
 // CHECK: %[[DENSE:.*]] = pto.vbitcast %[[WIDE]] : !pto.vreg<128xui16> -> !pto.vreg<128xbf16>
 // CHECK: %[[MASK16:.*]] = pto.pand {{.*}} : !pto.mask<b16>, !pto.mask<b16>, !pto.mask<b16> -> !pto.mask<b16>
-// CHECK: pto.vsts %[[DENSE]], {{.*}}, %[[MASK16]] : !pto.vreg<128xbf16>, !pto.ptr<bf16, ub>, !pto.mask<b16>
+// CHECK: pto.vsts %[[DENSE]], {{.*}}, %[[MASK16]] : !pto.vreg<128xbf16>, !pto.ptr<bf16, ub>, index, !pto.mask<b16>
 // CHECK-NOT: pto.vdintlv
 // CHECK-NOT: pto.vmi.

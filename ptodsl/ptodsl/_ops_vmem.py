@@ -16,7 +16,7 @@ from __future__ import annotations
 from ._ops_imports import *  # noqa: F401,F403
 
 from ._ops_common import (
-    _coerce_index,
+    _coerce_element_offset,
     _coerce_scalar_like_vector_element,
     _coerce_vunpack_part,
     _element_bytewidth,
@@ -81,7 +81,7 @@ def _vlds_tile_slice(src_ptr, *, dist, post_mode):
 def _vlds_pointer(src_ptr, offset, result_vreg_type, *, dist, post_mode):
     raw_source = unwrap_surface_value(src_ptr)
     result_type = _resolve(result_vreg_type)
-    raw_offset = _coerce_index(offset, context="vlds(ptr, offset)")
+    raw_offset = _coerce_element_offset(offset, context="vlds(ptr, offset)")
     kwargs = _vector_memory_dist_kwargs(
         dist,
         allowed=_VLOAD_DIST_TOKENS,
@@ -211,7 +211,7 @@ def vldsx2(source, offset_or_dist, dist=None, *, result_vreg_type=None):
         result_type,
         None,
         unwrap_surface_value(source),
-        _coerce_index(offset_or_dist, context="vldsx2(ptr, offset, dist)"),
+        _coerce_element_offset(offset_or_dist, context="vldsx2(ptr, offset, dist)"),
         _normalize_dist_token(
             dist,
             allowed=_DEINTERLEAVE_DIST_TOKENS,
@@ -662,7 +662,7 @@ def _vsts_tile_slice(val, dst_ptr, mask_value, *, extra_mask, dist, post_mode):
 def _vsts_pointer(val, dst_ptr, offset, mask_value, *, dist, post_mode):
     raw_destination = unwrap_surface_value(dst_ptr)
     raw_value = unwrap_surface_value(val)
-    raw_offset = _coerce_index(offset, context="vsts(ptr, offset, mask)")
+    raw_offset = _coerce_element_offset(offset, context="vsts(ptr, offset, mask)")
     raw_mask = unwrap_surface_value(mask_value)
     kwargs = _vector_memory_dist_kwargs(
         dist,
@@ -738,7 +738,7 @@ def vstsx2(low, high, dst_ptr, offset_or_dist, dist_or_mask=None, mask=None):
         unwrap_surface_value(low),
         unwrap_surface_value(high),
         unwrap_surface_value(dst_ptr),
-        _coerce_index(offset_or_dist, context="vstsx2(ptr, offset, dist, mask)"),
+        _coerce_element_offset(offset_or_dist, context="vstsx2(ptr, offset, dist, mask)"),
         _normalize_dist_token(
             dist_or_mask,
             allowed=_INTERLEAVE_DIST_TOKENS,

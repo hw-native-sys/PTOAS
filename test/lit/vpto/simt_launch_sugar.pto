@@ -21,7 +21,7 @@ module attributes {pto.target_arch = "a5", pto.kernel_kind = #pto.kernel_kind<ve
   func.func @simt_body(%dst: !pto.ptr<i32, ub>) attributes {pto.simt_entry} {
     %c0 = arith.constant 0 : index
     %tid = pto.get_tid_x : i32
-    pto.store %tid, %dst[%c0] : !pto.ptr<i32, ub>, i32
+    pto.store %tid, %dst[%c0] : !pto.ptr<i32, ub>, index, i32
     return
   }
 }

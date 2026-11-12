@@ -19,12 +19,12 @@ module attributes {pto.target_arch = "a5", pto.kernel_kind = #pto.kernel_kind<ve
     %c64 = arith.constant 64 : index
     pto.vecscope {
       %mask = pto.pset_b32 "PAT_ALL" : !pto.mask<b32>
-      %before = pto.vlds %data[%c0] : !pto.ptr<f32, ub> -> !pto.vreg<64xf32>
+      %before = pto.vlds %data[%c0] : !pto.ptr<f32, ub>, index -> !pto.vreg<64xf32>
       pto.vscatter %value, %data, %offsets, %mask : !pto.vreg<64xf32>, !pto.ptr<f32, ub>, !pto.vreg<64xi32>, !pto.mask<b32>
       pto.mem_bar "VST_VLD"
-      %after = pto.vlds %data[%c0] : !pto.ptr<f32, ub> -> !pto.vreg<64xf32>
-      pto.vsts %before, %out[%c0], %mask : !pto.vreg<64xf32>, !pto.ptr<f32, ub>, !pto.mask<b32>
-      pto.vsts %after, %out[%c64], %mask : !pto.vreg<64xf32>, !pto.ptr<f32, ub>, !pto.mask<b32>
+      %after = pto.vlds %data[%c0] : !pto.ptr<f32, ub>, index -> !pto.vreg<64xf32>
+      pto.vsts %before, %out[%c0], %mask : !pto.vreg<64xf32>, !pto.ptr<f32, ub>, index, !pto.mask<b32>
+      pto.vsts %after, %out[%c64], %mask : !pto.vreg<64xf32>, !pto.ptr<f32, ub>, index, !pto.mask<b32>
     }
     return
   }

@@ -154,8 +154,8 @@ ENGINE_SOURCE = f"""module attributes {{pto.target_arch = "{ARCH}", pto.kernel_k
       attributes {{pto.kernel}} {{
     %sess = pto.session_init %sess_gm : !pto.ptr<i8, gm> -> {_SESSION_TYPE}
     %off = arith.index_castui %offset : i64 to index
-    %win_src = pto.addptr %src, %off : !pto.ptr<i8, gm> -> !pto.ptr<i8, gm>
-    %win_dst = pto.addptr %dst, %off : !pto.ptr<i8, gm> -> !pto.ptr<i8, gm>
+    %win_src = pto.addptr %src, %off : !pto.ptr<i8, gm>, index -> !pto.ptr<i8, gm>
+    %win_dst = pto.addptr %dst, %off : !pto.ptr<i8, gm>, index -> !pto.ptr<i8, gm>
     %rec = pto.sdma_gm_gm %win_dst, %win_src, %nbytes session(%sess)
       : !pto.ptr<i8, gm>, !pto.ptr<i8, gm>, i64, {_SESSION_TYPE}
         -> !pto.ptr<i64, gm>

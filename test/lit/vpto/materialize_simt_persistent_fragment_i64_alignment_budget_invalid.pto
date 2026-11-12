@@ -37,7 +37,7 @@ module attributes {pto.target_arch = "a5", pto.kernel_kind = #pto.kernel_kind<ve
       %wide_i32 = arith.trunci %wide : i64 to i32
       %wide_f32 = arith.sitofp %wide_i32 : i32 to f32
       %result = arith.addf %value, %wide_f32 : f32
-      pto.store %result, %dst[%c0] : !pto.ptr<f32, ub>, f32
+      pto.store %result, %dst[%c0] : !pto.ptr<f32, ub>, index, f32
     }
     return
   }

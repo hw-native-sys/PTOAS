@@ -19,7 +19,7 @@ module attributes {pto.target_arch = "a5", pto.kernel_kind = #pto.kernel_kind<ve
           : !pto.ptr<ui16, ub>, !pto.vreg<128xui16>, !pto.mask<b16>
           -> !pto.vreg<128xui16>
       pto.vsts %out, %dst[%c0], %mask
-          : !pto.vreg<128xui16>, !pto.ptr<ui16, ub>, !pto.mask<b16>
+          : !pto.vreg<128xui16>, !pto.ptr<ui16, ub>, index, !pto.mask<b16>
     }
     return
   }

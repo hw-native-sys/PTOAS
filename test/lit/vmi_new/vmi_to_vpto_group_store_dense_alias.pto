@@ -72,10 +72,10 @@ module {
 // LOWER-NEXT: %[[VAL_5:[a-zA-Z0-9_.$-]+]] = arith.constant 0 : i16
 // LOWER-NEXT: %[[VAL_6:[a-zA-Z0-9_.$-]+]] = arith.constant 0 : index
 // LOWER-NEXT: %[[VAL_7:[a-zA-Z0-9_.$-]+]] = pto.pset_b8 "PAT_VL64" : !pto.mask<b8>
-// LOWER-NEXT: %[[VAL_8:[a-zA-Z0-9_.$-]+]] = pto.addptr %[[VAL_0]], %[[VAL_6]] : <ui8, ub> -> <ui8, ub>
+// LOWER-NEXT: %[[VAL_8:[a-zA-Z0-9_.$-]+]] = pto.addptr %[[VAL_0]], %[[VAL_6]] : <ui8, ub>, index -> <ui8, ub>
 // LOWER-NEXT: %[[VAL_9:[a-zA-Z0-9_.$-]+]] = pto.vsldb %[[VAL_8]], %[[VAL_4]], %[[VAL_5]], %[[VAL_7]] : !pto.ptr<ui8, ub>, i16, i16, !pto.mask<b8> -> !pto.vreg<256xui8>
 // LOWER-NEXT: %[[VAL_10:[a-zA-Z0-9_.$-]+]], %[[VAL_11:[a-zA-Z0-9_.$-]+]] = pto.plt_b8 %[[VAL_3]] : i32 -> !pto.mask<b8>, i32
-// LOWER-NEXT: pto.vsts %[[VAL_9]], %[[VAL_1]]{{\[}}%[[VAL_6]]], %[[VAL_10]] : !pto.vreg<256xui8>, !pto.ptr<ui8, ub>, !pto.mask<b8>
+// LOWER-NEXT: pto.vsts %[[VAL_9]], %[[VAL_1]]{{\[}}%[[VAL_6]]], %[[VAL_10]] : !pto.vreg<256xui8>, !pto.ptr<ui8, ub>, index, !pto.mask<b8>
 // LOWER-NEXT: return
 // LOWER-NEXT: }
 // LOWER-LABEL: func.func @group_store_strided_rows(
@@ -85,9 +85,9 @@ module {
 // LOWER-NEXT: %[[VAL_3:[a-zA-Z0-9_.$-]+]] = arith.constant 0 : i16
 // LOWER-NEXT: %[[VAL_4:[a-zA-Z0-9_.$-]+]] = arith.constant 2 : i16
 // LOWER-NEXT: %[[VAL_5:[a-zA-Z0-9_.$-]+]] = arith.constant 0 : index
-// LOWER-NEXT: %[[VAL_6:[a-zA-Z0-9_.$-]+]] = pto.vlds %[[VAL_0]]{{\[}}%[[VAL_5]]] : !pto.ptr<i32, ub> -> !pto.vreg<64xi32>
+// LOWER-NEXT: %[[VAL_6:[a-zA-Z0-9_.$-]+]] = pto.vlds %[[VAL_0]]{{\[}}%[[VAL_5]]] : !pto.ptr<i32, ub>, index -> !pto.vreg<64xi32>
 // LOWER-NEXT: %[[VAL_7:[a-zA-Z0-9_.$-]+]] = pto.pset_b32 "PAT_ALL" : !pto.mask<b32>
-// LOWER-NEXT: %[[VAL_8:[a-zA-Z0-9_.$-]+]] = pto.addptr %[[VAL_1]], %[[VAL_5]] : <i32, ub> -> <i32, ub>
+// LOWER-NEXT: %[[VAL_8:[a-zA-Z0-9_.$-]+]] = pto.addptr %[[VAL_1]], %[[VAL_5]] : <i32, ub>, index -> <i32, ub>
 // LOWER-NEXT: pto.vsstb %[[VAL_6]], %[[VAL_8]], %[[VAL_4]], %[[VAL_3]], %[[VAL_7]] : !pto.vreg<64xi32>, !pto.ptr<i32, ub>, i16, i16, !pto.mask<b32>
 // LOWER-NEXT: return
 // LOWER-NEXT: }
@@ -98,9 +98,9 @@ module {
 // LOWER-NEXT: %[[VAL_3:[a-zA-Z0-9_.$-]+]] = arith.constant 0 : i16
 // LOWER-NEXT: %[[VAL_4:[a-zA-Z0-9_.$-]+]] = arith.constant 0 : index
 // LOWER-NEXT: %[[VAL_5:[a-zA-Z0-9_.$-]+]] = pto.pset_b8 "PAT_VL1" : !pto.mask<b8>
-// LOWER-NEXT: %[[VAL_6:[a-zA-Z0-9_.$-]+]] = pto.addptr %[[VAL_0]], %[[VAL_4]] : <ui8, ub> -> <ui8, ub>
+// LOWER-NEXT: %[[VAL_6:[a-zA-Z0-9_.$-]+]] = pto.addptr %[[VAL_0]], %[[VAL_4]] : <ui8, ub>, index -> <ui8, ub>
 // LOWER-NEXT: %[[VAL_7:[a-zA-Z0-9_.$-]+]] = pto.vsldb %[[VAL_6]], %[[VAL_3]], %[[VAL_3]], %[[VAL_5]] : !pto.ptr<ui8, ub>, i16, i16, !pto.mask<b8> -> !pto.vreg<256xui8>
 // LOWER-NEXT: %[[VAL_8:[a-zA-Z0-9_.$-]+]] = pto.pset_b8 "PAT_VL8" : !pto.mask<b8>
-// LOWER-NEXT: pto.vsts %[[VAL_7]], %[[VAL_1]]{{\[}}%[[VAL_4]]], %[[VAL_8]] {dist = "NORM_B8"} : !pto.vreg<256xui8>, !pto.ptr<ui8, ub>, !pto.mask<b8>
+// LOWER-NEXT: pto.vsts %[[VAL_7]], %[[VAL_1]]{{\[}}%[[VAL_4]]], %[[VAL_8]] {dist = "NORM_B8"} : !pto.vreg<256xui8>, !pto.ptr<ui8, ub>, index, !pto.mask<b8>
 // LOWER-NEXT: return
 // LOWER-NEXT: }

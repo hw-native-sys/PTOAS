@@ -324,9 +324,9 @@ The execution model follows non-blocking fork semantics:
 ```mlir
 pto.vecscope {
   %mask = pto.pset_b32 "PAT_ALL" : !pto.mask<b32>
-  %v = pto.vlds %ub[%lane] : !pto.ptr<f32, ub> -> !pto.vreg<64xf32>
+  %v = pto.vlds %ub[%lane] : !pto.ptr<f32, ub>, index -> !pto.vreg<64xf32>
   %abs = pto.vabs %v, %mask : !pto.vreg<64xf32>, !pto.mask<b32> -> !pto.vreg<64xf32>
-  pto.vsts %abs, %ub_out[%lane], %mask : !pto.vreg<64xf32>, !pto.ptr<f32, ub>, !pto.mask<b32>
+  pto.vsts %abs, %ub_out[%lane], %mask : !pto.vreg<64xf32>, !pto.ptr<f32, ub>, index, !pto.mask<b32>
 }
 ```
 
@@ -336,9 +336,9 @@ pto.vecscope {
 pto.strict_vecscope(%ub, %ub_out, %lane) {
 ^bb0(%in: !pto.ptr<f32, ub>, %out: !pto.ptr<f32, ub>, %iv: index):
   %mask = pto.pset_b32 "PAT_ALL" : !pto.mask<b32>
-  %v = pto.vlds %in[%iv] : !pto.ptr<f32, ub> -> !pto.vreg<64xf32>
+  %v = pto.vlds %in[%iv] : !pto.ptr<f32, ub>, index -> !pto.vreg<64xf32>
   %abs = pto.vabs %v, %mask : !pto.vreg<64xf32>, !pto.mask<b32> -> !pto.vreg<64xf32>
-  pto.vsts %abs, %out[%iv], %mask : !pto.vreg<64xf32>, !pto.ptr<f32, ub>, !pto.mask<b32>
+  pto.vsts %abs, %out[%iv], %mask : !pto.vreg<64xf32>, !pto.ptr<f32, ub>, index, !pto.mask<b32>
 } : (!pto.ptr<f32, ub>, !pto.ptr<f32, ub>, index) -> ()
 ```
 
@@ -370,9 +370,9 @@ pto.wait_flag["PIPE_MTE2", "PIPE_V", "EVENT_ID0"]
 pto.vecscope {
   scf.for %lane = %c0 to %9 step %c64 {
     %mask = pto.pset_b32 "PAT_ALL" : !pto.mask<b32>
-    %v = pto.vlds %2[%lane] : !pto.ptr<f32, ub> -> !pto.vreg<64xf32>
+    %v = pto.vlds %2[%lane] : !pto.ptr<f32, ub>, index -> !pto.vreg<64xf32>
     %abs = pto.vabs %v, %mask : !pto.vreg<64xf32>, !pto.mask<b32> -> !pto.vreg<64xf32>
-    pto.vsts %abs, %8[%lane], %mask : !pto.vreg<64xf32>, !pto.ptr<f32, ub>, !pto.mask<b32>
+    pto.vsts %abs, %8[%lane], %mask : !pto.vreg<64xf32>, !pto.ptr<f32, ub>, index, !pto.mask<b32>
   }
 }
 
@@ -389,9 +389,9 @@ pto.mte_ub_gm %8, %14, %c128_i64
 pto.strict_vecscope(%ub_in, %ub_out, %lane, %remaining) {
 ^bb0(%in: !pto.ptr<f32, ub>, %out: !pto.ptr<f32, ub>, %iv: index, %rem: i32):
   %mask, %next_remaining = pto.plt_b32 %rem : i32 -> !pto.mask<b32>, i32
-  %v = pto.vlds %in[%iv] : !pto.ptr<f32, ub> -> !pto.vreg<64xf32>
+  %v = pto.vlds %in[%iv] : !pto.ptr<f32, ub>, index -> !pto.vreg<64xf32>
   %abs = pto.vabs %v, %mask : !pto.vreg<64xf32>, !pto.mask<b32> -> !pto.vreg<64xf32>
-  pto.vsts %abs, %out[%iv], %mask : !pto.vreg<64xf32>, !pto.ptr<f32, ub>, !pto.mask<b32>
+  pto.vsts %abs, %out[%iv], %mask : !pto.vreg<64xf32>, !pto.ptr<f32, ub>, index, !pto.mask<b32>
 } : (!pto.ptr<f32, ub>, !pto.ptr<f32, ub>, index, i32) -> ()
 ```
 
@@ -742,8 +742,8 @@ At the PTO micro Instruction level, these runtime-query ops are pure scalar prod
 %block_len = pto.constant 2048 : index
 %base = pto.index_cast %block signed : i64 -> index
 %offset = pto.muli %base, %block_len : index
-%block_in = pto.addptr %gm_in, %offset : !pto.ptr<f32, gm> -> !pto.ptr<f32, gm>
-%block_out = pto.addptr %gm_out, %offset : !pto.ptr<f32, gm> -> !pto.ptr<f32, gm>
+%block_in = pto.addptr %gm_in, %offset : !pto.ptr<f32, gm>, index -> !pto.ptr<f32, gm>
+%block_out = pto.addptr %gm_out, %offset : !pto.ptr<f32, gm>, index -> !pto.ptr<f32, gm>
 ```
 
 In this pattern, all blocks execute the same kernel body, but each block sees a different `%block` value and therefore computes a different GM window.
@@ -845,7 +845,7 @@ module attributes {pto.target_arch = "a5", pto.kernel_kind = #pto.kernel_kind<ve
     %lane_base = arith.muli %ty, %c32_i32 : i32
     %tid = arith.addi %lane_base, %tx : i32
     %tid_idx = arith.index_castui %tid : i32 to index
-    pto.store %xyz, %dst[%tid_idx] : !pto.ptr<i32, ub>, i32
+    pto.store %xyz, %dst[%tid_idx] : !pto.ptr<i32, ub>, index, i32
     return
   }
 }
@@ -929,7 +929,7 @@ Typical pointer construction and pointer arithmetic follow the same `!pto.ptr<..
 
 ```mlir
 %0 = pto.castptr %c0 : i64 -> !pto.ptr<f32, ub>
-%1 = pto.addptr %0, %c1024 : !pto.ptr<f32, ub> -> !pto.ptr<f32, ub>
+%1 = pto.addptr %0, %c1024 : !pto.ptr<f32, ub>, index -> !pto.ptr<f32, ub>
 ```
 
 ### `!pto.ptr<T, space>`
@@ -956,7 +956,7 @@ The complete contracts for `pto.castptr`, `pto.addptr`, `pto.load`, and
 
 #### `pto.load`
 
-- **syntax:** `%value = pto.load %ptr[%offset] : !pto.ptr<T, space> -> T`
+- **syntax:** `%value = pto.load %ptr[%offset] : !pto.ptr<T, space>, index -> T`
 - **semantics:** Load one scalar element from a VPTO pointer-like operand.
 
 ```c
@@ -975,7 +975,7 @@ value = ptr[offset];
 
 #### `pto.store`
 
-- **syntax:** `pto.store %value, %ptr[%offset] : !pto.ptr<T, space>, T`
+- **syntax:** `pto.store %value, %ptr[%offset] : !pto.ptr<T, space>, index, T`
 - **semantics:** Store one scalar element to a VPTO pointer-like operand.
 
 ```c
@@ -1007,15 +1007,15 @@ UB vector loads/stores:
 
 ```mlir
 %0 = pto.castptr %c0 : i64 -> !pto.ptr<f32, ub>
-%1 = pto.addptr %0, %c1024 : !pto.ptr<f32, ub> -> !pto.ptr<f32, ub>
+%1 = pto.addptr %0, %c1024 : !pto.ptr<f32, ub>, index -> !pto.ptr<f32, ub>
 pto.vecscope {
   %16 = scf.for %arg3 = %c0 to %11 step %c64 iter_args(%arg4 = %12) -> (i32) {
     %mask, %scalar_out = pto.plt_b32 %arg4 : i32 -> !pto.mask<b32>, i32
-    %s = pto.load %1[%c4] : !pto.ptr<f32, ub> -> f32
-    pto.store %s, %1[%c8] : !pto.ptr<f32, ub>, f32
-    %17 = pto.vlds %1[%arg3] : !pto.ptr<f32, ub> -> !pto.vreg<64xf32>
+    %s = pto.load %1[%c4] : !pto.ptr<f32, ub>, index -> f32
+    pto.store %s, %1[%c8] : !pto.ptr<f32, ub>, index, f32
+    %17 = pto.vlds %1[%arg3] : !pto.ptr<f32, ub>, index -> !pto.vreg<64xf32>
     %18 = pto.vabs %17, %mask : !pto.vreg<64xf32>, !pto.mask<b32> -> !pto.vreg<64xf32>
-    pto.vsts %18, %10[%arg3], %mask : !pto.vreg<64xf32>, !pto.ptr<f32, ub>, !pto.mask<b32>
+    pto.vsts %18, %10[%arg3], %mask : !pto.vreg<64xf32>, !pto.ptr<f32, ub>, index, !pto.mask<b32>
     scf.yield %scalar_out : i32
   }
 }
@@ -1137,8 +1137,8 @@ All PTO micro Instruction operations follow standard MLIR syntax. The common pat
 **Load (memory to register):**
 
 ```mlir
-%result = pto.vlds %source[%offset] {dist = "DIST"} : !pto.ptr<T, ub> -> !pto.vreg<NxT>
-%result, %updated_base = pto.vlds %source[%offset] {dist = "DIST"} : !pto.ptr<T, ub> -> !pto.vreg<NxT>, !pto.ptr<T, ub>
+%result = pto.vlds %source[%offset] {dist = "DIST"} : !pto.ptr<T, ub>, index -> !pto.vreg<NxT>
+%result, %updated_base = pto.vlds %source[%offset] {dist = "DIST"} : !pto.ptr<T, ub>, index -> !pto.vreg<NxT>, !pto.ptr<T, ub>
 ```
 
 **Store (register to memory):**
@@ -1191,7 +1191,7 @@ pto.wait_flag["PIPE_MTE2", "PIPE_V", "EVENT_ID0"]
 
 ```mlir
 %ptr = pto.castptr %addr : i64 -> !pto.ptr<T, SPACE>
-%ptr2 = pto.addptr %ptr, %offset : !pto.ptr<T, SPACE> -> !pto.ptr<T, SPACE>
+%ptr2 = pto.addptr %ptr, %offset : !pto.ptr<T, SPACE>, index -> !pto.ptr<T, SPACE>
 ```
 
 ### Scalar and Shared Control-Flow Syntax Patterns
@@ -1502,16 +1502,16 @@ Group 17, while shared structured-control semantics remain in Group 15.
 ```mlir
 // 1. Find max
 %max_vec = pto.vcmax %logits, %mask : !pto.vreg<64xf32>, !pto.mask<b32> -> !pto.vreg<64xf32>
-pto.vsts %max_vec, %ub_tmp[%c0], %mask : !pto.vreg<64xf32>, !pto.ptr<f32, ub>, !pto.mask<b32>
-%max_bc = pto.vlds %ub_tmp[%c0] {dist = "BRC_B32"} : !pto.ptr<f32, ub> -> !pto.vreg<64xf32>
+pto.vsts %max_vec, %ub_tmp[%c0], %mask : !pto.vreg<64xf32>, !pto.ptr<f32, ub>, index, !pto.mask<b32>
+%max_bc = pto.vlds %ub_tmp[%c0] {dist = "BRC_B32"} : !pto.ptr<f32, ub>, index -> !pto.vreg<64xf32>
 
 // 2. exp(x - max) using fused op
 %exp = pto.vexpdif %logits, %max_bc, %mask, "ODD" : !pto.vreg<64xf32>, !pto.vreg<64xf32>, !pto.mask<b32> -> !pto.vreg<64xf32>
 
 // 3. Sum
 %sum = pto.vcadd %exp, %mask : !pto.vreg<64xf32>, !pto.mask<b32> -> !pto.vreg<64xf32>
-pto.vsts %sum, %ub_tmp[%c0], %mask : !pto.vreg<64xf32>, !pto.ptr<f32, ub>, !pto.mask<b32>
-%sum_bc = pto.vlds %ub_tmp[%c0] {dist = "BRC_B32"} : !pto.ptr<f32, ub> -> !pto.vreg<64xf32>
+pto.vsts %sum, %ub_tmp[%c0], %mask : !pto.vreg<64xf32>, !pto.ptr<f32, ub>, index, !pto.mask<b32>
+%sum_bc = pto.vlds %ub_tmp[%c0] {dist = "BRC_B32"} : !pto.ptr<f32, ub>, index -> !pto.vreg<64xf32>
 
 // 4. Divide
 %softmax = pto.vdiv %exp, %sum_bc, %mask : !pto.vreg<64xf32>, !pto.vreg<64xf32>, !pto.mask<b32> -> !pto.vreg<64xf32>

@@ -33,9 +33,9 @@ module attributes {pto.target_arch = "a5", pto.kernel_kind = #pto.kernel_kind<ve
         scf.if %cmp {
         }
         %vec = pto.vlds %base[%off] {dist = "NORM"}
-          : !pto.ptr<f32, ub> -> !pto.vreg<64xf32>
+          : !pto.ptr<f32, ub>, index -> !pto.vreg<64xf32>
         pto.vsts %vec, %sink[%iv], %mask
-          : !pto.vreg<64xf32>, !pto.ptr<f32, ub>, !pto.mask<b32>
+          : !pto.vreg<64xf32>, !pto.ptr<f32, ub>, index, !pto.mask<b32>
         %next = arith.addi %off, %c64 : index
         scf.yield %next : index
       }

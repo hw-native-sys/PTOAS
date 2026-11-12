@@ -52,8 +52,8 @@ module attributes {pto.target_arch = "a5", pto.kernel_kind = #pto.kernel_kind<ve
       // (no loop-carried WAW).  The cross-op RAW on rowsum still requires a
       // barrier before the second loop reads it.
       scf.for %i = %c0 to %c8192 step %c64 {
-        %vx = pto.vlds %x[%i] : !pto.ptr<f32, ub> -> !pto.vreg<64xf32>
-        pto.vsts %vx, %rowsum[%i], %mask : !pto.vreg<64xf32>, !pto.ptr<f32, ub>, !pto.mask<b32>
+        %vx = pto.vlds %x[%i] : !pto.ptr<f32, ub>, index -> !pto.vreg<64xf32>
+        pto.vsts %vx, %rowsum[%i], %mask : !pto.vreg<64xf32>, !pto.ptr<f32, ub>, index, !pto.mask<b32>
         scf.yield
       }
       // Second loop: broadcast rowsum[i] (4-byte footprint) + vld(x[i]) ->
@@ -62,11 +62,11 @@ module attributes {pto.target_arch = "a5", pto.kernel_kind = #pto.kernel_kind<ve
       // The 4-byte broadcast footprint never reaches y, so no intra-loop
       // barrier should appear.
       scf.for %i2 = %c0 to %c128 step %c1 {
-        %vrs = pto.vlds %rowsum[%i2] {dist = "BRC_B32"} : !pto.ptr<f32, ub> -> !pto.vreg<64xf32>
+        %vrs = pto.vlds %rowsum[%i2] {dist = "BRC_B32"} : !pto.ptr<f32, ub>, index -> !pto.vreg<64xf32>
         %y_off = arith.muli %i2, %c64 : index
-        %vx2 = pto.vlds %x[%y_off] : !pto.ptr<f32, ub> -> !pto.vreg<64xf32>
+        %vx2 = pto.vlds %x[%y_off] : !pto.ptr<f32, ub>, index -> !pto.vreg<64xf32>
         %vd = pto.vdiv %vx2, %vrs, %mask : !pto.vreg<64xf32>, !pto.vreg<64xf32>, !pto.mask<b32> -> !pto.vreg<64xf32>
-        pto.vsts %vd, %y[%y_off], %mask : !pto.vreg<64xf32>, !pto.ptr<f32, ub>, !pto.mask<b32>
+        pto.vsts %vd, %y[%y_off], %mask : !pto.vreg<64xf32>, !pto.ptr<f32, ub>, index, !pto.mask<b32>
         scf.yield
       }
     }
@@ -101,8 +101,8 @@ module attributes {pto.target_arch = "a5", pto.kernel_kind = #pto.kernel_kind<ve
       scf.for %iv = %c0 to %c64 step %c1 {
         %load_off = arith.muli %iv, %c2 : index
         %store_off = arith.muli %iv, %c128 : index
-        %vrs = pto.vlds %rowsum[%load_off] {dist = "BRC_B32"} : !pto.ptr<f16, ub> -> !pto.vreg<128xf16>
-        pto.vsts %vrs, %y[%store_off], %mask : !pto.vreg<128xf16>, !pto.ptr<f16, ub>, !pto.mask<b16>
+        %vrs = pto.vlds %rowsum[%load_off] {dist = "BRC_B32"} : !pto.ptr<f16, ub>, index -> !pto.vreg<128xf16>
+        pto.vsts %vrs, %y[%store_off], %mask : !pto.vreg<128xf16>, !pto.ptr<f16, ub>, index, !pto.mask<b16>
         scf.yield
       }
     }

@@ -15,7 +15,7 @@ module attributes {pto.target_arch = "a5", pto.kernel_kind = #pto.kernel_kind<ve
     %c0 = arith.constant 0 : index
     pto.vecscope {
       %mask = pto.pset_b16 "PAT_ALL" : !pto.mask<b16>
-      pto.vsts %value, %dst[%c0], %mask : !pto.vreg<128xsi16>, !pto.ptr<si16, ub>, !pto.mask<b16>
+      pto.vsts %value, %dst[%c0], %mask : !pto.vreg<128xsi16>, !pto.ptr<si16, ub>, index, !pto.mask<b16>
     }
     return
   }
@@ -24,7 +24,7 @@ module attributes {pto.target_arch = "a5", pto.kernel_kind = #pto.kernel_kind<ve
     %c0 = arith.constant 0 : index
     pto.vecscope {
       %mask = pto.pset_b16 "PAT_ALL" : !pto.mask<b16>
-      pto.vsts %value, %dst[%c0], %mask : !pto.vreg<128xi16>, !pto.ptr<i16, ub>, !pto.mask<b16>
+      pto.vsts %value, %dst[%c0], %mask : !pto.vreg<128xi16>, !pto.ptr<i16, ub>, index, !pto.mask<b16>
     }
     return
   }

@@ -16,7 +16,7 @@ module attributes {pto.target_arch = "a5", pto.kernel_kind = #pto.kernel_kind<ve
       %result = pto.vgather2 %source, %offsets, %mask
           : !pto.ptr<f16, ub>, !pto.vreg<128xui16>, !pto.mask<b16> -> !pto.vreg<128xf16>
       pto.vsts %result, %source[%c0], %mask
-          : !pto.vreg<128xf16>, !pto.ptr<f16, ub>, !pto.mask<b16>
+          : !pto.vreg<128xf16>, !pto.ptr<f16, ub>, index, !pto.mask<b16>
     }
     return
   }

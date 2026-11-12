@@ -32,7 +32,7 @@ KERNEL_SOURCE = (
     '.ptr<ui8, gm>, !pto.ptr<ui8, ub>, i64, i64, i64, i64, i64\n\n    pto.set_flag["PIPE_MTE2", "PIPE_V", "EVENT_'
     'ID0"]\n    pto.wait_flag["PIPE_MTE2", "PIPE_V", "EVENT_ID0"]\n\n    pto.vecscope {\n      %_:1 = scf.for %iv'
     ' = %c0 to %c1 step %c1 iter_args(%remaining = %c256_i32) -> (i32) {\n        %active, %next = pto.plt_b8 %re'
-    'maining : i32 -> !pto.mask<b8>, i32\n        %src = pto.vlds %ub_src[%c0] : !pto.ptr<ui8, ub> -> !pto.vreg<2'
+    'maining : i32 -> !pto.mask<b8>, i32\n        %src = pto.vlds %ub_src[%c0] : !pto.ptr<ui8, ub>, index -> !pto.vreg<2'
     '56xui8>\n        %pred = pto.vcmps %src, %threshold, %active, "gt" : !pto.vreg<256xui8>, i8, !pto.mask<b8> -'
     '> !pto.mask<b8>\n        pto.psts %pred, %ub_out[%c0], "NORM" : !pto.mask<b8>, !pto.ptr<ui8, ub>, index\n   '
     '     scf.yield %next : i32\n      }\n    }\n\n    pto.set_flag["PIPE_V", "PIPE_MTE3", "EVENT_ID0"]\n    pto.'

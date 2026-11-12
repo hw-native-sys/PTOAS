@@ -25,9 +25,9 @@ module attributes {pto.target_arch = "a5", pto.kernel_kind = #pto.kernel_kind<ve
     %itof = pto.itof %integer signed : i32 -> f32
     %ftoi = pto.ftoi %float signed : f32 -> i32
     %ftof = pto.ftof %float : f32 -> f16
-    pto.store %itof, %dst_f32[%c0] : !pto.ptr<f32, ub>, f32
-    pto.store %ftoi, %dst_i32[%c0] : !pto.ptr<i32, ub>, i32
-    pto.store %ftof, %dst_f16[%c0] : !pto.ptr<f16, ub>, f16
+    pto.store %itof, %dst_f32[%c0] : !pto.ptr<f32, ub>, index, f32
+    pto.store %ftoi, %dst_i32[%c0] : !pto.ptr<i32, ub>, index, i32
+    pto.store %ftof, %dst_f16[%c0] : !pto.ptr<f16, ub>, index, f16
     return
   }
 }

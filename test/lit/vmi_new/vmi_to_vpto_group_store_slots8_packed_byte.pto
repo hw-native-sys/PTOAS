@@ -46,7 +46,7 @@ module {
 }
 
 // CHECK-LABEL: func.func @vmi_to_vpto_group_store_slots8_i32_to_u8(
-// CHECK-COUNT-1: pto.vsts {{.*}} {dist = "PK4_B32"} : !pto.vreg<64xi32>, !pto.ptr<ui8, ub>, !pto.mask<b32>
+// CHECK-COUNT-1: pto.vsts {{.*}} {dist = "PK4_B32"} : !pto.vreg<64xi32>, !pto.ptr<ui8, ub>, index, !pto.mask<b32>
 // CHECK-LABEL: func.func @vmi_to_vpto_group_store_slots8_i32_to_u8_unaligned(
 // CHECK: %[[PACK16:.*]] = pto.vpack {{.*}}, "LOWER" : !pto.vreg<64xi32> -> !pto.vreg<128xui16>
 // CHECK: %[[PACK8:.*]] = pto.vpack %[[PACK16]], "LOWER" : !pto.vreg<128xui16> -> !pto.vreg<256xui8>
@@ -56,7 +56,7 @@ module {
 // CHECK-LABEL: func.func @vmi_to_vpto_group_store_slots8_i32_to_u8_padded(
 // CHECK: pto.vpack {{.*}} "LOWER" : !pto.vreg<64xi32> -> !pto.vreg<128xui16>
 // CHECK: pto.vpack {{.*}} "LOWER" : !pto.vreg<128xui16> -> !pto.vreg<256xui8>
-// CHECK: pto.vsts {{.*}} {dist = "NORM_B8"} : !pto.vreg<256xui8>, !pto.ptr<ui8, ub>, !pto.mask<b8>
+// CHECK: pto.vsts {{.*}} {dist = "NORM_B8"} : !pto.vreg<256xui8>, !pto.ptr<ui8, ub>, index, !pto.mask<b8>
 // CHECK-NOT: pto.vmi.
 // CHECK-NOT: !pto.vmi.
 // CHECK-NOT: unrealized_conversion_cast

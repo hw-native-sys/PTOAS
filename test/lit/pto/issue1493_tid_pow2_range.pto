@@ -37,10 +37,10 @@ module attributes {pto.target_arch = "a5"} {
           %c64 = arith.constant 64 : i32
           %lane = arith.muli %div, %c64 : i32
           %laneidx = arith.index_cast %lane : i32 to index
-          %v = pto.load %arg0[%laneidx] : !pto.ptr<i32, gm> -> i32
+          %v = pto.load %arg0[%laneidx] : !pto.ptr<i32, gm>, index -> i32
           %one = arith.constant 1 : i32
           %v1 = arith.addi %v, %one : i32
-          pto.store %v1, %arg1[%laneidx] : !pto.ptr<i32, gm>, i32
+          pto.store %v1, %arg1[%laneidx] : !pto.ptr<i32, gm>, index, i32
         }
       }
       return
@@ -58,10 +58,10 @@ module attributes {pto.target_arch = "a5"} {
         %lane = arith.muli %div, %c64 : i32
         %adj = arith.addi %lane, %mod : i32
         %idx = arith.index_cast %adj : i32 to index
-        %v = pto.load %arg0[%idx] : !pto.ptr<i32, gm> -> i32
+        %v = pto.load %arg0[%idx] : !pto.ptr<i32, gm>, index -> i32
         %one = arith.constant 1 : i32
         %v1 = arith.addi %v, %one : i32
-        pto.store %v1, %arg1[%idx] : !pto.ptr<i32, gm>, i32
+        pto.store %v1, %arg1[%idx] : !pto.ptr<i32, gm>, index, i32
       }
       return
     }
@@ -77,10 +77,10 @@ module attributes {pto.target_arch = "a5"} {
       %lane = arith.muli %div, %c64 : i64
       %adj = arith.addi %lane, %mod : i64
       %idx = arith.index_cast %adj : i64 to index
-      %v = pto.load %arg0[%idx] : !pto.ptr<i64, gm> -> i64
+      %v = pto.load %arg0[%idx] : !pto.ptr<i64, gm>, index -> i64
       %one = arith.constant 1 : i64
       %v1 = arith.addi %v, %one : i64
-      pto.store %v1, %arg1[%idx] : !pto.ptr<i64, gm>, i64
+      pto.store %v1, %arg1[%idx] : !pto.ptr<i64, gm>, index, i64
       return
     }
     // get_subblock_idx carries the tightest range in the set: [0, 1] (the two
@@ -94,9 +94,9 @@ module attributes {pto.target_arch = "a5"} {
       %div = arith.floordivsi %sbi, %c2 : i64
       %mod = arith.remsi %sbi, %c2 : i64
       %idx = arith.index_cast %mod : i64 to index
-      %v = pto.load %arg0[%idx] : !pto.ptr<i64, gm> -> i64
+      %v = pto.load %arg0[%idx] : !pto.ptr<i64, gm>, index -> i64
       %sum = arith.addi %v, %div : i64
-      pto.store %sum, %arg1[%idx] : !pto.ptr<i64, gm>, i64
+      pto.store %sum, %arg1[%idx] : !pto.ptr<i64, gm>, index, i64
       return
     }
     // Negative cases: these queries deliberately carry NO non-negative range.
@@ -112,7 +112,7 @@ module attributes {pto.target_arch = "a5"} {
         %mrem = arith.remsi %mask, %c32 : i32
         %sum = arith.addi %cdiv, %mrem : i32
         %idx = arith.index_cast %sum : i32 to index
-        pto.store %sum, %arg0[%idx] : !pto.ptr<i32, gm>, i32
+        pto.store %sum, %arg0[%idx] : !pto.ptr<i32, gm>, index, i32
       }
       return
     }
@@ -135,7 +135,7 @@ module attributes {pto.target_arch = "a5"} {
         %s2 = arith.addi %c, %d : i32
         %sum = arith.addi %s1, %s2 : i32
         %idx = arith.index_cast %sum : i32 to index
-        pto.store %sum, %arg0[%idx] : !pto.ptr<i32, gm>, i32
+        pto.store %sum, %arg0[%idx] : !pto.ptr<i32, gm>, index, i32
       }
       return
     }

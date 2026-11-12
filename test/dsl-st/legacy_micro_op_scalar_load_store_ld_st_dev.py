@@ -26,8 +26,8 @@ KERNEL_SOURCE = (
     '----------------\nmodule attributes {pto.target_arch = "a5", pto.kernel_kind = #pto.kernel_kind<vector>} {\n'
     '  func.func @ld_st_dev_kernel(\n      %src: !pto.ptr<i32, gm>,\n      %dst: !pto.ptr<i32, gm>) attributes {p'
     'to.aicore} {\n    %src_offset = arith.constant 1 : index\n    %dst_offset = arith.constant 3 : index\n    %v'
-    'alue = pto.ld_dev %src[%src_offset] : !pto.ptr<i32, gm> -> i32\n    pto.st_dev %value, %dst[%dst_offset] : !'
-    'pto.ptr<i32, gm>, i32\n    return\n  }\n}\n'
+    'alue = pto.ld_dev %src[%src_offset] : !pto.ptr<i32, gm>, index -> i32\n    pto.st_dev %value, %dst[%dst_offset] : !'
+    'pto.ptr<i32, gm>, index, i32\n    return\n  }\n}\n'
 )
 
 def _golden_scope():

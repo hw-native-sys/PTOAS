@@ -21,7 +21,7 @@ module attributes {pto.target_arch = "a5", pto.kernel_kind = #pto.kernel_kind<ve
     pto.section.simt<<<32, 1, 1>>> {
       %value = arith.constant dense<0.0> : vector<4xf8E4M3FN>
       %c0 = arith.constant 0 : index
-      pto.stg %value, %dst[%c0] : !pto.ptr<vector<4xf8E4M3FN>, gm>, vector<4xf8E4M3FN>
+      pto.stg %value, %dst[%c0] : !pto.ptr<vector<4xf8E4M3FN>, gm>, index, vector<4xf8E4M3FN>
     }
     return
   }
@@ -33,7 +33,7 @@ module attributes {pto.target_arch = "a5", pto.kernel_kind = #pto.kernel_kind<ve
     pto.section.simt<<<32, 1, 1>>> {
       %value = arith.constant dense<0.0> : vector<4xf8E5M2>
       %c0 = arith.constant 0 : index
-      pto.stg %value, %dst[%c0] : !pto.ptr<vector<4xf8E5M2>, gm>, vector<4xf8E5M2>
+      pto.stg %value, %dst[%c0] : !pto.ptr<vector<4xf8E5M2>, gm>, index, vector<4xf8E5M2>
     }
     return
   }

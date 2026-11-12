@@ -39,7 +39,7 @@ module attributes {pto.target_arch = "a5", pto.kernel_kind = #pto.kernel_kind<ve
     %bf16_b = arith.constant 2.000000e+00 : bf16
     %bf16_c = arith.constant 4.000000e+00 : bf16
 
-    %f32_dynamic = pto.load %dst_f32[%c7] : !pto.ptr<f32, ub> -> f32
+    %f32_dynamic = pto.load %dst_f32[%c7] : !pto.ptr<f32, ub>, index -> f32
     %abs = pto.absf %f32_dynamic : f32
     %min = pto.minf %f32_a, %f32_b : f32
     %max = pto.maxf %bf16_a, %bf16_b : bf16
@@ -60,25 +60,25 @@ module attributes {pto.target_arch = "a5", pto.kernel_kind = #pto.kernel_kind<ve
     %fma16 = pto.fma %f16_a, %f16_b, %f16_c : f16, f16, f16 -> f16
     %fmabf16 = pto.fma %bf16_a, %bf16_b, %bf16_c : bf16, bf16, bf16 -> bf16
 
-    pto.store %abs, %dst_f32[%c0] : !pto.ptr<f32, ub>, f32
-    pto.store %min, %dst_f32[%c1] : !pto.ptr<f32, ub>, f32
-    pto.store %exp, %dst_f32[%c2] : !pto.ptr<f32, ub>, f32
-    pto.store %log, %dst_f32[%c3] : !pto.ptr<f32, ub>, f32
-    pto.store %pow, %dst_f32[%c4] : !pto.ptr<f32, ub>, f32
-    pto.store %floor, %dst_f32[%c5] : !pto.ptr<f32, ub>, f32
-    pto.store %fma, %dst_f32[%c6] : !pto.ptr<f32, ub>, f32
-    pto.store %abs16, %dst_f16[%c7] : !pto.ptr<f16, ub>, f16
-    pto.store %exp16, %dst_f16[%c0] : !pto.ptr<f16, ub>, f16
-    pto.store %log16, %dst_f16[%c1] : !pto.ptr<f16, ub>, f16
-    pto.store %pow16, %dst_f16[%c2] : !pto.ptr<f16, ub>, f16
-    pto.store %rint, %dst_f16[%c3] : !pto.ptr<f16, ub>, f16
-    pto.store %fma16, %dst_f16[%c4] : !pto.ptr<f16, ub>, f16
-    pto.store %max, %dst_bf16[%c0] : !pto.ptr<bf16, ub>, bf16
-    pto.store %min16, %dst_f16[%c5] : !pto.ptr<f16, ub>, f16
-    pto.store %max16, %dst_f16[%c6] : !pto.ptr<f16, ub>, f16
-    pto.store %ceil, %dst_bf16[%c1] : !pto.ptr<bf16, ub>, bf16
-    pto.store %round, %dst_bf16[%c2] : !pto.ptr<bf16, ub>, bf16
-    pto.store %fmabf16, %dst_bf16[%c3] : !pto.ptr<bf16, ub>, bf16
+    pto.store %abs, %dst_f32[%c0] : !pto.ptr<f32, ub>, index, f32
+    pto.store %min, %dst_f32[%c1] : !pto.ptr<f32, ub>, index, f32
+    pto.store %exp, %dst_f32[%c2] : !pto.ptr<f32, ub>, index, f32
+    pto.store %log, %dst_f32[%c3] : !pto.ptr<f32, ub>, index, f32
+    pto.store %pow, %dst_f32[%c4] : !pto.ptr<f32, ub>, index, f32
+    pto.store %floor, %dst_f32[%c5] : !pto.ptr<f32, ub>, index, f32
+    pto.store %fma, %dst_f32[%c6] : !pto.ptr<f32, ub>, index, f32
+    pto.store %abs16, %dst_f16[%c7] : !pto.ptr<f16, ub>, index, f16
+    pto.store %exp16, %dst_f16[%c0] : !pto.ptr<f16, ub>, index, f16
+    pto.store %log16, %dst_f16[%c1] : !pto.ptr<f16, ub>, index, f16
+    pto.store %pow16, %dst_f16[%c2] : !pto.ptr<f16, ub>, index, f16
+    pto.store %rint, %dst_f16[%c3] : !pto.ptr<f16, ub>, index, f16
+    pto.store %fma16, %dst_f16[%c4] : !pto.ptr<f16, ub>, index, f16
+    pto.store %max, %dst_bf16[%c0] : !pto.ptr<bf16, ub>, index, bf16
+    pto.store %min16, %dst_f16[%c5] : !pto.ptr<f16, ub>, index, f16
+    pto.store %max16, %dst_f16[%c6] : !pto.ptr<f16, ub>, index, f16
+    pto.store %ceil, %dst_bf16[%c1] : !pto.ptr<bf16, ub>, index, bf16
+    pto.store %round, %dst_bf16[%c2] : !pto.ptr<bf16, ub>, index, bf16
+    pto.store %fmabf16, %dst_bf16[%c3] : !pto.ptr<bf16, ub>, index, bf16
     return
   }
 }

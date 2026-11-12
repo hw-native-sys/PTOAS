@@ -30,9 +30,9 @@ module attributes {pto.target_arch = "a3"} {
       %ptr = pto.castptr %zero : i64 -> !pto.ptr<f32, ub>
       %mask = pto.pset_b32 "PAT_ALL" : !pto.mask<b32>
       %vector = pto.vlds %ptr[%offset]
-        : !pto.ptr<f32, ub> -> !pto.vreg<64xf32>
+        : !pto.ptr<f32, ub>, index -> !pto.vreg<64xf32>
       pto.vsts %vector, %ptr[%offset], %mask
-        : !pto.vreg<64xf32>, !pto.ptr<f32, ub>, !pto.mask<b32>
+        : !pto.vreg<64xf32>, !pto.ptr<f32, ub>, index, !pto.mask<b32>
       return
     }
   }

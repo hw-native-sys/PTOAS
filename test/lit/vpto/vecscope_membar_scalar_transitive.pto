@@ -24,12 +24,12 @@ module attributes {pto.target_arch = "a5"} {
     pto.vecscope {
       %mask = pto.pset_b32 "PAT_ALL" : !pto.mask<b32>
       %v = pto.vdup %one, %mask : f32, !pto.mask<b32> -> !pto.vreg<64xf32>
-      pto.vsts %v, %ub[%c0], %mask : !pto.vreg<64xf32>, !pto.ptr<f32, ub>, !pto.mask<b32>
-      pto.vsts %v, %ub[%c256], %mask : !pto.vreg<64xf32>, !pto.ptr<f32, ub>, !pto.mask<b32>
-      %s = pto.load %ub[%c0] : !pto.ptr<f32, ub> -> f32
-      pto.store %s, %ub[%c256] : !pto.ptr<f32, ub>, f32
-      %reload = pto.load %ub[%c256] : !pto.ptr<f32, ub> -> f32
-      pto.store %reload, %ub[%c512] : !pto.ptr<f32, ub>, f32
+      pto.vsts %v, %ub[%c0], %mask : !pto.vreg<64xf32>, !pto.ptr<f32, ub>, index, !pto.mask<b32>
+      pto.vsts %v, %ub[%c256], %mask : !pto.vreg<64xf32>, !pto.ptr<f32, ub>, index, !pto.mask<b32>
+      %s = pto.load %ub[%c0] : !pto.ptr<f32, ub>, index -> f32
+      pto.store %s, %ub[%c256] : !pto.ptr<f32, ub>, index, f32
+      %reload = pto.load %ub[%c256] : !pto.ptr<f32, ub>, index -> f32
+      pto.store %reload, %ub[%c512] : !pto.ptr<f32, ub>, index, f32
     }
     return
   }
@@ -45,11 +45,11 @@ module attributes {pto.target_arch = "a5"} {
     pto.vecscope {
       %mask = pto.pset_b32 "PAT_ALL" : !pto.mask<b32>
       %v = pto.vdup %one, %mask : f32, !pto.mask<b32> -> !pto.vreg<64xf32>
-      pto.vsts %v, %ub[%c0], %mask : !pto.vreg<64xf32>, !pto.ptr<f32, ub>, !pto.mask<b32>
-      pto.vsts %v, %ub[%c256], %mask : !pto.vreg<64xf32>, !pto.ptr<f32, ub>, !pto.mask<b32>
-      %s = pto.load %ub[%c0] : !pto.ptr<f32, ub> -> f32
-      pto.store %one, %ub[%c256] : !pto.ptr<f32, ub>, f32
-      pto.store %s, %ub[%c512] : !pto.ptr<f32, ub>, f32
+      pto.vsts %v, %ub[%c0], %mask : !pto.vreg<64xf32>, !pto.ptr<f32, ub>, index, !pto.mask<b32>
+      pto.vsts %v, %ub[%c256], %mask : !pto.vreg<64xf32>, !pto.ptr<f32, ub>, index, !pto.mask<b32>
+      %s = pto.load %ub[%c0] : !pto.ptr<f32, ub>, index -> f32
+      pto.store %one, %ub[%c256] : !pto.ptr<f32, ub>, index, f32
+      pto.store %s, %ub[%c512] : !pto.ptr<f32, ub>, index, f32
     }
     return
   }
@@ -65,10 +65,10 @@ module attributes {pto.target_arch = "a5"} {
     pto.vecscope {
       %mask = pto.pset_b32 "PAT_ALL" : !pto.mask<b32>
       %v = pto.vdup %one, %mask : f32, !pto.mask<b32> -> !pto.vreg<64xf32>
-      pto.vsts %v, %ub[%c0], %mask : !pto.vreg<64xf32>, !pto.ptr<f32, ub>, !pto.mask<b32>
-      %s = pto.load %ub[%c0] : !pto.ptr<f32, ub> -> f32
-      pto.vsts %v, %ub[%c256], %mask : !pto.vreg<64xf32>, !pto.ptr<f32, ub>, !pto.mask<b32>
-      pto.store %s, %ub[%c256] : !pto.ptr<f32, ub>, f32
+      pto.vsts %v, %ub[%c0], %mask : !pto.vreg<64xf32>, !pto.ptr<f32, ub>, index, !pto.mask<b32>
+      %s = pto.load %ub[%c0] : !pto.ptr<f32, ub>, index -> f32
+      pto.vsts %v, %ub[%c256], %mask : !pto.vreg<64xf32>, !pto.ptr<f32, ub>, index, !pto.mask<b32>
+      pto.store %s, %ub[%c256] : !pto.ptr<f32, ub>, index, f32
     }
     return
   }
@@ -84,10 +84,10 @@ module attributes {pto.target_arch = "a5"} {
     pto.vecscope {
       %mask = pto.pset_b32 "PAT_ALL" : !pto.mask<b32>
       %v = pto.vdup %one, %mask : f32, !pto.mask<b32> -> !pto.vreg<64xf32>
-      pto.vsts %v, %ub[%c256], %mask : !pto.vreg<64xf32>, !pto.ptr<f32, ub>, !pto.mask<b32>
+      pto.vsts %v, %ub[%c256], %mask : !pto.vreg<64xf32>, !pto.ptr<f32, ub>, index, !pto.mask<b32>
       pto.mem_bar "VST_VLD"
-      %s = pto.load %ub[%c0] : !pto.ptr<f32, ub> -> f32
-      pto.store %s, %ub[%c256] : !pto.ptr<f32, ub>, f32
+      %s = pto.load %ub[%c0] : !pto.ptr<f32, ub>, index -> f32
+      pto.store %s, %ub[%c256] : !pto.ptr<f32, ub>, index, f32
     }
     return
   }
@@ -103,10 +103,10 @@ module attributes {pto.target_arch = "a5"} {
     pto.vecscope {
       %mask = pto.pset_b32 "PAT_ALL" : !pto.mask<b32>
       %v = pto.vdup %one, %mask : f32, !pto.mask<b32> -> !pto.vreg<64xf32>
-      pto.vsts %v, %ub[%c256], %mask : !pto.vreg<64xf32>, !pto.ptr<f32, ub>, !pto.mask<b32>
+      pto.vsts %v, %ub[%c256], %mask : !pto.vreg<64xf32>, !pto.ptr<f32, ub>, index, !pto.mask<b32>
       pto.mem_bar "VST_LD"
-      %s = pto.load %ub[%c0] : !pto.ptr<f32, ub> -> f32
-      pto.store %s, %ub[%c256] : !pto.ptr<f32, ub>, f32
+      %s = pto.load %ub[%c0] : !pto.ptr<f32, ub>, index -> f32
+      pto.store %s, %ub[%c256] : !pto.ptr<f32, ub>, index, f32
     }
     return
   }
@@ -122,13 +122,13 @@ module attributes {pto.target_arch = "a5"} {
     pto.vecscope {
       %mask = pto.pset_b32 "PAT_ALL" : !pto.mask<b32>
       %v = pto.vdup %one, %mask : f32, !pto.mask<b32> -> !pto.vreg<64xf32>
-      pto.vsts %v, %ub[%c256], %mask : !pto.vreg<64xf32>, !pto.ptr<f32, ub>, !pto.mask<b32>
+      pto.vsts %v, %ub[%c256], %mask : !pto.vreg<64xf32>, !pto.ptr<f32, ub>, index, !pto.mask<b32>
       %s = scf.for %i = %c0 to %n step %c1 iter_args(%acc = %one) -> (f32) {
         pto.mem_bar "VST_LD"
-        %x = pto.load %ub[%c0] : !pto.ptr<f32, ub> -> f32
+        %x = pto.load %ub[%c0] : !pto.ptr<f32, ub>, index -> f32
         scf.yield %x : f32
       }
-      pto.store %s, %ub[%c256] : !pto.ptr<f32, ub>, f32
+      pto.store %s, %ub[%c256] : !pto.ptr<f32, ub>, index, f32
     }
     return
   }
@@ -144,15 +144,15 @@ module attributes {pto.target_arch = "a5"} {
     pto.vecscope {
       %mask = pto.pset_b32 "PAT_ALL" : !pto.mask<b32>
       %v = pto.vdup %one, %mask : f32, !pto.mask<b32> -> !pto.vreg<64xf32>
-      pto.vsts %v, %ub[%c256], %mask : !pto.vreg<64xf32>, !pto.ptr<f32, ub>, !pto.mask<b32>
+      pto.vsts %v, %ub[%c256], %mask : !pto.vreg<64xf32>, !pto.ptr<f32, ub>, index, !pto.mask<b32>
       %s = scf.if %cond -> (f32) {
         pto.mem_bar "VST_LD"
-        %x = pto.load %ub[%c0] : !pto.ptr<f32, ub> -> f32
+        %x = pto.load %ub[%c0] : !pto.ptr<f32, ub>, index -> f32
         scf.yield %x : f32
       } else {
         scf.yield %one : f32
       }
-      pto.store %s, %ub[%c256] : !pto.ptr<f32, ub>, f32
+      pto.store %s, %ub[%c256] : !pto.ptr<f32, ub>, index, f32
     }
     return
   }

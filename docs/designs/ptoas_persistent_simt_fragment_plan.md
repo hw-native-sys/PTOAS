@@ -51,7 +51,7 @@ func.func @main_kernel(...) attributes {pto.entry} {
 
   // init section：UB → fragment
   pto.section.simt<<<128, 1, 1>>> {
-    %w0 = pto.load %w_ub[%idx0] : !pto.ptr<f32, ub> -> f32
+    %w0 = pto.load %w_ub[%idx0] : !pto.ptr<f32, ub>, index -> f32
     %p0 = llvm.getelementptr %w_frag[%off0] : (!llvm.ptr, i64) -> !llvm.ptr, f32
     llvm.store %w0, %p0 : f32, !llvm.ptr
     // ... 同样定义本次需要驻留的其它 element
@@ -120,7 +120,7 @@ keep/resume 承载跨 section 的寄存器状态。示意输出：
 ```mlir
 func.func @main_kernel(...) attributes {pto.entry} {
   pto.section.simt<<<128, 1, 1>>> {             // init
-    %w0 = pto.load %w_ub[%idx0] : !pto.ptr<f32, ub> -> f32
+    %w0 = pto.load %w_ub[%idx0] : !pto.ptr<f32, ub>, index -> f32
     pto.keep %w0 {slot = 0 : i64} : f32
     // ... keep 完整 residentElements
   }

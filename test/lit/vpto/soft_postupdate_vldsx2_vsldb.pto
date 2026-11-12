@@ -31,21 +31,21 @@ module attributes {pto.target_arch = "a5", pto.kernel_kind = #pto.kernel_kind<ve
       %l0, %h0 = pto.vldsx2 %src[%c0], "DINTLV_B32"
           : !pto.ptr<f32, ub>, index -> !pto.vreg<64xf32>, !pto.vreg<64xf32>
       pto.vsts %l0, %sink[%c0], %mask
-          : !pto.vreg<64xf32>, !pto.ptr<f32, ub>, !pto.mask<b32>
+          : !pto.vreg<64xf32>, !pto.ptr<f32, ub>, index, !pto.mask<b32>
       pto.vsts %h0, %sink[%c0], %mask
-          : !pto.vreg<64xf32>, !pto.ptr<f32, ub>, !pto.mask<b32>
+          : !pto.vreg<64xf32>, !pto.ptr<f32, ub>, index, !pto.mask<b32>
       %l1, %h1 = pto.vldsx2 %src[%step], "DINTLV_B32"
           : !pto.ptr<f32, ub>, index -> !pto.vreg<64xf32>, !pto.vreg<64xf32>
       pto.vsts %l1, %sink[%c0], %mask
-          : !pto.vreg<64xf32>, !pto.ptr<f32, ub>, !pto.mask<b32>
+          : !pto.vreg<64xf32>, !pto.ptr<f32, ub>, index, !pto.mask<b32>
       pto.vsts %h1, %sink[%c0], %mask
-          : !pto.vreg<64xf32>, !pto.ptr<f32, ub>, !pto.mask<b32>
+          : !pto.vreg<64xf32>, !pto.ptr<f32, ub>, index, !pto.mask<b32>
       %l2, %h2 = pto.vldsx2 %src[%step2], "DINTLV_B32"
           : !pto.ptr<f32, ub>, index -> !pto.vreg<64xf32>, !pto.vreg<64xf32>
       pto.vsts %l2, %sink[%c0], %mask
-          : !pto.vreg<64xf32>, !pto.ptr<f32, ub>, !pto.mask<b32>
+          : !pto.vreg<64xf32>, !pto.ptr<f32, ub>, index, !pto.mask<b32>
       pto.vsts %h2, %sink[%c0], %mask
-          : !pto.vreg<64xf32>, !pto.ptr<f32, ub>, !pto.mask<b32>
+          : !pto.vreg<64xf32>, !pto.ptr<f32, ub>, index, !pto.mask<b32>
     }
     return
   }
@@ -64,15 +64,15 @@ module attributes {pto.target_arch = "a5", pto.kernel_kind = #pto.kernel_kind<ve
       %v0 = pto.vsldb %src, %c2_i16, %c0_i16, %mask
           : !pto.ptr<f32, ub>, i16, i16, !pto.mask<b32> -> !pto.vreg<64xf32>
       pto.vsts %v0, %sink[%c0], %mask
-          : !pto.vreg<64xf32>, !pto.ptr<f32, ub>, !pto.mask<b32>
+          : !pto.vreg<64xf32>, !pto.ptr<f32, ub>, index, !pto.mask<b32>
       %v1 = pto.vsldb %src, %c2_i16, %step, %mask
           : !pto.ptr<f32, ub>, i16, i16, !pto.mask<b32> -> !pto.vreg<64xf32>
       pto.vsts %v1, %sink[%c0], %mask
-          : !pto.vreg<64xf32>, !pto.ptr<f32, ub>, !pto.mask<b32>
+          : !pto.vreg<64xf32>, !pto.ptr<f32, ub>, index, !pto.mask<b32>
       %v2 = pto.vsldb %src, %c2_i16, %step2, %mask
           : !pto.ptr<f32, ub>, i16, i16, !pto.mask<b32> -> !pto.vreg<64xf32>
       pto.vsts %v2, %sink[%c0], %mask
-          : !pto.vreg<64xf32>, !pto.ptr<f32, ub>, !pto.mask<b32>
+          : !pto.vreg<64xf32>, !pto.ptr<f32, ub>, index, !pto.mask<b32>
     }
     return
   }

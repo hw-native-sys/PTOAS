@@ -164,9 +164,9 @@ block:
 %block_as_index = arith.index_cast %block : i64 to index
 %block_offset = arith.muli %block_as_index, %block_len : index
 %block_in = pto.addptr %gm_in, %block_offset
-  : !pto.ptr<f32, gm> -> !pto.ptr<f32, gm>
+  : !pto.ptr<f32, gm>, index -> !pto.ptr<f32, gm>
 %block_out = pto.addptr %gm_out, %block_offset
-  : !pto.ptr<f32, gm> -> !pto.ptr<f32, gm>
+  : !pto.ptr<f32, gm>, index -> !pto.ptr<f32, gm>
 ```
 
 The query operations report the launch state; the surrounding arithmetic and
@@ -225,10 +225,13 @@ Examples:
 
   ```mlir
   %result = pto.addptr %ptr, %offset
-    : !pto.ptr<T, space> -> !pto.ptr<T, space>
+    : !pto.ptr<T, space>, index -> !pto.ptr<T, space>
   ```
 
-- **Operands:** `%ptr` is `!pto.ptr<T, space>` and `%offset` is `index`.
+- **Operands:** `%ptr` is `!pto.ptr<T, space>` and `%offset` is `index` or
+  a signless integer (`i32`, `i64`), declared in the type list right after the
+  pointer type, as in
+  `pto.addptr %ptr, %offset : !pto.ptr<T, space>, index -> !pto.ptr<T, space>`.
 - **Result:** A pointer with exactly the same element type and memory space as
   `%ptr`.
 - **Attributes:** None.
@@ -249,7 +252,7 @@ Example:
 ```mlir
 %c16 = arith.constant 16 : index
 %tail = pto.addptr %base, %c16
-  : !pto.ptr<f32, gm> -> !pto.ptr<f32, gm>
+  : !pto.ptr<f32, gm>, index -> !pto.ptr<f32, gm>
 ```
 
 `%tail` points 16 `f32` elements, or 64 bytes, after `%base`.
@@ -270,7 +273,7 @@ SIMT body, and their presence does not by itself select SIMT execution.
 - **Syntax:**
 
   ```mlir
-  %value = pto.load %ptr[%offset] : Ptr -> T
+  %value = pto.load %ptr[%offset] : Ptr, index -> T
   ```
 
 - **Operands:** `%ptr` is `!pto.ptr<T, space>` or a memref with element type
@@ -295,7 +298,7 @@ SIMT body, and their presence does not by itself select SIMT execution.
 - **Syntax:**
 
   ```mlir
-  pto.store %value, %ptr[%offset] : Ptr, T
+  pto.store %value, %ptr[%offset] : Ptr, index, T
   ```
 
 - **Operands:** `%value` has type `T`; `%ptr` is `!pto.ptr<T, space>` or a
@@ -317,8 +320,8 @@ Example:
 
 ```mlir
 %c4 = arith.constant 4 : index
-%value = pto.load %src[%c4] : !pto.ptr<f32, ub> -> f32
-pto.store %value, %dst[%c4] : !pto.ptr<f32, ub>, f32
+%value = pto.load %src[%c4] : !pto.ptr<f32, ub>, index -> f32
+pto.store %value, %dst[%c4] : !pto.ptr<f32, ub>, index, f32
 ```
 
 Both accesses select element 4, which is 16 bytes after the base address of an
@@ -358,7 +361,7 @@ local L1 data cache is target-defined.
 - **Syntax:**
 
   ```mlir
-  %value = pto.ld_dev %ptr[%offset] : !pto.ptr<T, gm> -> T
+  %value = pto.ld_dev %ptr[%offset] : !pto.ptr<T, gm>, index -> T
   ```
 
 - **Operands:** `%ptr` is `!pto.ptr<T, gm>` and `%offset` is an element offset
@@ -381,7 +384,7 @@ value = GM[address : address + sizeof(T)] as T
 - **Syntax:**
 
   ```mlir
-  pto.st_dev %value, %ptr[%offset] : !pto.ptr<T, gm>, T
+  pto.st_dev %value, %ptr[%offset] : !pto.ptr<T, gm>, index, T
   ```
 
 - **Operands:** `%value` has type `T`, `%ptr` is `!pto.ptr<T, gm>`, and
@@ -400,8 +403,8 @@ GM[address : address + sizeof(T)] = value as bytes
 
 ```mlir
 %c3 = arith.constant 3 : index
-%value = pto.ld_dev %src[%c3] : !pto.ptr<i32, gm> -> i32
-pto.st_dev %value, %dst[%c3] : !pto.ptr<i32, gm>, i32
+%value = pto.ld_dev %src[%c3] : !pto.ptr<i32, gm>, index -> i32
+pto.st_dev %value, %dst[%c3] : !pto.ptr<i32, gm>, index, i32
 ```
 
 Both operations access element 3, which begins 12 bytes after the corresponding

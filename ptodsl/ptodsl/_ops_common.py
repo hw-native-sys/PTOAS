@@ -212,7 +212,7 @@ def addptr(base_ptr, index_offset):
     return wrap_surface_value(
         _pto.AddPtrOp(
             unwrap_surface_value(base_ptr),
-            _coerce_index(index_offset, context="addptr(ptr, offset)"),
+            _coerce_element_offset(index_offset, context="addptr(ptr, offset)"),
         ).result
     )
 
@@ -515,14 +515,39 @@ def _pointer_element_type(ptr_value, *, context: str):
             raise TypeError(f"{context} expects a PTO pointer or memref-backed address, got {raw_type}") from exc
 
 
-def _coerce_index(value, *, context: str):
+def _coerce_scalar_operand(value, *, context: str, coerce, expectation: str):
+    """Unwrap one authored operand and normalize it, reporting the surface type."""
     raw_value = unwrap_surface_value(value)
     try:
-        return coerce_runtime_index_value(raw_value, context=context)
+        return coerce(raw_value, context=context)
     except TypeError as exc:
         if hasattr(raw_value, "type"):
-            raise TypeError(f"{context} expects an index-like scalar, got {raw_value.type}") from exc
+            raise TypeError(f"{context} expects {expectation}, got {raw_value.type}") from exc
         raise
+
+
+def _coerce_index(value, *, context: str):
+    return _coerce_scalar_operand(
+        value,
+        context=context,
+        coerce=coerce_runtime_index_value,
+        expectation="an index-like scalar",
+    )
+
+
+def _coerce_element_offset(value, *, context: str):
+    """Normalize an element offset operand; an integer keeps its own width.
+
+    Unlike an index-shaped operand (a loop bound, a tile coordinate), an element
+    offset of pto.addptr and of the pointer-based memory ops may be a signless
+    integer, so no index conversion is inserted here.
+    """
+    return _coerce_scalar_operand(
+        value,
+        context=context,
+        coerce=coerce_runtime_element_offset_value,
+        expectation="an index or integer element offset",
+    )
 
 
 def _coerce_vunpack_part(part, *, context: str):
@@ -541,6 +566,7 @@ def _coerce_vunpack_part(part, *, context: str):
 def init_align():
     """``pto.init_align`` – materialize the initial alignment state."""
     return wrap_surface_value(_pto.InitAlignOp(_pto.AlignType.get()).result)
+
 
 def _emit_unary_vec_op(op_ctor, inp, mask):
     _reject_low_precision_vreg_operands(inp, context=f"pto.{_surface_name_for_op_ctor(op_ctor)}(...)")

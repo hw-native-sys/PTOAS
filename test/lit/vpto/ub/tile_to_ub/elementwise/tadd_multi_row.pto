@@ -19,9 +19,9 @@ module attributes {pto.target_arch = "a3", pto.kernel_kind = #pto.kernel_kind<ve
     // CHECK: %[[SRC1_BASE:.*]] = pto.castptr {{.*}} : i64 -> !pto.ptr<f32, ub>
     %src1 = pto.alloc_tile : !pto.tile_buf<loc=vec, dtype=f32, rows=4, cols=64, v_row=4, v_col=64, blayout=row_major, slayout=none_box, fractal=512, pad=0>
     // CHECK: scf.for
-    // CHECK: %[[DST:.*]] = pto.addptr %[[DST_BASE]], {{.*}} : <f32, ub> -> <f32, ub>
-    // CHECK: %[[SRC0:.*]] = pto.addptr %[[SRC0_BASE]], {{.*}} : <f32, ub> -> <f32, ub>
-    // CHECK: %[[SRC1:.*]] = pto.addptr %[[SRC1_BASE]], {{.*}} : <f32, ub> -> <f32, ub>
+    // CHECK: %[[DST:.*]] = pto.addptr %[[DST_BASE]], {{.*}} : <f32, ub>, index -> <f32, ub>
+    // CHECK: %[[SRC0:.*]] = pto.addptr %[[SRC0_BASE]], {{.*}} : <f32, ub>, index -> <f32, ub>
+    // CHECK: %[[SRC1:.*]] = pto.addptr %[[SRC1_BASE]], {{.*}} : <f32, ub>, index -> <f32, ub>
     // CHECK: pto.ub.vadd %[[DST]], %[[SRC0]], %[[SRC1]]
     // CHECK-SAME: : !pto.ptr<f32, ub>, !pto.ptr<f32, ub>, !pto.ptr<f32, ub>, i64, i64, i64, i64, i64, i64, i64
     pto.tadd ins(%src0, %src1 : !pto.tile_buf<loc=vec, dtype=f32, rows=4, cols=64, v_row=4, v_col=64, blayout=row_major, slayout=none_box, fractal=512, pad=0>, !pto.tile_buf<loc=vec, dtype=f32, rows=4, cols=64, v_row=4, v_col=64, blayout=row_major, slayout=none_box, fractal=512, pad=0>) outs(%dst : !pto.tile_buf<loc=vec, dtype=f32, rows=4, cols=64, v_row=4, v_col=64, blayout=row_major, slayout=none_box, fractal=512, pad=0>)

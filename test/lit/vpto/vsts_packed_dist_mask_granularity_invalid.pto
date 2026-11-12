@@ -22,7 +22,7 @@ module attributes {pto.target_arch = "a5", pto.kernel_kind = #pto.kernel_kind<ve
     %c0 = arith.constant 0 : index
     pto.vecscope {
       pto.vsts %u8, %dst[%c0], %mask {dist = "PK4_B32"}
-          : !pto.vreg<256xui8>, !pto.ptr<ui8, ub>, !pto.mask<b8>
+          : !pto.vreg<256xui8>, !pto.ptr<ui8, ub>, index, !pto.mask<b8>
     }
     return
   }
@@ -37,7 +37,7 @@ module attributes {pto.target_arch = "a5", pto.kernel_kind = #pto.kernel_kind<ve
     %c0 = arith.constant 0 : index
     pto.vecscope {
       pto.vsts %f32, %dst[%c0], %mask {dist = "PK_B64"}
-          : !pto.vreg<64xf32>, !pto.ptr<f32, ub>, !pto.mask<b16>
+          : !pto.vreg<64xf32>, !pto.ptr<f32, ub>, index, !pto.mask<b16>
     }
     return
   }

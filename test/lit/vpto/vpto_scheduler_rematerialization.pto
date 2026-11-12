@@ -89,7 +89,7 @@ module attributes {pto.target_arch = "a5"} {
     %step = arith.constant 1 : index
     pto.vecscope {
       %mask = pto.pset_b32 "PAT_ALL" : !pto.mask<b32>
-      %loaded = pto.vlds %source[%offset] : !pto.ptr<i32, ub> -> !pto.vreg<64xi32>
+      %loaded = pto.vlds %source[%offset] : !pto.ptr<i32, ub>, index -> !pto.vreg<64xi32>
       %cheap = pto.vdup %zero, %mask : i32, !pto.mask<b32> -> !pto.vreg<64xi32>
       %root = pto.vci %zero : i32 -> !pto.vreg<64xi32>
       %index0_base = pto.vadds %root, %zero, %mask : !pto.vreg<64xi32>, i32, !pto.mask<b32> -> !pto.vreg<64xi32>

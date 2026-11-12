@@ -14,10 +14,10 @@ module attributes {pto.target_arch = "a5"} {
     %mask = pto.pset_b32 "PAT_ALL" : !pto.mask<b32>
     %init = pto.vdup %zero, %mask : ui32, !pto.mask<b32> -> !pto.vreg<64xui32>
     %sum0 = pto.vadd %init, %init, %mask : !pto.vreg<64xui32>, !pto.vreg<64xui32>, !pto.mask<b32> -> !pto.vreg<64xui32>
-    pto.vsts %sum0, %ub[%c0], %mask : !pto.vreg<64xui32>, !pto.ptr<ui32, ub>, !pto.mask<b32>
+    pto.vsts %sum0, %ub[%c0], %mask : !pto.vreg<64xui32>, !pto.ptr<ui32, ub>, index, !pto.mask<b32>
     pto.barrier #pto.pipe<PIPE_ALL>
     %sum1 = pto.vadd %init, %init, %mask : !pto.vreg<64xui32>, !pto.vreg<64xui32>, !pto.mask<b32> -> !pto.vreg<64xui32>
-    pto.vsts %sum1, %ub[%c64], %mask : !pto.vreg<64xui32>, !pto.ptr<ui32, ub>, !pto.mask<b32>
+    pto.vsts %sum1, %ub[%c64], %mask : !pto.vreg<64xui32>, !pto.ptr<ui32, ub>, index, !pto.mask<b32>
     return
   }
   }

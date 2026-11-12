@@ -18,19 +18,20 @@
 // CHECK: [[BYTE_NEXT:%[a-zA-Z0-9_]+]] = pto.psts {{.*}}, [[BYTE_PTR]][%c1]
 // CHECK: scf.yield [[ELEMENT_NEXT]], [[BYTE_NEXT]]
 
-// Nonzero i32 initial offsets must be converted to index before pto.addptr.
+// A nonzero i32 initial offset keeps its own type: pto.addptr accepts an
+// integer element displacement, so no index conversion is forced.
 // CHECK-LABEL: func.func @vstas_nonzero_i32_initial_offset
-// CHECK: %[[VSTAS_INIT:[a-zA-Z0-9_]+]] = pto.addptr %arg0, %c4
+// CHECK: %[[VSTAS_INIT:[a-zA-Z0-9_]+]] = pto.addptr %arg0, %c4_i32 : <f32, ub>, i32 -> <f32, ub>
 // CHECK: scf.for {{.*}} iter_args({{%.*}} = %[[VSTAS_INIT]])
 // CHECK: pto.vstas {{.*}}, {{%.*}}, %c4_i32
 // LLVM-LABEL: define void @vstas_nonzero_i32_initial_offset_mix_aiv
 // LLVM: call ptr addrspace(6) @llvm.hivm.vstas.post(<32 x i8> {{.*}}, ptr addrspace(6) {{.*}}, i32 16, i32 1)
 
-// sprsti offsets are signed 8-bit word counts; -1 must remain negative when
-// the initial pto.addptr address is constructed.
+// sprsti offsets are signed 8-bit word counts; -1 must keep both its sign and
+// its i32 width when the initial pto.addptr address is constructed.
 // CHECK-LABEL: func.func @sprsti_negative_initial_offset
-// CHECK: %c-1 = arith.constant -1 : index
-// CHECK: %[[SPR_INIT:[a-zA-Z0-9_]+]] = pto.addptr %arg0, %c-1
+// CHECK: %c-1_i32 = arith.constant -1 : i32
+// CHECK: %[[SPR_INIT:[a-zA-Z0-9_]+]] = pto.addptr %arg0, %c-1_i32 : <ui32, ub>, i32 -> <ui32, ub>
 // CHECK: scf.for {{.*}} iter_args({{%.*}} = %[[SPR_INIT]])
 // CHECK: pto.sprsti "AR", {{%.*}}[%c1_i32]
 
@@ -46,9 +47,9 @@ module attributes {pto.target_arch = "a5", pto.kernel_kind = #pto.kernel_kind<ve
     pto.vecscope {
       scf.for %iv = %c0 to %c4 step %c1 {
         %value = pto.vlds %base[%iv]
-            : !pto.ptr<f32, ub> -> !pto.vreg<64xf32>
+            : !pto.ptr<f32, ub>, index -> !pto.vreg<64xf32>
         pto.vsts %value, %sink[%c0], %vector_mask
-            : !pto.vreg<64xf32>, !pto.ptr<f32, ub>, !pto.mask<b32>
+            : !pto.vreg<64xf32>, !pto.ptr<f32, ub>, index, !pto.mask<b32>
         pto.psts %predicate_mask, %base[%iv], "NORM"
             : !pto.mask<b8>, !pto.ptr<f32, ub>, index
       }
@@ -87,7 +88,7 @@ module attributes {pto.target_arch = "a5", pto.kernel_kind = #pto.kernel_kind<ve
         pto.sprsti "AR", %ptr[%cm1_i32]
             : !pto.ptr<ui32, ub>, i32
         %next_ptr = pto.addptr %ptr, %c1
-            : !pto.ptr<ui32, ub> -> !pto.ptr<ui32, ub>
+            : !pto.ptr<ui32, ub>, index -> !pto.ptr<ui32, ub>
         scf.yield %next_ptr : !pto.ptr<ui32, ub>
       }
     }

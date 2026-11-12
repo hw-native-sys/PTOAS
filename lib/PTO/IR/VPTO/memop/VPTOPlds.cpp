@@ -23,8 +23,8 @@ void PldsOp::getEffects(
 LogicalResult PldsOp::verify() {
   return verifyPredicateLoadOp(
       *this, [&]() -> LogicalResult {
-        if (!getOffset().getType().isIndex()) {
-          return emitOpError("requires index offset");
+        if (!isElementOffsetType(getOffset().getType())) {
+          return emitOpError("requires an index or signless integer element offset");
         }
         return success();
       });

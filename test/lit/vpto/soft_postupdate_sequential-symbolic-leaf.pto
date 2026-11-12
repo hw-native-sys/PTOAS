@@ -51,15 +51,15 @@ module attributes {pto.target_arch = "a5", pto.kernel_kind = #pto.kernel_kind<ve
     %c0 = arith.constant 0 : index
     pto.vecscope {
       %mask = pto.pset_b32 "PAT_ALL" : !pto.mask<b32>
-      %v0 = pto.vlds %src[%c0] : !pto.ptr<f32, ub> -> !pto.vreg<64xf32>
-      pto.vsts %v0, %sink[%c0], %mask : !pto.vreg<64xf32>, !pto.ptr<f32, ub>, !pto.mask<b32>
+      %v0 = pto.vlds %src[%c0] : !pto.ptr<f32, ub>, index -> !pto.vreg<64xf32>
+      pto.vsts %v0, %sink[%c0], %mask : !pto.vreg<64xf32>, !pto.ptr<f32, ub>, index, !pto.mask<b32>
       %step_i32 = arith.select %cond, %lhs, %rhs : i32
       %step = arith.index_cast %step_i32 : i32 to index
-      %v1 = pto.vlds %src[%step] : !pto.ptr<f32, ub> -> !pto.vreg<64xf32>
-      pto.vsts %v1, %sink[%c0], %mask : !pto.vreg<64xf32>, !pto.ptr<f32, ub>, !pto.mask<b32>
+      %v1 = pto.vlds %src[%step] : !pto.ptr<f32, ub>, index -> !pto.vreg<64xf32>
+      pto.vsts %v1, %sink[%c0], %mask : !pto.vreg<64xf32>, !pto.ptr<f32, ub>, index, !pto.mask<b32>
       %step2 = arith.addi %step, %step : index
-      %v2 = pto.vlds %src[%step2] : !pto.ptr<f32, ub> -> !pto.vreg<64xf32>
-      pto.vsts %v2, %sink[%c0], %mask : !pto.vreg<64xf32>, !pto.ptr<f32, ub>, !pto.mask<b32>
+      %v2 = pto.vlds %src[%step2] : !pto.ptr<f32, ub>, index -> !pto.vreg<64xf32>
+      pto.vsts %v2, %sink[%c0], %mask : !pto.vreg<64xf32>, !pto.ptr<f32, ub>, index, !pto.mask<b32>
     }
     return
   }
@@ -70,10 +70,10 @@ module attributes {pto.target_arch = "a5", pto.kernel_kind = #pto.kernel_kind<ve
     %step2 = arith.addi %step, %step : index
     pto.vecscope {
       %mask = pto.pset_b32 "PAT_ALL" : !pto.mask<b32>
-      %vec = pto.vlds %src[%c0] : !pto.ptr<f32, ub> -> !pto.vreg<64xf32>
-      pto.vsts %vec, %dst[%c0], %mask : !pto.vreg<64xf32>, !pto.ptr<f32, ub>, !pto.mask<b32>
-      pto.vsts %vec, %dst[%step], %mask : !pto.vreg<64xf32>, !pto.ptr<f32, ub>, !pto.mask<b32>
-      pto.vsts %vec, %dst[%step2], %mask : !pto.vreg<64xf32>, !pto.ptr<f32, ub>, !pto.mask<b32>
+      %vec = pto.vlds %src[%c0] : !pto.ptr<f32, ub>, index -> !pto.vreg<64xf32>
+      pto.vsts %vec, %dst[%c0], %mask : !pto.vreg<64xf32>, !pto.ptr<f32, ub>, index, !pto.mask<b32>
+      pto.vsts %vec, %dst[%step], %mask : !pto.vreg<64xf32>, !pto.ptr<f32, ub>, index, !pto.mask<b32>
+      pto.vsts %vec, %dst[%step2], %mask : !pto.vreg<64xf32>, !pto.ptr<f32, ub>, index, !pto.mask<b32>
     }
     return
   }
@@ -86,7 +86,7 @@ module attributes {pto.target_arch = "a5", pto.kernel_kind = #pto.kernel_kind<ve
     %step2 = arith.addi %step, %step : i16
     pto.vecscope {
       %mask = pto.pset_b32 "PAT_ALL" : !pto.mask<b32>
-      %vec = pto.vlds %src[%c0] : !pto.ptr<f32, ub> -> !pto.vreg<64xf32>
+      %vec = pto.vlds %src[%c0] : !pto.ptr<f32, ub>, index -> !pto.vreg<64xf32>
       pto.vsstb %vec, %dst, %c1_i16, %c0_i16, %mask : !pto.vreg<64xf32>, !pto.ptr<f32, ub>, i16, i16, !pto.mask<b32>
       pto.vsstb %vec, %dst, %c1_i16, %step, %mask : !pto.vreg<64xf32>, !pto.ptr<f32, ub>, i16, i16, !pto.mask<b32>
       pto.vsstb %vec, %dst, %c1_i16, %step2, %mask : !pto.vreg<64xf32>, !pto.ptr<f32, ub>, i16, i16, !pto.mask<b32>
@@ -101,12 +101,12 @@ module attributes {pto.target_arch = "a5", pto.kernel_kind = #pto.kernel_kind<ve
     %sum = arith.addi %step0, %step1 : index
     pto.vecscope {
       %mask = pto.pset_b32 "PAT_ALL" : !pto.mask<b32>
-      %v0 = pto.vlds %src[%c0] : !pto.ptr<f32, ub> -> !pto.vreg<64xf32>
-      pto.vsts %v0, %sink[%c0], %mask : !pto.vreg<64xf32>, !pto.ptr<f32, ub>, !pto.mask<b32>
-      %v1 = pto.vlds %src[%step0] : !pto.ptr<f32, ub> -> !pto.vreg<64xf32>
-      pto.vsts %v1, %sink[%c0], %mask : !pto.vreg<64xf32>, !pto.ptr<f32, ub>, !pto.mask<b32>
-      %v2 = pto.vlds %src[%sum] : !pto.ptr<f32, ub> -> !pto.vreg<64xf32>
-      pto.vsts %v2, %sink[%c0], %mask : !pto.vreg<64xf32>, !pto.ptr<f32, ub>, !pto.mask<b32>
+      %v0 = pto.vlds %src[%c0] : !pto.ptr<f32, ub>, index -> !pto.vreg<64xf32>
+      pto.vsts %v0, %sink[%c0], %mask : !pto.vreg<64xf32>, !pto.ptr<f32, ub>, index, !pto.mask<b32>
+      %v1 = pto.vlds %src[%step0] : !pto.ptr<f32, ub>, index -> !pto.vreg<64xf32>
+      pto.vsts %v1, %sink[%c0], %mask : !pto.vreg<64xf32>, !pto.ptr<f32, ub>, index, !pto.mask<b32>
+      %v2 = pto.vlds %src[%sum] : !pto.ptr<f32, ub>, index -> !pto.vreg<64xf32>
+      pto.vsts %v2, %sink[%c0], %mask : !pto.vreg<64xf32>, !pto.ptr<f32, ub>, index, !pto.mask<b32>
     }
     return
   }
@@ -115,14 +115,14 @@ module attributes {pto.target_arch = "a5", pto.kernel_kind = #pto.kernel_kind<ve
     %c0 = arith.constant 0 : index
     pto.vecscope {
       %mask = pto.pset_b32 "PAT_ALL" : !pto.mask<b32>
-      %v0 = pto.vlds %src[%c0] : !pto.ptr<f32, ub> -> !pto.vreg<64xf32>
-      pto.vsts %v0, %sink[%c0], %mask : !pto.vreg<64xf32>, !pto.ptr<f32, ub>, !pto.mask<b32>
+      %v0 = pto.vlds %src[%c0] : !pto.ptr<f32, ub>, index -> !pto.vreg<64xf32>
+      pto.vsts %v0, %sink[%c0], %mask : !pto.vreg<64xf32>, !pto.ptr<f32, ub>, index, !pto.mask<b32>
       %step = arith.divui %numerator, %denominator : index
-      %v1 = pto.vlds %src[%step] : !pto.ptr<f32, ub> -> !pto.vreg<64xf32>
-      pto.vsts %v1, %sink[%c0], %mask : !pto.vreg<64xf32>, !pto.ptr<f32, ub>, !pto.mask<b32>
+      %v1 = pto.vlds %src[%step] : !pto.ptr<f32, ub>, index -> !pto.vreg<64xf32>
+      pto.vsts %v1, %sink[%c0], %mask : !pto.vreg<64xf32>, !pto.ptr<f32, ub>, index, !pto.mask<b32>
       %step2 = arith.addi %step, %step : index
-      %v2 = pto.vlds %src[%step2] : !pto.ptr<f32, ub> -> !pto.vreg<64xf32>
-      pto.vsts %v2, %sink[%c0], %mask : !pto.vreg<64xf32>, !pto.ptr<f32, ub>, !pto.mask<b32>
+      %v2 = pto.vlds %src[%step2] : !pto.ptr<f32, ub>, index -> !pto.vreg<64xf32>
+      pto.vsts %v2, %sink[%c0], %mask : !pto.vreg<64xf32>, !pto.ptr<f32, ub>, index, !pto.mask<b32>
     }
     return
   }

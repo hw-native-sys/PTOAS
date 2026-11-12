@@ -44,7 +44,7 @@ module {
 // lane, so it degenerates to one contiguous read and the default load safety
 // policy lowers it to a single aligned vlds (no gather, no passthru select).
 // POLICY-LABEL: func.func @vmi_to_vpto_expand_load_all_active(
-// POLICY: %[[RESULT:.*]] = pto.vlds %arg0[%arg1] : !pto.ptr<f32, ub> -> !pto.vreg<64xf32>
+// POLICY: %[[RESULT:.*]] = pto.vlds %arg0[%arg1] : !pto.ptr<f32, ub>, index -> !pto.vreg<64xf32>
 // POLICY: return %[[RESULT]] : !pto.vreg<64xf32>
 // POLICY-NOT: pto.vmi.
 // POLICY-NOT: !pto.vmi.

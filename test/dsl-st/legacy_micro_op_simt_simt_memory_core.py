@@ -36,7 +36,7 @@ KERNEL_SOURCE = (
     '000 : i32\n    %c10_i32 = arith.constant 10 : i32\n    %row = arith.muli %ty, %c32_i32 : i32\n    %dst_i32 ='
     ' arith.addi %row, %tx : i32\n    %dst_idx = arith.index_castui %dst_i32 : i32 to index\n\n    %scaled_y = ar'
     'ith.muli %ty, %c10_i32 : i32\n    %value = arith.addi %dst_i32, %scaled_y : i32\n    %final = arith.addi %va'
-    'lue, %c1000_i32 : i32\n    pto.store %final, %buf[%dst_idx] : !pto.ptr<i32, ub>, i32\n    return\n  }\n}\n'
+    'lue, %c1000_i32 : i32\n    pto.store %final, %buf[%dst_idx] : !pto.ptr<i32, ub>, index, i32\n    return\n  }\n}\n'
 )
 
 def _golden_scope():

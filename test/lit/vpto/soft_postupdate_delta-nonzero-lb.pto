@@ -30,8 +30,8 @@ module attributes {pto.target_arch = "a5", pto.kernel_kind = #pto.kernel_kind<ve
       scf.for %iv = %c64 to %c1024 step %c64
           iter_args(%remaining = %c1024_i32) -> i32 {
         %mask, %next = pto.plt_b32 %remaining : i32 -> !pto.mask<b32>, i32
-        %vec = pto.vlds %ub_in[%iv] {dist = "NORM"} : !pto.ptr<f32, ub> -> !pto.vreg<64xf32>
-        pto.vsts %vec, %ub_out[%iv], %mask : !pto.vreg<64xf32>, !pto.ptr<f32, ub>, !pto.mask<b32>
+        %vec = pto.vlds %ub_in[%iv] {dist = "NORM"} : !pto.ptr<f32, ub>, index -> !pto.vreg<64xf32>
+        pto.vsts %vec, %ub_out[%iv], %mask : !pto.vreg<64xf32>, !pto.ptr<f32, ub>, index, !pto.mask<b32>
         scf.yield %next : i32
       }
     }

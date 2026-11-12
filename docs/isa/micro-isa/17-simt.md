@@ -26,7 +26,13 @@ not by themselves read lane or thread state or select SIMT execution.
 - The SIMT body is a normal `func.func` with the `pto.simt_entry` attribute.
 - Each active workitem executes the same SIMT body with its own scalar SSA
   values, thread coordinates, lane id, and lane-mask state.
-- SIMT scalar memory offsets are element offsets, not byte offsets.
+- SIMT scalar memory offsets are element offsets, not byte offsets. They are
+  **signed element displacements**: positive values advance the base pointer and
+  negative values move it toward lower addresses. An offset is written either
+  with the platform `index` type or with a signless integer of explicit width
+  (`i32`, `i64`), declared in the type list right after the base pointer type,
+  as in `%p[%off] : !pto.ptr<i32, ub>, index -> i32`. These ops perform no
+  bounds checking.
 - Vector-register ops such as `pto.vlds`, `pto.vadd`, and `pto.vsts` belong to
   normal vector code, not to the SIMT body.
 
@@ -36,7 +42,7 @@ Example SIMT body:
 func.func @body(%dst: !pto.ptr<i32, ub>) attributes {pto.simt_entry} {
   %tx = pto.get_tid_x : i32
   %idx = arith.index_castui %tx : i32 to index
-  pto.store %tx, %dst[%idx] : !pto.ptr<i32, ub>, i32
+  pto.store %tx, %dst[%idx] : !pto.ptr<i32, ub>, index, i32
   return
 }
 ```
@@ -478,18 +484,18 @@ support. For ordinary typed access without SIMT scope or cache controls, use
 
 ### `pto.ldg`
 
-- **syntax:** `%value = pto.ldg %ptr[%offset] l1cache(...)? l2cache(...)? attr-dict : !pto.ptr<T, gm> -> T`
+- **syntax:** `%value = pto.ldg %ptr[%offset] l1cache(...)? l2cache(...)? attr-dict : !pto.ptr<T, gm>, index -> T`
 - **accepted forms:**
 
 ```mlir
 // GM load with default cache controls: l1cache(cache) and l2cache(nmfv).
-%value = pto.ldg %gm[%offset] : !pto.ptr<T, gm> -> T
+%value = pto.ldg %gm[%offset] : !pto.ptr<T, gm>, index -> T
 
 // GM load with an explicit L1 cache control.
-%value = pto.ldg %gm[%offset] l1cache(cache) : !pto.ptr<T, gm> -> T
+%value = pto.ldg %gm[%offset] l1cache(cache) : !pto.ptr<T, gm>, index -> T
 
 // GM load with explicit L1 and L2 cache controls.
-%value = pto.ldg %gm[%offset] l1cache(uncache) l2cache(nmpref) : !pto.ptr<T, gm> -> T
+%value = pto.ldg %gm[%offset] l1cache(uncache) l2cache(nmpref) : !pto.ptr<T, gm>, index -> T
 ```
 
 - **semantics:** Load one element from GM at `%ptr + %offset` using the
@@ -515,18 +521,18 @@ support. For ordinary typed access without SIMT scope or cache controls, use
 
 ### `pto.stg`
 
-- **syntax:** `pto.stg %value, %ptr[%offset] l1cache(...)? l2cache(...)? attr-dict : !pto.ptr<T, gm>, T`
+- **syntax:** `pto.stg %value, %ptr[%offset] l1cache(...)? l2cache(...)? attr-dict : !pto.ptr<T, gm>, index, T`
 - **accepted forms:**
 
 ```mlir
 // GM store with default cache controls: l1cache(cache) and l2cache(nmfv).
-pto.stg %value, %gm[%offset] : !pto.ptr<T, gm>, T
+pto.stg %value, %gm[%offset] : !pto.ptr<T, gm>, index, T
 
 // GM store with an explicit L1 cache control.
-pto.stg %value, %gm[%offset] l1cache(cache) : !pto.ptr<T, gm>, T
+pto.stg %value, %gm[%offset] l1cache(cache) : !pto.ptr<T, gm>, index, T
 
 // GM store with explicit L1 and L2 cache controls.
-pto.stg %value, %gm[%offset] l1cache(uncache) l2cache(wtsred) : !pto.ptr<T, gm>, T
+pto.stg %value, %gm[%offset] l1cache(uncache) l2cache(wtsred) : !pto.ptr<T, gm>, index, T
 ```
 
 - **semantics:** Store one element to GM at `%ptr + %offset` using the
@@ -547,9 +553,9 @@ Example:
 ```mlir
 %tx = pto.get_tid_x : i32
 %idx = arith.index_castui %tx : i32 to index
-%loaded = pto.load %gm[%idx] : !pto.ptr<i32, gm> -> i32
+%loaded = pto.load %gm[%idx] : !pto.ptr<i32, gm>, index -> i32
 %sum = arith.addi %loaded, %tx : i32
-pto.store %sum, %gm[%idx] : !pto.ptr<i32, gm>, i32
+pto.store %sum, %gm[%idx] : !pto.ptr<i32, gm>, index, i32
 ```
 
 ---
@@ -968,10 +974,10 @@ Example:
 func.func @body(%ub: !pto.ptr<i32, ub>) attributes {pto.simt_entry} {
   %tx = pto.get_tid_x : i32
   %idx = arith.index_castui %tx : i32 to index
-  pto.store %tx, %ub[%idx] : !pto.ptr<i32, ub>, i32
+  pto.store %tx, %ub[%idx] : !pto.ptr<i32, ub>, index, i32
   pto.syncthreads
-  %v = pto.load %ub[%idx] : !pto.ptr<i32, ub> -> i32
-  pto.store %v, %ub[%idx] : !pto.ptr<i32, ub>, i32
+  %v = pto.load %ub[%idx] : !pto.ptr<i32, ub>, index -> i32
+  pto.store %v, %ub[%idx] : !pto.ptr<i32, ub>, index, i32
   return
 }
 ```
@@ -1036,7 +1042,7 @@ Example:
 func.func @stage0(%dst: !pto.ptr<i32, ub>) attributes {pto.simt_entry} {
   %tx = pto.get_tid_x : i32
   %idx = arith.index_castui %tx : i32 to index
-  pto.store %tx, %dst[%idx] : !pto.ptr<i32, ub>, i32
+  pto.store %tx, %dst[%idx] : !pto.ptr<i32, ub>, index, i32
   pto.keep %tx {slot = 0 : i64} : i32
   pto.syncthreads
   return
@@ -1047,7 +1053,7 @@ func.func @stage1(%dst: !pto.ptr<i32, ub>) attributes {pto.simt_entry} {
   %tx = pto.get_tid_x : i32
   %idx = arith.index_castui %tx : i32 to index
   %sum = arith.addi %tx0, %tx : i32
-  pto.store %sum, %dst[%idx] : !pto.ptr<i32, ub>, i32
+  pto.store %sum, %dst[%idx] : !pto.ptr<i32, ub>, index, i32
   return
 }
 ```
@@ -1125,7 +1131,7 @@ module attributes {pto.target_arch = "a5",
     %lane_base = arith.muli %ty, %c32_i32 : i32
     %idx_i32 = arith.addi %lane_base, %tx : i32
     %idx = arith.index_castui %idx_i32 : i32 to index
-    pto.store %xyz, %dst[%idx] : !pto.ptr<i32, ub>, i32
+    pto.store %xyz, %dst[%idx] : !pto.ptr<i32, ub>, index, i32
     return
   }
 }

@@ -143,15 +143,15 @@ Output:
 %ub_s0  = pto.tile_buf_addr %src0 : !pto.ptr<f32, ub>
 %ub_s1  = pto.tile_buf_addr %src1 : !pto.ptr<f32, ub>
 
-%row_dst = pto.addptr %ub_dst, %c0 : !pto.ptr<f32, ub>
-%row_s0  = pto.addptr %ub_s0, %c0 : !pto.ptr<f32, ub>
-%row_s1  = pto.addptr %ub_s1, %c0 : !pto.ptr<f32, ub>
+%row_dst = pto.addptr %ub_dst, %c0 : !pto.ptr<f32, ub>, index
+%row_s0  = pto.addptr %ub_s0, %c0 : !pto.ptr<f32, ub>, index
+%row_s1  = pto.addptr %ub_s1, %c0 : !pto.ptr<f32, ub>, index
 
 scf.for %i = %c0 to %c4 step %c1 {
   %off = arith.index_cast %i : index to i64
-  %rd = pto.addptr %row_dst, %off : !pto.ptr<f32, ub>
-  %r0 = pto.addptr %row_s0, %off : !pto.ptr<f32, ub>
-  %r1 = pto.addptr %row_s1, %off : !pto.ptr<f32, ub>
+  %rd = pto.addptr %row_dst, %off : !pto.ptr<f32, ub>, index
+  %r0 = pto.addptr %row_s0, %off : !pto.ptr<f32, ub>, index
+  %r1 = pto.addptr %row_s1, %off : !pto.ptr<f32, ub>, index
 
   pto.ub.set_mask_count
   pto.ub.vadd %rd, %r0, %r1, %c1, %c1, %c1, %c1, %c8, %c8, %c8
@@ -224,8 +224,8 @@ On A5 targets, `pto.tadd` passes through `LowerPTOToUBufOps` unchanged and is la
 ```mlir
 // VPTO IR (after ExpandTileOp + inlining):
 pto.vecscope {
-  %v0 = pto.vlds %src0_memref : memref<...>
-  %v1 = pto.vlds %src1_memref : memref<...>
+  %v0 = pto.vlds %src0_memref : memref<...>, index
+  %v1 = pto.vlds %src1_memref : memref<...>, index
   %v2 = pto.vadd %v0, %v1 : !pto.vreg<f32>
   pto.vsts %v2, %dst_memref : memref<...>
 }

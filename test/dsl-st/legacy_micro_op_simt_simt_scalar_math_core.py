@@ -52,14 +52,14 @@ KERNEL_SOURCE = (
     'mt_b, %sel_3210 : i32, i32, i32 -> i32\n    %prmt_7654 = pto.prmt %prmt_a, %prmt_b, %sel_7654 : i32, i32, i3'
     '2 -> i32\n    %prmt_89ab = pto.prmt %prmt_a, %prmt_b, %sel_89ab : i32, i32, i32 -> i32\n    %prmt_ffff = pto'
     '.prmt %prmt_a, %prmt_b, %sel_ffff : i32, i32, i32 -> i32\n\n    pto.store %mulhi_s, %dst[%c0] : !pto.ptr<i32'
-    ', ub>, i32\n    pto.store %mulhi_u, %dst[%c1] : !pto.ptr<i32, ub>, i32\n    pto.store %wide_s_lo, %dst[%c2] '
-    ': !pto.ptr<i32, ub>, i32\n    pto.store %wide_s_hi, %dst[%c3] : !pto.ptr<i32, ub>, i32\n    pto.store %wide_'
-    'u_lo, %dst[%c4] : !pto.ptr<i32, ub>, i32\n    pto.store %wide_u_hi, %dst[%c5] : !pto.ptr<i32, ub>, i32\n    '
-    'pto.store %hi64_u_lo, %dst[%c6] : !pto.ptr<i32, ub>, i32\n    pto.store %hi64_u_hi, %dst[%c7] : !pto.ptr<i32'
-    ', ub>, i32\n    pto.store %prmt_3210, %dst[%c8] : !pto.ptr<i32, ub>, i32\n    pto.store %prmt_7654, %dst[%c9'
-    '] : !pto.ptr<i32, ub>, i32\n    pto.store %prmt_89ab, %dst[%c10] : !pto.ptr<i32, ub>, i32\n    pto.store %pr'
-    'mt_ffff, %dst[%c11] : !pto.ptr<i32, ub>, i32\n    pto.store %hi64_s_lo, %dst[%c12] : !pto.ptr<i32, ub>, i32'
-    '\n    pto.store %hi64_s_hi, %dst[%c13] : !pto.ptr<i32, ub>, i32\n    return\n  }\n}\n'
+    ', ub>, index, i32\n    pto.store %mulhi_u, %dst[%c1] : !pto.ptr<i32, ub>, index, i32\n    pto.store %wide_s_lo, %dst[%c2] '
+    ': !pto.ptr<i32, ub>, index, i32\n    pto.store %wide_s_hi, %dst[%c3] : !pto.ptr<i32, ub>, index, i32\n    pto.store %wide_'
+    'u_lo, %dst[%c4] : !pto.ptr<i32, ub>, index, i32\n    pto.store %wide_u_hi, %dst[%c5] : !pto.ptr<i32, ub>, index, i32\n    '
+    'pto.store %hi64_u_lo, %dst[%c6] : !pto.ptr<i32, ub>, index, i32\n    pto.store %hi64_u_hi, %dst[%c7] : !pto.ptr<i32'
+    ', ub>, index, i32\n    pto.store %prmt_3210, %dst[%c8] : !pto.ptr<i32, ub>, index, i32\n    pto.store %prmt_7654, %dst[%c9'
+    '] : !pto.ptr<i32, ub>, index, i32\n    pto.store %prmt_89ab, %dst[%c10] : !pto.ptr<i32, ub>, index, i32\n    pto.store %pr'
+    'mt_ffff, %dst[%c11] : !pto.ptr<i32, ub>, index, i32\n    pto.store %hi64_s_lo, %dst[%c12] : !pto.ptr<i32, ub>, index, i32'
+    '\n    pto.store %hi64_s_hi, %dst[%c13] : !pto.ptr<i32, ub>, index, i32\n    return\n  }\n}\n'
 )
 
 def _golden_scope():

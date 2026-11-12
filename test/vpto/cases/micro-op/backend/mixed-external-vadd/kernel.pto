@@ -66,14 +66,14 @@ module attributes {pto.target_arch = "a5"} {
           %mask, %next_remaining = pto.plt_b32 %remaining
             : i32 -> !pto.mask<b32>, i32
           %lhs = pto.vlds %ub_lhs[%offset]
-            : !pto.ptr<f32, ub> -> !pto.vreg<64xf32>
+            : !pto.ptr<f32, ub>, index -> !pto.vreg<64xf32>
           %rhs = pto.vlds %ub_rhs[%offset]
-            : !pto.ptr<f32, ub> -> !pto.vreg<64xf32>
+            : !pto.ptr<f32, ub>, index -> !pto.vreg<64xf32>
           %sum = pto.vadd %lhs, %rhs, %mask
             : !pto.vreg<64xf32>, !pto.vreg<64xf32>, !pto.mask<b32>
               -> !pto.vreg<64xf32>
           pto.vsts %sum, %ub_out[%offset], %mask
-            : !pto.vreg<64xf32>, !pto.ptr<f32, ub>, !pto.mask<b32>
+            : !pto.vreg<64xf32>, !pto.ptr<f32, ub>, index, !pto.mask<b32>
           scf.yield %next_remaining : i32
         }
       }

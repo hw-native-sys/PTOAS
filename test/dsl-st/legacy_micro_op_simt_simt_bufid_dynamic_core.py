@@ -41,9 +41,9 @@ KERNEL_SOURCE = (
     '}\n    return\n  }\n\n  func.func @simt_bufid_dynamic_core_body(%gm: !pto.ptr<i32, gm>) attributes {pto.simt'
     '_entry} {\n    %tx = pto.get_tid_x : i32\n    %c32_i32 = arith.constant 32 : i32\n    %c100_i32 = arith.cons'
     'tant 100 : i32\n\n    %src_idx = arith.index_castui %tx : i32 to index\n    %loaded = pto.load %gm[%src_idx]'
-    ' : !pto.ptr<i32, gm> -> i32\n    %result = arith.addi %loaded, %c100_i32 : i32\n\n    %dst_i32 = arith.addi '
+    ' : !pto.ptr<i32, gm>, index -> i32\n    %result = arith.addi %loaded, %c100_i32 : i32\n\n    %dst_i32 = arith.addi '
     '%tx, %c32_i32 : i32\n    %dst_idx = arith.index_castui %dst_i32 : i32 to index\n    pto.store %result, %gm[%'
-    'dst_idx] : !pto.ptr<i32, gm>, i32\n    return\n  }\n}\n'
+    'dst_idx] : !pto.ptr<i32, gm>, index, i32\n    return\n  }\n}\n'
 )
 
 def _golden_scope():

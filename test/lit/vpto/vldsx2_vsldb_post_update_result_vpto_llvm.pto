@@ -22,11 +22,11 @@ module attributes {pto.target_arch = "a5", pto.kernel_kind = #pto.kernel_kind<ve
           : !pto.ptr<f32, ub>, i16, i16, !pto.mask<b32>
           -> !pto.vreg<64xf32>, !pto.ptr<f32, ub>
       pto.vsts %low, %next_block[%c0], %mask
-          : !pto.vreg<64xf32>, !pto.ptr<f32, ub>, !pto.mask<b32>
+          : !pto.vreg<64xf32>, !pto.ptr<f32, ub>, index, !pto.mask<b32>
       pto.vsts %high, %next_block[%c0], %mask
-          : !pto.vreg<64xf32>, !pto.ptr<f32, ub>, !pto.mask<b32>
+          : !pto.vreg<64xf32>, !pto.ptr<f32, ub>, index, !pto.mask<b32>
       pto.vsts %value, %next_block[%c0], %mask
-          : !pto.vreg<64xf32>, !pto.ptr<f32, ub>, !pto.mask<b32>
+          : !pto.vreg<64xf32>, !pto.ptr<f32, ub>, index, !pto.mask<b32>
     }
     return
   }

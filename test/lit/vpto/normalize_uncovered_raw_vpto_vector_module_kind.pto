@@ -16,10 +16,10 @@ module attributes {pto.target_arch = "a5"} {
     func.func public @raw_vec_kernel(%src: !pto.ptr<f32, ub>, %dst: !pto.ptr<f32, ub>) {
       %c0 = arith.constant 0 : index
       %mask = pto.pset_b32 "PAT_ALL" : !pto.mask<b32>
-      %vec0 = pto.vlds %src[%c0] : !pto.ptr<f32, ub> -> !pto.vreg<64xf32>
-      %vec1 = pto.vlds %dst[%c0] : !pto.ptr<f32, ub> -> !pto.vreg<64xf32>
+      %vec0 = pto.vlds %src[%c0] : !pto.ptr<f32, ub>, index -> !pto.vreg<64xf32>
+      %vec1 = pto.vlds %dst[%c0] : !pto.ptr<f32, ub>, index -> !pto.vreg<64xf32>
       %sum = pto.vadd %vec0, %vec1, %mask : !pto.vreg<64xf32>, !pto.vreg<64xf32>, !pto.mask<b32> -> !pto.vreg<64xf32>
-      pto.vsts %sum, %dst[%c0], %mask {dist = "NORM_B32"} : !pto.vreg<64xf32>, !pto.ptr<f32, ub>, !pto.mask<b32>
+      pto.vsts %sum, %dst[%c0], %mask {dist = "NORM_B32"} : !pto.vreg<64xf32>, !pto.ptr<f32, ub>, index, !pto.mask<b32>
       return
     }
   }

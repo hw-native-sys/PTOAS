@@ -857,7 +857,7 @@ class VectorCubeSurfaceTest(unittest.TestCase):
         with patch_ops("unwrap_surface_value", side_effect=_identity), \
              patch_ops("wrap_surface_value", side_effect=_identity), \
              patch_ops("_infer_vreg_type_from_address_source", return_value="vec_ty"), \
-             patch_ops("_coerce_index", return_value="idx"), \
+             patch_ops("_coerce_element_offset", return_value="idx"), \
              patch_ops("_normalize_post_update_mode", return_value="NO_POST_UPDATE"), \
              patch_ops("_normalize_dist_token", side_effect=lambda dist, *, allowed, context: dist) as normalize_dist, \
              patch.object(_ops._pto, "VldsOp", return_value=SimpleNamespace(result=vec)) as vlds_op:

@@ -20,7 +20,7 @@ module attributes {pto.target_arch = "a5", pto.kernel_kind = #pto.kernel_kind<ve
       %half = arith.floordivsi %gate, %c2_i32 : i32
       %half_f32 = arith.sitofp %half : i32 to f32
       %out = pto.vmuls %value, %half_f32, %mask : !pto.vreg<64xf32>, f32, !pto.mask<b32> -> !pto.vreg<64xf32>
-      pto.vsts %out, %dst[%c0], %mask : !pto.vreg<64xf32>, !pto.ptr<f32, ub>, !pto.mask<b32>
+      pto.vsts %out, %dst[%c0], %mask : !pto.vreg<64xf32>, !pto.ptr<f32, ub>, index, !pto.mask<b32>
     }
     return
   }

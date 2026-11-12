@@ -115,7 +115,7 @@ module attributes {pto.target_arch = "a5"} {
     %tid2 = pto.resume {slot = 0 : i64} : i32
     %tid = pto.get_tid_x : i32
     %idx = arith.index_castui %tid : i32 to index
-    pto.store %tid2, %dst[%idx] : !pto.ptr<i32, ub>, i32
+    pto.store %tid2, %dst[%idx] : !pto.ptr<i32, ub>, index, i32
     return
   }
 }

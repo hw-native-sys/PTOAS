@@ -4,9 +4,9 @@ module {
   func.func @castptr_addptr(%addr: i64, %dst: !pto.ptr<ui32>, %idx: index) attributes {pto.kernel_kind = #pto.kernel_kind<vector>} {
     %c0 = arith.constant 0 : index
     %ptr = pto.castptr %addr : i64 -> !pto.ptr<ui32>
-    %off = pto.addptr %ptr, %idx : !pto.ptr<ui32> -> !pto.ptr<ui32>
-    %val = pto.load %off[%c0] : !pto.ptr<ui32> -> ui32
-    pto.store %val, %dst[%c0] : !pto.ptr<ui32>, ui32
+    %off = pto.addptr %ptr, %idx : !pto.ptr<ui32>, index -> !pto.ptr<ui32>
+    %val = pto.load %off[%c0] : !pto.ptr<ui32>, index -> ui32
+    pto.store %val, %dst[%c0] : !pto.ptr<ui32>, index, ui32
     return
   }
 }

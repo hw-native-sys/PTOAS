@@ -16,8 +16,8 @@ module attributes {pto.target_arch = "a5", pto.kernel_kind = #pto.kernel_kind<ve
     %zero = arith.constant 0 : index
     %s = pto.sin %x : f32 -> f32
     %c = pto.cos %x : f32 -> f32
-    pto.store %s, %dst[%zero] : !pto.ptr<f32, ub>, f32
-    pto.store %c, %dst[%zero] : !pto.ptr<f32, ub>, f32
+    pto.store %s, %dst[%zero] : !pto.ptr<f32, ub>, index, f32
+    pto.store %c, %dst[%zero] : !pto.ptr<f32, ub>, index, f32
     return
   }
 }

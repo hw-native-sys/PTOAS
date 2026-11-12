@@ -22,10 +22,10 @@
  %mask_6, %remained_7 = pto.plt_b32 %remained_iter_0 : i32 -> !pto.mask<b32>, i32
  %row_off_4 = arith.muli %row_3, %c64 : index
  %linear_5 = arith.addi %row_off_4, %col_5 : index
- %lhs_8 = pto.vlds %tmp_0[%linear_5] : !pto.ptr<f32, ub> -> !pto.vreg<64xf32>
- %rhs_9 = pto.vlds %tmp_1[%linear_5] : !pto.ptr<f32, ub> -> !pto.vreg<64xf32>
+ %lhs_8 = pto.vlds %tmp_0[%linear_5] : !pto.ptr<f32, ub>, index -> !pto.vreg<64xf32>
+ %rhs_9 = pto.vlds %tmp_1[%linear_5] : !pto.ptr<f32, ub>, index -> !pto.vreg<64xf32>
  %summed_10 = pto.vadd %lhs_8, %rhs_9, %mask_6 : !pto.vreg<64xf32>, !pto.vreg<64xf32>, !pto.mask<b32> -> !pto.vreg<64xf32>
- pto.vsts %summed_10, %tmp_2[%linear_5], %mask_6 : !pto.vreg<64xf32>, !pto.ptr<f32, ub>, !pto.mask<b32>
+ pto.vsts %summed_10, %tmp_2[%linear_5], %mask_6 : !pto.vreg<64xf32>, !pto.ptr<f32, ub>, index, !pto.mask<b32>
  scf.yield %remained_7 : i32
  }
  }

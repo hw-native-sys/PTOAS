@@ -37,7 +37,7 @@
 // VPTO-DAG: pto.plds {{.*}}, "US" : !pto.ptr<ui8, ub>, index -> !pto.mask<b8>
 // VPTO-DAG: pto.pbitcast {{.*}} : !pto.mask<b8> -> !pto.mask<b16>
 // VPTO-DAG: pto.vsel {{.*}} : !pto.vreg<128xbf16>, !pto.vreg<128xbf16>, !pto.mask<b16> -> !pto.vreg<128xbf16>
-// VPTO-DAG: pto.vsts {{.*}} : !pto.vreg<128xbf16>, !pto.ptr<bf16, ub>, !pto.mask<b16>
+// VPTO-DAG: pto.vsts {{.*}} : !pto.vreg<128xbf16>, !pto.ptr<bf16, ub>, index, !pto.mask<b16>
 
 // VPTO-LABEL: func.func @TSELS_BF16_1D
 // VPTO-NOT: pto.tsels ins
@@ -46,7 +46,7 @@
 // VPTO: pto.plds {{.*}}, "US" : !pto.ptr<ui8, ub>, index -> !pto.mask<b8>
 // VPTO: pto.pbitcast {{.*}} : !pto.mask<b8> -> !pto.mask<b16>
 // VPTO: pto.vsel {{.*}} : !pto.vreg<128xbf16>, !pto.vreg<128xbf16>, !pto.mask<b16> -> !pto.vreg<128xbf16>
-// VPTO: pto.vsts {{.*}} : !pto.vreg<128xbf16>, !pto.ptr<bf16, ub>, !pto.mask<b16>
+// VPTO: pto.vsts {{.*}} : !pto.vreg<128xbf16>, !pto.ptr<bf16, ub>, index, !pto.mask<b16>
 
 module attributes {pto.kernel_kind = #pto.kernel_kind<vector>} {
   func.func @TSELS_BF16() {

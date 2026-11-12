@@ -18,14 +18,14 @@ module attributes {pto.target_arch = "a5", pto.kernel_kind = #pto.kernel_kind<ve
     %c0 = arith.constant 0 : index
     pto.vecscope {
       pto.vsts %f32, %f32_dst[%c0], %mask {dist = "PK_B64"}
-          : !pto.vreg<64xf32>, !pto.ptr<f32, ub>, !pto.mask<b32>
+          : !pto.vreg<64xf32>, !pto.ptr<f32, ub>, index, !pto.mask<b32>
       pto.vsts %u8, %u8_dst[%c0], %mask {dist = "PK4_B32"}
-          : !pto.vreg<256xui8>, !pto.ptr<ui8, ub>, !pto.mask<b32>
+          : !pto.vreg<256xui8>, !pto.ptr<ui8, ub>, index, !pto.mask<b32>
     }
     return
   }
 }
 
 // CHECK-LABEL: func.func @vsts_packed_dist_mask_granularity
-// CHECK: pto.vsts {{.*}} {dist = "PK_B64"} : !pto.vreg<64xf32>, !pto.ptr<f32, ub>, !pto.mask<b32>
-// CHECK: pto.vsts {{.*}} {dist = "PK4_B32"} : !pto.vreg<256xui8>, !pto.ptr<ui8, ub>, !pto.mask<b32>
+// CHECK: pto.vsts {{.*}} {dist = "PK_B64"} : !pto.vreg<64xf32>, !pto.ptr<f32, ub>, index, !pto.mask<b32>
+// CHECK: pto.vsts {{.*}} {dist = "PK4_B32"} : !pto.vreg<256xui8>, !pto.ptr<ui8, ub>, index, !pto.mask<b32>

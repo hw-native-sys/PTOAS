@@ -18,10 +18,10 @@ module {
     pto.vecscope {
       %mask = pto.pset_b16 "PAT_ALL" : !pto.mask<b16>
       %out_mask = pto.pset_b32 "PAT_ALL" : !pto.mask<b32>
-      %src = pto.vlds %input[%c0] : !pto.ptr<i16, ub> -> !pto.vreg<128xi16>
+      %src = pto.vlds %input[%c0] : !pto.ptr<i16, ub>, index -> !pto.vreg<128xi16>
       %sum = pto.vcadd %src, %mask : !pto.vreg<128xi16>, !pto.mask<b16> -> !pto.vreg<64xi32>
       pto.vsts %sum, %output[%c0], %out_mask
-          : !pto.vreg<64xi32>, !pto.ptr<i32, ub>, !pto.mask<b32>
+          : !pto.vreg<64xi32>, !pto.ptr<i32, ub>, index, !pto.mask<b32>
     }
     return
   }
@@ -33,10 +33,10 @@ module {
     pto.vecscope {
       %mask = pto.pset_b16 "PAT_ALL" : !pto.mask<b16>
       %out_mask = pto.pset_b32 "PAT_ALL" : !pto.mask<b32>
-      %src = pto.vlds %input[%c0] : !pto.ptr<si16, ub> -> !pto.vreg<128xsi16>
+      %src = pto.vlds %input[%c0] : !pto.ptr<si16, ub>, index -> !pto.vreg<128xsi16>
       %sum = pto.vcadd %src, %mask : !pto.vreg<128xsi16>, !pto.mask<b16> -> !pto.vreg<64xsi32>
       pto.vsts %sum, %output[%c0], %out_mask
-          : !pto.vreg<64xsi32>, !pto.ptr<si32, ub>, !pto.mask<b32>
+          : !pto.vreg<64xsi32>, !pto.ptr<si32, ub>, index, !pto.mask<b32>
     }
     return
   }
@@ -48,10 +48,10 @@ module {
     pto.vecscope {
       %mask = pto.pset_b16 "PAT_ALL" : !pto.mask<b16>
       %out_mask = pto.pset_b32 "PAT_ALL" : !pto.mask<b32>
-      %src = pto.vlds %input[%c0] : !pto.ptr<ui16, ub> -> !pto.vreg<128xui16>
+      %src = pto.vlds %input[%c0] : !pto.ptr<ui16, ub>, index -> !pto.vreg<128xui16>
       %sum = pto.vcadd %src, %mask : !pto.vreg<128xui16>, !pto.mask<b16> -> !pto.vreg<64xui32>
       pto.vsts %sum, %output[%c0], %out_mask
-          : !pto.vreg<64xui32>, !pto.ptr<ui32, ub>, !pto.mask<b32>
+          : !pto.vreg<64xui32>, !pto.ptr<ui32, ub>, index, !pto.mask<b32>
     }
     return
   }
@@ -63,10 +63,10 @@ module {
     pto.vecscope {
       %mask = pto.pset_b32 "PAT_ALL" : !pto.mask<b32>
       %out_mask = pto.pset_b32 "PAT_ALL" : !pto.mask<b32>
-      %src = pto.vlds %input[%c0] : !pto.ptr<i32, ub> -> !pto.vreg<64xi32>
+      %src = pto.vlds %input[%c0] : !pto.ptr<i32, ub>, index -> !pto.vreg<64xi32>
       %sum = pto.vcadd %src, %mask : !pto.vreg<64xi32>, !pto.mask<b32> -> !pto.vreg<64xi32>
       pto.vsts %sum, %output[%c0], %out_mask
-          : !pto.vreg<64xi32>, !pto.ptr<i32, ub>, !pto.mask<b32>
+          : !pto.vreg<64xi32>, !pto.ptr<i32, ub>, index, !pto.mask<b32>
     }
     return
   }
@@ -78,10 +78,10 @@ module {
     pto.vecscope {
       %mask = pto.pset_b32 "PAT_ALL" : !pto.mask<b32>
       %out_mask = pto.pset_b32 "PAT_ALL" : !pto.mask<b32>
-      %src = pto.vlds %input[%c0] : !pto.ptr<si32, ub> -> !pto.vreg<64xsi32>
+      %src = pto.vlds %input[%c0] : !pto.ptr<si32, ub>, index -> !pto.vreg<64xsi32>
       %sum = pto.vcadd %src, %mask : !pto.vreg<64xsi32>, !pto.mask<b32> -> !pto.vreg<64xsi32>
       pto.vsts %sum, %output[%c0], %out_mask
-          : !pto.vreg<64xsi32>, !pto.ptr<si32, ub>, !pto.mask<b32>
+          : !pto.vreg<64xsi32>, !pto.ptr<si32, ub>, index, !pto.mask<b32>
     }
     return
   }
@@ -93,10 +93,10 @@ module {
     pto.vecscope {
       %mask = pto.pset_b32 "PAT_ALL" : !pto.mask<b32>
       %out_mask = pto.pset_b32 "PAT_ALL" : !pto.mask<b32>
-      %src = pto.vlds %input[%c0] : !pto.ptr<ui32, ub> -> !pto.vreg<64xui32>
+      %src = pto.vlds %input[%c0] : !pto.ptr<ui32, ub>, index -> !pto.vreg<64xui32>
       %sum = pto.vcadd %src, %mask : !pto.vreg<64xui32>, !pto.mask<b32> -> !pto.vreg<64xui32>
       pto.vsts %sum, %output[%c0], %out_mask
-          : !pto.vreg<64xui32>, !pto.ptr<ui32, ub>, !pto.mask<b32>
+          : !pto.vreg<64xui32>, !pto.ptr<ui32, ub>, index, !pto.mask<b32>
     }
     return
   }
@@ -108,10 +108,10 @@ module {
     pto.vecscope {
       %mask = pto.pset_b16 "PAT_ALL" : !pto.mask<b16>
       %out_mask = pto.pset_b16 "PAT_ALL" : !pto.mask<b16>
-      %src = pto.vlds %input[%c0] : !pto.ptr<f16, ub> -> !pto.vreg<128xf16>
+      %src = pto.vlds %input[%c0] : !pto.ptr<f16, ub>, index -> !pto.vreg<128xf16>
       %sum = pto.vcadd %src, %mask : !pto.vreg<128xf16>, !pto.mask<b16> -> !pto.vreg<128xf16>
       pto.vsts %sum, %output[%c0], %out_mask
-          : !pto.vreg<128xf16>, !pto.ptr<f16, ub>, !pto.mask<b16>
+          : !pto.vreg<128xf16>, !pto.ptr<f16, ub>, index, !pto.mask<b16>
     }
     return
   }
@@ -123,10 +123,10 @@ module {
     pto.vecscope {
       %mask = pto.pset_b32 "PAT_ALL" : !pto.mask<b32>
       %out_mask = pto.pset_b32 "PAT_ALL" : !pto.mask<b32>
-      %src = pto.vlds %input[%c0] : !pto.ptr<f32, ub> -> !pto.vreg<64xf32>
+      %src = pto.vlds %input[%c0] : !pto.ptr<f32, ub>, index -> !pto.vreg<64xf32>
       %sum = pto.vcadd %src, %mask : !pto.vreg<64xf32>, !pto.mask<b32> -> !pto.vreg<64xf32>
       pto.vsts %sum, %output[%c0], %out_mask
-          : !pto.vreg<64xf32>, !pto.ptr<f32, ub>, !pto.mask<b32>
+          : !pto.vreg<64xf32>, !pto.ptr<f32, ub>, index, !pto.mask<b32>
     }
     return
   }

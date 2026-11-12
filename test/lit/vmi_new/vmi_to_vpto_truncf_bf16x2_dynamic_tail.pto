@@ -70,6 +70,6 @@ module {
 // LOWER: %[[STORE_CLAMPED:.*]] = arith.minui %[[STORE_NONNEG]], {{.*}} : i32
 // LOWER: %[[STORE_M0:.*]], %[[STORE_REM:.*]] = pto.plt_b32 %[[STORE_CLAMPED]] : i32 -> !pto.mask<b32>, i32
 // LOWER: %[[STORE_M1:.*]], %{{.*}} = pto.plt_b32 %[[STORE_REM]] : i32 -> !pto.mask<b32>, i32
-// LOWER: pto.vsts %[[R0]], %[[DST]][%[[ALIGNED_OFF]]], %[[STORE_M0]] {dist = "PK4_B32"} : !pto.vreg<256x!pto.f4E1M2x2>, !pto.ptr<!pto.f4E1M2x2, ub>, !pto.mask<b32>
+// LOWER: pto.vsts %[[R0]], %[[DST]][%[[ALIGNED_OFF]]], %[[STORE_M0]] {dist = "PK4_B32"} : !pto.vreg<256x!pto.f4E1M2x2>, !pto.ptr<!pto.f4E1M2x2, ub>, index, !pto.mask<b32>
 // LOWER: %[[OFF64:.*]] = arith.addi %[[ALIGNED_OFF]], %{{.*}} : index
-// LOWER: pto.vsts %[[R1]], %[[DST]][%[[OFF64]]], %[[STORE_M1]] {dist = "PK4_B32"} : !pto.vreg<256x!pto.f4E1M2x2>, !pto.ptr<!pto.f4E1M2x2, ub>, !pto.mask<b32>
+// LOWER: pto.vsts %[[R1]], %[[DST]][%[[OFF64]]], %[[STORE_M1]] {dist = "PK4_B32"} : !pto.vreg<256x!pto.f4E1M2x2>, !pto.ptr<!pto.f4E1M2x2, ub>, index, !pto.mask<b32>

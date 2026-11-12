@@ -41,7 +41,7 @@ module attributes {pto.target_arch = "a5", pto.kernel_kind = #pto.kernel_kind<ve
         %old = llvm.load %element : !llvm.ptr -> f32
         %updated = arith.addf %old, %two : f32
         llvm.store %updated, %element : f32, !llvm.ptr
-        pto.store %updated, %dst[%i] : !pto.ptr<f32, ub>, f32
+        pto.store %updated, %dst[%i] : !pto.ptr<f32, ub>, index, f32
       }
     }
     return

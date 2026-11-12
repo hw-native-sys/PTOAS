@@ -18,7 +18,7 @@ module attributes {pto.kernel_kind = #pto.kernel_kind<vector>} {
     %c16 = arith.constant 16 : index
     %c0_i64 = arith.constant 0 : i64
     %ptr = pto.addptr %base, %base_offset
-      : !pto.ptr<f32, gm> -> !pto.ptr<f32, gm>
+      : !pto.ptr<f32, gm>, index -> !pto.ptr<f32, gm>
     %view = pto.make_tensor_view %ptr, shape = [%rows, %cols],
       strides = [%row_stride, %c1] : !pto.tensor_view<?x?xf32>
     %part = pto.partition_view %view, offsets = [%c0, %c0],

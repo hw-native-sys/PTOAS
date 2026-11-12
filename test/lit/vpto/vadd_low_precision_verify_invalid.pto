@@ -15,8 +15,8 @@ module attributes {pto.target_arch = "a5"} {
     %c0 = arith.constant 0 : index
     pto.vecscope {
       %mask = pto.pset_b8 "PAT_ALL" : !pto.mask<b8>
-      %lhs = pto.vlds %src0[%c0] : !pto.ptr<f8E4M3FN, ub> -> !pto.vreg<256xf8E4M3FN>
-      %rhs = pto.vlds %src1[%c0] : !pto.ptr<f8E4M3FN, ub> -> !pto.vreg<256xf8E4M3FN>
+      %lhs = pto.vlds %src0[%c0] : !pto.ptr<f8E4M3FN, ub>, index -> !pto.vreg<256xf8E4M3FN>
+      %rhs = pto.vlds %src1[%c0] : !pto.ptr<f8E4M3FN, ub>, index -> !pto.vreg<256xf8E4M3FN>
       %sum = pto.vadd %lhs, %rhs, %mask : !pto.vreg<256xf8E4M3FN>, !pto.vreg<256xf8E4M3FN>, !pto.mask<b8> -> !pto.vreg<256xf8E4M3FN>
       %use = pto.vbitcast %sum : !pto.vreg<256xf8E4M3FN> -> !pto.vreg<64xf32>
     }

@@ -10,11 +10,11 @@ module attributes {pto.target_arch = "a5"} {
 
     %src_mask = pto.pset_b32 "PAT_ALL" : !pto.mask<b32>
     %store_mask = pto.pset_b16 "PAT_ALL" : !pto.mask<b16>
-    %src = pto.vlds %ub_in[%c0] : !pto.ptr<f32, ub> -> !pto.vreg<64xf32>
+    %src = pto.vlds %ub_in[%c0] : !pto.ptr<f32, ub>, index -> !pto.vreg<64xf32>
     %packed_f16 = pto.vcvt %src, %src_mask {part = "EVEN", rnd = "R", sat = "SAT"} : !pto.vreg<64xf32>, !pto.mask<b32> -> !pto.vreg<128xf16>
     %packed_u32 = pto.vbitcast %packed_f16 : !pto.vreg<128xf16> -> !pto.vreg<64xui32>
     %packed_u16 = pto.vpack %packed_u32, "LOWER" : !pto.vreg<64xui32> -> !pto.vreg<128xui16>
-    pto.vsts %packed_u16, %ub_out[%c0], %store_mask : !pto.vreg<128xui16>, !pto.ptr<ui16, ub>, !pto.mask<b16>
+    pto.vsts %packed_u16, %ub_out[%c0], %store_mask : !pto.vreg<128xui16>, !pto.ptr<ui16, ub>, index, !pto.mask<b16>
     return
   }
   }

@@ -32,8 +32,8 @@ module attributes {pto.target_arch = "a3"} {
 
     %raw_addr = pto.castptr %dst : !pto.ptr<ui32> -> i64
     %roundtrip = pto.castptr %raw_addr : i64 -> !pto.ptr<ui32>
-    %value = pto.load %roundtrip[%c0] : !pto.ptr<ui32> -> ui32
-    pto.store %value, %roundtrip[%c0] : !pto.ptr<ui32>, ui32
+    %value = pto.load %roundtrip[%c0] : !pto.ptr<ui32>, index -> ui32
+    pto.store %value, %roundtrip[%c0] : !pto.ptr<ui32>, index, ui32
     return
   }
 }

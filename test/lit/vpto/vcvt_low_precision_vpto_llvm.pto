@@ -23,24 +23,24 @@ module attributes {pto.target_arch = "a5", pto.kernel_kind = #pto.kernel_kind<ve
       %src_f32 = pto.vdup %f32_seed, %mask_b32 : f32, !pto.mask<b32> -> !pto.vreg<64xf32>
       %f8e4 = pto.vcvt %src_f32, %mask_b32 {rnd = "R", sat = "NOSAT", part = "P0"} : !pto.vreg<64xf32>, !pto.mask<b32> -> !pto.vreg<256xf8E4M3FN>
       %back_f32 = pto.vcvt %f8e4, %mask_b8 {part = "P0"} : !pto.vreg<256xf8E4M3FN>, !pto.mask<b8> -> !pto.vreg<64xf32>
-      pto.vsts %back_f32, %dst_f32[%c0], %mask_b32 : !pto.vreg<64xf32>, !pto.ptr<f32, ub>, !pto.mask<b32>
+      pto.vsts %back_f32, %dst_f32[%c0], %mask_b32 : !pto.vreg<64xf32>, !pto.ptr<f32, ub>, index, !pto.mask<b32>
 
       %f8e5 = pto.vcvt %src_f32, %mask_b32 {rnd = "R", sat = "NOSAT", part = "P0"} : !pto.vreg<64xf32>, !pto.mask<b32> -> !pto.vreg<256xf8E5M2>
       %back_f32_e5 = pto.vcvt %f8e5, %mask_b8 {part = "P0"} : !pto.vreg<256xf8E5M2>, !pto.mask<b8> -> !pto.vreg<64xf32>
-      pto.vsts %back_f32_e5, %dst_f32[%c64], %mask_b32 : !pto.vreg<64xf32>, !pto.ptr<f32, ub>, !pto.mask<b32>
+      pto.vsts %back_f32_e5, %dst_f32[%c64], %mask_b32 : !pto.vreg<64xf32>, !pto.ptr<f32, ub>, index, !pto.mask<b32>
 
       %hif8 = pto.vcvt %src_f32, %mask_b32 {rnd = "A", sat = "NOSAT", part = "P0"} : !pto.vreg<64xf32>, !pto.mask<b32> -> !pto.vreg<256x!pto.hif8>
       %back_f32_hif8 = pto.vcvt %hif8, %mask_b8 {part = "P0"} : !pto.vreg<256x!pto.hif8>, !pto.mask<b8> -> !pto.vreg<64xf32>
-      pto.vsts %back_f32_hif8, %dst_f32[%c128], %mask_b32 : !pto.vreg<64xf32>, !pto.ptr<f32, ub>, !pto.mask<b32>
+      pto.vsts %back_f32_hif8, %dst_f32[%c128], %mask_b32 : !pto.vreg<64xf32>, !pto.ptr<f32, ub>, index, !pto.mask<b32>
 
       %src_bf16 = pto.vdup %bf16_seed, %mask_b16 : bf16, !pto.mask<b16> -> !pto.vreg<128xbf16>
       %f4e1 = pto.vcvt %src_bf16, %mask_b16 {rnd = "R", part = "P0"} : !pto.vreg<128xbf16>, !pto.mask<b16> -> !pto.vreg<256x!pto.f4E1M2x2>
       %back_bf16 = pto.vcvt %f4e1, %mask_b8 {part = "P0"} : !pto.vreg<256x!pto.f4E1M2x2>, !pto.mask<b8> -> !pto.vreg<128xbf16>
-      pto.vsts %back_bf16, %dst_bf16[%c0], %mask_b16 : !pto.vreg<128xbf16>, !pto.ptr<bf16, ub>, !pto.mask<b16>
+      pto.vsts %back_bf16, %dst_bf16[%c0], %mask_b16 : !pto.vreg<128xbf16>, !pto.ptr<bf16, ub>, index, !pto.mask<b16>
 
       %f4e2 = pto.vcvt %src_bf16, %mask_b16 {rnd = "R", part = "P0"} : !pto.vreg<128xbf16>, !pto.mask<b16> -> !pto.vreg<256x!pto.f4E2M1x2>
       %back_bf16_e2 = pto.vcvt %f4e2, %mask_b8 {part = "P0"} : !pto.vreg<256x!pto.f4E2M1x2>, !pto.mask<b8> -> !pto.vreg<128xbf16>
-      pto.vsts %back_bf16_e2, %dst_bf16[%c128], %mask_b16 : !pto.vreg<128xbf16>, !pto.ptr<bf16, ub>, !pto.mask<b16>
+      pto.vsts %back_bf16_e2, %dst_bf16[%c128], %mask_b16 : !pto.vreg<128xbf16>, !pto.ptr<bf16, ub>, index, !pto.mask<b16>
     }
     return
   }

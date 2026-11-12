@@ -67,11 +67,11 @@ module {
 // LOWER-NEXT: %[[VAL_5:[a-zA-Z0-9_.$-]+]] = arith.constant 0 : index
 // LOWER-NEXT: %[[VAL_6:[a-zA-Z0-9_.$-]+]] = arith.constant 0 : i16
 // LOWER-NEXT: %[[VAL_7:[a-zA-Z0-9_.$-]+]] = pto.pset_b8 "PAT_VL4" : !pto.mask<b8>
-// LOWER-NEXT: %[[VAL_8:[a-zA-Z0-9_.$-]+]] = pto.addptr %[[VAL_0]], %[[VAL_2]] : <i8, ub> -> <i8, ub>
+// LOWER-NEXT: %[[VAL_8:[a-zA-Z0-9_.$-]+]] = pto.addptr %[[VAL_0]], %[[VAL_2]] : <i8, ub>, index -> <i8, ub>
 // LOWER-NEXT: %[[VAL_9:[a-zA-Z0-9_.$-]+]] = pto.vsldb %[[VAL_8]], %[[VAL_6]], %[[VAL_6]], %[[VAL_7]] : !pto.ptr<i8, ub>, i16, i16, !pto.mask<b8> -> !pto.vreg<256xi8>
 // LOWER-NEXT: %[[VAL_10:[a-zA-Z0-9_.$-]+]] = pto.vzunpack %[[VAL_9]], %[[VAL_5]] : !pto.vreg<256xi8> -> !pto.vreg<128xui16>
 // LOWER-NEXT: %[[VAL_11:[a-zA-Z0-9_.$-]+]] = pto.vzunpack %[[VAL_10]], %[[VAL_5]] : !pto.vreg<128xui16> -> !pto.vreg<64xui32>
-// LOWER-NEXT: %[[VAL_12:[a-zA-Z0-9_.$-]+]] = pto.addptr %[[VAL_1]], %[[VAL_2]] : <ui32, ub> -> <ui32, ub>
+// LOWER-NEXT: %[[VAL_12:[a-zA-Z0-9_.$-]+]] = pto.addptr %[[VAL_1]], %[[VAL_2]] : <ui32, ub>, index -> <ui32, ub>
 // LOWER-NEXT: %[[VAL_13:[a-zA-Z0-9_.$-]+]] = pto.init_align : !pto.align
 // LOWER-NEXT: %[[VAL_14:[a-zA-Z0-9_.$-]+]], %[[VAL_15:[a-zA-Z0-9_.$-]+]] = pto.vstus %[[VAL_13]], %[[VAL_4]], %[[VAL_11]], %[[VAL_12]] : !pto.align, i32, !pto.vreg<64xui32>, !pto.ptr<ui32, ub> -> !pto.align, !pto.ptr<ui32, ub>
 // LOWER-NEXT: pto.vstas %[[VAL_14]], %[[VAL_15]], %[[VAL_3]] : !pto.align, !pto.ptr<ui32, ub>, i32
@@ -86,10 +86,10 @@ module {
 // LOWER-NEXT: %[[VAL_5:[a-zA-Z0-9_.$-]+]] = arith.constant 0 : index
 // LOWER-NEXT: %[[VAL_6:[a-zA-Z0-9_.$-]+]] = arith.constant 0 : i16
 // LOWER-NEXT: %[[VAL_7:[a-zA-Z0-9_.$-]+]] = pto.pset_b16 "PAT_VL4" : !pto.mask<b16>
-// LOWER-NEXT: %[[VAL_8:[a-zA-Z0-9_.$-]+]] = pto.addptr %[[VAL_0]], %[[VAL_2]] : <i16, ub> -> <i16, ub>
+// LOWER-NEXT: %[[VAL_8:[a-zA-Z0-9_.$-]+]] = pto.addptr %[[VAL_0]], %[[VAL_2]] : <i16, ub>, index -> <i16, ub>
 // LOWER-NEXT: %[[VAL_9:[a-zA-Z0-9_.$-]+]] = pto.vsldb %[[VAL_8]], %[[VAL_6]], %[[VAL_6]], %[[VAL_7]] : !pto.ptr<i16, ub>, i16, i16, !pto.mask<b16> -> !pto.vreg<128xi16>
 // LOWER-NEXT: %[[VAL_10:[a-zA-Z0-9_.$-]+]] = pto.vzunpack %[[VAL_9]], %[[VAL_5]] : !pto.vreg<128xi16> -> !pto.vreg<64xui32>
-// LOWER-NEXT: %[[VAL_11:[a-zA-Z0-9_.$-]+]] = pto.addptr %[[VAL_1]], %[[VAL_2]] : <ui32, ub> -> <ui32, ub>
+// LOWER-NEXT: %[[VAL_11:[a-zA-Z0-9_.$-]+]] = pto.addptr %[[VAL_1]], %[[VAL_2]] : <ui32, ub>, index -> <ui32, ub>
 // LOWER-NEXT: %[[VAL_12:[a-zA-Z0-9_.$-]+]] = pto.init_align : !pto.align
 // LOWER-NEXT: %[[VAL_13:[a-zA-Z0-9_.$-]+]], %[[VAL_14:[a-zA-Z0-9_.$-]+]] = pto.vstus %[[VAL_12]], %[[VAL_4]], %[[VAL_10]], %[[VAL_11]] : !pto.align, i32, !pto.vreg<64xui32>, !pto.ptr<ui32, ub> -> !pto.align, !pto.ptr<ui32, ub>
 // LOWER-NEXT: pto.vstas %[[VAL_13]], %[[VAL_14]], %[[VAL_3]] : !pto.align, !pto.ptr<ui32, ub>, i32

@@ -11,7 +11,7 @@ These instructions build the address, view, and tile-buffer metadata that later 
 
 - **syntax:**
 ```mlir
-%result = pto.addptr %base, %offset : !pto.ptr<T> -> !pto.ptr<T>
+%result = pto.addptr %base, %offset : !pto.ptr<T>, index -> !pto.ptr<T>
 ```
 - **semantics:** `result = ptr + offset`, with `offset` counted in **elements** (not bytes).
 
@@ -30,7 +30,7 @@ These instructions build the address, view, and tile-buffer metadata that later 
 **Example:**
 
 ```mlir
-%ptr_off = pto.addptr %base, %offset : !pto.ptr<f32> -> !pto.ptr<f32>
+%ptr_off = pto.addptr %base, %offset : !pto.ptr<f32>, index -> !pto.ptr<f32>
 ```
 
 ---

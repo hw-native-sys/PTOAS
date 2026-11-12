@@ -26,8 +26,8 @@ module attributes {pto.target_arch = "a5", pto.kernel_kind = #pto.kernel_kind<ve
   // vector<2xi64> is 128-bit total — rejected by packed vector type gate.
   func.func @packed_vector_v2xi64_negative(%gm_v2xi64: !pto.ptr<vector<2xi64>, gm>) attributes {pto.aicore} {
     %c0 = arith.constant 0 : index
-    %bad = pto.ldg %gm_v2xi64[%c0] : !pto.ptr<vector<2xi64>, gm> -> vector<2xi64>
-    pto.stg %bad, %gm_v2xi64[%c0] : !pto.ptr<vector<2xi64>, gm>, vector<2xi64>
+    %bad = pto.ldg %gm_v2xi64[%c0] : !pto.ptr<vector<2xi64>, gm>, index -> vector<2xi64>
+    pto.stg %bad, %gm_v2xi64[%c0] : !pto.ptr<vector<2xi64>, gm>, index, vector<2xi64>
     return
   }
 }
@@ -37,8 +37,8 @@ module attributes {pto.target_arch = "a5", pto.kernel_kind = #pto.kernel_kind<ve
   // vector<4xf32> has dim size 4 — rejected (only fp8 supports 4/8 lanes).
   func.func @packed_vector_v4xf32_negative(%gm_v4xf32: !pto.ptr<vector<4xf32>, gm>) attributes {pto.aicore} {
     %c0 = arith.constant 0 : index
-    %bad = pto.ldg %gm_v4xf32[%c0] : !pto.ptr<vector<4xf32>, gm> -> vector<4xf32>
-    pto.stg %bad, %gm_v4xf32[%c0] : !pto.ptr<vector<4xf32>, gm>, vector<4xf32>
+    %bad = pto.ldg %gm_v4xf32[%c0] : !pto.ptr<vector<4xf32>, gm>, index -> vector<4xf32>
+    pto.stg %bad, %gm_v4xf32[%c0] : !pto.ptr<vector<4xf32>, gm>, index, vector<4xf32>
     return
   }
 }
@@ -48,8 +48,8 @@ module attributes {pto.target_arch = "a5", pto.kernel_kind = #pto.kernel_kind<ve
   // vector<16xf8E4M3FN> is fp8, but lane count 16 is rejected.
   func.func @packed_vector_v16xf8e4_negative(%gm_v16xf8e4: !pto.ptr<vector<16xf8E4M3FN>, gm>) attributes {pto.aicore} {
     %c0 = arith.constant 0 : index
-    %bad = pto.ldg %gm_v16xf8e4[%c0] : !pto.ptr<vector<16xf8E4M3FN>, gm> -> vector<16xf8E4M3FN>
-    pto.stg %bad, %gm_v16xf8e4[%c0] : !pto.ptr<vector<16xf8E4M3FN>, gm>, vector<16xf8E4M3FN>
+    %bad = pto.ldg %gm_v16xf8e4[%c0] : !pto.ptr<vector<16xf8E4M3FN>, gm>, index -> vector<16xf8E4M3FN>
+    pto.stg %bad, %gm_v16xf8e4[%c0] : !pto.ptr<vector<16xf8E4M3FN>, gm>, index, vector<16xf8E4M3FN>
     return
   }
 }
@@ -59,8 +59,8 @@ module attributes {pto.target_arch = "a5", pto.kernel_kind = #pto.kernel_kind<ve
   // Non-fp8 packed vector types remain restricted to lane count 2.
   func.func @packed_vector_v4xf16_negative(%gm_v4xf16: !pto.ptr<vector<4xf16>, gm>) attributes {pto.aicore} {
     %c0 = arith.constant 0 : index
-    %bad = pto.ldg %gm_v4xf16[%c0] : !pto.ptr<vector<4xf16>, gm> -> vector<4xf16>
-    pto.stg %bad, %gm_v4xf16[%c0] : !pto.ptr<vector<4xf16>, gm>, vector<4xf16>
+    %bad = pto.ldg %gm_v4xf16[%c0] : !pto.ptr<vector<4xf16>, gm>, index -> vector<4xf16>
+    pto.stg %bad, %gm_v4xf16[%c0] : !pto.ptr<vector<4xf16>, gm>, index, vector<4xf16>
     return
   }
 }
@@ -69,8 +69,8 @@ module attributes {pto.target_arch = "a5", pto.kernel_kind = #pto.kernel_kind<ve
 module attributes {pto.target_arch = "a5", pto.kernel_kind = #pto.kernel_kind<vector>} {
   func.func @packed_vector_v4xi16_negative(%gm_v4xi16: !pto.ptr<vector<4xi16>, gm>) attributes {pto.aicore} {
     %c0 = arith.constant 0 : index
-    %bad = pto.ldg %gm_v4xi16[%c0] : !pto.ptr<vector<4xi16>, gm> -> vector<4xi16>
-    pto.stg %bad, %gm_v4xi16[%c0] : !pto.ptr<vector<4xi16>, gm>, vector<4xi16>
+    %bad = pto.ldg %gm_v4xi16[%c0] : !pto.ptr<vector<4xi16>, gm>, index -> vector<4xi16>
+    pto.stg %bad, %gm_v4xi16[%c0] : !pto.ptr<vector<4xi16>, gm>, index, vector<4xi16>
     return
   }
 }
@@ -79,8 +79,8 @@ module attributes {pto.target_arch = "a5", pto.kernel_kind = #pto.kernel_kind<ve
 module attributes {pto.target_arch = "a5", pto.kernel_kind = #pto.kernel_kind<vector>} {
   func.func @packed_vector_v8xi8_negative(%gm_v8xi8: !pto.ptr<vector<8xi8>, gm>) attributes {pto.aicore} {
     %c0 = arith.constant 0 : index
-    %bad = pto.ldg %gm_v8xi8[%c0] : !pto.ptr<vector<8xi8>, gm> -> vector<8xi8>
-    pto.stg %bad, %gm_v8xi8[%c0] : !pto.ptr<vector<8xi8>, gm>, vector<8xi8>
+    %bad = pto.ldg %gm_v8xi8[%c0] : !pto.ptr<vector<8xi8>, gm>, index -> vector<8xi8>
+    pto.stg %bad, %gm_v8xi8[%c0] : !pto.ptr<vector<8xi8>, gm>, index, vector<8xi8>
     return
   }
 }

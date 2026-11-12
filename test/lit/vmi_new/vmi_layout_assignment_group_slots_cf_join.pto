@@ -60,16 +60,16 @@ module {
 // CHECK-NEXT: scf.yield %[[VAL_13]] : !pto.vreg<64xf32>
 // CHECK-NEXT: } else {
 // CHECK-NEXT: %[[VAL_14:[a-zA-Z0-9_.$-]+]] = pto.pset_b32 "PAT_VL8" : !pto.mask<b32>
-// CHECK-NEXT: %[[VAL_15:[a-zA-Z0-9_.$-]+]] = pto.addptr %[[VAL_2]], %[[VAL_7]] : <f32, ub> -> <f32, ub>
+// CHECK-NEXT: %[[VAL_15:[a-zA-Z0-9_.$-]+]] = pto.addptr %[[VAL_2]], %[[VAL_7]] : <f32, ub>, index -> <f32, ub>
 // CHECK-NEXT: %[[VAL_16:[a-zA-Z0-9_.$-]+]] = pto.vsldb %[[VAL_15]], %[[VAL_5]], %[[VAL_5]], %[[VAL_14]] : !pto.ptr<f32, ub>, i16, i16, !pto.mask<b32> -> !pto.vreg<64xf32>
 // CHECK-NEXT: scf.yield %[[VAL_16]] : !pto.vreg<64xf32>
 // CHECK-NEXT: }
 // CHECK-NEXT: %[[VAL_17:[a-zA-Z0-9_.$-]+]] = pto.pset_b32 "PAT_VL8" : !pto.mask<b32>
-// CHECK-NEXT: %[[VAL_18:[a-zA-Z0-9_.$-]+]] = pto.addptr %[[VAL_2]], %[[VAL_7]] : <f32, ub> -> <f32, ub>
+// CHECK-NEXT: %[[VAL_18:[a-zA-Z0-9_.$-]+]] = pto.addptr %[[VAL_2]], %[[VAL_7]] : <f32, ub>, index -> <f32, ub>
 // CHECK-NEXT: %[[VAL_19:[a-zA-Z0-9_.$-]+]] = pto.vsldb %[[VAL_18]], %[[VAL_5]], %[[VAL_5]], %[[VAL_17]] : !pto.ptr<f32, ub>, i16, i16, !pto.mask<b32> -> !pto.vreg<64xf32>
 // CHECK-NEXT: %[[VAL_20:[a-zA-Z0-9_.$-]+]] = pto.pset_b32 "PAT_VL8" : !pto.mask<b32>
 // CHECK-NEXT: %[[VAL_21:[a-zA-Z0-9_.$-]+]] = pto.vadd %[[VAL_9]], %[[VAL_19]], %[[VAL_20]] : !pto.vreg<64xf32>, !pto.vreg<64xf32>, !pto.mask<b32> -> !pto.vreg<64xf32>
 // CHECK-NEXT: %[[VAL_22:[a-zA-Z0-9_.$-]+]] = pto.pset_b32 "PAT_VL8" : !pto.mask<b32>
-// CHECK-NEXT: pto.vsts %[[VAL_21]], %[[VAL_3]]{{\[}}%[[VAL_7]]], %[[VAL_22]] : !pto.vreg<64xf32>, !pto.ptr<f32, ub>, !pto.mask<b32>
+// CHECK-NEXT: pto.vsts %[[VAL_21]], %[[VAL_3]]{{\[}}%[[VAL_7]]], %[[VAL_22]] : !pto.vreg<64xf32>, !pto.ptr<f32, ub>, index, !pto.mask<b32>
 // CHECK-NEXT: return
 // CHECK-NEXT: }

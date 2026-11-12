@@ -30,11 +30,11 @@ KERNEL_SOURCE = (
     '%laneid = pto.get_laneid : i32\n    %base_i32 = arith.muli %laneid, %c8_i32 : i32\n    %idx0 = arith.index_c'
     'astui %base_i32 : i32 to index\n    %idx1 = arith.addi %idx0, %c1 : index\n    %idx2 = arith.addi %idx0, %c2'
     ' : index\n    %idx3 = arith.addi %idx0, %c3 : index\n    %idx4 = arith.addi %idx0, %c4 : index\n\n    %v_cac'
-    'he = pto.ldg %arg0[%idx0] l1cache(cache) l2cache(nmfv) : !pto.ptr<i32, gm> -> i32\n    %v_uncache = pto.ldg '
-    '%arg0[%idx1] l1cache(uncache) l2cache(nmfv) : !pto.ptr<i32, gm> -> i32\n    %sum = arith.addi %v_cache, %v_u'
-    'ncache : i32\n    pto.stg %v_cache, %arg0[%idx2] l1cache(cache) l2cache(nmfv) : !pto.ptr<i32, gm>, i32\n    '
-    'pto.stg %v_uncache, %arg0[%idx3] l1cache(uncache) l2cache(nmfv) : !pto.ptr<i32, gm>, i32\n    pto.stg %sum, '
-    '%arg0[%idx4] l1cache(cache) l2cache(nmfv) : !pto.ptr<i32, gm>, i32\n    return\n  }\n}\n'
+    'he = pto.ldg %arg0[%idx0] l1cache(cache) l2cache(nmfv) : !pto.ptr<i32, gm>, index -> i32\n    %v_uncache = pto.ldg '
+    '%arg0[%idx1] l1cache(uncache) l2cache(nmfv) : !pto.ptr<i32, gm>, index -> i32\n    %sum = arith.addi %v_cache, %v_u'
+    'ncache : i32\n    pto.stg %v_cache, %arg0[%idx2] l1cache(cache) l2cache(nmfv) : !pto.ptr<i32, gm>, index, i32\n    '
+    'pto.stg %v_uncache, %arg0[%idx3] l1cache(uncache) l2cache(nmfv) : !pto.ptr<i32, gm>, index, i32\n    pto.stg %sum, '
+    '%arg0[%idx4] l1cache(cache) l2cache(nmfv) : !pto.ptr<i32, gm>, index, i32\n    return\n  }\n}\n'
 )
 
 def _golden_scope():

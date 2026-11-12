@@ -21,7 +21,7 @@ module attributes {pto.target_arch = "a5", pto.kernel_kind = #pto.kernel_kind<ve
     "scf.for"(%c0, %c2, %c1) ({
     ^bb0(%i: index):
       %value = arith.index_cast %i : index to i32
-      pto.store %value, %dst[%i] : !pto.ptr<i32, ub>, i32
+      pto.store %value, %dst[%i] : !pto.ptr<i32, ub>, index, i32
       scf.yield
     }) {pto.unroll = "full"} : (index, index, index) -> ()
 
@@ -30,7 +30,7 @@ module attributes {pto.target_arch = "a5", pto.kernel_kind = #pto.kernel_kind<ve
       "scf.for"(%c0, %c4, %c1) ({
       ^bb0(%i: index):
         %value = arith.index_cast %i : index to i32
-        pto.store %value, %dst[%i] : !pto.ptr<i32, ub>, i32
+        pto.store %value, %dst[%i] : !pto.ptr<i32, ub>, index, i32
         scf.yield
       }) {pto.unroll = "full"} : (index, index, index) -> ()
     }
@@ -39,7 +39,7 @@ module attributes {pto.target_arch = "a5", pto.kernel_kind = #pto.kernel_kind<ve
     pto.section.simt<<<32, 1, 1>>> {
       scf.for %i = %c0 to %c2 step %c1 {
         %value = arith.index_cast %i : index to i32
-        pto.store %value, %dst[%i] : !pto.ptr<i32, ub>, i32
+        pto.store %value, %dst[%i] : !pto.ptr<i32, ub>, index, i32
       }
     }
     return

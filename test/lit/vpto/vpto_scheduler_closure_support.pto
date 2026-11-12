@@ -26,7 +26,7 @@ module attributes {pto.target_arch = "a5"} {
   func.func @memory_gated_predicate_closure(%x0: !pto.vreg<64xf32>, %x1: !pto.vreg<64xf32>, %dst: !pto.ptr<f32, ub>, %active: !pto.mask<b32>) {
     %c0 = arith.constant 0 : index
     pto.vecscope {
-      pto.vsts %x0, %dst[%c0], %active {dist = "NORM_B32"} : !pto.vreg<64xf32>, !pto.ptr<f32, ub>, !pto.mask<b32>
+      pto.vsts %x0, %dst[%c0], %active {dist = "NORM_B32"} : !pto.vreg<64xf32>, !pto.ptr<f32, ub>, index, !pto.mask<b32>
       %p0 = pto.vcmp %x0, %x1, %active, "lt" : !pto.vreg<64xf32>, !pto.vreg<64xf32>, !pto.mask<b32> -> !pto.mask<b32>
       %p1 = pto.vcmp %x0, %x1, %active, "lt" : !pto.vreg<64xf32>, !pto.vreg<64xf32>, !pto.mask<b32> -> !pto.mask<b32>
       %p2 = pto.vcmp %x0, %x1, %active, "lt" : !pto.vreg<64xf32>, !pto.vreg<64xf32>, !pto.mask<b32> -> !pto.mask<b32>
@@ -35,14 +35,14 @@ module attributes {pto.target_arch = "a5"} {
       %p5 = pto.vcmp %x0, %x1, %active, "lt" : !pto.vreg<64xf32>, !pto.vreg<64xf32>, !pto.mask<b32> -> !pto.mask<b32>
       %p6 = pto.vcmp %x0, %x1, %active, "lt" : !pto.vreg<64xf32>, !pto.vreg<64xf32>, !pto.mask<b32> -> !pto.mask<b32>
       %p7 = pto.vcmp %x0, %x1, %active, "lt" : !pto.vreg<64xf32>, !pto.vreg<64xf32>, !pto.mask<b32> -> !pto.mask<b32>
-      pto.vsts %x0, %dst[%c0], %p0 {dist = "NORM_B32"} : !pto.vreg<64xf32>, !pto.ptr<f32, ub>, !pto.mask<b32>
-      pto.vsts %x0, %dst[%c0], %p1 {dist = "NORM_B32"} : !pto.vreg<64xf32>, !pto.ptr<f32, ub>, !pto.mask<b32>
-      pto.vsts %x0, %dst[%c0], %p2 {dist = "NORM_B32"} : !pto.vreg<64xf32>, !pto.ptr<f32, ub>, !pto.mask<b32>
-      pto.vsts %x0, %dst[%c0], %p3 {dist = "NORM_B32"} : !pto.vreg<64xf32>, !pto.ptr<f32, ub>, !pto.mask<b32>
-      pto.vsts %x0, %dst[%c0], %p4 {dist = "NORM_B32"} : !pto.vreg<64xf32>, !pto.ptr<f32, ub>, !pto.mask<b32>
-      pto.vsts %x0, %dst[%c0], %p5 {dist = "NORM_B32"} : !pto.vreg<64xf32>, !pto.ptr<f32, ub>, !pto.mask<b32>
-      pto.vsts %x0, %dst[%c0], %p6 {dist = "NORM_B32"} : !pto.vreg<64xf32>, !pto.ptr<f32, ub>, !pto.mask<b32>
-      pto.vsts %x0, %dst[%c0], %p7 {dist = "NORM_B32"} : !pto.vreg<64xf32>, !pto.ptr<f32, ub>, !pto.mask<b32>
+      pto.vsts %x0, %dst[%c0], %p0 {dist = "NORM_B32"} : !pto.vreg<64xf32>, !pto.ptr<f32, ub>, index, !pto.mask<b32>
+      pto.vsts %x0, %dst[%c0], %p1 {dist = "NORM_B32"} : !pto.vreg<64xf32>, !pto.ptr<f32, ub>, index, !pto.mask<b32>
+      pto.vsts %x0, %dst[%c0], %p2 {dist = "NORM_B32"} : !pto.vreg<64xf32>, !pto.ptr<f32, ub>, index, !pto.mask<b32>
+      pto.vsts %x0, %dst[%c0], %p3 {dist = "NORM_B32"} : !pto.vreg<64xf32>, !pto.ptr<f32, ub>, index, !pto.mask<b32>
+      pto.vsts %x0, %dst[%c0], %p4 {dist = "NORM_B32"} : !pto.vreg<64xf32>, !pto.ptr<f32, ub>, index, !pto.mask<b32>
+      pto.vsts %x0, %dst[%c0], %p5 {dist = "NORM_B32"} : !pto.vreg<64xf32>, !pto.ptr<f32, ub>, index, !pto.mask<b32>
+      pto.vsts %x0, %dst[%c0], %p6 {dist = "NORM_B32"} : !pto.vreg<64xf32>, !pto.ptr<f32, ub>, index, !pto.mask<b32>
+      pto.vsts %x0, %dst[%c0], %p7 {dist = "NORM_B32"} : !pto.vreg<64xf32>, !pto.ptr<f32, ub>, index, !pto.mask<b32>
     }
     return
   }

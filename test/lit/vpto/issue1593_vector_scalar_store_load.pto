@@ -19,13 +19,13 @@ module attributes {pto.target_arch = "a5", pto.kernel_kind = #pto.kernel_kind<ve
     %ub = pto.castptr %c0i64 : i64 -> !pto.ptr<f32, ub>
     pto.vecscope {
       %mask = pto.pset_b32 "PAT_ALL" : !pto.mask<b32>
-      %v0 = pto.vlds %ub[%c0] : !pto.ptr<f32, ub> -> !pto.vreg<64xf32>
-      pto.vsts %v0, %ub[%c0], %mask : !pto.vreg<64xf32>, !pto.ptr<f32, ub>, !pto.mask<b32>
-      %s0 = pto.load %ub[%c0] : !pto.ptr<f32, ub> -> f32
-      pto.store %s0, %ub[%c256] : !pto.ptr<f32, ub>, f32
-      %s1 = pto.load %ub[%c256] : !pto.ptr<f32, ub> -> f32
+      %v0 = pto.vlds %ub[%c0] : !pto.ptr<f32, ub>, index -> !pto.vreg<64xf32>
+      pto.vsts %v0, %ub[%c0], %mask : !pto.vreg<64xf32>, !pto.ptr<f32, ub>, index, !pto.mask<b32>
+      %s0 = pto.load %ub[%c0] : !pto.ptr<f32, ub>, index -> f32
+      pto.store %s0, %ub[%c256] : !pto.ptr<f32, ub>, index, f32
+      %s1 = pto.load %ub[%c256] : !pto.ptr<f32, ub>, index -> f32
       %v1 = pto.vdup %s1, %mask : f32, !pto.mask<b32> -> !pto.vreg<64xf32>
-      pto.vsts %v1, %ub[%c0], %mask : !pto.vreg<64xf32>, !pto.ptr<f32, ub>, !pto.mask<b32>
+      pto.vsts %v1, %ub[%c0], %mask : !pto.vreg<64xf32>, !pto.ptr<f32, ub>, index, !pto.mask<b32>
     }
     return
   }

@@ -217,7 +217,7 @@ module {
     %va = pto.partition_view %tva, offsets = [%c0, %c0], sizes = [%c64, %c128] : !pto.tensor_view<?x?xbf16> -> !pto.partition_tensor_view<64x128xbf16>
     %tvb = pto.make_tensor_view %b, shape = [%c128, %c128], strides = [%c128, %c1] : !pto.tensor_view<?x?xbf16>
     %vb = pto.partition_view %tvb, offsets = [%c0, %c0], sizes = [%c128, %c128] : !pto.tensor_view<?x?xbf16> -> !pto.partition_tensor_view<128x128xbf16>
-    %oshift = pto.addptr %o, %e64 : !pto.ptr<f32> -> !pto.ptr<f32>
+    %oshift = pto.addptr %o, %e64 : !pto.ptr<f32>, index -> !pto.ptr<f32>
     %tvo = pto.make_tensor_view %o, shape = [%c64, %c256], strides = [%c256, %c1] : !pto.tensor_view<?x?xf32>
     %vo0 = pto.partition_view %tvo, offsets = [%c0, %c0], sizes = [%c64, %c128] : !pto.tensor_view<?x?xf32> -> !pto.partition_tensor_view<64x128xf32>
     %tvo1 = pto.make_tensor_view %oshift, shape = [%c64, %c256], strides = [%c256, %c1] : !pto.tensor_view<?x?xf32>

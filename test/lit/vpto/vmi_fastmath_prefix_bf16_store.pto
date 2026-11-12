@@ -18,7 +18,7 @@ module {
     %converted = pto.vcvt %src, %mask32 {part = "EVEN", rnd = "Z", sat = "NOSAT"}
         : !pto.vreg<64xf32>, !pto.mask<b32> -> !pto.vreg<128xbf16>
     pto.vsts %converted, %dst[%c0], %mask16 {dist = "NORM_B16"}
-        : !pto.vreg<128xbf16>, !pto.ptr<bf16, ub>, !pto.mask<b16>
+        : !pto.vreg<128xbf16>, !pto.ptr<bf16, ub>, index, !pto.mask<b16>
     return
   }
 }

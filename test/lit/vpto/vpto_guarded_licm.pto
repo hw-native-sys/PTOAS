@@ -39,9 +39,9 @@ module attributes {pto.target_arch = "a5"} {
         %dynamic = arith.muli %iv64, %c128_i64 : i64
         %offset64 = arith.addi %range_base, %dynamic : i64
         %addr = arith.index_cast %offset64 : i64 to index
-        %v = pto.load %buf[%addr] : !pto.ptr<f32, ub> -> f32
+        %v = pto.load %buf[%addr] : !pto.ptr<f32, ub>, index -> f32
         %v2 = arith.addf %v, %v : f32
-        pto.store %v2, %buf[%addr] : !pto.ptr<f32, ub>, f32
+        pto.store %v2, %buf[%addr] : !pto.ptr<f32, ub>, index, f32
       }
     }
     return
@@ -88,7 +88,7 @@ module attributes {pto.target_arch = "a5"} {
         %dynamic = arith.muli %iv64, %c128_i64 : i64
         %dyn_index = arith.index_cast %dynamic : i64 to index
         %addr = arith.addi %base, %dyn_index : index
-        pto.store %c0_i32, %buf[%addr] : !pto.ptr<i32, ub>, i32
+        pto.store %c0_i32, %buf[%addr] : !pto.ptr<i32, ub>, index, i32
       }
     }
     return
@@ -119,7 +119,7 @@ module attributes {pto.target_arch = "a5"} {
       %in_bounds = arith.cmpi slt, %iv, %c1000 : index
       scf.if %in_bounds {
         %buf = pto.castptr %raw : i64 -> !pto.ptr<i32, ub>
-        pto.store %zero, %buf[%iv] : !pto.ptr<i32, ub>, i32
+        pto.store %zero, %buf[%iv] : !pto.ptr<i32, ub>, index, i32
       }
     }
     return
@@ -153,8 +153,8 @@ module attributes {pto.target_arch = "a5"} {
           %dynamic = arith.muli %iv64, %c128_i64 : i64
           %offset64 = arith.addi %range_base, %dynamic : i64
           %addr = arith.index_cast %offset64 : i64 to index
-          %v = pto.load %buf[%addr] : !pto.ptr<f32, ub> -> f32
-          pto.store %v, %buf[%addr] : !pto.ptr<f32, ub>, f32
+          %v = pto.load %buf[%addr] : !pto.ptr<f32, ub>, index -> f32
+          pto.store %v, %buf[%addr] : !pto.ptr<f32, ub>, index, f32
         }
       }
     }
@@ -201,8 +201,8 @@ module attributes {pto.target_arch = "a5"} {
             %dynamic = arith.muli %iv64, %c128_i64 : i64
             %offset64 = arith.addi %range_base, %dynamic : i64
             %addr = arith.index_cast %offset64 : i64 to index
-            %v = pto.load %buf[%addr] : !pto.ptr<f32, ub> -> f32
-            pto.store %v, %buf[%addr] : !pto.ptr<f32, ub>, f32
+            %v = pto.load %buf[%addr] : !pto.ptr<f32, ub>, index -> f32
+            pto.store %v, %buf[%addr] : !pto.ptr<f32, ub>, index, f32
           }
         }
       }
@@ -243,8 +243,8 @@ module attributes {pto.target_arch = "a5"} {
         %dynamic = arith.muli %iv64, %c128_i64 : i64
         %combined = arith.addi %slot, %dynamic : i64
         %addr = arith.index_cast %combined : i64 to index
-        %v = pto.load %buf[%addr] : !pto.ptr<f32, ub> -> f32
-        pto.store %v, %buf[%addr] : !pto.ptr<f32, ub>, f32
+        %v = pto.load %buf[%addr] : !pto.ptr<f32, ub>, index -> f32
+        pto.store %v, %buf[%addr] : !pto.ptr<f32, ub>, index, f32
       }
     }
     return
@@ -280,8 +280,8 @@ module attributes {pto.target_arch = "a5"} {
         %slot = arith.muli %w64, %c32_i64 : i64
         %quotient = arith.divsi %slot, %divisor : i64
         %addr = arith.index_cast %slot : i64 to index
-        %v = pto.load %buf[%addr] : !pto.ptr<f32, ub> -> f32
-        pto.store %v, %buf[%addr] : !pto.ptr<f32, ub>, f32
+        %v = pto.load %buf[%addr] : !pto.ptr<f32, ub>, index -> f32
+        pto.store %v, %buf[%addr] : !pto.ptr<f32, ub>, index, f32
       }
     }
     return
@@ -318,7 +318,7 @@ module attributes {pto.target_arch = "a5"} {
         %ballot = pto.vote_ballot %pred : i1 -> i32
         %shuf = pto.shuffle_idx %v, %c1_i32 : i32, i32 -> i32
         %c0_i32 = arith.constant 0 : i32
-        pto.store %c0_i32, %buf[%iv] : !pto.ptr<i32, ub>, i32
+        pto.store %c0_i32, %buf[%iv] : !pto.ptr<i32, ub>, index, i32
       }
     }
     return
@@ -354,7 +354,7 @@ module attributes {pto.target_arch = "a5"} {
       scf.if %in_bounds {
         %quotient = arith.floordivsi %x, %divisor : i64
         %addr = arith.index_cast %quotient : i64 to index
-        pto.store %c0_i32, %buf[%addr] : !pto.ptr<i32, ub>, i32
+        pto.store %c0_i32, %buf[%addr] : !pto.ptr<i32, ub>, index, i32
       }
     }
     return

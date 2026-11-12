@@ -20,14 +20,14 @@ module attributes {pto.target_arch = "a5", pto.kernel_kind = #pto.kernel_kind<ve
     %ub0 = pto.castptr %c0_i64 : i64 -> !pto.ptr<f32, ub>
     %ub1 = pto.castptr %c256_i64 : i64 -> !pto.ptr<f32, ub>
     %mask = pto.pset_b32 "PAT_ALL" : !pto.mask<b32>
-    %vec0 = pto.vlds %ub1[%c0] : !pto.ptr<f32, ub> -> !pto.vreg<64xf32>
+    %vec0 = pto.vlds %ub1[%c0] : !pto.ptr<f32, ub>, index -> !pto.vreg<64xf32>
     // store#1 -> store#2 : WAW (VST_VST), anchor = before store#2.
-    pto.vsts %vec0, %ub0[%c0], %mask : !pto.vreg<64xf32>, !pto.ptr<f32, ub>, !pto.mask<b32>
-    pto.vsts %vec0, %ub0[%c0], %mask : !pto.vreg<64xf32>, !pto.ptr<f32, ub>, !pto.mask<b32>
+    pto.vsts %vec0, %ub0[%c0], %mask : !pto.vreg<64xf32>, !pto.ptr<f32, ub>, index, !pto.mask<b32>
+    pto.vsts %vec0, %ub0[%c0], %mask : !pto.vreg<64xf32>, !pto.ptr<f32, ub>, index, !pto.mask<b32>
     // load ub0[0]: RAW (store#2 -> load), anchor = before the load.
-    %vec1 = pto.vlds %ub0[%c0] : !pto.ptr<f32, ub> -> !pto.vreg<64xf32>
+    %vec1 = pto.vlds %ub0[%c0] : !pto.ptr<f32, ub>, index -> !pto.vreg<64xf32>
     // store vec1 to a disjoint address so vec1 is not DCE'd.
-    pto.vsts %vec1, %ub1[%c0], %mask : !pto.vreg<64xf32>, !pto.ptr<f32, ub>, !pto.mask<b32>
+    pto.vsts %vec1, %ub1[%c0], %mask : !pto.vreg<64xf32>, !pto.ptr<f32, ub>, index, !pto.mask<b32>
     return
   }
 }

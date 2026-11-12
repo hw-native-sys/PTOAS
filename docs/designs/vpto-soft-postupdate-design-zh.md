@@ -9,12 +9,12 @@
 ```mlir
 // 变换前：偏移由归纳变量计算
 scf.for %iv = %c0 to %N step %c64 iter_args(...) {
-  %vec = pto.vlds %base[%iv] : !pto.ptr<f32, ub> -> !pto.vreg<64xf32>
+  %vec = pto.vlds %base[%iv] : !pto.ptr<f32, ub>, index -> !pto.vreg<64xf32>
 }
 
 // 变换后：指针通过 iter_args 循环携带
 scf.for %iv = %c0 to %N step %c64 iter_args(..., %ptr = %base) {
-  %vec, %new_ptr = pto.vlds %ptr[%c64] : !pto.ptr<f32, ub>
+  %vec, %new_ptr = pto.vlds %ptr[%c64] : !pto.ptr<f32, ub>, index
       -> !pto.vreg<64xf32>, !pto.ptr<f32, ub>
   scf.yield ..., %new_ptr
 }

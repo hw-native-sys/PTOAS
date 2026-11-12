@@ -66,7 +66,7 @@ module {
 // CHECK-NEXT: %[[VAL_2:[a-zA-Z0-9_.$-]+]] = arith.constant 0 : index
 // CHECK-NEXT: %[[VAL_3:[a-zA-Z0-9_.$-]+]] = pto.vci %[[VAL_0]] : si32 -> !pto.vreg<64xsi32>
 // CHECK-NEXT: %[[VAL_4:[a-zA-Z0-9_.$-]+]] = pto.pset_b32 "PAT_ALL" : !pto.mask<b32>
-// CHECK-NEXT: pto.vsts %[[VAL_3]], %[[VAL_1]]{{\[}}%[[VAL_2]]], %[[VAL_4]] : !pto.vreg<64xsi32>, !pto.ptr<si32, ub>, !pto.mask<b32>
+// CHECK-NEXT: pto.vsts %[[VAL_3]], %[[VAL_1]]{{\[}}%[[VAL_2]]], %[[VAL_4]] : !pto.vreg<64xsi32>, !pto.ptr<si32, ub>, index, !pto.mask<b32>
 // CHECK-NEXT: return
 // CHECK-NEXT: }
 // CHECK-LABEL: func.func @vmi_to_vpto_iota_signed_base_split(

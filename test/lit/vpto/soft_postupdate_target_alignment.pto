@@ -33,9 +33,9 @@ module attributes {pto.target_arch = "a3", pto.kernel_kind = #pto.kernel_kind<ve
         pto.psti %mask, %dst_ptr[%c0], "PK"
             : !pto.mask<b8>, !pto.ptr<i8, ub>, index
         %next_src = pto.addptr %src_ptr, %c16
-            : !pto.ptr<i8, ub> -> !pto.ptr<i8, ub>
+            : !pto.ptr<i8, ub>, index -> !pto.ptr<i8, ub>
         %next_dst = pto.addptr %dst_ptr, %c16
-            : !pto.ptr<i8, ub> -> !pto.ptr<i8, ub>
+            : !pto.ptr<i8, ub>, index -> !pto.ptr<i8, ub>
         scf.yield %next_src, %next_dst
             : !pto.ptr<i8, ub>, !pto.ptr<i8, ub>
       }

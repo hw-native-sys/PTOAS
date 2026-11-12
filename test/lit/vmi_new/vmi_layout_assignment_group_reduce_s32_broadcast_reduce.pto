@@ -205,27 +205,27 @@ module {
 // LOWER-NEXT: %[[VAL_152:[a-zA-Z0-9_.$-]+]] = pto.pand %[[VAL_7]], %[[VAL_150]], %[[VAL_151]] : !pto.mask<b32>, !pto.mask<b32>, !pto.mask<b32> -> !pto.mask<b32>
 // LOWER-NEXT: %[[VAL_153:[a-zA-Z0-9_.$-]+]] = pto.vcadd %[[VAL_105]], %[[VAL_152]] : !pto.vreg<64xf32>, !pto.mask<b32> -> !pto.vreg<64xf32>
 // LOWER-NEXT: %[[VAL_154:[a-zA-Z0-9_.$-]+]] = pto.pset_b32 "PAT_VL1" : !pto.mask<b32>
-// LOWER-NEXT: pto.vsts %[[VAL_109]], %[[VAL_8]]{{\[}}%[[VAL_9]]], %[[VAL_154]] {dist = "1PT_B32"} : !pto.vreg<64xf32>, !pto.ptr<f32, ub>, !pto.mask<b32>
+// LOWER-NEXT: pto.vsts %[[VAL_109]], %[[VAL_8]]{{\[}}%[[VAL_9]]], %[[VAL_154]] {dist = "1PT_B32"} : !pto.vreg<64xf32>, !pto.ptr<f32, ub>, index, !pto.mask<b32>
 // LOWER-NEXT: %[[VAL_155:[a-zA-Z0-9_.$-]+]] = pto.pset_b32 "PAT_VL1" : !pto.mask<b32>
 // LOWER-NEXT: %[[VAL_156:[a-zA-Z0-9_.$-]+]] = arith.addi %[[VAL_9]], %[[VAL_16]] : index
-// LOWER-NEXT: pto.vsts %[[VAL_117]], %[[VAL_8]]{{\[}}%[[VAL_156]]], %[[VAL_155]] {dist = "1PT_B32"} : !pto.vreg<64xf32>, !pto.ptr<f32, ub>, !pto.mask<b32>
+// LOWER-NEXT: pto.vsts %[[VAL_117]], %[[VAL_8]]{{\[}}%[[VAL_156]]], %[[VAL_155]] {dist = "1PT_B32"} : !pto.vreg<64xf32>, !pto.ptr<f32, ub>, index, !pto.mask<b32>
 // LOWER-NEXT: %[[VAL_157:[a-zA-Z0-9_.$-]+]] = pto.pset_b32 "PAT_VL1" : !pto.mask<b32>
 // LOWER-NEXT: %[[VAL_158:[a-zA-Z0-9_.$-]+]] = arith.addi %[[VAL_9]], %[[VAL_15]] : index
-// LOWER-NEXT: pto.vsts %[[VAL_121]], %[[VAL_8]]{{\[}}%[[VAL_158]]], %[[VAL_157]] {dist = "1PT_B32"} : !pto.vreg<64xf32>, !pto.ptr<f32, ub>, !pto.mask<b32>
+// LOWER-NEXT: pto.vsts %[[VAL_121]], %[[VAL_8]]{{\[}}%[[VAL_158]]], %[[VAL_157]] {dist = "1PT_B32"} : !pto.vreg<64xf32>, !pto.ptr<f32, ub>, index, !pto.mask<b32>
 // LOWER-NEXT: %[[VAL_159:[a-zA-Z0-9_.$-]+]] = pto.pset_b32 "PAT_VL1" : !pto.mask<b32>
 // LOWER-NEXT: %[[VAL_160:[a-zA-Z0-9_.$-]+]] = arith.addi %[[VAL_9]], %[[VAL_14]] : index
-// LOWER-NEXT: pto.vsts %[[VAL_129]], %[[VAL_8]]{{\[}}%[[VAL_160]]], %[[VAL_159]] {dist = "1PT_B32"} : !pto.vreg<64xf32>, !pto.ptr<f32, ub>, !pto.mask<b32>
+// LOWER-NEXT: pto.vsts %[[VAL_129]], %[[VAL_8]]{{\[}}%[[VAL_160]]], %[[VAL_159]] {dist = "1PT_B32"} : !pto.vreg<64xf32>, !pto.ptr<f32, ub>, index, !pto.mask<b32>
 // LOWER-NEXT: %[[VAL_161:[a-zA-Z0-9_.$-]+]] = pto.pset_b32 "PAT_VL1" : !pto.mask<b32>
 // LOWER-NEXT: %[[VAL_162:[a-zA-Z0-9_.$-]+]] = arith.addi %[[VAL_9]], %[[VAL_13]] : index
-// LOWER-NEXT: pto.vsts %[[VAL_133]], %[[VAL_8]]{{\[}}%[[VAL_162]]], %[[VAL_161]] {dist = "1PT_B32"} : !pto.vreg<64xf32>, !pto.ptr<f32, ub>, !pto.mask<b32>
+// LOWER-NEXT: pto.vsts %[[VAL_133]], %[[VAL_8]]{{\[}}%[[VAL_162]]], %[[VAL_161]] {dist = "1PT_B32"} : !pto.vreg<64xf32>, !pto.ptr<f32, ub>, index, !pto.mask<b32>
 // LOWER-NEXT: %[[VAL_163:[a-zA-Z0-9_.$-]+]] = pto.pset_b32 "PAT_VL1" : !pto.mask<b32>
 // LOWER-NEXT: %[[VAL_164:[a-zA-Z0-9_.$-]+]] = arith.addi %[[VAL_9]], %[[VAL_12]] : index
-// LOWER-NEXT: pto.vsts %[[VAL_141]], %[[VAL_8]]{{\[}}%[[VAL_164]]], %[[VAL_163]] {dist = "1PT_B32"} : !pto.vreg<64xf32>, !pto.ptr<f32, ub>, !pto.mask<b32>
+// LOWER-NEXT: pto.vsts %[[VAL_141]], %[[VAL_8]]{{\[}}%[[VAL_164]]], %[[VAL_163]] {dist = "1PT_B32"} : !pto.vreg<64xf32>, !pto.ptr<f32, ub>, index, !pto.mask<b32>
 // LOWER-NEXT: %[[VAL_165:[a-zA-Z0-9_.$-]+]] = pto.pset_b32 "PAT_VL1" : !pto.mask<b32>
 // LOWER-NEXT: %[[VAL_166:[a-zA-Z0-9_.$-]+]] = arith.addi %[[VAL_9]], %[[VAL_11]] : index
-// LOWER-NEXT: pto.vsts %[[VAL_145]], %[[VAL_8]]{{\[}}%[[VAL_166]]], %[[VAL_165]] {dist = "1PT_B32"} : !pto.vreg<64xf32>, !pto.ptr<f32, ub>, !pto.mask<b32>
+// LOWER-NEXT: pto.vsts %[[VAL_145]], %[[VAL_8]]{{\[}}%[[VAL_166]]], %[[VAL_165]] {dist = "1PT_B32"} : !pto.vreg<64xf32>, !pto.ptr<f32, ub>, index, !pto.mask<b32>
 // LOWER-NEXT: %[[VAL_167:[a-zA-Z0-9_.$-]+]] = pto.pset_b32 "PAT_VL1" : !pto.mask<b32>
 // LOWER-NEXT: %[[VAL_168:[a-zA-Z0-9_.$-]+]] = arith.addi %[[VAL_9]], %[[VAL_10]] : index
-// LOWER-NEXT: pto.vsts %[[VAL_153]], %[[VAL_8]]{{\[}}%[[VAL_168]]], %[[VAL_167]] {dist = "1PT_B32"} : !pto.vreg<64xf32>, !pto.ptr<f32, ub>, !pto.mask<b32>
+// LOWER-NEXT: pto.vsts %[[VAL_153]], %[[VAL_8]]{{\[}}%[[VAL_168]]], %[[VAL_167]] {dist = "1PT_B32"} : !pto.vreg<64xf32>, !pto.ptr<f32, ub>, index, !pto.mask<b32>
 // LOWER-NEXT: return
 // LOWER-NEXT: }

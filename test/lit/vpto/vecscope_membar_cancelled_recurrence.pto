@@ -27,10 +27,10 @@ module {
         %t2 = arith.muli %i, %two : index
         %t1 = arith.subi %t3, %t2 : index
         %off = arith.subi %t1, %i : index
-        pto.vsts %v, %q[%off], %m : !pto.vreg<64xf32>, !pto.ptr<f32, ub>, !pto.mask<b32>
-        %read = pto.vlds %q[%z] : !pto.ptr<f32, ub> -> !pto.vreg<64xf32>
-        pto.vsts %read, %d[%z], %m : !pto.vreg<64xf32>, !pto.ptr<f32, ub>, !pto.mask<b32>
-        %next = pto.addptr %q, %c64 : <f32, ub> -> <f32, ub>
+        pto.vsts %v, %q[%off], %m : !pto.vreg<64xf32>, !pto.ptr<f32, ub>, index, !pto.mask<b32>
+        %read = pto.vlds %q[%z] : !pto.ptr<f32, ub>, index -> !pto.vreg<64xf32>
+        pto.vsts %read, %d[%z], %m : !pto.vreg<64xf32>, !pto.ptr<f32, ub>, index, !pto.mask<b32>
+        %next = pto.addptr %q, %c64 : <f32, ub>, index -> <f32, ub>
         scf.yield %next : !pto.ptr<f32, ub>
       }
     }
@@ -51,16 +51,16 @@ module {
       %m = pto.pset_b32 "PAT_ALL" : !pto.mask<b32>
       scf.for %outer = %one to %three step %one {
         %outer_offset = arith.muli %outer, %c64 : index
-        %base = pto.addptr %p, %outer_offset : <f32, ub> -> <f32, ub>
+        %base = pto.addptr %p, %outer_offset : <f32, ub>, index -> <f32, ub>
         %end = scf.for %i = %one to %three step %one iter_args(%q = %base) -> (!pto.ptr<f32, ub>) {
           %t3 = arith.muli %outer, %three : index
           %t2 = arith.muli %outer, %two : index
           %t1 = arith.subi %t3, %t2 : index
           %off = arith.subi %t1, %outer : index
-          pto.vsts %v, %q[%off], %m : !pto.vreg<64xf32>, !pto.ptr<f32, ub>, !pto.mask<b32>
-          %read = pto.vlds %q[%z] : !pto.ptr<f32, ub> -> !pto.vreg<64xf32>
-          pto.vsts %read, %d[%z], %m : !pto.vreg<64xf32>, !pto.ptr<f32, ub>, !pto.mask<b32>
-          %next = pto.addptr %q, %c64 : <f32, ub> -> <f32, ub>
+          pto.vsts %v, %q[%off], %m : !pto.vreg<64xf32>, !pto.ptr<f32, ub>, index, !pto.mask<b32>
+          %read = pto.vlds %q[%z] : !pto.ptr<f32, ub>, index -> !pto.vreg<64xf32>
+          pto.vsts %read, %d[%z], %m : !pto.vreg<64xf32>, !pto.ptr<f32, ub>, index, !pto.mask<b32>
+          %next = pto.addptr %q, %c64 : <f32, ub>, index -> <f32, ub>
           scf.yield %next : !pto.ptr<f32, ub>
         }
       }

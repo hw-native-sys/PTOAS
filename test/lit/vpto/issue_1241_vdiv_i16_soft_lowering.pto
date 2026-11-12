@@ -22,7 +22,7 @@ module attributes {pto.target_arch = "a5", pto.kernel_kind = #pto.kernel_kind<ve
     %quotient = pto.vdiv %lhs, %rhs, %mask :
       !pto.vreg<128xsi16>, !pto.vreg<128xsi16>, !pto.mask<b16> -> !pto.vreg<128xsi16>
     pto.vsts %quotient, %dst[%c0], %mask :
-      !pto.vreg<128xsi16>, !pto.ptr<si16, ub>, !pto.mask<b16>
+      !pto.vreg<128xsi16>, !pto.ptr<si16, ub>, index, !pto.mask<b16>
     return
   }
 }

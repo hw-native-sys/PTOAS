@@ -97,9 +97,9 @@ module attributes {pto.target_arch = "a5"} {
     %c4 = arith.constant 4 : index
     scf.for %iv = %c0 to %c4 step %c1 {
       %value = pto.vlds %src[%iv]
-          : !pto.ptr<f32, ub> -> !pto.vreg<64xf32>
+          : !pto.ptr<f32, ub>, index -> !pto.vreg<64xf32>
       pto.vsts %value, %dst[%iv], %mask
-          : !pto.vreg<64xf32>, !pto.ptr<f32, ub>, !pto.mask<b32>
+          : !pto.vreg<64xf32>, !pto.ptr<f32, ub>, index, !pto.mask<b32>
     }
     return
   }
@@ -229,12 +229,12 @@ module attributes {pto.target_arch = "a5"} {
         iter_args(%ptr = %src) -> (!pto.ptr<f32, ub>) {
       %offset = arith.muli %iv, %c2 : index
       %value = pto.vlds %ptr[%offset]
-          : !pto.ptr<f32, ub> -> !pto.vreg<64xf32>
+          : !pto.ptr<f32, ub>, index -> !pto.vreg<64xf32>
       %align = pto.vldas %ptr : !pto.ptr<f32, ub> -> !pto.align
       %unused_value, %unused_align = pto.vldus %ptr, %align
           : !pto.ptr<f32, ub>, !pto.align -> !pto.vreg<64xf32>, !pto.align
       %next_ptr = pto.addptr %ptr, %c1
-          : !pto.ptr<f32, ub> -> !pto.ptr<f32, ub>
+          : !pto.ptr<f32, ub>, index -> !pto.ptr<f32, ub>
       scf.yield %next_ptr : !pto.ptr<f32, ub>
     }
     return
@@ -262,7 +262,7 @@ module attributes {pto.target_arch = "a5"} {
       %aligned = pto.pldi %align_ptr[%c0], "NORM"
           : !pto.ptr<i8, ub>, index -> !pto.mask<b8>
       %next = pto.addptr %align_ptr, %c32
-          : !pto.ptr<i8, ub> -> !pto.ptr<i8, ub>
+          : !pto.ptr<i8, ub>, index -> !pto.ptr<i8, ub>
       scf.yield %next : !pto.ptr<i8, ub>
     }
     return
@@ -273,11 +273,11 @@ module attributes {pto.target_arch = "a5"} {
     %c1 = arith.constant 1 : index
     %c3 = arith.constant 3 : index
     %biased = pto.addptr %src, %bias
-        : !pto.ptr<f32, ub> -> !pto.ptr<f32, ub>
+        : !pto.ptr<f32, ub>, index -> !pto.ptr<f32, ub>
     scf.for %iv = %c0 to %c3 step %c1 {
       %scaled = arith.muli %iv, %c3 : index
       %value = pto.vlds %biased[%scaled]
-          : !pto.ptr<f32, ub> -> !pto.vreg<64xf32>
+          : !pto.ptr<f32, ub>, index -> !pto.vreg<64xf32>
     }
     return
   }
@@ -292,9 +292,9 @@ module attributes {pto.target_arch = "a5"} {
         iter_args(%offset_i8 = %c3_i8) -> (i8) {
       %offset = arith.index_castui %offset_i8 : i8 to index
       %address = pto.addptr %src, %offset
-          : !pto.ptr<ui8, ub> -> !pto.ptr<ui8, ub>
+          : !pto.ptr<ui8, ub>, index -> !pto.ptr<ui8, ub>
       %value = pto.vlds %address[%c0]
-          : !pto.ptr<ui8, ub> -> !pto.vreg<256xui8>
+          : !pto.ptr<ui8, ub>, index -> !pto.vreg<256xui8>
       %next = arith.subi %offset_i8, %c1_i8 : i8
       scf.yield %next : i8
     }
@@ -315,17 +315,17 @@ module attributes {pto.target_arch = "a5"} {
     scf.for %iv = %c0 to %c2 step %c1
         iter_args(%ptr = %src) -> (!pto.ptr<ui8, ub>) {
       %value = pto.vlds %ptr[%c0]
-          : !pto.ptr<ui8, ub> -> !pto.vreg<256xui8>
+          : !pto.ptr<ui8, ub>, index -> !pto.vreg<256xui8>
       %next = pto.addptr %ptr, %extended_index
-          : !pto.ptr<ui8, ub> -> !pto.ptr<ui8, ub>
+          : !pto.ptr<ui8, ub>, index -> !pto.ptr<ui8, ub>
       scf.yield %next : !pto.ptr<ui8, ub>
     }
     scf.for %iv = %c0 to %c2 step %c1
         iter_args(%ptr = %src) -> (!pto.ptr<ui8, ub>) {
       %value = pto.vlds %ptr[%c0]
-          : !pto.ptr<ui8, ub> -> !pto.vreg<256xui8>
+          : !pto.ptr<ui8, ub>, index -> !pto.vreg<256xui8>
       %next = pto.addptr %ptr, %truncated_step
-          : !pto.ptr<ui8, ub> -> !pto.ptr<ui8, ub>
+          : !pto.ptr<ui8, ub>, index -> !pto.ptr<ui8, ub>
       scf.yield %next : !pto.ptr<ui8, ub>
     }
     return
@@ -360,7 +360,7 @@ module attributes {pto.target_arch = "a5"} {
     %c2 = arith.constant 2 : index
     scf.for %iv = %c0 to %c2 step %c1 {
       %value = pto.vlds %base[%c0]
-          : !pto.ptr<ui8, ub> -> !pto.vreg<256xui8>
+          : !pto.ptr<ui8, ub>, index -> !pto.vreg<256xui8>
     }
     return
   }
@@ -375,24 +375,24 @@ module attributes {pto.target_arch = "a5"} {
     scf.for %iv = %c0 to %c2 step %c1 {
       %wrapping_add = arith.addi %iv, %cmax : index
       %add_address = pto.addptr %base, %wrapping_add
-          : !pto.ptr<ui8, ub> -> !pto.ptr<ui8, ub>
+          : !pto.ptr<ui8, ub>, index -> !pto.ptr<ui8, ub>
       %add_value = pto.vlds %add_address[%c0]
-          : !pto.ptr<ui8, ub> -> !pto.vreg<256xui8>
+          : !pto.ptr<ui8, ub>, index -> !pto.vreg<256xui8>
       %wrapping_sub = arith.subi %cmin, %iv : index
       %sub_address = pto.addptr %base, %wrapping_sub
-          : !pto.ptr<ui8, ub> -> !pto.ptr<ui8, ub>
+          : !pto.ptr<ui8, ub>, index -> !pto.ptr<ui8, ub>
       %sub_value = pto.vlds %sub_address[%c0]
-          : !pto.ptr<ui8, ub> -> !pto.vreg<256xui8>
+          : !pto.ptr<ui8, ub>, index -> !pto.vreg<256xui8>
       %wrapping_mul = arith.muli %iv, %cmax : index
       %mul_address = pto.addptr %base, %wrapping_mul
-          : !pto.ptr<ui8, ub> -> !pto.ptr<ui8, ub>
+          : !pto.ptr<ui8, ub>, index -> !pto.ptr<ui8, ub>
       %mul_value = pto.vlds %mul_address[%c0]
-          : !pto.ptr<ui8, ub> -> !pto.vreg<256xui8>
+          : !pto.ptr<ui8, ub>, index -> !pto.vreg<256xui8>
       %safe_mul = arith.muli %iv, %c32 : index
       %safe_address = pto.addptr %base, %safe_mul
-          : !pto.ptr<ui8, ub> -> !pto.ptr<ui8, ub>
+          : !pto.ptr<ui8, ub>, index -> !pto.ptr<ui8, ub>
       %safe_value = pto.vlds %safe_address[%c0]
-          : !pto.ptr<ui8, ub> -> !pto.vreg<256xui8>
+          : !pto.ptr<ui8, ub>, index -> !pto.vreg<256xui8>
     }
     return
   }

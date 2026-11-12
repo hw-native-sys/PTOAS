@@ -41,4 +41,4 @@ module {
 // LOWER: %[[P2_BF16:.*]] = pto.vbitcast %[[P2]] : !pto.vreg<64x!pto.bf16x2> -> !pto.vreg<128xbf16>
 // LOWER: %[[R2:.*]] = pto.vcvt %[[P2_BF16]], {{.*}} {part = "P2", rnd = "A"} : !pto.vreg<128xbf16>, !pto.mask<b16> -> !pto.vreg<256x!pto.f4E1M2x2>
 // LOWER: %[[PACKED:.*]] = pto.vor %[[R0]], %[[R2]]
-// LOWER: pto.vsts %[[PACKED]], %[[DST]][{{.*}}], {{.*}} {dist = "PK_B16"} : !pto.vreg<256x!pto.f4E1M2x2>, !pto.ptr<!pto.f4E1M2x2, ub>, !pto.mask<b16>
+// LOWER: pto.vsts %[[PACKED]], %[[DST]][{{.*}}], {{.*}} {dist = "PK_B16"} : !pto.vreg<256x!pto.f4E1M2x2>, !pto.ptr<!pto.f4E1M2x2, ub>, index, !pto.mask<b16>

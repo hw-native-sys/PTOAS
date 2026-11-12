@@ -44,8 +44,8 @@ module attributes {pto.target_arch = "a5", pto.kernel_kind = #pto.kernel_kind<ve
           iter_args(%off = %c0, %remaining = %c1024_i32) -> (index, i32) {
         %mask, %next_rem = pto.plt_b32 %remaining : i32 -> !pto.mask<b32>, i32
         %s = arith.addi %iv, %c1 : index
-        %vec = pto.vlds %ub_in[%off] {dist = "NORM"} : !pto.ptr<f32, ub> -> !pto.vreg<64xf32>
-        pto.vsts %vec, %ub_out[%off], %mask : !pto.vreg<64xf32>, !pto.ptr<f32, ub>, !pto.mask<b32>
+        %vec = pto.vlds %ub_in[%off] {dist = "NORM"} : !pto.ptr<f32, ub>, index -> !pto.vreg<64xf32>
+        pto.vsts %vec, %ub_out[%off], %mask : !pto.vreg<64xf32>, !pto.ptr<f32, ub>, index, !pto.mask<b32>
         %next_off = arith.addi %off, %s : index
         scf.yield %next_off, %next_rem : index, i32
       }

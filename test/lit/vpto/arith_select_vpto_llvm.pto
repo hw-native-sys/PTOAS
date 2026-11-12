@@ -20,7 +20,7 @@ module attributes {pto.target_arch = "a5", pto.kernel_kind = #pto.kernel_kind<ve
           : f32, !pto.mask<b32> -> !pto.vreg<64xf32>
       %chosen = arith.select %cond, %lhs, %rhs : !pto.vreg<64xf32>
       pto.vsts %chosen, %dst[%c0], %mask
-          : !pto.vreg<64xf32>, !pto.ptr<f32, ub>, !pto.mask<b32>
+          : !pto.vreg<64xf32>, !pto.ptr<f32, ub>, index, !pto.mask<b32>
     }
     return
   }
@@ -35,7 +35,7 @@ module attributes {pto.target_arch = "a5", pto.kernel_kind = #pto.kernel_kind<ve
       %vec = pto.vdup %value, %all
           : f32, !pto.mask<b32> -> !pto.vreg<64xf32>
       pto.vsts %vec, %dst[%c0], %chosen_mask
-          : !pto.vreg<64xf32>, !pto.ptr<f32, ub>, !pto.mask<b32>
+          : !pto.vreg<64xf32>, !pto.ptr<f32, ub>, index, !pto.mask<b32>
     }
     return
   }

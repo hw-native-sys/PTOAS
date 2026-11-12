@@ -373,8 +373,13 @@ def coerce_scalar_value_to_type(value, target_type, *, context: str):
     )
 
 
-def coerce_runtime_index_value(value, *, context: str):
-    """Normalize one already-unwrapped authored value/literal to an MLIR index value."""
+def _normalize_index_or_integer_scalar(value, *, context: str, as_index: bool):
+    """Validate an index-shaped or integer scalar, and pick its normalized form.
+
+    ``as_index`` selects the interpretation the caller needs: an operand that has
+    to be an index (a loop bound, an event id) is converted, while an element
+    offset keeps its own width because the memory ops accept a signless integer.
+    """
     if isinstance(value, bool):
         raise TypeError(f"{context} does not accept bool values")
     if isinstance(value, int):
@@ -390,9 +395,25 @@ def coerce_runtime_index_value(value, *, context: str):
     if IndexType.isinstance(value_type):
         return value
     if IntegerType.isinstance(value_type):
+        if not as_index:
+            return _pto_cast(value, _signless_integer_type(value_type))
         return _pto_cast(value, IndexType.get(), index=True)
 
     raise TypeError(f"{context} expects an index or integer runtime scalar, got {value_type}")
+
+
+def coerce_runtime_index_value(value, *, context: str):
+    """Normalize one already-unwrapped authored value/literal to an MLIR index value."""
+    return _normalize_index_or_integer_scalar(value, context=context, as_index=True)
+
+
+def coerce_runtime_element_offset_value(value, *, context: str):
+    """Normalize one already-unwrapped authored value/literal to an element offset.
+
+    The pointer-based memory ops and pto.addptr accept either the platform index
+    type or a signless integer, so an integer offset is kept in its own width.
+    """
+    return _normalize_index_or_integer_scalar(value, context=context, as_index=False)
 
 
 def coerce_runtime_loop_bounds(start, stop, step, *, context: str):

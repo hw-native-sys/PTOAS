@@ -57,7 +57,7 @@ module attributes {pto.target_arch = "a5", pto.kernel_kind = #pto.kernel_kind<ve
       %initial_store_align = pto.init_align : !pto.align
       %vstas_align = pto.init_align : !pto.align
       %vlds = pto.vlds %src[%c0]
-            : !pto.ptr<f32, ub> -> !pto.vreg<64xf32>
+            : !pto.ptr<f32, ub>, index -> !pto.vreg<64xf32>
       %low, %high = pto.vldsx2 %src[%c0], "DINTLV_B32"
             : !pto.ptr<f32, ub>, index
               -> !pto.vreg<64xf32>, !pto.vreg<64xf32>
@@ -69,7 +69,7 @@ module attributes {pto.target_arch = "a5", pto.kernel_kind = #pto.kernel_kind<ve
       %pldi = pto.pldi %src[%c0], "NORM"
             : !pto.ptr<f32, ub>, index -> !pto.mask<b32>
       pto.vsts %value, %dst[%c0], %mask
-            : !pto.vreg<64xf32>, !pto.ptr<f32, ub>, !pto.mask<b32>
+            : !pto.vreg<64xf32>, !pto.ptr<f32, ub>, index, !pto.mask<b32>
       %store_align =
           pto.vstus %initial_store_align, %c0_i32, %value, %dst
             : !pto.align, i32, !pto.vreg<64xf32>, !pto.ptr<f32, ub>
@@ -90,7 +90,7 @@ module attributes {pto.target_arch = "a5", pto.kernel_kind = #pto.kernel_kind<ve
               !pto.mask<b32>
 
       %post_value, %post_vlds_base = pto.vlds %src[%c1]
-            : !pto.ptr<f32, ub> -> !pto.vreg<64xf32>, !pto.ptr<f32, ub>
+            : !pto.ptr<f32, ub>, index -> !pto.vreg<64xf32>, !pto.ptr<f32, ub>
       %post_low, %post_high, %post_vldsx2_base =
             pto.vldsx2 %src[%c1], "DINTLV_B32"
             : !pto.ptr<f32, ub>, index
@@ -104,7 +104,7 @@ module attributes {pto.target_arch = "a5", pto.kernel_kind = #pto.kernel_kind<ve
       %post_pldi, %post_pldi_base = pto.pldi %src[%c1], "NORM"
             : !pto.ptr<f32, ub>, index -> !pto.mask<b32>, !pto.ptr<f32, ub>
       %post_vsts_base = pto.vsts %value, %dst[%c1], %mask
-            : !pto.vreg<64xf32>, !pto.ptr<f32, ub>, !pto.mask<b32>
+            : !pto.vreg<64xf32>, !pto.ptr<f32, ub>, index, !pto.mask<b32>
               -> !pto.ptr<f32, ub>
       %post_store_align, %post_vstus_base =
             pto.vstus %store_align, %c0_i32, %value, %dst

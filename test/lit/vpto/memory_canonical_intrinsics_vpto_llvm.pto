@@ -15,12 +15,12 @@ module attributes {pto.target_arch = "a5", pto.kernel_kind = #pto.kernel_kind<ve
     pto.vecscope {
       %mask = pto.pset_b32 "PAT_ALL" : !pto.mask<b32>
       %value, %next_src = pto.vlds %src[%c0]
-          : !pto.ptr<si32, ub> -> !pto.vreg<64xsi32>, !pto.ptr<si32, ub>
+          : !pto.ptr<si32, ub>, index -> !pto.vreg<64xsi32>, !pto.ptr<si32, ub>
       %next_dst = pto.vsts %value, %dst[%c0], %mask {dist = "NORM_B32"}
-          : !pto.vreg<64xsi32>, !pto.ptr<si32, ub>, !pto.mask<b32>
+          : !pto.vreg<64xsi32>, !pto.ptr<si32, ub>, index, !pto.mask<b32>
           -> !pto.ptr<si32, ub>
       pto.vsts %value, %next_dst[%c0], %mask {dist = "NORM_B32"}
-          : !pto.vreg<64xsi32>, !pto.ptr<si32, ub>, !pto.mask<b32>
+          : !pto.vreg<64xsi32>, !pto.ptr<si32, ub>, index, !pto.mask<b32>
     }
     return
   }
@@ -51,7 +51,7 @@ module attributes {pto.target_arch = "a5", pto.kernel_kind = #pto.kernel_kind<ve
           : !pto.ptr<ui64, ub>, i16, i16, !pto.mask<b32>
           -> !pto.vreg<32xui64>
       pto.vsts %value, %dst[%offset], %mask {dist = "PK_B64"}
-          : !pto.vreg<32xui64>, !pto.ptr<ui64, ub>, !pto.mask<b32>
+          : !pto.vreg<32xui64>, !pto.ptr<ui64, ub>, index, !pto.mask<b32>
     }
     return
   }

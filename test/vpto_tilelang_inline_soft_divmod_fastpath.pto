@@ -29,11 +29,11 @@ module attributes {pto.target_arch = "a5"} {
     %tmp_1 = pto.tile_buf_addr %arg1 : !pto.tile_buf<loc=vec, dtype=i16, rows=8, cols=16, v_row=8, v_col=16, blayout=row_major, slayout=none_box, fractal=512, pad=0> -> !pto.ptr<i16, ub>
     pto.vecscope {
       %mask_0 = pto.pset_b16 "PAT_ALL" : !pto.mask<b16>
-      %vec_1 = pto.vlds %tmp_1[%c0] : !pto.ptr<i16, ub> -> !pto.vreg<128xi16>
+      %vec_1 = pto.vlds %tmp_1[%c0] : !pto.ptr<i16, ub>, index -> !pto.vreg<128xi16>
       %q_59 = func.call @__tl_inline__tl_soft_vdiv_2(%vec_1, %vec_1, %mask_0) : (!pto.vreg<128xi16>, !pto.vreg<128xi16>, !pto.mask<b16>) -> !pto.vreg<128xi16>
       %r_81 = func.call @__tl_inline__tl_soft_vmod_4(%vec_1, %vec_1, %mask_0) : (!pto.vreg<128xi16>, !pto.vreg<128xi16>, !pto.mask<b16>) -> !pto.vreg<128xi16>
-      pto.vsts %q_59, %tmp_0[%c0], %mask_0 : !pto.vreg<128xi16>, !pto.ptr<i16, ub>, !pto.mask<b16>
-      pto.vsts %r_81, %tmp_0[%c1], %mask_0 : !pto.vreg<128xi16>, !pto.ptr<i16, ub>, !pto.mask<b16>
+      pto.vsts %q_59, %tmp_0[%c0], %mask_0 : !pto.vreg<128xi16>, !pto.ptr<i16, ub>, index, !pto.mask<b16>
+      pto.vsts %r_81, %tmp_0[%c1], %mask_0 : !pto.vreg<128xi16>, !pto.ptr<i16, ub>, index, !pto.mask<b16>
     }
     return
   }

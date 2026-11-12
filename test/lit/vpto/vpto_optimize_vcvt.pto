@@ -13,7 +13,7 @@ module {
       -> (!pto.vreg<64xf32>, !pto.vreg<64xf32>) {
     %mask = pto.pset_b16 "PAT_ALL" : !pto.mask<b16>
     %load = pto.vlds %src[%off] {dist = "E2B_B16"}
-        : !pto.ptr<f16, ub> -> !pto.vreg<128xf16>
+        : !pto.ptr<f16, ub>, index -> !pto.vreg<128xf16>
     %even = pto.vcvt %load, %mask {part = "EVEN"}
         : !pto.vreg<128xf16>, !pto.mask<b16> -> !pto.vreg<64xf32>
     %odd = pto.vcvt %load, %mask {part = "ODD"}
@@ -25,7 +25,7 @@ module {
       -> (!pto.vreg<64xf32>, !pto.vreg<64xf32>) {
     %mask = pto.pset_b16 "PAT_ALL" : !pto.mask<b16>
     %load = pto.vlds %src[%off] {dist = "BRC_B16"}
-        : !pto.ptr<f16, ub> -> !pto.vreg<128xf16>
+        : !pto.ptr<f16, ub>, index -> !pto.vreg<128xf16>
     %even = pto.vcvt %load, %mask {part = "EVEN"}
         : !pto.vreg<128xf16>, !pto.mask<b16> -> !pto.vreg<64xf32>
     %odd = pto.vcvt %load, %mask {part = "ODD"}
@@ -48,7 +48,7 @@ module {
       -> (!pto.vreg<64xf32>, !pto.vreg<64xf32>) {
     %mask = pto.pset_b16 "PAT_ALL" : !pto.mask<b16>
     %load = pto.vlds %src[%off]
-        : !pto.ptr<f16, ub> -> !pto.vreg<128xf16>
+        : !pto.ptr<f16, ub>, index -> !pto.vreg<128xf16>
     %even = pto.vcvt %load, %mask {part = "EVEN"}
         : !pto.vreg<128xf16>, !pto.mask<b16> -> !pto.vreg<64xf32>
     %odd = pto.vcvt %load, %mask {part = "ODD"}
@@ -71,7 +71,7 @@ module {
       -> !pto.vreg<128xui16> {
     %mask = pto.pset_b8 "PAT_ALL" : !pto.mask<b8>
     %load = pto.vlds %src[%off] {dist = "UNPK_B8"}
-        : !pto.ptr<ui8, ub> -> !pto.vreg<256xui8>
+        : !pto.ptr<ui8, ub>, index -> !pto.vreg<256xui8>
     %wide = pto.vcvt %load, %mask {part = "EVEN"}
         : !pto.vreg<256xui8>, !pto.mask<b8> -> !pto.vreg<128xui16>
     return %wide : !pto.vreg<128xui16>
@@ -81,7 +81,7 @@ module {
       -> !pto.vreg<64xui32> {
     %mask = pto.pset_b16 "PAT_ALL" : !pto.mask<b16>
     %load = pto.vlds %src[%off] {dist = "UNPK_B16"}
-        : !pto.ptr<ui16, ub> -> !pto.vreg<128xui16>
+        : !pto.ptr<ui16, ub>, index -> !pto.vreg<128xui16>
     %wide = pto.vcvt %load, %mask {part = "EVEN"}
         : !pto.vreg<128xui16>, !pto.mask<b16> -> !pto.vreg<64xui32>
     return %wide : !pto.vreg<64xui32>
@@ -91,7 +91,7 @@ module {
       -> !pto.vreg<64xui32> {
     %mask = pto.pset_b8 "PAT_ALL" : !pto.mask<b8>
     %load = pto.vlds %src[%off] {dist = "UNPK4"}
-        : !pto.ptr<ui8, ub> -> !pto.vreg<256xui8>
+        : !pto.ptr<ui8, ub>, index -> !pto.vreg<256xui8>
     %wide = pto.vcvt %load, %mask {part = "P0"}
         : !pto.vreg<256xui8>, !pto.mask<b8> -> !pto.vreg<64xui32>
     return %wide : !pto.vreg<64xui32>
@@ -170,7 +170,7 @@ module {
       -> !pto.vreg<128xui16> {
     %mask = pto.pset_b8 "PAT_ALL" : !pto.mask<b8>
     %load = pto.vlds %src[%off] {dist = "UNPK_B8"}
-        : !pto.ptr<ui8, ub> -> !pto.vreg<256xui8>
+        : !pto.ptr<ui8, ub>, index -> !pto.vreg<256xui8>
     %wide = pto.vcvt %load, %mask {part = "ODD"}
         : !pto.vreg<256xui8>, !pto.mask<b8> -> !pto.vreg<128xui16>
     return %wide : !pto.vreg<128xui16>
@@ -180,7 +180,7 @@ module {
       %src: !pto.ptr<si8, ub>, %off: index) -> !pto.vreg<128xsi16> {
     %mask = pto.pset_b8 "PAT_ALL" : !pto.mask<b8>
     %load = pto.vlds %src[%off] {dist = "UNPK_B8"}
-        : !pto.ptr<si8, ub> -> !pto.vreg<256xsi8>
+        : !pto.ptr<si8, ub>, index -> !pto.vreg<256xsi8>
     %wide = pto.vcvt %load, %mask {part = "EVEN"}
         : !pto.vreg<256xsi8>, !pto.mask<b8> -> !pto.vreg<128xsi16>
     return %wide : !pto.vreg<128xsi16>
@@ -190,7 +190,7 @@ module {
       %src: !pto.ptr<ui8, ub>, %off: index) -> !pto.vreg<128xui16> {
     %mask = pto.pset_b8 "PAT_VL1" : !pto.mask<b8>
     %load = pto.vlds %src[%off] {dist = "UNPK_B8"}
-        : !pto.ptr<ui8, ub> -> !pto.vreg<256xui8>
+        : !pto.ptr<ui8, ub>, index -> !pto.vreg<256xui8>
     %wide = pto.vcvt %load, %mask {part = "EVEN"}
         : !pto.vreg<256xui8>, !pto.mask<b8> -> !pto.vreg<128xui16>
     return %wide : !pto.vreg<128xui16>

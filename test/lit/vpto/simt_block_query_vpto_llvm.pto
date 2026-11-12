@@ -15,8 +15,8 @@ module attributes {pto.target_arch = "a5", pto.kernel_kind = #pto.kernel_kind<ve
     %c1 = arith.constant 1 : index
     %block_idx = pto.get_block_idx
     %block_num = pto.get_block_num
-    pto.store %block_idx, %dst[%c0] : !pto.ptr<i64, ub>, i64
-    pto.store %block_num, %dst[%c1] : !pto.ptr<i64, ub>, i64
+    pto.store %block_idx, %dst[%c0] : !pto.ptr<i64, ub>, index, i64
+    pto.store %block_num, %dst[%c1] : !pto.ptr<i64, ub>, index, i64
     return
   }
 
@@ -25,8 +25,8 @@ module attributes {pto.target_arch = "a5", pto.kernel_kind = #pto.kernel_kind<ve
     %c1 = arith.constant 1 : index
     %block_idx = pto.get_block_idx
     %block_num = pto.get_block_num
-    pto.store %block_idx, %dst[%c0] : !pto.ptr<i64, ub>, i64
-    pto.store %block_num, %dst[%c1] : !pto.ptr<i64, ub>, i64
+    pto.store %block_idx, %dst[%c0] : !pto.ptr<i64, ub>, index, i64
+    pto.store %block_num, %dst[%c1] : !pto.ptr<i64, ub>, index, i64
     return
   }
 }

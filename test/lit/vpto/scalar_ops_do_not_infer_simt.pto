@@ -22,8 +22,8 @@ module {
 
   func.func @scalar_pointer_ops(%ptr: !pto.ptr<f32, ub>) -> f32 {
     %c0 = arith.constant 0 : index
-    %value = pto.load %ptr[%c0] : !pto.ptr<f32, ub> -> f32
-    pto.store %value, %ptr[%c0] : !pto.ptr<f32, ub>, f32
+    %value = pto.load %ptr[%c0] : !pto.ptr<f32, ub>, index -> f32
+    pto.store %value, %ptr[%c0] : !pto.ptr<f32, ub>, index, f32
     return %value : f32
   }
 }

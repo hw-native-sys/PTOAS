@@ -17,9 +17,9 @@ func.func @vrelu_bf16_invalid(%src: !pto.ptr<bf16, ub>, %dst: !pto.ptr<bf16, ub>
   %c0 = arith.constant 0 : index
   pto.vecscope {
     %mask = pto.pset_b16 "PAT_ALL" : !pto.mask<b16>
-    %vec = pto.vlds %src[%c0] : !pto.ptr<bf16, ub> -> !pto.vreg<128xbf16>
+    %vec = pto.vlds %src[%c0] : !pto.ptr<bf16, ub>, index -> !pto.vreg<128xbf16>
     %out = pto.vrelu %vec, %mask : !pto.vreg<128xbf16>, !pto.mask<b16> -> !pto.vreg<128xbf16>
-    pto.vsts %out, %dst[%c0], %mask : !pto.vreg<128xbf16>, !pto.ptr<bf16, ub>, !pto.mask<b16>
+    pto.vsts %out, %dst[%c0], %mask : !pto.vreg<128xbf16>, !pto.ptr<bf16, ub>, index, !pto.mask<b16>
   }
   return
 }

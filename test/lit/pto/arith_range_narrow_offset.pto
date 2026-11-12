@@ -38,7 +38,7 @@ module attributes {pto.target_arch = "a5", pto.kernel_kind = #pto.kernel_kind<ve
           %dynamic = arith.muli %iv64, %c128_i64 : i64
           %offset = arith.addi %slot, %dynamic : i64
           %addr = arith.index_cast %offset : i64 to index
-          pto.store %laneid, %dst[%addr] : !pto.ptr<i32, ub>, i32
+          pto.store %laneid, %dst[%addr] : !pto.ptr<i32, ub>, index, i32
         }
       }
     }
@@ -53,9 +53,9 @@ module attributes {pto.target_arch = "a5", pto.kernel_kind = #pto.kernel_kind<ve
     %c2048_i64 = arith.constant 2048 : i64
     %off = arith.muli %block_idx, %c2048_i64 : i64
     %addr = arith.index_cast %off : i64 to index
-    %v = pto.load %gm[%addr] : !pto.ptr<i32, gm> -> i32
+    %v = pto.load %gm[%addr] : !pto.ptr<i32, gm>, index -> i32
     %c0 = arith.constant 0 : index
-    pto.store %v, %gm[%c0] : !pto.ptr<i32, gm>, i32
+    pto.store %v, %gm[%c0] : !pto.ptr<i32, gm>, index, i32
     return
   }
 
@@ -75,8 +75,8 @@ module attributes {pto.target_arch = "a5", pto.kernel_kind = #pto.kernel_kind<ve
       %block_idx = pto.get_block_idx
       %sum = arith.addi %prod, %block_idx : i64
       %addr = arith.index_cast %sum : i64 to index
-      %v = pto.load %gm[%addr] : !pto.ptr<i32, gm> -> i32
-      pto.store %v, %gm[%addr] : !pto.ptr<i32, gm>, i32
+      %v = pto.load %gm[%addr] : !pto.ptr<i32, gm>, index -> i32
+      pto.store %v, %gm[%addr] : !pto.ptr<i32, gm>, index, i32
     }
     return
   }
@@ -93,8 +93,8 @@ module attributes {pto.target_arch = "a5", pto.kernel_kind = #pto.kernel_kind<ve
       %idx = arith.index_cast %sum : i32 to index
       %c4 = arith.constant 4 : index
       %off = arith.addi %idx, %c4 : index
-      %v = pto.load %dst[%off] : !pto.ptr<i32, ub> -> i32
-      pto.store %v, %dst[%off] : !pto.ptr<i32, ub>, i32
+      %v = pto.load %dst[%off] : !pto.ptr<i32, ub>, index -> i32
+      pto.store %v, %dst[%off] : !pto.ptr<i32, ub>, index, i32
     }
     return
   }
@@ -109,11 +109,11 @@ module attributes {pto.target_arch = "a5", pto.kernel_kind = #pto.kernel_kind<ve
     %q1 = arith.floordivsi %block_idx, %c_pow32 : i64
     %q2 = arith.floordivsi %block_idx, %c_pow32p1 : i64
     %addr = arith.index_cast %q2 : i64 to index
-    %v = pto.load %gm[%addr] : !pto.ptr<i32, gm> -> i32
+    %v = pto.load %gm[%addr] : !pto.ptr<i32, gm>, index -> i32
     %sum64 = arith.addi %q1, %q2 : i64
     %c0 = arith.constant 0 : index
-    pto.store %v, %gm[%c0] : !pto.ptr<i32, gm>, i32
-    pto.store %sum64, %gm64[%c0] : !pto.ptr<i64, gm>, i64
+    pto.store %v, %gm[%c0] : !pto.ptr<i32, gm>, index, i32
+    pto.store %sum64, %gm64[%c0] : !pto.ptr<i64, gm>, index, i64
     return
   }
 }

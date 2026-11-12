@@ -270,8 +270,8 @@ module attributes {pto.target_arch = "a5", pto.kernel_kind = #pto.kernel_kind<ve
     pto.vecscope {
       %mask = pto.pset_b32 "PAT_ALL" : !pto.mask<b32>
       %value = pto.vlds %src[%c0] {dist = "NORM"}
-          : !pto.ptr<f32, ub> -> !pto.vreg<64xf32>
-      pto.vsts %value, %dst[%c0], %mask : !pto.vreg<64xf32>, !pto.ptr<f32, ub>, !pto.mask<b32>
+          : !pto.ptr<f32, ub>, index -> !pto.vreg<64xf32>
+      pto.vsts %value, %dst[%c0], %mask : !pto.vreg<64xf32>, !pto.ptr<f32, ub>, index, !pto.mask<b32>
     }
     return
   }
@@ -285,8 +285,8 @@ module attributes {pto.target_arch = "a5", pto.kernel_kind = #pto.kernel_kind<ve
     pto.vecscope {
       %mask = pto.pset_b32 "PAT_ALL" : !pto.mask<b32>
       %value = pto.vlds %src[%c0] {dist = "NORM"}
-          : !pto.ptr<f32, ub> -> !pto.vreg<64xf32>
-      pto.vsts %value, %dst[%c0], %mask : !pto.vreg<64xf32>, !pto.ptr<f32, ub>, !pto.mask<b32>
+          : !pto.ptr<f32, ub>, index -> !pto.vreg<64xf32>
+      pto.vsts %value, %dst[%c0], %mask : !pto.vreg<64xf32>, !pto.ptr<f32, ub>, index, !pto.mask<b32>
     }
     return
   }
@@ -300,8 +300,8 @@ module attributes {pto.target_arch = "a5", pto.kernel_kind = #pto.kernel_kind<ve
     pto.vecscope {
       %mask = pto.pset_b32 "PAT_ALL" : !pto.mask<b32>
       %value = pto.vlds %src[%c0] {dist = "NORM"}
-          : !pto.ptr<f32, ub> -> !pto.vreg<64xf32>
-      pto.vsts %value, %dst[%c0], %mask : !pto.vreg<64xf32>, !pto.ptr<f32, ub>, !pto.mask<b32>
+          : !pto.ptr<f32, ub>, index -> !pto.vreg<64xf32>
+      pto.vsts %value, %dst[%c0], %mask : !pto.vreg<64xf32>, !pto.ptr<f32, ub>, index, !pto.mask<b32>
     }
     return
   }

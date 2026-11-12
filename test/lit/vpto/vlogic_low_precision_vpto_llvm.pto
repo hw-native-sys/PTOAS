@@ -15,10 +15,10 @@ module attributes {pto.target_arch = "a5", pto.kernel_kind = #pto.kernel_kind<ve
     %c0 = arith.constant 0 : index
     pto.vecscope {
       %mask = pto.pset_b8 "PAT_ALL" : !pto.mask<b8>
-      %lhs = pto.vlds %lhs_ptr[%c0] : !pto.ptr<f8E4M3FN, ub> -> !pto.vreg<256xf8E4M3FN>
-      %rhs = pto.vlds %rhs_ptr[%c0] : !pto.ptr<f8E4M3FN, ub> -> !pto.vreg<256xf8E4M3FN>
+      %lhs = pto.vlds %lhs_ptr[%c0] : !pto.ptr<f8E4M3FN, ub>, index -> !pto.vreg<256xf8E4M3FN>
+      %rhs = pto.vlds %rhs_ptr[%c0] : !pto.ptr<f8E4M3FN, ub>, index -> !pto.vreg<256xf8E4M3FN>
       %out = pto.vand %lhs, %rhs, %mask : !pto.vreg<256xf8E4M3FN>, !pto.vreg<256xf8E4M3FN>, !pto.mask<b8> -> !pto.vreg<256xf8E4M3FN>
-      pto.vsts %out, %dst_ptr[%c0], %mask : !pto.vreg<256xf8E4M3FN>, !pto.ptr<f8E4M3FN, ub>, !pto.mask<b8>
+      pto.vsts %out, %dst_ptr[%c0], %mask : !pto.vreg<256xf8E4M3FN>, !pto.ptr<f8E4M3FN, ub>, index, !pto.mask<b8>
     }
     return
   }
@@ -29,10 +29,10 @@ module attributes {pto.target_arch = "a5", pto.kernel_kind = #pto.kernel_kind<ve
     %c0 = arith.constant 0 : index
     pto.vecscope {
       %mask = pto.pset_b8 "PAT_ALL" : !pto.mask<b8>
-      %lhs = pto.vlds %lhs_ptr[%c0] : !pto.ptr<f8E4M3FN, ub> -> !pto.vreg<256xf8E4M3FN>
-      %rhs = pto.vlds %rhs_ptr[%c0] : !pto.ptr<f8E4M3FN, ub> -> !pto.vreg<256xf8E4M3FN>
+      %lhs = pto.vlds %lhs_ptr[%c0] : !pto.ptr<f8E4M3FN, ub>, index -> !pto.vreg<256xf8E4M3FN>
+      %rhs = pto.vlds %rhs_ptr[%c0] : !pto.ptr<f8E4M3FN, ub>, index -> !pto.vreg<256xf8E4M3FN>
       %out = pto.vor %lhs, %rhs, %mask : !pto.vreg<256xf8E4M3FN>, !pto.vreg<256xf8E4M3FN>, !pto.mask<b8> -> !pto.vreg<256xf8E4M3FN>
-      pto.vsts %out, %dst_ptr[%c0], %mask : !pto.vreg<256xf8E4M3FN>, !pto.ptr<f8E4M3FN, ub>, !pto.mask<b8>
+      pto.vsts %out, %dst_ptr[%c0], %mask : !pto.vreg<256xf8E4M3FN>, !pto.ptr<f8E4M3FN, ub>, index, !pto.mask<b8>
     }
     return
   }
@@ -43,10 +43,10 @@ module attributes {pto.target_arch = "a5", pto.kernel_kind = #pto.kernel_kind<ve
     %c0 = arith.constant 0 : index
     pto.vecscope {
       %mask = pto.pset_b8 "PAT_ALL" : !pto.mask<b8>
-      %lhs = pto.vlds %lhs_ptr[%c0] : !pto.ptr<f8E4M3FN, ub> -> !pto.vreg<256xf8E4M3FN>
-      %rhs = pto.vlds %rhs_ptr[%c0] : !pto.ptr<f8E4M3FN, ub> -> !pto.vreg<256xf8E4M3FN>
+      %lhs = pto.vlds %lhs_ptr[%c0] : !pto.ptr<f8E4M3FN, ub>, index -> !pto.vreg<256xf8E4M3FN>
+      %rhs = pto.vlds %rhs_ptr[%c0] : !pto.ptr<f8E4M3FN, ub>, index -> !pto.vreg<256xf8E4M3FN>
       %out = pto.vxor %lhs, %rhs, %mask : !pto.vreg<256xf8E4M3FN>, !pto.vreg<256xf8E4M3FN>, !pto.mask<b8> -> !pto.vreg<256xf8E4M3FN>
-      pto.vsts %out, %dst_ptr[%c0], %mask : !pto.vreg<256xf8E4M3FN>, !pto.ptr<f8E4M3FN, ub>, !pto.mask<b8>
+      pto.vsts %out, %dst_ptr[%c0], %mask : !pto.vreg<256xf8E4M3FN>, !pto.ptr<f8E4M3FN, ub>, index, !pto.mask<b8>
     }
     return
   }
@@ -57,12 +57,12 @@ module attributes {pto.target_arch = "a5", pto.kernel_kind = #pto.kernel_kind<ve
     %c0 = arith.constant 0 : index
     pto.vecscope {
       %mask = pto.pset_b8 "PAT_ALL" : !pto.mask<b8>
-      %lhs = pto.vlds %lhs_ptr[%c0] : !pto.ptr<!pto.hif8, ub> -> !pto.vreg<256x!pto.hif8>
-      %rhs = pto.vlds %rhs_ptr[%c0] : !pto.ptr<!pto.hif8, ub> -> !pto.vreg<256x!pto.hif8>
+      %lhs = pto.vlds %lhs_ptr[%c0] : !pto.ptr<!pto.hif8, ub>, index -> !pto.vreg<256x!pto.hif8>
+      %rhs = pto.vlds %rhs_ptr[%c0] : !pto.ptr<!pto.hif8, ub>, index -> !pto.vreg<256x!pto.hif8>
       %and = pto.vand %lhs, %rhs, %mask : !pto.vreg<256x!pto.hif8>, !pto.vreg<256x!pto.hif8>, !pto.mask<b8> -> !pto.vreg<256x!pto.hif8>
       %or = pto.vor %and, %rhs, %mask : !pto.vreg<256x!pto.hif8>, !pto.vreg<256x!pto.hif8>, !pto.mask<b8> -> !pto.vreg<256x!pto.hif8>
       %xor = pto.vxor %or, %lhs, %mask : !pto.vreg<256x!pto.hif8>, !pto.vreg<256x!pto.hif8>, !pto.mask<b8> -> !pto.vreg<256x!pto.hif8>
-      pto.vsts %xor, %dst_ptr[%c0], %mask : !pto.vreg<256x!pto.hif8>, !pto.ptr<!pto.hif8, ub>, !pto.mask<b8>
+      pto.vsts %xor, %dst_ptr[%c0], %mask : !pto.vreg<256x!pto.hif8>, !pto.ptr<!pto.hif8, ub>, index, !pto.mask<b8>
     }
     return
   }

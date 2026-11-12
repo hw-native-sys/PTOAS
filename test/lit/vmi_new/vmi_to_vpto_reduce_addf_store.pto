@@ -67,7 +67,7 @@ module {
 // LOWER: %[[ALL:.*]] = pto.pset_b32 "PAT_ALL"
 // LOWER: %[[SUM:.*]] = pto.vadd %[[SRC]], %[[RHS]], %[[ALL]]
 // LOWER: pto.vcvt {{.*}} {part = "EVEN", rnd = "R", sat = "SAT"}
-// LOWER: pto.vsts {{.*}}, %[[DST_BF16]][%[[ALIGNED_OFF]]], {{.*}} {dist = "PK_B32"} : !pto.vreg<128xbf16>, !pto.ptr<bf16, ub>, !pto.mask<b32>
+// LOWER: pto.vsts {{.*}}, %[[DST_BF16]][%[[ALIGNED_OFF]]], {{.*}} {dist = "PK_B32"} : !pto.vreg<128xbf16>, !pto.ptr<bf16, ub>, index, !pto.mask<b32>
 // LOWER: %[[REDUCED:.*]] = pto.vcadd %[[SUM]], %[[ALL]]
 // LOWER: %[[STORE_MASK:.*]] = pto.pset_b32 "PAT_VL1"
 // LOWER: pto.vsts %[[REDUCED]], %[[DST]][%[[ALIGNED_OFF]]], {{.*}} {dist = "1PT_B32"}

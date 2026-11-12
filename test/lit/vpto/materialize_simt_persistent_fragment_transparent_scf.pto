@@ -17,25 +17,25 @@ module attributes {pto.target_arch = "a5", pto.kernel_kind = #pto.kernel_kind<ve
       scf.if %condition {
         %before = arith.constant 2.000000e+00 : f32
         %c0 = arith.constant 0 : index
-        pto.store %before, %dst[%c0] : !pto.ptr<f32, ub>, f32
+        pto.store %before, %dst[%c0] : !pto.ptr<f32, ub>, index, f32
       }
       llvm.store %one, %fragment : f32, !llvm.ptr
       scf.if %condition {
         %after = arith.constant 3.000000e+00 : f32
         %c1 = arith.constant 1 : index
-        pto.store %after, %dst[%c1] : !pto.ptr<f32, ub>, f32
+        pto.store %after, %dst[%c1] : !pto.ptr<f32, ub>, index, f32
       }
     }
     pto.section.simt<<<32, 1, 1>>> {
       scf.if %condition {
         %before = arith.constant 4.000000e+00 : f32
         %c2 = arith.constant 2 : index
-        pto.store %before, %dst[%c2] : !pto.ptr<f32, ub>, f32
+        pto.store %before, %dst[%c2] : !pto.ptr<f32, ub>, index, f32
       }
       %value = llvm.load %fragment : !llvm.ptr -> f32
       scf.if %condition {
         %c3 = arith.constant 3 : index
-        pto.store %value, %dst[%c3] : !pto.ptr<f32, ub>, f32
+        pto.store %value, %dst[%c3] : !pto.ptr<f32, ub>, index, f32
       }
     }
     return

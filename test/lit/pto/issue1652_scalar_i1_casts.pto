@@ -71,7 +71,7 @@ module {
   func.func @i1_comparison_signed_index_i32(%source: !pto.ptr<i32>) -> i32 {
     %zero = arith.constant 0 : index
     %zero_i32 = arith.constant 0 : i32
-    %input = pto.load %source[%zero] : !pto.ptr<i32> -> i32
+    %input = pto.load %source[%zero] : !pto.ptr<i32>, index -> i32
     %condition = arith.cmpi sgt, %input, %zero_i32 : i32
     %index = arith.index_cast %condition : i1 to index
     %result = arith.index_cast %index : index to i32
@@ -81,7 +81,7 @@ module {
   func.func @i1_comparison_index_i32(%source: !pto.ptr<i32>) -> i32 {
     %zero = arith.constant 0 : index
     %zero_i32 = arith.constant 0 : i32
-    %input = pto.load %source[%zero] : !pto.ptr<i32> -> i32
+    %input = pto.load %source[%zero] : !pto.ptr<i32>, index -> i32
     %condition = arith.cmpi sgt, %input, %zero_i32 : i32
     %index = arith.index_castui %condition : i1 to index
     %result = arith.index_cast %index : index to i32
@@ -117,30 +117,30 @@ module {
     %signed_true = arith.index_cast %true : i1 to index
     %signed_false_i32 = arith.index_cast %signed_false : index to i32
     %signed_true_i32 = arith.index_cast %signed_true : index to i32
-    pto.store %signed_false_i32, %out32[%c0] : !pto.ptr<i32>, i32
-    pto.store %signed_true_i32, %out32[%c1] : !pto.ptr<i32>, i32
+    pto.store %signed_false_i32, %out32[%c0] : !pto.ptr<i32>, index, i32
+    pto.store %signed_true_i32, %out32[%c1] : !pto.ptr<i32>, index, i32
     %unsigned_false = arith.index_castui %false : i1 to index
     %unsigned_true = arith.index_castui %true : i1 to index
     %unsigned_false_i32 = arith.index_cast %unsigned_false : index to i32
     %unsigned_true_i32 = arith.index_cast %unsigned_true : index to i32
-    pto.store %unsigned_false_i32, %out32[%c2] : !pto.ptr<i32>, i32
-    pto.store %unsigned_true_i32, %out32[%c3] : !pto.ptr<i32>, i32
+    pto.store %unsigned_false_i32, %out32[%c2] : !pto.ptr<i32>, index, i32
+    pto.store %unsigned_true_i32, %out32[%c3] : !pto.ptr<i32>, index, i32
     %extsi_false = arith.extsi %false : i1 to i32
     %extsi_true = arith.extsi %true : i1 to i32
-    pto.store %extsi_false, %out32[%c4] : !pto.ptr<i32>, i32
-    pto.store %extsi_true, %out32[%c5] : !pto.ptr<i32>, i32
+    pto.store %extsi_false, %out32[%c4] : !pto.ptr<i32>, index, i32
+    pto.store %extsi_true, %out32[%c5] : !pto.ptr<i32>, index, i32
     %extui_false = arith.extui %false : i1 to i32
     %extui_true = arith.extui %true : i1 to i32
-    pto.store %extui_false, %out32[%c6] : !pto.ptr<i32>, i32
-    pto.store %extui_true, %out32[%c7] : !pto.ptr<i32>, i32
+    pto.store %extui_false, %out32[%c6] : !pto.ptr<i32>, index, i32
+    pto.store %extui_true, %out32[%c7] : !pto.ptr<i32>, index, i32
     %sitofp_false = arith.sitofp %false : i1 to f32
     %sitofp_true = arith.sitofp %true : i1 to f32
-    pto.store %sitofp_false, %outf[%c0] : !pto.ptr<f32>, f32
-    pto.store %sitofp_true, %outf[%c1] : !pto.ptr<f32>, f32
+    pto.store %sitofp_false, %outf[%c0] : !pto.ptr<f32>, index, f32
+    pto.store %sitofp_true, %outf[%c1] : !pto.ptr<f32>, index, f32
     %uitofp_false = arith.uitofp %false : i1 to f32
     %uitofp_true = arith.uitofp %true : i1 to f32
-    pto.store %uitofp_false, %outf[%c2] : !pto.ptr<f32>, f32
-    pto.store %uitofp_true, %outf[%c3] : !pto.ptr<f32>, f32
+    pto.store %uitofp_false, %outf[%c2] : !pto.ptr<f32>, index, f32
+    pto.store %uitofp_true, %outf[%c3] : !pto.ptr<f32>, index, f32
     return
   }
 

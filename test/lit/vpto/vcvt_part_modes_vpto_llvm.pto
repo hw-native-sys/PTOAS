@@ -22,7 +22,7 @@ module attributes {pto.target_arch = "a5", pto.kernel_kind = #pto.kernel_kind<ve
       %m01 = pto.vor %p0, %p1, %mask : !pto.vreg<256xui8>, !pto.vreg<256xui8>, !pto.mask<b8> -> !pto.vreg<256xui8>
       %m23 = pto.vor %p2, %p3, %mask : !pto.vreg<256xui8>, !pto.vreg<256xui8>, !pto.mask<b8> -> !pto.vreg<256xui8>
       %out = pto.vor %m01, %m23, %mask : !pto.vreg<256xui8>, !pto.vreg<256xui8>, !pto.mask<b8> -> !pto.vreg<256xui8>
-      pto.vsts %out, %dst[%c0], %mask : !pto.vreg<256xui8>, !pto.ptr<ui8, ub>, !pto.mask<b8>
+      pto.vsts %out, %dst[%c0], %mask : !pto.vreg<256xui8>, !pto.ptr<ui8, ub>, index, !pto.mask<b8>
     }
     return
   }

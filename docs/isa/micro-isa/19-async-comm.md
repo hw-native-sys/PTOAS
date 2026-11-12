@@ -195,8 +195,8 @@ else:
   %bid = pto.get_block_idx
   %byte_off = arith.muli %bid, %chunk : i64
   %off = arith.index_castui %byte_off : i64 to index
-  %core_src = pto.addptr %src, %off : !pto.ptr<i8, gm> -> !pto.ptr<i8, gm>
-  %core_dst = pto.addptr %dst, %off : !pto.ptr<i8, gm> -> !pto.ptr<i8, gm>
+  %core_src = pto.addptr %src, %off : !pto.ptr<i8, gm>, index -> !pto.ptr<i8, gm>
+  %core_dst = pto.addptr %dst, %off : !pto.ptr<i8, gm>, index -> !pto.ptr<i8, gm>
   %rec = pto.sdma_gm_gm %core_dst, %core_src, %chunk session(%sess)
     : !pto.ptr<i8, gm>, !pto.ptr<i8, gm>, i64, !pto.dma_session<sdma>
       -> !pto.ptr<i64, gm>

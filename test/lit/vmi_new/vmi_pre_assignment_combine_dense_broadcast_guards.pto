@@ -18,7 +18,7 @@ module {
   func.func @aliasing_store(%src: !pto.ptr<bf16, ub>, %off: index) -> !pto.vmi.vreg<256xbf16> {
     %load = pto.vmi.load %src[%off] : !pto.ptr<bf16, ub> -> !pto.vmi.vreg<8xbf16>
     %zero = arith.constant 0.0 : bf16
-    pto.store %zero, %src[%off] : !pto.ptr<bf16, ub>, bf16
+    pto.store %zero, %src[%off] : !pto.ptr<bf16, ub>, index, bf16
     %out = pto.vmi.group_broadcast %load {num_groups = 8} : !pto.vmi.vreg<8xbf16> -> !pto.vmi.vreg<256xbf16>
     return %out : !pto.vmi.vreg<256xbf16>
   }
@@ -52,7 +52,7 @@ module {
     %dst = memref.alloc() : memref<256xbf16, #pto.address_space<vec>>
     %load = pto.vmi.load %src[%off] : memref<256xbf16, #pto.address_space<vec>> -> !pto.vmi.vreg<8xbf16>
     %zero = arith.constant 0.0 : bf16
-    pto.store %zero, %dst[%off] : memref<256xbf16, #pto.address_space<vec>>, bf16
+    pto.store %zero, %dst[%off] : memref<256xbf16, #pto.address_space<vec>>, index, bf16
     %out = pto.vmi.group_broadcast %load {num_groups = 8} : !pto.vmi.vreg<8xbf16> -> !pto.vmi.vreg<256xbf16>
     return %out : !pto.vmi.vreg<256xbf16>
   }

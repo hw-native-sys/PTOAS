@@ -263,13 +263,13 @@ module attributes {pto.target_arch = "a5"} {
         // Online-softmax max/sum reduction (one row at a time).
         %row_qk     = arith.muli %row, %c128 : index
         %oldmax_bc  = pto.vlds %ub_oldmax[%row]
-                          {dist = "BRC_B32"} : !pto.ptr<f32, ub> -> !pto.vreg<64xf32>
+                          {dist = "BRC_B32"} : !pto.ptr<f32, ub>, index -> !pto.vreg<64xf32>
         %final_max, %final_sum = scf.for %chunk = %c0 to %c128 step %c64
             iter_args(%running_max = %oldmax_bc, %running_sum = %oldsum_bc)
             -> (!pto.vreg<64xf32>, !pto.vreg<64xf32>) {
           %base = arith.addi %row_qk, %chunk : index
           %vec  = pto.vlds %ub_qk[%base]
-                      : !pto.ptr<f32, ub> -> !pto.vreg<64xf32>
+                      : !pto.ptr<f32, ub>, index -> !pto.vreg<64xf32>
           // ... running_max / running_sum update via vcmax / vexpdif / vmul / vadd ...
           scf.yield %merged_max, %merged_sum : !pto.vreg<64xf32>, !pto.vreg<64xf32>
         }
@@ -277,13 +277,13 @@ module attributes {pto.target_arch = "a5"} {
         // Persist the row-local results back to UB.
         pto.vsts %final_max, %ub_newmax[%row], %one_mask
                 {dist = "1PT_B32"}
-                : !pto.vreg<64xf32>, !pto.ptr<f32, ub>, !pto.mask<b32>
+                : !pto.vreg<64xf32>, !pto.ptr<f32, ub>, index, !pto.mask<b32>
 
         // Second pass: write softmax output back into the qk tile's UB region.
         scf.for %chunk = %c0 to %c128 step %c64 {
           %base = arith.addi %row_qk, %chunk : index
           %vec  = pto.vlds %ub_qk[%base]
-                      : !pto.ptr<f32, ub> -> !pto.vreg<64xf32>
+                      : !pto.ptr<f32, ub>, index -> !pto.vreg<64xf32>
           %exp  = pto.vexpdif %vec, %final_max, %chunk_mask, "ODD"
                       : !pto.vreg<64xf32>, !pto.vreg<64xf32>, !pto.mask<b32>
                      -> !pto.vreg<64xf32>
@@ -291,7 +291,7 @@ module attributes {pto.target_arch = "a5"} {
                       : !pto.vreg<64xf32>, !pto.vreg<64xf32>, !pto.mask<b32>
                      -> !pto.vreg<64xf32>
           pto.vsts %out, %ub_out[%base], %chunk_mask
-                      : !pto.vreg<64xf32>, !pto.ptr<f32, ub>, !pto.mask<b32>
+                      : !pto.vreg<64xf32>, !pto.ptr<f32, ub>, index, !pto.mask<b32>
         }
       }
     }

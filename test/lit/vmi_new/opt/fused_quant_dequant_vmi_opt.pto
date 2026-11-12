@@ -30,7 +30,7 @@
 
 // VPTO-LABEL: func.func @fused_qd_vmi_current
 // VPTO-DAG: pto.pset_b16 "PAT_ALL"
-// VPTO-DAG: %[[SCALE_BASE:[^ ]+]] = pto.addptr {{.*}}, %c0 : <ui8, ub> -> <ui8, ub>
+// VPTO-DAG: %[[SCALE_BASE:[^ ]+]] = pto.addptr {{.*}}, %c0 : <ui8, ub>, index -> <ui8, ub>
 // VPTO-DAG: %[[SCALE_ALIGN:.*]] = pto.init_align
 // VPTO: pto.pset_b16 "PAT_VL8"
 // VPTO: %[[ZERO:[^ ]+]] = pto.vdup {{.*}} : bf16,
@@ -152,7 +152,7 @@ module attributes {pto.target_arch = "a5"} {
         %37 = arith.index_cast %arg2 : i32 to index
         %38 = arith.muli %35, %37 : index
         %39 = arith.addi %38, %36 : index
-        %40 = pto.addptr %arg0, %39 : <bf16, gm> -> <bf16, gm>
+        %40 = pto.addptr %arg0, %39 : <bf16, gm>, index -> <bf16, gm>
         %c0 = arith.constant 0 : index
         %41 = arith.cmpi eq, %34, %c0 : index
         scf.if %41 {

@@ -34,6 +34,7 @@ from ._scalar_coercion import coerce_scalar_to_type, materialize_scalar_literal
 from ._scalar_adaptation import (
     classify_runtime_scalar_type,
     coerce_runtime_i1_value,
+    coerce_runtime_element_offset_value,
     coerce_runtime_index_value,
     coerce_runtime_integer_value,
 )
@@ -106,6 +107,7 @@ __all__ = [
     "materialize_scalar_literal",
     "classify_runtime_scalar_type",
     "coerce_runtime_i1_value",
+    "coerce_runtime_element_offset_value",
     "coerce_runtime_index_value",
     "coerce_runtime_integer_value",
     "emit_runtime_binary_op",

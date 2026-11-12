@@ -38,7 +38,7 @@ module {
 // CHECK-NOT: part = "P2"
 // CHECK-NOT: part = "P3"
 // CHECK-NOT: pto.vor
-// CHECK-COUNT-4: pto.vsts {{.*}} {dist = "PK4_B32"} : !pto.vreg<256xf8E4M3FN>, !pto.ptr<f8E4M3FN, ub>, !pto.mask<b32>
+// CHECK-COUNT-4: pto.vsts {{.*}} {dist = "PK4_B32"} : !pto.vreg<256xf8E4M3FN>, !pto.ptr<f8E4M3FN, ub>, index, !pto.mask<b32>
 // CHECK-NOT: pto.vmi.
 // CHECK-NOT: !pto.vmi.
 // CHECK-NOT: unrealized_conversion_cast

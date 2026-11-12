@@ -28,11 +28,11 @@ KERNEL_SOURCE = (
     '@simt_gm_memory_core_body(%gm: !pto.ptr<i32, gm>) attributes {pto.simt_entry} {\n    %tx = pto.get_tid_x : i'
     '32\n    %c32_i32 = arith.constant 32 : i32\n    %c64_i32 = arith.constant 64 : i32\n    %c1000_i32 = arith.c'
     'onstant 1000 : i32\n\n    %src_idx = arith.index_castui %tx : i32 to index\n    %loaded = pto.load %gm[%src_'
-    'idx] : !pto.ptr<i32, gm> -> i32\n    %sum = arith.addi %loaded, %tx : i32\n    %with_bias = arith.addi %sum,'
+    'idx] : !pto.ptr<i32, gm>, index -> i32\n    %sum = arith.addi %loaded, %tx : i32\n    %with_bias = arith.addi %sum,'
     ' %c1000_i32 : i32\n\n    %dst_i32 = arith.addi %tx, %c32_i32 : i32\n    %dst_idx = arith.index_castui %dst_i'
-    '32 : i32 to index\n    pto.store %with_bias, %gm[%dst_idx] : !pto.ptr<i32, gm>, i32\n\n    %lane_dst_i32 = a'
+    '32 : i32 to index\n    pto.store %with_bias, %gm[%dst_idx] : !pto.ptr<i32, gm>, index, i32\n\n    %lane_dst_i32 = a'
     'rith.addi %tx, %c64_i32 : i32\n    %lane_dst_idx = arith.index_castui %lane_dst_i32 : i32 to index\n    pto.'
-    'store %tx, %gm[%lane_dst_idx] : !pto.ptr<i32, gm>, i32\n    return\n  }\n}\n'
+    'store %tx, %gm[%lane_dst_idx] : !pto.ptr<i32, gm>, index, i32\n    return\n  }\n}\n'
 )
 
 def _golden_scope():

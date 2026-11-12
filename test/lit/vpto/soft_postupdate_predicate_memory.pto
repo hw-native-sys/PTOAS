@@ -85,7 +85,7 @@ module attributes {pto.target_arch = "a5", pto.kernel_kind = #pto.kernel_kind<ve
         pto.psti %mask, %sink[%c0], "NORM"
             : !pto.mask<b8>, !pto.ptr<i8, ub>, index
         %next_src = pto.addptr %src_ptr, %c128
-            : !pto.ptr<i8, ub> -> !pto.ptr<i8, ub>
+            : !pto.ptr<i8, ub>, index -> !pto.ptr<i8, ub>
         scf.yield %next_src : !pto.ptr<i8, ub>
       }
     }
@@ -118,7 +118,7 @@ module attributes {pto.target_arch = "a5", pto.kernel_kind = #pto.kernel_kind<ve
         pto.psti %mask, %dst_ptr[%c0], "NORM"
             : !pto.mask<b8>, !pto.ptr<i8, ub>, index
         %next_dst = pto.addptr %dst_ptr, %c128
-            : !pto.ptr<i8, ub> -> !pto.ptr<i8, ub>
+            : !pto.ptr<i8, ub>, index -> !pto.ptr<i8, ub>
         scf.yield %next_dst : !pto.ptr<i8, ub>
       }
     }
@@ -160,15 +160,15 @@ module attributes {pto.target_arch = "a5", pto.kernel_kind = #pto.kernel_kind<ve
         pto.psti %mask_ds, %dst_pk_ptr[%c0], "NORM"
             : !pto.mask<b8>, !pto.ptr<i8, ub>, index
         %next_src_norm = pto.addptr %src_norm_ptr, %c32
-            : !pto.ptr<i8, ub> -> !pto.ptr<i8, ub>
+            : !pto.ptr<i8, ub>, index -> !pto.ptr<i8, ub>
         %next_src_us = pto.addptr %src_us_ptr, %c16
-            : !pto.ptr<i8, ub> -> !pto.ptr<i8, ub>
+            : !pto.ptr<i8, ub>, index -> !pto.ptr<i8, ub>
         %next_src_ds = pto.addptr %src_ds_ptr, %c32
-            : !pto.ptr<i8, ub> -> !pto.ptr<i8, ub>
+            : !pto.ptr<i8, ub>, index -> !pto.ptr<i8, ub>
         %next_dst_norm = pto.addptr %dst_norm_ptr, %c32
-            : !pto.ptr<i8, ub> -> !pto.ptr<i8, ub>
+            : !pto.ptr<i8, ub>, index -> !pto.ptr<i8, ub>
         %next_dst_pk = pto.addptr %dst_pk_ptr, %c16
-            : !pto.ptr<i8, ub> -> !pto.ptr<i8, ub>
+            : !pto.ptr<i8, ub>, index -> !pto.ptr<i8, ub>
         scf.yield %next_src_norm, %next_src_us, %next_src_ds,
                   %next_dst_norm, %next_dst_pk
             : !pto.ptr<i8, ub>, !pto.ptr<i8, ub>, !pto.ptr<i8, ub>,
@@ -186,8 +186,8 @@ module attributes {pto.target_arch = "a5", pto.kernel_kind = #pto.kernel_kind<ve
     pto.vecscope {
       scf.for %iv = %c0 to %c4 step %c1 {
         %scaled = arith.muli %iv, %step : index
-        %src_at = pto.addptr %src, %scaled : !pto.ptr<i8, ub> -> !pto.ptr<i8, ub>
-        %dst_at = pto.addptr %dst, %scaled : !pto.ptr<i8, ub> -> !pto.ptr<i8, ub>
+        %src_at = pto.addptr %src, %scaled : !pto.ptr<i8, ub>, index -> !pto.ptr<i8, ub>
+        %dst_at = pto.addptr %dst, %scaled : !pto.ptr<i8, ub>, index -> !pto.ptr<i8, ub>
         %mask = pto.pldi %src_at[%c0], "NORM"
             : !pto.ptr<i8, ub>, index -> !pto.mask<b8>
         pto.psti %mask, %dst_at[%c0], "NORM"

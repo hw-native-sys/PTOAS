@@ -15,17 +15,17 @@ module attributes {pto.target_arch = "a5"} {
 
     %mask0, %tail0 = pto.plt_b32 %c16_i32 : i32 -> !pto.mask<b32>, i32
     scf.for %i = %c0 to %c2 step %c1 {
-      %vec0 = pto.vlds %ub[%i] : !pto.ptr<f32, ub> -> !pto.vreg<64xf32>
+      %vec0 = pto.vlds %ub[%i] : !pto.ptr<f32, ub>, index -> !pto.vreg<64xf32>
       %sum0 = pto.vadds %vec0, %cst, %mask0 : !pto.vreg<64xf32>, f32, !pto.mask<b32> -> !pto.vreg<64xf32>
-      pto.vsts %sum0, %ub[%i], %mask0 : !pto.vreg<64xf32>, !pto.ptr<f32, ub>, !pto.mask<b32>
+      pto.vsts %sum0, %ub[%i], %mask0 : !pto.vreg<64xf32>, !pto.ptr<f32, ub>, index, !pto.mask<b32>
     }
     scf.if %cond {
-      %vec1 = pto.vlds %ub[%c64] : !pto.ptr<f32, ub> -> !pto.vreg<64xf32>
+      %vec1 = pto.vlds %ub[%c64] : !pto.ptr<f32, ub>, index -> !pto.vreg<64xf32>
       %sum1 = pto.vadds %vec1, %cst, %mask0 : !pto.vreg<64xf32>, f32, !pto.mask<b32> -> !pto.vreg<64xf32>
-      pto.vsts %sum1, %ub[%c64], %mask0 : !pto.vreg<64xf32>, !pto.ptr<f32, ub>, !pto.mask<b32>
+      pto.vsts %sum1, %ub[%c64], %mask0 : !pto.vreg<64xf32>, !pto.ptr<f32, ub>, index, !pto.mask<b32>
     }
-    %vec2 = pto.vlds %ub[%c128] : !pto.ptr<f32, ub> -> !pto.vreg<64xf32>
-    pto.vsts %vec2, %ub[%c128], %mask0 : !pto.vreg<64xf32>, !pto.ptr<f32, ub>, !pto.mask<b32>
+    %vec2 = pto.vlds %ub[%c128] : !pto.ptr<f32, ub>, index -> !pto.vreg<64xf32>
+    pto.vsts %vec2, %ub[%c128], %mask0 : !pto.vreg<64xf32>, !pto.ptr<f32, ub>, index, !pto.mask<b32>
     return
   }
 
@@ -39,15 +39,15 @@ module attributes {pto.target_arch = "a5"} {
 
     scf.if %cond {
       %mask0 = pto.pset_b32 "PAT_ALL" : !pto.mask<b32>
-      %vec0 = pto.vlds %ub[%c0] : !pto.ptr<f32, ub> -> !pto.vreg<64xf32>
-      pto.vsts %vec0, %ub[%c0], %mask0 : !pto.vreg<64xf32>, !pto.ptr<f32, ub>, !pto.mask<b32>
+      %vec0 = pto.vlds %ub[%c0] : !pto.ptr<f32, ub>, index -> !pto.vreg<64xf32>
+      pto.vsts %vec0, %ub[%c0], %mask0 : !pto.vreg<64xf32>, !pto.ptr<f32, ub>, index, !pto.mask<b32>
 
       pto.barrier #pto.pipe<PIPE_ALL>
 
       %mask1, %tail = pto.plt_b32 %c16_i32 : i32 -> !pto.mask<b32>, i32
-      %vec1 = pto.vlds %ub[%c64] : !pto.ptr<f32, ub> -> !pto.vreg<64xf32>
+      %vec1 = pto.vlds %ub[%c64] : !pto.ptr<f32, ub>, index -> !pto.vreg<64xf32>
       %sum1 = pto.vadds %vec1, %cst, %mask1 : !pto.vreg<64xf32>, f32, !pto.mask<b32> -> !pto.vreg<64xf32>
-      pto.vsts %sum1, %ub[%c64], %mask1 : !pto.vreg<64xf32>, !pto.ptr<f32, ub>, !pto.mask<b32>
+      pto.vsts %sum1, %ub[%c64], %mask1 : !pto.vreg<64xf32>, !pto.ptr<f32, ub>, index, !pto.mask<b32>
     }
     return
   }

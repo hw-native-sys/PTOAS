@@ -39,7 +39,7 @@ module attributes {pto.target_arch = "a5", pto.kernel_kind = #pto.kernel_kind<ve
     %tid = pto.get_tid_x : i32
     %idx = arith.index_castui %tid : i32 to index
     %value = arith.trunci %wide : i64 to i32
-    pto.store %value, %dst[%idx] : !pto.ptr<i32, ub>, i32
+    pto.store %value, %dst[%idx] : !pto.ptr<i32, ub>, index, i32
     pto.keep %f16 {slot = 5 : i64} : f16
     pto.keep %bf16 {slot = 6 : i64} : bf16
     pto.keep %wide {slot = 8 : i64} : i64

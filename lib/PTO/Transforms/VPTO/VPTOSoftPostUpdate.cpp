@@ -371,20 +371,17 @@ static bool canScaleInitialOffsetAtLoopEntry(
   return initial && *initial % (elemBytes / unitBytes) == 0;
 }
 
-// pto.addptr always consumes an index offset. Block offsets retain their
-// existing unsigned interpretation; every other supported address unit is
-// signed, including sprsti's signed 8-bit word offset.
-static Value normalizeAddPtrOffsetToIndex(Value offset, StrideUnit strideUnit,
-                                          Location loc, OpBuilder &builder) {
-  if (offset.getType().isIndex()) {
+// pto.addptr consumes a signed element displacement in its own type, so a
+// signed offset is passed through and the GEP index rule sign-extends it.
+// Block offsets are unsigned while the GEP index rule is signed, so they keep
+// an explicit zero-extension into the platform index type.
+static Value normalizeAddPtrOffset(Value offset, StrideUnit strideUnit,
+                                  Location loc, OpBuilder &builder) {
+  if (offset.getType().isIndex() || strideUnit != StrideUnit::Block) {
     return offset;
   }
-  if (strideUnit == StrideUnit::Block) {
-    return builder.create<arith::IndexCastUIOp>(loc, builder.getIndexType(),
-                                                offset);
-  }
-  return builder.create<arith::IndexCastOp>(loc, builder.getIndexType(),
-                                            offset);
+  return builder.create<arith::IndexCastUIOp>(loc, builder.getIndexType(),
+                                              offset);
 }
 
 // Create the address reached by one memory op before post-update rewriting.
@@ -422,7 +419,7 @@ static Value createInitialPtr(Value base, Value strideOperand,
     }
   }
   scaledOffset =
-      normalizeAddPtrOffsetToIndex(scaledOffset, strideUnit, loc, builder);
+      normalizeAddPtrOffset(scaledOffset, strideUnit, loc, builder);
   return builder.create<pto::AddPtrOp>(loc, base, scaledOffset);
 }
 

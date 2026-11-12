@@ -37,6 +37,12 @@ enum class VPTOAdvanceConstraint {
 struct VPTOAddressOffset {
   OpOperand *operand;
   VPTOAddressUnit unit = VPTOAddressUnit::Element;
+  /// Signedness of the offset value. A signed offset addresses lower addresses
+  /// for negative values; an unsigned offset is a non-negative magnitude. The
+  /// distinction only matters when the offset type is narrower than the pointer
+  /// index width, where it selects the extension (sign vs zero) the emitter
+  /// must apply before the address is formed.
+  bool isSigned = true;
   /// Value whose element type defines an Element unit. This can differ from
   /// the base pointer for payload-denominated operations.
   Value elementTypeSource;
@@ -60,6 +66,9 @@ struct VPTOPostUpdateSemantics {
   Value updatedBase;
   /// Value whose element type defines an Element advance unit.
   Value elementTypeSource;
+  /// Signedness of the advance value, with the same meaning as
+  /// VPTOAddressOffset::isSigned.
+  bool isSigned = true;
 };
 
 /// Complete VPTO addressing contract. Current accesses describe where an
@@ -74,6 +83,13 @@ struct VPTOAddressSemantics {
 
 /// Default implementation used by VPTOAddressSemanticsOpInterface.
 VPTOAddressSemantics getDefaultVPTOAddressSemantics(Operation *operation);
+
+/// Signedness of the offset an operation declares through
+/// VPTOAddressSemanticsOpInterface: the current-access offset when the
+/// operation is in normal form, otherwise the post-access advance. Operations
+/// that do not declare addressing semantics are treated as signed element
+/// displacements, which is the contract of the pointer-based memory ops.
+bool isSignedVPTOOffset(Operation *operation);
 
 /// Resolve the byte width of one address unit from the operation's addressing
 /// contract. For Element units, elementTypeSource may be a base pointer or a

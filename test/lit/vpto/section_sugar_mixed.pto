@@ -17,9 +17,9 @@ module attributes {pto.target_arch = "a5"} {
         : !pto.ptr<i16, gm>, !pto.ptr<i16, ub>, i64, i64, i64, i64, i64
       %mask = pto.pset_b16 "PAT_ALL" : !pto.mask<b16>
       %vec = pto.vlds %ub[%idx0]
-        : !pto.ptr<i16, ub> -> !pto.vreg<128xi16>
+        : !pto.ptr<i16, ub>, index -> !pto.vreg<128xi16>
       pto.vsts %vec, %ub[%idx0], %mask
-        : !pto.vreg<128xi16>, !pto.ptr<i16, ub>, !pto.mask<b16>
+        : !pto.vreg<128xi16>, !pto.ptr<i16, ub>, index, !pto.mask<b16>
     }
 
     pto.section.cube {

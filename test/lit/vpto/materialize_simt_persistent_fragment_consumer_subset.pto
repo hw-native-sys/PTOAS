@@ -28,7 +28,7 @@ module attributes {pto.target_arch = "a5", pto.kernel_kind = #pto.kernel_kind<ve
       %element1 = llvm.getelementptr %fragment[%c4_i64] : (!llvm.ptr, i64) -> !llvm.ptr, i8
       %value1 = llvm.load %element1 : !llvm.ptr -> f32
       %c0 = arith.constant 0 : index
-      pto.store %value1, %dst[%c0] : !pto.ptr<f32, ub>, f32
+      pto.store %value1, %dst[%c0] : !pto.ptr<f32, ub>, index, f32
     }
     return
   }

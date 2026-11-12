@@ -20,14 +20,14 @@ module attributes {pto.target_arch = "a5", pto.kernel_kind = #pto.kernel_kind<ve
     %two = arith.constant 2.0 : f32
     %ub = pto.castptr %addr : i64 -> !pto.ptr<f32, ub>
     pto.vecscope {
-      pto.store %one, %ub[%c0] : !pto.ptr<f32, ub>, f32
-      %x = pto.load %ub[%c0] : !pto.ptr<f32, ub> -> f32
-      pto.store %two, %ub[%c0] : !pto.ptr<f32, ub>, f32
-      pto.store %x, %ub[%c0] : !pto.ptr<f32, ub>, f32
+      pto.store %one, %ub[%c0] : !pto.ptr<f32, ub>, index, f32
+      %x = pto.load %ub[%c0] : !pto.ptr<f32, ub>, index -> f32
+      pto.store %two, %ub[%c0] : !pto.ptr<f32, ub>, index, f32
+      pto.store %x, %ub[%c0] : !pto.ptr<f32, ub>, index, f32
       scf.for %i = %c0 to %n step %c1 {
-        %y = pto.load %ub[%c0] : !pto.ptr<f32, ub> -> f32
-        pto.store %one, %ub[%c0] : !pto.ptr<f32, ub>, f32
-        pto.store %y, %ub[%c0] : !pto.ptr<f32, ub>, f32
+        %y = pto.load %ub[%c0] : !pto.ptr<f32, ub>, index -> f32
+        pto.store %one, %ub[%c0] : !pto.ptr<f32, ub>, index, f32
+        pto.store %y, %ub[%c0] : !pto.ptr<f32, ub>, index, f32
       }
     }
     return

@@ -30,10 +30,10 @@ KERNEL_SOURCE = (
     'vecscope {\n    }\n\n    %block = pto.get_block_idx\n    %subblock = pto.get_subblock_idx\n    %block_num = '
     'pto.get_block_num\n    %subblock_num = pto.get_subblock_num\n\n    %block_idx = arith.index_cast %block : i6'
     '4 to index\n    %slot_base = arith.muli %block_idx, %c32 : index\n\n    pto.store %block, %arg0[%slot_base] '
-    ': !pto.ptr<i64, gm>, i64\n    %slot_1 = arith.addi %slot_base, %c1 : index\n    pto.store %subblock, %arg0[%'
-    'slot_1] : !pto.ptr<i64, gm>, i64\n    %slot_2 = arith.addi %slot_base, %c2 : index\n    pto.store %block_num'
-    ', %arg0[%slot_2] : !pto.ptr<i64, gm>, i64\n    %slot_3 = arith.addi %slot_base, %c3 : index\n    pto.store %'
-    'subblock_num, %arg0[%slot_3] : !pto.ptr<i64, gm>, i64\n    return\n  }\n}\n'
+    ': !pto.ptr<i64, gm>, index, i64\n    %slot_1 = arith.addi %slot_base, %c1 : index\n    pto.store %subblock, %arg0[%'
+    'slot_1] : !pto.ptr<i64, gm>, index, i64\n    %slot_2 = arith.addi %slot_base, %c2 : index\n    pto.store %block_num'
+    ', %arg0[%slot_2] : !pto.ptr<i64, gm>, index, i64\n    %slot_3 = arith.addi %slot_base, %c3 : index\n    pto.store %'
+    'subblock_num, %arg0[%slot_3] : !pto.ptr<i64, gm>, index, i64\n    return\n  }\n}\n'
 )
 
 def _golden_scope():

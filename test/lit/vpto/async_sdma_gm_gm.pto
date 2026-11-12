@@ -36,8 +36,8 @@ module attributes {"pto.target_arch" = "a5", pto.kernel_kind = #pto.kernel_kind<
     // the wiring is checked rather than folded away as dead.
     %c0 = arith.constant 0 : index
     %c3 = arith.constant 3 : index
-    %head_addr = pto.ld_dev %rec[%c3] : !pto.ptr<i64, gm> -> i64
-    pto.store %head_addr, %out[%c0] : !pto.ptr<i64, gm>, i64
+    %head_addr = pto.ld_dev %rec[%c3] : !pto.ptr<i64, gm>, index -> i64
+    pto.store %head_addr, %out[%c0] : !pto.ptr<i64, gm>, index, i64
 
     return
   }
@@ -123,7 +123,7 @@ module attributes {"pto.target_arch" = "a5", pto.kernel_kind = #pto.kernel_kind<
 // SQE-A2A3: pto.struct_get %{{.*}}[1]
 // SQE-A2A3: pto.struct_get %{{.*}}[3]
 // SQE-A2A3: pto.castptr %{{.*}} : i64 -> !pto.ptr<i32, ub>
-// SQE-A2A3: pto.store %{{.*}}, %{{.*}} : !pto.ptr<i32, ub>, i32
+// SQE-A2A3: pto.store %{{.*}}, %{{.*}} : !pto.ptr<i32, ub>, index, i32
 // SQE-A2A3: pto.set_flag_dyn[<PIPE_S>, <PIPE_MTE3>
 // SQE-A2A3: pto.wait_flag_dyn[<PIPE_S>, <PIPE_MTE3>
 // SQE-A2A3: pto.copy_ubuf_to_gm {{.*}}{vpto.byte_granular}

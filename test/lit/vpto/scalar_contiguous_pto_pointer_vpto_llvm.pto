@@ -13,8 +13,8 @@ module attributes {pto.target_arch = "a5", pto.kernel_kind = #pto.kernel_kind<ve
       %src: !pto.ptr<vector<4xf32>, gm>,
       %dst: !pto.ptr<vector<4xf32>, gm>) attributes {pto.aicore} {
     %c0 = arith.constant 0 : index
-    %value = pto.load %src[%c0] : !pto.ptr<vector<4xf32>, gm> -> vector<4xf32>
-    pto.store %value, %dst[%c0] : !pto.ptr<vector<4xf32>, gm>, vector<4xf32>
+    %value = pto.load %src[%c0] : !pto.ptr<vector<4xf32>, gm>, index -> vector<4xf32>
+    pto.store %value, %dst[%c0] : !pto.ptr<vector<4xf32>, gm>, index, vector<4xf32>
     return
   }
 }

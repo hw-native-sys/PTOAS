@@ -19,7 +19,7 @@ module {
   func.func @intervening_write(%src: !pto.ptr<f32, ub>, %off: index) -> !pto.vmi.vreg<128xf32> {
     %lane = pto.vmi.vload %src[%off] : !pto.ptr<f32, ub> -> !pto.vmi.vreg<1xf32>
     %zero = arith.constant 0.0 : f32
-    pto.store %zero, %src[%off] : !pto.ptr<f32, ub>, f32
+    pto.store %zero, %src[%off] : !pto.ptr<f32, ub>, index, f32
     %r = pto.vmi.vbrc %lane {group = 1 : i64} : !pto.vmi.vreg<1xf32> -> !pto.vmi.vreg<128xf32>
     return %r : !pto.vmi.vreg<128xf32>
   }

@@ -15,7 +15,7 @@ module attributes {pto.target_arch = "a5", pto.kernel_kind = #pto.kernel_kind<ve
       %mask_b16 = pto.pset_b16 "PAT_ALL" : !pto.mask<b16>
       %src = pto.vdup %f16_seed, %mask_b16 : f16, !pto.mask<b16> -> !pto.vreg<128xf16>
       %bf16 = pto.vcvt %src, %mask_b16 {rnd = "R"} : !pto.vreg<128xf16>, !pto.mask<b16> -> !pto.vreg<128xbf16>
-      pto.vsts %bf16, %dst_bf16[%c0], %mask_b16 : !pto.vreg<128xbf16>, !pto.ptr<bf16, ub>, !pto.mask<b16>
+      pto.vsts %bf16, %dst_bf16[%c0], %mask_b16 : !pto.vreg<128xbf16>, !pto.ptr<bf16, ub>, index, !pto.mask<b16>
     }
     return
   }

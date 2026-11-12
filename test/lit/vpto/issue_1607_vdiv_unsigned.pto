@@ -20,7 +20,7 @@ module attributes {pto.target_arch = "a5", pto.kernel_kind = #pto.kernel_kind<ve
     %c0 = arith.constant 0 : index
     %q = pto.vdiv %lhs, %rhs, %mask :
       !pto.vreg<128xui16>, !pto.vreg<128xui16>, !pto.mask<b16> -> !pto.vreg<128xui16>
-    pto.vsts %q, %dst[%c0], %mask : !pto.vreg<128xui16>, !pto.ptr<ui16, ub>, !pto.mask<b16>
+    pto.vsts %q, %dst[%c0], %mask : !pto.vreg<128xui16>, !pto.ptr<ui16, ub>, index, !pto.mask<b16>
     return
   }
   func.func @issue1607_vdiv_ui32(%lhs: !pto.vreg<64xui32>,
@@ -29,7 +29,7 @@ module attributes {pto.target_arch = "a5", pto.kernel_kind = #pto.kernel_kind<ve
     %c0 = arith.constant 0 : index
     %q = pto.vdiv %lhs, %rhs, %mask :
       !pto.vreg<64xui32>, !pto.vreg<64xui32>, !pto.mask<b32> -> !pto.vreg<64xui32>
-    pto.vsts %q, %dst[%c0], %mask : !pto.vreg<64xui32>, !pto.ptr<ui32, ub>, !pto.mask<b32>
+    pto.vsts %q, %dst[%c0], %mask : !pto.vreg<64xui32>, !pto.ptr<ui32, ub>, index, !pto.mask<b32>
     return
   }
 }

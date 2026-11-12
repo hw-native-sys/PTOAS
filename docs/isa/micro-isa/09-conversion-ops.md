@@ -323,7 +323,7 @@ for (int i = 0; i < N; i++)
 **Example: Reinterpreting float as integer for bit manipulation**
 ```mlir
 // Prepare a vector of float values
-%fvec = pto.vlds %ub[%lane] : !pto.ptr<f32, ub> -> !pto.vreg<64xf32>
+%fvec = pto.vlds %ub[%lane] : !pto.ptr<f32, ub>, index -> !pto.vreg<64xf32>
 
 // Reinterpret as integer for bitwise operations
 %ivec = pto.vbitcast %fvec : !pto.vreg<64xf32> -> !pto.vreg<64xi32>
@@ -338,7 +338,7 @@ for (int i = 0; i < N; i++)
 **Example: Type punning between signed and unsigned integer**
 ```mlir
 // Convert signed to unsigned without changing bits
-%signed = pto.vlds %ub[%lane] : !pto.ptr<si32, ub> -> !pto.vreg<64xsi32>
+%signed = pto.vlds %ub[%lane] : !pto.ptr<si32, ub>, index -> !pto.vreg<64xsi32>
 %unsigned = pto.vbitcast %signed : !pto.vreg<64xsi32> -> !pto.vreg<64xui32>
 // Bits are identical; interpretation changes from signed to unsigned
 ```

@@ -98,75 +98,75 @@ module attributes {pto.target_arch = "a5", pto.kernel_kind = #pto.kernel_kind<ve
     %idx_out = arith.index_castui %out_off : i32 to index
 
     // ── Arithmetic: f32x2 (64-bit ldg/stg via s64/b64) ──
-    %a0_f32x2 = pto.ldg %buf_f32x2[%idx_a0] l1cache(cache) l2cache(nmfv) : !pto.ptr<vector<2xf32>, gm> -> vector<2xf32>
-    %b0_f32x2 = pto.ldg %buf_f32x2[%idx_b0] l1cache(cache) l2cache(nmfv) : !pto.ptr<vector<2xf32>, gm> -> vector<2xf32>
+    %a0_f32x2 = pto.ldg %buf_f32x2[%idx_a0] l1cache(cache) l2cache(nmfv) : !pto.ptr<vector<2xf32>, gm>, index -> vector<2xf32>
+    %b0_f32x2 = pto.ldg %buf_f32x2[%idx_b0] l1cache(cache) l2cache(nmfv) : !pto.ptr<vector<2xf32>, gm>, index -> vector<2xf32>
     %s0_f32x2 = arith.addf %a0_f32x2, %b0_f32x2 : vector<2xf32>
-    pto.stg %s0_f32x2, %buf_f32x2[%idx_c0] l1cache(cache) l2cache(nmfv) : !pto.ptr<vector<2xf32>, gm>, vector<2xf32>
+    pto.stg %s0_f32x2, %buf_f32x2[%idx_c0] l1cache(cache) l2cache(nmfv) : !pto.ptr<vector<2xf32>, gm>, index, vector<2xf32>
 
-    %a1_f32x2 = pto.ldg %buf_f32x2[%idx_a1] l1cache(cache) l2cache(nmfv) : !pto.ptr<vector<2xf32>, gm> -> vector<2xf32>
-    %b1_f32x2 = pto.ldg %buf_f32x2[%idx_b1] l1cache(cache) l2cache(nmfv) : !pto.ptr<vector<2xf32>, gm> -> vector<2xf32>
+    %a1_f32x2 = pto.ldg %buf_f32x2[%idx_a1] l1cache(cache) l2cache(nmfv) : !pto.ptr<vector<2xf32>, gm>, index -> vector<2xf32>
+    %b1_f32x2 = pto.ldg %buf_f32x2[%idx_b1] l1cache(cache) l2cache(nmfv) : !pto.ptr<vector<2xf32>, gm>, index -> vector<2xf32>
     %s1_f32x2 = arith.addf %a1_f32x2, %b1_f32x2 : vector<2xf32>
-    pto.stg %s1_f32x2, %buf_f32x2[%idx_c1] l1cache(cache) l2cache(nmfv) : !pto.ptr<vector<2xf32>, gm>, vector<2xf32>
+    pto.stg %s1_f32x2, %buf_f32x2[%idx_c1] l1cache(cache) l2cache(nmfv) : !pto.ptr<vector<2xf32>, gm>, index, vector<2xf32>
 
     // ── Arithmetic: f16x2 (32-bit ldg/stg via s32/b32) ──
-    %a0_f16x2 = pto.ldg %buf_f16x2[%idx_a0] l1cache(cache) l2cache(nmfv) : !pto.ptr<vector<2xf16>, gm> -> vector<2xf16>
-    %b0_f16x2 = pto.ldg %buf_f16x2[%idx_b0] l1cache(cache) l2cache(nmfv) : !pto.ptr<vector<2xf16>, gm> -> vector<2xf16>
+    %a0_f16x2 = pto.ldg %buf_f16x2[%idx_a0] l1cache(cache) l2cache(nmfv) : !pto.ptr<vector<2xf16>, gm>, index -> vector<2xf16>
+    %b0_f16x2 = pto.ldg %buf_f16x2[%idx_b0] l1cache(cache) l2cache(nmfv) : !pto.ptr<vector<2xf16>, gm>, index -> vector<2xf16>
     %s0_f16x2 = arith.addf %a0_f16x2, %b0_f16x2 : vector<2xf16>
-    pto.stg %s0_f16x2, %buf_f16x2[%idx_c0] l1cache(cache) l2cache(nmfv) : !pto.ptr<vector<2xf16>, gm>, vector<2xf16>
+    pto.stg %s0_f16x2, %buf_f16x2[%idx_c0] l1cache(cache) l2cache(nmfv) : !pto.ptr<vector<2xf16>, gm>, index, vector<2xf16>
 
-    %a1_f16x2 = pto.ldg %buf_f16x2[%idx_a1] l1cache(cache) l2cache(nmfv) : !pto.ptr<vector<2xf16>, gm> -> vector<2xf16>
-    %b1_f16x2 = pto.ldg %buf_f16x2[%idx_b1] l1cache(cache) l2cache(nmfv) : !pto.ptr<vector<2xf16>, gm> -> vector<2xf16>
+    %a1_f16x2 = pto.ldg %buf_f16x2[%idx_a1] l1cache(cache) l2cache(nmfv) : !pto.ptr<vector<2xf16>, gm>, index -> vector<2xf16>
+    %b1_f16x2 = pto.ldg %buf_f16x2[%idx_b1] l1cache(cache) l2cache(nmfv) : !pto.ptr<vector<2xf16>, gm>, index -> vector<2xf16>
     %s1_f16x2 = arith.addf %a1_f16x2, %b1_f16x2 : vector<2xf16>
-    pto.stg %s1_f16x2, %buf_f16x2[%idx_c1] l1cache(cache) l2cache(nmfv) : !pto.ptr<vector<2xf16>, gm>, vector<2xf16>
+    pto.stg %s1_f16x2, %buf_f16x2[%idx_c1] l1cache(cache) l2cache(nmfv) : !pto.ptr<vector<2xf16>, gm>, index, vector<2xf16>
 
     // ── Arithmetic: bf16x2 (32-bit ldg/stg via s32/b32) ──
-    %a0_bf16x2 = pto.ldg %buf_bf16x2[%idx_a0] l1cache(cache) l2cache(nmfv) : !pto.ptr<vector<2xbf16>, gm> -> vector<2xbf16>
-    %b0_bf16x2 = pto.ldg %buf_bf16x2[%idx_b0] l1cache(cache) l2cache(nmfv) : !pto.ptr<vector<2xbf16>, gm> -> vector<2xbf16>
+    %a0_bf16x2 = pto.ldg %buf_bf16x2[%idx_a0] l1cache(cache) l2cache(nmfv) : !pto.ptr<vector<2xbf16>, gm>, index -> vector<2xbf16>
+    %b0_bf16x2 = pto.ldg %buf_bf16x2[%idx_b0] l1cache(cache) l2cache(nmfv) : !pto.ptr<vector<2xbf16>, gm>, index -> vector<2xbf16>
     %s0_bf16x2 = arith.addf %a0_bf16x2, %b0_bf16x2 : vector<2xbf16>
-    pto.stg %s0_bf16x2, %buf_bf16x2[%idx_c0] l1cache(cache) l2cache(nmfv) : !pto.ptr<vector<2xbf16>, gm>, vector<2xbf16>
+    pto.stg %s0_bf16x2, %buf_bf16x2[%idx_c0] l1cache(cache) l2cache(nmfv) : !pto.ptr<vector<2xbf16>, gm>, index, vector<2xbf16>
 
-    %a1_bf16x2 = pto.ldg %buf_bf16x2[%idx_a1] l1cache(cache) l2cache(nmfv) : !pto.ptr<vector<2xbf16>, gm> -> vector<2xbf16>
-    %b1_bf16x2 = pto.ldg %buf_bf16x2[%idx_b1] l1cache(cache) l2cache(nmfv) : !pto.ptr<vector<2xbf16>, gm> -> vector<2xbf16>
+    %a1_bf16x2 = pto.ldg %buf_bf16x2[%idx_a1] l1cache(cache) l2cache(nmfv) : !pto.ptr<vector<2xbf16>, gm>, index -> vector<2xbf16>
+    %b1_bf16x2 = pto.ldg %buf_bf16x2[%idx_b1] l1cache(cache) l2cache(nmfv) : !pto.ptr<vector<2xbf16>, gm>, index -> vector<2xbf16>
     %s1_bf16x2 = arith.addf %a1_bf16x2, %b1_bf16x2 : vector<2xbf16>
-    pto.stg %s1_bf16x2, %buf_bf16x2[%idx_c1] l1cache(cache) l2cache(nmfv) : !pto.ptr<vector<2xbf16>, gm>, vector<2xbf16>
+    pto.stg %s1_bf16x2, %buf_bf16x2[%idx_c1] l1cache(cache) l2cache(nmfv) : !pto.ptr<vector<2xbf16>, gm>, index, vector<2xbf16>
 
     // ── Arithmetic: i16x2 (32-bit ldg/stg via s32/b32) ──
-    %a0_i16x2 = pto.ldg %buf_i16x2[%idx_a0] l1cache(cache) l2cache(nmfv) : !pto.ptr<vector<2xi16>, gm> -> vector<2xi16>
-    %b0_i16x2 = pto.ldg %buf_i16x2[%idx_b0] l1cache(cache) l2cache(nmfv) : !pto.ptr<vector<2xi16>, gm> -> vector<2xi16>
+    %a0_i16x2 = pto.ldg %buf_i16x2[%idx_a0] l1cache(cache) l2cache(nmfv) : !pto.ptr<vector<2xi16>, gm>, index -> vector<2xi16>
+    %b0_i16x2 = pto.ldg %buf_i16x2[%idx_b0] l1cache(cache) l2cache(nmfv) : !pto.ptr<vector<2xi16>, gm>, index -> vector<2xi16>
     %s0_i16x2 = arith.addi %a0_i16x2, %b0_i16x2 : vector<2xi16>
-    pto.stg %s0_i16x2, %buf_i16x2[%idx_c0] l1cache(cache) l2cache(nmfv) : !pto.ptr<vector<2xi16>, gm>, vector<2xi16>
+    pto.stg %s0_i16x2, %buf_i16x2[%idx_c0] l1cache(cache) l2cache(nmfv) : !pto.ptr<vector<2xi16>, gm>, index, vector<2xi16>
 
-    %a1_i16x2 = pto.ldg %buf_i16x2[%idx_a1] l1cache(cache) l2cache(nmfv) : !pto.ptr<vector<2xi16>, gm> -> vector<2xi16>
-    %b1_i16x2 = pto.ldg %buf_i16x2[%idx_b1] l1cache(cache) l2cache(nmfv) : !pto.ptr<vector<2xi16>, gm> -> vector<2xi16>
+    %a1_i16x2 = pto.ldg %buf_i16x2[%idx_a1] l1cache(cache) l2cache(nmfv) : !pto.ptr<vector<2xi16>, gm>, index -> vector<2xi16>
+    %b1_i16x2 = pto.ldg %buf_i16x2[%idx_b1] l1cache(cache) l2cache(nmfv) : !pto.ptr<vector<2xi16>, gm>, index -> vector<2xi16>
     %s1_i16x2 = arith.addi %a1_i16x2, %b1_i16x2 : vector<2xi16>
-    pto.stg %s1_i16x2, %buf_i16x2[%idx_c1] l1cache(cache) l2cache(nmfv) : !pto.ptr<vector<2xi16>, gm>, vector<2xi16>
+    pto.stg %s1_i16x2, %buf_i16x2[%idx_c1] l1cache(cache) l2cache(nmfv) : !pto.ptr<vector<2xi16>, gm>, index, vector<2xi16>
 
     // ── Arithmetic: i32x2 (64-bit ldg/stg via s64/b64) ──
-    %a0_i32x2 = pto.ldg %buf_i32x2[%idx_a0] l1cache(cache) l2cache(nmfv) : !pto.ptr<vector<2xi32>, gm> -> vector<2xi32>
-    %b0_i32x2 = pto.ldg %buf_i32x2[%idx_b0] l1cache(cache) l2cache(nmfv) : !pto.ptr<vector<2xi32>, gm> -> vector<2xi32>
+    %a0_i32x2 = pto.ldg %buf_i32x2[%idx_a0] l1cache(cache) l2cache(nmfv) : !pto.ptr<vector<2xi32>, gm>, index -> vector<2xi32>
+    %b0_i32x2 = pto.ldg %buf_i32x2[%idx_b0] l1cache(cache) l2cache(nmfv) : !pto.ptr<vector<2xi32>, gm>, index -> vector<2xi32>
     %s0_i32x2 = arith.addi %a0_i32x2, %b0_i32x2 : vector<2xi32>
-    pto.stg %s0_i32x2, %buf_i32x2[%idx_c0] l1cache(cache) l2cache(nmfv) : !pto.ptr<vector<2xi32>, gm>, vector<2xi32>
+    pto.stg %s0_i32x2, %buf_i32x2[%idx_c0] l1cache(cache) l2cache(nmfv) : !pto.ptr<vector<2xi32>, gm>, index, vector<2xi32>
 
-    %a1_i32x2 = pto.ldg %buf_i32x2[%idx_a1] l1cache(cache) l2cache(nmfv) : !pto.ptr<vector<2xi32>, gm> -> vector<2xi32>
-    %b1_i32x2 = pto.ldg %buf_i32x2[%idx_b1] l1cache(cache) l2cache(nmfv) : !pto.ptr<vector<2xi32>, gm> -> vector<2xi32>
+    %a1_i32x2 = pto.ldg %buf_i32x2[%idx_a1] l1cache(cache) l2cache(nmfv) : !pto.ptr<vector<2xi32>, gm>, index -> vector<2xi32>
+    %b1_i32x2 = pto.ldg %buf_i32x2[%idx_b1] l1cache(cache) l2cache(nmfv) : !pto.ptr<vector<2xi32>, gm>, index -> vector<2xi32>
     %s1_i32x2 = arith.addi %a1_i32x2, %b1_i32x2 : vector<2xi32>
-    pto.stg %s1_i32x2, %buf_i32x2[%idx_c1] l1cache(cache) l2cache(nmfv) : !pto.ptr<vector<2xi32>, gm>, vector<2xi32>
+    pto.stg %s1_i32x2, %buf_i32x2[%idx_c1] l1cache(cache) l2cache(nmfv) : !pto.ptr<vector<2xi32>, gm>, index, vector<2xi32>
 
     // ── Copy: !pto.hif8x2 (16-bit ldg/stg via s16/b16) ──
-    %v_hif8x2 = pto.ldg %buf_hif8x2[%idx_in] : !pto.ptr<!pto.hif8x2, gm> -> !pto.hif8x2
-    pto.stg %v_hif8x2, %buf_hif8x2[%idx_out] : !pto.ptr<!pto.hif8x2, gm>, !pto.hif8x2
+    %v_hif8x2 = pto.ldg %buf_hif8x2[%idx_in] : !pto.ptr<!pto.hif8x2, gm>, index -> !pto.hif8x2
+    pto.stg %v_hif8x2, %buf_hif8x2[%idx_out] : !pto.ptr<!pto.hif8x2, gm>, index, !pto.hif8x2
 
     // ── Copy: vector<2xi8> (16-bit ldg/stg via s16/b16) ──
-    %v_i8x2 = pto.ldg %buf_i8x2[%idx_in] : !pto.ptr<vector<2xi8>, gm> -> vector<2xi8>
-    pto.stg %v_i8x2, %buf_i8x2[%idx_out] : !pto.ptr<vector<2xi8>, gm>, vector<2xi8>
+    %v_i8x2 = pto.ldg %buf_i8x2[%idx_in] : !pto.ptr<vector<2xi8>, gm>, index -> vector<2xi8>
+    pto.stg %v_i8x2, %buf_i8x2[%idx_out] : !pto.ptr<vector<2xi8>, gm>, index, vector<2xi8>
 
     // ── Copy: vector<2xf8E4M3FN> (16-bit ldg/stg via s16/b16) ──
-    %v_fp8e4 = pto.ldg %buf_fp8e4x2[%idx_in] : !pto.ptr<vector<2xf8E4M3FN>, gm> -> vector<2xf8E4M3FN>
-    pto.stg %v_fp8e4, %buf_fp8e4x2[%idx_out] : !pto.ptr<vector<2xf8E4M3FN>, gm>, vector<2xf8E4M3FN>
+    %v_fp8e4 = pto.ldg %buf_fp8e4x2[%idx_in] : !pto.ptr<vector<2xf8E4M3FN>, gm>, index -> vector<2xf8E4M3FN>
+    pto.stg %v_fp8e4, %buf_fp8e4x2[%idx_out] : !pto.ptr<vector<2xf8E4M3FN>, gm>, index, vector<2xf8E4M3FN>
 
     // ── Copy: vector<2xf8E5M2> (16-bit ldg/stg via s16/b16) ──
-    %v_fp8e5 = pto.ldg %buf_fp8e5x2[%idx_in] : !pto.ptr<vector<2xf8E5M2>, gm> -> vector<2xf8E5M2>
-    pto.stg %v_fp8e5, %buf_fp8e5x2[%idx_out] : !pto.ptr<vector<2xf8E5M2>, gm>, vector<2xf8E5M2>
+    %v_fp8e5 = pto.ldg %buf_fp8e5x2[%idx_in] : !pto.ptr<vector<2xf8E5M2>, gm>, index -> vector<2xf8E5M2>
+    pto.stg %v_fp8e5, %buf_fp8e5x2[%idx_out] : !pto.ptr<vector<2xf8E5M2>, gm>, index, vector<2xf8E5M2>
 
     return
   }

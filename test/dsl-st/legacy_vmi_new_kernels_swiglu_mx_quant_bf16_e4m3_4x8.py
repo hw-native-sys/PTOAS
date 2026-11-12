@@ -41,7 +41,7 @@ KERNEL_SOURCE = (
     '2 = pto.castptr %c0_i64 : i64 -> !pto.ptr<bf16, ub>\n    %ub_x1 = pto.castptr %c4096_i64 : i64 -> !pto.ptr<b'
     'f16, ub>\n    %ub_out_u8 = pto.castptr %c8192_i64 : i64 -> !pto.ptr<ui8, ub>\n    %ub_out_f8 = pto.castptr %'
     'c8192_i64 : i64 -> !pto.ptr<f8E4M3FN, ub>\n    %ub_scale = pto.castptr %c128_i64 : i64 -> !pto.ptr<ui8, ub>'
-    '\n    %src_x1_gm = pto.addptr %src_gm, %c4 : !pto.ptr<bf16, gm> -> !pto.ptr<bf16, gm>\n\n    pto.vecscope {'
+    '\n    %src_x1_gm = pto.addptr %src_gm, %c4 : !pto.ptr<bf16, gm>, index -> !pto.ptr<bf16, gm>\n\n    pto.vecscope {'
     '\n      %zero_pad = pto.vmi.vbrc %c0_bf16\n          : bf16 -> !pto.vmi.vreg<256xbf16>\n      pto.vmi.vstore'
     ' %zero_pad, %ub_x2[%c0]\n          : !pto.vmi.vreg<256xbf16>, !pto.ptr<bf16, ub>\n      pto.vmi.vstore %zero'
     '_pad, %ub_x1[%c0]\n          : !pto.vmi.vreg<256xbf16>, !pto.ptr<bf16, ub>\n    }\n    pto.set_flag["PIPE_V"'

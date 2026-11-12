@@ -761,7 +761,7 @@ def main() -> None:
         float_addptr_offset_probe.compile,
         TypeError,
         "addptr(ptr, offset)",
-        "expects an index-like scalar",
+        "expects an index or integer element offset",
         "f32",
     )
     expect_raises(

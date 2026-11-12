@@ -21,21 +21,21 @@
 // CHECK-LABEL: func.func @TTRANS_i8_tall_32x32
 // CHECK-NOT: pto.ttrans ins
 // CHECK: pto.vgather2 {{.*}} : !pto.ptr<i8, ub>, !pto.vreg<128xi16>, !pto.mask<b16> -> !pto.vreg<128xi16>
-// CHECK: pto.vsts {{.*}} {dist = "PK_B16"} : !pto.vreg<128xi16>, !pto.ptr<i8, ub>, !pto.mask<b16>
+// CHECK: pto.vsts {{.*}} {dist = "PK_B16"} : !pto.vreg<128xi16>, !pto.ptr<i8, ub>, index, !pto.mask<b16>
 
 // CHECK-LABEL: func.func @TTRANS_ui8_tall_32x32
 // CHECK-NOT: pto.ttrans ins
 // CHECK: pto.vgather2 {{.*}} : !pto.ptr<ui8, ub>, !pto.vreg<128xi16>, !pto.mask<b16> -> !pto.vreg<128xui16>
-// CHECK: pto.vsts {{.*}} {dist = "PK_B16"} : !pto.vreg<128xui16>, !pto.ptr<ui8, ub>, !pto.mask<b16>
+// CHECK: pto.vsts {{.*}} {dist = "PK_B16"} : !pto.vreg<128xui16>, !pto.ptr<ui8, ub>, index, !pto.mask<b16>
 
 // CHECK-LABEL: func.func @TTRANS_f16_wide_16x32
 // CHECK-NOT: pto.ttrans ins
-// CHECK: pto.vlds {{.*}} : !pto.ptr<f16, ub> -> !pto.vreg<128xf16>
+// CHECK: pto.vlds {{.*}} : !pto.ptr<f16, ub>, index -> !pto.vreg<128xf16>
 // CHECK: pto.vscatter {{.*}} : !pto.vreg<128xf16>, !pto.ptr<f16, ub>, !pto.vreg<128xi16>, !pto.mask<b16>
 
 // CHECK-LABEL: func.func @TTRANS_i8_wide_32x64
 // CHECK-NOT: pto.ttrans ins
-// CHECK: pto.vlds {{.*}} {dist = "UNPK_B8"} : !pto.ptr<i8, ub> -> !pto.vreg<256xi8>
+// CHECK: pto.vlds {{.*}} {dist = "UNPK_B8"} : !pto.ptr<i8, ub>, index -> !pto.vreg<256xi8>
 // CHECK: pto.vscatter {{.*}} : !pto.vreg<256xi8>, !pto.ptr<i8, ub>, !pto.vreg<128xi16>, !pto.mask<b16>
 
 module attributes {pto.kernel_kind = #pto.kernel_kind<vector>} {

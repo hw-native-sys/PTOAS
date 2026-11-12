@@ -20,5 +20,5 @@ module {
 }
 
 // CHECK-LABEL: func.func @tgather_a5_index_bf16_i16()
-// CHECK: pto.vlds {{.*}} : !pto.ptr<i16, ub> -> !pto.vreg<128xi16>
+// CHECK: pto.vlds {{.*}} : !pto.ptr<i16, ub>, index -> !pto.vreg<128xi16>
 // CHECK: pto.vgather2 {{.*}} : !pto.ptr<bf16, ub>, !pto.vreg<128xui16>, !pto.mask<b16> -> !pto.vreg<128xbf16>

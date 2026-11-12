@@ -184,14 +184,11 @@ static Value offsetBufferPointer(Value basePtr, Value elementOffset,
     return {};
   }
 
-  Value offsetIndex = elementOffset;
-  if (!offsetIndex.getType().isIndex()) {
-    offsetIndex = rewriter.create<arith::IndexCastUIOp>(loc,
-                                                        rewriter.getIndexType(),
-                                                        elementOffset);
-  }
+  // pto.addptr consumes a signed element displacement in its own type: a
+  // narrow integer offset is scaled and sign-extended by the GEP index rule,
+  // so no index conversion is forced here.
   return rewriter.create<pto::AddPtrOp>(loc, basePtr.getType(), basePtr,
-                                        offsetIndex);
+                                        elementOffset);
 }
 
 static bool isKnownOne(Value value) {

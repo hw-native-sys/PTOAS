@@ -144,7 +144,7 @@ module {
 
 // CHECK-LABEL: func.func @vmi_to_vpto_group_slot_load_slots8(
 // CHECK: %[[MASK:.*]] = pto.pset_b32 "PAT_VL8" : !pto.mask<b32>
-// CHECK: %[[BASE:.*]] = pto.addptr %arg0, %arg1 : <f32, ub> -> <f32, ub>
+// CHECK: %[[BASE:.*]] = pto.addptr %arg0, %arg1 : <f32, ub>, index -> <f32, ub>
 // CHECK: %[[OUT:.*]] = pto.vsldb %[[BASE]], {{.*}}, {{.*}}, %[[MASK]] : !pto.ptr<f32, ub>, i16, i16, !pto.mask<b32> -> !pto.vreg<64xf32>
 // CHECK: return %[[OUT]]
 
@@ -153,7 +153,7 @@ module {
 
 // CHECK-LABEL: func.func @vmi_to_vpto_group_slot_load_slots8_store(
 // CHECK: %[[LOAD_MASK:.*]] = pto.pset_b32 "PAT_VL8" : !pto.mask<b32>
-// CHECK: %[[BASE:.*]] = pto.addptr %arg0, %arg2 : <f32, ub> -> <f32, ub>
+// CHECK: %[[BASE:.*]] = pto.addptr %arg0, %arg2 : <f32, ub>, index -> <f32, ub>
 // CHECK: %[[OUT:.*]] = pto.vsldb %[[BASE]], {{.*}}, {{.*}}, %[[LOAD_MASK]]
 // CHECK: pto.init_align
 // CHECK: pto.vstus

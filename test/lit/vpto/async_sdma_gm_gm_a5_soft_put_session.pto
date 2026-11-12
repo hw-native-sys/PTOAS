@@ -50,8 +50,8 @@ module attributes {"pto.target_arch" = "a5", pto.kernel_kind = #pto.kernel_kind<
     %off = arith.muli %bid, %chunk : i64
     %off_idx = arith.index_castui %off : i64 to index
     // i8 endpoints, so an element offset is a byte offset.
-    %core_src = pto.addptr %src, %off_idx : !pto.ptr<i8, gm> -> !pto.ptr<i8, gm>
-    %core_dst = pto.addptr %dst, %off_idx : !pto.ptr<i8, gm> -> !pto.ptr<i8, gm>
+    %core_src = pto.addptr %src, %off_idx : !pto.ptr<i8, gm>, index -> !pto.ptr<i8, gm>
+    %core_dst = pto.addptr %dst, %off_idx : !pto.ptr<i8, gm>, index -> !pto.ptr<i8, gm>
 
     %rec = pto.sdma_gm_gm %core_dst, %core_src, %chunk session(%sess) {soft_put}
       : !pto.ptr<i8, gm>, !pto.ptr<i8, gm>, i64,

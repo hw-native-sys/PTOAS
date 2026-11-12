@@ -34,9 +34,9 @@ module {
 // CHECK: %[[C64:.*]] = arith.constant 64 : index
 // CHECK: %[[C8:.*]] = arith.constant 8 : index
 // CHECK: %[[ALIGNED_OFF:.*]] = arith.muli %[[OFF]], %[[C8]] : index
-// CHECK: pto.vsts %[[V0]], %[[DST]][%[[ALIGNED_OFF]]], %[[M0]] : !pto.vreg<64xf32>, !pto.ptr<f32, ub>, !pto.mask<b32>
+// CHECK: pto.vsts %[[V0]], %[[DST]][%[[ALIGNED_OFF]]], %[[M0]] : !pto.vreg<64xf32>, !pto.ptr<f32, ub>, index, !pto.mask<b32>
 // CHECK: %[[OFF1:.*]] = arith.addi %[[ALIGNED_OFF]], %[[C64]] : index
-// CHECK: pto.vsts %[[V1]], %[[DST]][%[[OFF1]]], %[[M1]] : !pto.vreg<64xf32>, !pto.ptr<f32, ub>, !pto.mask<b32>
+// CHECK: pto.vsts %[[V1]], %[[DST]][%[[OFF1]]], %[[M1]] : !pto.vreg<64xf32>, !pto.ptr<f32, ub>, index, !pto.mask<b32>
 // CHECK-NOT: pto.vmi.
 // CHECK-NOT: !pto.vmi.
 // CHECK-NOT: unrealized_conversion_cast

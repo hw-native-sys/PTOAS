@@ -74,29 +74,29 @@ module attributes {pto.target_arch = "a5"} {
 // COMPACT-NEXT: %[[VAL_5:[a-zA-Z0-9_.$-]+]] = arith.constant 64 : index
 // COMPACT-NEXT: %[[VAL_6:[a-zA-Z0-9_.$-]+]] = arith.constant 32 : index
 // COMPACT-NEXT: %[[VAL_7:[a-zA-Z0-9_.$-]+]] = arith.muli %[[VAL_2]], %[[VAL_6]] : index
-// COMPACT-NEXT: %[[VAL_8:[a-zA-Z0-9_.$-]+]] = pto.vlds %[[VAL_0]]{{\[}}%[[VAL_7]]] : !pto.ptr<f32, ub> -> !pto.vreg<64xf32>
+// COMPACT-NEXT: %[[VAL_8:[a-zA-Z0-9_.$-]+]] = pto.vlds %[[VAL_0]]{{\[}}%[[VAL_7]]] : !pto.ptr<f32, ub>, index -> !pto.vreg<64xf32>
 // COMPACT-NEXT: %[[VAL_9:[a-zA-Z0-9_.$-]+]] = arith.addi %[[VAL_7]], %[[VAL_5]] : index
-// COMPACT-NEXT: %[[VAL_10:[a-zA-Z0-9_.$-]+]] = pto.vlds %[[VAL_0]]{{\[}}%[[VAL_9]]] : !pto.ptr<f32, ub> -> !pto.vreg<64xf32>
+// COMPACT-NEXT: %[[VAL_10:[a-zA-Z0-9_.$-]+]] = pto.vlds %[[VAL_0]]{{\[}}%[[VAL_9]]] : !pto.ptr<f32, ub>, index -> !pto.vreg<64xf32>
 // COMPACT-NEXT: %[[VAL_11:[a-zA-Z0-9_.$-]+]] = arith.addi %[[VAL_7]], %[[VAL_4]] : index
-// COMPACT-NEXT: %[[VAL_12:[a-zA-Z0-9_.$-]+]] = pto.vlds %[[VAL_0]]{{\[}}%[[VAL_11]]] : !pto.ptr<f32, ub> -> !pto.vreg<64xf32>
+// COMPACT-NEXT: %[[VAL_12:[a-zA-Z0-9_.$-]+]] = pto.vlds %[[VAL_0]]{{\[}}%[[VAL_11]]] : !pto.ptr<f32, ub>, index -> !pto.vreg<64xf32>
 // COMPACT-NEXT: %[[VAL_13:[a-zA-Z0-9_.$-]+]] = arith.addi %[[VAL_7]], %[[VAL_3]] : index
-// COMPACT-NEXT: %[[VAL_14:[a-zA-Z0-9_.$-]+]] = pto.vlds %[[VAL_0]]{{\[}}%[[VAL_13]]] : !pto.ptr<f32, ub> -> !pto.vreg<64xf32>
+// COMPACT-NEXT: %[[VAL_14:[a-zA-Z0-9_.$-]+]] = pto.vlds %[[VAL_0]]{{\[}}%[[VAL_13]]] : !pto.ptr<f32, ub>, index -> !pto.vreg<64xf32>
 // COMPACT-NEXT: %[[VAL_15:[a-zA-Z0-9_.$-]+]] = pto.pset_b32 "PAT_ALL" : !pto.mask<b32>
 // COMPACT-NEXT: %[[VAL_16:[a-zA-Z0-9_.$-]+]] = pto.vcvt %[[VAL_8]], %[[VAL_15]] {part = "P0", rnd = "R", sat = "SAT"} : !pto.vreg<64xf32>, !pto.mask<b32> -> !pto.vreg<256xf8E4M3FN>
 // COMPACT-NEXT: %[[VAL_17:[a-zA-Z0-9_.$-]+]] = pto.vcvt %[[VAL_10]], %[[VAL_15]] {part = "P0", rnd = "R", sat = "SAT"} : !pto.vreg<64xf32>, !pto.mask<b32> -> !pto.vreg<256xf8E4M3FN>
 // COMPACT-NEXT: %[[VAL_18:[a-zA-Z0-9_.$-]+]] = pto.vcvt %[[VAL_12]], %[[VAL_15]] {part = "P0", rnd = "R", sat = "SAT"} : !pto.vreg<64xf32>, !pto.mask<b32> -> !pto.vreg<256xf8E4M3FN>
 // COMPACT-NEXT: %[[VAL_19:[a-zA-Z0-9_.$-]+]] = pto.vcvt %[[VAL_14]], %[[VAL_15]] {part = "P0", rnd = "R", sat = "SAT"} : !pto.vreg<64xf32>, !pto.mask<b32> -> !pto.vreg<256xf8E4M3FN>
 // COMPACT-NEXT: %[[VAL_20:[a-zA-Z0-9_.$-]+]] = pto.pset_b32 "PAT_ALL" : !pto.mask<b32>
-// COMPACT-NEXT: pto.vsts %[[VAL_16]], %[[VAL_1]]{{\[}}%[[VAL_7]]], %[[VAL_20]] {dist = "PK4_B32"} : !pto.vreg<256xf8E4M3FN>, !pto.ptr<f8E4M3FN, ub>, !pto.mask<b32>
+// COMPACT-NEXT: pto.vsts %[[VAL_16]], %[[VAL_1]]{{\[}}%[[VAL_7]]], %[[VAL_20]] {dist = "PK4_B32"} : !pto.vreg<256xf8E4M3FN>, !pto.ptr<f8E4M3FN, ub>, index, !pto.mask<b32>
 // COMPACT-NEXT: %[[VAL_21:[a-zA-Z0-9_.$-]+]] = pto.pset_b32 "PAT_ALL" : !pto.mask<b32>
 // COMPACT-NEXT: %[[VAL_22:[a-zA-Z0-9_.$-]+]] = arith.addi %[[VAL_7]], %[[VAL_5]] : index
-// COMPACT-NEXT: pto.vsts %[[VAL_17]], %[[VAL_1]]{{\[}}%[[VAL_22]]], %[[VAL_21]] {dist = "PK4_B32"} : !pto.vreg<256xf8E4M3FN>, !pto.ptr<f8E4M3FN, ub>, !pto.mask<b32>
+// COMPACT-NEXT: pto.vsts %[[VAL_17]], %[[VAL_1]]{{\[}}%[[VAL_22]]], %[[VAL_21]] {dist = "PK4_B32"} : !pto.vreg<256xf8E4M3FN>, !pto.ptr<f8E4M3FN, ub>, index, !pto.mask<b32>
 // COMPACT-NEXT: %[[VAL_23:[a-zA-Z0-9_.$-]+]] = pto.pset_b32 "PAT_ALL" : !pto.mask<b32>
 // COMPACT-NEXT: %[[VAL_24:[a-zA-Z0-9_.$-]+]] = arith.addi %[[VAL_7]], %[[VAL_4]] : index
-// COMPACT-NEXT: pto.vsts %[[VAL_18]], %[[VAL_1]]{{\[}}%[[VAL_24]]], %[[VAL_23]] {dist = "PK4_B32"} : !pto.vreg<256xf8E4M3FN>, !pto.ptr<f8E4M3FN, ub>, !pto.mask<b32>
+// COMPACT-NEXT: pto.vsts %[[VAL_18]], %[[VAL_1]]{{\[}}%[[VAL_24]]], %[[VAL_23]] {dist = "PK4_B32"} : !pto.vreg<256xf8E4M3FN>, !pto.ptr<f8E4M3FN, ub>, index, !pto.mask<b32>
 // COMPACT-NEXT: %[[VAL_25:[a-zA-Z0-9_.$-]+]] = pto.pset_b32 "PAT_ALL" : !pto.mask<b32>
 // COMPACT-NEXT: %[[VAL_26:[a-zA-Z0-9_.$-]+]] = arith.addi %[[VAL_7]], %[[VAL_3]] : index
-// COMPACT-NEXT: pto.vsts %[[VAL_19]], %[[VAL_1]]{{\[}}%[[VAL_26]]], %[[VAL_25]] {dist = "PK4_B32"} : !pto.vreg<256xf8E4M3FN>, !pto.ptr<f8E4M3FN, ub>, !pto.mask<b32>
+// COMPACT-NEXT: pto.vsts %[[VAL_19]], %[[VAL_1]]{{\[}}%[[VAL_26]]], %[[VAL_25]] {dist = "PK4_B32"} : !pto.vreg<256xf8E4M3FN>, !pto.ptr<f8E4M3FN, ub>, index, !pto.mask<b32>
 // COMPACT-NEXT: return
 // COMPACT-NEXT: }
 // COMPACT-NEXT: func.func @trunci_dense_masked_store(%[[VAL_27:[a-zA-Z0-9_.$-]+]]: !pto.ptr<ui32, ub>, %[[VAL_28:[a-zA-Z0-9_.$-]+]]: !pto.ptr<ui8, ub>, %[[VAL_29:[a-zA-Z0-9_.$-]+]]: index, %[[VAL_30:[a-zA-Z0-9_.$-]+]]: index) {
@@ -107,13 +107,13 @@ module attributes {pto.target_arch = "a5"} {
 // COMPACT-NEXT: %[[VAL_35:[a-zA-Z0-9_.$-]+]] = arith.constant 64 : index
 // COMPACT-NEXT: %[[VAL_36:[a-zA-Z0-9_.$-]+]] = arith.constant 32 : index
 // COMPACT-NEXT: %[[VAL_37:[a-zA-Z0-9_.$-]+]] = arith.muli %[[VAL_29]], %[[VAL_36]] : index
-// COMPACT-NEXT: %[[VAL_38:[a-zA-Z0-9_.$-]+]] = pto.vlds %[[VAL_27]]{{\[}}%[[VAL_37]]] : !pto.ptr<ui32, ub> -> !pto.vreg<64xui32>
+// COMPACT-NEXT: %[[VAL_38:[a-zA-Z0-9_.$-]+]] = pto.vlds %[[VAL_27]]{{\[}}%[[VAL_37]]] : !pto.ptr<ui32, ub>, index -> !pto.vreg<64xui32>
 // COMPACT-NEXT: %[[VAL_39:[a-zA-Z0-9_.$-]+]] = arith.addi %[[VAL_37]], %[[VAL_35]] : index
-// COMPACT-NEXT: %[[VAL_40:[a-zA-Z0-9_.$-]+]] = pto.vlds %[[VAL_27]]{{\[}}%[[VAL_39]]] : !pto.ptr<ui32, ub> -> !pto.vreg<64xui32>
+// COMPACT-NEXT: %[[VAL_40:[a-zA-Z0-9_.$-]+]] = pto.vlds %[[VAL_27]]{{\[}}%[[VAL_39]]] : !pto.ptr<ui32, ub>, index -> !pto.vreg<64xui32>
 // COMPACT-NEXT: %[[VAL_41:[a-zA-Z0-9_.$-]+]] = arith.addi %[[VAL_37]], %[[VAL_34]] : index
-// COMPACT-NEXT: %[[VAL_42:[a-zA-Z0-9_.$-]+]] = pto.vlds %[[VAL_27]]{{\[}}%[[VAL_41]]] : !pto.ptr<ui32, ub> -> !pto.vreg<64xui32>
+// COMPACT-NEXT: %[[VAL_42:[a-zA-Z0-9_.$-]+]] = pto.vlds %[[VAL_27]]{{\[}}%[[VAL_41]]] : !pto.ptr<ui32, ub>, index -> !pto.vreg<64xui32>
 // COMPACT-NEXT: %[[VAL_43:[a-zA-Z0-9_.$-]+]] = arith.addi %[[VAL_37]], %[[VAL_33]] : index
-// COMPACT-NEXT: %[[VAL_44:[a-zA-Z0-9_.$-]+]] = pto.vlds %[[VAL_27]]{{\[}}%[[VAL_43]]] : !pto.ptr<ui32, ub> -> !pto.vreg<64xui32>
+// COMPACT-NEXT: %[[VAL_44:[a-zA-Z0-9_.$-]+]] = pto.vlds %[[VAL_27]]{{\[}}%[[VAL_43]]] : !pto.ptr<ui32, ub>, index -> !pto.vreg<64xui32>
 // COMPACT-NEXT: %[[VAL_45:[a-zA-Z0-9_.$-]+]] = pto.pset_b32 "PAT_ALL" : !pto.mask<b32>
 // COMPACT-NEXT: %[[VAL_46:[a-zA-Z0-9_.$-]+]] = pto.vcvt %[[VAL_38]], %[[VAL_45]] {part = "P0", sat = "SAT"} : !pto.vreg<64xui32>, !pto.mask<b32> -> !pto.vreg<256xui8>
 // COMPACT-NEXT: %[[VAL_47:[a-zA-Z0-9_.$-]+]] = pto.vcvt %[[VAL_40]], %[[VAL_45]] {part = "P0", sat = "SAT"} : !pto.vreg<64xui32>, !pto.mask<b32> -> !pto.vreg<256xui8>
@@ -126,13 +126,13 @@ module attributes {pto.target_arch = "a5"} {
 // COMPACT-NEXT: %[[VAL_55:[a-zA-Z0-9_.$-]+]], %[[VAL_56:[a-zA-Z0-9_.$-]+]] = pto.plt_b32 %[[VAL_54]] : i32 -> !pto.mask<b32>, i32
 // COMPACT-NEXT: %[[VAL_57:[a-zA-Z0-9_.$-]+]], %[[VAL_58:[a-zA-Z0-9_.$-]+]] = pto.plt_b32 %[[VAL_56]] : i32 -> !pto.mask<b32>, i32
 // COMPACT-NEXT: %[[VAL_59:[a-zA-Z0-9_.$-]+]], %[[VAL_60:[a-zA-Z0-9_.$-]+]] = pto.plt_b32 %[[VAL_58]] : i32 -> !pto.mask<b32>, i32
-// COMPACT-NEXT: pto.vsts %[[VAL_46]], %[[VAL_28]]{{\[}}%[[VAL_37]]], %[[VAL_53]] {dist = "PK4_B32"} : !pto.vreg<256xui8>, !pto.ptr<ui8, ub>, !pto.mask<b32>
+// COMPACT-NEXT: pto.vsts %[[VAL_46]], %[[VAL_28]]{{\[}}%[[VAL_37]]], %[[VAL_53]] {dist = "PK4_B32"} : !pto.vreg<256xui8>, !pto.ptr<ui8, ub>, index, !pto.mask<b32>
 // COMPACT-NEXT: %[[VAL_61:[a-zA-Z0-9_.$-]+]] = arith.addi %[[VAL_37]], %[[VAL_35]] : index
-// COMPACT-NEXT: pto.vsts %[[VAL_47]], %[[VAL_28]]{{\[}}%[[VAL_61]]], %[[VAL_55]] {dist = "PK4_B32"} : !pto.vreg<256xui8>, !pto.ptr<ui8, ub>, !pto.mask<b32>
+// COMPACT-NEXT: pto.vsts %[[VAL_47]], %[[VAL_28]]{{\[}}%[[VAL_61]]], %[[VAL_55]] {dist = "PK4_B32"} : !pto.vreg<256xui8>, !pto.ptr<ui8, ub>, index, !pto.mask<b32>
 // COMPACT-NEXT: %[[VAL_62:[a-zA-Z0-9_.$-]+]] = arith.addi %[[VAL_37]], %[[VAL_34]] : index
-// COMPACT-NEXT: pto.vsts %[[VAL_48]], %[[VAL_28]]{{\[}}%[[VAL_62]]], %[[VAL_57]] {dist = "PK4_B32"} : !pto.vreg<256xui8>, !pto.ptr<ui8, ub>, !pto.mask<b32>
+// COMPACT-NEXT: pto.vsts %[[VAL_48]], %[[VAL_28]]{{\[}}%[[VAL_62]]], %[[VAL_57]] {dist = "PK4_B32"} : !pto.vreg<256xui8>, !pto.ptr<ui8, ub>, index, !pto.mask<b32>
 // COMPACT-NEXT: %[[VAL_63:[a-zA-Z0-9_.$-]+]] = arith.addi %[[VAL_37]], %[[VAL_33]] : index
-// COMPACT-NEXT: pto.vsts %[[VAL_49]], %[[VAL_28]]{{\[}}%[[VAL_63]]], %[[VAL_59]] {dist = "PK4_B32"} : !pto.vreg<256xui8>, !pto.ptr<ui8, ub>, !pto.mask<b32>
+// COMPACT-NEXT: pto.vsts %[[VAL_49]], %[[VAL_28]]{{\[}}%[[VAL_63]]], %[[VAL_59]] {dist = "PK4_B32"} : !pto.vreg<256xui8>, !pto.ptr<ui8, ub>, index, !pto.mask<b32>
 // COMPACT-NEXT: return
 // COMPACT-NEXT: }
 // COMPACT-NEXT: }

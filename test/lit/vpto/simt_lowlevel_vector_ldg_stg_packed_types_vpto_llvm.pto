@@ -26,38 +26,38 @@ module attributes {pto.target_arch = "a5", pto.kernel_kind = #pto.kernel_kind<ve
     %c1 = arith.constant 1 : index
 
     // 16-bit total: load via s16, store via b16
-    %v_f8e4 = pto.ldg %gm_f8e4[%c0] : !pto.ptr<vector<2xf8E4M3FN>, gm> -> vector<2xf8E4M3FN>
-    pto.stg %v_f8e4, %gm_f8e4[%c1] : !pto.ptr<vector<2xf8E4M3FN>, gm>, vector<2xf8E4M3FN>
+    %v_f8e4 = pto.ldg %gm_f8e4[%c0] : !pto.ptr<vector<2xf8E4M3FN>, gm>, index -> vector<2xf8E4M3FN>
+    pto.stg %v_f8e4, %gm_f8e4[%c1] : !pto.ptr<vector<2xf8E4M3FN>, gm>, index, vector<2xf8E4M3FN>
 
-    %v_f8e5 = pto.ldg %gm_f8e5[%c0] : !pto.ptr<vector<2xf8E5M2>, gm> -> vector<2xf8E5M2>
-    pto.stg %v_f8e5, %gm_f8e5[%c1] : !pto.ptr<vector<2xf8E5M2>, gm>, vector<2xf8E5M2>
+    %v_f8e5 = pto.ldg %gm_f8e5[%c0] : !pto.ptr<vector<2xf8E5M2>, gm>, index -> vector<2xf8E5M2>
+    pto.stg %v_f8e5, %gm_f8e5[%c1] : !pto.ptr<vector<2xf8E5M2>, gm>, index, vector<2xf8E5M2>
 
     // !pto.hif8x2 is a 2-byte packed hif8 value type.
-    %v_hif8x2 = pto.ldg %gm_hif8x2[%c0] : !pto.ptr<!pto.hif8x2, gm> -> !pto.hif8x2
-    pto.stg %v_hif8x2, %gm_hif8x2[%c1] : !pto.ptr<!pto.hif8x2, gm>, !pto.hif8x2
+    %v_hif8x2 = pto.ldg %gm_hif8x2[%c0] : !pto.ptr<!pto.hif8x2, gm>, index -> !pto.hif8x2
+    pto.stg %v_hif8x2, %gm_hif8x2[%c1] : !pto.ptr<!pto.hif8x2, gm>, index, !pto.hif8x2
 
-    %v_i8 = pto.ldg %gm_i8[%c0] : !pto.ptr<vector<2xi8>, gm> -> vector<2xi8>
-    pto.stg %v_i8, %gm_i8[%c1] : !pto.ptr<vector<2xi8>, gm>, vector<2xi8>
+    %v_i8 = pto.ldg %gm_i8[%c0] : !pto.ptr<vector<2xi8>, gm>, index -> vector<2xi8>
+    pto.stg %v_i8, %gm_i8[%c1] : !pto.ptr<vector<2xi8>, gm>, index, vector<2xi8>
 
     // 32-bit total: load via s32, store via b32
-    %v_f8e4x4 = pto.ldg %gm_f8e4x4[%c0] : !pto.ptr<vector<4xf8E4M3FN>, gm> -> vector<4xf8E4M3FN>
-    pto.stg %v_f8e4x4, %gm_f8e4x4[%c1] : !pto.ptr<vector<4xf8E4M3FN>, gm>, vector<4xf8E4M3FN>
+    %v_f8e4x4 = pto.ldg %gm_f8e4x4[%c0] : !pto.ptr<vector<4xf8E4M3FN>, gm>, index -> vector<4xf8E4M3FN>
+    pto.stg %v_f8e4x4, %gm_f8e4x4[%c1] : !pto.ptr<vector<4xf8E4M3FN>, gm>, index, vector<4xf8E4M3FN>
 
-    %v_f8e5x4 = pto.ldg %gm_f8e5x4[%c0] : !pto.ptr<vector<4xf8E5M2>, gm> -> vector<4xf8E5M2>
-    pto.stg %v_f8e5x4, %gm_f8e5x4[%c1] : !pto.ptr<vector<4xf8E5M2>, gm>, vector<4xf8E5M2>
+    %v_f8e5x4 = pto.ldg %gm_f8e5x4[%c0] : !pto.ptr<vector<4xf8E5M2>, gm>, index -> vector<4xf8E5M2>
+    pto.stg %v_f8e5x4, %gm_f8e5x4[%c1] : !pto.ptr<vector<4xf8E5M2>, gm>, index, vector<4xf8E5M2>
 
-    %v_i16 = pto.ldg %gm_i16[%c0] : !pto.ptr<vector<2xi16>, gm> -> vector<2xi16>
-    pto.stg %v_i16, %gm_i16[%c1] : !pto.ptr<vector<2xi16>, gm>, vector<2xi16>
+    %v_i16 = pto.ldg %gm_i16[%c0] : !pto.ptr<vector<2xi16>, gm>, index -> vector<2xi16>
+    pto.stg %v_i16, %gm_i16[%c1] : !pto.ptr<vector<2xi16>, gm>, index, vector<2xi16>
 
     // 64-bit total: load via s64, store via b64
-    %v_f8e4x8 = pto.ldg %gm_f8e4x8[%c0] : !pto.ptr<vector<8xf8E4M3FN>, gm> -> vector<8xf8E4M3FN>
-    pto.stg %v_f8e4x8, %gm_f8e4x8[%c1] : !pto.ptr<vector<8xf8E4M3FN>, gm>, vector<8xf8E4M3FN>
+    %v_f8e4x8 = pto.ldg %gm_f8e4x8[%c0] : !pto.ptr<vector<8xf8E4M3FN>, gm>, index -> vector<8xf8E4M3FN>
+    pto.stg %v_f8e4x8, %gm_f8e4x8[%c1] : !pto.ptr<vector<8xf8E4M3FN>, gm>, index, vector<8xf8E4M3FN>
 
-    %v_f8e5x8 = pto.ldg %gm_f8e5x8[%c0] : !pto.ptr<vector<8xf8E5M2>, gm> -> vector<8xf8E5M2>
-    pto.stg %v_f8e5x8, %gm_f8e5x8[%c1] : !pto.ptr<vector<8xf8E5M2>, gm>, vector<8xf8E5M2>
+    %v_f8e5x8 = pto.ldg %gm_f8e5x8[%c0] : !pto.ptr<vector<8xf8E5M2>, gm>, index -> vector<8xf8E5M2>
+    pto.stg %v_f8e5x8, %gm_f8e5x8[%c1] : !pto.ptr<vector<8xf8E5M2>, gm>, index, vector<8xf8E5M2>
 
-    %v_i32 = pto.ldg %gm_i32[%c0] : !pto.ptr<vector<2xi32>, gm> -> vector<2xi32>
-    pto.stg %v_i32, %gm_i32[%c1] : !pto.ptr<vector<2xi32>, gm>, vector<2xi32>
+    %v_i32 = pto.ldg %gm_i32[%c0] : !pto.ptr<vector<2xi32>, gm>, index -> vector<2xi32>
+    pto.stg %v_i32, %gm_i32[%c1] : !pto.ptr<vector<2xi32>, gm>, index, vector<2xi32>
 
     }
     return

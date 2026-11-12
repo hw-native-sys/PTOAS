@@ -76,7 +76,7 @@ module {
 
 // LOWER-LABEL: func.func @e2b_deint4_candidate
 // LOWER-NOT: pto.vsldb
-// LOWER: %[[BCAST:.*]] = pto.vlds {{.*}} {dist = "E2B_B32"} : !pto.ptr<f32, ub> -> !pto.vreg<64xf32>
+// LOWER: %[[BCAST:.*]] = pto.vlds {{.*}} {dist = "E2B_B32"} : !pto.ptr<f32, ub>, index -> !pto.vreg<64xf32>
 // LOWER-NOT: BRC_B32
 // LOWER-NOT: pto.vsel
 // LOWER: return %[[BCAST]], %[[BCAST]], %[[BCAST]], %[[BCAST]] : !pto.vreg<64xf32>, !pto.vreg<64xf32>, !pto.vreg<64xf32>, !pto.vreg<64xf32>
@@ -84,7 +84,7 @@ module {
 
 // LOWER-LABEL: func.func @e2b_deint4_consumer
 // LOWER-NOT: pto.vsldb
-// LOWER: pto.vlds {{.*}} {dist = "E2B_B32"} : !pto.ptr<f32, ub> -> !pto.vreg<64xf32>
+// LOWER: pto.vlds {{.*}} {dist = "E2B_B32"} : !pto.ptr<f32, ub>, index -> !pto.vreg<64xf32>
 // LOWER-NOT: BRC_B32
 // LOWER-NOT: pto.vsel
 // LOWER: pto.vcvt {{%.*}}, {{%.*}} {part = "EVEN"}

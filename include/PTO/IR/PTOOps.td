@@ -75,6 +75,20 @@ def ExpandScalarType :
 def PrintScalarType :
   AnyTypeOf<[AnyInteger, AnyFloat], "integer/float printable scalar">;
 
+// Element offset / displacement operand of memory access and pointer
+// arithmetic ops. Either the platform index type or a signless integer with an
+// explicit width. The unit (elements, bytes, alignment units), the signedness
+// and the addressable range are operation-specific; each op documents its own
+// contract, and the emitters must honour it (see issue #12).
+def PTO_ElementOffset
+    : Type<CPred<"$_self.isSignlessIntOrIndex()">,
+           "index or signless integer element offset">,
+      // The generated builders forward the operand Value, so an integer offset
+      // supplied programmatically keeps its own type. The buildable type only
+      // supplies the type that a builder (or the declarative assembly format)
+      // materialises on its own, and that type is the platform index type.
+      BuildableType<"$_builder.getIndexType()">;
+
 //===----------------------------------------------------------------------===//
 // Op Class
 //===----------------------------------------------------------------------===//
@@ -170,7 +184,7 @@ def AddPtrOp : PTO_Op<"addptr", [
 
   let arguments = (ins
     PtrType:$ptr,
-    Index:$offset
+    PTO_ElementOffset:$offset
   );
 
   let results = (outs PtrType:$result);
@@ -178,7 +192,7 @@ def AddPtrOp : PTO_Op<"addptr", [
   let hasVerifier = 1;
 
   let assemblyFormat = [{
-    $ptr `,` $offset attr-dict `:` type($ptr) `->` type($result)
+    $ptr `,` $offset attr-dict `:` type($ptr) `,` type($offset) `->` type($result)
   }];
 }
 

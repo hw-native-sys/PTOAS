@@ -28,12 +28,12 @@ Target IR (expand_tileop_to_vpto_result.pto):
           scf.for %arg0 = %c0 to %c16 step %c1 {
             %mask, %scalar_out = pto.plt_b32 %c64_i32 : i32 -> !pto.mask<b32>, i32
             %2 = arith.muli %arg0, %c64 : index
-            %3 = pto.addptr %0, %2 : <f32, ub> -> <f32, ub>
-            %4 = pto.vlds %3[%c0] : !pto.ptr<f32, ub> -> !pto.vreg<64xf32>
-            %5 = pto.addptr %1, %2 : <f32, ub> -> <f32, ub>
-            %6 = pto.vlds %5[%c0] : !pto.ptr<f32, ub> -> !pto.vreg<64xf32>
+            %3 = pto.addptr %0, %2 : <f32, ub>, index -> <f32, ub>
+            %4 = pto.vlds %3[%c0] : !pto.ptr<f32, ub>, index -> !pto.vreg<64xf32>
+            %5 = pto.addptr %1, %2 : <f32, ub>, index -> <f32, ub>
+            %6 = pto.vlds %5[%c0] : !pto.ptr<f32, ub>, index -> !pto.vreg<64xf32>
             %7 = pto.vadd %4, %6, %mask : !pto.vreg<64xf32>, !pto.vreg<64xf32>, !pto.mask<b32> -> !pto.vreg<64xf32>
-            pto.vsts %7, %5[%c0], %mask : !pto.vreg<64xf32>, !pto.ptr<f32, ub>, !pto.mask<b32>
+            pto.vsts %7, %5[%c0], %mask : !pto.vreg<64xf32>, !pto.ptr<f32, ub>, index, !pto.mask<b32>
           }
         }
         return
@@ -121,41 +121,30 @@ def build():
                         vs_block = vecscope_op.body.blocks.append()
 
                         with InsertionPoint(vs_block):
-                            # %0 = pto.castptr %c4096_i64 : i64 -> !pto.ptr<f32, ub>
                             ptr0 = pto.CastPtrOp(ptr_f32_ub, c4096_i64).result
 
-                            # %1 = pto.castptr %c0_i64 : i64 -> !pto.ptr<f32, ub>
                             ptr1 = pto.CastPtrOp(ptr_f32_ub, c0_i64).result
 
-                            # scf.for %arg0 = %c0 to %c16 step %c1 { … }
                             for_op = scf.ForOp(c0, c16, c1)
                             with InsertionPoint(for_op.body):
                                 arg0 = for_op.induction_variable
 
-                                # %mask, %scalar_out = pto.plt_b32 %c64_i32
                                 plt = pto.PltB32Op(mask_b32, i32, c64_i32)
                                 mask = plt.mask
                                 # scalar_out is unused in this kernel
 
-                                # %2 = arith.muli %arg0, %c64 : index
                                 off = arith.MulIOp(arg0, c64).result
 
-                                # %3 = pto.addptr %0, %2
                                 ptr3 = pto.AddPtrOp(ptr0, off).result
 
-                                # %4 = pto.vlds %3[%c0] : !pto.ptr<f32, ub> -> !pto.vreg<64xf32>
                                 vreg4 = pto.VldsOp(vreg_64f32, ptr3, c0).result
 
-                                # %5 = pto.addptr %1, %2
                                 ptr5 = pto.AddPtrOp(ptr1, off).result
 
-                                # %6 = pto.vlds %5[%c0] : !pto.ptr<f32, ub> -> !pto.vreg<64xf32>
                                 vreg6 = pto.VldsOp(vreg_64f32, ptr5, c0).result
 
-                                # %7 = pto.vadd %4, %6, %mask
                                 vreg7 = pto.VaddOp(vreg_64f32, vreg4, vreg6, mask).result
 
-                                # pto.vsts %7, %5[%c0], %mask
                                 pto.VstsOp(vreg7, ptr5, c0, mask)
 
                                 scf.YieldOp([])

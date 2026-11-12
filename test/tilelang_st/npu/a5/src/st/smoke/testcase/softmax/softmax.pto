@@ -166,8 +166,8 @@ module attributes {pto.target_arch = "a5", pto.kernel_kind = #pto.kernel_kind<ve
         %one_mask, %one_remaining = pto.plt_b32 %c1_i32 : i32 -> !pto.mask<b32>, i32
         scf.for %row = %c0 to %row_count step %c1 {
           %row_qk = arith.muli %row, %c128 : index
-          %oldmax_bc = pto.vlds %ub_oldmax[%row] {dist = "BRC_B32"} : !pto.ptr<f32, ub> -> !pto.vreg<64xf32>
-          %oldsum_bc = pto.vlds %ub_oldsum[%row] {dist = "BRC_B32"} : !pto.ptr<f32, ub> -> !pto.vreg<64xf32>
+          %oldmax_bc = pto.vlds %ub_oldmax[%row] {dist = "BRC_B32"} : !pto.ptr<f32, ub>, index -> !pto.vreg<64xf32>
+          %oldsum_bc = pto.vlds %ub_oldsum[%row] {dist = "BRC_B32"} : !pto.ptr<f32, ub>, index -> !pto.vreg<64xf32>
 
           %final_max, %final_sum = scf.for %chunk = %c0 to %c128 step %c64
               iter_args(%running_max = %oldmax_bc, %running_sum = %oldsum_bc)
@@ -178,7 +178,7 @@ module attributes {pto.target_arch = "a5", pto.kernel_kind = #pto.kernel_kind<ve
             %next_max, %next_sum = scf.if %has_chunk -> (!pto.vreg<64xf32>, !pto.vreg<64xf32>) {
               %chunk_mask, %chunk_rest = pto.plt_b32 %remaining_cols : i32 -> !pto.mask<b32>, i32
               %chunk_base = arith.addi %row_qk, %chunk : index
-              %vec = pto.vlds %ub_qk[%chunk_base] : !pto.ptr<f32, ub> -> !pto.vreg<64xf32>
+              %vec = pto.vlds %ub_qk[%chunk_base] : !pto.ptr<f32, ub>, index -> !pto.vreg<64xf32>
               %chunk_max = pto.vcmax %vec, %chunk_mask : !pto.vreg<64xf32>, !pto.mask<b32> -> !pto.vreg<64xf32>
               %chunk_max_bc = pto.vdup %chunk_max, %active {position = "LOWEST"} : !pto.vreg<64xf32>, !pto.mask<b32> -> !pto.vreg<64xf32>
               %merged_max = pto.vmax %running_max, %chunk_max_bc, %active : !pto.vreg<64xf32>, !pto.vreg<64xf32>, !pto.mask<b32> -> !pto.vreg<64xf32>
@@ -198,9 +198,9 @@ module attributes {pto.target_arch = "a5", pto.kernel_kind = #pto.kernel_kind<ve
           %raw_expmax = pto.vexpdif %oldmax_bc, %final_max, %active, "ODD" : !pto.vreg<64xf32>, !pto.vreg<64xf32>, !pto.mask<b32> -> !pto.vreg<64xf32>
           %scaled_oldsum = pto.vmul %raw_expmax, %oldsum_bc, %active : !pto.vreg<64xf32>, !pto.vreg<64xf32>, !pto.mask<b32> -> !pto.vreg<64xf32>
           %expmax = pto.vdiv %scaled_oldsum, %final_sum, %active : !pto.vreg<64xf32>, !pto.vreg<64xf32>, !pto.mask<b32> -> !pto.vreg<64xf32>
-          pto.vsts %final_max, %ub_newmax[%row], %one_mask {dist = "1PT_B32"} : !pto.vreg<64xf32>, !pto.ptr<f32, ub>, !pto.mask<b32>
-          pto.vsts %final_sum, %ub_newsum[%row], %one_mask {dist = "1PT_B32"} : !pto.vreg<64xf32>, !pto.ptr<f32, ub>, !pto.mask<b32>
-          pto.vsts %expmax, %ub_expmax[%row], %one_mask {dist = "1PT_B32"} : !pto.vreg<64xf32>, !pto.ptr<f32, ub>, !pto.mask<b32>
+          pto.vsts %final_max, %ub_newmax[%row], %one_mask {dist = "1PT_B32"} : !pto.vreg<64xf32>, !pto.ptr<f32, ub>, index, !pto.mask<b32>
+          pto.vsts %final_sum, %ub_newsum[%row], %one_mask {dist = "1PT_B32"} : !pto.vreg<64xf32>, !pto.ptr<f32, ub>, index, !pto.mask<b32>
+          pto.vsts %expmax, %ub_expmax[%row], %one_mask {dist = "1PT_B32"} : !pto.vreg<64xf32>, !pto.ptr<f32, ub>, index, !pto.mask<b32>
 
           scf.for %chunk = %c0 to %c128 step %c64 {
             %chunk_i32 = arith.index_cast %chunk : index to i32
@@ -209,10 +209,10 @@ module attributes {pto.target_arch = "a5", pto.kernel_kind = #pto.kernel_kind<ve
             scf.if %has_chunk {
               %chunk_mask, %chunk_rest = pto.plt_b32 %remaining_cols : i32 -> !pto.mask<b32>, i32
               %chunk_base = arith.addi %row_qk, %chunk : index
-              %vec = pto.vlds %ub_qk[%chunk_base] : !pto.ptr<f32, ub> -> !pto.vreg<64xf32>
+              %vec = pto.vlds %ub_qk[%chunk_base] : !pto.ptr<f32, ub>, index -> !pto.vreg<64xf32>
               %exp = pto.vexpdif %vec, %final_max, %chunk_mask, "ODD" : !pto.vreg<64xf32>, !pto.vreg<64xf32>, !pto.mask<b32> -> !pto.vreg<64xf32>
               %out = pto.vdiv %exp, %final_sum, %chunk_mask : !pto.vreg<64xf32>, !pto.vreg<64xf32>, !pto.mask<b32> -> !pto.vreg<64xf32>
-              pto.vsts %out, %ub_out[%chunk_base], %chunk_mask : !pto.vreg<64xf32>, !pto.ptr<f32, ub>, !pto.mask<b32>
+              pto.vsts %out, %ub_out[%chunk_base], %chunk_mask : !pto.vreg<64xf32>, !pto.ptr<f32, ub>, index, !pto.mask<b32>
             }
           }
         }

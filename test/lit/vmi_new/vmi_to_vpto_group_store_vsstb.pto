@@ -56,7 +56,7 @@ module {
 // CHECK: %[[RS0_2:.*]] = arith.constant 0 : i16
 // CHECK: pto.vsstb %arg0, %{{.*}}, %[[BS32]], %[[RS0_2]], %{{.*}} : !pto.vreg<64xf32>, !pto.ptr<f32, ub>, i16, i16, !pto.mask<b32>
 // CHECK: %[[PART_OFFSET:.*]] = arith.addi %arg3, %[[PART_DELTA]] : index
-// CHECK: %[[PART_BASE:.*]] = pto.addptr %arg2, %[[PART_OFFSET]] : <f32, ub> -> <f32, ub>
+// CHECK: %[[PART_BASE:.*]] = pto.addptr %arg2, %[[PART_OFFSET]] : <f32, ub>, index -> <f32, ub>
 // CHECK: pto.vsstb %arg1, %[[PART_BASE]], %[[BS32]], %[[RS0_2]], %{{.*}} : !pto.vreg<64xf32>, !pto.ptr<f32, ub>, i16, i16, !pto.mask<b32>
 
 // CHECK-LABEL: func.func @group_store_one_block_bf16_tail(

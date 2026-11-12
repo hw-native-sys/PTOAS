@@ -78,15 +78,15 @@ module {
 // LOWER-NEXT: %[[VAL_10:[a-zA-Z0-9_.$-]+]] = arith.constant 1 : index
 // LOWER-NEXT: %[[VAL_11:[a-zA-Z0-9_.$-]+]] = arith.constant 2 : index
 // LOWER-NEXT: %[[VAL_12:[a-zA-Z0-9_.$-]+]] = pto.pset_b32 "PAT_VL8" : !pto.mask<b32>
-// LOWER-NEXT: %[[VAL_13:[a-zA-Z0-9_.$-]+]] = pto.addptr %[[VAL_0]], %[[VAL_3]] : <f32, ub> -> <f32, ub>
+// LOWER-NEXT: %[[VAL_13:[a-zA-Z0-9_.$-]+]] = pto.addptr %[[VAL_0]], %[[VAL_3]] : <f32, ub>, index -> <f32, ub>
 // LOWER-NEXT: %[[VAL_14:[a-zA-Z0-9_.$-]+]] = pto.vsldb %[[VAL_13]], %[[VAL_8]], %[[VAL_8]], %[[VAL_12]] : !pto.ptr<f32, ub>, i16, i16, !pto.mask<b32> -> !pto.vreg<64xf32>
 // LOWER-NEXT: %[[VAL_15:[a-zA-Z0-9_.$-]+]] = scf.for %[[VAL_16:[a-zA-Z0-9_.$-]+]] = %[[VAL_9]] to %[[VAL_11]] step %[[VAL_10]] iter_args(%[[VAL_17:[a-zA-Z0-9_.$-]+]] = %[[VAL_14]]) -> (!pto.vreg<64xf32>) {
 // LOWER-NEXT: %[[VAL_18:[a-zA-Z0-9_.$-]+]] = pto.pset_b32 "PAT_ALL" : !pto.mask<b32>
-// LOWER-NEXT: %[[VAL_19:[a-zA-Z0-9_.$-]+]] = pto.addptr %[[VAL_1]], %[[VAL_3]] : <f32, ub> -> <f32, ub>
+// LOWER-NEXT: %[[VAL_19:[a-zA-Z0-9_.$-]+]] = pto.addptr %[[VAL_1]], %[[VAL_3]] : <f32, ub>, index -> <f32, ub>
 // LOWER-NEXT: %[[VAL_20:[a-zA-Z0-9_.$-]+]] = pto.vsldb %[[VAL_19]], %[[VAL_7]], %[[VAL_8]], %[[VAL_18]] : !pto.ptr<f32, ub>, i16, i16, !pto.mask<b32> -> !pto.vreg<64xf32>
 // LOWER-NEXT: %[[VAL_21:[a-zA-Z0-9_.$-]+]] = pto.pset_b32 "PAT_ALL" : !pto.mask<b32>
 // LOWER-NEXT: %[[VAL_22:[a-zA-Z0-9_.$-]+]] = arith.addi %[[VAL_3]], %[[VAL_6]] : index
-// LOWER-NEXT: %[[VAL_23:[a-zA-Z0-9_.$-]+]] = pto.addptr %[[VAL_1]], %[[VAL_22]] : <f32, ub> -> <f32, ub>
+// LOWER-NEXT: %[[VAL_23:[a-zA-Z0-9_.$-]+]] = pto.addptr %[[VAL_1]], %[[VAL_22]] : <f32, ub>, index -> <f32, ub>
 // LOWER-NEXT: %[[VAL_24:[a-zA-Z0-9_.$-]+]] = pto.vsldb %[[VAL_23]], %[[VAL_7]], %[[VAL_8]], %[[VAL_21]] : !pto.ptr<f32, ub>, i16, i16, !pto.mask<b32> -> !pto.vreg<64xf32>
 // LOWER-NEXT: %[[VAL_25:[a-zA-Z0-9_.$-]+]] = pto.pset_b32 "PAT_ALL" : !pto.mask<b32>
 // LOWER-NEXT: %[[VAL_26:[a-zA-Z0-9_.$-]+]] = pto.pset_b32 "PAT_ALL" : !pto.mask<b32>
@@ -98,7 +98,7 @@ module {
 // LOWER-NEXT: %[[VAL_32:[a-zA-Z0-9_.$-]+]] = pto.vadd %[[VAL_17]], %[[VAL_30]], %[[VAL_31]] : !pto.vreg<64xf32>, !pto.vreg<64xf32>, !pto.mask<b32> -> !pto.vreg<64xf32>
 // LOWER-NEXT: scf.yield %[[VAL_32]] : !pto.vreg<64xf32>
 // LOWER-NEXT: }
-// LOWER-NEXT: %[[VAL_33:[a-zA-Z0-9_.$-]+]] = pto.addptr %[[VAL_2]], %[[VAL_3]] : <f32, ub> -> <f32, ub>
+// LOWER-NEXT: %[[VAL_33:[a-zA-Z0-9_.$-]+]] = pto.addptr %[[VAL_2]], %[[VAL_3]] : <f32, ub>, index -> <f32, ub>
 // LOWER-NEXT: %[[VAL_34:[a-zA-Z0-9_.$-]+]] = pto.init_align : !pto.align
 // LOWER-NEXT: %[[VAL_35:[a-zA-Z0-9_.$-]+]], %[[VAL_36:[a-zA-Z0-9_.$-]+]] = pto.vstus %[[VAL_34]], %[[VAL_5]], %[[VAL_15]], %[[VAL_33]] : !pto.align, i32, !pto.vreg<64xf32>, !pto.ptr<f32, ub> -> !pto.align, !pto.ptr<f32, ub>
 // LOWER-NEXT: pto.vstas %[[VAL_35]], %[[VAL_36]], %[[VAL_4]] : !pto.align, !pto.ptr<f32, ub>, i32

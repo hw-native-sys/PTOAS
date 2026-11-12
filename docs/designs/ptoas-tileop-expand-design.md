@@ -82,8 +82,8 @@ func.func @TADD(
   pto.vecscope {
     scf.for %arg0 = %c0 to %c16 step %c1 {           // 遍历 rows
       scf.for %arg1 = %c0 to %c64 step %c64 {         // 遍历 cols，步长=vector_width
-        %va = pto.vlds %vecA[%arg0, %arg1] : memref<16x64xf32, strided<[64, 1]>, #pto.address_space<vec>> -> !pto.vreg<64xf32>
-        %vb = pto.vlds %vecB[%arg0, %arg1] : memref<16x64xf32, strided<[64, 1]>, #pto.address_space<vec>> -> !pto.vreg<64xf32>
+        %va = pto.vlds %vecA[%arg0, %arg1] : memref<16x64xf32, strided<[64, 1]>, #pto.address_space<vec>>, index -> !pto.vreg<64xf32>
+        %vb = pto.vlds %vecB[%arg0, %arg1] : memref<16x64xf32, strided<[64, 1]>, #pto.address_space<vec>>, index -> !pto.vreg<64xf32>
         %vc = pto.vadd %va, %vb : !pto.vreg<64xf32>, !pto.vreg<64xf32> -> !pto.vreg<64xf32>
         pto.vsts %vc, %vecC[%arg0, %arg1] : !pto.vreg<64xf32>, memref<16x64xf32, strided<[64, 1]>, #pto.address_space<vec>>
       }
@@ -564,13 +564,13 @@ func.func @__pto_tilelang_tadd_f32_16_64(
         %mask, %next = pto.plt_b32 %remain : i32 -> !pto.mask, i32
 
         %va = pto.vlds %mSrc0[%i, %j]
-            : memref<16x64xf32, strided<[64, 1]>, #pto.address_space<vec>> -> !pto.vreg<64xf32>
+            : memref<16x64xf32, strided<[64, 1]>, #pto.address_space<vec>>, index -> !pto.vreg<64xf32>
         %vb = pto.vlds %mSrc1[%i, %j]
-            : memref<16x64xf32, strided<[64, 1]>, #pto.address_space<vec>> -> !pto.vreg<64xf32>
+            : memref<16x64xf32, strided<[64, 1]>, #pto.address_space<vec>>, index -> !pto.vreg<64xf32>
         %vc = pto.vadd %va, %vb, %mask
             : !pto.vreg<64xf32>, !pto.vreg<64xf32>, !pto.mask -> !pto.vreg<64xf32>
         pto.vsts %vc, %mDst[%i, %j], %mask
-            : !pto.vreg<64xf32>, memref<16x64xf32, strided<[64, 1]>, #pto.address_space<vec>>, !pto.mask
+            : !pto.vreg<64xf32>, memref<16x64xf32, strided<[64, 1]>, #pto.address_space<vec>>, index, !pto.mask
 
         scf.yield %next : i32
       }
@@ -629,8 +629,8 @@ func.func private @__pto_tilelang_tadd_f32_16_64(
     scf.for %i = %c0 to %v_rows step %c1 {
       scf.for %j = %c0 to %v_cols step %c64 iter_args(%remain = %v_cols_i32) -> (i32) {
         %mask, %next = pto.plt_b32 %remain : i32 -> !pto.mask, i32
-        %va = pto.vlds %mSrc0[%i, %j] : memref<...> -> !pto.vreg<64xf32>
-        %vb = pto.vlds %mSrc1[%i, %j] : memref<...> -> !pto.vreg<64xf32>
+        %va = pto.vlds %mSrc0[%i, %j] : memref<...>, index -> !pto.vreg<64xf32>
+        %vb = pto.vlds %mSrc1[%i, %j] : memref<...>, index -> !pto.vreg<64xf32>
         %vc = pto.vadd %va, %vb, %mask : ...
         pto.vsts %vc, %mDst[%i, %j], %mask : ...
         scf.yield %next : i32
@@ -769,13 +769,13 @@ func.func @TADD(
       scf.for %j = %c0 to %c64 step %c64 iter_args(%remain = %c64_i32) -> (i32) {
         %mask, %next = pto.plt_b32 %remain : i32 -> !pto.mask, i32
         %va = pto.vlds %vecA[%i, %j]
-            : memref<16x64xf32, strided<[64, 1]>, #pto.address_space<vec>> -> !pto.vreg<64xf32>
+            : memref<16x64xf32, strided<[64, 1]>, #pto.address_space<vec>>, index -> !pto.vreg<64xf32>
         %vb = pto.vlds %vecB[%i, %j]
-            : memref<16x64xf32, strided<[64, 1]>, #pto.address_space<vec>> -> !pto.vreg<64xf32>
+            : memref<16x64xf32, strided<[64, 1]>, #pto.address_space<vec>>, index -> !pto.vreg<64xf32>
         %vc = pto.vadd %va, %vb, %mask
             : !pto.vreg<64xf32>, !pto.vreg<64xf32>, !pto.mask -> !pto.vreg<64xf32>
         pto.vsts %vc, %vecC[%i, %j], %mask
-            : !pto.vreg<64xf32>, memref<16x64xf32, strided<[64, 1]>, #pto.address_space<vec>>, !pto.mask
+            : !pto.vreg<64xf32>, memref<16x64xf32, strided<[64, 1]>, #pto.address_space<vec>>, index, !pto.mask
         scf.yield %next : i32
       }
     }

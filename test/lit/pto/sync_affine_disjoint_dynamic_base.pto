@@ -44,7 +44,7 @@ module attributes {pto.target_arch = "a2a3"} {
     scf.for %i = %c0 to %c8 step %c1 {
       %off = arith.muli %i, %c512 : index
       %negoff = arith.muli %i, %cneg512 : index
-      %moving = pto.addptr %arg0, %negoff : !pto.ptr<bf16> -> !pto.ptr<bf16>
+      %moving = pto.addptr %arg0, %negoff : !pto.ptr<bf16>, index -> !pto.ptr<bf16>
       %dst = pto.make_tensor_view %moving, shape = [%c1024, %c4096], strides = [%c4096, %c1] {layout = #pto.layout<nd>} : !pto.tensor_view<?x?xbf16>
       %out = pto.partition_view %dst, offsets = [%c0, %off], sizes = [%c1, %c64] : !pto.tensor_view<?x?xbf16> -> !pto.partition_tensor_view<1x64xbf16>
       pto.tstore ins(%tile : !pto.tile_buf<loc=vec, dtype=bf16, rows=1, cols=64, v_row=?, v_col=?, blayout=row_major, slayout=none_box, fractal=512, pad=0>) outs(%out : !pto.partition_tensor_view<1x64xbf16>)

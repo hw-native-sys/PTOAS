@@ -40,8 +40,8 @@ module attributes {pto.target_arch = "a5", pto.kernel_kind = #pto.kernel_kind<ve
             : !pto.ptr<f32, ub>, !pto.align -> !pto.vreg<64xf32>, !pto.align
         %next_store_state = pto.vstus %store_state, %c64_i32, %value, %dst_iter
             : !pto.align, i32, !pto.vreg<64xf32>, !pto.ptr<f32, ub> -> !pto.align
-        %next_src = pto.addptr %src_iter, %c64 : !pto.ptr<f32, ub> -> !pto.ptr<f32, ub>
-        %next_dst = pto.addptr %dst_iter, %c64 : !pto.ptr<f32, ub> -> !pto.ptr<f32, ub>
+        %next_src = pto.addptr %src_iter, %c64 : !pto.ptr<f32, ub>, index -> !pto.ptr<f32, ub>
+        %next_dst = pto.addptr %dst_iter, %c64 : !pto.ptr<f32, ub>, index -> !pto.ptr<f32, ub>
         scf.yield %next_src, %next_dst, %next_load_state, %next_store_state
             : !pto.ptr<f32, ub>, !pto.ptr<f32, ub>, !pto.align, !pto.align
       }
@@ -63,12 +63,12 @@ module attributes {pto.target_arch = "a5", pto.kernel_kind = #pto.kernel_kind<ve
     %y16 = arith.addi %y, %c16 : index
     %x32 = arith.addi %x, %c32 : index
     %y32 = arith.addi %y, %c32 : index
-    %base0a = pto.addptr %src, %x : !pto.ptr<f32, ub> -> !pto.ptr<f32, ub>
-    %base0 = pto.addptr %base0a, %y : !pto.ptr<f32, ub> -> !pto.ptr<f32, ub>
-    %base1a = pto.addptr %src, %x16 : !pto.ptr<f32, ub> -> !pto.ptr<f32, ub>
-    %base1 = pto.addptr %base1a, %y16 : !pto.ptr<f32, ub> -> !pto.ptr<f32, ub>
-    %base2a = pto.addptr %src, %x32 : !pto.ptr<f32, ub> -> !pto.ptr<f32, ub>
-    %base2 = pto.addptr %base2a, %y32 : !pto.ptr<f32, ub> -> !pto.ptr<f32, ub>
+    %base0a = pto.addptr %src, %x : !pto.ptr<f32, ub>, index -> !pto.ptr<f32, ub>
+    %base0 = pto.addptr %base0a, %y : !pto.ptr<f32, ub>, index -> !pto.ptr<f32, ub>
+    %base1a = pto.addptr %src, %x16 : !pto.ptr<f32, ub>, index -> !pto.ptr<f32, ub>
+    %base1 = pto.addptr %base1a, %y16 : !pto.ptr<f32, ub>, index -> !pto.ptr<f32, ub>
+    %base2a = pto.addptr %src, %x32 : !pto.ptr<f32, ub>, index -> !pto.ptr<f32, ub>
+    %base2 = pto.addptr %base2a, %y32 : !pto.ptr<f32, ub>, index -> !pto.ptr<f32, ub>
     pto.vecscope {
       %mask = pto.pset_b32 "PAT_ALL" : !pto.mask<b32>
       %align0 = pto.vldas %base0 : !pto.ptr<f32, ub> -> !pto.align
@@ -79,11 +79,11 @@ module attributes {pto.target_arch = "a5", pto.kernel_kind = #pto.kernel_kind<ve
       %v2, %align3 = pto.vldus %base2, %align2
           : !pto.ptr<f32, ub>, !pto.align -> !pto.vreg<64xf32>, !pto.align
       pto.vsts %v0, %dst[%c0], %mask
-          : !pto.vreg<64xf32>, !pto.ptr<f32, ub>, !pto.mask<b32>
+          : !pto.vreg<64xf32>, !pto.ptr<f32, ub>, index, !pto.mask<b32>
       pto.vsts %v1, %dst[%c32], %mask
-          : !pto.vreg<64xf32>, !pto.ptr<f32, ub>, !pto.mask<b32>
+          : !pto.vreg<64xf32>, !pto.ptr<f32, ub>, index, !pto.mask<b32>
       pto.vsts %v2, %dst[%c64], %mask
-          : !pto.vreg<64xf32>, !pto.ptr<f32, ub>, !pto.mask<b32>
+          : !pto.vreg<64xf32>, !pto.ptr<f32, ub>, index, !pto.mask<b32>
     }
     return
   }

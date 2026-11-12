@@ -56,5 +56,5 @@ module attributes {"pto.target_arch" = "a3", pto.kernel_kind = #pto.kernel_kind<
 
 // Field 0 is 64-bit and field 2 is 32-bit; both are read with ld_dev because a
 // comm kernel is an ordinary entry function, where ldg is not available.
-// EXPAND: pto.ld_dev %{{.*}} : !pto.ptr<i64, gm> -> i64
+// EXPAND: pto.ld_dev %{{.*}} : !pto.ptr<i64, gm>, index -> i64
 // EXPAND: pto.struct_set %{{.*}}[0]

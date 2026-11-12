@@ -307,7 +307,7 @@ VPTO lowering result:
 
 ```text
 %x16_0 = pto.vlds %base[%off] {dist = "NORM"}
-  : !pto.ptr<f16, ub> -> !pto.vreg<128xf16>
+  : !pto.ptr<f16, ub>, index -> !pto.vreg<128xf16>
 
 %x32_p0 = pto.vcvt %x16_0, PAT_ALL_B16 {part = "EVEN"}
   : !pto.vreg<128xf16>, !pto.mask<b16> -> !pto.vreg<64xf32>
@@ -323,7 +323,7 @@ Alternative complete VPTO lowering result if `vstsx2 INTLV_B32` is unavailable:
 
 ```text
 %x16_0 = pto.vlds %base[%off] {dist = "NORM"}
-  : !pto.ptr<f16, ub> -> !pto.vreg<128xf16>
+  : !pto.ptr<f16, ub>, index -> !pto.vreg<128xf16>
 
 %x32_p0 = pto.vcvt %x16_0, PAT_ALL_B16 {part = "EVEN"}
   : !pto.vreg<128xf16>, !pto.mask<b16> -> !pto.vreg<64xf32>
@@ -334,9 +334,9 @@ Alternative complete VPTO lowering result if `vstsx2 INTLV_B32` is unavailable:
   : !pto.vreg<64xf32>, !pto.vreg<64xf32> -> !pto.vreg<64xf32>, !pto.vreg<64xf32>
 
 pto.vsts %x32_d0, %out[%off], PAT_ALL_B32 {dist = "NORM_B32"}
-  : !pto.vreg<64xf32>, !pto.ptr<f32, ub>, !pto.mask<b32>
+  : !pto.vreg<64xf32>, !pto.ptr<f32, ub>, index, !pto.mask<b32>
 pto.vsts %x32_d1, %out[%off_plus_64], PAT_ALL_B32 {dist = "NORM_B32"}
-  : !pto.vreg<64xf32>, !pto.ptr<f32, ub>, !pto.mask<b32>
+  : !pto.vreg<64xf32>, !pto.ptr<f32, ub>, index, !pto.mask<b32>
 ```
 
 Memory result:
@@ -383,7 +383,7 @@ VPTO lowering result:
   : !pto.vreg<128xf16>
 
 pto.vsts %x16_0, %out[%off], PAT_ALL_B16 {dist = "NORM_B16"}
-  : !pto.vreg<128xf16>, !pto.ptr<f16, ub>, !pto.mask<b16>
+  : !pto.vreg<128xf16>, !pto.ptr<f16, ub>, index, !pto.mask<b16>
 ```
 
 Alternative complete VPTO lowering result if the source has already been loaded
@@ -392,9 +392,9 @@ the conversion:
 
 ```text
 %x32_d0 = pto.vlds %base[%off] {dist = "NORM"}
-  : !pto.ptr<f32, ub> -> !pto.vreg<64xf32>
+  : !pto.ptr<f32, ub>, index -> !pto.vreg<64xf32>
 %x32_d1 = pto.vlds %base[%off_plus_64] {dist = "NORM"}
-  : !pto.ptr<f32, ub> -> !pto.vreg<64xf32>
+  : !pto.ptr<f32, ub>, index -> !pto.vreg<64xf32>
 %x32_p0, %x32_p1 = pto.vdintlv %x32_d0, %x32_d1
   : !pto.vreg<64xf32>, !pto.vreg<64xf32> -> !pto.vreg<64xf32>, !pto.vreg<64xf32>
 
@@ -410,7 +410,7 @@ the conversion:
   : !pto.vreg<128xf16>
 
 pto.vsts %x16_0, %out[%off], PAT_ALL_B16 {dist = "NORM_B16"}
-  : !pto.vreg<128xf16>, !pto.ptr<f16, ub>, !pto.mask<b16>
+  : !pto.vreg<128xf16>, !pto.ptr<f16, ub>, index, !pto.mask<b16>
 ```
 
 Memory result:
@@ -447,7 +447,7 @@ VPTO lowering result:
 
 ```text
 %x8_0 = pto.vlds %base[%off] {dist = "NORM"}
-  : !pto.ptr<f8, ub> -> !pto.vreg<256xf8>
+  : !pto.ptr<f8, ub>, index -> !pto.vreg<256xf8>
 
 %x32_p0 = pto.vcvt %x8_0, PAT_ALL_B8 {part = "P0"}
   : !pto.vreg<256xf8>, !pto.mask<b8> -> !pto.vreg<64xf32>
@@ -486,7 +486,7 @@ VPTO lowering result:
 %y8_0  = pto.vor %y8_01, %y8_23, PAT_ALL_B8
 
 pto.vsts %y8_0, %out[%off], PAT_ALL_B8 {dist = "NORM_B8"}
-  : !pto.vreg<256xf8>, !pto.ptr<f8, ub>, !pto.mask<b8>
+  : !pto.vreg<256xf8>, !pto.ptr<f8, ub>, index, !pto.mask<b8>
 ```
 
 Memory result:
@@ -525,14 +525,14 @@ VPTO lowering result for one full 8-row tile:
 %mask_chunk = pto.pge_b32 "PAT_ALL"
 
 %x_chunk = pto.vlds %base[%tile_off] {dist = "NORM"}
-  : !pto.ptr<f32, ub> -> !pto.vreg<64xf32>
+  : !pto.ptr<f32, ub>, index -> !pto.vreg<64xf32>
 
 %sum_block = pto.vcgadd %x_chunk, %mask_chunk
   : !pto.vreg<64xf32>, !pto.mask<b32> -> !pto.vreg<64xf32>
 
 %store8 = pto.pge_b32 "PAT_VL8"
 pto.vsts %sum_block, %sum_out[%group_tile_off], %store8 {dist = "NORM_B32"}
-  : !pto.vreg<64xf32>, !pto.ptr<f32, ub>, !pto.mask<b32>
+  : !pto.vreg<64xf32>, !pto.ptr<f32, ub>, index, !pto.mask<b32>
 ```
 
 Lowering result for one chunk, per the `visa.txt` VCGADD contract:
@@ -639,7 +639,7 @@ VPTO lowering result for one full 8-row tile:
 
 %store8 = pto.pge_b32 "PAT_VL8"
 pto.vsts %sum_block, %sum_out[%group_tile_off], %store8 {dist = "NORM_B32"}
-  : !pto.vreg<64xf32>, !pto.ptr<f32, ub>, !pto.mask<b32>
+  : !pto.vreg<64xf32>, !pto.ptr<f32, ub>, index, !pto.mask<b32>
 ```
 
 `BDINTLV` here denotes the ISA `#bdintlv` block-based interleaving load mode:
@@ -753,7 +753,7 @@ VPTO lowering result for one full 8-row tile:
 
 %store8 = pto.pge_b32 "PAT_VL8"
 pto.vsts %ysum_block, %out[%group_tile_off], %store8 {dist = "NORM_B32"}
-  : !pto.vreg<64xf32>, !pto.ptr<f32, ub>, !pto.mask<b32>
+  : !pto.vreg<64xf32>, !pto.ptr<f32, ub>, index, !pto.mask<b32>
 ```
 
 This trace processes 8 logical rows at once. `num_groups = N / 16` means each
@@ -931,7 +931,7 @@ VPTO lowering result for one full 8-row tile:
   : !pto.vreg<64xf32>
 
 pto.vsts %outv_block, %out[%group_tile_off], %sum_mask {dist = "NORM_B32"}
-  : !pto.vreg<64xf32>, !pto.ptr<f32, ub>, !pto.mask<b32>
+  : !pto.vreg<64xf32>, !pto.ptr<f32, ub>, index, !pto.mask<b32>
 ```
 
 Memory result:
@@ -1049,7 +1049,7 @@ VPTO lowering result for one full 8-row tile:
 %sum_block = pto.vadd %s01, %s23, %sum_mask : !pto.vreg<64xf32>
 
 pto.vsts %sum_block, %sum_out[%group_tile_off], %sum_mask {dist = "NORM_B32"}
-  : !pto.vreg<64xf32>, !pto.ptr<f32, ub>, !pto.mask<b32>
+  : !pto.vreg<64xf32>, !pto.ptr<f32, ub>, index, !pto.mask<b32>
 ```
 
 Memory result:
@@ -1121,7 +1121,7 @@ VPTO lowering result for one full 8-row tile:
   : !pto.vreg<64xf32>
 
 pto.vsts %outv_block, %out[%group_tile_off], %sum_mask {dist = "NORM_B32"}
-  : !pto.vreg<64xf32>, !pto.ptr<f32, ub>, !pto.mask<b32>
+  : !pto.vreg<64xf32>, !pto.ptr<f32, ub>, index, !pto.mask<b32>
 ```
 
 Memory result:
@@ -1217,7 +1217,7 @@ VPTO lowering result for one full 8-row tile:
 %ysum_block = pto.vadd %ys01, %ys23, %sum_mask : !pto.vreg<64xf32>
 
 pto.vsts %ysum_block, %out[%group_tile_off], %sum_mask {dist = "NORM_B32"}
-  : !pto.vreg<64xf32>, !pto.ptr<f32, ub>, !pto.mask<b32>
+  : !pto.vreg<64xf32>, !pto.ptr<f32, ub>, index, !pto.mask<b32>
 ```
 
 Memory result:
@@ -1299,21 +1299,21 @@ VPTO lowering result for one full 8-row tile:
 %one_b32 = pto.pge_b32 "PAT_VL1"
 
 %x0 = pto.vlds %base[%row_off_0] {dist = "NORM"}
-  : !pto.ptr<f32, ub> -> !pto.vreg<64xf32>
+  : !pto.ptr<f32, ub>, index -> !pto.vreg<64xf32>
 %x1 = pto.vlds %base[%row_off_1] {dist = "NORM"}
-  : !pto.ptr<f32, ub> -> !pto.vreg<64xf32>
+  : !pto.ptr<f32, ub>, index -> !pto.vreg<64xf32>
 %x2 = pto.vlds %base[%row_off_2] {dist = "NORM"}
-  : !pto.ptr<f32, ub> -> !pto.vreg<64xf32>
+  : !pto.ptr<f32, ub>, index -> !pto.vreg<64xf32>
 %x3 = pto.vlds %base[%row_off_3] {dist = "NORM"}
-  : !pto.ptr<f32, ub> -> !pto.vreg<64xf32>
+  : !pto.ptr<f32, ub>, index -> !pto.vreg<64xf32>
 %x4 = pto.vlds %base[%row_off_4] {dist = "NORM"}
-  : !pto.ptr<f32, ub> -> !pto.vreg<64xf32>
+  : !pto.ptr<f32, ub>, index -> !pto.vreg<64xf32>
 %x5 = pto.vlds %base[%row_off_5] {dist = "NORM"}
-  : !pto.ptr<f32, ub> -> !pto.vreg<64xf32>
+  : !pto.ptr<f32, ub>, index -> !pto.vreg<64xf32>
 %x6 = pto.vlds %base[%row_off_6] {dist = "NORM"}
-  : !pto.ptr<f32, ub> -> !pto.vreg<64xf32>
+  : !pto.ptr<f32, ub>, index -> !pto.vreg<64xf32>
 %x7 = pto.vlds %base[%row_off_7] {dist = "NORM"}
-  : !pto.ptr<f32, ub> -> !pto.vreg<64xf32>
+  : !pto.ptr<f32, ub>, index -> !pto.vreg<64xf32>
 
 %p0 = pto.vcgadd %x0, %all_b32 : !pto.vreg<64xf32>, !pto.mask<b32> -> !pto.vreg<64xf32>
 %p1 = pto.vcgadd %x1, %all_b32 : !pto.vreg<64xf32>, !pto.mask<b32> -> !pto.vreg<64xf32>
@@ -1334,21 +1334,21 @@ VPTO lowering result for one full 8-row tile:
 %sum7 = pto.vcadd %p7, %block8 : !pto.vreg<64xf32>, !pto.mask<b32> -> !pto.vreg<64xf32>
 
 pto.vsts %sum0, %sum_out[%group_tile_off_0], %one_b32 {dist = "NORM_B32"}
-  : !pto.vreg<64xf32>, !pto.ptr<f32, ub>, !pto.mask<b32>
+  : !pto.vreg<64xf32>, !pto.ptr<f32, ub>, index, !pto.mask<b32>
 pto.vsts %sum1, %sum_out[%group_tile_off_1], %one_b32 {dist = "NORM_B32"}
-  : !pto.vreg<64xf32>, !pto.ptr<f32, ub>, !pto.mask<b32>
+  : !pto.vreg<64xf32>, !pto.ptr<f32, ub>, index, !pto.mask<b32>
 pto.vsts %sum2, %sum_out[%group_tile_off_2], %one_b32 {dist = "NORM_B32"}
-  : !pto.vreg<64xf32>, !pto.ptr<f32, ub>, !pto.mask<b32>
+  : !pto.vreg<64xf32>, !pto.ptr<f32, ub>, index, !pto.mask<b32>
 pto.vsts %sum3, %sum_out[%group_tile_off_3], %one_b32 {dist = "NORM_B32"}
-  : !pto.vreg<64xf32>, !pto.ptr<f32, ub>, !pto.mask<b32>
+  : !pto.vreg<64xf32>, !pto.ptr<f32, ub>, index, !pto.mask<b32>
 pto.vsts %sum4, %sum_out[%group_tile_off_4], %one_b32 {dist = "NORM_B32"}
-  : !pto.vreg<64xf32>, !pto.ptr<f32, ub>, !pto.mask<b32>
+  : !pto.vreg<64xf32>, !pto.ptr<f32, ub>, index, !pto.mask<b32>
 pto.vsts %sum5, %sum_out[%group_tile_off_5], %one_b32 {dist = "NORM_B32"}
-  : !pto.vreg<64xf32>, !pto.ptr<f32, ub>, !pto.mask<b32>
+  : !pto.vreg<64xf32>, !pto.ptr<f32, ub>, index, !pto.mask<b32>
 pto.vsts %sum6, %sum_out[%group_tile_off_6], %one_b32 {dist = "NORM_B32"}
-  : !pto.vreg<64xf32>, !pto.ptr<f32, ub>, !pto.mask<b32>
+  : !pto.vreg<64xf32>, !pto.ptr<f32, ub>, index, !pto.mask<b32>
 pto.vsts %sum7, %sum_out[%group_tile_off_7], %one_b32 {dist = "NORM_B32"}
-  : !pto.vreg<64xf32>, !pto.ptr<f32, ub>, !pto.mask<b32>
+  : !pto.vreg<64xf32>, !pto.ptr<f32, ub>, index, !pto.mask<b32>
 ```
 
 Memory result:
@@ -1390,14 +1390,14 @@ VPTO lowering result for one full 8-row tile:
 %block8 = pto.pge_b32 "PAT_VL8"
 %one_b32 = pto.pge_b32 "PAT_VL1"
 
-%x0 = pto.vlds %base[%row_off_0] {dist = "NORM"} : !pto.ptr<f32, ub> -> !pto.vreg<64xf32>
-%x1 = pto.vlds %base[%row_off_1] {dist = "NORM"} : !pto.ptr<f32, ub> -> !pto.vreg<64xf32>
-%x2 = pto.vlds %base[%row_off_2] {dist = "NORM"} : !pto.ptr<f32, ub> -> !pto.vreg<64xf32>
-%x3 = pto.vlds %base[%row_off_3] {dist = "NORM"} : !pto.ptr<f32, ub> -> !pto.vreg<64xf32>
-%x4 = pto.vlds %base[%row_off_4] {dist = "NORM"} : !pto.ptr<f32, ub> -> !pto.vreg<64xf32>
-%x5 = pto.vlds %base[%row_off_5] {dist = "NORM"} : !pto.ptr<f32, ub> -> !pto.vreg<64xf32>
-%x6 = pto.vlds %base[%row_off_6] {dist = "NORM"} : !pto.ptr<f32, ub> -> !pto.vreg<64xf32>
-%x7 = pto.vlds %base[%row_off_7] {dist = "NORM"} : !pto.ptr<f32, ub> -> !pto.vreg<64xf32>
+%x0 = pto.vlds %base[%row_off_0] {dist = "NORM"} : !pto.ptr<f32, ub>, index -> !pto.vreg<64xf32>
+%x1 = pto.vlds %base[%row_off_1] {dist = "NORM"} : !pto.ptr<f32, ub>, index -> !pto.vreg<64xf32>
+%x2 = pto.vlds %base[%row_off_2] {dist = "NORM"} : !pto.ptr<f32, ub>, index -> !pto.vreg<64xf32>
+%x3 = pto.vlds %base[%row_off_3] {dist = "NORM"} : !pto.ptr<f32, ub>, index -> !pto.vreg<64xf32>
+%x4 = pto.vlds %base[%row_off_4] {dist = "NORM"} : !pto.ptr<f32, ub>, index -> !pto.vreg<64xf32>
+%x5 = pto.vlds %base[%row_off_5] {dist = "NORM"} : !pto.ptr<f32, ub>, index -> !pto.vreg<64xf32>
+%x6 = pto.vlds %base[%row_off_6] {dist = "NORM"} : !pto.ptr<f32, ub>, index -> !pto.vreg<64xf32>
+%x7 = pto.vlds %base[%row_off_7] {dist = "NORM"} : !pto.ptr<f32, ub>, index -> !pto.vreg<64xf32>
 
 %p0 = pto.vcgadd %x0, %all_b32 : !pto.vreg<64xf32>, !pto.mask<b32> -> !pto.vreg<64xf32>
 %p1 = pto.vcgadd %x1, %all_b32 : !pto.vreg<64xf32>, !pto.mask<b32> -> !pto.vreg<64xf32>
@@ -1443,14 +1443,14 @@ VPTO lowering result for one full 8-row tile:
 %out6 = pto.vadd %sum6, %rhs6, %one_b32 : !pto.vreg<64xf32>
 %out7 = pto.vadd %sum7, %rhs7, %one_b32 : !pto.vreg<64xf32>
 
-pto.vsts %out0, %out[%group_tile_off_0], %one_b32 {dist = "NORM_B32"} : !pto.vreg<64xf32>, !pto.ptr<f32, ub>, !pto.mask<b32>
-pto.vsts %out1, %out[%group_tile_off_1], %one_b32 {dist = "NORM_B32"} : !pto.vreg<64xf32>, !pto.ptr<f32, ub>, !pto.mask<b32>
-pto.vsts %out2, %out[%group_tile_off_2], %one_b32 {dist = "NORM_B32"} : !pto.vreg<64xf32>, !pto.ptr<f32, ub>, !pto.mask<b32>
-pto.vsts %out3, %out[%group_tile_off_3], %one_b32 {dist = "NORM_B32"} : !pto.vreg<64xf32>, !pto.ptr<f32, ub>, !pto.mask<b32>
-pto.vsts %out4, %out[%group_tile_off_4], %one_b32 {dist = "NORM_B32"} : !pto.vreg<64xf32>, !pto.ptr<f32, ub>, !pto.mask<b32>
-pto.vsts %out5, %out[%group_tile_off_5], %one_b32 {dist = "NORM_B32"} : !pto.vreg<64xf32>, !pto.ptr<f32, ub>, !pto.mask<b32>
-pto.vsts %out6, %out[%group_tile_off_6], %one_b32 {dist = "NORM_B32"} : !pto.vreg<64xf32>, !pto.ptr<f32, ub>, !pto.mask<b32>
-pto.vsts %out7, %out[%group_tile_off_7], %one_b32 {dist = "NORM_B32"} : !pto.vreg<64xf32>, !pto.ptr<f32, ub>, !pto.mask<b32>
+pto.vsts %out0, %out[%group_tile_off_0], %one_b32 {dist = "NORM_B32"} : !pto.vreg<64xf32>, !pto.ptr<f32, ub>, index, !pto.mask<b32>
+pto.vsts %out1, %out[%group_tile_off_1], %one_b32 {dist = "NORM_B32"} : !pto.vreg<64xf32>, !pto.ptr<f32, ub>, index, !pto.mask<b32>
+pto.vsts %out2, %out[%group_tile_off_2], %one_b32 {dist = "NORM_B32"} : !pto.vreg<64xf32>, !pto.ptr<f32, ub>, index, !pto.mask<b32>
+pto.vsts %out3, %out[%group_tile_off_3], %one_b32 {dist = "NORM_B32"} : !pto.vreg<64xf32>, !pto.ptr<f32, ub>, index, !pto.mask<b32>
+pto.vsts %out4, %out[%group_tile_off_4], %one_b32 {dist = "NORM_B32"} : !pto.vreg<64xf32>, !pto.ptr<f32, ub>, index, !pto.mask<b32>
+pto.vsts %out5, %out[%group_tile_off_5], %one_b32 {dist = "NORM_B32"} : !pto.vreg<64xf32>, !pto.ptr<f32, ub>, index, !pto.mask<b32>
+pto.vsts %out6, %out[%group_tile_off_6], %one_b32 {dist = "NORM_B32"} : !pto.vreg<64xf32>, !pto.ptr<f32, ub>, index, !pto.mask<b32>
+pto.vsts %out7, %out[%group_tile_off_7], %one_b32 {dist = "NORM_B32"} : !pto.vreg<64xf32>, !pto.ptr<f32, ub>, index, !pto.mask<b32>
 ```
 
 Memory result:
@@ -1494,7 +1494,7 @@ VPTO lowering result for one full 8-row tile:
 
 // The compiler emits this row-local block once for each r in 0..7.
 %x_r = pto.vlds %base[%row_off_r] {dist = "NORM"}
-  : !pto.ptr<f32, ub> -> !pto.vreg<64xf32>
+  : !pto.ptr<f32, ub>, index -> !pto.vreg<64xf32>
 
 %p_r = pto.vcgadd %x_r, %all_b32
   : !pto.vreg<64xf32>, !pto.mask<b32> -> !pto.vreg<64xf32>
@@ -1513,7 +1513,7 @@ VPTO lowering result for one full 8-row tile:
   : !pto.vreg<64xf32>, !pto.mask<b32> -> !pto.vreg<64xf32>
 
 pto.vsts %ysum_r, %out[%group_tile_off_r], %one_b32 {dist = "NORM_B32"}
-  : !pto.vreg<64xf32>, !pto.ptr<f32, ub>, !pto.mask<b32>
+  : !pto.vreg<64xf32>, !pto.ptr<f32, ub>, index, !pto.mask<b32>
 ```
 
 The row-local block above is not a runtime loop requirement. It is the repeated
@@ -1659,7 +1659,7 @@ VPTO lowering result for one full 8-row tile:
 
 %all_b16 = pto.pge_b16 "PAT_ALL"
 pto.vsts %b16, %out[%off], %all_b16 {dist = "NORM_B16"}
-  : !pto.vreg<128xf16>, !pto.ptr<f16, ub>, !pto.mask<b16>
+  : !pto.vreg<128xf16>, !pto.ptr<f16, ub>, index, !pto.mask<b16>
 ```
 
 Memory result:
@@ -1783,7 +1783,7 @@ VPTO lowering result for one full `8x32xf32` tile:
 %sum_block = pto.vadd %s01, %s23, %sum_mask : !pto.vreg<64xf32>
 
 pto.vsts %sum_block, %out[%group_tile_off], %sum_mask {dist = "NORM_B32"}
-  : !pto.vreg<64xf32>, !pto.ptr<f32, ub>, !pto.mask<b32>
+  : !pto.vreg<64xf32>, !pto.ptr<f32, ub>, index, !pto.mask<b32>
 ```
 
 Memory result:
@@ -1833,13 +1833,13 @@ VPTO lowering result:
 // Emit this row-local block for r = 0..5 only. No load or store is emitted for
 // rows 6 and 7.
 %x_r = pto.vlds %base[%row_off_r] {dist = "NORM"}
-  : !pto.ptr<f32, ub> -> !pto.vreg<64xf32>
+  : !pto.ptr<f32, ub>, index -> !pto.vreg<64xf32>
 %p_r = pto.vcgadd %x_r, %all_b32
   : !pto.vreg<64xf32>, !pto.mask<b32> -> !pto.vreg<64xf32>
 %sum_r = pto.vcadd %p_r, %block8
   : !pto.vreg<64xf32>, !pto.mask<b32> -> !pto.vreg<64xf32>
 pto.vsts %sum_r, %out[%group_tile_off_r], %one_b32 {dist = "NORM_B32"}
-  : !pto.vreg<64xf32>, !pto.ptr<f32, ub>, !pto.mask<b32>
+  : !pto.vreg<64xf32>, !pto.ptr<f32, ub>, index, !pto.mask<b32>
 ```
 
 Memory result:
@@ -1965,7 +1965,7 @@ section 3.6:
 %sum_block = pto.vadd %s01, %s23, %sum_mask : !pto.vreg<64xf32>
 
 pto.vsts %sum_block, %out[%group_tile_off], %sum_mask {dist = "NORM_B32"}
-  : !pto.vreg<64xf32>, !pto.ptr<f32, ub>, !pto.mask<b32>
+  : !pto.vreg<64xf32>, !pto.ptr<f32, ub>, index, !pto.mask<b32>
 ```
 
 Memory result:
@@ -2181,7 +2181,7 @@ VPTO lowering result for one `8x16xf32` tile:
   : !pto.vreg<64xf32>
 
 pto.vsts %sum_block, %out[%group_tile_off], %sum_mask {dist = "NORM_B32"}
-  : !pto.vreg<64xf32>, !pto.ptr<f32, ub>, !pto.mask<b32>
+  : !pto.vreg<64xf32>, !pto.ptr<f32, ub>, index, !pto.mask<b32>
 ```
 
 Memory result:
@@ -2284,7 +2284,7 @@ VPTO lowering result:
   : !pto.vreg<64xf32>
 
 pto.vsts %sum_block, %out[%group_tile_off], %sum_mask {dist = "NORM_B32"}
-  : !pto.vreg<64xf32>, !pto.ptr<f32, ub>, !pto.mask<b32>
+  : !pto.vreg<64xf32>, !pto.ptr<f32, ub>, index, !pto.mask<b32>
 ```
 
 Memory result:
@@ -2379,7 +2379,7 @@ VPTO lowering result:
   : !pto.ptr<f32, ub>, i16, i16, !pto.mask<b32> -> !pto.vreg<64xf32>
 
 pto.vsts %rhs_block, %out[%group_off], %slot_mask {dist = "NORM_B32"}
-  : !pto.vreg<64xf32>, !pto.ptr<f32, ub>, !pto.mask<b32>
+  : !pto.vreg<64xf32>, !pto.ptr<f32, ub>, index, !pto.mask<b32>
 ```
 
 Memory result:
@@ -2433,7 +2433,7 @@ VPTO lowering result:
   : !pto.ptr<f32, ub>, i16, i16, !pto.mask<b32> -> !pto.vreg<64xf32>
 
 pto.vsts %rhs_r, %out[%group_off_plus_r], %one_b32 {dist = "NORM_B32"}
-  : !pto.vreg<64xf32>, !pto.ptr<f32, ub>, !pto.mask<b32>
+  : !pto.vreg<64xf32>, !pto.ptr<f32, ub>, index, !pto.mask<b32>
 ```
 
 Memory result:
@@ -2542,7 +2542,7 @@ VPTO lowering result:
   : !pto.vreg<128xf16>
 
 pto.vsts %h0, %out[%off], %all_b16 {dist = "NORM_B16"}
-  : !pto.vreg<128xf16>, !pto.ptr<f16, ub>, !pto.mask<b16>
+  : !pto.vreg<128xf16>, !pto.ptr<f16, ub>, index, !pto.mask<b16>
 ```
 
 Memory result:
@@ -2629,7 +2629,7 @@ VPTO lowering result:
 %sum_block = pto.vadd %s01, %s23, %sum_mask : !pto.vreg<64xf32>
 
 pto.vsts %sum_block, %sum_out[%group_off], %sum_mask {dist = "NORM_B32"}
-  : !pto.vreg<64xf32>, !pto.ptr<f32, ub>, !pto.mask<b32>
+  : !pto.vreg<64xf32>, !pto.ptr<f32, ub>, index, !pto.mask<b32>
 
 // Dense store materialization for the second consumer.
 %even0, %even1 = pto.vintlv %x_p0, %x_p2
@@ -2743,7 +2743,7 @@ VPTO lowering result:
   : !pto.vreg<64xf32>
 
 pto.vsts %sum_block, %sum_out[%group_off], %sum_mask {dist = "NORM_B32"}
-  : !pto.vreg<64xf32>, !pto.ptr<f32, ub>, !pto.mask<b32>
+  : !pto.vreg<64xf32>, !pto.ptr<f32, ub>, index, !pto.mask<b32>
 
 %h_even = pto.vcvt %x_p0, %all_b32 {part = "EVEN", rnd = "R", sat = "SAT"}
   : !pto.vreg<64xf32>, !pto.mask<b32> -> !pto.vreg<128xf16>
@@ -2754,7 +2754,7 @@ pto.vsts %sum_block, %sum_out[%group_off], %sum_mask {dist = "NORM_B32"}
 %h0 = pto.vor %h_even, %h_odd, %all_b16
   : !pto.vreg<128xf16>
 pto.vsts %h0, %out[%off], %all_b16 {dist = "NORM_B16"}
-  : !pto.vreg<128xf16>, !pto.ptr<f16, ub>, !pto.mask<b16>
+  : !pto.vreg<128xf16>, !pto.ptr<f16, ub>, index, !pto.mask<b16>
 ```
 
 Memory result:
@@ -2885,7 +2885,7 @@ VPTO lowering result for the join:
   : !pto.vreg<64xf32>
 
 pto.vsts %out_block, %out[%group_off], %slot_mask {dist = "NORM_B32"}
-  : !pto.vreg<64xf32>, !pto.ptr<f32, ub>, !pto.mask<b32>
+  : !pto.vreg<64xf32>, !pto.ptr<f32, ub>, index, !pto.mask<b32>
 ```
 
 Memory result:
@@ -2944,13 +2944,13 @@ VPTO lowering result:
 // A statically safe full-read proof allows the load plan to read the
 // rounded-up 8-row tile.  Only rows 0..5 are semantically active.
 %x_c0 = pto.vlds %base[%tile_off_0]
-  : memref<256xf32> -> !pto.vreg<64xf32>
+  : memref<256xf32>, index -> !pto.vreg<64xf32>
 %x_c1 = pto.vlds %base[%tile_off_1]
-  : memref<256xf32> -> !pto.vreg<64xf32>
+  : memref<256xf32>, index -> !pto.vreg<64xf32>
 %x_c2 = pto.vlds %base[%tile_off_2]
-  : memref<256xf32> -> !pto.vreg<64xf32>
+  : memref<256xf32>, index -> !pto.vreg<64xf32>
 %x_c3 = pto.vlds %base[%tile_off_3]
-  : memref<256xf32> -> !pto.vreg<64xf32>
+  : memref<256xf32>, index -> !pto.vreg<64xf32>
 
 %x_lo01, %x_hi01 = pto.vdintlv %x_c0, %x_c1
   : !pto.vreg<64xf32>, !pto.vreg<64xf32> -> !pto.vreg<64xf32>, !pto.vreg<64xf32>
@@ -2986,7 +2986,7 @@ VPTO lowering result:
 %sum_block = pto.vadd %s01, %s23, %sum_mask : !pto.vreg<64xf32>
 
 pto.vsts %sum_block, %out[%group_off], %sum_mask {dist = "NORM_B32"}
-  : !pto.vreg<64xf32>, !pto.ptr<f32, ub>, !pto.mask<b32>
+  : !pto.vreg<64xf32>, !pto.ptr<f32, ub>, index, !pto.mask<b32>
 ```
 
 Memory result:
@@ -3081,7 +3081,7 @@ VPTO lowering result:
 %s23 = pto.vadd %s2, %s3, %sum_mask : !pto.vreg<64xf32>
 %sum_block = pto.vadd %s01, %s23, %sum_mask : !pto.vreg<64xf32>
 pto.vsts %sum_block, %out[%group_off], %sum_mask {dist = "NORM_B32"}
-  : !pto.vreg<64xf32>, !pto.ptr<f32, ub>, !pto.mask<b32>
+  : !pto.vreg<64xf32>, !pto.ptr<f32, ub>, index, !pto.mask<b32>
 ```
 
 Memory result:
@@ -3197,7 +3197,7 @@ VPTO lowering result:
 %ysum_block = pto.vadd %y_lo_sum, %y_hi_sum, %sum_mask
   : !pto.vreg<64xf32>
 pto.vsts %ysum_block, %sum_out[%group_off], %sum_mask {dist = "NORM_B32"}
-  : !pto.vreg<64xf32>, !pto.ptr<f32, ub>, !pto.mask<b32>
+  : !pto.vreg<64xf32>, !pto.ptr<f32, ub>, index, !pto.mask<b32>
 
 // Use 2: rematerialize broadcast for the f32->f16 parity cast path.
 %b_rows_for_cast_0 = pto.vselr %sum_block, %broadcast_idx_0
@@ -3215,7 +3215,7 @@ pto.vsts %ysum_block, %sum_out[%group_off], %sum_mask {dist = "NORM_B32"}
 %all_b16 = pto.pge_b16 "PAT_ALL"
 %h0 = pto.vor %h_even, %h_odd, %all_b16 : !pto.vreg<128xf16>
 pto.vsts %h0, %dense_out[%off], %all_b16 {dist = "NORM_B16"}
-  : !pto.vreg<128xf16>, !pto.ptr<f16, ub>, !pto.mask<b16>
+  : !pto.vreg<128xf16>, !pto.ptr<f16, ub>, index, !pto.mask<b16>
 ```
 
 Memory result:
@@ -3265,18 +3265,18 @@ VPTO lowering result:
 %m, %_ = pto.plt_b32 %c48_i32 : i32 -> !pto.mask<b32>, i32
 
 %x0 = pto.vlds %base[%off] {dist = "NORM"}
-  : !pto.ptr<f32, ub> -> !pto.vreg<64xf32>
+  : !pto.ptr<f32, ub>, index -> !pto.vreg<64xf32>
 %rhs0 = pto.vlds %rhs_base[%off] {dist = "NORM"}
-  : !pto.ptr<f32, ub> -> !pto.vreg<64xf32>
+  : !pto.ptr<f32, ub>, index -> !pto.vreg<64xf32>
 %sum0 = pto.vadd %x0, %rhs0, %all_b32 : !pto.vreg<64xf32>
 
 %pass0 = pto.vsel %sum0, %x0, %m
   : !pto.vreg<64xf32>, !pto.vreg<64xf32>, !pto.mask<b32> -> !pto.vreg<64xf32>
 pto.vsts %pass0, %dense_out[%off], %all_b32 {dist = "NORM_B32"}
-  : !pto.vreg<64xf32>, !pto.ptr<f32, ub>, !pto.mask<b32>
+  : !pto.vreg<64xf32>, !pto.ptr<f32, ub>, index, !pto.mask<b32>
 
 pto.vsts %sum0, %masked_out[%off], %m {dist = "NORM_B32"}
-  : !pto.vreg<64xf32>, !pto.ptr<f32, ub>, !pto.mask<b32>
+  : !pto.vreg<64xf32>, !pto.ptr<f32, ub>, index, !pto.mask<b32>
 ```
 
 Memory result:
@@ -3369,7 +3369,7 @@ func.func @caller(...) {
   %s23 = pto.vadd %s2, %s3, %sum_mask : !pto.vreg<64xf32>
   %sum_block = pto.vadd %s01, %s23, %sum_mask : !pto.vreg<64xf32>
   pto.vsts %sum_block, %out[%group_off], %sum_mask {dist = "NORM_B32"}
-    : !pto.vreg<64xf32>, !pto.ptr<f32, ub>, !pto.mask<b32>
+    : !pto.vreg<64xf32>, !pto.ptr<f32, ub>, index, !pto.mask<b32>
 }
 ```
 
@@ -3499,7 +3499,7 @@ VPTO lowering result for one `8x16xf32` tile:
   : !pto.vreg<64xf32>
 
 pto.vsts %ysum_block, %out[%group_tile_off], %sum_mask {dist = "NORM_B32"}
-  : !pto.vreg<64xf32>, !pto.ptr<f32, ub>, !pto.mask<b32>
+  : !pto.vreg<64xf32>, !pto.ptr<f32, ub>, index, !pto.mask<b32>
 ```
 
 Memory result:
@@ -3592,7 +3592,7 @@ VPTO lowering result:
 %sum_block = pto.vadd %s01, %s23, %sum_mask : !pto.vreg<64xf32>
 
 pto.vsts %sum_block, %out[%group_tile_off], %sum_mask {dist = "NORM_B32"}
-  : !pto.vreg<64xf32>, !pto.ptr<f32, ub>, !pto.mask<b32>
+  : !pto.vreg<64xf32>, !pto.ptr<f32, ub>, index, !pto.mask<b32>
 ```
 
 Memory result:
@@ -3661,7 +3661,7 @@ VPTO lowering result:
   : !pto.ptr<f32, ub>, i16, i16, !pto.mask<b32> -> !pto.vreg<64xf32>
 
 pto.vsts %rhs_r, %out[%group_tile_off_r], %one_b32 {dist = "NORM_B32"}
-  : !pto.vreg<64xf32>, !pto.ptr<f32, ub>, !pto.mask<b32>
+  : !pto.vreg<64xf32>, !pto.ptr<f32, ub>, index, !pto.mask<b32>
 ```
 
 Memory result:
@@ -3773,9 +3773,9 @@ VPTO lowering result:
   : !pto.ptr<f32, ub>, index -> !pto.vreg<64xf32>
 
 pto.vsts %x0, %out32[%off], %mask32_0 {dist = "NORM_B32"}
-  : !pto.vreg<64xf32>, !pto.ptr<f32, ub>, !pto.mask<b32>
+  : !pto.vreg<64xf32>, !pto.ptr<f32, ub>, index, !pto.mask<b32>
 pto.vsts %x1, %out32[%off_plus_64], %mask32_1 {dist = "NORM_B32"}
-  : !pto.vreg<64xf32>, !pto.ptr<f32, ub>, !pto.mask<b32>
+  : !pto.vreg<64xf32>, !pto.ptr<f32, ub>, index, !pto.mask<b32>
 
 %x_p0, %x_p1 = pto.vdintlv %x0, %x1
   : !pto.vreg<64xf32>, !pto.vreg<64xf32> -> !pto.vreg<64xf32>, !pto.vreg<64xf32>
@@ -3791,7 +3791,7 @@ pto.vsts %x1, %out32[%off_plus_64], %mask32_1 {dist = "NORM_B32"}
 %mask_b16, %scalar_out = pto.plt_b16 %c96_i32
   : i32 -> !pto.mask<b16>, i32
 pto.vsts %h0, %out16[%off], %mask_b16 {dist = "NORM_B16"}
-  : !pto.vreg<128xf16>, !pto.ptr<f16, ub>, !pto.mask<b16>
+  : !pto.vreg<128xf16>, !pto.ptr<f16, ub>, index, !pto.mask<b16>
 ```
 
 Memory result:
@@ -3857,19 +3857,19 @@ VPTO lowering result:
   : f32, !pto.mask<b32> -> !pto.vreg<64xf32>
 
 %l0 = pto.vlds %base[%c0]
-  : memref<128xf32> -> !pto.vreg<64xf32>
+  : memref<128xf32>, index -> !pto.vreg<64xf32>
 %x0 = pto.vsel %l0, %zero0, %m0
   : !pto.vreg<64xf32>, !pto.vreg<64xf32>, !pto.mask<b32> -> !pto.vreg<64xf32>
 
 %l1 = pto.vlds %base[%c64]
-  : memref<128xf32> -> !pto.vreg<64xf32>
+  : memref<128xf32>, index -> !pto.vreg<64xf32>
 %x1 = pto.vsel %l1, %zero1, %m1
   : !pto.vreg<64xf32>, !pto.vreg<64xf32>, !pto.mask<b32> -> !pto.vreg<64xf32>
 
 pto.vsts %x0, %out[%c0], %m0 {dist = "NORM_B32"}
-  : !pto.vreg<64xf32>, memref<128xf32>, !pto.mask<b32>
+  : !pto.vreg<64xf32>, memref<128xf32>, index, !pto.mask<b32>
 pto.vsts %x1, %out[%c64], %m1 {dist = "NORM_B32"}
-  : !pto.vreg<64xf32>, memref<128xf32>, !pto.mask<b32>
+  : !pto.vreg<64xf32>, memref<128xf32>, index, !pto.mask<b32>
 ```
 
 Memory result:
@@ -3945,7 +3945,7 @@ VPTO lowering result:
 %sum_mask = pto.pge_b32 "PAT_VL8"
 
 %x16_0 = pto.vlds %base[%off]
-  : memref<128xf16> -> !pto.vreg<128xf16>
+  : memref<128xf16>, index -> !pto.vreg<128xf16>
 %x32_p0 = pto.vcvt %x16_0, %all_b16 {part = "EVEN"}
   : !pto.vreg<128xf16>, !pto.mask<b16> -> !pto.vreg<64xf32>
 %x32_p1 = pto.vcvt %x16_0, %all_b16 {part = "ODD"}
@@ -3959,15 +3959,15 @@ VPTO lowering result:
   : !pto.vreg<64xf32>
 
 pto.vsts %sum_block, %sum_out[%group_off], %sum_mask {dist = "NORM_B32"}
-  : !pto.vreg<64xf32>, memref<8xf32>, !pto.mask<b32>
+  : !pto.vreg<64xf32>, memref<8xf32>, index, !pto.mask<b32>
 
 %dense0, %dense1 = pto.vintlv %x32_p0, %x32_p1
   : !pto.vreg<64xf32>, !pto.vreg<64xf32> -> !pto.vreg<64xf32>, !pto.vreg<64xf32>
 
 pto.vsts %dense0, %dense_out[%off], %all_b32 {dist = "NORM_B32"}
-  : !pto.vreg<64xf32>, memref<128xf32>, !pto.mask<b32>
+  : !pto.vreg<64xf32>, memref<128xf32>, index, !pto.mask<b32>
 pto.vsts %dense1, %dense_out[%off_plus_64], %all_b32 {dist = "NORM_B32"}
-  : !pto.vreg<64xf32>, memref<128xf32>, !pto.mask<b32>
+  : !pto.vreg<64xf32>, memref<128xf32>, index, !pto.mask<b32>
 ```
 
 Memory result:
@@ -4051,7 +4051,7 @@ VPTO lowering result:
 %sum_block = pto.vadd %s01, %s23, %sum_mask : !pto.vreg<64xf32>
 
 pto.vsts %sum_block, %sum_out[%group_off], %sum_mask {dist = "NORM_B32"}
-  : !pto.vreg<64xf32>, memref<8xf32>, !pto.mask<b32>
+  : !pto.vreg<64xf32>, memref<8xf32>, index, !pto.mask<b32>
 
 %x8_p0 = pto.vcvt %x_p0, %all_b32 {part = "P0", rnd = "R", sat = "SAT"}
   : !pto.vreg<64xf32>, !pto.mask<b32> -> !pto.vreg<256xf8>
@@ -4070,7 +4070,7 @@ pto.vsts %sum_block, %sum_out[%group_off], %sum_mask {dist = "NORM_B32"}
   : !pto.vreg<256xf8>
 
 pto.vsts %x8_0, %out8[%off], PAT_ALL_B8 {dist = "NORM_B8"}
-  : !pto.vreg<256xf8>, memref<256xf8>, !pto.mask<b8>
+  : !pto.vreg<256xf8>, memref<256xf8>, index, !pto.mask<b8>
 ```
 
 Memory result:
@@ -4184,9 +4184,9 @@ VPTO lowering result:
   : !pto.vreg<64xf32>
 
 pto.vsts %sum16_lo, %out16[%group_off16], %sum8_mask {dist = "NORM_B32"}
-  : !pto.vreg<64xf32>, !pto.ptr<f32, ub>, !pto.mask<b32>
+  : !pto.vreg<64xf32>, !pto.ptr<f32, ub>, index, !pto.mask<b32>
 pto.vsts %sum16_hi, %out16[%group_off16_plus_8], %sum8_mask {dist = "NORM_B32"}
-  : !pto.vreg<64xf32>, !pto.ptr<f32, ub>, !pto.mask<b32>
+  : !pto.vreg<64xf32>, !pto.ptr<f32, ub>, index, !pto.mask<b32>
 
 // Rematerialized S=32 use.  Two DINTLV loads plus one register deinterleave
 // level produce mod-4 columns for rows 0..7.
@@ -4210,7 +4210,7 @@ pto.vsts %sum16_hi, %out16[%group_off16_plus_8], %sum8_mask {dist = "NORM_B32"}
 %sum32_block = pto.vadd %s32_01, %s32_23, %sum8_mask : !pto.vreg<64xf32>
 
 pto.vsts %sum32_block, %out32[%group_off32], %sum8_mask {dist = "NORM_B32"}
-  : !pto.vreg<64xf32>, !pto.ptr<f32, ub>, !pto.mask<b32>
+  : !pto.vreg<64xf32>, !pto.ptr<f32, ub>, index, !pto.mask<b32>
 ```
 
 Memory result:
@@ -4278,7 +4278,7 @@ VPTO lowering result for one full 8-row tile:
 
 // The compiler emits this row-local sequence for r = 0..7.
 %x_r = pto.vlds %base[%row_off_r] {dist = "NORM"}
-  : !pto.ptr<f32, ub> -> !pto.vreg<64xf32>
+  : !pto.ptr<f32, ub>, index -> !pto.vreg<64xf32>
 %p_r = pto.vcgadd %x_r, %all_b32
   : !pto.vreg<64xf32>, !pto.mask<b32> -> !pto.vreg<64xf32>
 %sum32_r = pto.vcadd %p_r, %block8
@@ -4290,7 +4290,7 @@ VPTO lowering result for one full 8-row tile:
   : !pto.vreg<64xf32>, !pto.mask<b32> -> !pto.vreg<128xf16>
 
 pto.vsts %sum16_r, %out[%group_tile_off_r], %one_b16 {dist = "NORM_B16"}
-  : !pto.vreg<128xf16>, !pto.ptr<f16, ub>, !pto.mask<b16>
+  : !pto.vreg<128xf16>, !pto.ptr<f16, ub>, index, !pto.mask<b16>
 ```
 
 Memory result:
@@ -4379,7 +4379,7 @@ VPTO lowering result for one full 8-row tile:
 
 // First group-slot consumer: store the group slots without changing layout.
 pto.vsts %sum_block, %sum_out[%group_off], %slot8 {dist = "NORM_B32"}
-  : !pto.vreg<64xf32>, !pto.ptr<f32, ub>, !pto.mask<b32>
+  : !pto.vreg<64xf32>, !pto.ptr<f32, ub>, index, !pto.mask<b32>
 
 // Second group-slot consumer: materialize only this use as dense grouped data.
 %broadcast_idx0 = compute index vector [0 repeated 16, 1 repeated 16,
@@ -4407,7 +4407,7 @@ pto.vsts %sum_block, %sum_out[%group_off], %slot8 {dist = "NORM_B32"}
 %ysum_block = pto.vadd %y_lo_sum, %y_hi_sum, %slot8 : !pto.vreg<64xf32>
 
 pto.vsts %ysum_block, %out[%group_off], %slot8 {dist = "NORM_B32"}
-  : !pto.vreg<64xf32>, !pto.ptr<f32, ub>, !pto.mask<b32>
+  : !pto.vreg<64xf32>, !pto.ptr<f32, ub>, index, !pto.mask<b32>
 ```
 
 Memory result:
@@ -4492,7 +4492,7 @@ VPTO lowering result:
 %out16_block = pto.vadd %sum16_block, %rhs16_block, %slot8
   : !pto.vreg<64xf32>
 pto.vsts %out16_block, %out16[%group_off16], %slot8 {dist = "NORM_B32"}
-  : !pto.vreg<64xf32>, !pto.ptr<f32, ub>, !pto.mask<b32>
+  : !pto.vreg<64xf32>, !pto.ptr<f32, ub>, index, !pto.mask<b32>
 
 // Row-local S=64 RHS: a separate group_slot_load op produces one lane-0
 // value per physical row-local result.
@@ -4501,12 +4501,12 @@ pto.vsts %out16_block, %out16[%group_off16], %slot8 {dist = "NORM_B32"}
 
 // Emit this row-local reduction/add/store shape for r = 0..7.
 %x64_r = pto.vlds %base64[%row_off64_r] {dist = "NORM"}
-  : !pto.ptr<f32, ub> -> !pto.vreg<64xf32>
+  : !pto.ptr<f32, ub>, index -> !pto.vreg<64xf32>
 %p64_r = pto.vcgadd %x64_r, PAT_ALL_B32 : !pto.vreg<64xf32>
 %sum64_r = pto.vcadd %p64_r, PAT_VL8_B32 : !pto.vreg<64xf32>
 %out64_r = pto.vadd %sum64_r, %rhs64_r, %one_b32 : !pto.vreg<64xf32>
 pto.vsts %out64_r, %out64[%group_off64_plus_r], %one_b32 {dist = "NORM_B32"}
-  : !pto.vreg<64xf32>, !pto.ptr<f32, ub>, !pto.mask<b32>
+  : !pto.vreg<64xf32>, !pto.ptr<f32, ub>, index, !pto.mask<b32>
 ```
 
 Memory result:
@@ -4563,13 +4563,13 @@ VPTO lowering result:
 
 // Emit this row-local sequence for r = 0..7.
 %x_r = pto.vlds %base[%row_off_r] {dist = "NORM"}
-  : !pto.ptr<f32, ub> -> !pto.vreg<64xf32>
+  : !pto.ptr<f32, ub>, index -> !pto.vreg<64xf32>
 %p_r = pto.vcgadd %x_r, %all_b32 : !pto.vreg<64xf32>
 %sum_r = pto.vcadd %p_r, %block8 : !pto.vreg<64xf32>
 
 %dst_r = %out + %group_off + r * %row_stride
 pto.vsts %sum_r, %dst_r, %one_b32 {dist = "NORM_B32"}
-  : !pto.vreg<64xf32>, !pto.ptr<f32, ub>, !pto.mask<b32>
+  : !pto.vreg<64xf32>, !pto.ptr<f32, ub>, index, !pto.mask<b32>
 ```
 
 Memory result:
@@ -4644,7 +4644,7 @@ VPTO lowering result:
   : !pto.vreg<64xf32>
 
 pto.vsts %sum_block_t, %tile_out_t, PAT_VL8_B32 {dist = "NORM_B32"}
-  : !pto.vreg<64xf32>, !pto.ptr<f32, ub>, !pto.mask<b32>
+  : !pto.vreg<64xf32>, !pto.ptr<f32, ub>, index, !pto.mask<b32>
 ```
 
 Memory result:
@@ -4755,7 +4755,7 @@ VPTO lowering result:
 %ysum_block = pto.vadd %ys01, %ys23, %slot8 : !pto.vreg<64xf32>
 
 pto.vsts %ysum_block, %out[%group_off], %slot8 {dist = "NORM_B32"}
-  : !pto.vreg<64xf32>, !pto.ptr<f32, ub>, !pto.mask<b32>
+  : !pto.vreg<64xf32>, !pto.ptr<f32, ub>, index, !pto.mask<b32>
 ```
 
 Memory result:
@@ -4886,7 +4886,7 @@ pto.vsts %copy3, %copy_out[%off_plus_192], %all_b32 {dist = "NORM_B32"}
 %sum_block = pto.vadd %s01, %s23, %slot8 : !pto.vreg<64xf32>
 
 pto.vsts %sum_block, %sum_out[%group_off], %slot8 {dist = "NORM_B32"}
-  : !pto.vreg<64xf32>, !pto.ptr<f32, ub>, !pto.mask<b32>
+  : !pto.vreg<64xf32>, !pto.ptr<f32, ub>, index, !pto.mask<b32>
 ```
 
 Memory result:
@@ -5000,7 +5000,7 @@ pto.vsts %x3, %copy_out[%off_plus_192], %all_b32 {dist = "NORM_B32"}
 %sum_block = pto.vadd %s01, %s23, %slot8 : !pto.vreg<64xf32>
 
 pto.vsts %sum_block, %sum_out[%group_off], %slot8 {dist = "NORM_B32"}
-  : !pto.vreg<64xf32>, !pto.ptr<f32, ub>, !pto.mask<b32>
+  : !pto.vreg<64xf32>, !pto.ptr<f32, ub>, index, !pto.mask<b32>
 ```
 
 Memory result:
@@ -5088,7 +5088,7 @@ VPTO lowering result:
 }
 
 pto.vsts %acc_block, %out[%group_off], %slot8 {dist = "NORM_B32"}
-  : !pto.vreg<64xf32>, !pto.ptr<f32, ub>, !pto.mask<b32>
+  : !pto.vreg<64xf32>, !pto.ptr<f32, ub>, index, !pto.mask<b32>
 ```
 
 Memory result:
@@ -5214,16 +5214,16 @@ func.func private @consume(%x_p0: !pto.vreg<64xf32>,
   %s23 = pto.vadd %s2, %s3, %slot8 : !pto.vreg<64xf32>
   %sum_block = pto.vadd %s01, %s23, %slot8 : !pto.vreg<64xf32>
   pto.vsts %sum_block, %out[%group_off], %slot8 {dist = "NORM_B32"}
-    : !pto.vreg<64xf32>, !pto.ptr<f32, ub>, !pto.mask<b32>
+    : !pto.vreg<64xf32>, !pto.ptr<f32, ub>, index, !pto.mask<b32>
   return
 }
 
 func.func @caller(...) {
   // Caller keeps the load and group mask in the contiguous function ABI layout.
-  %x0 = pto.vlds %base[%off] : !pto.ptr<f32, ub> -> !pto.vreg<64xf32>
-  %x1 = pto.vlds %base[%off_plus_64] : !pto.ptr<f32, ub> -> !pto.vreg<64xf32>
-  %x2 = pto.vlds %base[%off_plus_128] : !pto.ptr<f32, ub> -> !pto.vreg<64xf32>
-  %x3 = pto.vlds %base[%off_plus_192] : !pto.ptr<f32, ub> -> !pto.vreg<64xf32>
+  %x0 = pto.vlds %base[%off] : !pto.ptr<f32, ub>, index -> !pto.vreg<64xf32>
+  %x1 = pto.vlds %base[%off_plus_64] : !pto.ptr<f32, ub>, index -> !pto.vreg<64xf32>
+  %x2 = pto.vlds %base[%off_plus_128] : !pto.ptr<f32, ub>, index -> !pto.vreg<64xf32>
+  %x3 = pto.vlds %base[%off_plus_192] : !pto.ptr<f32, ub>, index -> !pto.vreg<64xf32>
 
   %m0 = pto.pset_b32 "PAT_ALL" : !pto.mask<b32>
   %m1 = pto.pset_b32 "PAT_ALL" : !pto.mask<b32>
@@ -5334,7 +5334,7 @@ Lowering:
 %l1 = pto.vlds %base[%off_plus_64]
 %l2 = pto.vlds %base[%off_plus_128]
 %l3 = pto.vlds %base[%off_plus_192]
-%x0 = pto.vsel %l0, %z0, %m0 : !pto.vreg<64xf32>
+%x0 = pto.vsel %l0, %z0, %m0 : !pto.vreg<64xf32>, index, index, index, index
 %x1 = pto.vsel %l1, %z1, %m1 : !pto.vreg<64xf32>
 %x2 = pto.vsel %l2, %z2, %m2 : !pto.vreg<64xf32>
 %x3 = pto.vsel %l3, %z3, %m3 : !pto.vreg<64xf32>
@@ -5365,7 +5365,7 @@ Lowering:
 %sum_block = pto.vadd %s01, %s23, %slot8 : !pto.vreg<64xf32>
 
 pto.vsts %sum_block, %out[%group_off], %slot8 {dist = "NORM_B32"}
-  : !pto.vreg<64xf32>, !pto.ptr<f32, ub>, !pto.mask<b32>
+  : !pto.vreg<64xf32>, !pto.ptr<f32, ub>, index, !pto.mask<b32>
 ```
 
 Memory result:
@@ -5679,7 +5679,7 @@ func.func @store_ui16_group_slots(%sum: !pto.vreg<128xui16>, %out: !pto.ptr<ui16
   %wide = pto.vbitcast %sum : !pto.vreg<128xui16> -> !pto.vreg<64xui32>
   %packed = pto.vpack %wide, "LOWER" : !pto.vreg<64xui32> -> !pto.vreg<128xui16>
   %slots = pto.pset_b16 "PAT_VL8" : !pto.mask<b16>
-  pto.vsts %packed, %out[%off], %slots {dist = "NORM_B16"} : !pto.vreg<128xui16>, !pto.ptr<ui16, ub>, !pto.mask<b16>
+  pto.vsts %packed, %out[%off], %slots {dist = "NORM_B16"} : !pto.vreg<128xui16>, !pto.ptr<ui16, ub>, index, !pto.mask<b16>
   return
 }
 ```
@@ -5825,7 +5825,7 @@ VPTO lowering shape for the only result chunk:
 %sum0 = pto.vadd %s01, %s23, %slot4_b16 : !pto.vreg<128xf16>
 
 pto.vsts %sum0, %out[%group_off], %slot4_b16 {dist = "NORM_B16"}
-  : !pto.vreg<128xf16>, !pto.ptr<f16, ub>, !pto.mask<b16>
+  : !pto.vreg<128xf16>, !pto.ptr<f16, ub>, index, !pto.mask<b16>
 ```
 
 Memory result:
@@ -5931,7 +5931,7 @@ VPTO lowering shape:
 
 // Repeated for r = 0..7.
 %x_r = pto.vlds %base[%row_off_r] {dist = "NORM"}
-  : !pto.ptr<T16, ub> -> !pto.vreg<128xT16>
+  : !pto.ptr<T16, ub>, index -> !pto.vreg<128xT16>
 
 // Floating-point keeps the same physical result type.
 %sumf_r = pto.vcadd %x_r, %all_b16
@@ -5944,7 +5944,7 @@ VPTO lowering shape:
   : !pto.vreg<64xi32> -> !pto.vreg<128xi16>
 
 pto.vsts %sum{f|i}_r, %out[%group_off_plus_r], %slot1_b16 {dist = "NORM_B16"}
-  : !pto.vreg<128xT16>, !pto.ptr<T16, ub>, !pto.mask<b16>
+  : !pto.vreg<128xT16>, !pto.ptr<T16, ub>, index, !pto.mask<b16>
 ```
 
 Memory result:
@@ -5988,7 +5988,7 @@ VPTO lowering shape:
     -> !pto.vreg<64xT32>
 
 pto.vsts %sum0, %out[%group_off], %slot8_b32 {dist = "NORM_B32"}
-  : !pto.vreg<64xT32>, !pto.ptr<T32, ub>, !pto.mask<b32>
+  : !pto.vreg<64xT32>, !pto.ptr<T32, ub>, index, !pto.mask<b32>
 ```
 
 The same formula gives:
@@ -6083,7 +6083,7 @@ VPTO lowering shape:
 
 ```text
 %x8_packed = pto.vlds %base_f8[%off] {dist = "NORM"}
-  : !pto.ptr<f8, ub> -> !pto.vreg<256xf8>
+  : !pto.ptr<f8, ub>, index -> !pto.vreg<256xf8>
 
 %all_b8 = pto.pge_b8 "PAT_ALL"
 %all_b32 = pto.pge_b32 "PAT_ALL"
@@ -6107,7 +6107,7 @@ VPTO lowering shape:
 %sum0 = pto.vadd %s01, %s23, %slot8_b32 : !pto.vreg<64xf32>
 
 pto.vsts %sum0, %out_f32[%group_off], %slot8_b32 {dist = "NORM_B32"}
-  : !pto.vreg<64xf32>, !pto.ptr<f32, ub>, !pto.mask<b32>
+  : !pto.vreg<64xf32>, !pto.ptr<f32, ub>, index, !pto.mask<b32>
 ```
 
 Memory result:
@@ -6201,12 +6201,12 @@ For `N = 256`, VPTO lowering shape:
 
 ```text
 %src0 = pto.vlds %src_base[%src_off] {dist = "NORM"}
-  : !pto.ptr<ui8, ub> -> !pto.vreg<256xui8>
+  : !pto.ptr<ui8, ub>, index -> !pto.vreg<256xui8>
 
 %acc_lo = pto.vlds %acc_base[%acc_off + 0] {dist = "NORM"}
-  : !pto.ptr<ui16, ub> -> !pto.vreg<128xui16>
+  : !pto.ptr<ui16, ub>, index -> !pto.vreg<128xui16>
 %acc_hi = pto.vlds %acc_base[%acc_off + 128] {dist = "NORM"}
-  : !pto.ptr<ui16, ub> -> !pto.vreg<128xui16>
+  : !pto.ptr<ui16, ub>, index -> !pto.vreg<128xui16>
 
 %hist_lo = pto.dhistv2 %acc_lo, %src0, %mask0, %bin0
   : !pto.vreg<128xui16>, !pto.vreg<256xui8>, !pto.mask<b8>, i32

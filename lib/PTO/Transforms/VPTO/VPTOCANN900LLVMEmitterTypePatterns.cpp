@@ -10,19 +10,40 @@
 
 namespace mlir::pto::detail {
 
-/// Validate the pointer operand of the pto store/stg patterns and normalize the
-/// byte offset to i64. The returned pointer type is used to build the GEP.
-static FailureOr<LLVM::LLVMPointerType> prepareStorePointerOperand(Operation *op, Value pointer,
-                                                                   Value &offset,
-                                                                   ConversionPatternRewriter &rewriter) {
-  auto llvmPtrType = dyn_cast<LLVM::LLVMPointerType>(pointer.getType());
+// Element offsets of the pointer-based memory ops and of pto.addptr are signed
+// element displacements: positive values advance the pointer and negative
+// values move it toward lower addresses. An integer offset keeps its own width
+// as the GEP index - LLVM scales by the element type and sign-extends a narrow
+// index itself - so no i64 conversion is forced on the address arithmetic.
+// Only the platform index type, which has no LLVM form, is converted.
+static Value normalizeElementOffsetOperand(Operation *op, Value offset,
+                                           ConversionPatternRewriter &rewriter) {
+  if (!offset.getType().isIndex()) {
+    return offset;
+  }
+  return rewriter.create<arith::IndexCastOp>(op->getLoc(), rewriter.getI64Type(),
+                                             offset);
+}
+
+// Address of the element a memory op accesses: the base pointer advanced by the
+// element offset. A statically zero offset keeps the base pointer untouched, so
+// a constant displacement can still fold into the instruction as an immediate.
+static FailureOr<Value> lowerElementAddress(Operation *op, Value ptr, Value offset,
+                                            Type elementType,
+                                            ConversionPatternRewriter &rewriter) {
+  auto llvmPtrType = dyn_cast<LLVM::LLVMPointerType>(ptr.getType());
   if (!llvmPtrType) {
-    return rewriter.notifyMatchFailure(op, "expected LLVM pointer operand");
+    (void)rewriter.notifyMatchFailure(op, "expected LLVM pointer operand");
+    return failure();
   }
-  if (offset.getType().isIndex()) {
-    offset = rewriter.create<arith::IndexCastUIOp>(op->getLoc(), rewriter.getI64Type(), offset);
+
+  Value normalized = normalizeElementOffsetOperand(op, offset, rewriter);
+  if (matchPattern(normalized, m_Zero())) {
+    return ptr;
   }
-  return llvmPtrType;
+  auto gep = rewriter.create<LLVM::GEPOp>(op->getLoc(), llvmPtrType, elementType, ptr,
+                                          ValueRange{normalized});
+  return gep.getResult();
 }
 
 class ConvertVPTOUnrealizedCastOp final : public OpConversionPattern<UnrealizedConversionCastOp> {
@@ -238,10 +259,7 @@ public:
       return rewriter.notifyMatchFailure(op, "expected LLVM pointer result type");
     }
 
-    Value offset = adaptor.getOffset();
-    if (offset.getType().isIndex()) {
-      offset = rewriter.create<arith::IndexCastUIOp>(op.getLoc(), rewriter.getI64Type(), offset);
-    }
+    Value offset = normalizeElementOffsetOperand(op, adaptor.getOffset(), rewriter);
 
     auto gep = rewriter.create<LLVM::GEPOp>(
         op.getLoc(), llvmPtrType,
@@ -304,28 +322,18 @@ public:
 
   LogicalResult matchAndRewrite(pto::PTOLoadOp op, OpAdaptor adaptor,
                                 ConversionPatternRewriter &rewriter) const override {
-    auto llvmPtrType = dyn_cast<LLVM::LLVMPointerType>(adaptor.getPtr().getType());
-    if (!llvmPtrType) {
-      return rewriter.notifyMatchFailure(op, "expected LLVM pointer operand");
-    }
-
     Type convertedValueType = getTypeConverter()->convertType(op.getValue().getType());
     if (!convertedValueType) {
       return rewriter.notifyMatchFailure(op, "could not convert load result type");
     }
 
-    Value offset = adaptor.getOffset();
-    if (offset.getType().isIndex()) {
-      offset = rewriter.create<arith::IndexCastUIOp>(op.getLoc(), rewriter.getI64Type(), offset);
+    FailureOr<Value> elemPtr = lowerElementAddress(op, adaptor.getPtr(), adaptor.getOffset(), convertedValueType,
+                                                   rewriter);
+    if (failed(elemPtr)) {
+      return failure();
     }
 
-    Value elemPtr = adaptor.getPtr();
-    if (!matchPattern(offset, m_Zero())) {
-      elemPtr = rewriter.create<LLVM::GEPOp>(op.getLoc(), llvmPtrType, convertedValueType, adaptor.getPtr(),
-                                             ValueRange{offset});
-    }
-
-    rewriter.replaceOpWithNewOp<LLVM::LoadOp>(op, convertedValueType, elemPtr,
+    rewriter.replaceOpWithNewOp<LLVM::LoadOp>(op, convertedValueType, *elemPtr,
                                               getNaturalByteAlignment(convertedValueType));
     return success();
   }
@@ -397,24 +405,15 @@ static Value convertLdgCallResult(Location loc, Type valueType, Type convertedVa
 
 static FailureOr<Value> preparePtoLdgAddress(pto::PTOLdgOp op, pto::PTOLdgOp::Adaptor adaptor, Type convertedValueType,
                                              ConversionPatternRewriter &rewriter) {
-  auto llvmPtrType = dyn_cast<LLVM::LLVMPointerType>(adaptor.getPtr().getType());
-  if (!llvmPtrType) {
+  FailureOr<Value> elemPtr =
+      lowerElementAddress(op, adaptor.getPtr(), adaptor.getOffset(),
+                          normalizeGEPElementTypeForLLVMLowering(convertedValueType, rewriter), rewriter);
+  if (failed(elemPtr)) {
     return failure();
   }
 
-  Value offset = adaptor.getOffset();
-  if (offset.getType().isIndex()) {
-    offset = rewriter.create<arith::IndexCastUIOp>(op.getLoc(), rewriter.getI64Type(), offset);
-  }
-
-  Value elemPtr = adaptor.getPtr();
-  if (!matchPattern(offset, m_Zero())) {
-    Type elementType = normalizeGEPElementTypeForLLVMLowering(convertedValueType, rewriter);
-    elemPtr = rewriter.create<LLVM::GEPOp>(op.getLoc(), llvmPtrType, elementType, adaptor.getPtr(), ValueRange{offset});
-  }
-
   auto ptrType = cast<pto::PtrType>(op.getPtr().getType());
-  return reinterpretPointerToAddrSpace(op, elemPtr, static_cast<unsigned>(ptrType.getMemorySpace().getAddressSpace()));
+  return reinterpretPointerToAddrSpace(op, *elemPtr, static_cast<unsigned>(ptrType.getMemorySpace().getAddressSpace()));
 }
 
 class ConvertPtoLdgOp final : public OpConversionPattern<pto::PTOLdgOp> {
@@ -469,20 +468,13 @@ public:
 
   LogicalResult matchAndRewrite(pto::PTOStoreOp op, OpAdaptor adaptor,
                                 ConversionPatternRewriter &rewriter) const override {
-    Value offset = adaptor.getOffset();
-    FailureOr<LLVM::LLVMPointerType> llvmPtrType =
-        prepareStorePointerOperand(op, adaptor.getPtr(), offset, rewriter);
-    if (failed(llvmPtrType)) {
+    FailureOr<Value> elemPtr = lowerElementAddress(op, adaptor.getPtr(), adaptor.getOffset(),
+                                                   adaptor.getValue().getType(), rewriter);
+    if (failed(elemPtr)) {
       return failure();
     }
 
-    Value elemPtr = adaptor.getPtr();
-    if (!matchPattern(offset, m_Zero())) {
-      elemPtr = rewriter.create<LLVM::GEPOp>(op.getLoc(), *llvmPtrType, adaptor.getValue().getType(), adaptor.getPtr(),
-                                             ValueRange{offset});
-    }
-
-    rewriter.replaceOpWithNewOp<LLVM::StoreOp>(op, adaptor.getValue(), elemPtr,
+    rewriter.replaceOpWithNewOp<LLVM::StoreOp>(op, adaptor.getValue(), *elemPtr,
                                                getNaturalByteAlignment(adaptor.getValue().getType()));
     return success();
   }
@@ -535,23 +527,16 @@ public:
 
   LogicalResult matchAndRewrite(pto::PTOStgOp op, OpAdaptor adaptor,
                                 ConversionPatternRewriter &rewriter) const override {
-    Value offset = adaptor.getOffset();
-    FailureOr<LLVM::LLVMPointerType> llvmPtrType =
-        prepareStorePointerOperand(op, adaptor.getPtr(), offset, rewriter);
-    if (failed(llvmPtrType)) {
+    FailureOr<Value> elemPtr =
+        lowerElementAddress(op, adaptor.getPtr(), adaptor.getOffset(),
+                            normalizeGEPElementTypeForLLVMLowering(adaptor.getValue().getType(), rewriter), rewriter);
+    if (failed(elemPtr)) {
       return failure();
-    }
-
-    Value elemPtr = adaptor.getPtr();
-    if (!matchPattern(offset, m_Zero())) {
-      elemPtr = rewriter.create<LLVM::GEPOp>(
-          op.getLoc(), *llvmPtrType, normalizeGEPElementTypeForLLVMLowering(adaptor.getValue().getType(), rewriter),
-          adaptor.getPtr(), ValueRange{offset});
     }
 
     auto ptrTy = cast<pto::PtrType>(op.getPtr().getType());
     FailureOr<Value> ptr =
-        reinterpretPointerToAddrSpace(op, elemPtr, static_cast<unsigned>(ptrTy.getMemorySpace().getAddressSpace()));
+        reinterpretPointerToAddrSpace(op, *elemPtr, static_cast<unsigned>(ptrTy.getMemorySpace().getAddressSpace()));
     if (failed(ptr)) {
       return rewriter.notifyMatchFailure(op, "failed to map stg pointer");
     }
@@ -588,19 +573,9 @@ public:
 
   LogicalResult matchAndRewrite(pto::PTOLdDevOp op, OpAdaptor adaptor,
                                 ConversionPatternRewriter &rewriter) const override {
-    auto llvmPtrType = dyn_cast<LLVM::LLVMPointerType>(adaptor.getPtr().getType());
-    if (!llvmPtrType) {
-      return rewriter.notifyMatchFailure(op, "expected LLVM pointer operand");
-    }
-
     auto valueType = dyn_cast<IntegerType>(op.getValue().getType());
     if (!valueType) {
       return rewriter.notifyMatchFailure(op, "expected integer result type");
-    }
-
-    Value offset = adaptor.getOffset();
-    if (offset.getType().isIndex()) {
-      offset = rewriter.create<arith::IndexCastUIOp>(op.getLoc(), rewriter.getI64Type(), offset);
     }
 
     Type convertedValueType = getTypeConverter()->convertType(op.getValue().getType());
@@ -608,14 +583,14 @@ public:
       return rewriter.notifyMatchFailure(op, "could not convert ld_dev result type");
     }
 
-    Value elemPtr = adaptor.getPtr();
-    if (!matchPattern(offset, m_Zero())) {
-      elemPtr = rewriter.create<LLVM::GEPOp>(op.getLoc(), llvmPtrType,
-                                             normalizeGEPElementTypeForLLVMLowering(convertedValueType, rewriter),
-                                             adaptor.getPtr(), ValueRange{offset});
+    FailureOr<Value> elemPtr =
+        lowerElementAddress(op, adaptor.getPtr(), adaptor.getOffset(),
+                            normalizeGEPElementTypeForLLVMLowering(convertedValueType, rewriter), rewriter);
+    if (failed(elemPtr)) {
+      return failure();
     }
 
-    FailureOr<Value> gmPtr = reinterpretPointerToAddrSpace(op, elemPtr, static_cast<unsigned>(pto::AddressSpace::GM));
+    FailureOr<Value> gmPtr = reinterpretPointerToAddrSpace(op, *elemPtr, static_cast<unsigned>(pto::AddressSpace::GM));
     if (failed(gmPtr)) {
       return rewriter.notifyMatchFailure(op, "failed to map ld_dev GM pointer");
     }
@@ -647,29 +622,19 @@ public:
 
   LogicalResult matchAndRewrite(pto::PTOStDevOp op, OpAdaptor adaptor,
                                 ConversionPatternRewriter &rewriter) const override {
-    auto llvmPtrType = dyn_cast<LLVM::LLVMPointerType>(adaptor.getPtr().getType());
-    if (!llvmPtrType) {
-      return rewriter.notifyMatchFailure(op, "expected LLVM pointer operand");
-    }
-
     auto valueType = dyn_cast<IntegerType>(op.getValue().getType());
     if (!valueType) {
       return rewriter.notifyMatchFailure(op, "expected integer value type");
     }
 
-    Value offset = adaptor.getOffset();
-    if (offset.getType().isIndex()) {
-      offset = rewriter.create<arith::IndexCastUIOp>(op.getLoc(), rewriter.getI64Type(), offset);
+    FailureOr<Value> elemPtr =
+        lowerElementAddress(op, adaptor.getPtr(), adaptor.getOffset(),
+                            normalizeGEPElementTypeForLLVMLowering(adaptor.getValue().getType(), rewriter), rewriter);
+    if (failed(elemPtr)) {
+      return failure();
     }
 
-    Value elemPtr = adaptor.getPtr();
-    if (!matchPattern(offset, m_Zero())) {
-      elemPtr = rewriter.create<LLVM::GEPOp>(
-          op.getLoc(), llvmPtrType, normalizeGEPElementTypeForLLVMLowering(adaptor.getValue().getType(), rewriter),
-          adaptor.getPtr(), ValueRange{offset});
-    }
-
-    FailureOr<Value> gmPtr = reinterpretPointerToAddrSpace(op, elemPtr, static_cast<unsigned>(pto::AddressSpace::GM));
+    FailureOr<Value> gmPtr = reinterpretPointerToAddrSpace(op, *elemPtr, static_cast<unsigned>(pto::AddressSpace::GM));
     if (failed(gmPtr)) {
       return rewriter.notifyMatchFailure(op, "failed to map st_dev GM pointer");
     }
