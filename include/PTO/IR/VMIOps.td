@@ -1663,6 +1663,8 @@ def VMIVscatterOp : VMI_Op<"vscatter", [DeclareOpInterfaceMethods<MemoryEffectsO
     Inactive and padding lanes do not write memory. The direct path supports
     partial contiguous B32/B16 chunks. B8 values and logical b8 masks are
     expanded together to B16 hardware request slots (128 requests per chunk).
+    Duplicate active indices are allowed: when two or more active lanes share an
+    index only one write is guaranteed and the written value is undefined.
     PTODSL requires matching value/index/mask lane counts in
     1/2/4/8/64/128/256; internal IR retains general logical lengths.
 

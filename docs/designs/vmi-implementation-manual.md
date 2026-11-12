@@ -3966,7 +3966,8 @@ vmi.scatter:
     if mask[lane] is true, memory[base + indices[lane]] = value[lane]
     if mask[lane] is false, no memory write occurs for that lane
     indices are interpreted in element units, not bytes
-    all active lanes must have pairwise-distinct indices; duplicate active indices violate the VMI scatter contract
+    duplicate active indices are allowed: when two or more active lanes share
+    an index only one write is guaranteed and the written value is undefined
   layout assignment:
     value and indices uses are requested as contiguous
     mask use is requested as contiguous with granularity derived from value element width

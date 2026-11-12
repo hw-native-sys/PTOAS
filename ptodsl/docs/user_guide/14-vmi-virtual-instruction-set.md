@@ -1267,8 +1267,10 @@ irregular memory locations using per-lane element offsets.
 same logical lane count, chosen from `1/2/4/8/64/128/256`. PTODSL rejects other
 counts with `ValueError`, including `96`; this policy does not restrict compiler
 internal VMI shapes. The three operands must lower to unit-stride contiguous
-layouts and the destination must be a UB pointer. Active offsets must be valid
-and pairwise distinct.
+layouts and the destination must be a UB pointer. Active offsets must be valid.
+Duplicate active offsets are allowed: when two or more active lanes share an offset
+only one write is guaranteed and the written value is undefined; programs that need a
+determinate value must use distinct offsets (or a deduplicating/atomic scheme).
 
 B32 uses 32-bit indices and B16/B8 use 16-bit indices. B32/B16 partial physical
 chunks intersect the user mask with a valid-lane prefix. Full chunks reuse the

@@ -782,9 +782,9 @@ locations using unsigned element offsets relative to `buf`.
 | 64 lanes of b32 data | 64 lanes of `i32` or `ui32` | `b32` | 64 |
 
 For b8 data, request `i` stores `vec[2 * i]`; odd-numbered source bytes are
-ignored. The destination is `buf + unsigned(offsets[i])` in elements. If
-multiple active requests use the same offset, only one write is guaranteed and
-the winning request is implementation-defined.
+ignored. The destination is `buf + unsigned(offsets[i])` in elements. Duplicate
+active offsets are allowed: if multiple active requests use the same offset,
+only one write is guaranteed and the written value is undefined.
 
 **Returns**: None (side-effect operation).
 
