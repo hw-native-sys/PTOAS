@@ -156,8 +156,15 @@ LogicalResult mlir::pto::SetIntraBlockOp::verify() {
             getOperation(), getPipe(), getEventIdAttr(), getEventIdDyn(), 15, "pto.set_intra_block");
     };
     auto verifyA5 = [this]() -> LogicalResult {
+        // A5 signals the flag through the native set_intra_block interface,
+        // whose pipe operand also takes the scalar pipe: the A5 PTO-ISA TPush
+        // control path and the CANN A5 kernel sync layer both issue
+        // set_intra_block(PIPE_S, id).  Bisheng exposes the same shape as
+        // llvm.hivm.SET.INTRA.BLOCK.mode, and the emitted PIPE_S immediate is
+        // 0 in both the PTO and the CCE pipe enums.
         return verifyNamedSyncEventOp(
-            getOperation(), getPipe(), getEventIdAttr(), getEventIdDyn(), 31, "pto.set_intra_block");
+            getOperation(), getPipe(), getEventIdAttr(), getEventIdDyn(), 31, "pto.set_intra_block",
+            /*allowScalarPipe=*/true);
     };
     return dispatchVerifierByArch(getOperation(), verifyA2A3, verifyA5);
 }
@@ -181,8 +188,11 @@ LogicalResult mlir::pto::WaitIntraBlockOp::verify() {
             getOperation(), getPipe(), getEventIdAttr(), getEventIdDyn(), 15, "pto.wait_intra_block");
     };
     auto verifyA5 = [this]() -> LogicalResult {
+        // The A5 wait side mirrors the signal side: CANN and the A5 PTO-ISA
+        // TPush wait with wait_intra_block(PIPE_S, id).
         return verifyNamedSyncEventOp(
-            getOperation(), getPipe(), getEventIdAttr(), getEventIdDyn(), 31, "pto.wait_intra_block");
+            getOperation(), getPipe(), getEventIdAttr(), getEventIdDyn(), 31, "pto.wait_intra_block",
+            /*allowScalarPipe=*/true);
     };
     return dispatchVerifierByArch(getOperation(), verifyA2A3, verifyA5);
 }

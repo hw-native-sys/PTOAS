@@ -681,11 +681,17 @@ V→C on A5 (1:1, no reduce — need two waits):
 
 - **syntax:** `pto.set_intra_block %block_id, %event_id : i64, i64`
 - **semantics:** Signal event within a block (A5). Specifies **trigger pipe**. 1:1 per subblock.
+- **accepted pipes (A5):** `PIPE_FIX`, `PIPE_MTE1`, `PIPE_MTE2`, `PIPE_MTE3`, `PIPE_V` and the
+  scalar pipe `PIPE_S`. The scalar pipe is what the native A5 PTO-ISA `TPush` V2C
+  control path and the CANN A5 kernel sync layer use. On A2/A3 the op lowers to an
+  FFTS mode-2 cross-core signal and keeps the five non-scalar pipes.
 
 ### `pto.wait_intra_core`
 
 - **syntax:** `pto.wait_intra_core %block_id, %event_id : i64, i64`
 - **semantics:** Wait for event within block (A5). Specifies **which pipeline should wait** — only that pipe stalls, SU and other pipes continue.
+- **accepted pipes (A5):** same set as `pto.set_intra_block`, including `PIPE_S` (waiting on
+  the scalar pipe stalls the SU only, not the vector/data-movement pipes).
 
 ### Wait Granularity Comparison
 

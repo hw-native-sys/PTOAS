@@ -1,0 +1,45 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+
+// Negative coverage for the intra-block pipe set: PIPE_S is accepted on A5
+// only (see intra_block_pipe_s_a5_emitc.pto), while pipes the hardware does
+// not accept for an intra-block flag stay rejected on every target.
+// RUN: split-file %s %t
+// RUN: not ptoas --pto-arch=a5 %t/a5_invalid_pipe.pto 2>&1 | FileCheck %s --check-prefix=A5-INVALID
+// RUN: not ptoas --pto-arch=a5 %t/a5_pipe_all.pto 2>&1 | FileCheck %s --check-prefix=A5-ALL
+// RUN: not ptoas --pto-arch=a3 %t/a3_pipe_s.pto 2>&1 | FileCheck %s --check-prefix=A3-S
+
+//--- a5_invalid_pipe.pto
+module attributes {pto.target_arch = "a5"} {
+  func.func @a5_invalid_pipe() attributes {pto.kernel} {
+    pto.set_intra_block <PIPE_M>, 3
+    return
+  }
+}
+
+// A5-INVALID: 'pto.set_intra_block' op pto.set_intra_block expects pipe to be one of <PIPE_FIX>, <PIPE_MTE1>, <PIPE_MTE2>, <PIPE_MTE3>, <PIPE_V>, <PIPE_S>
+
+//--- a5_pipe_all.pto
+module attributes {pto.target_arch = "a5"} {
+  func.func @a5_pipe_all() attributes {pto.kernel} {
+    pto.wait_intra_block <PIPE_ALL>, 3
+    return
+  }
+}
+
+// A5-ALL: 'pto.wait_intra_block' op pto.wait_intra_block expects pipe to be one of <PIPE_FIX>, <PIPE_MTE1>, <PIPE_MTE2>, <PIPE_MTE3>, <PIPE_V>, <PIPE_S>
+
+//--- a3_pipe_s.pto
+module attributes {pto.target_arch = "a3"} {
+  func.func @a3_pipe_s() attributes {pto.kernel} {
+    pto.set_intra_block <PIPE_S>, 3
+    return
+  }
+}
+
+// A3-S: 'pto.set_intra_block' op pto.set_intra_block expects pipe to be one of <PIPE_FIX>, <PIPE_MTE1>, <PIPE_MTE2>, <PIPE_MTE3>, <PIPE_V>

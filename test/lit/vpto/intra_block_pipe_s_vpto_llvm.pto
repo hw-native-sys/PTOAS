@@ -1,0 +1,54 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+
+// A5 scalar-pipe intra-block flags survive the VPTO LLVM path with the CANN
+// pipe encoding (PIPE_S == 0), exactly as the minimal reproduction in
+// hw-native-sys/PTOAS#1734 is compiled. The five pre-existing pipes keep their
+// historical immediates.
+// RUN: ptoas --pto-arch=a5 --pto-backend=vpto --emit-vpto-llvm-ir %s -o - 2>&1 | FileCheck %s
+
+module attributes {
+  pto.kernel_kind = #pto.kernel_kind<vector>,
+  pto.target_arch = "a5"
+} {
+  func.func @intra_block_pipe_s() attributes {pto.kernel} {
+    pto.set_intra_block <PIPE_S>, 3
+    pto.wait_intra_block <PIPE_S>, 3
+    return
+  }
+
+  func.func @intra_block_existing_pipes() attributes {pto.kernel} {
+    pto.set_intra_block <PIPE_FIX>, 5
+    pto.set_intra_block <PIPE_MTE1>, 6
+    pto.set_intra_block <PIPE_MTE2>, 7
+    pto.set_intra_block <PIPE_MTE3>, 8
+    pto.set_intra_block <PIPE_V>, 9
+    pto.wait_intra_block <PIPE_FIX>, 5
+    pto.wait_intra_block <PIPE_MTE1>, 6
+    pto.wait_intra_block <PIPE_MTE2>, 7
+    pto.wait_intra_block <PIPE_MTE3>, 8
+    pto.wait_intra_block <PIPE_V>, 9
+    return
+  }
+}
+
+// CHECK-LABEL: define void @intra_block_pipe_s_mix_aiv()
+// CHECK: call void @llvm.hivm.SET.INTRA.BLOCK.mode(i64 0, i64 3)
+// CHECK-NEXT: call void @llvm.hivm.WAIT.INTRA.BLOCK.mode(i64 0, i64 3)
+
+// CHECK-LABEL: define void @intra_block_existing_pipes_mix_aiv()
+// CHECK: call void @llvm.hivm.SET.INTRA.BLOCK.mode(i64 10, i64 5)
+// CHECK-NEXT: call void @llvm.hivm.SET.INTRA.BLOCK.mode(i64 3, i64 6)
+// CHECK-NEXT: call void @llvm.hivm.SET.INTRA.BLOCK.mode(i64 4, i64 7)
+// CHECK-NEXT: call void @llvm.hivm.SET.INTRA.BLOCK.mode(i64 5, i64 8)
+// CHECK-NEXT: call void @llvm.hivm.SET.INTRA.BLOCK.mode(i64 1, i64 9)
+// CHECK-NEXT: call void @llvm.hivm.WAIT.INTRA.BLOCK.mode(i64 10, i64 5)
+// CHECK-NEXT: call void @llvm.hivm.WAIT.INTRA.BLOCK.mode(i64 3, i64 6)
+// CHECK-NEXT: call void @llvm.hivm.WAIT.INTRA.BLOCK.mode(i64 4, i64 7)
+// CHECK-NEXT: call void @llvm.hivm.WAIT.INTRA.BLOCK.mode(i64 5, i64 8)
+// CHECK-NEXT: call void @llvm.hivm.WAIT.INTRA.BLOCK.mode(i64 1, i64 9)

@@ -1,0 +1,54 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+
+// A5 intra-block flags accept the scalar pipe: the native A5 PTO-ISA TPush and
+// the CANN A5 kernel sync layer issue set_intra_block/wait_intra_block on
+// PIPE_S (see hw-native-sys/PTOAS#1734). The five pipes that were already
+// accepted must keep lowering byte-for-byte as before.
+// RUN: ptoas --pto-arch=a5 %s 2>&1 | FileCheck %s --implicit-check-not=__builtin_cce_
+
+module attributes {
+  pto.kernel_kind = #pto.kernel_kind<vector>,
+  pto.target_arch = "a5"
+} {
+  func.func @intra_block_pipe_s() attributes {pto.kernel} {
+    pto.set_intra_block <PIPE_S>, 3
+    pto.wait_intra_block <PIPE_S>, 3
+    return
+  }
+
+  func.func @intra_block_existing_pipes() attributes {pto.kernel} {
+    pto.set_intra_block <PIPE_FIX>, 5
+    pto.set_intra_block <PIPE_MTE1>, 6
+    pto.set_intra_block <PIPE_MTE2>, 7
+    pto.set_intra_block <PIPE_MTE3>, 8
+    pto.set_intra_block <PIPE_V>, 9
+    pto.wait_intra_block <PIPE_FIX>, 5
+    pto.wait_intra_block <PIPE_MTE1>, 6
+    pto.wait_intra_block <PIPE_MTE2>, 7
+    pto.wait_intra_block <PIPE_MTE3>, 8
+    pto.wait_intra_block <PIPE_V>, 9
+    return
+  }
+}
+
+// CHECK-LABEL: extern "C" __global__ AICORE void intra_block_pipe_s() {
+// CHECK: set_intra_block(PIPE_S, 3);
+// CHECK-NEXT: wait_intra_block(PIPE_S, 3);
+
+// CHECK-LABEL: extern "C" __global__ AICORE void intra_block_existing_pipes() {
+// CHECK: set_intra_block(PIPE_FIX, 5);
+// CHECK-NEXT: set_intra_block(PIPE_MTE1, 6);
+// CHECK-NEXT: set_intra_block(PIPE_MTE2, 7);
+// CHECK-NEXT: set_intra_block(PIPE_MTE3, 8);
+// CHECK-NEXT: set_intra_block(PIPE_V, 9);
+// CHECK-NEXT: wait_intra_block(PIPE_FIX, 5);
+// CHECK-NEXT: wait_intra_block(PIPE_MTE1, 6);
+// CHECK-NEXT: wait_intra_block(PIPE_MTE2, 7);
+// CHECK-NEXT: wait_intra_block(PIPE_MTE3, 8);
+// CHECK-NEXT: wait_intra_block(PIPE_V, 9);
