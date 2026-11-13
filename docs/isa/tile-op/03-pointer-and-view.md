@@ -93,7 +93,8 @@ These instructions build the address, view, and tile-buffer metadata that later 
 - If `layout` is provided with static shapes/strides, it must be consistent with the inferred layout.
 - MX layouts are available only on A5 and require a rank-2 view of `!pto.f8E8M0` scale elements. Shapes and strides are measured in scale elements, not quantized data elements.
 - MX ND layouts require contiguous row-major strides `[cols, 1]`; MX DN layouts require contiguous column-major strides `[1, rows]`. MX ZZ/NN views use `[cols, 1]` for their logical shape.
-- MX A layouts require an even column count; MX B layouts require an even row count. Additionally, `mx_a_zz` requires rows divisible by 16, and `mx_b_nn` requires columns divisible by 16. Dynamic dimensions must satisfy the same constraints at runtime.
+- MX A layouts require an even column count; MX B layouts require an even row count, matching the PTO-ISA scale-pair constraint. Dynamic dimensions must satisfy this constraint at runtime.
+- Logical rows in `mx_a_zz` and logical columns in `mx_b_nn` may have a partial final block of 16. The backing GM data must already be packed and padded to complete blocks; view construction performs no allocation or padding. For example, a `4x63` B-NN view requires storage for `4x64` scales, while its logical extent and a Tile's valid columns may remain 63. This block padding does not apply to `mx_a_nd` rows.
 - Runtime dimensions, element counts (`rows * cols`), and packed strides (including stride times two) must fit the signed index range and the backing global-memory allocation.
 - A partition inherits the source layout; an explicitly different result layout is invalid. Dimension queries on MX views use logical dimension indices 0 and 1.
 

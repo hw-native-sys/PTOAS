@@ -350,6 +350,10 @@ Type getPointerLikeElementType(Type type) ;
 Value getRuntimeGlobalTensorMetadata( ConversionPatternRewriter &rewriter, Location loc, Value tensor, Value logicalDim, int64_t rank, bool isStride) ;
 emitc::OpaqueType getRuntimeGlobalTensorOpaqueType( MLIRContext *ctx, Type elemTy, ArrayRef<int64_t> shape, StringRef layoutEnum) ;
 std::string getRuntimeMxStrideType(Type elemTy, StringRef layoutEnum) ;
+// Fractal MX storage covers complete 16-element blocks; logical views may
+// have a partial last block. The caller supplies an allocation covering it.
+void alignRuntimeMxFractalShape(
+    ConversionPatternRewriter& rewriter, Location loc, StringRef layoutEnum, SmallVectorImpl<Value>& shape);
 emitc::OpaqueType getSignedIntOpaqueType(MLIRContext *ctx, unsigned bitWidth) ;
 Value getSourceEmitCVariable(Value value) ;
 std::optional<SpecialGlobalTensorTypeSpec> getSpecialGlobalTensorTypeSpecForLayout(std::optional<mlir::pto::Layout> layout, ArrayRef<int64_t> shape, Type elemTy) ;

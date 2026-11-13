@@ -33,9 +33,39 @@ module {
     return %part : memref<16x?x!pto.f8E8M0, strided<[?, 1], offset: ?>,
                            #pto.address_space<gm>>
   }
-}
 
 // CHECK-LABEL: dynamic_mx_subview(
 // CHECK: TileShape2D<float8_e8m0_t, 16, -1, pto::Layout::MX_A_ND> {{.*}}([[ROWS:[^,]+]], [[COLS:[^)]+]])
 // CHECK: BaseShape2D<float8_e8m0_t, 16, -1, pto::Layout::MX_A_ND> {{.*}}([[ROWS]], [[COLS]])
 // CHECK: PTOAS__GLOBAL_TENSOR_DATA(
+
+  func.func @dynamic_b_nn_subview(
+      %base: memref<?x!pto.f8E8M0, #pto.address_space<gm>>,
+      %cols: index)
+      -> memref<4x?x!pto.f8E8M0, strided<[?, 1], offset: ?>,
+                 #pto.address_space<gm>> {
+    %c0 = arith.constant 0 : index
+    %c1 = arith.constant 1 : index
+    %view = memref.reinterpret_cast %base to
+      offset: [0], sizes: [4, %cols], strides: [%cols, %c1]
+      {layout = #pto.layout<mx_b_nn>}
+      : memref<?x!pto.f8E8M0, #pto.address_space<gm>> to
+        memref<4x?x!pto.f8E8M0, strided<[?, 1], offset: ?>,
+                #pto.address_space<gm>>
+    %part = memref.subview %view[%c0, %c0] [4, %cols] [1, 1]
+        {layout = #pto.layout<mx_b_nn>}
+      : memref<4x?x!pto.f8E8M0, strided<[?, 1], offset: ?>,
+          #pto.address_space<gm>> to
+        memref<4x?x!pto.f8E8M0, strided<[?, 1], offset: ?>,
+          #pto.address_space<gm>>
+    return %part : memref<4x?x!pto.f8E8M0, strided<[?, 1], offset: ?>,
+                           #pto.address_space<gm>>
+  }
+}
+
+// CHECK-LABEL: dynamic_b_nn_subview(
+// CHECK: const int64_t [[BLOCK:v[0-9]+]] = 16;
+// CHECK: {{.*}} / [[BLOCK]]
+// CHECK: {{.*}} % [[BLOCK]]
+// CHECK: TileShape2D<float8_e8m0_t, 4, -1, pto::Layout::MX_B_NN> {{.*}}([[ROWS:[^,]+]], [[COLS:[^)]+]])
+// CHECK: BaseShape2D<float8_e8m0_t, 4, -1, pto::Layout::MX_B_NN> {{.*}}([[ROWS]], [[COLS]])

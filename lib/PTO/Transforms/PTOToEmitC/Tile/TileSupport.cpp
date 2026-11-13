@@ -10,6 +10,7 @@
 
 #include "../PTOToEmitCEmitters.h"
 #include "TileInternal.h"
+#include <limits>
 
 using namespace mlir;
 using namespace mlir::pto;
@@ -257,6 +258,98 @@ buildRuntime5DValues(ConversionPatternRewriter &rewriter, Location loc,
   return {shapeValues, strideValues};
 }
 
+std::optional<SpecialGlobalTensorTypeSpec> getSpecialGlobalTensorTypeSpecForLayout(
+    std::optional<mlir::pto::Layout> layout, ArrayRef<int64_t> shape, Type elemTy)
+{
+    bool hasScaleElementType = isF8E8M0ElemType(elemTy);
+    size_t shapeRank = shape.size();
+    if (!layout || !hasScaleElementType || shapeRank != kTileRank) {
+        return std::nullopt;
+    }
+
+    // PTO-ISA uses -1, not ShapedType::kDynamic, for runtime dimensions.
+    constexpr int64_t ptoDynamic = -1;
+    int64_t logicalRows = ShapedType::isDynamic(shape[0]) ? ptoDynamic : shape[0];
+    int64_t logicalCols = ShapedType::isDynamic(shape[1]) ? ptoDynamic : shape[1];
+
+    // PTO-ISA divides the fractal axis by 16 without rounding. Preserve the
+    // logical view in IR, but describe the complete blocks already in GM.
+    if (*layout == mlir::pto::Layout::MX_A_ZZ || *layout == mlir::pto::Layout::MX_B_NN) {
+        int64_t& extent = *layout == mlir::pto::Layout::MX_A_ZZ ? logicalRows : logicalCols;
+        constexpr int64_t block = 16;
+        if (extent != ptoDynamic) {
+            bool isOutOfRange = extent < 0 || extent > std::numeric_limits<int64_t>::max() - (block - 1);
+            if (isOutOfRange) {
+                return std::nullopt;
+            }
+            extent = ((extent + block - 1) / block) * block;
+        }
+    }
+
+    std::string elemTypeStr = getEmitCScalarTypeToken(elemTy);
+    switch (*layout) {
+        case mlir::pto::Layout::MX_A_ZZ: {
+            int64_t rows = logicalRows;
+            int64_t cols = logicalCols;
+            return SpecialGlobalTensorTypeSpec{
+                "TileShape2D<" + elemTypeStr + ", " + std::to_string(rows) + ", " + std::to_string(cols) +
+                    ", pto::Layout::MX_A_ZZ>",
+                "BaseShape2D<" + elemTypeStr + ", " + std::to_string(rows) + ", " + std::to_string(cols) +
+                    ", pto::Layout::MX_A_ZZ>",
+                "pto::Layout::MX_A_ZZ",
+            };
+        }
+        case mlir::pto::Layout::MX_B_NN: {
+            int64_t rows = logicalRows;
+            int64_t cols = logicalCols;
+            return SpecialGlobalTensorTypeSpec{
+                "TileShape2D<" + elemTypeStr + ", " + std::to_string(rows) + ", " + std::to_string(cols) +
+                    ", pto::Layout::MX_B_NN>",
+                "BaseShape2D<" + elemTypeStr + ", " + std::to_string(rows) + ", " + std::to_string(cols) +
+                    ", pto::Layout::MX_B_NN>",
+                "pto::Layout::MX_B_NN",
+            };
+        }
+        case mlir::pto::Layout::MX_A_ND:
+        case mlir::pto::Layout::MX_A_DN:
+        case mlir::pto::Layout::MX_B_ND:
+        case mlir::pto::Layout::MX_B_DN: {
+            std::string layoutName = layoutToEmitCString(*layout);
+            return SpecialGlobalTensorTypeSpec{
+                "TileShape2D<" + elemTypeStr + ", " + std::to_string(logicalRows) + ", " + std::to_string(logicalCols) +
+                    ", " + layoutName + ">",
+                "BaseShape2D<" + elemTypeStr + ", " + std::to_string(logicalRows) + ", " + std::to_string(logicalCols) +
+                    ", " + layoutName + ">",
+                layoutName,
+            };
+        }
+        default:
+            return std::nullopt;
+    }
+}
+
+void alignRuntimeMxFractalShape(
+    ConversionPatternRewriter& rewriter, Location loc, StringRef layoutEnum, SmallVectorImpl<Value>& shape)
+{
+    bool isA = layoutEnum == "pto::Layout::MX_A_ZZ";
+    bool isB = layoutEnum == "pto::Layout::MX_B_NN";
+    if (!isA && !isB) {
+        return;
+    }
+    unsigned dim = isA ? 0 : 1;
+    Value extent = castViewIndexToEmitC(rewriter, loc, shape[dim]);
+    Value block = makeViewIndexConstant(rewriter, loc, 16);
+    Value zero = makeViewIndexConstant(rewriter, loc, 0);
+    Value quotient = rewriter.create<emitc::DivOp>(loc, extent.getType(), extent, block);
+    Value remainder = rewriter.create<emitc::RemOp>(loc, extent.getType(), extent, block);
+    Value hasTail = rewriter.create<emitc::CmpOp>(loc, rewriter.getI1Type(), emitc::CmpPredicate::ne, remainder, zero);
+    Value tail = castViewIndexToEmitC(rewriter, loc, hasTail);
+    Value blocks = rewriter.create<emitc::AddOp>(loc, extent.getType(), quotient, tail);
+    // The padded extent must fit the index range and the backing allocation.
+    // Divide before adding the tail to avoid an intermediate extent + 15.
+    shape[dim] = rewriter.create<emitc::MulOp>(loc, extent.getType(), blocks, block);
+}
+
 FailureOr<Value> buildRuntimeGlobalTensor(
     ConversionPatternRewriter &rewriter, Location loc, Value ptr, Type elemTy,
     ArrayRef<int64_t> staticShape, ValueRange runtimeShape,
@@ -280,6 +373,7 @@ FailureOr<Value> buildRuntimeGlobalTensor(
           return failure();
       }
       SmallVector<Value, 2> logicalShape(runtimeShape.begin(), runtimeShape.end());
+      alignRuntimeMxFractalShape(rewriter, loc, layoutEnum, logicalShape);
 
       Value shape = rewriter
                         .create<emitc::CallOpaqueOp>(

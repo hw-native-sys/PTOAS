@@ -138,19 +138,6 @@ static LogicalResult verifyMxLayout(mlir::pto::MakeTensorViewOp op,
                                 << " to be divisible by 2";
     }
 
-    // Fractal MX descriptors divide this dimension by 16 at runtime.
-    // Require the same alignment for static descriptors instead of rounding.
-    if (layout == Layout::MX_A_ZZ || layout == Layout::MX_B_NN) {
-        unsigned alignedDim = layout == Layout::MX_A_ZZ ? 0 : 1;
-        int64_t extent = shape[alignedDim];
-        bool isMisaligned = !ShapedType::isDynamic(extent) && extent % 16 != 0;
-        if (isMisaligned) {
-            return op.emitOpError() << "MX layout=" << stringifyLayout(layout)
-                                    << " requires dimension " << alignedDim
-                                    << " to be divisible by 16";
-        }
-    }
-
     return verifyMxContiguousStrides(op, layout);
 }
 

@@ -1281,62 +1281,6 @@ Value getSourceEmitCVariable(Value value) {
   return {};
 }
 
-std::optional<SpecialGlobalTensorTypeSpec> getSpecialGlobalTensorTypeSpecForLayout(
-    std::optional<mlir::pto::Layout> layout, ArrayRef<int64_t> shape, Type elemTy)
-{
-    bool hasScaleElementType = isF8E8M0ElemType(elemTy);
-    size_t shapeRank = shape.size();
-    if (!layout || !hasScaleElementType || shapeRank != kTileRank) {
-        return std::nullopt;
-    }
-
-    // PTO-ISA uses -1, not ShapedType::kDynamic, for runtime dimensions.
-    constexpr int64_t ptoDynamic = -1;
-    int64_t logicalRows = ShapedType::isDynamic(shape[0]) ? ptoDynamic : shape[0];
-    int64_t logicalCols = ShapedType::isDynamic(shape[1]) ? ptoDynamic : shape[1];
-
-    std::string elemTypeStr = getEmitCScalarTypeToken(elemTy);
-    switch (*layout) {
-        case mlir::pto::Layout::MX_A_ZZ: {
-            int64_t rows = logicalRows;
-            int64_t cols = logicalCols;
-            return SpecialGlobalTensorTypeSpec{
-                "TileShape2D<" + elemTypeStr + ", " + std::to_string(rows) + ", " + std::to_string(cols) +
-                    ", pto::Layout::MX_A_ZZ>",
-                "BaseShape2D<" + elemTypeStr + ", " + std::to_string(rows) + ", " + std::to_string(cols) +
-                    ", pto::Layout::MX_A_ZZ>",
-                "pto::Layout::MX_A_ZZ",
-            };
-        }
-        case mlir::pto::Layout::MX_B_NN: {
-            int64_t rows = logicalRows;
-            int64_t cols = logicalCols;
-            return SpecialGlobalTensorTypeSpec{
-                "TileShape2D<" + elemTypeStr + ", " + std::to_string(rows) + ", " + std::to_string(cols) +
-                    ", pto::Layout::MX_B_NN>",
-                "BaseShape2D<" + elemTypeStr + ", " + std::to_string(rows) + ", " + std::to_string(cols) +
-                    ", pto::Layout::MX_B_NN>",
-                "pto::Layout::MX_B_NN",
-            };
-        }
-        case mlir::pto::Layout::MX_A_ND:
-        case mlir::pto::Layout::MX_A_DN:
-        case mlir::pto::Layout::MX_B_ND:
-        case mlir::pto::Layout::MX_B_DN: {
-            std::string layoutName = layoutToEmitCString(*layout);
-            return SpecialGlobalTensorTypeSpec{
-                "TileShape2D<" + elemTypeStr + ", " + std::to_string(logicalRows) + ", " + std::to_string(logicalCols) +
-                    ", " + layoutName + ">",
-                "BaseShape2D<" + elemTypeStr + ", " + std::to_string(logicalRows) + ", " + std::to_string(logicalCols) +
-                    ", " + layoutName + ">",
-                layoutName,
-            };
-        }
-        default:
-            return std::nullopt;
-    }
-}
-
 std::optional<SpecialGlobalTensorTypeSpec>
 getSpecialScaleGlobalTensorTypeSpec(Operation *anchor, MemRefType mrTy) {
   auto load = dyn_cast_or_null<pto::TLoadOp>(anchor);

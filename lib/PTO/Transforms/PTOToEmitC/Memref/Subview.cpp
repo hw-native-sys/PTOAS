@@ -568,6 +568,7 @@ struct SubviewToEmitCPattern : public OpConversionPattern<memref::SubViewOp> {
       for (int i = kGlobalTensorRank - kTileRank; i < kGlobalTensorRank; ++i) {
         shapeArgs.push_back(dims.shapeValues[i]);
       }
+      alignRuntimeMxFractalShape(rewriter, loc, layoutEnum, shapeArgs);
     } else {
       for (Value dynSize : adaptor.getSizes()) {
         shapeArgs.push_back(dynSize);
