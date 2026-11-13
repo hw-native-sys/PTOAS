@@ -12,6 +12,7 @@
 #include "PTO/IR/PTO.h"
 #include "llvm/ADT/ArrayRef.h"
 
+#include <array>
 #include <optional>
 #include <string>
 
@@ -20,6 +21,15 @@ namespace mlir::pto {
 inline constexpr unsigned kPTOLayoutRank = 5;
 
 bool isMxLayout(Layout layout);
+
+/// Valid extents proven by the type or a locally tracked tile descriptor.
+std::array<std::optional<int64_t>, 2> getKnownTileValidShapeAt(Value tile,
+                                                            Operation *at);
+
+/// Minimum single-row scratch width for A2/A3 TREM and TREMS. Use the
+/// physical width as the upper bound when the valid width is unknown.
+std::optional<int64_t> getA2A3RemainderScratchCols(Value dst, Operation *at,
+                                                 RemPrecision precision);
 
 std::optional<std::string>
 getNZViewCompatibilityError(ArrayRef<int64_t> shape5D,

@@ -56,7 +56,8 @@ extern "C" __global__ AICORE void rem_kernel_2d(__gm__ float* v1, __gm__ float* 
   Tile<TileType::Vec, float, 32, 32, BLayout::RowMajor, 32, 32, SLayout::NoneBox, 512, PadValue::Null, CompactMode::Null> v22;
   uint64_t v23 = (uint64_t) v8;
   TASSIGN(v22, v23);
-  Tile<TileType::Vec, float, 2, 32, BLayout::RowMajor, 2, 32, SLayout::NoneBox, 512, PadValue::Null, CompactMode::Null> v24;
+  Tile<TileType::Vec, float, 1, 80, BLayout::RowMajor, 1, 80,
+       SLayout::NoneBox, 512, PadValue::Null, CompactMode::Null> v24;
   uint64_t v25 = (uint64_t) v9;
   TASSIGN(v24, v25);
   Tile<TileType::Vec, float, 32, 32, BLayout::RowMajor, 32, 32, SLayout::NoneBox, 512, PadValue::Null, CompactMode::Null> v26;

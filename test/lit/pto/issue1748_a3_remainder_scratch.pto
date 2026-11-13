@@ -1,0 +1,237 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the license.
+
+// RUN: split-file %s %t
+// RUN: ptoas --pto-arch=a3 --emit-pto-ir %t/valid.pto | FileCheck %s --check-prefix=IR
+// RUN: ptoas --pto-arch=a3 %t/valid.pto | FileCheck %s --check-prefix=CPP
+// RUN: not ptoas --pto-arch=a3 --emit-pto-ir %t/short-default.pto 2>&1 | FileCheck %s --check-prefix=DEFAULT
+// RUN: not ptoas --pto-arch=a3 --emit-pto-ir %t/short-known-tmp.pto 2>&1 | FileCheck %s --check-prefix=DEFAULT
+// RUN: not ptoas --pto-arch=a3 --emit-pto-ir %t/short-hp.pto 2>&1 | FileCheck %s --check-prefix=HP
+
+// RUN: not ptoas --pto-arch=a3 --emit-pto-ir %t/short-repeat.pto 2>&1 | FileCheck %s --check-prefix=REPEAT
+
+//--- valid.pto
+!full = !pto.tile_buf<vec, 1x128xf32>
+!partial = !pto.tile_buf<vec, 1x128xf32, valid=1x127>
+!dynamic = !pto.tile_buf<vec, 1x128xf32, valid=1x?>
+!dynamic_shape = !pto.tile_buf<vec, 1x128xf32, valid=?x?>
+!scalar_data = !pto.tile_buf<vec, 1x64xf32>
+!unaligned_stride = !pto.tile_buf<vec, 1x72xf32>
+!integer_data = !pto.tile_buf<vec, 1x64xi32>
+!boxed_tmp = !pto.tile_buf<vec, 8x80xf32, valid=1x80, slayout=col_major>
+!hp_tmp = !pto.tile_buf<vec, 1x784xf32>
+
+module attributes {pto.target_arch = "a2a3"} {
+  func.func @explicit_hp_partial() attributes {pto.kernel_kind = #pto.kernel_kind<vector>} {
+    %lhs = pto.alloc_tile : !partial
+    %rhs = pto.alloc_tile : !partial
+    %tmp = pto.alloc_tile : !hp_tmp
+    %dst = pto.alloc_tile : !partial
+    pto.trem ins(%lhs, %rhs, %tmp : !partial, !partial, !hp_tmp)
+             outs(%dst : !partial) {precisionType = #pto<rem_precision high_precision>}
+    return
+  }
+
+  func.func @implicit_default_partial() attributes {pto.kernel_kind = #pto.kernel_kind<vector>} {
+    %lhs = pto.alloc_tile : !partial
+    %rhs = pto.alloc_tile : !partial
+    %dst = pto.alloc_tile : !partial
+    %scalar = arith.constant 3.0 : f32
+    pto.trem ins(%lhs, %rhs : !partial, !partial) outs(%dst : !partial)
+    pto.trems ins(%lhs, %scalar : !partial, f32) outs(%dst : !partial)
+    return
+  }
+
+  func.func @implicit_hp_full() attributes {pto.kernel_kind = #pto.kernel_kind<vector>} {
+    %lhs = pto.alloc_tile : !full
+    %rhs = pto.alloc_tile : !full
+    %dst = pto.alloc_tile : !full
+    pto.trem ins(%lhs, %rhs : !full, !full)
+             outs(%dst : !full) {precisionType = #pto<rem_precision high_precision>}
+    return
+  }
+
+  func.func @implicit_hp_dynamic(%width: index) attributes {pto.kernel_kind = #pto.kernel_kind<vector>} {
+    %lhs = pto.alloc_tile valid_col = %width : !dynamic
+    %rhs = pto.alloc_tile valid_col = %width : !dynamic
+    %dst = pto.alloc_tile valid_col = %width : !dynamic
+    pto.trem ins(%lhs, %rhs : !dynamic, !dynamic)
+             outs(%dst : !dynamic) {precisionType = #pto<rem_precision high_precision>}
+    return
+  }
+
+  func.func @hp_known_width() attributes {pto.kernel_kind = #pto.kernel_kind<vector>} {
+    %width = arith.constant 64 : index
+    %lhs = pto.alloc_tile valid_col = %width : !dynamic
+    %rhs = pto.alloc_tile valid_col = %width : !dynamic
+    %dst = pto.alloc_tile valid_col = %width : !dynamic
+    %tmp = pto.alloc_tile : !hp_tmp
+    pto.trem ins(%lhs, %rhs, %tmp : !dynamic, !dynamic, !hp_tmp)
+             outs(%dst : !dynamic) {precisionType = #pto<rem_precision high_precision>}
+    pto.trem ins(%lhs, %rhs : !dynamic, !dynamic)
+             outs(%dst : !dynamic) {precisionType = #pto<rem_precision high_precision>}
+    return
+  }
+
+  func.func @hp_updated_width() attributes {pto.kernel_kind = #pto.kernel_kind<vector>} {
+    %one = arith.constant 1 : index
+    %c64 = arith.constant 64 : index
+    %c128 = arith.constant 128 : index
+    %lhs = pto.alloc_tile valid_col = %c64 : !dynamic
+    %rhs = pto.alloc_tile valid_col = %c64 : !dynamic
+    %dst = pto.alloc_tile valid_row = %one valid_col = %c128 : !dynamic_shape
+    pto.set_validshape %dst, %one, %c64 : !dynamic_shape
+    pto.trem ins(%lhs, %rhs : !dynamic, !dynamic)
+             outs(%dst : !dynamic_shape) {precisionType = #pto<rem_precision high_precision>}
+    return
+  }
+
+  func.func @explicit_boxed_tmp() attributes {pto.kernel_kind = #pto.kernel_kind<vector>} {
+    %scalar = arith.constant 3.0 : f32
+    %src = pto.alloc_tile : !scalar_data
+    %tmp = pto.alloc_tile : !boxed_tmp
+    %dst = pto.alloc_tile : !scalar_data
+    pto.trems ins(%src, %scalar, %tmp : !scalar_data, f32, !boxed_tmp)
+              outs(%dst : !scalar_data)
+    return
+  }
+
+  func.func @implicit_repeat_padding() attributes {pto.kernel_kind = #pto.kernel_kind<vector>} {
+    %scalar = arith.constant 3.0 : f32
+    %src = pto.alloc_tile : !unaligned_stride
+    %dst = pto.alloc_tile : !unaligned_stride
+    pto.trems ins(%src, %scalar : !unaligned_stride, f32) outs(%dst : !unaligned_stride)
+    return
+  }
+
+  func.func @implicit_i32() attributes {pto.kernel_kind = #pto.kernel_kind<vector>} {
+    %scalar = arith.constant 3 : i32
+    %lhs = pto.alloc_tile : !integer_data
+    %rhs = pto.alloc_tile : !integer_data
+    %dst = pto.alloc_tile : !integer_data
+    pto.trem ins(%lhs, %rhs : !integer_data, !integer_data) outs(%dst : !integer_data)
+    pto.trems ins(%lhs, %scalar : !integer_data, i32) outs(%dst : !integer_data)
+    return
+  }
+}
+
+// IR-LABEL: func.func @explicit_hp_partial
+// IR: pto.trem ins(
+// IR-SAME: !pto.tile_buf<vec, 1x784xf32>
+// IR-SAME: precisionType = #pto<rem_precision high_precision>
+// IR-LABEL: func.func @implicit_default_partial
+// IR: pto.trem ins(
+// IR-SAME: !pto.tile_buf<vec, 1x144xf32>
+// IR: pto.trems ins(
+// IR-SAME: !pto.tile_buf<vec, 1x144xf32>
+// IR-LABEL: func.func @implicit_hp_full
+// IR: pto.trem ins(
+// IR-SAME: !pto.tile_buf<vec, 1x1424xf32>
+// IR-SAME: precisionType = #pto<rem_precision high_precision>
+
+// IR-LABEL: func.func @implicit_hp_dynamic
+// IR: pto.trem ins(
+// IR-SAME: !pto.tile_buf<vec, 1x1424xf32>
+
+// IR-LABEL: func.func @hp_known_width
+// IR: pto.trem ins(
+// IR-SAME: !pto.tile_buf<vec, 1x784xf32>
+// IR: pto.trem ins(
+// IR-SAME: !pto.tile_buf<vec, 1x784xf32>
+// IR-LABEL: func.func @hp_updated_width
+// IR: pto.trem ins(
+// IR-SAME: !pto.tile_buf<vec, 1x784xf32>
+// IR-LABEL: func.func @explicit_boxed_tmp
+// IR: pto.trems ins(
+// IR-SAME: !pto.tile_buf<vec, 8x80xf32
+// IR-SAME: slayout=col_major
+
+// IR-LABEL: func.func @implicit_repeat_padding
+// IR: pto.trems ins(
+// IR-SAME: !pto.tile_buf<vec, 1x144xf32>
+// IR-LABEL: func.func @implicit_i32
+// IR: pto.trem ins(
+// IR-SAME: !pto.tile_buf<vec, 1x80xi32>
+// IR: pto.trems ins(
+// IR-SAME: !pto.tile_buf<vec, 1x80xi32>
+
+// CPP-LABEL: void explicit_hp_partial(
+// CPP: TREM<pto::RemAlgorithm::HIGH_PRECISION>(
+// CPP-LABEL: void implicit_hp_full(
+// CPP: TREM<pto::RemAlgorithm::HIGH_PRECISION>(
+
+//--- short-default.pto
+!data = !pto.tile_buf<vec, 1x64xf32>
+!tmp = !pto.tile_buf<vec, 1x80xf32, valid=1x79>
+
+module attributes {pto.target_arch = "a2a3"} {
+  func.func @short_default() attributes {pto.kernel_kind = #pto.kernel_kind<vector>} {
+    %src = pto.alloc_tile : !data
+    %tmp = pto.alloc_tile : !tmp
+    %dst = pto.alloc_tile : !data
+    %scalar = arith.constant 3.0 : f32
+    pto.trems ins(%src, %scalar, %tmp : !data, f32, !tmp) outs(%dst : !data)
+    return
+  }
+}
+
+// DEFAULT: error: 'pto.trems' op expects A2/A3 tmp to have at least 80 columns in one row with precisionType=default
+// DEFAULT-SAME: got 80 physical columns and 79 valid columns
+
+//--- short-known-tmp.pto
+!data = !pto.tile_buf<vec, 1x64xf32>
+!tmp = !pto.tile_buf<vec, 1x80xf32, valid=1x?>
+
+module attributes {pto.target_arch = "a2a3"} {
+  func.func @short_known_tmp() attributes {pto.kernel_kind = #pto.kernel_kind<vector>} {
+    %width = arith.constant 79 : index
+    %src = pto.alloc_tile : !data
+    %tmp = pto.alloc_tile valid_col = %width : !tmp
+    %dst = pto.alloc_tile : !data
+    %scalar = arith.constant 3.0 : f32
+    pto.trems ins(%src, %scalar, %tmp : !data, f32, !tmp) outs(%dst : !data)
+    return
+  }
+}
+
+//--- short-hp.pto
+!data = !pto.tile_buf<vec, 1x64xf32>
+!tmp = !pto.tile_buf<vec, 1x784xf32, valid=1x783>
+
+module attributes {pto.target_arch = "a2a3"} {
+  func.func @short_hp() attributes {pto.kernel_kind = #pto.kernel_kind<vector>} {
+    %lhs = pto.alloc_tile : !data
+    %rhs = pto.alloc_tile : !data
+    %tmp = pto.alloc_tile : !tmp
+    %dst = pto.alloc_tile : !data
+    pto.trem ins(%lhs, %rhs, %tmp : !data, !data, !tmp)
+             outs(%dst : !data) {precisionType = #pto<rem_precision high_precision>}
+    return
+  }
+}
+
+// HP: error: 'pto.trem' op expects A2/A3 tmp to have at least 784 columns in one row with precisionType=high_precision
+// HP-SAME: got 784 physical columns and 783 valid columns
+
+//--- short-repeat.pto
+!data = !pto.tile_buf<vec, 1x72xf32>
+!tmp = !pto.tile_buf<vec, 1x88xf32>
+
+module attributes {pto.target_arch = "a2a3"} {
+  func.func @short_repeat() attributes {pto.kernel_kind = #pto.kernel_kind<vector>} {
+    %src = pto.alloc_tile : !data
+    %tmp = pto.alloc_tile : !tmp
+    %dst = pto.alloc_tile : !data
+    %scalar = arith.constant 3.0 : f32
+    pto.trems ins(%src, %scalar, %tmp : !data, f32, !tmp) outs(%dst : !data)
+    return
+  }
+}
+
+// REPEAT: error: 'pto.trems' op expects A2/A3 tmp to have at least 144 columns in one row
+// REPEAT-SAME: got 88 physical columns and 88 valid columns

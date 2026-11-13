@@ -8,40 +8,13 @@
 
 // Included by PTO.cpp as part of the PTO IR implementation translation unit.
 
-static LogicalResult verifyTRemSTmpA2A3(TRemSOp op, Type tt, Type elem) {
-  Type td = op.getDst().getType();
-  auto dstValid = getValidShapeVec(td);
-  auto tmpValid = getValidShapeVec(tt);
-  if (failed(verifyVecTileCommon(op, tt, "tmp"))) {
-    return failure();
-  }
-  if (getElemTy(tt) != getElemTy(td)) {
-    return op.emitOpError("expects tmp and dst to have the same element type");
-  }
-  if (tmpValid[0] != ShapedType::kDynamic && tmpValid[0] < 1) {
-    return op.emitOpError("expects A2/A3 tmp valid_shape[0] to be at least 1");
-  }
-  if (dstValid[1] != ShapedType::kDynamic && tmpValid[1] != ShapedType::kDynamic &&
-      tmpValid[1] < dstValid[1]) {
-    return op.emitOpError("expects A2/A3 tmp valid columns to cover dst valid columns");
-  }
-  constexpr size_t kTremsTileRank = 2;
-  constexpr unsigned kI32BitWidth = 32;
-  auto dstShape = getShapeVec(td);
-  auto elemBytes = getElemByteSize(elem);
-  if (dstShape.size() != kTremsTileRank ||
-      dstShape[1] == ShapedType::kDynamic || elemBytes == 0) {
-    return op.emitOpError(
-        "expects A2/A3 trems dst shape and element size to be static when tmp is provided");
-  }
-  if (failed(verifyTmpCapacityAtLeast(
-          op, tt, static_cast<uint64_t>(dstShape[1]) * elemBytes))) {
-    return failure();
-  }
-  if (!(elem.isInteger(kI32BitWidth) || elem.isF32())) {
+static LogicalResult verifyTRemSTmpA2A3(TRemSOp op, Type elem) {
+  const bool supportedElem = elem.isInteger(32) || elem.isF32();
+  if (!supportedElem) {
     return op.emitOpError("expects A2/A3 trems element type to be i32/f32");
   }
-  return success();
+  return verifyA2A3RemainderTmp(op, op.getTmp(), op.getDst(),
+                               pto::RemPrecision::Default);
 }
 
 static LogicalResult verifyTRemSTmpA5(TRemSOp op, Type tt, Type elem) {
@@ -69,8 +42,8 @@ static LogicalResult verifyTRemSTmp(TRemSOp op, Type elem) {
       tmpValid.size() != kTremsTileRank) {
     return op.emitOpError("expects tmp and dst to be rank-2 tiles");
   }
-  auto verifyA2A3 = [&op, &tt, &elem]() -> LogicalResult {
-    return verifyTRemSTmpA2A3(op, tt, elem);
+  auto verifyA2A3 = [&op, &elem]() -> LogicalResult {
+    return verifyTRemSTmpA2A3(op, elem);
   };
   auto verifyA5 = [&op, &tt, &elem]() -> LogicalResult {
     return verifyTRemSTmpA5(op, tt, elem);

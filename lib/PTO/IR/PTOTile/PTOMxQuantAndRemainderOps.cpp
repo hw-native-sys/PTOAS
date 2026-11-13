@@ -169,43 +169,57 @@ static LogicalResult verifyTRemNoTmp(TRemOp op, Type elem) {
                                 verifyA5NoTmp);
 }
 
-static LogicalResult verifyTRemTmpA2A3(TRemOp op, Type tmpTy, Type elem) {
-  constexpr size_t kTremTileRank = 2;
-  constexpr int64_t kTremMinTmpRows = 2;
-  constexpr uint64_t kTremTmpColFactor = 2;
-  constexpr unsigned kI32BitWidth = 32;
-  Type dstTy = op.getDst().getType();
-  auto dstValid = getValidShapeVec(dstTy);
-  auto tmpValid = getValidShapeVec(tmpTy);
+static LogicalResult verifyA2A3RemainderTmp(Operation *op, Value tmpValue,
+                                          Value dstValue,
+                                          pto::RemPrecision precision) {
+  Type tmpTy = tmpValue.getType();
   if (failed(verifyVecTileCommon(op, tmpTy, "tmp"))) {
     return failure();
   }
-  if (getElemTy(tmpTy) != getElemTy(dstTy)) {
-    return op.emitOpError("expects tmp and dst to have the same element type");
+  auto tmp = cast<TileBufType>(tmpTy);
+  auto dst = cast<TileBufType>(dstValue.getType());
+  const Type dstElem = dst.getElementType();
+  const Type tmpElem = tmp.getElementType();
+  if (tmpElem != dstElem) {
+    return op->emitOpError("expects tmp and dst to have the same element type");
   }
-  if (tmpValid[0] != ShapedType::kDynamic && tmpValid[0] < kTremMinTmpRows) {
-    return op.emitOpError("expects A2/A3 tmp valid_shape[0] to be at least 2");
+  const auto requiredCols =
+      pto::getA2A3RemainderScratchCols(dstValue, op, precision);
+  if (!requiredCols) {
+    return op->emitOpError("cannot determine A2/A3 tmp width from dst tile");
   }
-  if (dstValid[1] != ShapedType::kDynamic && tmpValid[1] != ShapedType::kDynamic &&
-      tmpValid[1] < dstValid[1]) {
-    return op.emitOpError("expects A2/A3 tmp valid columns to cover dst valid columns");
+
+  const auto shape = tmp.getShape();
+  auto [validRows, validCols] = pto::getKnownTileValidShapeAt(tmpValue, op);
+  if (shape[0] < 1 || (validRows && *validRows < 1)) {
+    return op->emitOpError("expects A2/A3 tmp to have at least one valid row");
   }
-  auto dstShape = getShapeVec(dstTy);
-  auto elemBytes = getElemByteSize(elem);
-  if (dstShape.size() != kTremTileRank ||
-      dstShape[1] == ShapedType::kDynamic || elemBytes == 0) {
-    return op.emitOpError(
-        "expects A2/A3 trem dst shape and element size to be static when tmp is provided");
+  // The physical row must cover the scratch region even when the valid
+  // width is only known at runtime.
+  if (shape[1] < *requiredCols || (validCols && *validCols < *requiredCols)) {
+    return op->emitOpError()
+           << "expects A2/A3 tmp to have at least " << *requiredCols
+           << " columns in one row with precisionType="
+           << pto::stringifyRemPrecision(precision) << ", got " << shape[1]
+           << " physical columns and "
+           << (validCols ? std::to_string(*validCols) : "dynamic")
+           << " valid columns";
   }
-  if (failed(verifyTmpCapacityAtLeast(
-          op, tmpTy,
-          kTremTmpColFactor * static_cast<uint64_t>(dstShape[1]) * elemBytes))) {
-    return failure();
-  }
-  if (!(elem.isInteger(kI32BitWidth) || elem.isF32())) {
-    return op.emitOpError("expects A2/A3 trem element type to be i32/f32");
+  if ((validRows && *validRows > shape[0]) ||
+      (validCols && *validCols > shape[1])) {
+    return op->emitOpError(
+        "expects A2/A3 tmp valid shape to fit within its physical shape");
   }
   return success();
+}
+
+static LogicalResult verifyTRemTmpA2A3(TRemOp op, Type elem) {
+  const bool supportedElem = elem.isInteger(32) || elem.isF32();
+  if (!supportedElem) {
+    return op.emitOpError("expects A2/A3 trem element type to be i32/f32");
+  }
+  return verifyA2A3RemainderTmp(op, op.getTmp(), op.getDst(),
+                               op.getPrecisionType());
 }
 
 static LogicalResult verifyTRemTmpA5(TRemOp op, Type tmpTy, Type elem) {
@@ -232,8 +246,8 @@ static LogicalResult verifyTRemTmp(TRemOp op, Type elem) {
   if (dstValid.size() != kTremTileRank || tmpValid.size() != kTremTileRank) {
     return op.emitOpError("expects tmp and dst to be rank-2 tiles");
   }
-  auto verifyA2A3 = [&op, &tmpTy, &elem]() -> LogicalResult {
-    return verifyTRemTmpA2A3(op, tmpTy, elem);
+  auto verifyA2A3 = [&op, &elem]() -> LogicalResult {
+    return verifyTRemTmpA2A3(op, elem);
   };
   auto verifyA5 = [&op, &tmpTy, &elem]() -> LogicalResult {
     return verifyTRemTmpA5(op, tmpTy, elem);

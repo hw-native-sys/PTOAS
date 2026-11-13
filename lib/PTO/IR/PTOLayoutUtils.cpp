@@ -8,11 +8,16 @@
 
 #include "PTO/IR/PTOLayoutUtils.h"
 
+#include "mlir/Dialect/Utils/StaticValueUtils.h"
 #include "mlir/IR/BuiltinTypes.h"
 #include "llvm/ADT/STLExtras.h"
 #include "llvm/ADT/SmallVector.h"
 #include "llvm/ADT/Twine.h"
 #include "llvm/Support/MathExtras.h"
+
+#include <algorithm>
+#include <limits>
+#include <utility>
 
 using namespace mlir;
 using namespace mlir::pto;
@@ -366,4 +371,129 @@ mlir::pto::inferLayout5D(ArrayRef<int64_t> shape, ArrayRef<int64_t> stride,
   return inferMinor2DLayout(padded->shape[3], padded->shape[4],
                             padded->stride[3], padded->stride[4],
                             preferredMinor2D, isMinor2DAmbiguous);
+}
+
+// Follow the descriptor of a local allocation within its block. An earlier
+// opaque use can change or expose the descriptor, so its extents stay unknown.
+static std::pair<Value, Value> getLocalTileValidOperands(Value tile,
+                                                        Operation *at) {
+  auto alloc = tile.getDefiningOp<AllocTileOp>();
+  Block *block = at->getBlock();
+  if (!alloc || !block) {
+    return {};
+  }
+  Block *allocBlock = alloc->getBlock();
+  if (allocBlock != block) {
+    return {};
+  }
+  Operation *lastUpdate = alloc.getOperation();
+  std::pair<Value, Value> valid{alloc.getValidRow(), alloc.getValidCol()};
+  for (Operation *user : tile.getUsers()) {
+    Operation *anchor = block->findAncestorOpInBlock(*user);
+    if (!anchor) {
+      return {};
+    }
+    if (anchor == at || !anchor->isBeforeInBlock(at)) {
+      continue;
+    }
+    if (isa<GetValidShapeOp, TRemOp, TRemSOp>(user)) {
+      continue;
+    }
+    auto update = dyn_cast<SetValidShapeOp>(user);
+    if (!update || anchor != user) {
+      return {};
+    }
+    if (lastUpdate->isBeforeInBlock(user)) {
+      lastUpdate = user;
+      valid = {update.getValidRow(), update.getValidCol()};
+    }
+  }
+  return valid;
+}
+
+std::array<std::optional<int64_t>, 2>
+mlir::pto::getKnownTileValidShapeAt(Value tile, Operation *at) {
+  std::array<std::optional<int64_t>, 2> result{};
+  auto type = dyn_cast<TileBufType>(tile.getType());
+  if (!type) {
+    return result;
+  }
+  auto valid = type.getValidShape();
+  if (valid.size() != 2) {
+    return result;
+  }
+  for (size_t i = 0; i < result.size(); ++i) {
+    if (!ShapedType::isDynamic(valid[i])) {
+      result[i] = valid[i];
+    }
+  }
+  if (result[0] && result[1]) {
+    return result;
+  }
+  auto [row, col] = getLocalTileValidOperands(tile, at);
+  if (!result[0] && row) {
+    result[0] = getConstantIntValue(row);
+  }
+  if (!result[1] && col) {
+    result[1] = getConstantIntValue(col);
+  }
+  return result;
+}
+
+std::optional<int64_t>
+mlir::pto::getA2A3RemainderScratchCols(Value dst, Operation *at,
+                                      RemPrecision precision) {
+  constexpr int64_t kMaxTileCols = std::numeric_limits<int32_t>::max();
+  auto type = dyn_cast<TileBufType>(dst.getType());
+  if (!type) {
+    return std::nullopt;
+  }
+  const auto shape = type.getShape();
+  const auto validShape = type.getValidShape();
+  const bool rankTwo = shape.size() == 2 && validShape.size() == 2;
+  if (!rankTwo) {
+    return std::nullopt;
+  }
+  // ISA Tile::RowStride is the physical column count for row-major tiles.
+  // Bound it to the signed width of the ISA Tile template before arithmetic.
+  const int64_t stride = shape[1];
+  if (stride <= 0 || stride > kMaxTileCols) {
+    return std::nullopt;
+  }
+
+  constexpr int64_t kVectorElements = 64; // One 256-byte repeat of i32 or f32.
+  constexpr int64_t kBlockElements = 8;   // One 32-byte block of i32 or f32.
+  constexpr int64_t kMaskBitsPerBlock = 256;
+  const int64_t candidateCols =
+      static_cast<int64_t>(llvm::alignTo(stride, kVectorElements));
+  const int64_t baseCols =
+      candidateCols + kBlockElements * llvm::divideCeil(stride, kMaskBitsPerBlock) +
+      kBlockElements;
+  int64_t requiredCols = baseCols;
+  if (precision == RemPrecision::HighPrecision && type.getElementType().isF32()) {
+    constexpr int64_t kMasksPerBlock = 4;
+    // The pinned PTO-ISA (ece75ec8) needs no compensation window. Reserve
+    // extra space for the final high-precision iteration in 7db8bb0a.
+    constexpr int64_t kCompensationVectorsPerInput = 8;
+    constexpr int64_t kFusedChunkVectors = 8;
+    const int64_t width = getKnownTileValidShapeAt(dst, at)[1].value_or(stride);
+    if (width < 0 || width > stride) {
+      return std::nullopt;
+    }
+    const int64_t capacity = std::max<int64_t>(width / kVectorElements, 1);
+    const int64_t maskCols =
+        kBlockElements * llvm::divideCeil(capacity, kMasksPerBlock);
+    const int64_t stateCols = capacity == 1 ? kVectorElements : 0;
+    const int64_t compensationCols =
+        kCompensationVectorsPerInput * kVectorElements *
+        std::min(capacity, kFusedChunkVectors);
+    const int64_t highPrecisionCols =
+        3 * kVectorElements * capacity + maskCols + kBlockElements + stateCols +
+        compensationCols;
+    requiredCols = std::max(baseCols, highPrecisionCols);
+  }
+  if (requiredCols > kMaxTileCols) {
+    return std::nullopt;
+  }
+  return requiredCols;
 }

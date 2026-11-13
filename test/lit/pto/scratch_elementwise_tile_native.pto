@@ -14,12 +14,12 @@ module {
     pto.tprelu ins(%src, %slope, %tmp : !pto.tile_buf<vec, 16x64xf32>, !pto.tile_buf<vec, 16x64xf32>, !pto.tile_buf<loc=vec, dtype=ui8, rows=17, cols=32, v_row=16, v_col=8, blayout=row_major, slayout=none_box, fractal=512, pad=0>) outs(%dst : !pto.tile_buf<vec, 16x64xf32>)
     return
   }
-  func.func private @trem_arg(%a: !pto.tile_buf<vec, 1x16xf32>, %b: !pto.tile_buf<vec, 1x16xf32>, %tmp: !pto.tile_buf<vec, 2x16xf32>, %dst: !pto.tile_buf<vec, 1x16xf32>) {
-    pto.trem ins(%a, %b, %tmp : !pto.tile_buf<vec, 1x16xf32>, !pto.tile_buf<vec, 1x16xf32>, !pto.tile_buf<vec, 2x16xf32>) outs(%dst : !pto.tile_buf<vec, 1x16xf32>)
+  func.func private @trem_arg(%a: !pto.tile_buf<vec, 1x16xf32>, %b: !pto.tile_buf<vec, 1x16xf32>, %tmp: !pto.tile_buf<vec, 1x80xf32>, %dst: !pto.tile_buf<vec, 1x16xf32>) {
+    pto.trem ins(%a, %b, %tmp : !pto.tile_buf<vec, 1x16xf32>, !pto.tile_buf<vec, 1x16xf32>, !pto.tile_buf<vec, 1x80xf32>) outs(%dst : !pto.tile_buf<vec, 1x16xf32>)
     return
   }
-  func.func private @trems_arg(%src: !pto.tile_buf<vec, 1x16xf32>, %tmp: !pto.tile_buf<vec, 1x16xf32>, %dst: !pto.tile_buf<vec, 1x16xf32>, %scalar: f32) {
-    pto.trems ins(%src, %scalar, %tmp : !pto.tile_buf<vec, 1x16xf32>, f32, !pto.tile_buf<vec, 1x16xf32>) outs(%dst : !pto.tile_buf<vec, 1x16xf32>)
+  func.func private @trems_arg(%src: !pto.tile_buf<vec, 1x16xf32>, %tmp: !pto.tile_buf<vec, 1x80xf32>, %dst: !pto.tile_buf<vec, 1x16xf32>, %scalar: f32) {
+    pto.trems ins(%src, %scalar, %tmp : !pto.tile_buf<vec, 1x16xf32>, f32, !pto.tile_buf<vec, 1x80xf32>) outs(%dst : !pto.tile_buf<vec, 1x16xf32>)
     return
   }
 }

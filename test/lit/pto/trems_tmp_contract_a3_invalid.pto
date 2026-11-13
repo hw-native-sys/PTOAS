@@ -12,12 +12,12 @@ module attributes {"pto.device-spec" = "Ascend910B3"} {
   func.func @a3_trems_tmp_too_short() attributes {pto.kernel_kind = #pto.kernel_kind<vector>} {
     %scalar = arith.constant 3.000000e+00 : f32
     %src = pto.alloc_tile : !pto.tile_buf<loc=vec, dtype=f32, rows=16, cols=64, v_row=16, v_col=64, blayout=row_major, slayout=none_box, fractal=512, pad=0>
-    %tmp = pto.alloc_tile : !pto.tile_buf<loc=vec, dtype=f32, rows=1, cols=64, v_row=0, v_col=64, blayout=row_major, slayout=none_box, fractal=512, pad=0>
+    %tmp = pto.alloc_tile : !pto.tile_buf<loc=vec, dtype=f32, rows=1, cols=80, v_row=0, v_col=80, blayout=row_major, slayout=none_box, fractal=512, pad=0>
     %dst = pto.alloc_tile : !pto.tile_buf<loc=vec, dtype=f32, rows=16, cols=64, v_row=16, v_col=64, blayout=row_major, slayout=none_box, fractal=512, pad=0>
-    pto.trems ins(%src, %scalar, %tmp : !pto.tile_buf<loc=vec, dtype=f32, rows=16, cols=64, v_row=16, v_col=64, blayout=row_major, slayout=none_box, fractal=512, pad=0>, f32, !pto.tile_buf<loc=vec, dtype=f32, rows=1, cols=64, v_row=0, v_col=64, blayout=row_major, slayout=none_box, fractal=512, pad=0>)
+    pto.trems ins(%src, %scalar, %tmp : !pto.tile_buf<loc=vec, dtype=f32, rows=16, cols=64, v_row=16, v_col=64, blayout=row_major, slayout=none_box, fractal=512, pad=0>, f32, !pto.tile_buf<loc=vec, dtype=f32, rows=1, cols=80, v_row=0, v_col=80, blayout=row_major, slayout=none_box, fractal=512, pad=0>)
               outs(%dst : !pto.tile_buf<loc=vec, dtype=f32, rows=16, cols=64, v_row=16, v_col=64, blayout=row_major, slayout=none_box, fractal=512, pad=0>)
     return
   }
 }
 
-// CHECK: error: 'pto.trems' op expects A2/A3 tmp valid_shape[0] to be at least 1
+// CHECK: error: 'pto.trems' op expects A2/A3 tmp to have at least one valid row

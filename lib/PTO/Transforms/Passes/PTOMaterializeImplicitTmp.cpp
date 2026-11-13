@@ -13,6 +13,7 @@
 
 #include "PTO/IR/PTO.h"
 #include "PTO/IR/PTODialect.h"
+#include "PTO/IR/PTOLayoutUtils.h"
 #include "PTO/IR/PTOTypeUtils.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/Func/IR/FuncOps.h"
@@ -1046,16 +1047,28 @@ static LogicalResult materializeTPReluTmpOp(pto::TPReluOp typedOp,
       *type, {1, 1, 1, 1}, isA5 ? false : requireExplicitTmp, "tprelu");
 }
 
+static FailureOr<pto::TileBufType>
+makeRemainderTmpType(Operation *op, Value dst, pto::RemPrecision precision) {
+  const auto cols = pto::getA2A3RemainderScratchCols(dst, op, precision);
+  if (!cols) {
+    return failure();
+  }
+  auto dstTy = cast<pto::TileBufType>(dst.getType());
+  return makeVecTmpType(op->getContext(), {1, *cols}, dstTy.getElementType(),
+                        {1, *cols});
+}
+
 static LogicalResult materializeTRemTmpOp(pto::TRemOp typedOp,
                                           bool requireExplicitTmp,
                                           MLIRContext *ctx) {
   Operation *op = typedOp.getOperation();
   bool isA5 = pto::getTargetArch(op) == pto::PTOArch::A5;
   auto type = isA5 ? makeA5PlaceholderTmpType(ctx, typedOp.getDst())
-                   : makeRowsTmpType(ctx, typedOp.getDst(), 2);
+                   : makeRemainderTmpType(op, typedOp.getDst(),
+                                          typedOp.getPrecisionType());
   if (failed(type)) {
     return typedOp.emitOpError(
-        "requires static tile_buf dst to materialize implicit trem tmp");
+        "cannot determine dst row stride to materialize implicit trem tmp");
   }
   return replaceFixedDpsOpWithTmp(
       op, {typedOp.getSrc0(), typedOp.getSrc1(), Value(), typedOp.getDst()},
@@ -1068,10 +1081,11 @@ static LogicalResult materializeTRemSTmpOp(pto::TRemSOp typedOp,
   Operation *op = typedOp.getOperation();
   bool isA5 = pto::getTargetArch(op) == pto::PTOArch::A5;
   auto type = isA5 ? makeA5PlaceholderTmpType(ctx, typedOp.getDst())
-                   : makeRowsTmpType(ctx, typedOp.getDst(), 1);
+                   : makeRemainderTmpType(op, typedOp.getDst(),
+                                          pto::RemPrecision::Default);
   if (failed(type)) {
     return typedOp.emitOpError(
-        "requires static tile_buf dst to materialize implicit trems tmp");
+        "cannot determine dst row stride to materialize implicit trems tmp");
   }
   return replaceFixedDpsOpWithTmp(
       op, {typedOp.getSrc(), typedOp.getScalar(), Value(), typedOp.getDst()},

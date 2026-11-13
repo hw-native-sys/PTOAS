@@ -4,15 +4,15 @@ module {
   func.func @trem_tmp_form() {
     %src0 = pto.alloc_tile : !pto.tile_buf<loc=vec, dtype=f32, rows=1, cols=16, v_row=1, v_col=16, blayout=row_major, slayout=none_box, fractal=512, pad=0>
     %src1 = pto.alloc_tile : !pto.tile_buf<loc=vec, dtype=f32, rows=1, cols=16, v_row=1, v_col=16, blayout=row_major, slayout=none_box, fractal=512, pad=0>
-    %tmp = pto.alloc_tile : !pto.tile_buf<loc=vec, dtype=f32, rows=2, cols=16, v_row=2, v_col=16, blayout=row_major, slayout=none_box, fractal=512, pad=0>
+    %tmp = pto.alloc_tile : !pto.tile_buf<loc=vec, dtype=f32, rows=1, cols=80, v_row=1, v_col=80, blayout=row_major, slayout=none_box, fractal=512, pad=0>
     %dst = pto.alloc_tile : !pto.tile_buf<loc=vec, dtype=f32, rows=1, cols=16, v_row=1, v_col=16, blayout=row_major, slayout=none_box, fractal=512, pad=0>
-    pto.trem ins(%src0, %src1, %tmp : !pto.tile_buf<loc=vec, dtype=f32, rows=1, cols=16, v_row=1, v_col=16, blayout=row_major, slayout=none_box, fractal=512, pad=0>, !pto.tile_buf<loc=vec, dtype=f32, rows=1, cols=16, v_row=1, v_col=16, blayout=row_major, slayout=none_box, fractal=512, pad=0>, !pto.tile_buf<loc=vec, dtype=f32, rows=2, cols=16, v_row=2, v_col=16, blayout=row_major, slayout=none_box, fractal=512, pad=0>) outs(%dst : !pto.tile_buf<loc=vec, dtype=f32, rows=1, cols=16, v_row=1, v_col=16, blayout=row_major, slayout=none_box, fractal=512, pad=0>)
+    pto.trem ins(%src0, %src1, %tmp : !pto.tile_buf<loc=vec, dtype=f32, rows=1, cols=16, v_row=1, v_col=16, blayout=row_major, slayout=none_box, fractal=512, pad=0>, !pto.tile_buf<loc=vec, dtype=f32, rows=1, cols=16, v_row=1, v_col=16, blayout=row_major, slayout=none_box, fractal=512, pad=0>, !pto.tile_buf<loc=vec, dtype=f32, rows=1, cols=80, v_row=1, v_col=80, blayout=row_major, slayout=none_box, fractal=512, pad=0>) outs(%dst : !pto.tile_buf<loc=vec, dtype=f32, rows=1, cols=16, v_row=1, v_col=16, blayout=row_major, slayout=none_box, fractal=512, pad=0>)
     return
   }
 }
 
 // A3: pto.trem ins([[SRC0:%[0-9]+]], [[SRC1:%[0-9]+]], [[TMP:%[0-9]+]] : !pto.tile_buf<vec, 1x16xf32
 // A3-SAME: !pto.tile_buf<vec, 1x16xf32
-// A3-SAME: !pto.tile_buf<vec, 2x16xf32
+// A3-SAME: !pto.tile_buf<vec, 1x80xf32
 // A3: outs([[DST:%[0-9]+]] : !pto.tile_buf<vec, 1x16xf32
 // A3: TREM([[VDST:[_A-Za-z][_A-Za-z0-9]*]], [[VSRC0:[_A-Za-z][_A-Za-z0-9]*]], [[VSRC1:[_A-Za-z][_A-Za-z0-9]*]], [[VTMP:[_A-Za-z][_A-Za-z0-9]*]]);

@@ -2939,7 +2939,10 @@ pto.trem ins(<src0>, <src1>, <tmp> : <src0_type>, <src1_type>, <tmp_type>)
   - `src0/src1/dst` must use row-major layout (`blayout=row_major`).
   - `tmp` must be a row-major `loc=vec` tile.
   - `src0/src1/dst` must have the same `validRow/validCol`.
-  - `tmp` must provide at least `2` valid rows and `tmp.validCol >= dst.validCol`.
+  - `tmp` must provide at least one valid row. Its physical and valid columns must both cover the required scratch width.
+  - With physical destination row stride `S` in elements, default precision requires `base = alignTo(S, 64) + 8 * ceil(S / 256) + 8` columns. The candidate capacity rounds up to a full 64-element repeat. The two extra regions hold a packed mask rounded to a 32-byte block and a 32-byte address buffer.
+  - FP32 `high_precision` also requires `hp = 192*C + 8*ceil(C/4) + 8 + (C == 1 ? 64 : 0) + 512*min(C, 8)` columns, where `C = max(floor(dst.validCol / 64), 1)`. Use `max(base, hp)`. PTOAS uses the valid width when it can prove its value and uses the physical width otherwise. The final term reserves the compensation window used by PTO-ISA `7db8bb0a`. The default pin `ece75ec8` needs no compensation window.
+  - With `S = dst.validCol = 64`, default precision requires 80 columns and FP32 high precision requires 784 columns.
 - **Implementation checks (A5)**
   - `src0/src1/dst` element type must match, and must be one of: `i32`, `i16`, `f16`, `f32`.
   - `src0/src1/dst` must use row-major layout (`blayout=row_major`).
@@ -2960,8 +2963,8 @@ pto.trem ins(%a, %b, %tmp : !pto.tile_buf<loc=vec, dtype=f32, rows=16, cols=16,
              !pto.tile_buf<loc=vec, dtype=f32, rows=16, cols=16,
              v_row=16, v_col=16, blayout=row_major, slayout=none_box,
              fractal=512, pad=0>,
-             !pto.tile_buf<loc=vec, dtype=f32, rows=2, cols=16,
-             v_row=2, v_col=16, blayout=row_major, slayout=none_box,
+             !pto.tile_buf<loc=vec, dtype=f32, rows=1, cols=80,
+             v_row=1, v_col=80, blayout=row_major, slayout=none_box,
              fractal=512, pad=0>)
          outs(%c : !pto.tile_buf<loc=vec, dtype=f32, rows=16, cols=16,
              v_row=16, v_col=16, blayout=row_major, slayout=none_box,
@@ -3936,7 +3939,7 @@ pto.trems ins(<src>, <scalar>, <tmp> : <src_type>, <scalar_type>, <tmp_type>)
   - `src/dst` must use row-major layout (`blayout=row_major`).
   - `tmp` must be a row-major `loc=vec` tile.
   - `src` and `dst` must have the same `validRow/validCol`.
-  - `tmp` must provide at least `1` valid row and `tmp.validCol >= dst.validCol`.
+  - `tmp` must provide at least one valid row. Its physical and valid columns must both cover `alignTo(S, 64) + 8 * ceil(S / 256) + 8`, where `S` is the physical destination row stride in elements.
 - **Implementation checks (A5)**
   - `src/dst` element type must match, and must be one of: `i16`, `i32`, `ui16`, `ui32`, `f16`, `f32`.
   - `scalar` type must match the tile element type.
@@ -3955,8 +3958,8 @@ pto.trems ins(<src>, <scalar>, <tmp> : <src_type>, <scalar_type>, <tmp_type>)
 pto.trems ins(%a, %s, %tmp : !pto.tile_buf<loc=vec, dtype=f32, rows=32, cols=32,
               v_row=32, v_col=32, blayout=row_major, slayout=none_box,
               fractal=512, pad=0>, f32,
-              !pto.tile_buf<loc=vec, dtype=f32, rows=1, cols=32,
-              v_row=1, v_col=32, blayout=row_major, slayout=none_box,
+              !pto.tile_buf<loc=vec, dtype=f32, rows=1, cols=80,
+              v_row=1, v_col=80, blayout=row_major, slayout=none_box,
               fractal=512, pad=0>)
           outs(%c : !pto.tile_buf<loc=vec, dtype=f32, rows=32, cols=32,
               v_row=32, v_col=32, blayout=row_major, slayout=none_box,

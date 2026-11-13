@@ -31,9 +31,8 @@ def build():
             fractal_ab_size = pto.TileConfig.fractalABSize
             cfg = pto.TileBufConfigAttr.get(bl, sl, fractal_ab_size, pd, ctx)
             tile_buf_32 = pto.TileBufType.get([32, 32], f32, vec, [32, 32], cfg, ctx)
-            # A2/A3 TREM workspace contract only needs 2 valid rows and
-            # validCol covering dst.validCol.
-            tile_buf_tmp = pto.TileBufType.get([2, 32], f32, vec, [2, 32], cfg, ctx)
+            # Reserve a 64-element repeat plus 8 mask and 8 address columns.
+            tile_buf_tmp = pto.TileBufType.get([1, 80], f32, vec, [1, 80], cfg, ctx)
 
             fn_ty = func.FunctionType.get([ptr_f32, ptr_f32, ptr_f32], [])
             with InsertionPoint(m.body):
@@ -65,7 +64,7 @@ def build():
                 pto.TLoadOp(None, sv0, tb0)  # result=None
                 pto.TLoadOp(None, sv1, tb1)  # result=None
 
-                pto.TRemOp(tb0, tb1, tmp, tb2)
+                pto.TRemOp(tb0, tb1, tb2, tmp=tmp)
 
                 # Replaced immediate numbers with constants c0 and c32
                 sv2 = pto.PartitionViewOp(tile_view_32, tv2, offsets=[c0, c0], sizes=[c32, c32]).result
