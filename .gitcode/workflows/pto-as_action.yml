@@ -51,6 +51,9 @@ stages:
         container:
           image: swr.cn-north-4.myhuaweicloud.com/ci_cann/ubuntu20.04.05_x86:k8s_v1.1006
       JOB_pre:
+        permissions:
+          repository: read
+          id-token: write
         name: Test_PreBuild
         uses: cann/.gitcode/.gitcode/workflows/pre_action.yml@master
     pre:
@@ -60,6 +63,9 @@ stages:
     name: Compile
     jobs:
       JOB_x86_compile:
+        permissions:
+          repository: read
+          id-token: write
         name: Compile_x86
         uses: .gitcode/workflows/compile_action.yml
         with:
@@ -68,6 +74,9 @@ stages:
           arch: 'x64'
           package_name: 'cann-pto-as_linux-x86_64.run'
       JOB_arm_compile:
+        permissions:
+          repository: read
+          id-token: write
         name: Compile_arm
         uses: .gitcode/workflows/compile_action.yml
         with:
@@ -104,12 +113,18 @@ stages:
         container:
           image: swr.cn-north-4.myhuaweicloud.com/ci_cann/${{ jobs.JOB_image.outputs.Compile_Ascend_X86 }}
       JOB_codecheck:
+        permissions:
+          repository: read
+          id-token: write
         name: CodeCheck
         uses: cann/.gitcode/.gitcode/workflows/codecheck_action.yml@master
         with:
           precommit_image_version: ${{ jobs.JOB_image.outputs.precommit }}
           codecheck_image_version: ${{ jobs.JOB_image.outputs.codecheck }}
       JOB_sim_validation:
+        permissions:
+          repository: read
+          id-token: write
         name: SIM_VALIDATION
         steps:
           - name: Checkout
@@ -187,14 +202,21 @@ stages:
               export SIM_SUITE=pypto
               bash "${{ steps.process_checkout.outputs.path }}/.gitcode/scripts/sim_validation.sh" test \
                 "${{ steps.process_checkout.outputs.path }}"
+          -
+            name: oidc_auth
+            uses: huaweicloud-oidc-auth
+            with:
+              audience: ${{ secrets.audience }}
+              agency_urn: ${{ secrets.agency_urn }}
+              provider_urn: ${{ secrets.provider_urn }}
+              region: cn-north-4
+              duration: 3600
           - name: Upload simulator logs
             if: always()
             uses: obs-upload
             with:
               endpoint: "https://obs.cn-north-4.myhuaweicloud.com"
               bucket: "ascend-ci"
-              access-key: ${{ secrets.AK }}
-              secret-key: ${{ secrets.SK }}
               artifact-path: |
                 ${{ steps.process_checkout.outputs.path }}/.work/gitcode-vpto-sim/vpto-sim.log
                 ${{ steps.process_checkout.outputs.path }}/.work/gitcode-vpto-sim/tilelib-st.log
@@ -211,6 +233,9 @@ stages:
     name: PreSmoke
     jobs:
       PreSmoke_A2:
+        permissions:
+          repository: read
+          id-token: write
         name: PreSmoke_A2
         steps:
           -
@@ -221,13 +246,20 @@ stages:
               ref: ${{ atomgit.event.pull_request.merge_commit_sha }}
               token: ${{secrets.GIT_TOKEN}}
           -
+            name: oidc_auth
+            uses: huaweicloud-oidc-auth
+            with:
+              audience: ${{ secrets.audience }}
+              agency_urn: ${{ secrets.agency_urn }}
+              provider_urn: ${{ secrets.provider_urn }}
+              region: cn-north-4
+              duration: 3600
+          -
             name: download pr files
             uses: obs-download
             with:
               endpoint: "https://obs.cn-north-4.myhuaweicloud.com"
               bucket: "ascend-ci"
-              access-key: ${{ secrets.AK }}
-              secret-key: ${{ secrets.SK }}
               key: |
                 ${{ env.obs_path }}/pr_filelist.txt
                 ${{ env.obs_path }}/pr_filelist_mod.txt
@@ -247,8 +279,6 @@ stages:
                 export repo_name=${{env.repo_name}}
                 export obs_smoke_path=${{ env.obs_smoke_path }}
                 export pr_id=${{ env.MERGE_ID }}
-                export AK=${{secrets.AK}}
-                export SK=${{secrets.SK}}
                 export ST_PART=1
                 bash ${{ steps.process_checkout.outputs.path }}/pre_smoke.sh
           - name: upload
@@ -256,8 +286,6 @@ stages:
             with:
               endpoint: "https://obs.cn-north-4.myhuaweicloud.com"
               bucket: "ascend-ci"
-              access-key: ${{ secrets.AK }}
-              secret-key: ${{ secrets.SK }}
               artifact-path: "${{ steps.process_checkout.outputs.path }}/slog*.tar.gz"
               object-prefix: ${obs_smoke_path}/plog/
         if: env.TARGET_BRANCH == 'master'
