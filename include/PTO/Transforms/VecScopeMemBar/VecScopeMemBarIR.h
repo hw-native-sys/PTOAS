@@ -9,6 +9,7 @@
 #ifndef PTO_TRANSFORMS_VECSCOPEMEMBAR_VECSCOPEMEMBARIR_H
 #define PTO_TRANSFORMS_VECSCOPEMEMBAR_VECSCOPEMEMBARIR_H
 
+#include "PTO/Analysis/PTOMemoryAccessAnalysis.h"
 #include "mlir/Dialect/SCF/IR/SCF.h"
 #include "mlir/IR/Operation.h"
 #include "mlir/IR/Value.h"
@@ -25,8 +26,6 @@ enum class VecScopeNodeKind {
     Access,
     ExistingBarrier,
 };
-
-enum class VecScopeAccessUnit { Vector, Scalar };
 
 struct VecScopeLoopInfo {
     unsigned id = 0;
@@ -45,26 +44,6 @@ struct VecScopeScheduleNode {
     std::optional<unsigned> parent;
     SmallVector<unsigned, 2> schedulePath;
 };
-
-bool isUBBackedType(Type type);
-
-bool isUBVectorStore(Operation* op);
-
-bool isUBVectorLoad(Operation* op);
-
-bool isUBVectorMemoryOp(Operation* op);
-
-bool isUBScalarMemoryOp(Operation* op);
-
-bool isUBScalarStore(Operation* op);
-
-bool isUBScalarLoad(Operation* op);
-
-bool isUBMemoryOp(Operation* op);
-
-SmallVector<Value, 2> getStoredValues(Operation* storeOp);
-
-SmallVector<Value, 2> getLoadedValues(Operation* loadOp);
 
 } // namespace mlir::pto::vecscopemembar
 

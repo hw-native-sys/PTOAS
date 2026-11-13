@@ -6,7 +6,7 @@
 // INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
 // See LICENSE in the root of the software repository for the full text of the License.
 
-#include "PTO/Transforms/VecScopeMemBar/VecScopeMemBarIR.h"
+#include "PTO/Analysis/PTOMemoryAccessAnalysis.h"
 #include "PTO/IR/PTO.h"
 
 #include "mlir/Interfaces/SideEffectInterfaces.h"
@@ -14,7 +14,6 @@
 
 using namespace mlir;
 using namespace mlir::pto;
-using namespace mlir::pto::vecscopemembar;
 
 namespace {
 
@@ -44,7 +43,7 @@ static bool hasUBEffect(Operation* op, bool wantRead, bool wantWrite)
 
 } // namespace
 
-bool vecscopemembar::isUBBackedType(Type type)
+bool pto::isUBBackedType(Type type)
 {
     if (auto ptr = dyn_cast<pto::PtrType>(type)) {
         return ptr.getMemorySpace().getAddressSpace() == AddressSpace::VEC;
@@ -63,39 +62,26 @@ bool vecscopemembar::isUBBackedType(Type type)
     return false;
 }
 
-bool vecscopemembar::isUBVectorStore(Operation* op)
-{
-    return !isScalarAccess(op) && hasUBEffect(op, false, true);
-}
+bool pto::isUBVectorStore(Operation* op) { return !isScalarAccess(op) && hasUBEffect(op, false, true); }
 
-bool vecscopemembar::isUBVectorLoad(Operation* op)
-{
-    return !isScalarAccess(op) && hasUBEffect(op, true, false);
-}
+bool pto::isUBVectorLoad(Operation* op) { return !isScalarAccess(op) && hasUBEffect(op, true, false); }
 
-bool vecscopemembar::isUBVectorMemoryOp(Operation* op) { return isUBVectorStore(op) || isUBVectorLoad(op); }
+bool pto::isUBVectorMemoryOp(Operation* op) { return isUBVectorStore(op) || isUBVectorLoad(op); }
 
-bool vecscopemembar::isUBScalarMemoryOp(Operation* op)
-{
-    return isScalarAccess(op) && hasUBEffect(op, true, true);
-}
+bool pto::isUBScalarMemoryOp(Operation* op) { return isScalarAccess(op) && hasUBEffect(op, true, true); }
 
-bool vecscopemembar::isUBScalarStore(Operation* op)
-{
-    return isScalarAccess(op) && hasUBEffect(op, false, true);
-}
+bool pto::isUBScalarStore(Operation* op) { return isScalarAccess(op) && hasUBEffect(op, false, true); }
 
-bool vecscopemembar::isUBScalarLoad(Operation* op)
-{
-    return isScalarAccess(op) && hasUBEffect(op, true, false);
-}
+bool pto::isUBScalarLoad(Operation* op) { return isScalarAccess(op) && hasUBEffect(op, true, false); }
 
-bool vecscopemembar::isUBMemoryOp(Operation* op) { return isUBVectorMemoryOp(op) || isUBScalarMemoryOp(op); }
+bool pto::isUBMemoryOp(Operation* op) { return isUBVectorMemoryOp(op) || isUBScalarMemoryOp(op); }
 
-SmallVector<Value, 2> vecscopemembar::getStoredValues(Operation* storeOp)
+SmallVector<Value, 2> pto::getStoredValues(Operation* storeOp)
 {
     SmallVector<Value, 2> out;
     if (auto s = dyn_cast<pto::PTOStoreOp>(storeOp)) {
+        out.push_back(s.getValue());
+    } else if (auto s = dyn_cast<pto::VscatterOp>(storeOp)) {
         out.push_back(s.getValue());
     } else if (auto s = dyn_cast<pto::VstsOp>(storeOp)) {
         out.push_back(s.getValue());
@@ -106,11 +92,13 @@ SmallVector<Value, 2> vecscopemembar::getStoredValues(Operation* storeOp)
     return out;
 }
 
-SmallVector<Value, 2> vecscopemembar::getLoadedValues(Operation* loadOp)
+SmallVector<Value, 2> pto::getLoadedValues(Operation* loadOp)
 {
     SmallVector<Value, 2> out;
     if (auto l = dyn_cast<pto::PTOLoadOp>(loadOp)) {
         out.push_back(l.getResult());
+    } else if (isa<pto::Vgather2Op, pto::Vgather2BcOp, pto::VgatherbOp>(loadOp)) {
+        out.push_back(loadOp->getResult(0));
     } else if (auto l = dyn_cast<pto::VldsOp>(loadOp)) {
         if (Value r = l.getResult()) {
             out.push_back(r);

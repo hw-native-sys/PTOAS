@@ -1,0 +1,96 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// You should not use this file except in compliance with the License.
+// You may refer to the License for details.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+
+// RUN: pto-test-opt --pto-insert-vecscope-membar %s | FileCheck %s
+// RUN: pto-test-opt --pto-insert-vecscope-membar --pto-insert-vecscope-membar %s | FileCheck %s
+
+// Invalid mask widths are early-pass controls; the full emitter rejects them.
+!mb16 = !pto.mask<b16>
+!mb32 = !pto.mask<b32>
+!pui32ub = !pto.ptr<ui32, ub>
+!v64xi32 = !pto.vreg<64xi32>
+!v64xui32 = !pto.vreg<64xui32>
+
+module attributes {pto.target_arch = "a5"} {
+// CHECK-LABEL: func.func @table_wrong_store_mask_width(
+// CHECK: pto.mem_bar
+// CHECK: return
+func.func @table_wrong_store_mask_width() {
+  %c0 = arith.constant 0 : index
+  %s0 = arith.constant 0 : i32
+  %src0 = arith.constant 0 : i64
+  %dst0 = arith.constant 8192 : i64
+  %tab0 = arith.constant 196608 : i64
+  %one64 = arith.constant 1 : i64
+  %src = pto.castptr %src0 : i64 -> !pui32ub
+  %dst = pto.castptr %dst0 : i64 -> !pui32ub
+  %tab = pto.castptr %tab0 : i64 -> !pui32ub
+  pto.set_loop_size_outtoub %one64, %one64 : i64, i64
+
+  pto.vecscope {
+    %i = pto.vci %s0 : i32 -> !v64xi32
+    %u = pto.vbitcast %i : !v64xi32 -> !v64xui32
+    %pm = pto.pset_b16 "PAT_VL64" : !mb16
+    pto.vsts %u, %tab[%c0], %pm : !v64xui32, !pui32ub, index, !mb16
+  }
+
+  pto.vecscope {
+    %m2 = pto.pset_b32 "PAT_ALL" : !mb32
+    %idx = pto.vlds %tab[%c0] : !pui32ub, index -> !v64xui32
+    %a = pto.vgather2 %src, %idx, %m2 : !pui32ub, !v64xui32, !mb32 -> !v64xui32
+    pto.vsts %a, %dst[%c0], %m2 : !v64xui32, !pui32ub, index, !mb32
+    %b = pto.vgather2 %src, %idx, %m2 : !pui32ub, !v64xui32, !mb32 -> !v64xui32
+  }
+  return
+}
+
+// CHECK-LABEL: func.func @table_wrong_arithmetic_mask_width(
+// CHECK: pto.mem_bar
+// CHECK: return
+func.func @table_wrong_arithmetic_mask_width() {
+  %c0 = arith.constant 0 : index
+  %s0 = arith.constant 0 : i32
+  %s15i = arith.constant 15 : i32
+  %s15 = builtin.unrealized_conversion_cast %s15i : i32 to ui32
+  %s128i = arith.constant 128 : i32
+  %s128 = builtin.unrealized_conversion_cast %s128i : i32 to ui32
+  %s4 = arith.constant 4 : i16
+  %src0 = arith.constant 0 : i64
+  %dst0 = arith.constant 8192 : i64
+  %tab0 = arith.constant 196608 : i64
+  %one64 = arith.constant 1 : i64
+  %src = pto.castptr %src0 : i64 -> !pui32ub
+  %dst = pto.castptr %dst0 : i64 -> !pui32ub
+  %tab = pto.castptr %tab0 : i64 -> !pui32ub
+  pto.set_loop_size_outtoub %one64, %one64 : i64, i64
+
+  pto.vecscope {
+    %i = pto.vci %s0 : i32 -> !v64xi32
+    %u = pto.vbitcast %i : !v64xi32 -> !v64xui32
+    %m = pto.pset_b32 "PAT_ALL" : !mb32
+    %maskv = pto.vdup %s15, %m : ui32, !mb32 -> !v64xui32
+    %row = pto.vand %u, %maskv, %m : !v64xui32, !v64xui32, !mb32 -> !v64xui32
+    %pack = pto.vshrs %u, %s4, %m : !v64xui32, i16, !mb32 -> !v64xui32
+    %scaled = pto.vmuls %row, %s128, %m : !v64xui32, ui32, !mb32 -> !v64xui32
+    %wm = pto.pset_b16 "PAT_VL64" : !mb16
+    %indices = pto.vadd %scaled, %pack, %wm : !v64xui32, !v64xui32, !mb16 -> !v64xui32
+    %pm = pto.pset_b32 "PAT_ALL" : !mb32
+    pto.vsts %indices, %tab[%c0], %pm : !v64xui32, !pui32ub, index, !mb32
+  }
+
+  pto.vecscope {
+    %m2 = pto.pset_b32 "PAT_ALL" : !mb32
+    %idx = pto.vlds %tab[%c0] : !pui32ub, index -> !v64xui32
+    %a = pto.vgather2 %src, %idx, %m2 : !pui32ub, !v64xui32, !mb32 -> !v64xui32
+    pto.vsts %a, %dst[%c0], %m2 : !v64xui32, !pui32ub, index, !mb32
+    %b = pto.vgather2 %src, %idx, %m2 : !pui32ub, !v64xui32, !mb32 -> !v64xui32
+  }
+  return
+}
+}

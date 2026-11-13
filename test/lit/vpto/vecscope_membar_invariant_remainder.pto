@@ -1,0 +1,153 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// You should not use this file except in compliance with the License.
+// You may refer to the License for details.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+
+// RUN: pto-test-opt --pto-insert-vecscope-membar %s | FileCheck %s
+// RUN: pto-test-opt --pto-insert-vecscope-membar --pto-insert-vecscope-membar %s | FileCheck %s
+// RUN: ptoas --pto-arch=a5 --pto-backend=vpto --emit-vpto --enable-vecscope-mem-bar=true %s | FileCheck %s
+
+!mb32 = !pto.mask<b32>
+!pf32ub = !pto.ptr<f32, ub>
+!v64xf32 = !pto.vreg<64xf32>
+
+module {
+// CHECK-LABEL: func.func @stable_signed_stage(
+// CHECK-NOT: pto.mem_bar
+// CHECK: scf.for
+// CHECK-NOT: pto.mem_bar
+// CHECK: pto.vsts
+// CHECK-NOT: pto.mem_bar
+// CHECK: return
+// CHECK-NOT: pto.mem_bar
+func.func @stable_signed_stage(%outer: si32, %v: !v64xf32) {
+  %z = arith.constant 0 : index
+  %one = arith.constant 1 : index
+  %four = arith.constant 4 : index
+  %c3 = arith.constant 3 : i32
+  %c31 = arith.constant 31 : i32
+  %stride = arith.constant 64 : i32
+  %spacing = arith.constant 1024 : i32
+  %addr = arith.constant 0 : i64
+  %ub = pto.castptr %addr : i64 -> !pf32ub
+
+  pto.vecscope {
+    %m = pto.pset_b32 "PAT_ALL" : !mb32
+    scf.for %i = %z to %four step %one {
+      %iv = arith.index_cast %i : index to i32
+      %x = builtin.unrealized_conversion_cast %outer : si32 to i32
+      %r = arith.remsi %x, %c3 : i32
+      %sign = arith.shrsi %r, %c31 : i32
+      %fix = arith.andi %sign, %c3 : i32
+      %stage = arith.addi %r, %fix : i32
+      %stageoff = arith.muli %stage, %spacing : i32
+      %rowoff = arith.muli %iv, %stride : i32
+      %off = arith.addi %stageoff, %rowoff : i32
+      %idx = arith.index_cast %off : i32 to index
+      pto.vsts %v, %ub[%idx], %m : !v64xf32, !pf32ub, index, !mb32
+    }
+  }
+  return
+}
+
+// CHECK-LABEL: func.func @stable_unsigned_stage(
+// CHECK-NOT: pto.mem_bar
+// CHECK: scf.for
+// CHECK-NOT: pto.mem_bar
+// CHECK: pto.vsts
+// CHECK-NOT: pto.mem_bar
+// CHECK: return
+// CHECK-NOT: pto.mem_bar
+func.func @stable_unsigned_stage(%outer: si32, %v: !v64xf32) {
+  %z = arith.constant 0 : index
+  %one = arith.constant 1 : index
+  %four = arith.constant 4 : index
+  %c3 = arith.constant 3 : i32
+  %stride = arith.constant 64 : i32
+  %spacing = arith.constant 1024 : i32
+  %addr = arith.constant 0 : i64
+  %ub = pto.castptr %addr : i64 -> !pf32ub
+
+  pto.vecscope {
+    %m = pto.pset_b32 "PAT_ALL" : !mb32
+    scf.for %i = %z to %four step %one {
+      %iv = arith.index_cast %i : index to i32
+      %x = builtin.unrealized_conversion_cast %outer : si32 to i32
+      %stage = arith.remui %x, %c3 : i32
+      %stageoff = arith.muli %stage, %spacing : i32
+      %rowoff = arith.muli %iv, %stride : i32
+      %off = arith.addi %stageoff, %rowoff : i32
+      %idx = arith.index_cast %off : i32 to index
+      pto.vsts %v, %ub[%idx], %m : !v64xf32, !pf32ub, index, !mb32
+    }
+  }
+  return
+}
+
+// CHECK-LABEL: func.func @stable_stage_real_overlap(
+// CHECK: pto.mem_bar "VST_VST"
+// CHECK: return
+func.func @stable_stage_real_overlap(%outer: si32, %v: !v64xf32) {
+  %z = arith.constant 0 : index
+  %one = arith.constant 1 : index
+  %four = arith.constant 4 : index
+  %c3 = arith.constant 3 : i32
+  %c31 = arith.constant 31 : i32
+  %stride = arith.constant 32 : i32
+  %spacing = arith.constant 1024 : i32
+  %addr = arith.constant 0 : i64
+  %ub = pto.castptr %addr : i64 -> !pf32ub
+
+  pto.vecscope {
+    %m = pto.pset_b32 "PAT_ALL" : !mb32
+    scf.for %i = %z to %four step %one {
+      %iv = arith.index_cast %i : index to i32
+      %x = builtin.unrealized_conversion_cast %outer : si32 to i32
+      %r = arith.remsi %x, %c3 : i32
+      %sign = arith.shrsi %r, %c31 : i32
+      %fix = arith.andi %sign, %c3 : i32
+      %stage = arith.addi %r, %fix : i32
+      %stageoff = arith.muli %stage, %spacing : i32
+      %rowoff = arith.muli %iv, %stride : i32
+      %off = arith.addi %stageoff, %rowoff : i32
+      %idx = arith.index_cast %off : i32 to index
+      pto.vsts %v, %ub[%idx], %m : !v64xf32, !pf32ub, index, !mb32
+    }
+  }
+  return
+}
+
+// CHECK-LABEL: func.func @varying_reinterpret_real_overlap(
+// CHECK: pto.mem_bar "VST_VST"
+// CHECK: return
+func.func @varying_reinterpret_real_overlap(%outer: si32, %v: !v64xf32) {
+  %z = arith.constant 0 : index
+  %one = arith.constant 1 : index
+  %four = arith.constant 4 : index
+  %c3 = arith.constant 3 : i32
+  %stride = arith.constant -1024 : i32
+  %spacing = arith.constant 1024 : i32
+  %addr = arith.constant 8192 : i64
+  %ub = pto.castptr %addr : i64 -> !pf32ub
+
+  pto.vecscope {
+    %m = pto.pset_b32 "PAT_ALL" : !mb32
+    scf.for %i = %z to %four step %one {
+      %iv = arith.index_cast %i : index to i32
+      %u = builtin.unrealized_conversion_cast %iv : i32 to si32
+      %x = builtin.unrealized_conversion_cast %u : si32 to i32
+      %stage = arith.remui %x, %c3 : i32
+      %stageoff = arith.muli %stage, %spacing : i32
+      %rowoff = arith.muli %iv, %stride : i32
+      %off = arith.addi %stageoff, %rowoff : i32
+      %idx = arith.index_cast %off : i32 to index
+      pto.vsts %v, %ub[%idx], %m : !v64xf32, !pf32ub, index, !mb32
+    }
+  }
+  return
+}
+}

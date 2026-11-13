@@ -1,0 +1,99 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software: you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+
+// RUN: pto-test-opt --pto-insert-vecscope-membar %s | FileCheck %s
+// RUN: pto-test-opt --pto-insert-vecscope-membar --pto-insert-vecscope-membar %s | FileCheck %s
+// RUN: ptoas --pto-arch=a5 --pto-backend=vpto --emit-vpto --enable-vecscope-mem-bar=true %s | FileCheck %s
+
+!p = !pto.ptr<f32, ub>
+!v = !pto.vreg<64xf32>
+!m = !pto.mask<b32>
+module attributes {pto.target_arch = "a5", pto.kernel_kind = #pto.kernel_kind<vector>} {
+// CHECK-LABEL: func.func @complementary_slots(
+// CHECK-NOT: pto.mem_bar
+// CHECK: return
+// CHECK-NOT: pto.mem_bar
+func.func @complementary_slots(%stage: index, %data: !v) {
+  %z64 = arith.constant 0 : i64
+  %p = pto.castptr %z64 : i64 -> !p
+  %z = arith.constant 0 : index
+  %one = arith.constant 1 : index
+  %four = arith.constant 4 : index
+  %mask = arith.constant 1 : index
+  %stride = arith.constant 64 : index
+  %slot_size = arith.constant 256 : index
+  %slot = arith.andi %stage, %mask : index
+  %base = arith.muli %slot, %slot_size : index
+  pto.vecscope {
+    %m = pto.pset_b32 "PAT_ALL" : !m
+    scf.for %i = %z to %four step %one {
+      %col = arith.muli %i, %stride : index
+      %src = arith.addi %base, %col : index
+      %end = arith.addi %slot_size, %col : index
+      %dst = arith.subi %end, %base : index
+      %v = pto.vlds %p[%src] : !p, index -> !v
+      pto.vsts %v, %p[%dst], %m : !v, !p, index, !m
+    }
+  }
+  return
+}
+// CHECK-LABEL: func.func @middle_slot_overlaps(
+// CHECK: pto.mem_bar
+// CHECK: return
+func.func @middle_slot_overlaps(%stage: index, %data: !v) {
+  %z64 = arith.constant 0 : i64
+  %p = pto.castptr %z64 : i64 -> !p
+  %z = arith.constant 0 : index
+  %one = arith.constant 1 : index
+  %four = arith.constant 4 : index
+  %mask = arith.constant 3 : index
+  %stride = arith.constant 64 : index
+  %slot_size = arith.constant 128 : index
+  %slot = arith.andi %stage, %mask : index
+  %base = arith.muli %slot, %slot_size : index
+  pto.vecscope {
+    %m = pto.pset_b32 "PAT_ALL" : !m
+    scf.for %i = %z to %four step %one {
+      %col = arith.muli %i, %stride : index
+      %src = arith.addi %base, %col : index
+      %end = arith.addi %slot_size, %col : index
+      %dst = arith.subi %end, %base : index
+      %v = pto.vlds %p[%src] : !p, index -> !v
+      pto.vsts %v, %p[%dst], %m : !v, !p, index, !m
+    }
+  }
+  return
+}
+// CHECK-LABEL: func.func @stage_varies_across_iterations(
+// CHECK: pto.mem_bar
+// CHECK: return
+func.func @stage_varies_across_iterations(%stage: index, %data: !v) {
+  %z64 = arith.constant 0 : i64
+  %p = pto.castptr %z64 : i64 -> !p
+  %z = arith.constant 0 : index
+  %one = arith.constant 1 : index
+  %four = arith.constant 4 : index
+  %mask = arith.constant 1 : index
+  %stride = arith.constant 64 : index
+  %slot_size = arith.constant 256 : index
+  pto.vecscope {
+    %m = pto.pset_b32 "PAT_ALL" : !m
+    scf.for %i = %z to %four step %one {
+      %slot = arith.andi %i, %mask : index
+      %base = arith.muli %slot, %slot_size : index
+      %col = arith.muli %i, %stride : index
+      %src = arith.addi %base, %col : index
+      %end = arith.addi %slot_size, %col : index
+      %dst = arith.subi %end, %base : index
+      %v = pto.vlds %p[%src] : !p, index -> !v
+      pto.vsts %v, %p[%dst], %m : !v, !p, index, !m
+    }
+  }
+  return
+}
+}

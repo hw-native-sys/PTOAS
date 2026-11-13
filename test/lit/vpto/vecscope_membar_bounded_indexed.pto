@@ -1,0 +1,268 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// You should not use this file except in compliance with the License.
+// You may refer to the License for details.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+
+// RUN: pto-test-opt --pto-insert-vecscope-membar %s | FileCheck %s
+// RUN: pto-test-opt --pto-insert-vecscope-membar --pto-insert-vecscope-membar %s | FileCheck %s
+// RUN: ptoas --pto-arch=a5 --pto-backend=vpto --emit-vpto --enable-vecscope-mem-bar=true %s | FileCheck %s
+
+!mb16 = !pto.mask<b16>
+!mb32 = !pto.mask<b32>
+!pf32ub = !pto.ptr<f32, ub>
+!pui16ub = !pto.ptr<ui16, ub>
+!pui8ub = !pto.ptr<ui8, ub>
+!v128xui16 = !pto.vreg<128xui16>
+!v64xf32 = !pto.vreg<64xf32>
+!v64xui32 = !pto.vreg<64xui32>
+
+module {
+// CHECK-LABEL: func.func @varying_shift_disjoint(
+// CHECK-NOT: pto.mem_bar
+// CHECK: return
+// CHECK-NOT: pto.mem_bar
+  func.func @varying_shift_disjoint() {
+    %z = arith.constant 0 : index
+    %n = arith.constant 4 : index
+    %one = arith.constant 1 : index
+    %shift = arith.constant 1 : i32
+    %stride = arith.constant 64 : i32
+    %roff = arith.constant 0 : index
+    %woff = arith.constant 1024 : index
+    %addr = arith.constant 0 : i64
+    %ub = pto.castptr %addr : i64 -> !pf32ub
+    %rb = pto.addptr %ub, %roff : !pto.ptr<f32, ub>, index -> !pto.ptr<f32, ub>
+    %wb = pto.addptr %ub, %woff : !pto.ptr<f32, ub>, index -> !pto.ptr<f32, ub>
+    pto.vecscope {
+      %mask = pto.pset_b32 "PAT_ALL" : !mb32
+      scf.for %iv = %z to %n step %one {
+        %i = arith.index_cast %iv : index to i32
+        %q = arith.shrsi %i, %shift : i32
+        %t = arith.muli %q, %stride : i32
+        %ivstride = arith.constant 128 : i32
+        %linear = arith.muli %i, %ivstride : i32
+        %at = arith.addi %t, %linear : i32
+        %idx = arith.index_cast %at : i32 to index
+        %v = pto.vlds %rb[%idx] : !pf32ub, index -> !v64xf32
+        pto.vsts %v, %wb[%idx], %mask : !v64xf32, !pf32ub, index, !mb32
+      }
+    }
+    return
+  }
+
+// CHECK-LABEL: func.func @varying_shift_real_overlap(
+// CHECK: scf.for
+// CHECK: pto.vlds
+// CHECK: pto.vsts
+// CHECK-NEXT: pto.mem_bar "VLD_VST"
+// CHECK-NEXT: }
+// CHECK: return
+  func.func @varying_shift_real_overlap() {
+    %z = arith.constant 0 : index
+    %n = arith.constant 4 : index
+    %one = arith.constant 1 : index
+    %shift = arith.constant 1 : i32
+    %stride = arith.constant -64 : i32
+    %roff = arith.constant 64 : index
+    %woff = arith.constant 0 : index
+    %addr = arith.constant 0 : i64
+    %ub = pto.castptr %addr : i64 -> !pf32ub
+    %rb = pto.addptr %ub, %roff : !pto.ptr<f32, ub>, index -> !pto.ptr<f32, ub>
+    %wb = pto.addptr %ub, %woff : !pto.ptr<f32, ub>, index -> !pto.ptr<f32, ub>
+    pto.vecscope {
+      %mask = pto.pset_b32 "PAT_ALL" : !mb32
+      scf.for %iv = %z to %n step %one {
+        %i = arith.index_cast %iv : index to i32
+        %q = arith.shrsi %i, %shift : i32
+        %t = arith.muli %q, %stride : i32
+        %ivstride = arith.constant 128 : i32
+        %linear = arith.muli %i, %ivstride : i32
+        %at = arith.addi %t, %linear : i32
+        %idx = arith.index_cast %at : i32 to index
+        %v = pto.vlds %rb[%idx] : !pf32ub, index -> !v64xf32
+        pto.vsts %v, %wb[%idx], %mask : !v64xf32, !pf32ub, index, !mb32
+      }
+    }
+    return
+  }
+
+// CHECK-LABEL: func.func @masked_wrapping_child_disjoint(
+// CHECK-NOT: pto.mem_bar
+// CHECK: return
+// CHECK-NOT: pto.mem_bar
+  func.func @masked_wrapping_child_disjoint(%x: i32) {
+    %z = arith.constant 0 : index
+    %n = arith.constant 4 : index
+    %one = arith.constant 1 : index
+    %max = arith.constant 2147483647 : i32
+    %bits = arith.constant 3 : i32
+    %stride = arith.constant 64 : index
+    %off = arith.constant 1024 : index
+    %addr = arith.constant 0 : i64
+    %ub = pto.castptr %addr : i64 -> !pf32ub
+    %wb = pto.addptr %ub, %off : !pto.ptr<f32, ub>, index -> !pto.ptr<f32, ub>
+    pto.vecscope {
+      %mask = pto.pset_b32 "PAT_ALL" : !mb32
+      scf.for %iv = %z to %n step %one {
+        %sum = arith.addi %x, %max : i32
+        %bounded = arith.andi %sum, %bits : i32
+        %idx = arith.index_cast %bounded : i32 to index
+        %v = pto.vlds %ub[%idx] : !pf32ub, index -> !v64xf32
+        %wi = arith.muli %iv, %stride : index
+        pto.vsts %v, %wb[%wi], %mask : !v64xf32, !pf32ub, index, !mb32
+      }
+    }
+    return
+  }
+
+// CHECK-LABEL: func.func @gather_u16_max_index_overlap(
+// CHECK: pto.vgather2
+// CHECK-NOT: pto.vsts
+// CHECK: pto.mem_bar "VLD_VST"
+// CHECK-NEXT: pto.vsts %arg2
+// CHECK: return
+  func.func @gather_u16_max_index_overlap(%offsets: !v128xui16, %pred: !mb16, %value: !v128xui16) {
+    %ro = arith.constant 0 : index
+    %wo = arith.constant 65535 : index
+    %addr = arith.constant 0 : i64
+    %ub = pto.castptr %addr : i64 -> !pui16ub
+    %src = pto.addptr %ub, %ro : !pto.ptr<ui16, ub>, index -> !pto.ptr<ui16, ub>
+    %base = pto.castptr %addr : i64 -> !pui16ub
+    pto.vecscope {
+      %all = pto.pset_b16 "PAT_ALL" : !mb16
+      %g = pto.vgather2 %src, %offsets, %pred : !pui16ub, !v128xui16, !mb16 -> !v128xui16
+      pto.vsts %value, %base[%wo], %all : !v128xui16, !pui16ub, index, !mb16
+      pto.vsts %g, %base[%wo], %all : !v128xui16, !pui16ub, index, !mb16
+    }
+    return
+  }
+
+// CHECK-LABEL: func.func @gather_u32_before_source(
+// CHECK-NOT: pto.mem_bar
+// CHECK: return
+// CHECK-NOT: pto.mem_bar
+  func.func @gather_u32_before_source(%offsets: !v64xui32, %pred: !mb32, %value: !v64xf32, %unused_sink: !pf32ub) {
+    %ro = arith.constant 4096 : index
+    %wo = arith.constant 0 : index
+    %addr = arith.constant 0 : i64
+    %ub = pto.castptr %addr : i64 -> !pf32ub
+    %src = pto.addptr %ub, %ro : !pto.ptr<f32, ub>, index -> !pto.ptr<f32, ub>
+    %base = pto.castptr %addr : i64 -> !pf32ub
+    %so = arith.constant 2048 : index
+    pto.vecscope {
+      %all = pto.pset_b32 "PAT_ALL" : !mb32
+      %g = pto.vgather2 %src, %offsets, %pred : !pf32ub, !v64xui32, !mb32 -> !v64xf32
+      pto.vsts %value, %base[%wo], %all : !v64xf32, !pf32ub, index, !mb32
+      pto.vsts %g, %base[%so], %all : !v64xf32, !pf32ub, index, !mb32
+    }
+    return
+  }
+
+// CHECK-LABEL: func.func @gather_u32_max_index_overlap(
+// CHECK: pto.vgather2
+// CHECK-NOT: pto.vsts
+// CHECK: pto.mem_bar "VLD_VST"
+// CHECK-NEXT: pto.vsts %arg2
+// CHECK: return
+  func.func @gather_u32_max_index_overlap(%offsets: !v64xui32, %pred: !mb32, %value: !v64xf32) {
+    %ro = arith.constant 0 : index
+    %wo = arith.constant 4294967295 : index
+    %addr = arith.constant 0 : i64
+    %ub = pto.castptr %addr : i64 -> !pf32ub
+    %src = pto.addptr %ub, %ro : !pto.ptr<f32, ub>, index -> !pto.ptr<f32, ub>
+    %base = pto.castptr %addr : i64 -> !pf32ub
+    pto.vecscope {
+      %all = pto.pset_b32 "PAT_ALL" : !mb32
+      %g = pto.vgather2 %src, %offsets, %pred : !pf32ub, !v64xui32, !mb32 -> !v64xf32
+      pto.vsts %value, %base[%wo], %all : !v64xf32, !pf32ub, index, !mb32
+      pto.vsts %g, %base[%wo], %all : !v64xf32, !pf32ub, index, !mb32
+    }
+    return
+  }
+
+// CHECK-LABEL: func.func @gather_b8_actual_read_width(
+// CHECK-NOT: pto.mem_bar
+// CHECK: return
+// CHECK-NOT: pto.mem_bar
+  func.func @gather_b8_actual_read_width(%offsets: !v128xui16, %pred: !mb16, %value: !v128xui16) {
+    %ro = arith.constant 4096 : index
+    %wo = arith.constant 34816 : index
+    %addr = arith.constant 0 : i64
+    %ub = pto.castptr %addr : i64 -> !pui8ub
+    %src = pto.addptr %ub, %ro : !pto.ptr<ui8, ub>, index -> !pto.ptr<ui8, ub>
+    %base = pto.castptr %addr : i64 -> !pui16ub
+    %so = arith.constant 1024 : index
+    pto.vecscope {
+      %all = pto.pset_b16 "PAT_ALL" : !mb16
+      %g = pto.vgather2 %src, %offsets, %pred : !pui8ub, !v128xui16, !mb16 -> !v128xui16
+      pto.vsts %value, %base[%wo], %all : !v128xui16, !pui16ub, index, !mb16
+      pto.vsts %g, %base[%so], %all : !v128xui16, !pui16ub, index, !mb16
+    }
+    return
+  }
+
+// CHECK-LABEL: func.func @gather_u16_beyond_domain(
+// CHECK-NOT: pto.mem_bar
+// CHECK: return
+// CHECK-NOT: pto.mem_bar
+  func.func @gather_u16_beyond_domain(%offsets: !v128xui16, %pred: !mb16, %value: !v128xui16) {
+    %ro = arith.constant 0 : index
+    %wo = arith.constant 65536 : index
+    %addr = arith.constant 0 : i64
+    %ub = pto.castptr %addr : i64 -> !pui16ub
+    %src = pto.addptr %ub, %ro : !pto.ptr<ui16, ub>, index -> !pto.ptr<ui16, ub>
+    %base = pto.castptr %addr : i64 -> !pui16ub
+    %so = arith.constant 66048 : index
+    pto.vecscope {
+      %all = pto.pset_b16 "PAT_ALL" : !mb16
+      %g = pto.vgather2 %src, %offsets, %pred : !pui16ub, !v128xui16, !mb16 -> !v128xui16
+      pto.vsts %value, %base[%wo], %all : !v128xui16, !pui16ub, index, !mb16
+      pto.vsts %g, %base[%so], %all : !v128xui16, !pui16ub, index, !mb16
+    }
+    return
+  }
+
+// CHECK-LABEL: func.func @gather_unknown_source(
+// CHECK: pto.vgather2
+// CHECK-NOT: pto.vsts
+// CHECK: pto.mem_bar "VLD_VST"
+// CHECK-NEXT: pto.vsts %arg3
+// CHECK: return
+  func.func @gather_unknown_source(%src: !pui16ub, %dst: !pui16ub, %offsets: !v128xui16, %v: !v128xui16) {
+    %z = arith.constant 0 : index
+    pto.vecscope {
+      %m = pto.pset_b16 "PAT_ALL" : !mb16
+      %g = pto.vgather2 %src, %offsets, %m : !pui16ub, !v128xui16, !mb16 -> !v128xui16
+      pto.vsts %v, %dst[%z], %m : !v128xui16, !pui16ub, index, !mb16
+      pto.vsts %g, %dst[%z], %m : !v128xui16, !pui16ub, index, !mb16
+    }
+    return
+  }
+
+// CHECK-LABEL: func.func @gather_b8_max_index_overlap(
+// CHECK: pto.vgather2
+// CHECK-NOT: pto.vsts
+// CHECK: pto.mem_bar "VLD_VST"
+// CHECK-NEXT: pto.vsts %arg2
+// CHECK: return
+  func.func @gather_b8_max_index_overlap(%offsets: !v128xui16, %pred: !mb16, %value: !v128xui16) {
+    %ro = arith.constant 0 : index
+    %wo = arith.constant 32767 : index
+    %addr = arith.constant 0 : i64
+    %ub = pto.castptr %addr : i64 -> !pui8ub
+    %src = pto.addptr %ub, %ro : !pto.ptr<ui8, ub>, index -> !pto.ptr<ui8, ub>
+    %base = pto.castptr %addr : i64 -> !pui16ub
+    %so = arith.constant 1024 : index
+    pto.vecscope {
+      %all = pto.pset_b16 "PAT_ALL" : !mb16
+      %g = pto.vgather2 %src, %offsets, %pred : !pui8ub, !v128xui16, !mb16 -> !v128xui16
+      pto.vsts %value, %base[%wo], %all : !v128xui16, !pui16ub, index, !mb16
+      pto.vsts %g, %base[%so], %all : !v128xui16, !pui16ub, index, !mb16
+    }
+    return
+  }
+}

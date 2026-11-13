@@ -1,0 +1,176 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// You should not use this file except in compliance with the License.
+// You may refer to the License for details.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+
+// RUN: pto-test-opt --pto-insert-vecscope-membar %s | FileCheck %s
+// RUN: pto-test-opt --pto-insert-vecscope-membar --pto-insert-vecscope-membar %s | FileCheck %s
+// RUN: ptoas --pto-arch=a5 --pto-backend=vpto --emit-vpto --enable-vecscope-mem-bar=true %s | FileCheck %s
+
+!mb16 = !pto.mask<b16>
+!pui16ub = !pto.ptr<ui16, ub>
+!v128xi16 = !pto.vreg<128xi16>
+!v128xui16 = !pto.vreg<128xui16>
+
+module attributes {pto.target_arch = "a5"} {
+// CHECK-LABEL: func.func @table_dynamic_scatter_adjacent(
+// CHECK-NOT: pto.mem_bar
+// CHECK: return
+// CHECK-NOT: pto.mem_bar
+func.func @table_dynamic_scatter_adjacent() {
+  %c0 = arith.constant 0 : index
+  %c1 = arith.constant 1 : index
+  %c2 = arith.constant 2 : index
+  %s0 = arith.constant 0 : i16
+  %src0 = arith.constant 0 : i64
+  %dst0 = arith.constant 4096 : i64
+  %tab0 = arith.constant 196608 : i64
+  %one64 = arith.constant 1 : i64
+  %src = pto.castptr %src0 : i64 -> !pui16ub
+  %dst = pto.castptr %dst0 : i64 -> !pui16ub
+  %tab = pto.castptr %tab0 : i64 -> !pui16ub
+  pto.set_loop_size_outtoub %one64, %one64 : i64, i64
+
+  pto.vecscope {
+    %i = pto.vci %s0 : i16 -> !v128xi16
+    %u = pto.vbitcast %i : !v128xi16 -> !v128xui16
+    %pm = pto.pset_b16 "PAT_ALL" : !mb16
+    pto.vsts %u, %tab[%c0], %pm : !v128xui16, !pui16ub, index, !mb16
+  }
+
+  scf.for %oi = %c0 to %c2 step %c1 {
+    %ob = arith.constant 195582 : i64
+    %op = pto.castptr %ob : i64 -> !pui16ub
+    %origin = arith.index_cast %oi : index to i16
+    %scalei = arith.constant 128 : i16
+    %scale = builtin.unrealized_conversion_cast %scalei : i16 to ui16
+    pto.vecscope {
+      %sm = pto.pset_b16 "PAT_ALL" : !mb16
+      %pm4 = pto.pset_b16 "PAT_VL4" : !mb16
+      %ri = pto.vci %origin : i16 -> !v128xi16
+      %ru = pto.vbitcast %ri : !v128xi16 -> !v128xui16
+      %ro = pto.vmuls %ru, %scale, %sm : !v128xui16, ui16, !mb16 -> !v128xui16
+      %sv = pto.vlds %src[%c0] : !pui16ub, index -> !v128xui16
+      pto.vscatter %sv, %op, %ro, %pm4 : !v128xui16, !pui16ub, !v128xui16, !mb16
+    }
+  }
+  pto.vecscope {
+    %m2 = pto.pset_b16 "PAT_ALL" : !mb16
+    %idx = pto.vlds %tab[%c0] : !pui16ub, index -> !v128xui16
+    %a = pto.vgather2 %src, %idx, %m2 : !pui16ub, !v128xui16, !mb16 -> !v128xui16
+    pto.vsts %a, %dst[%c0], %m2 : !v128xui16, !pui16ub, index, !mb16
+    %b = pto.vgather2 %src, %idx, %m2 : !pui16ub, !v128xui16, !mb16 -> !v128xui16
+    %keep = arith.constant 128 : index
+    pto.vsts %b, %dst[%keep], %m2 : !v128xui16, !pui16ub, index, !mb16
+  }
+  return
+}
+
+// CHECK-LABEL: func.func @table_dynamic_scatter_overlap(
+// CHECK: pto.mem_bar
+// CHECK: return
+func.func @table_dynamic_scatter_overlap() {
+  %c0 = arith.constant 0 : index
+  %c1 = arith.constant 1 : index
+  %c2 = arith.constant 2 : index
+  %s0 = arith.constant 0 : i16
+  %src0 = arith.constant 0 : i64
+  %dst0 = arith.constant 4096 : i64
+  %tab0 = arith.constant 196608 : i64
+  %one64 = arith.constant 1 : i64
+  %src = pto.castptr %src0 : i64 -> !pui16ub
+  %dst = pto.castptr %dst0 : i64 -> !pui16ub
+  %tab = pto.castptr %tab0 : i64 -> !pui16ub
+  pto.set_loop_size_outtoub %one64, %one64 : i64, i64
+
+  pto.vecscope {
+    %i = pto.vci %s0 : i16 -> !v128xi16
+    %u = pto.vbitcast %i : !v128xi16 -> !v128xui16
+    %pm = pto.pset_b16 "PAT_ALL" : !mb16
+    pto.vsts %u, %tab[%c0], %pm : !v128xui16, !pui16ub, index, !mb16
+  }
+
+  scf.for %oi = %c0 to %c2 step %c1 {
+    %ob = arith.constant 195584 : i64
+    %op = pto.castptr %ob : i64 -> !pui16ub
+    %origin = arith.index_cast %oi : index to i16
+    %scalei = arith.constant 128 : i16
+    %scale = builtin.unrealized_conversion_cast %scalei : i16 to ui16
+    pto.vecscope {
+      %sm = pto.pset_b16 "PAT_ALL" : !mb16
+      %pm4 = pto.pset_b16 "PAT_VL4" : !mb16
+      %ri = pto.vci %origin : i16 -> !v128xi16
+      %ru = pto.vbitcast %ri : !v128xi16 -> !v128xui16
+      %ro = pto.vmuls %ru, %scale, %sm : !v128xui16, ui16, !mb16 -> !v128xui16
+      %sv = pto.vlds %src[%c0] : !pui16ub, index -> !v128xui16
+      pto.vscatter %sv, %op, %ro, %pm4 : !v128xui16, !pui16ub, !v128xui16, !mb16
+    }
+  }
+  pto.vecscope {
+    %m2 = pto.pset_b16 "PAT_ALL" : !mb16
+    %idx = pto.vlds %tab[%c0] : !pui16ub, index -> !v128xui16
+    %a = pto.vgather2 %src, %idx, %m2 : !pui16ub, !v128xui16, !mb16 -> !v128xui16
+    pto.vsts %a, %dst[%c0], %m2 : !v128xui16, !pui16ub, index, !mb16
+    %b = pto.vgather2 %src, %idx, %m2 : !pui16ub, !v128xui16, !mb16 -> !v128xui16
+    %keep = arith.constant 128 : index
+    pto.vsts %b, %dst[%keep], %m2 : !v128xui16, !pui16ub, index, !mb16
+  }
+  return
+}
+
+// CHECK-LABEL: func.func @table_dynamic_scatter_wrap(
+// CHECK: pto.mem_bar
+// CHECK: return
+func.func @table_dynamic_scatter_wrap() {
+  %c0 = arith.constant 0 : index
+  %c1 = arith.constant 1 : index
+  %c2 = arith.constant 2 : index
+  %s0 = arith.constant 0 : i16
+  %src0 = arith.constant 0 : i64
+  %dst0 = arith.constant 4096 : i64
+  %tab0 = arith.constant 196608 : i64
+  %one64 = arith.constant 1 : i64
+  %src = pto.castptr %src0 : i64 -> !pui16ub
+  %dst = pto.castptr %dst0 : i64 -> !pui16ub
+  %tab = pto.castptr %tab0 : i64 -> !pui16ub
+  pto.set_loop_size_outtoub %one64, %one64 : i64, i64
+
+  pto.vecscope {
+    %i = pto.vci %s0 : i16 -> !v128xi16
+    %u = pto.vbitcast %i : !v128xi16 -> !v128xui16
+    %pm = pto.pset_b16 "PAT_ALL" : !mb16
+    pto.vsts %u, %tab[%c0], %pm : !v128xui16, !pui16ub, index, !mb16
+  }
+
+  scf.for %oi = %c0 to %c2 step %c1 {
+    %ob = arith.constant 195582 : i64
+    %op = pto.castptr %ob : i64 -> !pui16ub
+    %origin = arith.index_cast %oi : index to i16
+    %scalei = arith.constant -32768 : i16
+    %scale = builtin.unrealized_conversion_cast %scalei : i16 to ui16
+    pto.vecscope {
+      %sm = pto.pset_b16 "PAT_ALL" : !mb16
+      %pm4 = pto.pset_b16 "PAT_VL4" : !mb16
+      %ri = pto.vci %origin : i16 -> !v128xi16
+      %ru = pto.vbitcast %ri : !v128xi16 -> !v128xui16
+      %ro = pto.vmuls %ru, %scale, %sm : !v128xui16, ui16, !mb16 -> !v128xui16
+      %sv = pto.vlds %src[%c0] : !pui16ub, index -> !v128xui16
+      pto.vscatter %sv, %op, %ro, %pm4 : !v128xui16, !pui16ub, !v128xui16, !mb16
+    }
+  }
+  pto.vecscope {
+    %m2 = pto.pset_b16 "PAT_ALL" : !mb16
+    %idx = pto.vlds %tab[%c0] : !pui16ub, index -> !v128xui16
+    %a = pto.vgather2 %src, %idx, %m2 : !pui16ub, !v128xui16, !mb16 -> !v128xui16
+    pto.vsts %a, %dst[%c0], %m2 : !v128xui16, !pui16ub, index, !mb16
+    %b = pto.vgather2 %src, %idx, %m2 : !pui16ub, !v128xui16, !mb16 -> !v128xui16
+    %keep = arith.constant 128 : index
+    pto.vsts %b, %dst[%keep], %m2 : !v128xui16, !pui16ub, index, !mb16
+  }
+  return
+}
+}

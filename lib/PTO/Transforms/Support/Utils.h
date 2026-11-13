@@ -81,8 +81,6 @@ namespace pto {
     pto::AddressSpace::VEC, pto::AddressSpace::MAT, pto::AddressSpace::ACC, pto::AddressSpace::LEFT, pto::AddressSpace::RIGHT, pto::AddressSpace::BIAS, pto::AddressSpace::SCALING};
   constexpr const uint8_t kBitsToByte = 8;
   func::ReturnOp getAssumedUniqueReturnOp(func::FuncOp funcOp);
-  // Single-source aliases; control-flow alternatives use TileProvenance.
-  std::optional<std::pair<Value, Value>> getOperationAliasInfo(Operation *op);
   SmallVector<std::pair<Value, Value>, kValue15>
   getSemanticNoAliasPairs(Operation *op);
   LogicalResult verifySemanticNoAliasRanges(func::FuncOp func);

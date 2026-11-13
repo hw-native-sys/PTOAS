@@ -300,6 +300,16 @@ pto.dsb "ALL"
 
 Without proper barriers, loads may see stale data or stores may be reordered incorrectly.
 
+Automatic vecscope memory-barrier analysis can also prove loop-carried UB
+accesses disjoint. For a runtime upper bound such as `min(n, 64)`, it uses
+a constant iteration-domain envelope when the lower bound and positive step
+are constant. A barrier is omitted only if the address-intersection relation
+is empty over that envelope; a nonempty or unmodelled relation retains the
+conservative dynamic-loop barrier. The envelope does not change the actual
+loop bound. Distinct allocations and invariant disjoint footprints are checked
+before the dynamic-loop fallback.
+
+
 #### Execution Scopes (__VEC_SCOPE__)
 
 `__VEC_SCOPE__` is the IR-level representation of a Vector Function (VF) launch. In the PTO architecture, it defines the hardware interface between the Scalar Unit and the Vector Thread.

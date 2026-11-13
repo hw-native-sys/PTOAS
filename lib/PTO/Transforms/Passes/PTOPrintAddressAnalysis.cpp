@@ -9,6 +9,9 @@
 //===- PTOPrintAddressAnalysis.cpp - Address analysis debug printer ------===//
 
 #include "PTO/Analysis/PTOAddressAnalysis.h"
+#include "PTO/Analysis/PTOMemoryAliasAnalysis.h"
+#include "PTO/Analysis/PTOMemoryDependenceAnalysis.h"
+#include "PTO/Analysis/PTOIntegerRange.h"
 #include "PTO/Support/CodeConstants.h"
 #include "PTO/Transforms/Passes.h"
 
@@ -203,6 +206,105 @@ static void printLoopOpAddressInfo(
   }
 }
 
+static void printContextualFacts(llvm::raw_ostream& os, func::FuncOp function, pto::PTOValueEvolutionAnalysis& values)
+{
+    function.walk([&](Operation* operation) {
+        if (!isa<arith::TruncIOp>(operation)) {
+            return;
+        }
+        auto range = values.getRangeAt(operation->getResult(0), operation);
+        auto preserves = values.preservesValueAt(operation, operation);
+        os << " contextual-trunc range=";
+        if (range) {
+            os << "[" << range.value->lowerInclusive.getSExtValue() << "," << range.value->upperInclusive.getSExtValue()
+               << "]";
+        } else {
+            os << "unknown";
+        }
+        os << " preserves=" << (preserves && *preserves.value ? "true" : "unknown") << "\n";
+    });
+    function.walk([&](scf::ForOp loop) {
+        auto bound = pto::integer_range::getLoopEnvelope(loop);
+        os << " loop-envelope=";
+        if (bound.valid) {
+            os << "[" << bound.lb << "," << bound.ub << ") step=" << bound.step;
+            os << " exact-trip=";
+            if (auto count = bound.exactTripCount()) {
+                os << *count;
+            } else {
+                os << "unknown";
+            }
+        } else {
+            os << "unknown";
+        }
+        os << "\n";
+    });
+}
+
+static void printSchedulerMemoryQueries(
+    llvm::raw_ostream& os, func::FuncOp function, pto::PTOAddressAnalysis& addresses)
+{
+    SmallVector<pto::ResolvedMemoryAccess> accesses;
+    function.walk([&](Operation* operation) {
+        if (!pto::isUBMemoryOp(operation)) {
+            return;
+        }
+        auto resolved = pto::resolveMemoryAccesses(operation, pto::getVPTOSchedulingSemantics(operation), &addresses);
+        accesses.append(resolved.begin(), resolved.end());
+    });
+    for (unsigned i = 0; i < accesses.size(); ++i) {
+        for (unsigned j = i + 1; j < accesses.size(); ++j) {
+            os << " scheduler-memory-pair " << i << "," << j
+               << " may-alias=" << (pto::mayAlias(accesses[i], accesses[j]) ? "true" : "false")
+               << " byte-difference=";
+            if (auto difference = pto::getExactByteDifference(accesses[i], accesses[j])) {
+                os << *difference;
+            } else {
+                os << "unknown";
+            }
+            os << "\n";
+        }
+    }
+}
+
+static void printMemoryQueries(llvm::raw_ostream& os, func::FuncOp function)
+{
+    SmallVector<pto::PTOMemoryAccessOccurrence> accesses;
+    function.walk([&](Operation* operation) {
+        if (!pto::isUBMemoryOp(operation)) {
+            return;
+        }
+        SmallVector<Value> ivs;
+        for (Operation* parent = operation->getParentOp(); parent != function.getOperation();
+             parent = parent->getParentOp()) {
+            if (auto loop = dyn_cast<scf::ForOp>(parent)) {
+                ivs.push_back(loop.getInductionVar());
+            }
+        }
+        std::reverse(ivs.begin(), ivs.end());
+        auto footprints = pto::getMemoryFootprints(operation, ivs);
+        if (footprints.empty()) {
+            os << " memory-access " << operation->getName() << " footprint=unknown\n";
+        }
+        for (const auto& footprint : footprints) {
+            accesses.push_back({operation, footprint});
+        }
+    });
+    for (unsigned i = 0; i < accesses.size(); ++i) {
+        for (unsigned j = i + 1; j < accesses.size(); ++j) {
+            auto alias = pto::aliasMemorySameIteration(accesses[i].footprint, accesses[j].footprint);
+            auto overlap = pto::querySequentialMemoryOverlap(accesses[i], accesses[j], function, true);
+            auto carried = pto::queryCarriedMemoryOverlap(accesses[i], accesses[j], function);
+            os << " memory-pair " << i << "," << j << " disjoint="
+               << (alias == pto::PTOMemoryAliasResult::NoAlias ||
+                           overlap == pto::PTOMemoryDependenceStatus::NoDependence ?
+                       "true" :
+                       "unknown")
+               << " carried=" << carried.size() << "\n";
+        }
+    }
+}
+
 struct PTOPrintAddressAnalysisPass
     : public pto::impl::PTOPrintAddressAnalysisBase<
           PTOPrintAddressAnalysisPass> {
@@ -230,6 +332,11 @@ struct PTOPrintAddressAnalysisPass
                                loop);
       });
     });
+    if (memoryQueries) {
+      printContextualFacts(os, function, valueAnalysis);
+      printMemoryQueries(os, function);
+      printSchedulerMemoryQueries(os, function, addressAnalysis);
+    }
     llvm::errs() << storage;
   }
 };

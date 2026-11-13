@@ -1,0 +1,335 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software: you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+
+// RUN: pto-test-opt --pto-insert-vecscope-membar %s | FileCheck %s
+// RUN: pto-test-opt --pto-insert-vecscope-membar --pto-insert-vecscope-membar %s | FileCheck %s
+// RUN: ptoas --pto-arch=a5 --pto-backend=vpto --emit-vpto --enable-vecscope-mem-bar=true %s | FileCheck %s
+
+!p = !pto.ptr<f32, ub>
+!v = !pto.vreg<64xf32>
+!s = !pto.vreg<64xsi32>
+!u = !pto.vreg<64xui32>
+!m = !pto.mask<b32>
+!p16 = !pto.ptr<f16, ub>
+!v16 = !pto.vreg<128xf16>
+!s16 = !pto.vreg<128xsi16>
+!u16 = !pto.vreg<128xui16>
+!m16 = !pto.mask<b16>
+module attributes {pto.target_arch = "a5"} {
+// CHECK-LABEL: func.func @bounded_gather(
+// CHECK-NOT: pto.mem_bar
+// CHECK: return
+// CHECK-NOT: pto.mem_bar
+func.func @bounded_gather(%p: !p, %idx: !s, %data: !v) {
+  %adjacent = arith.constant 256 : index
+  %out = arith.constant 1024 : index
+  %zero = arith.constant 0 : i32
+  %limit = arith.constant 256 : i32
+  pto.vecscope {
+    %all = pto.pset_b32 "PAT_ALL" : !m
+    %zv = pto.vdup %zero, %all : i32, !m -> !s
+    %bound = pto.vdup %limit, %all : i32, !m -> !s
+    %ge = pto.vcmp %idx, %zv, %all, "ge" : !s, !s, !m -> !m
+    %lt = pto.vcmp %idx, %bound, %all, "lt" : !s, !s, !m -> !m
+    %valid = pto.pand %ge, %lt, %all : !m, !m, !m -> !m
+    %ui = pto.vbitcast %idx : !s -> !u
+    pto.vsts %data, %p[%adjacent], %all : !v, !p, index, !m
+    %v = pto.vgather2_bc %p, %ui, %valid : !p, !u, !m -> !v
+    pto.vsts %v, %p[%out], %all : !v, !p, index, !m
+  }
+  return
+}
+
+// CHECK-LABEL: func.func @bounded_gather16(
+// CHECK-NOT: pto.mem_bar
+// CHECK: return
+// CHECK-NOT: pto.mem_bar
+func.func @bounded_gather16(%p: !p16, %idx: !s16, %data: !v16) {
+  %adjacent = arith.constant 256 : index
+  %out = arith.constant 1024 : index
+  %zero = arith.constant 0 : i16
+  %limit = arith.constant 256 : i16
+  pto.vecscope {
+    %all = pto.pset_b16 "PAT_ALL" : !m16
+    %zv = pto.vdup %zero, %all : i16, !m16 -> !s16
+    %bound = pto.vdup %limit, %all : i16, !m16 -> !s16
+    %ge = pto.vcmp %idx, %zv, %all, "ge" : !s16, !s16, !m16 -> !m16
+    %lt = pto.vcmp %idx, %bound, %all, "lt" : !s16, !s16, !m16 -> !m16
+    %valid = pto.pand %ge, %lt, %all : !m16, !m16, !m16 -> !m16
+    %ui = pto.vbitcast %idx : !s16 -> !u16
+    pto.vsts %data, %p[%adjacent], %all : !v16, !p16, index, !m16
+    %v = pto.vgather2 %p, %ui, %valid : !p16, !u16, !m16 -> !v16
+    pto.vsts %v, %p[%out], %all : !v16, !p16, index, !m16
+  }
+  return
+}
+
+// CHECK-LABEL: func.func @bounded_score_offsets(
+// CHECK-NOT: pto.mem_bar
+// CHECK: return
+// CHECK-NOT: pto.mem_bar
+func.func @bounded_score_offsets(%p: !p, %idx: !s, %data: !v) {
+  %z = arith.constant 513 : index
+  %out = arith.constant 1024 : index
+  %zero = arith.constant 0 : i32
+  %limit = arith.constant 256 : i32
+  pto.vecscope {
+    %all = pto.pset_b32 "PAT_ALL" : !m
+    %zv = pto.vdup %zero, %all : i32, !m -> !s
+    %bound = pto.vdup %limit, %all : i32, !m -> !s
+    %ge = pto.vcmp %idx, %zv, %all, "ge" : !s, !s, !m -> !m
+    %lt = pto.vcmp %idx, %bound, %all, "lt" : !s, !s, !m -> !m
+    %valid = pto.pand %ge, %lt, %all : !m, !m, !m -> !m
+    %ui = pto.vbitcast %idx : !s -> !u
+    %kii = arith.constant 2 : i32
+    %ki = builtin.unrealized_conversion_cast %kii : i32 to ui32
+    %kv = pto.vdup %ki, %all : ui32, !m -> !u
+    %product = pto.vmul %ui, %kv, %all : !u, !u, !m -> !u
+    %offset = pto.vadd %product, %kv, %all : !u, !u, !m -> !u
+    pto.vsts %data, %p[%z], %all : !v, !p, index, !m
+    %v = pto.vgather2_bc %p, %offset, %valid : !p, !u, !m -> !v
+    pto.vsts %v, %p[%out], %all : !v, !p, index, !m
+  }
+  return
+}
+
+// CHECK-LABEL: func.func @real_overlap(
+// CHECK: pto.mem_bar "VST_VLD"
+// CHECK: return
+func.func @real_overlap(%p: !p, %idx: !s, %data: !v) {
+  %z = arith.constant 0 : index
+  %out = arith.constant 1024 : index
+  %zero = arith.constant 0 : i32
+  %limit = arith.constant 256 : i32
+  pto.vecscope {
+    %all = pto.pset_b32 "PAT_ALL" : !m
+    %zv = pto.vdup %zero, %all : i32, !m -> !s
+    %bound = pto.vdup %limit, %all : i32, !m -> !s
+    %ge = pto.vcmp %idx, %zv, %all, "ge" : !s, !s, !m -> !m
+    %lt = pto.vcmp %idx, %bound, %all, "lt" : !s, !s, !m -> !m
+    %valid = pto.pand %ge, %lt, %all : !m, !m, !m -> !m
+    %ui = pto.vbitcast %idx : !s -> !u
+    pto.vsts %data, %p[%z], %all : !v, !p, index, !m
+    %v = pto.vgather2_bc %p, %ui, %valid : !p, !u, !m -> !v
+    pto.vsts %v, %p[%out], %all : !v, !p, index, !m
+  }
+  return
+}
+
+// CHECK-LABEL: func.func @missing_lower(
+// CHECK: pto.mem_bar "VST_VLD"
+// CHECK: return
+func.func @missing_lower(%p: !p, %idx: !s, %data: !v) {
+  %adjacent = arith.constant 256 : index
+  %out = arith.constant 1024 : index
+  %limit = arith.constant 256 : i32
+  pto.vecscope {
+    %all = pto.pset_b32 "PAT_ALL" : !m
+    %bound = pto.vdup %limit, %all : i32, !m -> !s
+    %lt = pto.vcmp %idx, %bound, %all, "lt" : !s, !s, !m -> !m
+    %ui = pto.vbitcast %idx : !s -> !u
+    pto.vsts %data, %p[%adjacent], %all : !v, !p, index, !m
+    %v = pto.vgather2_bc %p, %ui, %lt : !p, !u, !m -> !v
+    pto.vsts %v, %p[%out], %all : !v, !p, index, !m
+  }
+  return
+}
+
+// CHECK-LABEL: func.func @missing_upper(
+// CHECK: pto.mem_bar "VST_VLD"
+// CHECK: return
+func.func @missing_upper(%p: !p, %idx: !s, %data: !v) {
+  %adjacent = arith.constant 256 : index
+  %out = arith.constant 1024 : index
+  %zero = arith.constant 0 : i32
+  pto.vecscope {
+    %all = pto.pset_b32 "PAT_ALL" : !m
+    %zv = pto.vdup %zero, %all : i32, !m -> !s
+    %ge = pto.vcmp %idx, %zv, %all, "ge" : !s, !s, !m -> !m
+    %ui = pto.vbitcast %idx : !s -> !u
+    pto.vsts %data, %p[%adjacent], %all : !v, !p, index, !m
+    %v = pto.vgather2_bc %p, %ui, %ge : !p, !u, !m -> !v
+    pto.vsts %v, %p[%out], %all : !v, !p, index, !m
+  }
+  return
+}
+
+// CHECK-LABEL: func.func @or_is_not_conjunction(
+// CHECK: pto.mem_bar "VST_VLD"
+// CHECK: return
+func.func @or_is_not_conjunction(%p: !p, %idx: !s, %data: !v) {
+  %adjacent = arith.constant 256 : index
+  %out = arith.constant 1024 : index
+  %zero = arith.constant 0 : i32
+  %limit = arith.constant 256 : i32
+  pto.vecscope {
+    %all = pto.pset_b32 "PAT_ALL" : !m
+    %zv = pto.vdup %zero, %all : i32, !m -> !s
+    %bound = pto.vdup %limit, %all : i32, !m -> !s
+    %ge = pto.vcmp %idx, %zv, %all, "ge" : !s, !s, !m -> !m
+    %lt = pto.vcmp %idx, %bound, %all, "lt" : !s, !s, !m -> !m
+    %valid = pto.por %ge, %lt, %all : !m, !m, !m -> !m
+    %ui = pto.vbitcast %idx : !s -> !u
+    pto.vsts %data, %p[%adjacent], %all : !v, !p, index, !m
+    %v = pto.vgather2_bc %p, %ui, %valid : !p, !u, !m -> !v
+    pto.vsts %v, %p[%out], %all : !v, !p, index, !m
+  }
+  return
+}
+
+// CHECK-LABEL: func.func @partial_comparison(
+// CHECK: pto.mem_bar "VST_VLD"
+// CHECK: return
+func.func @partial_comparison(%p: !p, %idx: !s, %data: !v) {
+  %adjacent = arith.constant 256 : index
+  %out = arith.constant 1024 : index
+  %zero = arith.constant 0 : i32
+  %limit = arith.constant 256 : i32
+  pto.vecscope {
+    %all = pto.pset_b32 "PAT_ALL" : !m
+    %one = pto.pset_b32 "PAT_VL1" : !m
+    %zv = pto.vdup %zero, %all : i32, !m -> !s
+    %bound = pto.vdup %limit, %all : i32, !m -> !s
+    %ge = pto.vcmp %idx, %zv, %one, "ge" : !s, !s, !m -> !m
+    %lt = pto.vcmp %idx, %bound, %one, "lt" : !s, !s, !m -> !m
+    %valid = pto.pand %ge, %lt, %all : !m, !m, !m -> !m
+    %ui = pto.vbitcast %idx : !s -> !u
+    pto.vsts %data, %p[%adjacent], %all : !v, !p, index, !m
+    %v = pto.vgather2_bc %p, %ui, %valid : !p, !u, !m -> !v
+    pto.vsts %v, %p[%out], %all : !v, !p, index, !m
+  }
+  return
+}
+
+// CHECK-LABEL: func.func @wrapping_add(
+// CHECK: pto.mem_bar "VST_VLD"
+// CHECK: return
+func.func @wrapping_add(%p: !p, %idx: !s, %data: !v) {
+  %adjacent = arith.constant 256 : index
+  %out = arith.constant 1024 : index
+  %zero = arith.constant 0 : i32
+  %limit = arith.constant 256 : i32
+  pto.vecscope {
+    %all = pto.pset_b32 "PAT_ALL" : !m
+    %zv = pto.vdup %zero, %all : i32, !m -> !s
+    %bound = pto.vdup %limit, %all : i32, !m -> !s
+    %ge = pto.vcmp %idx, %zv, %all, "ge" : !s, !s, !m -> !m
+    %lt = pto.vcmp %idx, %bound, %all, "lt" : !s, !s, !m -> !m
+    %valid = pto.pand %ge, %lt, %all : !m, !m, !m -> !m
+    %ui = pto.vbitcast %idx : !s -> !u
+    %kii = arith.constant 4294967168 : i32
+    %ki = builtin.unrealized_conversion_cast %kii : i32 to ui32
+    %kv = pto.vdup %ki, %all : ui32, !m -> !u
+    %offset = pto.vadd %ui, %kv, %all : !u, !u, !m -> !u
+    pto.vsts %data, %p[%adjacent], %all : !v, !p, index, !m
+    %v = pto.vgather2_bc %p, %offset, %valid : !p, !u, !m -> !v
+    pto.vsts %v, %p[%out], %all : !v, !p, index, !m
+  }
+  return
+}
+
+// CHECK-LABEL: func.func @independent_war(
+// CHECK: pto.mem_bar "VLD_VST"
+// CHECK: return
+func.func @independent_war(%p: !p, %idx: !s, %data: !v) {
+  %out = arith.constant 1024 : index
+  %zero = arith.constant 0 : i32
+  %limit = arith.constant 256 : i32
+  pto.vecscope {
+    %all = pto.pset_b32 "PAT_ALL" : !m
+    %zv = pto.vdup %zero, %all : i32, !m -> !s
+    %bound = pto.vdup %limit, %all : i32, !m -> !s
+    %ge = pto.vcmp %idx, %zv, %all, "ge" : !s, !s, !m -> !m
+    %lt = pto.vcmp %idx, %bound, %all, "lt" : !s, !s, !m -> !m
+    %valid = pto.pand %ge, %lt, %all : !m, !m, !m -> !m
+    %ui = pto.vbitcast %idx : !s -> !u
+    %v = pto.vgather2_bc %p, %ui, %valid : !p, !u, !m -> !v
+    pto.vscatter %data, %p, %ui, %valid : !v, !p, !u, !m
+    pto.vsts %v, %p[%out], %all : !v, !p, index, !m
+  }
+  return
+}
+
+// CHECK-LABEL: func.func @dependent_war(
+// CHECK-NOT: pto.mem_bar
+// CHECK: return
+// CHECK-NOT: pto.mem_bar
+func.func @dependent_war(%p: !p, %idx: !s, %data: !v) {
+  %out = arith.constant 1024 : index
+  %zero = arith.constant 0 : i32
+  %limit = arith.constant 256 : i32
+  pto.vecscope {
+    %all = pto.pset_b32 "PAT_ALL" : !m
+    %zv = pto.vdup %zero, %all : i32, !m -> !s
+    %bound = pto.vdup %limit, %all : i32, !m -> !s
+    %ge = pto.vcmp %idx, %zv, %all, "ge" : !s, !s, !m -> !m
+    %lt = pto.vcmp %idx, %bound, %all, "lt" : !s, !s, !m -> !m
+    %valid = pto.pand %ge, %lt, %all : !m, !m, !m -> !m
+    %ui = pto.vbitcast %idx : !s -> !u
+    %v = pto.vgather2_bc %p, %ui, %valid : !p, !u, !m -> !v
+    pto.vscatter %v, %p, %ui, %valid : !v, !p, !u, !m
+    pto.vsts %v, %p[%out], %all : !v, !p, index, !m
+  }
+  return
+}
+
+// CHECK-LABEL: func.func @carried_disjoint(
+// CHECK-NOT: pto.mem_bar
+// CHECK: return
+// CHECK-NOT: pto.mem_bar
+func.func @carried_disjoint(%p: !p, %idx: !s, %data: !v) {
+  %z = arith.constant 0 : index
+  %zero = arith.constant 0 : i32
+  %limit = arith.constant 256 : i32
+  pto.vecscope {
+    %all = pto.pset_b32 "PAT_ALL" : !m
+    %zv = pto.vdup %zero, %all : i32, !m -> !s
+    %bound = pto.vdup %limit, %all : i32, !m -> !s
+    %ge = pto.vcmp %idx, %zv, %all, "ge" : !s, !s, !m -> !m
+    %lt = pto.vcmp %idx, %bound, %all, "lt" : !s, !s, !m -> !m
+    %valid = pto.pand %ge, %lt, %all : !m, !m, !m -> !m
+    %ui = pto.vbitcast %idx : !s -> !u
+    %two = arith.constant 2 : index
+    %step = arith.constant 1 : index
+    %stride = arith.constant 256 : index
+    scf.for %i = %z to %two step %step {
+      %shift = arith.muli %i, %stride : index
+      %base = pto.addptr %p, %shift : !pto.ptr<f32, ub>, index -> !pto.ptr<f32, ub>
+      pto.vscatter %data, %base, %ui, %valid : !v, !p, !u, !m
+    }
+  }
+  return
+}
+
+// CHECK-LABEL: func.func @carried_overlap(
+// CHECK: pto.mem_bar "VST_VST"
+// CHECK: return
+func.func @carried_overlap(%p: !p, %idx: !s, %data: !v) {
+  %z = arith.constant 0 : index
+  %zero = arith.constant 0 : i32
+  %limit = arith.constant 256 : i32
+  pto.vecscope {
+    %all = pto.pset_b32 "PAT_ALL" : !m
+    %zv = pto.vdup %zero, %all : i32, !m -> !s
+    %bound = pto.vdup %limit, %all : i32, !m -> !s
+    %ge = pto.vcmp %idx, %zv, %all, "ge" : !s, !s, !m -> !m
+    %lt = pto.vcmp %idx, %bound, %all, "lt" : !s, !s, !m -> !m
+    %valid = pto.pand %ge, %lt, %all : !m, !m, !m -> !m
+    %ui = pto.vbitcast %idx : !s -> !u
+    %two = arith.constant 2 : index
+    %step = arith.constant 1 : index
+    %stride = arith.constant 128 : index
+    scf.for %i = %z to %two step %step {
+      %shift = arith.muli %i, %stride : index
+      %base = pto.addptr %p, %shift : !pto.ptr<f32, ub>, index -> !pto.ptr<f32, ub>
+      pto.vscatter %data, %base, %ui, %valid : !v, !p, !u, !m
+    }
+  }
+  return
+}
+}

@@ -1,0 +1,151 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software: you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+
+// RUN: pto-test-opt --pto-insert-vecscope-membar %s | FileCheck %s
+// RUN: pto-test-opt --pto-insert-vecscope-membar --pto-insert-vecscope-membar %s | FileCheck %s
+// RUN: ptoas --pto-arch=a5 --pto-backend=vpto --emit-vpto --enable-vecscope-mem-bar=true %s | FileCheck %s
+
+!p = !pto.ptr<f32, ub>
+!v = !pto.vreg<64xf32>
+!s = !pto.vreg<64xsi32>
+!u = !pto.vreg<64xui32>
+!m = !pto.mask<b32>
+module attributes {pto.target_arch = "a5"} {
+// CHECK-LABEL: func.func @constant_row_indices(
+// CHECK-NOT: pto.mem_bar
+// CHECK: return
+// CHECK-NOT: pto.mem_bar
+func.func @constant_row_indices(%data: !v, %indices: !u) {
+  %z64 = arith.constant 0 : i64
+  %p = pto.castptr %z64 : i64 -> !p
+  %z = arith.constant 0 : index
+  %dst = arith.constant 128 : index
+  %out = arith.constant 256 : index
+  %zeroi = arith.constant 0 : i32
+  %zero = builtin.unrealized_conversion_cast %zeroi : i32 to si32
+  %threei = arith.constant 3 : i32
+  %three = builtin.unrealized_conversion_cast %threei : i32 to si32
+  %sixteeni = arith.constant 16 : i32
+  %sixteen = builtin.unrealized_conversion_cast %sixteeni : i32 to si32
+  %seveni = arith.constant 7 : i32
+  %seven = builtin.unrealized_conversion_cast %seveni : i32 to si32
+  %twoi = arith.constant 2 : i32
+  %two = builtin.unrealized_conversion_cast %twoi : i32 to si32
+  pto.vecscope {
+    %m = pto.pset_b32 "PAT_ALL" : !m
+    %lanes = pto.vci %zero : si32 -> !s
+    %shift = pto.vdup %three, %m : si32, !m -> !s
+    %row = pto.vshr %lanes, %shift, %m : !s, !s, !m -> !s
+    %stride = pto.vdup %sixteen, %m : si32, !m -> !s
+    %base = pto.vmul %row, %stride, %m : !s, !s, !m -> !s
+    %sevenv = pto.vdup %seven, %m : si32, !m -> !s
+    %k = pto.vand %lanes, %sevenv, %m : !s, !s, !m -> !s
+    %col = pto.vmuls %k, %two, %m : !s, si32, !m -> !s
+    %offset = pto.vadd %base, %col, %m : !s, !s, !m -> !s
+    %idx = pto.vbitcast %offset : !s -> !u
+    pto.vsts %data, %p[%dst], %m : !v, !p, index, !m
+    %v = pto.vgather2_bc %p, %idx, %m : !p, !u, !m -> !v
+    pto.vsts %v, %p[%out], %m : !v, !p, index, !m
+  }
+  return
+}
+// CHECK-LABEL: func.func @constant_indices_overlap(
+// CHECK: pto.mem_bar
+// CHECK: return
+func.func @constant_indices_overlap(%data: !v, %indices: !u) {
+  %z64 = arith.constant 0 : i64
+  %p = pto.castptr %z64 : i64 -> !p
+  %z = arith.constant 0 : index
+  %dst = arith.constant 0 : index
+  %out = arith.constant 256 : index
+  %zeroi = arith.constant 0 : i32
+  %zero = builtin.unrealized_conversion_cast %zeroi : i32 to si32
+  %threei = arith.constant 3 : i32
+  %three = builtin.unrealized_conversion_cast %threei : i32 to si32
+  %sixteeni = arith.constant 16 : i32
+  %sixteen = builtin.unrealized_conversion_cast %sixteeni : i32 to si32
+  %seveni = arith.constant 7 : i32
+  %seven = builtin.unrealized_conversion_cast %seveni : i32 to si32
+  %twoi = arith.constant 2 : i32
+  %two = builtin.unrealized_conversion_cast %twoi : i32 to si32
+  pto.vecscope {
+    %m = pto.pset_b32 "PAT_ALL" : !m
+    %lanes = pto.vci %zero : si32 -> !s
+    %shift = pto.vdup %three, %m : si32, !m -> !s
+    %row = pto.vshr %lanes, %shift, %m : !s, !s, !m -> !s
+    %stride = pto.vdup %sixteen, %m : si32, !m -> !s
+    %base = pto.vmul %row, %stride, %m : !s, !s, !m -> !s
+    %sevenv = pto.vdup %seven, %m : si32, !m -> !s
+    %k = pto.vand %lanes, %sevenv, %m : !s, !s, !m -> !s
+    %col = pto.vmuls %k, %two, %m : !s, si32, !m -> !s
+    %offset = pto.vadd %base, %col, %m : !s, !s, !m -> !s
+    %idx = pto.vbitcast %offset : !s -> !u
+    pto.vsts %data, %p[%dst], %m : !v, !p, index, !m
+    %v = pto.vgather2_bc %p, %idx, %m : !p, !u, !m -> !v
+    pto.vsts %v, %p[%out], %m : !v, !p, index, !m
+  }
+  return
+}
+// CHECK-LABEL: func.func @loaded_indices_unbounded(
+// CHECK: pto.mem_bar
+// CHECK: return
+func.func @loaded_indices_unbounded(%data: !v, %indices: !u) {
+  %z64 = arith.constant 0 : i64
+  %p = pto.castptr %z64 : i64 -> !p
+  %z = arith.constant 0 : index
+  %dst = arith.constant 128 : index
+  %out = arith.constant 256 : index
+  %zeroi = arith.constant 0 : i32
+  %zero = builtin.unrealized_conversion_cast %zeroi : i32 to si32
+  %threei = arith.constant 3 : i32
+  %three = builtin.unrealized_conversion_cast %threei : i32 to si32
+  %sixteeni = arith.constant 16 : i32
+  %sixteen = builtin.unrealized_conversion_cast %sixteeni : i32 to si32
+  %seveni = arith.constant 7 : i32
+  %seven = builtin.unrealized_conversion_cast %seveni : i32 to si32
+  %twoi = arith.constant 2 : i32
+  %two = builtin.unrealized_conversion_cast %twoi : i32 to si32
+  pto.vecscope {
+    %m = pto.pset_b32 "PAT_ALL" : !m
+    pto.vsts %data, %p[%dst], %m : !v, !p, index, !m
+    %v = pto.vgather2_bc %p, %indices, %m : !p, !u, !m -> !v
+    pto.vsts %v, %p[%out], %m : !v, !p, index, !m
+  }
+  return
+}
+// CHECK-LABEL: func.func @gather_scatter_ssa_order(
+// CHECK-NOT: pto.mem_bar
+// CHECK: return
+// CHECK-NOT: pto.mem_bar
+func.func @gather_scatter_ssa_order(%data: !v, %indices: !u) {
+  %z64 = arith.constant 0 : i64
+  %p = pto.castptr %z64 : i64 -> !p
+  %z = arith.constant 0 : index
+  pto.vecscope {
+    %m = pto.pset_b32 "PAT_ALL" : !m
+    %v = pto.vgather2_bc %p, %indices, %m : !p, !u, !m -> !v
+    pto.vscatter %v, %p, %indices, %m : !v, !p, !u, !m
+  }
+  return
+}
+// CHECK-LABEL: func.func @gather_scatter_independent_war(
+// CHECK: pto.mem_bar "VLD_VST"
+// CHECK: return
+func.func @gather_scatter_independent_war(%data: !v, %indices: !u) {
+  %z64 = arith.constant 0 : i64
+  %p = pto.castptr %z64 : i64 -> !p
+  %z = arith.constant 0 : index
+  pto.vecscope {
+    %m = pto.pset_b32 "PAT_ALL" : !m
+    %v = pto.vgather2_bc %p, %indices, %m : !p, !u, !m -> !v
+    pto.vscatter %data, %p, %indices, %m : !v, !p, !u, !m
+    pto.vsts %v, %p[%z], %m : !v, !p, index, !m
+  }
+  return
+}
+}

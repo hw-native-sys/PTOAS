@@ -147,7 +147,6 @@ module attributes {pto.target_arch = "a5", pto.kernel_kind = #pto.kernel_kind<ve
 // CHECK-NEXT: %[[VAL_40:[a-zA-Z0-9_.$-]+]] = pto.vor %[[VAL_37]], %[[VAL_38]], %[[VAL_15]] : !pto.vreg<256xf8E4M3FN>, !pto.vreg<256xf8E4M3FN>, !pto.mask<b8> -> !pto.vreg<256xf8E4M3FN>
 // CHECK-NEXT: pto.mem_bar "VLD_VST"
 // CHECK-NEXT: pto.vsts %[[VAL_39]], %[[VAL_10]]{{\[}}%[[VAL_23]]], %[[VAL_13]] {dist = "PK_B16"} : !pto.vreg<256xf8E4M3FN>, !pto.ptr<f8E4M3FN, ub>, index, !pto.mask<b16>
-// CHECK-NEXT: pto.mem_bar "VST_VST"
 // CHECK-NEXT: pto.vsts %[[VAL_40]], %[[VAL_10]]{{\[}}%[[VAL_24]]], %[[VAL_13]] {dist = "PK_B16"} : !pto.vreg<256xf8E4M3FN>, !pto.ptr<f8E4M3FN, ub>, index, !pto.mask<b16>
 // CHECK-NEXT: pto.mem_bar "VV_ALL"
 // CHECK-NEXT: }
@@ -197,7 +196,6 @@ module attributes {pto.target_arch = "a5", pto.kernel_kind = #pto.kernel_kind<ve
 // CHECK-NEXT: %[[VAL_81:[a-zA-Z0-9_.$-]+]] = pto.vor %[[VAL_78]], %[[VAL_79]], %[[VAL_56]] : !pto.vreg<256xf8E5M2>, !pto.vreg<256xf8E5M2>, !pto.mask<b8> -> !pto.vreg<256xf8E5M2>
 // CHECK-NEXT: pto.mem_bar "VLD_VST"
 // CHECK-NEXT: pto.vsts %[[VAL_80]], %[[VAL_51]]{{\[}}%[[VAL_64]]], %[[VAL_54]] {dist = "PK_B16"} : !pto.vreg<256xf8E5M2>, !pto.ptr<f8E5M2, ub>, index, !pto.mask<b16>
-// CHECK-NEXT: pto.mem_bar "VST_VST"
 // CHECK-NEXT: pto.vsts %[[VAL_81]], %[[VAL_51]]{{\[}}%[[VAL_65]]], %[[VAL_54]] {dist = "PK_B16"} : !pto.vreg<256xf8E5M2>, !pto.ptr<f8E5M2, ub>, index, !pto.mask<b16>
 // CHECK-NEXT: pto.mem_bar "VV_ALL"
 // CHECK-NEXT: }

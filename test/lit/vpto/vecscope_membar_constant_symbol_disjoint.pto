@@ -1,0 +1,152 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// You should not use this file except in compliance with the License.
+// You may refer to the License for details.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+
+// RUN: pto-test-opt --pto-insert-vecscope-membar %s | FileCheck %s
+// RUN: ptoas --pto-arch=a5 --pto-backend=vpto --emit-vpto --enable-vecscope-mem-bar=true %s | FileCheck %s
+// RUN: pto-test-opt --pto-insert-vecscope-membar --pto-insert-vecscope-membar %s | FileCheck %s
+
+!mb16 = !pto.mask<b16>
+!mb32 = !pto.mask<b32>
+!pbf16ub = !pto.ptr<bf16, ub>
+!pf32ub = !pto.ptr<f32, ub>
+!pui8ub = !pto.ptr<ui8, ub>
+!v128xbf16 = !pto.vreg<128xbf16>
+!v64xf32 = !pto.vreg<64xf32>
+
+module {
+// CHECK-LABEL: func.func @stage_no_loop(
+// CHECK-NOT: pto.mem_bar
+// CHECK: return
+// CHECK-NOT: pto.mem_bar
+  func.func @stage_no_loop(%x: i32, %v: !v64xf32) {
+    %c0i64 = arith.constant 0 : i64
+    %c3 = arith.constant 3 : i32
+    %c31 = arith.constant 31 : i32
+    %c256 = arith.constant 256 : i32
+    %c1600 = arith.constant 1600 : i32
+    %base = pto.castptr %c0i64 : i64 -> !pui8ub
+    %b16 = pto.castptr %base : !pui8ub -> !pbf16ub
+    %b32 = pto.castptr %base : !pui8ub -> !pf32ub
+    %r = arith.remsi %x, %c3 : i32
+    %sign = arith.shrsi %r, %c31 : i32
+    %correction = arith.andi %sign, %c3 : i32
+    %a = arith.muli %r, %c256 : i32
+    %b = arith.muli %correction, %c256 : i32
+    %stage = arith.addi %a, %b : i32
+    %off = arith.index_cast %stage : i32 to index
+    %roff32 = arith.addi %stage, %c1600 : i32
+    %roff = arith.index_cast %roff32 : i32 to index
+    %sinkoff = arith.constant 2048 : index
+    pto.vecscope {
+      %m = pto.pset_b32 "PAT_ALL" : !mb32
+      pto.vsts %v, %b32[%off], %m : !v64xf32, !pf32ub, index, !mb32
+      %z = pto.vlds %b16[%roff] {dist = "UNPK_B16"} : !pbf16ub, index -> !v128xbf16
+      %m16 = pto.pset_b16 "PAT_ALL" : !mb16
+      %out = pto.vcvt %z, %m16 {part = "EVEN"} : !v128xbf16, !mb16 -> !v64xf32
+      pto.vsts %out, %b32[%sinkoff], %m : !v64xf32, !pf32ub, index, !mb32
+    }
+    return
+  }
+
+// CHECK-LABEL: func.func @remainder_scale_wrap(
+// CHECK: pto.vsts
+// CHECK: pto.mem_bar "VST_VLD"
+// CHECK: pto.vlds
+// CHECK: return
+  func.func @remainder_scale_wrap(%x: i32, %v: !v64xf32) {
+    %c0i64 = arith.constant 0 : i64
+    %c3 = arith.constant 3 : i32
+    %c31 = arith.constant 31 : i32
+    %c256 = arith.constant 1073741824 : i32
+    %c1600 = arith.constant 1600 : i32
+    %base = pto.castptr %c0i64 : i64 -> !pui8ub
+    %b16 = pto.castptr %base : !pui8ub -> !pbf16ub
+    %b32 = pto.castptr %base : !pui8ub -> !pf32ub
+    %r = arith.remsi %x, %c3 : i32
+    %sign = arith.shrsi %r, %c31 : i32
+    %correction = arith.andi %sign, %c3 : i32
+    %a = arith.muli %r, %c256 : i32
+    %b = arith.muli %correction, %c256 : i32
+    %stage = arith.addi %a, %b : i32
+    %off = arith.index_cast %stage : i32 to index
+    %roff32 = arith.addi %stage, %c1600 : i32
+    %roff = arith.index_cast %roff32 : i32 to index
+    %sinkoff = arith.constant 2048 : index
+    pto.vecscope {
+      %m = pto.pset_b32 "PAT_ALL" : !mb32
+      pto.vsts %v, %b32[%off], %m : !v64xf32, !pf32ub, index, !mb32
+      %z = pto.vlds %b16[%roff] {dist = "UNPK_B16"} : !pbf16ub, index -> !v128xbf16
+      %m16 = pto.pset_b16 "PAT_ALL" : !mb16
+      %out = pto.vcvt %z, %m16 {part = "EVEN"} : !v128xbf16, !mb16 -> !v64xf32
+      pto.vsts %out, %b32[%sinkoff], %m : !v64xf32, !pf32ub, index, !mb32
+    }
+    return
+  }
+
+// CHECK-LABEL: func.func @wide_stage_unknown(
+// CHECK: pto.vsts
+// CHECK: pto.mem_bar "VST_VLD"
+// CHECK: pto.vlds
+// CHECK: return
+  func.func @wide_stage_unknown(%x: i128, %v: !v64xf32) {
+    %c0i64 = arith.constant 0 : i64
+    %c3 = arith.constant 3 : i128
+    %c31 = arith.constant 127 : i128
+    %c256 = arith.constant 256 : i128
+    %c1600 = arith.constant 1600 : i128
+    %base = pto.castptr %c0i64 : i64 -> !pui8ub
+    %b16 = pto.castptr %base : !pui8ub -> !pbf16ub
+    %b32 = pto.castptr %base : !pui8ub -> !pf32ub
+    %r = arith.remsi %x, %c3 : i128
+    %sign = arith.shrsi %r, %c31 : i128
+    %correction = arith.andi %sign, %c3 : i128
+    %a = arith.muli %r, %c256 : i128
+    %b = arith.muli %correction, %c256 : i128
+    %stage = arith.addi %a, %b : i128
+    %off = arith.index_cast %stage : i128 to index
+    %roff32 = arith.addi %stage, %c1600 : i128
+    %roff = arith.index_cast %roff32 : i128 to index
+    %sinkoff = arith.constant 2048 : index
+    pto.vecscope {
+      %m = pto.pset_b32 "PAT_ALL" : !mb32
+      pto.vsts %v, %b32[%off], %m : !v64xf32, !pf32ub, index, !mb32
+      %z = pto.vlds %b16[%roff] {dist = "UNPK_B16"} : !pbf16ub, index -> !v128xbf16
+      %m16 = pto.pset_b16 "PAT_ALL" : !mb16
+      %out = pto.vcvt %z, %m16 {part = "EVEN"} : !v128xbf16, !mb16 -> !v64xf32
+      pto.vsts %out, %b32[%sinkoff], %m : !v64xf32, !pf32ub, index, !mb32
+    }
+    return
+  }
+
+// CHECK-LABEL: func.func @shared_symbol_add_wrap(
+// CHECK: pto.vsts
+// CHECK: pto.mem_bar "VST_VLD"
+// CHECK: pto.vlds
+// CHECK: return
+  func.func @shared_symbol_add_wrap(%x: i32, %v: !v64xf32) {
+    %zero = arith.constant 0 : i64
+    %c3 = arith.constant 3 : i32
+    %cmax = arith.constant 2147483647 : i32
+    %c2 = arith.constant 2 : i32
+    %base = pto.castptr %zero : i64 -> !pf32ub
+    %stage = arith.remsi %x, %c3 : i32
+    %a = arith.addi %stage, %cmax : i32
+    %b = arith.addi %a, %cmax : i32
+    %wrapped = arith.addi %b, %c2 : i32
+    %wo = arith.index_cast %stage : i32 to index
+    %ro = arith.index_cast %wrapped : i32 to index
+    pto.vecscope {
+      %m = pto.pset_b32 "PAT_ALL" : !mb32
+      pto.vsts %v, %base[%wo], %m : !v64xf32, !pf32ub, index, !mb32
+      %z = pto.vlds %base[%ro] : !pf32ub, index -> !v64xf32
+      pto.vsts %z, %base[%wo], %m : !v64xf32, !pf32ub, index, !mb32
+    }
+    return
+  }
+}

@@ -1,0 +1,146 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software: you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+
+// RUN: pto-test-opt --pto-insert-vecscope-membar %s | FileCheck %s
+// RUN: pto-test-opt --pto-insert-vecscope-membar --pto-insert-vecscope-membar %s | FileCheck %s
+
+!mb32 = !pto.mask<b32>
+!pf32ub = !pto.ptr<f32, ub>
+!v64xf32 = !pto.vreg<64xf32>
+
+module attributes {pto.target_arch = "a5", pto.kernel_kind = #pto.kernel_kind<vector>} {
+
+// CHECK-LABEL: func.func @narrow_arithmetic_safe(
+// CHECK-NOT: pto.mem_bar
+// CHECK: return
+// CHECK-NOT: pto.mem_bar
+  func.func @narrow_arithmetic_safe(%n: index) {
+    %z = arith.constant 0 : i64
+    %p = pto.castptr %z : i64 -> !pf32ub
+    %c0 = arith.constant 0 : index
+    %c1 = arith.constant 1 : index
+    %c4 = arith.constant 4 : index
+    %c64 = arith.constant 64 : index
+    %c128_i32 = arith.constant 128 : i32
+    %bound = arith.minui %n, %c4 : index
+    pto.vecscope {
+      %m = pto.pset_b32 "PAT_ALL" : !mb32
+      scf.for %i = %c0 to %bound step %c1 {
+        %ii = arith.index_cast %i : index to i32
+        %o = arith.muli %ii, %c128_i32 : i32
+        %oc = arith.index_cast %o : i32 to index
+        %oc2 = arith.addi %oc, %c64 : index
+        %v = pto.vlds %p[%oc2] : !pf32ub, index -> !v64xf32
+        pto.vsts %v, %p[%oc], %m : !v64xf32, !pf32ub, index, !mb32
+      }
+    }
+    return
+  }
+
+// CHECK-LABEL: func.func @narrow_arithmetic_wraps(
+// CHECK: scf.for
+// CHECK: pto.vsts
+// CHECK-NEXT: pto.mem_bar "VST_VST"
+// CHECK-NEXT: pto.vsts
+// CHECK-NEXT: pto.mem_bar "VST_VST"
+// CHECK-NOT: pto.mem_bar
+// CHECK: return
+  func.func @narrow_arithmetic_wraps(%n: index, %v: !v64xf32) {
+    %z = arith.constant 0 : i64
+    %p = pto.castptr %z : i64 -> !pf32ub
+    %c0 = arith.constant 0 : index
+    %c1 = arith.constant 1 : index
+    %c8 = arith.constant 8 : index
+    %c64 = arith.constant 64 : index
+    %big = arith.constant 1000000000 : i32
+    %bound = arith.minui %n, %c8 : index
+    pto.vecscope {
+      %m = pto.pset_b32 "PAT_ALL" : !mb32
+      scf.for %i = %c0 to %bound step %c1 {
+        %ii = arith.index_cast %i : index to i32
+        %o = arith.muli %ii, %big : i32
+        %oc = arith.index_cast %o : i32 to index
+        %oc2 = arith.addi %oc, %c64 : index
+        pto.vsts %v, %p[%oc], %m : !v64xf32, !pf32ub, index, !mb32
+        pto.vsts %v, %p[%oc2], %m : !v64xf32, !pf32ub, index, !mb32
+      }
+    }
+    return
+  }
+
+// CHECK-LABEL: func.func @constant_truncation_overlap(
+// CHECK: pto.vsts
+// CHECK-NEXT: pto.mem_bar "VST_VST"
+// CHECK-NEXT: pto.vsts
+// CHECK: return
+  func.func @constant_truncation_overlap(%v: !v64xf32) {
+    %z = arith.constant 0 : i64
+    %p = pto.castptr %z : i64 -> !pf32ub
+    %c0 = arith.constant 0 : index
+    %large = arith.constant 65536 : i64
+    %narrow = arith.trunci %large : i64 to i16
+    %offset = arith.index_cast %narrow : i16 to index
+    pto.vecscope {
+      %m = pto.pset_b32 "PAT_ALL" : !mb32
+      pto.vsts %v, %p[%c0], %m : !v64xf32, !pf32ub, index, !mb32
+      pto.vsts %v, %p[%offset], %m : !v64xf32, !pf32ub, index, !mb32
+    }
+    return
+  }
+
+// CHECK-LABEL: func.func @at_most_one_overflow(
+// CHECK: scf.for
+// CHECK: pto.vsts
+// CHECK-NEXT: pto.mem_bar "VST_VST"
+// CHECK: return
+  func.func @at_most_one_overflow(%n: i8, %v: !v64xf32) {
+    %zero = arith.constant 0 : i64
+    %p = pto.castptr %zero : i64 -> !pf32ub
+    %c0 = arith.constant 0 : index
+    %lb = arith.constant 100 : i8
+    %cap = arith.constant 120 : i8
+    %step = arith.constant 100 : i8
+    %bound = arith.minui %n, %cap : i8
+    pto.vecscope {
+      %mask = pto.pset_b32 "PAT_ALL" : !mb32
+      scf.for %i = %lb to %bound step %step : i8 {
+        pto.vsts %v, %p[%c0], %mask : !v64xf32, !pf32ub, index, !mb32
+      }
+    }
+    return
+  }
+
+// CHECK-LABEL: func.func @exact_symbol_wrap(
+// CHECK: scf.for
+// CHECK: pto.vsts
+// CHECK: pto.mem_bar "VST_VST"
+// CHECK: return
+ func.func @exact_symbol_wrap(%s: index, %v: !pto.vreg<256xi8>) {
+  %z = arith.constant 0 : i64
+  %p = pto.castptr %z : i64 -> !pto.ptr<i8, ub>
+  %c0 = arith.constant 0 : index
+  %c1 = arith.constant 1 : index
+  %c5 = arith.constant 5 : index
+  %c4 = arith.constant 4 : index
+  %stride = arith.constant 4611686018427387904 : index
+  pto.vecscope {
+   %m = pto.pset_b8 "PAT_ALL" : !pto.mask<b8>
+   scf.for %i = %c0 to %c5 step %c1 {
+    %a = arith.muli %i, %stride : index
+    %o = arith.addi %s, %a : index
+    %first = arith.cmpi eq, %i, %c0 : index
+    %last = arith.cmpi eq, %i, %c4 : index
+    %active = arith.ori %first, %last : i1
+    scf.if %active {
+    pto.vsts %v, %p[%o], %m : !pto.vreg<256xi8>, !pto.ptr<i8, ub>, index, !pto.mask<b8>
+    }
+   }
+  }
+  return
+ }
+}

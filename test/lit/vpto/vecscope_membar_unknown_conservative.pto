@@ -57,8 +57,8 @@ module {
     return
   }
 
-  // The offset depends on a value defined outside the vecscope, so the
-  // footprint is inexact and every overlap query is Unknown.
+  // The outer constant-domain IV has a certified bounded range. The shared
+  // offset cancels across inner iterations: only the sibling-loop RAW remains.
   func.func @outer_value_offset(%z: !pto.vreg<64xf32>) {
     %c0 = arith.constant 0 : index
     %c1 = arith.constant 1 : index
@@ -101,10 +101,13 @@ module {
 // CHECK:       pto.vlds
 
 // CHECK-LABEL: func.func @outer_value_offset(
+// CHECK-NOT:   pto.mem_bar
 // CHECK:       pto.vsts
-// CHECK-NEXT:  pto.mem_bar "VST_VST"
+// CHECK-NOT:   pto.mem_bar
 // CHECK:       pto.mem_bar "VST_VLD"
 // CHECK-NEXT:  scf.for
 // CHECK:       pto.vlds
 // CHECK:       pto.vsts
-// CHECK-NEXT:  pto.mem_bar "VV_ALL"
+// CHECK-NOT:   pto.mem_bar
+// CHECK:       return
+// CHECK-NOT:   pto.mem_bar

@@ -574,14 +574,19 @@ PTOAddressAnalysis::getDeltaInUnit(const PTOAddressExpr &address,
 
 PTOAnalysisResult<PTOTypedExprRef>
 PTOAddressAnalysis::getPointerDifference(const PTOAddressExpr &from,
-                                         const PTOAddressExpr &to) {
+                                         const PTOAddressExpr &to, bool retainCastBoundaries) {
   if (from.rootOrBase != to.rootOrBase ||
       from.elementBytes != to.elementBytes) {
     return PTOAnalysisResult<PTOTypedExprRef>::unknown(
         PTOAnalysisUnknownReason::DifferentBase);
   }
-  auto fromOffset = valueEvolution.getPointExpression(from.elementOffset);
-  auto toOffset = valueEvolution.getPointExpression(to.elementOffset);
+  auto point = [&](const PTOTypedExprRef& expression) {
+    return retainCastBoundaries
+        ? PTOAnalysisResult<PTOTypedExprRef>::known(valueEvolution.getConservativePointExpression(expression))
+        : valueEvolution.getPointExpression(expression);
+  };
+  auto fromOffset = point(from.elementOffset);
+  auto toOffset = point(to.elementOffset);
   if (!fromOffset || !toOffset) {
     return PTOAnalysisResult<PTOTypedExprRef>::unknown(
         !fromOffset ? fromOffset.reason : toOffset.reason);
@@ -593,7 +598,7 @@ PTOAddressAnalysis::getPointerDifference(const PTOAddressExpr &from,
 
 PTOAnalysisResult<PTOTypedExprRef>
 PTOAddressAnalysis::getOffsetPointBytes(
-    const std::optional<PTOTypedAddressOffset> &offset) {
+    const std::optional<PTOTypedAddressOffset> &offset, bool retainCastBoundaries) {
   if (!offset) {
     return PTOAnalysisResult<PTOTypedExprRef>::known(makePTOConstantExpr(0));
   }
@@ -601,7 +606,9 @@ PTOAddressAnalysis::getOffsetPointBytes(
     return PTOAnalysisResult<PTOTypedExprRef>::unknown(
         PTOAnalysisUnknownReason::UnknownUnitSize);
   }
-  auto pointValue = valueEvolution.getPointExpression(offset->value);
+  auto pointValue = retainCastBoundaries
+      ? PTOAnalysisResult<PTOTypedExprRef>::known(valueEvolution.getConservativePointExpression(offset->value))
+      : valueEvolution.getPointExpression(offset->value);
   if (!pointValue) {
     return pointValue;
   }
@@ -610,8 +617,8 @@ PTOAddressAnalysis::getOffsetPointBytes(
 
 PTOAnalysisResult<PTOTypedExprRef>
 PTOAddressAnalysis::getDifferenceBytes(const PTOAddressExpr &from,
-                                       const PTOAddressExpr &to) {
-  auto pointerDifference = getPointerDifference(from, to);
+                                       const PTOAddressExpr &to, bool retainCastBoundaries) {
+  auto pointerDifference = getPointerDifference(from, to, retainCastBoundaries);
   if (!pointerDifference) {
     return pointerDifference;
   }
@@ -621,13 +628,13 @@ PTOAddressAnalysis::getDifferenceBytes(const PTOAddressExpr &from,
     return pointerBytes;
   }
 
-  auto fromOffsetResult = getOffsetPointBytes(from.offset);
+  auto fromOffsetResult = getOffsetPointBytes(from.offset, retainCastBoundaries);
   if (!fromOffsetResult) {
     return fromOffsetResult;
   }
   PTOTypedExprRef fromOffsetBytes = *fromOffsetResult.value;
 
-  auto toOffsetResult = getOffsetPointBytes(to.offset);
+  auto toOffsetResult = getOffsetPointBytes(to.offset, retainCastBoundaries);
   if (!toOffsetResult) {
     return toOffsetResult;
   }

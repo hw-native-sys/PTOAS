@@ -190,7 +190,19 @@ public:
   const PTOAnalysisResult<PTOTypedExprRef>
   getPointExpression(const PTOTypedExprRef &expression) const;
 
+  /// Point algebra with source-backed casts retained as opaque boundaries.
+  /// Used when a consumer must retain its existing cast-proof domain.
+  PTOTypedExprRef getConservativePointExpression(const PTOTypedExprRef& expression) const;
+
+  /// Exact typed loop evolution range. Unsupported evolutions stay unknown;
+  /// this does not use contextual guards or arbitrary InferIntRangeInterface
+  /// leaves. Use getRangeAt for conservative bounds at an execution point.
   PTOAnalysisResult<PTOFiniteRange> getRange(Value value, scf::ForOp loop);
+  /// Bounds valid at this program point, including dominating branch guards.
+  /// Unlike getEvolution, this does not claim an exact trip count or stride.
+  PTOAnalysisResult<PTOFiniteRange> getRangeAt(Value value, Operation *context);
+  PTOAnalysisResult<bool> preservesValueAt(Operation *castOp, Operation *context);
+
   PTOAnalysisResult<bool> preservesValue(Operation *castOp,
                                          scf::ForOp loop);
   PTOAnalysisResult<bool> doesNotWrap(Value value, scf::ForOp loop);

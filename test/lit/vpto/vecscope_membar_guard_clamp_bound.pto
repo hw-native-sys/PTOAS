@@ -1,0 +1,295 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// the CANN Open Software License Agreement Version 2.0 (the "License").
+// You may not use this file except in compliance with the License.
+// You may refer to the License for details.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+
+// RUN: pto-test-opt --pto-insert-vecscope-membar %s | FileCheck %s
+// RUN: pto-test-opt --pto-insert-vecscope-membar --pto-insert-vecscope-membar %s | FileCheck %s
+
+!mb32 = !pto.mask<b32>
+!pf32ub = !pto.ptr<f32, ub>
+!v64xf32 = !pto.vreg<64xf32>
+
+module attributes {pto.target_arch = "a5", pto.kernel_kind = #pto.kernel_kind<vector>} {
+
+// CHECK-LABEL: func.func @guard_clamp_row_disjoint(
+// CHECK-NOT: pto.mem_bar
+// CHECK: return
+// CHECK-NOT: pto.mem_bar
+  func.func @guard_clamp_row_disjoint(%n: i32, %ofs: i32, %v0: !v64xf32) {
+    %zero = arith.constant 0 : i64
+    %p = pto.castptr %zero : i64 -> !pf32ub
+    %c0_i16 = arith.constant 0 : i16
+    %c1_i16 = arith.constant 1 : i16
+    %c256 = arith.constant 256 : index
+    %c2_i64 = arith.constant 2 : i64
+    %c64_i64 = arith.constant 64 : i64
+    %ne = arith.extsi %n : i32 to i64
+    %ofse = arith.extsi %ofs : i32 to i64
+    %x = arith.subi %ne, %ofse : i64
+    %cond = arith.cmpi slt, %ofse, %ne : i64
+    scf.if %cond {
+      %clamp = arith.minsi %x, %c2_i64 : i64
+      %bound = arith.trunci %clamp : i64 to i16
+      pto.vecscope {
+        %m = pto.pset_b32 "PAT_ALL" : !mb32
+        scf.for %i = %c0_i16 to %bound step %c1_i16  : i16 {
+          %ie = arith.extsi %i : i16 to i64
+          %off = arith.muli %ie, %c64_i64 : i64
+          %offi = arith.index_cast %off : i64 to index
+          pto.vsts %v0, %p[%offi], %m : !v64xf32, !pf32ub, index, !mb32
+          %v = pto.vlds %p[%c256] : !pf32ub, index -> !v64xf32
+        }
+      }
+    }
+    return
+  }
+
+// CHECK-LABEL: func.func @guard_clamp_unguarded_conservative(
+// CHECK: scf.for
+// CHECK: pto.vsts
+// CHECK: pto.mem_bar "VST_VLD"
+// CHECK: pto.mem_bar "VV_ALL"
+// CHECK: return
+  func.func @guard_clamp_unguarded_conservative(%n: i32, %ofs: i32, %v0: !v64xf32) {
+    %zero = arith.constant 0 : i64
+    %p = pto.castptr %zero : i64 -> !pf32ub
+    %c0_i16 = arith.constant 0 : i16
+    %c1_i16 = arith.constant 1 : i16
+    %c256 = arith.constant 256 : index
+    %c2_i64 = arith.constant 2 : i64
+    %c64_i64 = arith.constant 64 : i64
+    %ne = arith.extsi %n : i32 to i64
+    %ofse = arith.extsi %ofs : i32 to i64
+    %x = arith.subi %ne, %ofse : i64
+    %clamp = arith.minsi %x, %c2_i64 : i64
+    %bound = arith.trunci %clamp : i64 to i16
+    pto.vecscope {
+      %m = pto.pset_b32 "PAT_ALL" : !mb32
+      scf.for %i = %c0_i16 to %bound step %c1_i16  : i16 {
+        %ie = arith.extsi %i : i16 to i64
+        %off = arith.muli %ie, %c64_i64 : i64
+        %offi = arith.index_cast %off : i64 to index
+        pto.vsts %v0, %p[%offi], %m : !v64xf32, !pf32ub, index, !mb32
+        %v = pto.vlds %p[%c256] : !pf32ub, index -> !v64xf32
+      }
+    }
+    return
+  }
+
+// CHECK-LABEL: func.func @guard_clamp_unrelated_guard_conservative(
+// CHECK: scf.for
+// CHECK: pto.vsts
+// CHECK: pto.mem_bar "VST_VLD"
+// CHECK: pto.mem_bar "VV_ALL"
+// CHECK: return
+  func.func @guard_clamp_unrelated_guard_conservative(%n: i32, %ofs: i32, %junk: i32, %v0: !v64xf32) {
+    %zero = arith.constant 0 : i64
+    %p = pto.castptr %zero : i64 -> !pf32ub
+    %c0_i16 = arith.constant 0 : i16
+    %c1_i16 = arith.constant 1 : i16
+    %c256 = arith.constant 256 : index
+    %c2_i64 = arith.constant 2 : i64
+    %c64_i64 = arith.constant 64 : i64
+    %ne = arith.extsi %n : i32 to i64
+    %ofse = arith.extsi %ofs : i32 to i64
+    %junke = arith.extsi %junk : i32 to i64
+    %x = arith.subi %ne, %ofse : i64
+    %cond = arith.cmpi slt, %junke, %ne : i64
+    scf.if %cond {
+      %clamp = arith.minsi %x, %c2_i64 : i64
+      %bound = arith.trunci %clamp : i64 to i16
+      pto.vecscope {
+        %m = pto.pset_b32 "PAT_ALL" : !mb32
+        scf.for %i = %c0_i16 to %bound step %c1_i16  : i16 {
+          %ie = arith.extsi %i : i16 to i64
+          %off = arith.muli %ie, %c64_i64 : i64
+          %offi = arith.index_cast %off : i64 to index
+          pto.vsts %v0, %p[%offi], %m : !v64xf32, !pf32ub, index, !mb32
+          %v = pto.vlds %p[%c256] : !pf32ub, index -> !v64xf32
+        }
+      }
+    }
+    return
+  }
+
+// CHECK-LABEL: func.func @guard_clamp_nonrepresentable_conservative(
+// CHECK: scf.for
+// CHECK: pto.vsts
+// CHECK: pto.mem_bar "VST_VLD"
+// CHECK: pto.mem_bar "VV_ALL"
+// CHECK: return
+  func.func @guard_clamp_nonrepresentable_conservative(%n: i32, %ofs: i32, %v0: !v64xf32) {
+    %zero = arith.constant 0 : i64
+    %p = pto.castptr %zero : i64 -> !pf32ub
+    %c0_i16 = arith.constant 0 : i16
+    %c1_i16 = arith.constant 1 : i16
+    %c256 = arith.constant 256 : index
+    %c2_i64 = arith.constant 2 : i64
+    %c64_i64 = arith.constant 64 : i64
+    %cneg40000 = arith.constant -40000 : i64
+    %ne = arith.extsi %n : i32 to i64
+    %ofse = arith.extsi %ofs : i32 to i64
+    %x = arith.subi %ne, %ofse : i64
+    %cond = arith.cmpi sge, %x, %cneg40000 : i64
+    scf.if %cond {
+      %clamp = arith.minsi %x, %c2_i64 : i64
+      %bound = arith.trunci %clamp : i64 to i16
+      pto.vecscope {
+        %m = pto.pset_b32 "PAT_ALL" : !mb32
+        scf.for %i = %c0_i16 to %bound step %c1_i16  : i16 {
+          %ie = arith.extsi %i : i16 to i64
+          %off = arith.muli %ie, %c64_i64 : i64
+          %offi = arith.index_cast %off : i64 to index
+          pto.vsts %v0, %p[%offi], %m : !v64xf32, !pf32ub, index, !mb32
+          %v = pto.vlds %p[%c256] : !pf32ub, index -> !v64xf32
+        }
+      }
+    }
+    return
+  }
+
+// CHECK-LABEL: func.func @guard_clamp_real_overlap(
+// CHECK: scf.for
+// CHECK: pto.vsts
+// CHECK: pto.mem_bar "VST_VLD"
+// CHECK: pto.mem_bar "VV_ALL"
+// CHECK: return
+  func.func @guard_clamp_real_overlap(%n: i32, %ofs: i32, %v0: !v64xf32) {
+    %zero = arith.constant 0 : i64
+    %p = pto.castptr %zero : i64 -> !pf32ub
+    %c0_i16 = arith.constant 0 : i16
+    %c1_i16 = arith.constant 1 : i16
+    %c32 = arith.constant 32 : index
+    %c2_i64 = arith.constant 2 : i64
+    %c64_i64 = arith.constant 64 : i64
+    %ne = arith.extsi %n : i32 to i64
+    %ofse = arith.extsi %ofs : i32 to i64
+    %x = arith.subi %ne, %ofse : i64
+    %cond = arith.cmpi slt, %ofse, %ne : i64
+    scf.if %cond {
+      %clamp = arith.minsi %x, %c2_i64 : i64
+      %bound = arith.trunci %clamp : i64 to i16
+      pto.vecscope {
+        %m = pto.pset_b32 "PAT_ALL" : !mb32
+        scf.for %i = %c0_i16 to %bound step %c1_i16  : i16 {
+          %ie = arith.extsi %i : i16 to i64
+          %off = arith.muli %ie, %c64_i64 : i64
+          %offi = arith.index_cast %off : i64 to index
+          pto.vsts %v0, %p[%offi], %m : !v64xf32, !pf32ub, index, !mb32
+          %v = pto.vlds %p[%c32] : !pf32ub, index -> !v64xf32
+        }
+      }
+    }
+    return
+  }
+
+// CHECK-LABEL: func.func @guard_clamp_i64_real_overlap(
+// CHECK: scf.for
+// CHECK: pto.vsts
+// CHECK: pto.mem_bar "VST_VLD"
+// CHECK: pto.mem_bar "VV_ALL"
+// CHECK: return
+  func.func @guard_clamp_i64_real_overlap(%n: i64, %ofs: i64, %v0: !v64xf32) {
+    %zero = arith.constant 0 : i64
+    %p = pto.castptr %zero : i64 -> !pf32ub
+    %c0_i16 = arith.constant 0 : i16
+    %c1_i16 = arith.constant 1 : i16
+    %c32 = arith.constant 32 : index
+    %c2_i64 = arith.constant 2 : i64
+    %c64_i64 = arith.constant 64 : i64
+    %x = arith.subi %n, %ofs : i64
+    %cond = arith.cmpi slt, %ofs, %n : i64
+    scf.if %cond {
+      %clamp = arith.minsi %x, %c2_i64 : i64
+      %bound = arith.trunci %clamp : i64 to i16
+      pto.vecscope {
+        %m = pto.pset_b32 "PAT_ALL" : !mb32
+        scf.for %i = %c0_i16 to %bound step %c1_i16  : i16 {
+          %ie = arith.extsi %i : i16 to i64
+          %off = arith.muli %ie, %c64_i64 : i64
+          %offi = arith.index_cast %off : i64 to index
+          pto.vsts %v0, %p[%offi], %m : !v64xf32, !pf32ub, index, !mb32
+          %v = pto.vlds %p[%c32] : !pf32ub, index -> !v64xf32
+        }
+      }
+    }
+    return
+  }
+
+// CHECK-LABEL: func.func @guard_clamp_int64_min_boundary_conservative(
+// CHECK: scf.for
+// CHECK: pto.vsts
+// CHECK: pto.mem_bar "VST_VLD"
+// CHECK: pto.mem_bar "VV_ALL"
+// CHECK: return
+  func.func @guard_clamp_int64_min_boundary_conservative(%n: i32, %ofs: i32, %v0: !v64xf32) {
+    %zero = arith.constant 0 : i64
+    %p = pto.castptr %zero : i64 -> !pf32ub
+    %c0_i16 = arith.constant 0 : i16
+    %c1_i16 = arith.constant 1 : i16
+    %c256 = arith.constant 256 : index
+    %c2_i64 = arith.constant 2 : i64
+    %c64_i64 = arith.constant 64 : i64
+    %cnegmin = arith.constant -9223372036854775808 : i64
+    %ne = arith.extsi %n : i32 to i64
+    %ofse = arith.extsi %ofs : i32 to i64
+    %x = arith.subi %ne, %ofse : i64
+    %cond = arith.cmpi sge, %x, %cnegmin : i64
+    scf.if %cond {
+      %clamp = arith.minsi %x, %c2_i64 : i64
+      %bound = arith.trunci %clamp : i64 to i16
+      pto.vecscope {
+        %m = pto.pset_b32 "PAT_ALL" : !mb32
+        scf.for %i = %c0_i16 to %bound step %c1_i16  : i16 {
+          %ie = arith.extsi %i : i16 to i64
+          %off = arith.muli %ie, %c64_i64 : i64
+          %offi = arith.index_cast %off : i64 to index
+          pto.vsts %v0, %p[%offi], %m : !v64xf32, !pf32ub, index, !mb32
+          %v = pto.vlds %p[%c256] : !pf32ub, index -> !v64xf32
+        }
+      }
+    }
+    return
+  }
+
+// CHECK-LABEL: func.func @guard_clamp_i128_guard_conservative(
+// CHECK: pto.vsts
+// CHECK: pto.mem_bar "VST_VLD"
+// CHECK: pto.vlds
+// CHECK: pto.mem_bar "VV_ALL"
+// CHECK: return
+  func.func @guard_clamp_i128_guard_conservative(%n: i64, %ofs: i64, %g: i128, %v0: !v64xf32) {
+    %zero = arith.constant 0 : i64
+    %p = pto.castptr %zero : i64 -> !pf32ub
+    %c0_i16 = arith.constant 0 : i16
+    %c1_i16 = arith.constant 1 : i16
+    %c32 = arith.constant 32 : index
+    %c2_i64 = arith.constant 2 : i64
+    %c64_i64 = arith.constant 64 : i64
+    %ne = arith.addi %n, %zero : i64
+    %ofse = arith.addi %ofs, %zero : i64
+    %x = arith.subi %ne, %ofse : i64
+    %huge = arith.constant 18446744073709551619 : i128
+    %cond = arith.cmpi slt, %g, %huge : i128
+    scf.if %cond {
+      %clamp = arith.minsi %x, %c2_i64 : i64
+      %bound = arith.trunci %clamp : i64 to i16
+      pto.vecscope {
+        %m = pto.pset_b32 "PAT_ALL" : !mb32
+        scf.for %i = %c0_i16 to %bound step %c1_i16  : i16 {
+          %ie = arith.extsi %i : i16 to i64
+          %off = arith.muli %ie, %c64_i64 : i64
+          %offi = arith.index_cast %off : i64 to index
+          pto.vsts %v0, %p[%offi], %m : !v64xf32, !pf32ub, index, !mb32
+          %v = pto.vlds %p[%c32] : !pf32ub, index -> !v64xf32
+        }
+      }
+    }
+    return
+  }
+}

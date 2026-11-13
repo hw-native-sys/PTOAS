@@ -1,0 +1,192 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// You should not use this file except in compliance with the License.
+// You may refer to the License for details.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+
+// RUN: pto-test-opt --pto-insert-vecscope-membar %s | FileCheck %s
+// RUN: pto-test-opt --pto-insert-vecscope-membar --pto-insert-vecscope-membar %s | FileCheck %s
+// RUN: ptoas --pto-arch=a5 --pto-backend=vpto --emit-vpto --enable-vecscope-mem-bar=true %s | FileCheck %s
+
+!mb32 = !pto.mask<b32>
+!pf32ub = !pto.ptr<f32, ub>
+!v64xf32 = !pto.vreg<64xf32>
+
+module {
+// CHECK-LABEL: func.func @nested_reduction_relay(
+// CHECK-NOT: pto.mem_bar
+// CHECK: pto.mem_bar "VST_VLD"
+// CHECK-NOT: pto.mem_bar
+// CHECK: pto.mem_bar "VST_VLD"
+// CHECK-NOT: pto.mem_bar
+// CHECK: return
+// CHECK-NOT: pto.mem_bar
+func.func @nested_reduction_relay() {
+  %c0 = arith.constant 0 : index
+  %c1 = arith.constant 1 : index
+  %c2 = arith.constant 2 : index
+  %c64 = arith.constant 64 : index
+  %a0 = arith.constant 0 : i64
+  %b0 = arith.constant 4096 : i64
+  %d0 = arith.constant 8192 : i64
+  %f0 = arith.constant 0.0 : f32
+  %a = pto.castptr %a0 : i64 -> !pf32ub
+  %b = pto.castptr %b0 : i64 -> !pf32ub
+  %d = pto.castptr %d0 : i64 -> !pf32ub
+  pto.vecscope {
+    %m = pto.pset_b32 "PAT_ALL" : !mb32
+    %zero = pto.vdup %f0, %m : f32, !mb32 -> !v64xf32
+    scf.for %row = %c0 to %c2 step %c1 {
+    %sum = scf.for %i = %c0 to %c2 step %c1 iter_args(%acc = %zero) -> (!v64xf32) {
+      %off = arith.muli %i, %c64 : index
+      %v = pto.vlds %a[%off] : !pf32ub, index -> !v64xf32
+      %next = pto.vadd %acc, %v, %m : !v64xf32, !v64xf32, !mb32 -> !v64xf32
+      scf.yield %next : !v64xf32
+    }
+    %rowoff = arith.muli %row, %c64 : index
+    pto.vsts %sum, %b[%rowoff], %m : !v64xf32, !pf32ub, index, !mb32
+    }
+    pto.mem_bar "VST_VLD"
+    %s = pto.vlds %b[%c0] : !pf32ub, index -> !v64xf32
+    pto.vsts %s, %d[%c0], %m : !v64xf32, !pf32ub, index, !mb32
+    pto.mem_bar "VST_VLD"
+    scf.for %j = %c0 to %c2 step %c1 {
+      %off = arith.muli %j, %c64 : index
+      %s2 = pto.vlds %d[%c0] : !pf32ub, index -> !v64xf32
+      pto.vsts %s2, %a[%off], %m : !v64xf32, !pf32ub, index, !mb32
+    }
+  }
+  return
+}
+
+// CHECK-LABEL: func.func @nested_possibly_empty_outer(
+// CHECK: pto.mem_bar "VV_ALL"
+// CHECK: return
+func.func @nested_possibly_empty_outer(%n: index) {
+  %c0 = arith.constant 0 : index
+  %c1 = arith.constant 1 : index
+  %c2 = arith.constant 2 : index
+  %c64 = arith.constant 64 : index
+  %a0 = arith.constant 0 : i64
+  %b0 = arith.constant 4096 : i64
+  %d0 = arith.constant 8192 : i64
+  %f0 = arith.constant 0.0 : f32
+  %a = pto.castptr %a0 : i64 -> !pf32ub
+  %b = pto.castptr %b0 : i64 -> !pf32ub
+  %d = pto.castptr %d0 : i64 -> !pf32ub
+  pto.vecscope {
+    %m = pto.pset_b32 "PAT_ALL" : !mb32
+    %zero = pto.vdup %f0, %m : f32, !mb32 -> !v64xf32
+    scf.for %row = %c0 to %n step %c1 {
+    %sum = scf.for %i = %c0 to %c2 step %c1 iter_args(%acc = %zero) -> (!v64xf32) {
+      %off = arith.muli %i, %c64 : index
+      %v = pto.vlds %a[%off] : !pf32ub, index -> !v64xf32
+      %next = pto.vadd %acc, %v, %m : !v64xf32, !v64xf32, !mb32 -> !v64xf32
+      scf.yield %next : !v64xf32
+    }
+    %rowoff = arith.muli %row, %c64 : index
+    pto.vsts %sum, %b[%rowoff], %m : !v64xf32, !pf32ub, index, !mb32
+    }
+    pto.mem_bar "VST_VLD"
+    %s = pto.vlds %b[%c0] : !pf32ub, index -> !v64xf32
+    pto.vsts %s, %d[%c0], %m : !v64xf32, !pf32ub, index, !mb32
+    pto.mem_bar "VST_VLD"
+    scf.for %j = %c0 to %c2 step %c1 {
+      %off = arith.muli %j, %c64 : index
+      %s2 = pto.vlds %d[%c0] : !pf32ub, index -> !v64xf32
+      pto.vsts %s2, %a[%off], %m : !v64xf32, !pf32ub, index, !mb32
+    }
+  }
+  return
+}
+
+// CHECK-LABEL: func.func @nested_conditional_outer(
+// CHECK: pto.mem_bar "VV_ALL"
+// CHECK: return
+func.func @nested_conditional_outer(%cond: i1) {
+  %c0 = arith.constant 0 : index
+  %c1 = arith.constant 1 : index
+  %c2 = arith.constant 2 : index
+  %c64 = arith.constant 64 : index
+  %a0 = arith.constant 0 : i64
+  %b0 = arith.constant 4096 : i64
+  %d0 = arith.constant 8192 : i64
+  %f0 = arith.constant 0.0 : f32
+  %a = pto.castptr %a0 : i64 -> !pf32ub
+  %b = pto.castptr %b0 : i64 -> !pf32ub
+  %d = pto.castptr %d0 : i64 -> !pf32ub
+  pto.vecscope {
+    %m = pto.pset_b32 "PAT_ALL" : !mb32
+    %zero = pto.vdup %f0, %m : f32, !mb32 -> !v64xf32
+    scf.if %cond {
+    scf.for %row = %c0 to %c2 step %c1 {
+    %sum = scf.for %i = %c0 to %c2 step %c1 iter_args(%acc = %zero) -> (!v64xf32) {
+      %off = arith.muli %i, %c64 : index
+      %v = pto.vlds %a[%off] : !pf32ub, index -> !v64xf32
+      %next = pto.vadd %acc, %v, %m : !v64xf32, !v64xf32, !mb32 -> !v64xf32
+      scf.yield %next : !v64xf32
+    }
+    %rowoff = arith.muli %row, %c64 : index
+    pto.vsts %sum, %b[%rowoff], %m : !v64xf32, !pf32ub, index, !mb32
+    }
+    }
+    pto.mem_bar "VST_VLD"
+    %s = pto.vlds %b[%c0] : !pf32ub, index -> !v64xf32
+    pto.vsts %s, %d[%c0], %m : !v64xf32, !pf32ub, index, !mb32
+    pto.mem_bar "VST_VLD"
+    scf.for %j = %c0 to %c2 step %c1 {
+      %off = arith.muli %j, %c64 : index
+      %s2 = pto.vlds %d[%c0] : !pf32ub, index -> !v64xf32
+      pto.vsts %s2, %a[%off], %m : !v64xf32, !pf32ub, index, !mb32
+    }
+  }
+  return
+}
+
+// CHECK-LABEL: func.func @nested_unrelayed_read(
+// CHECK: pto.mem_bar "VV_ALL"
+// CHECK: return
+func.func @nested_unrelayed_read() {
+  %c0 = arith.constant 0 : index
+  %c1 = arith.constant 1 : index
+  %c2 = arith.constant 2 : index
+  %c64 = arith.constant 64 : index
+  %a0 = arith.constant 0 : i64
+  %b0 = arith.constant 4096 : i64
+  %d0 = arith.constant 8192 : i64
+  %f0 = arith.constant 0.0 : f32
+  %a = pto.castptr %a0 : i64 -> !pf32ub
+  %b = pto.castptr %b0 : i64 -> !pf32ub
+  %d = pto.castptr %d0 : i64 -> !pf32ub
+  pto.vecscope {
+    %m = pto.pset_b32 "PAT_ALL" : !mb32
+    %zero = pto.vdup %f0, %m : f32, !mb32 -> !v64xf32
+    scf.for %row = %c0 to %c2 step %c1 {
+    %sum = scf.for %i = %c0 to %c2 step %c1 iter_args(%acc = %zero) -> (!v64xf32) {
+      %off = arith.muli %i, %c64 : index
+      %v = pto.vlds %a[%off] : !pf32ub, index -> !v64xf32
+      %next = pto.vadd %acc, %v, %m : !v64xf32, !v64xf32, !mb32 -> !v64xf32
+      scf.yield %next : !v64xf32
+    }
+    %rowoff = arith.muli %row, %c64 : index
+    pto.vsts %sum, %b[%rowoff], %m : !v64xf32, !pf32ub, index, !mb32
+    }
+    pto.mem_bar "VST_VLD"
+    %c128 = arith.constant 128 : index
+    %unused = pto.vlds %a[%c0] : !pf32ub, index -> !v64xf32
+    %s = pto.vlds %b[%c0] : !pf32ub, index -> !v64xf32
+    pto.vsts %s, %d[%c0], %m : !v64xf32, !pf32ub, index, !mb32
+    pto.mem_bar "VST_VLD"
+    scf.for %j = %c0 to %c2 step %c1 {
+      %off = arith.muli %j, %c64 : index
+      %s2 = pto.vlds %d[%c0] : !pf32ub, index -> !v64xf32
+      pto.vsts %s2, %a[%off], %m : !v64xf32, !pf32ub, index, !mb32
+    }
+    pto.vsts %unused, %d[%c128], %m : !v64xf32, !pf32ub, index, !mb32
+  }
+  return
+}
+}

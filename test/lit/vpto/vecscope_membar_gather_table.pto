@@ -1,0 +1,935 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// You should not use this file except in compliance with the License.
+// You may refer to the License for details.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+
+// RUN: pto-test-opt --pto-insert-vecscope-membar %s | FileCheck %s
+// RUN: pto-test-opt --pto-insert-vecscope-membar --pto-insert-vecscope-membar %s | FileCheck %s
+// RUN: ptoas --pto-arch=a5 --pto-backend=vpto --emit-vpto --enable-vecscope-mem-bar=true %s | FileCheck %s
+
+!mb16 = !pto.mask<b16>
+!mb32 = !pto.mask<b32>
+!pui16gm = !pto.ptr<ui16, gm>
+!pui16ub = !pto.ptr<ui16, ub>
+!pui8ub = !pto.ptr<ui8, ub>
+!v128xi16 = !pto.vreg<128xi16>
+!v128xui16 = !pto.vreg<128xui16>
+!v256xui8 = !pto.vreg<256xui8>
+!v64xui32 = !pto.vreg<64xui32>
+
+module attributes {pto.target_arch = "a5"} {
+func.func private @opaque()
+// CHECK-LABEL: func.func @table_disjoint(
+// CHECK-NOT: pto.mem_bar
+// CHECK: return
+// CHECK-NOT: pto.mem_bar
+func.func @table_disjoint() {
+  %c0 = arith.constant 0 : index
+  %s0 = arith.constant 0 : i16
+  %s15i = arith.constant 15 : i16
+  %s15 = builtin.unrealized_conversion_cast %s15i : i16 to ui16
+  %s128i = arith.constant 128 : i16
+  %s128 = builtin.unrealized_conversion_cast %s128i : i16 to ui16
+  %s4 = arith.constant 4 : i16
+  %src0 = arith.constant 0 : i64
+  %dst0 = arith.constant 4096 : i64
+  %tab0 = arith.constant 196608 : i64
+  %src = pto.castptr %src0 : i64 -> !pui16ub
+  %dst = pto.castptr %dst0 : i64 -> !pui16ub
+  %tab = pto.castptr %tab0 : i64 -> !pui16ub
+
+  pto.vecscope {
+    %i = pto.vci %s0 : i16 -> !v128xi16
+    %u = pto.vbitcast %i : !v128xi16 -> !v128xui16
+    %m = pto.pset_b16 "PAT_ALL" : !mb16
+    %maskv = pto.vdup %s15, %m : ui16, !mb16 -> !v128xui16
+    %row = pto.vand %u, %maskv, %m : !v128xui16, !v128xui16, !mb16 -> !v128xui16
+    %pack = pto.vshrs %u, %s4, %m : !v128xui16, i16, !mb16 -> !v128xui16
+    %scaled = pto.vmuls %row, %s128, %m : !v128xui16, ui16, !mb16 -> !v128xui16
+    %indices = pto.vadd %scaled, %pack, %m : !v128xui16, !v128xui16, !mb16 -> !v128xui16
+    %pm = pto.pset_b16 "PAT_ALL" : !mb16
+    pto.vsts %indices, %tab[%c0], %pm : !v128xui16, !pui16ub, index, !mb16
+  }
+
+  pto.vecscope {
+    %m2 = pto.pset_b16 "PAT_ALL" : !mb16
+    %idx = pto.vlds %tab[%c0] : !pui16ub, index -> !v128xui16
+    %a = pto.vgather2 %src, %idx, %m2 : !pui16ub, !v128xui16, !mb16 -> !v128xui16
+    pto.vsts %a, %dst[%c0], %m2 : !v128xui16, !pui16ub, index, !mb16
+    %b = pto.vgather2 %src, %idx, %m2 : !pui16ub, !v128xui16, !mb16 -> !v128xui16
+    %keep = arith.constant 128 : index
+    pto.vsts %b, %dst[%keep], %m2 : !v128xui16, !pui16ub, index, !mb16
+  }
+  return
+}
+
+// CHECK-LABEL: func.func @table_real_overlap(
+// CHECK: pto.mem_bar
+// CHECK: return
+func.func @table_real_overlap() {
+  %c0 = arith.constant 0 : index
+  %s0 = arith.constant 0 : i16
+  %src0 = arith.constant 0 : i64
+  %dst0 = arith.constant 128 : i64
+  %tab0 = arith.constant 196608 : i64
+  %src = pto.castptr %src0 : i64 -> !pui16ub
+  %dst = pto.castptr %dst0 : i64 -> !pui16ub
+  %tab = pto.castptr %tab0 : i64 -> !pui16ub
+
+  pto.vecscope {
+    %i = pto.vci %s0 : i16 -> !v128xi16
+    %u = pto.vbitcast %i : !v128xi16 -> !v128xui16
+    %pm = pto.pset_b16 "PAT_ALL" : !mb16
+    pto.vsts %u, %tab[%c0], %pm : !v128xui16, !pui16ub, index, !mb16
+  }
+
+  pto.vecscope {
+    %m2 = pto.pset_b16 "PAT_ALL" : !mb16
+    %idx = pto.vlds %tab[%c0] : !pui16ub, index -> !v128xui16
+    %a = pto.vgather2 %src, %idx, %m2 : !pui16ub, !v128xui16, !mb16 -> !v128xui16
+    pto.vsts %a, %dst[%c0], %m2 : !v128xui16, !pui16ub, index, !mb16
+    %b = pto.vgather2 %src, %idx, %m2 : !pui16ub, !v128xui16, !mb16 -> !v128xui16
+    %keep = arith.constant 128 : index
+    pto.vsts %b, %dst[%keep], %m2 : !v128xui16, !pui16ub, index, !mb16
+  }
+  return
+}
+
+// CHECK-LABEL: func.func @table_partial_initializer(
+// CHECK: pto.mem_bar
+// CHECK: return
+func.func @table_partial_initializer() {
+  %c0 = arith.constant 0 : index
+  %s0 = arith.constant 0 : i16
+  %src0 = arith.constant 0 : i64
+  %dst0 = arith.constant 4096 : i64
+  %tab0 = arith.constant 196608 : i64
+  %src = pto.castptr %src0 : i64 -> !pui16ub
+  %dst = pto.castptr %dst0 : i64 -> !pui16ub
+  %tab = pto.castptr %tab0 : i64 -> !pui16ub
+
+  pto.vecscope {
+    %i = pto.vci %s0 : i16 -> !v128xi16
+    %u = pto.vbitcast %i : !v128xi16 -> !v128xui16
+    %pm = pto.pset_b16 "PAT_VL64" : !mb16
+    pto.vsts %u, %tab[%c0], %pm : !v128xui16, !pui16ub, index, !mb16
+  }
+
+  pto.vecscope {
+    %m2 = pto.pset_b16 "PAT_ALL" : !mb16
+    %idx = pto.vlds %tab[%c0] : !pui16ub, index -> !v128xui16
+    %a = pto.vgather2 %src, %idx, %m2 : !pui16ub, !v128xui16, !mb16 -> !v128xui16
+    pto.vsts %a, %dst[%c0], %m2 : !v128xui16, !pui16ub, index, !mb16
+    %b = pto.vgather2 %src, %idx, %m2 : !pui16ub, !v128xui16, !mb16 -> !v128xui16
+    %keep = arith.constant 128 : index
+    pto.vsts %b, %dst[%keep], %m2 : !v128xui16, !pui16ub, index, !mb16
+  }
+  return
+}
+
+// CHECK-LABEL: func.func @table_conditional_initializer(
+// CHECK: pto.mem_bar
+// CHECK: return
+func.func @table_conditional_initializer(%cond: i1) {
+  %c0 = arith.constant 0 : index
+  %s0 = arith.constant 0 : i16
+  %src0 = arith.constant 0 : i64
+  %dst0 = arith.constant 4096 : i64
+  %tab0 = arith.constant 196608 : i64
+  %src = pto.castptr %src0 : i64 -> !pui16ub
+  %dst = pto.castptr %dst0 : i64 -> !pui16ub
+  %tab = pto.castptr %tab0 : i64 -> !pui16ub
+  scf.if %cond {
+  pto.vecscope {
+    %i = pto.vci %s0 : i16 -> !v128xi16
+    %u = pto.vbitcast %i : !v128xi16 -> !v128xui16
+    %pm = pto.pset_b16 "PAT_ALL" : !mb16
+    pto.vsts %u, %tab[%c0], %pm : !v128xui16, !pui16ub, index, !mb16
+  }
+  }
+
+  pto.vecscope {
+    %m2 = pto.pset_b16 "PAT_ALL" : !mb16
+    %idx = pto.vlds %tab[%c0] : !pui16ub, index -> !v128xui16
+    %a = pto.vgather2 %src, %idx, %m2 : !pui16ub, !v128xui16, !mb16 -> !v128xui16
+    pto.vsts %a, %dst[%c0], %m2 : !v128xui16, !pui16ub, index, !mb16
+    %b = pto.vgather2 %src, %idx, %m2 : !pui16ub, !v128xui16, !mb16 -> !v128xui16
+    %keep = arith.constant 128 : index
+    pto.vsts %b, %dst[%keep], %m2 : !v128xui16, !pui16ub, index, !mb16
+  }
+  return
+}
+
+// CHECK-LABEL: func.func @table_empty_initializer(
+// CHECK: pto.mem_bar
+// CHECK: return
+func.func @table_empty_initializer(%n: index) {
+  %c0 = arith.constant 0 : index
+  %c1 = arith.constant 1 : index
+  %s0 = arith.constant 0 : i16
+  %src0 = arith.constant 0 : i64
+  %dst0 = arith.constant 4096 : i64
+  %tab0 = arith.constant 196608 : i64
+  %src = pto.castptr %src0 : i64 -> !pui16ub
+  %dst = pto.castptr %dst0 : i64 -> !pui16ub
+  %tab = pto.castptr %tab0 : i64 -> !pui16ub
+  scf.for %outer = %c0 to %n step %c1 {
+  pto.vecscope {
+    %i = pto.vci %s0 : i16 -> !v128xi16
+    %u = pto.vbitcast %i : !v128xi16 -> !v128xui16
+    %pm = pto.pset_b16 "PAT_ALL" : !mb16
+    pto.vsts %u, %tab[%c0], %pm : !v128xui16, !pui16ub, index, !mb16
+  }
+  }
+
+  pto.vecscope {
+    %m2 = pto.pset_b16 "PAT_ALL" : !mb16
+    %idx = pto.vlds %tab[%c0] : !pui16ub, index -> !v128xui16
+    %a = pto.vgather2 %src, %idx, %m2 : !pui16ub, !v128xui16, !mb16 -> !v128xui16
+    pto.vsts %a, %dst[%c0], %m2 : !v128xui16, !pui16ub, index, !mb16
+    %b = pto.vgather2 %src, %idx, %m2 : !pui16ub, !v128xui16, !mb16 -> !v128xui16
+    %keep = arith.constant 128 : index
+    pto.vsts %b, %dst[%keep], %m2 : !v128xui16, !pui16ub, index, !mb16
+  }
+  return
+}
+
+// CHECK-LABEL: func.func @table_conditional_clobber(
+// CHECK: pto.mem_bar
+// CHECK: return
+func.func @table_conditional_clobber(%cond: i1) {
+  %c0 = arith.constant 0 : index
+  %s0 = arith.constant 0 : i16
+  %src0 = arith.constant 0 : i64
+  %dst0 = arith.constant 4096 : i64
+  %tab0 = arith.constant 196608 : i64
+  %src = pto.castptr %src0 : i64 -> !pui16ub
+  %dst = pto.castptr %dst0 : i64 -> !pui16ub
+  %tab = pto.castptr %tab0 : i64 -> !pui16ub
+
+  pto.vecscope {
+    %i = pto.vci %s0 : i16 -> !v128xi16
+    %u = pto.vbitcast %i : !v128xi16 -> !v128xui16
+    %pm = pto.pset_b16 "PAT_ALL" : !mb16
+    pto.vsts %u, %tab[%c0], %pm : !v128xui16, !pui16ub, index, !mb16
+  }
+
+  scf.if %cond {
+    pto.vecscope {
+      %cm = pto.pset_b16 "PAT_ALL" : !mb16
+      %cv = pto.vlds %src[%c0] : !pui16ub, index -> !v128xui16
+      pto.vsts %cv, %tab[%c0], %cm : !v128xui16, !pui16ub, index, !mb16
+    }
+  }
+  pto.vecscope {
+    %m2 = pto.pset_b16 "PAT_ALL" : !mb16
+    %idx = pto.vlds %tab[%c0] : !pui16ub, index -> !v128xui16
+    %a = pto.vgather2 %src, %idx, %m2 : !pui16ub, !v128xui16, !mb16 -> !v128xui16
+    pto.vsts %a, %dst[%c0], %m2 : !v128xui16, !pui16ub, index, !mb16
+    %b = pto.vgather2 %src, %idx, %m2 : !pui16ub, !v128xui16, !mb16 -> !v128xui16
+    %keep = arith.constant 128 : index
+    pto.vsts %b, %dst[%keep], %m2 : !v128xui16, !pui16ub, index, !mb16
+  }
+  return
+}
+
+// CHECK-LABEL: func.func @table_dma_clobber(
+// CHECK: pto.mem_bar
+// CHECK: return
+func.func @table_dma_clobber(%gm: !pui16gm) {
+  %c0 = arith.constant 0 : index
+  %s0 = arith.constant 0 : i16
+  %src0 = arith.constant 0 : i64
+  %dst0 = arith.constant 4096 : i64
+  %tab0 = arith.constant 196608 : i64
+  %one64 = arith.constant 1 : i64
+  %zero64 = arith.constant 0 : i64
+  %len64 = arith.constant 256 : i64
+  %false = arith.constant false
+  %src = pto.castptr %src0 : i64 -> !pui16ub
+  %dst = pto.castptr %dst0 : i64 -> !pui16ub
+  %tab = pto.castptr %tab0 : i64 -> !pui16ub
+  pto.set_loop_size_outtoub %one64, %one64 : i64, i64
+
+  pto.vecscope {
+    %i = pto.vci %s0 : i16 -> !v128xi16
+    %u = pto.vbitcast %i : !v128xi16 -> !v128xui16
+    %pm = pto.pset_b16 "PAT_ALL" : !mb16
+    pto.vsts %u, %tab[%c0], %pm : !v128xui16, !pui16ub, index, !mb16
+  }
+
+  pto.copy_gm_to_ubuf %gm, %tab, %zero64, %one64, %len64, %zero64, %zero64, %false, %zero64, %len64, %len64 : !pui16gm, !pui16ub, i64, i64, i64, i64, i64, i1, i64, i64, i64
+  pto.vecscope {
+    %m2 = pto.pset_b16 "PAT_ALL" : !mb16
+    %idx = pto.vlds %tab[%c0] : !pui16ub, index -> !v128xui16
+    %a = pto.vgather2 %src, %idx, %m2 : !pui16ub, !v128xui16, !mb16 -> !v128xui16
+    pto.vsts %a, %dst[%c0], %m2 : !v128xui16, !pui16ub, index, !mb16
+    %b = pto.vgather2 %src, %idx, %m2 : !pui16ub, !v128xui16, !mb16 -> !v128xui16
+    %keep = arith.constant 128 : index
+    pto.vsts %b, %dst[%keep], %m2 : !v128xui16, !pui16ub, index, !mb16
+  }
+  return
+}
+
+// CHECK-LABEL: func.func @table_dma_disjoint(
+// CHECK-NOT: pto.mem_bar
+// CHECK: return
+// CHECK-NOT: pto.mem_bar
+func.func @table_dma_disjoint(%gm: !pui16gm) {
+  %c0 = arith.constant 0 : index
+  %s0 = arith.constant 0 : i16
+  %src0 = arith.constant 0 : i64
+  %dst0 = arith.constant 4096 : i64
+  %tab0 = arith.constant 196608 : i64
+  %one64 = arith.constant 1 : i64
+  %zero64 = arith.constant 0 : i64
+  %len64 = arith.constant 256 : i64
+  %false = arith.constant false
+  %src = pto.castptr %src0 : i64 -> !pui16ub
+  %dst = pto.castptr %dst0 : i64 -> !pui16ub
+  %tab = pto.castptr %tab0 : i64 -> !pui16ub
+  pto.set_loop_size_outtoub %one64, %one64 : i64, i64
+
+  pto.vecscope {
+    %i = pto.vci %s0 : i16 -> !v128xi16
+    %u = pto.vbitcast %i : !v128xi16 -> !v128xui16
+    %pm = pto.pset_b16 "PAT_ALL" : !mb16
+    pto.vsts %u, %tab[%c0], %pm : !v128xui16, !pui16ub, index, !mb16
+  }
+
+  pto.copy_gm_to_ubuf %gm, %src, %zero64, %one64, %len64, %zero64, %zero64, %false, %zero64, %len64, %len64 : !pui16gm, !pui16ub, i64, i64, i64, i64, i64, i1, i64, i64, i64
+  pto.vecscope {
+    %m2 = pto.pset_b16 "PAT_ALL" : !mb16
+    %idx = pto.vlds %tab[%c0] : !pui16ub, index -> !v128xui16
+    %a = pto.vgather2 %src, %idx, %m2 : !pui16ub, !v128xui16, !mb16 -> !v128xui16
+    pto.vsts %a, %dst[%c0], %m2 : !v128xui16, !pui16ub, index, !mb16
+    %b = pto.vgather2 %src, %idx, %m2 : !pui16ub, !v128xui16, !mb16 -> !v128xui16
+    %keep = arith.constant 128 : index
+    pto.vsts %b, %dst[%keep], %m2 : !v128xui16, !pui16ub, index, !mb16
+  }
+  return
+}
+
+// CHECK-LABEL: func.func @table_unknown_call(
+// CHECK: pto.mem_bar
+// CHECK: return
+func.func @table_unknown_call() {
+  %c0 = arith.constant 0 : index
+  %s0 = arith.constant 0 : i16
+  %src0 = arith.constant 0 : i64
+  %dst0 = arith.constant 4096 : i64
+  %tab0 = arith.constant 196608 : i64
+  %src = pto.castptr %src0 : i64 -> !pui16ub
+  %dst = pto.castptr %dst0 : i64 -> !pui16ub
+  %tab = pto.castptr %tab0 : i64 -> !pui16ub
+
+  pto.vecscope {
+    %i = pto.vci %s0 : i16 -> !v128xi16
+    %u = pto.vbitcast %i : !v128xi16 -> !v128xui16
+    %pm = pto.pset_b16 "PAT_ALL" : !mb16
+    pto.vsts %u, %tab[%c0], %pm : !v128xui16, !pui16ub, index, !mb16
+  }
+
+  func.call @opaque() : () -> ()
+  pto.vecscope {
+    %m2 = pto.pset_b16 "PAT_ALL" : !mb16
+    %idx = pto.vlds %tab[%c0] : !pui16ub, index -> !v128xui16
+    %a = pto.vgather2 %src, %idx, %m2 : !pui16ub, !v128xui16, !mb16 -> !v128xui16
+    pto.vsts %a, %dst[%c0], %m2 : !v128xui16, !pui16ub, index, !mb16
+    %b = pto.vgather2 %src, %idx, %m2 : !pui16ub, !v128xui16, !mb16 -> !v128xui16
+    %keep = arith.constant 128 : index
+    pto.vsts %b, %dst[%keep], %m2 : !v128xui16, !pui16ub, index, !mb16
+  }
+  return
+}
+
+// CHECK-LABEL: func.func @table_wrap_initializer(
+// CHECK: pto.mem_bar
+// CHECK: return
+func.func @table_wrap_initializer() {
+  %c0 = arith.constant 0 : index
+  %s0 = arith.constant 0 : i16
+  %s15i = arith.constant 15 : i16
+  %s15 = builtin.unrealized_conversion_cast %s15i : i16 to ui16
+  %s128i = arith.constant -1 : i16
+  %s128 = builtin.unrealized_conversion_cast %s128i : i16 to ui16
+  %s4 = arith.constant 4 : i16
+  %src0 = arith.constant 0 : i64
+  %dst0 = arith.constant 4096 : i64
+  %tab0 = arith.constant 196608 : i64
+  %src = pto.castptr %src0 : i64 -> !pui16ub
+  %dst = pto.castptr %dst0 : i64 -> !pui16ub
+  %tab = pto.castptr %tab0 : i64 -> !pui16ub
+
+  pto.vecscope {
+    %i = pto.vci %s0 : i16 -> !v128xi16
+    %u = pto.vbitcast %i : !v128xi16 -> !v128xui16
+    %m = pto.pset_b16 "PAT_ALL" : !mb16
+    %maskv = pto.vdup %s15, %m : ui16, !mb16 -> !v128xui16
+    %row = pto.vand %u, %maskv, %m : !v128xui16, !v128xui16, !mb16 -> !v128xui16
+    %pack = pto.vshrs %u, %s4, %m : !v128xui16, i16, !mb16 -> !v128xui16
+    %scaled = pto.vmuls %row, %s128, %m : !v128xui16, ui16, !mb16 -> !v128xui16
+    %indices = pto.vadd %scaled, %pack, %m : !v128xui16, !v128xui16, !mb16 -> !v128xui16
+    %pm = pto.pset_b16 "PAT_ALL" : !mb16
+    pto.vsts %indices, %tab[%c0], %pm : !v128xui16, !pui16ub, index, !mb16
+  }
+
+  pto.vecscope {
+    %m2 = pto.pset_b16 "PAT_ALL" : !mb16
+    %idx = pto.vlds %tab[%c0] : !pui16ub, index -> !v128xui16
+    %a = pto.vgather2 %src, %idx, %m2 : !pui16ub, !v128xui16, !mb16 -> !v128xui16
+    pto.vsts %a, %dst[%c0], %m2 : !v128xui16, !pui16ub, index, !mb16
+    %b = pto.vgather2 %src, %idx, %m2 : !pui16ub, !v128xui16, !mb16 -> !v128xui16
+    %keep = arith.constant 128 : index
+    pto.vsts %b, %dst[%keep], %m2 : !v128xui16, !pui16ub, index, !mb16
+  }
+  return
+}
+
+// CHECK-LABEL: func.func @table_scaled_scatter_clobber(
+// CHECK: pto.mem_bar
+// CHECK: return
+func.func @table_scaled_scatter_clobber() {
+  %c0 = arith.constant 0 : index
+  %s0 = arith.constant 0 : i16
+  %src0 = arith.constant 0 : i64
+  %dst0 = arith.constant 4096 : i64
+  %tab0 = arith.constant 196608 : i64
+  %src = pto.castptr %src0 : i64 -> !pui16ub
+  %dst = pto.castptr %dst0 : i64 -> !pui16ub
+  %tab = pto.castptr %tab0 : i64 -> !pui16ub
+
+  pto.vecscope {
+    %i = pto.vci %s0 : i16 -> !v128xi16
+    %u = pto.vbitcast %i : !v128xi16 -> !v128xui16
+    %pm = pto.pset_b16 "PAT_ALL" : !mb16
+    pto.vsts %u, %tab[%c0], %pm : !v128xui16, !pui16ub, index, !mb16
+  }
+
+  pto.vecscope {
+    %sc0 = arith.constant 1 : i16
+    %sc128i = arith.constant 128 : i16
+    %sc128 = builtin.unrealized_conversion_cast %sc128i : i16 to ui16
+    %sc2048i = arith.constant 2048 : i16
+    %sc2048 = builtin.unrealized_conversion_cast %sc2048i : i16 to ui16
+    %scbase = arith.constant 196352 : i64
+    %scptr = pto.castptr %scbase : i64 -> !pui16ub
+    %sm = pto.pset_b16 "PAT_ALL" : !mb16
+    %si = pto.vci %sc0 : i16 -> !v128xi16
+    %su = pto.vbitcast %si : !v128xi16 -> !v128xui16
+    %so = pto.vmuls %su, %sc128, %sm : !v128xui16, ui16, !mb16 -> !v128xui16
+    %sv = pto.vdup %sc2048, %sm : ui16, !mb16 -> !v128xui16
+    pto.vscatter %sv, %scptr, %so, %sm : !v128xui16, !pui16ub, !v128xui16, !mb16
+  }
+  pto.vecscope {
+    %m2 = pto.pset_b16 "PAT_ALL" : !mb16
+    %idx = pto.vlds %tab[%c0] : !pui16ub, index -> !v128xui16
+    %a = pto.vgather2 %src, %idx, %m2 : !pui16ub, !v128xui16, !mb16 -> !v128xui16
+    pto.vsts %a, %dst[%c0], %m2 : !v128xui16, !pui16ub, index, !mb16
+    %b = pto.vgather2 %src, %idx, %m2 : !pui16ub, !v128xui16, !mb16 -> !v128xui16
+    %keep = arith.constant 128 : index
+    pto.vsts %b, %dst[%keep], %m2 : !v128xui16, !pui16ub, index, !mb16
+  }
+  return
+}
+
+// CHECK-LABEL: func.func @table_predicate_wrap_rejected(
+// CHECK: pto.mem_bar
+// CHECK: return
+func.func @table_predicate_wrap_rejected() {
+  %c0 = arith.constant 0 : index
+  %s0 = arith.constant 0 : i16
+  %src0 = arith.constant 0 : i64
+  %dst0 = arith.constant 4096 : i64
+  %tab0 = arith.constant 196608 : i64
+  %src = pto.castptr %src0 : i64 -> !pui16ub
+  %dst = pto.castptr %dst0 : i64 -> !pui16ub
+  %tab = pto.castptr %tab0 : i64 -> !pui16ub
+
+  pto.vecscope {
+    %i = pto.vci %s0 : i16 -> !v128xi16
+    %u = pto.vbitcast %i : !v128xi16 -> !v128xui16
+    %pm = pto.pset_b16 "PAT_ALL" : !mb16
+    pto.vsts %u, %tab[%c0], %pm : !v128xui16, !pui16ub, index, !mb16
+  }
+
+  pto.vecscope {
+    %pi = arith.constant 32760 : i16
+    %pj = arith.constant 8 : i16
+    %pw = arith.addi %pi, %pj : i16
+    %po = arith.index_cast %pw : i16 to index
+    %pm = pto.pset_b16 "PAT_ALL" : !mb16
+    pto.psts %pm, %tab[%po], "NORM" : !mb16, !pui16ub, index
+  }
+  pto.vecscope {
+    %m2 = pto.pset_b16 "PAT_ALL" : !mb16
+    %idx = pto.vlds %tab[%c0] : !pui16ub, index -> !v128xui16
+    %a = pto.vgather2 %src, %idx, %m2 : !pui16ub, !v128xui16, !mb16 -> !v128xui16
+    pto.vsts %a, %dst[%c0], %m2 : !v128xui16, !pui16ub, index, !mb16
+    %b = pto.vgather2 %src, %idx, %m2 : !pui16ub, !v128xui16, !mb16 -> !v128xui16
+    %keep = arith.constant 128 : index
+    pto.vsts %b, %dst[%keep], %m2 : !v128xui16, !pui16ub, index, !mb16
+  }
+  return
+}
+
+// CHECK-LABEL: func.func @table_partial_arithmetic(
+// CHECK: pto.mem_bar
+// CHECK: return
+func.func @table_partial_arithmetic() {
+  %c0 = arith.constant 0 : index
+  %s0 = arith.constant 0 : i16
+  %s15i = arith.constant 15 : i16
+  %s15 = builtin.unrealized_conversion_cast %s15i : i16 to ui16
+  %s128i = arith.constant 128 : i16
+  %s128 = builtin.unrealized_conversion_cast %s128i : i16 to ui16
+  %s4 = arith.constant 4 : i16
+  %src0 = arith.constant 0 : i64
+  %dst0 = arith.constant 4096 : i64
+  %tab0 = arith.constant 196608 : i64
+  %src = pto.castptr %src0 : i64 -> !pui16ub
+  %dst = pto.castptr %dst0 : i64 -> !pui16ub
+  %tab = pto.castptr %tab0 : i64 -> !pui16ub
+
+  pto.vecscope {
+    %i = pto.vci %s0 : i16 -> !v128xi16
+    %u = pto.vbitcast %i : !v128xi16 -> !v128xui16
+    %m = pto.pset_b16 "PAT_ALL" : !mb16
+    %maskv = pto.vdup %s15, %m : ui16, !mb16 -> !v128xui16
+    %row = pto.vand %u, %maskv, %m : !v128xui16, !v128xui16, !mb16 -> !v128xui16
+    %pack = pto.vshrs %u, %s4, %m : !v128xui16, i16, !mb16 -> !v128xui16
+    %scaled = pto.vmuls %row, %s128, %m : !v128xui16, ui16, !mb16 -> !v128xui16
+    %short = pto.pset_b16 "PAT_VL64" : !mb16
+    %indices = pto.vadd %scaled, %pack, %short : !v128xui16, !v128xui16, !mb16 -> !v128xui16
+    %pm = pto.pset_b16 "PAT_ALL" : !mb16
+    pto.vsts %indices, %tab[%c0], %pm : !v128xui16, !pui16ub, index, !mb16
+  }
+
+  pto.vecscope {
+    %m2 = pto.pset_b16 "PAT_ALL" : !mb16
+    %idx = pto.vlds %tab[%c0] : !pui16ub, index -> !v128xui16
+    %a = pto.vgather2 %src, %idx, %m2 : !pui16ub, !v128xui16, !mb16 -> !v128xui16
+    pto.vsts %a, %dst[%c0], %m2 : !v128xui16, !pui16ub, index, !mb16
+    %b = pto.vgather2 %src, %idx, %m2 : !pui16ub, !v128xui16, !mb16 -> !v128xui16
+    %keep = arith.constant 128 : index
+    pto.vsts %b, %dst[%keep], %m2 : !v128xui16, !pui16ub, index, !mb16
+  }
+  return
+}
+
+// CHECK-LABEL: func.func @table_unknown_dma_loop(
+// CHECK: pto.mem_bar
+// CHECK: return
+func.func @table_unknown_dma_loop(%gm: !pui16gm) {
+  %c0 = arith.constant 0 : index
+  %s0 = arith.constant 0 : i16
+  %src0 = arith.constant 0 : i64
+  %dst0 = arith.constant 4096 : i64
+  %tab0 = arith.constant 196608 : i64
+  %one64 = arith.constant 1 : i64
+  %zero64 = arith.constant 0 : i64
+  %len64 = arith.constant 256 : i64
+  %false = arith.constant false
+  %src = pto.castptr %src0 : i64 -> !pui16ub
+  %dst = pto.castptr %dst0 : i64 -> !pui16ub
+  %tab = pto.castptr %tab0 : i64 -> !pui16ub
+  pto.set_loop_size_outtoub %one64, %one64 : i64, i64
+
+  pto.vecscope {
+    %i = pto.vci %s0 : i16 -> !v128xi16
+    %u = pto.vbitcast %i : !v128xi16 -> !v128xui16
+    %pm = pto.pset_b16 "PAT_ALL" : !mb16
+    pto.vsts %u, %tab[%c0], %pm : !v128xui16, !pui16ub, index, !mb16
+  }
+
+  %two64 = arith.constant 2 : i64
+  pto.set_loop_size_outtoub %two64, %one64 : i64, i64
+  pto.copy_gm_to_ubuf %gm, %src, %zero64, %one64, %len64, %zero64, %zero64, %false, %zero64, %len64, %len64 : !pui16gm, !pui16ub, i64, i64, i64, i64, i64, i1, i64, i64, i64
+  pto.vecscope {
+    %m2 = pto.pset_b16 "PAT_ALL" : !mb16
+    %idx = pto.vlds %tab[%c0] : !pui16ub, index -> !v128xui16
+    %a = pto.vgather2 %src, %idx, %m2 : !pui16ub, !v128xui16, !mb16 -> !v128xui16
+    pto.vsts %a, %dst[%c0], %m2 : !v128xui16, !pui16ub, index, !mb16
+    %b = pto.vgather2 %src, %idx, %m2 : !pui16ub, !v128xui16, !mb16 -> !v128xui16
+    %keep = arith.constant 128 : index
+    pto.vsts %b, %dst[%keep], %m2 : !v128xui16, !pui16ub, index, !mb16
+  }
+  return
+}
+
+// CHECK-LABEL: func.func @table_intervening_mode(
+// CHECK: pto.mem_bar
+// CHECK: return
+func.func @table_intervening_mode() {
+  %c0 = arith.constant 0 : index
+  %s0 = arith.constant 0 : i16
+  %src0 = arith.constant 0 : i64
+  %dst0 = arith.constant 4096 : i64
+  %tab0 = arith.constant 196608 : i64
+  %one64 = arith.constant 1 : i64
+  %zero64 = arith.constant 0 : i64
+  %src = pto.castptr %src0 : i64 -> !pui16ub
+  %dst = pto.castptr %dst0 : i64 -> !pui16ub
+  %tab = pto.castptr %tab0 : i64 -> !pui16ub
+  pto.set_loop_size_outtoub %one64, %one64 : i64, i64
+
+  pto.vecscope {
+    %i = pto.vci %s0 : i16 -> !v128xi16
+    %u = pto.vbitcast %i : !v128xi16 -> !v128xui16
+    %pm = pto.pset_b16 "PAT_ALL" : !mb16
+    pto.vsts %u, %tab[%c0], %pm : !v128xui16, !pui16ub, index, !mb16
+  }
+
+  pto.set_store_atomic_cfg %zero64 : i64
+  pto.vecscope {
+    %m2 = pto.pset_b16 "PAT_ALL" : !mb16
+    %idx = pto.vlds %tab[%c0] : !pui16ub, index -> !v128xui16
+    %a = pto.vgather2 %src, %idx, %m2 : !pui16ub, !v128xui16, !mb16 -> !v128xui16
+    pto.vsts %a, %dst[%c0], %m2 : !v128xui16, !pui16ub, index, !mb16
+    %b = pto.vgather2 %src, %idx, %m2 : !pui16ub, !v128xui16, !mb16 -> !v128xui16
+    %keep = arith.constant 128 : index
+    pto.vsts %b, %dst[%keep], %m2 : !v128xui16, !pui16ub, index, !mb16
+  }
+  return
+}
+
+// CHECK-LABEL: func.func @table_stateful_clobber(
+// CHECK: pto.mem_bar
+// CHECK: return
+func.func @table_stateful_clobber() {
+  %c0 = arith.constant 0 : index
+  %s0 = arith.constant 0 : i16
+  %src0 = arith.constant 0 : i64
+  %dst0 = arith.constant 4096 : i64
+  %tab0 = arith.constant 196608 : i64
+  %one64 = arith.constant 1 : i64
+  %src = pto.castptr %src0 : i64 -> !pui16ub
+  %dst = pto.castptr %dst0 : i64 -> !pui16ub
+  %tab = pto.castptr %tab0 : i64 -> !pui16ub
+  pto.set_loop_size_outtoub %one64, %one64 : i64, i64
+
+  pto.vecscope {
+    %i = pto.vci %s0 : i16 -> !v128xi16
+    %u = pto.vbitcast %i : !v128xi16 -> !v128xui16
+    %pm = pto.pset_b16 "PAT_ALL" : !mb16
+    pto.vsts %u, %tab[%c0], %pm : !v128xui16, !pui16ub, index, !mb16
+  }
+
+  pto.vecscope {
+    %ss = pto.init_align : !pto.align
+    %sv = pto.vlds %src[%c0] : !pui16ub, index -> !v128xui16
+    %so = arith.constant 0 : i32
+    %sn = pto.vstus %ss, %so, %sv, %tab : !pto.align, i32, !v128xui16, !pui16ub -> !pto.align
+  }
+  pto.vecscope {
+    %m2 = pto.pset_b16 "PAT_ALL" : !mb16
+    %idx = pto.vlds %tab[%c0] : !pui16ub, index -> !v128xui16
+    %a = pto.vgather2 %src, %idx, %m2 : !pui16ub, !v128xui16, !mb16 -> !v128xui16
+    pto.vsts %a, %dst[%c0], %m2 : !v128xui16, !pui16ub, index, !mb16
+    %b = pto.vgather2 %src, %idx, %m2 : !pui16ub, !v128xui16, !mb16 -> !v128xui16
+    %keep = arith.constant 128 : index
+    pto.vsts %b, %dst[%keep], %m2 : !v128xui16, !pui16ub, index, !mb16
+  }
+  return
+}
+
+// CHECK-LABEL: func.func @table_nonprefix_clobber(
+// CHECK: pto.mem_bar
+// CHECK: return
+func.func @table_nonprefix_clobber() {
+  %c0 = arith.constant 0 : index
+  %s0 = arith.constant 0 : i16
+  %src0 = arith.constant 0 : i64
+  %dst0 = arith.constant 4096 : i64
+  %tab0 = arith.constant 196608 : i64
+  %src = pto.castptr %src0 : i64 -> !pui16ub
+  %dst = pto.castptr %dst0 : i64 -> !pui16ub
+  %tab = pto.castptr %tab0 : i64 -> !pui16ub
+
+  pto.vecscope {
+    %i = pto.vci %s0 : i16 -> !v128xi16
+    %u = pto.vbitcast %i : !v128xi16 -> !v128xui16
+    %pm = pto.pset_b16 "PAT_ALL" : !mb16
+    pto.vsts %u, %tab[%c0], %pm : !v128xui16, !pui16ub, index, !mb16
+  }
+
+  pto.vecscope {
+    %pgm = pto.pge_b16 "PAT_VL16" : !mb16
+    %pgaddr = arith.constant 196480 : i64
+    %pgptr = pto.castptr %pgaddr : i64 -> !pui16ub
+    %pgv = pto.vlds %src[%c0] : !pui16ub, index -> !v128xui16
+    pto.vsts %pgv, %pgptr[%c0], %pgm : !v128xui16, !pui16ub, index, !mb16
+  }
+  pto.vecscope {
+    %m2 = pto.pset_b16 "PAT_ALL" : !mb16
+    %idx = pto.vlds %tab[%c0] : !pui16ub, index -> !v128xui16
+    %a = pto.vgather2 %src, %idx, %m2 : !pui16ub, !v128xui16, !mb16 -> !v128xui16
+    pto.vsts %a, %dst[%c0], %m2 : !v128xui16, !pui16ub, index, !mb16
+    %b = pto.vgather2 %src, %idx, %m2 : !pui16ub, !v128xui16, !mb16 -> !v128xui16
+    %keep = arith.constant 128 : index
+    pto.vsts %b, %dst[%keep], %m2 : !v128xui16, !pui16ub, index, !mb16
+  }
+  return
+}
+
+// CHECK-LABEL: func.func @table_packed_clobber(
+// CHECK: pto.mem_bar
+// CHECK: return
+func.func @table_packed_clobber() {
+  %c0 = arith.constant 0 : index
+  %s0 = arith.constant 0 : i16
+  %src0 = arith.constant 0 : i64
+  %dst0 = arith.constant 4096 : i64
+  %tab0 = arith.constant 196608 : i64
+  %src = pto.castptr %src0 : i64 -> !pui16ub
+  %dst = pto.castptr %dst0 : i64 -> !pui16ub
+  %tab = pto.castptr %tab0 : i64 -> !pui16ub
+
+  pto.vecscope {
+    %i = pto.vci %s0 : i16 -> !v128xi16
+    %u = pto.vbitcast %i : !v128xi16 -> !v128xui16
+    %pm = pto.pset_b16 "PAT_ALL" : !mb16
+    pto.vsts %u, %tab[%c0], %pm : !v128xui16, !pui16ub, index, !mb16
+  }
+
+  pto.vecscope {
+    %cpaddr = arith.constant 196544 : i64
+    %cpptr = pto.castptr %cpaddr : i64 -> !pui16ub
+    %cpm = pto.pset_b32 "PAT_ALL" : !mb32
+    %cpv = pto.vlds %src[%c0] : !pui16ub, index -> !v64xui32
+    pto.vsts %cpv, %cpptr[%c0], %cpm {dist = "PK_B32"} : !v64xui32, !pui16ub, index, !mb32
+  }
+  pto.vecscope {
+    %m2 = pto.pset_b16 "PAT_ALL" : !mb16
+    %idx = pto.vlds %tab[%c0] : !pui16ub, index -> !v128xui16
+    %a = pto.vgather2 %src, %idx, %m2 : !pui16ub, !v128xui16, !mb16 -> !v128xui16
+    pto.vsts %a, %dst[%c0], %m2 : !v128xui16, !pui16ub, index, !mb16
+    %b = pto.vgather2 %src, %idx, %m2 : !pui16ub, !v128xui16, !mb16 -> !v128xui16
+    %keep = arith.constant 128 : index
+    pto.vsts %b, %dst[%keep], %m2 : !v128xui16, !pui16ub, index, !mb16
+  }
+  return
+}
+
+// CHECK-LABEL: func.func @table_pk4_adjacent(
+// CHECK-NOT: pto.mem_bar
+// CHECK: return
+// CHECK-NOT: pto.mem_bar
+func.func @table_pk4_adjacent() {
+  %c0 = arith.constant 0 : index
+  %s0 = arith.constant 0 : i16
+  %src0 = arith.constant 0 : i64
+  %dst0 = arith.constant 4096 : i64
+  %tab0 = arith.constant 196608 : i64
+  %src = pto.castptr %src0 : i64 -> !pui16ub
+  %dst = pto.castptr %dst0 : i64 -> !pui16ub
+  %tab = pto.castptr %tab0 : i64 -> !pui16ub
+
+  pto.vecscope {
+    %i = pto.vci %s0 : i16 -> !v128xi16
+    %u = pto.vbitcast %i : !v128xi16 -> !v128xui16
+    %pm = pto.pset_b16 "PAT_ALL" : !mb16
+    pto.vsts %u, %tab[%c0], %pm : !v128xui16, !pui16ub, index, !mb16
+  }
+
+  pto.vecscope {
+    %cpaddr = arith.constant 196544 : i64
+    %cpptr = pto.castptr %cpaddr : i64 -> !pui8ub
+    %cpm = pto.pset_b32 "PAT_ALL" : !mb32
+    %cpv = pto.vlds %src[%c0] : !pui16ub, index -> !v256xui8
+    pto.vsts %cpv, %cpptr[%c0], %cpm {dist = "PK4_B32"} : !v256xui8, !pui8ub, index, !mb32
+  }
+  pto.vecscope {
+    %m2 = pto.pset_b16 "PAT_ALL" : !mb16
+    %idx = pto.vlds %tab[%c0] : !pui16ub, index -> !v128xui16
+    %a = pto.vgather2 %src, %idx, %m2 : !pui16ub, !v128xui16, !mb16 -> !v128xui16
+    pto.vsts %a, %dst[%c0], %m2 : !v128xui16, !pui16ub, index, !mb16
+    %b = pto.vgather2 %src, %idx, %m2 : !pui16ub, !v128xui16, !mb16 -> !v128xui16
+    %keep = arith.constant 128 : index
+    pto.vsts %b, %dst[%keep], %m2 : !v128xui16, !pui16ub, index, !mb16
+  }
+  return
+}
+
+// CHECK-LABEL: func.func @table_pk4_overlap(
+// CHECK: pto.mem_bar
+// CHECK: return
+func.func @table_pk4_overlap() {
+  %c0 = arith.constant 0 : index
+  %s0 = arith.constant 0 : i16
+  %src0 = arith.constant 0 : i64
+  %dst0 = arith.constant 4096 : i64
+  %tab0 = arith.constant 196608 : i64
+  %src = pto.castptr %src0 : i64 -> !pui16ub
+  %dst = pto.castptr %dst0 : i64 -> !pui16ub
+  %tab = pto.castptr %tab0 : i64 -> !pui16ub
+
+  pto.vecscope {
+    %i = pto.vci %s0 : i16 -> !v128xi16
+    %u = pto.vbitcast %i : !v128xi16 -> !v128xui16
+    %pm = pto.pset_b16 "PAT_ALL" : !mb16
+    pto.vsts %u, %tab[%c0], %pm : !v128xui16, !pui16ub, index, !mb16
+  }
+
+  pto.vecscope {
+    %cpaddr = arith.constant 196545 : i64
+    %cpptr = pto.castptr %cpaddr : i64 -> !pui8ub
+    %cpm = pto.pset_b32 "PAT_ALL" : !mb32
+    %cpv = pto.vlds %src[%c0] : !pui16ub, index -> !v256xui8
+    pto.vsts %cpv, %cpptr[%c0], %cpm {dist = "PK4_B32"} : !v256xui8, !pui8ub, index, !mb32
+  }
+  pto.vecscope {
+    %m2 = pto.pset_b16 "PAT_ALL" : !mb16
+    %idx = pto.vlds %tab[%c0] : !pui16ub, index -> !v128xui16
+    %a = pto.vgather2 %src, %idx, %m2 : !pui16ub, !v128xui16, !mb16 -> !v128xui16
+    pto.vsts %a, %dst[%c0], %m2 : !v128xui16, !pui16ub, index, !mb16
+    %b = pto.vgather2 %src, %idx, %m2 : !pui16ub, !v128xui16, !mb16 -> !v128xui16
+    %keep = arith.constant 128 : index
+    pto.vsts %b, %dst[%keep], %m2 : !v128xui16, !pui16ub, index, !mb16
+  }
+  return
+}
+
+// CHECK-LABEL: func.func @table_1pt_adjacent(
+// CHECK-NOT: pto.mem_bar
+// CHECK: return
+// CHECK-NOT: pto.mem_bar
+func.func @table_1pt_adjacent() {
+  %c0 = arith.constant 0 : index
+  %s0 = arith.constant 0 : i16
+  %src0 = arith.constant 0 : i64
+  %dst0 = arith.constant 4096 : i64
+  %tab0 = arith.constant 196608 : i64
+  %src = pto.castptr %src0 : i64 -> !pui16ub
+  %dst = pto.castptr %dst0 : i64 -> !pui16ub
+  %tab = pto.castptr %tab0 : i64 -> !pui16ub
+
+  pto.vecscope {
+    %i = pto.vci %s0 : i16 -> !v128xi16
+    %u = pto.vbitcast %i : !v128xi16 -> !v128xui16
+    %pm = pto.pset_b16 "PAT_ALL" : !mb16
+    pto.vsts %u, %tab[%c0], %pm : !v128xui16, !pui16ub, index, !mb16
+  }
+
+  pto.vecscope {
+    %cpaddr = arith.constant 196604 : i64
+    %cpptr = pto.castptr %cpaddr : i64 -> !pui8ub
+    %cpm = pto.pset_b32 "PAT_VL1" : !mb32
+    %cpv = pto.vlds %src[%c0] : !pui16ub, index -> !v64xui32
+    pto.vsts %cpv, %cpptr[%c0], %cpm {dist = "1PT_B32"} : !v64xui32, !pui8ub, index, !mb32
+  }
+  pto.vecscope {
+    %m2 = pto.pset_b16 "PAT_ALL" : !mb16
+    %idx = pto.vlds %tab[%c0] : !pui16ub, index -> !v128xui16
+    %a = pto.vgather2 %src, %idx, %m2 : !pui16ub, !v128xui16, !mb16 -> !v128xui16
+    pto.vsts %a, %dst[%c0], %m2 : !v128xui16, !pui16ub, index, !mb16
+    %b = pto.vgather2 %src, %idx, %m2 : !pui16ub, !v128xui16, !mb16 -> !v128xui16
+    %keep = arith.constant 128 : index
+    pto.vsts %b, %dst[%keep], %m2 : !v128xui16, !pui16ub, index, !mb16
+  }
+  return
+}
+
+// CHECK-LABEL: func.func @table_1pt_overlap(
+// CHECK: pto.mem_bar
+// CHECK: return
+func.func @table_1pt_overlap() {
+  %c0 = arith.constant 0 : index
+  %s0 = arith.constant 0 : i16
+  %src0 = arith.constant 0 : i64
+  %dst0 = arith.constant 4096 : i64
+  %tab0 = arith.constant 196608 : i64
+  %src = pto.castptr %src0 : i64 -> !pui16ub
+  %dst = pto.castptr %dst0 : i64 -> !pui16ub
+  %tab = pto.castptr %tab0 : i64 -> !pui16ub
+
+  pto.vecscope {
+    %i = pto.vci %s0 : i16 -> !v128xi16
+    %u = pto.vbitcast %i : !v128xi16 -> !v128xui16
+    %pm = pto.pset_b16 "PAT_ALL" : !mb16
+    pto.vsts %u, %tab[%c0], %pm : !v128xui16, !pui16ub, index, !mb16
+  }
+
+  pto.vecscope {
+    %cpaddr = arith.constant 196606 : i64
+    %cpptr = pto.castptr %cpaddr : i64 -> !pui8ub
+    %cpm = pto.pset_b32 "PAT_VL1" : !mb32
+    %cpv = pto.vlds %src[%c0] : !pui16ub, index -> !v64xui32
+    pto.vsts %cpv, %cpptr[%c0], %cpm {dist = "1PT_B32"} : !v64xui32, !pui8ub, index, !mb32
+  }
+  pto.vecscope {
+    %m2 = pto.pset_b16 "PAT_ALL" : !mb16
+    %idx = pto.vlds %tab[%c0] : !pui16ub, index -> !v128xui16
+    %a = pto.vgather2 %src, %idx, %m2 : !pui16ub, !v128xui16, !mb16 -> !v128xui16
+    pto.vsts %a, %dst[%c0], %m2 : !v128xui16, !pui16ub, index, !mb16
+    %b = pto.vgather2 %src, %idx, %m2 : !pui16ub, !v128xui16, !mb16 -> !v128xui16
+    %keep = arith.constant 128 : index
+    pto.vsts %b, %dst[%keep], %m2 : !v128xui16, !pui16ub, index, !mb16
+  }
+  return
+}
+
+// CHECK-LABEL: func.func @late_table_initializer(
+// CHECK: %[[DST:.*]] = arith.constant 2048 : index
+// CHECK: pto.vsts {{.*}}[%[[DST]]]
+// CHECK-NEXT: pto.mem_bar "VST_VLD"
+// CHECK-NEXT: {{.*}}pto.vgather2
+// CHECK: return
+  func.func @late_table_initializer(%data: !pto.vreg<128xui16>) {
+    %zero = arith.constant 0 : index
+    %dst = arith.constant 2048 : index
+    %sink = arith.constant 4096 : index
+    %base = arith.constant 0 : i64
+    %table_addr = arith.constant 196608 : i64
+    %start = arith.constant 0 : i16
+    %p = pto.castptr %base : i64 -> !pto.ptr<ui16, ub>
+    %table = pto.castptr %table_addr : i64 -> !pto.ptr<ui16, ub>
+    pto.vecscope {
+      %m = pto.pset_b16 "PAT_ALL" : !pto.mask<b16>
+      %indices = pto.vlds %table[%zero] : !pto.ptr<ui16, ub>, index -> !pto.vreg<128xui16>
+      pto.vsts %data, %p[%dst], %m : !pto.vreg<128xui16>, !pto.ptr<ui16, ub>, index, !pto.mask<b16>
+      %read = pto.vgather2 %p, %indices, %m : !pto.ptr<ui16, ub>, !pto.vreg<128xui16>, !pto.mask<b16> -> !pto.vreg<128xui16>
+      pto.vsts %read, %p[%sink], %m : !pto.vreg<128xui16>, !pto.ptr<ui16, ub>, index, !pto.mask<b16>
+      %ramp = pto.vci %start : i16 -> !pto.vreg<128xi16>
+      %new_indices = pto.vbitcast %ramp : !pto.vreg<128xi16> -> !pto.vreg<128xui16>
+      pto.vsts %new_indices, %table[%zero], %m : !pto.vreg<128xui16>, !pto.ptr<ui16, ub>, index, !pto.mask<b16>
+    }
+    return
+  }
+
+// CHECK-LABEL: func.func @early_table_initializer(
+// CHECK: pto.vsts
+// CHECK-NEXT: pto.mem_bar "VST_VLD"
+// CHECK-NEXT: {{.*}}pto.vlds
+// CHECK: pto.vsts
+// CHECK-NOT: pto.mem_bar
+// CHECK: pto.vgather2
+// CHECK-NOT: pto.mem_bar
+// CHECK: return
+  func.func @early_table_initializer(%data: !pto.vreg<128xui16>) {
+    %zero = arith.constant 0 : index
+    %dst = arith.constant 2048 : index
+    %sink = arith.constant 4096 : index
+    %base = arith.constant 0 : i64
+    %table_addr = arith.constant 196608 : i64
+    %start = arith.constant 0 : i16
+    %p = pto.castptr %base : i64 -> !pto.ptr<ui16, ub>
+    %table = pto.castptr %table_addr : i64 -> !pto.ptr<ui16, ub>
+    pto.vecscope {
+      %m = pto.pset_b16 "PAT_ALL" : !pto.mask<b16>
+      %ramp = pto.vci %start : i16 -> !pto.vreg<128xi16>
+      %new_indices = pto.vbitcast %ramp : !pto.vreg<128xi16> -> !pto.vreg<128xui16>
+      pto.vsts %new_indices, %table[%zero], %m : !pto.vreg<128xui16>, !pto.ptr<ui16, ub>, index, !pto.mask<b16>
+      %indices = pto.vlds %table[%zero] : !pto.ptr<ui16, ub>, index -> !pto.vreg<128xui16>
+      pto.vsts %data, %p[%dst], %m : !pto.vreg<128xui16>, !pto.ptr<ui16, ub>, index, !pto.mask<b16>
+      %read = pto.vgather2 %p, %indices, %m : !pto.ptr<ui16, ub>, !pto.vreg<128xui16>, !pto.mask<b16> -> !pto.vreg<128xui16>
+      pto.vsts %read, %p[%sink], %m : !pto.vreg<128xui16>, !pto.ptr<ui16, ub>, index, !pto.mask<b16>
+
+    }
+    return
+  }
+}

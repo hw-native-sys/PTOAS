@@ -1,0 +1,372 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+
+// RUN: pto-test-opt --pto-insert-vecscope-membar %s | FileCheck %s
+// RUN: pto-test-opt --pto-insert-vecscope-membar --pto-insert-vecscope-membar %s | FileCheck %s
+
+!mb32 = !pto.mask<b32>
+!pf32ub = !pto.ptr<f32, ub>
+!v64xf32 = !pto.vreg<64xf32>
+
+module attributes {pto.target_arch = "a5", pto.kernel_kind = #pto.kernel_kind<vector>} {
+
+// CHECK-LABEL: func.func @bounded_disjoint(
+// CHECK-NOT: pto.mem_bar
+// CHECK: return
+// CHECK-NOT: pto.mem_bar
+  func.func @bounded_disjoint(%n: index) {
+    %zero = arith.constant 0 : i64
+    %ub = pto.castptr %zero : i64 -> !pf32ub
+    %c0 = arith.constant 0 : index
+    %c1 = arith.constant 1 : index
+    %c64 = arith.constant 64 : index
+    %c4096 = arith.constant 4096 : index
+    %src = pto.addptr %ub, %c0 : !pto.ptr<f32, ub>, index -> !pto.ptr<f32, ub>
+    %dst = pto.addptr %ub, %c4096 : !pto.ptr<f32, ub>, index -> !pto.ptr<f32, ub>
+    %bound = arith.minui %n, %c64 : index
+    pto.vecscope {
+      %mask = pto.pset_b32 "PAT_ALL" : !mb32
+      scf.for %i = %c0 to %bound step %c1 {
+        %offset = arith.muli %i, %c64 : index
+        %v = pto.vlds %src[%offset] : !pf32ub, index -> !v64xf32
+        pto.vsts %v, %dst[%offset], %mask : !v64xf32, !pf32ub, index, !mb32
+      }
+    }
+    return
+  }
+
+// CHECK-LABEL: func.func @bounded_overlap_store(
+// CHECK: pto.mem_bar "VST_VST"
+// CHECK: return
+  func.func @bounded_overlap_store(%n: index, %value: !v64xf32) {
+    %zero = arith.constant 0 : i64
+    %ub = pto.castptr %zero : i64 -> !pf32ub
+    %c0 = arith.constant 0 : index
+    %c1 = arith.constant 1 : index
+    %c64 = arith.constant 64 : index
+    %c4096 = arith.constant 4096 : index
+    %dst = pto.addptr %ub, %c4096 : !pto.ptr<f32, ub>, index -> !pto.ptr<f32, ub>
+    %bound = arith.minui %n, %c64 : index
+    %c32 = arith.constant 32 : index
+    pto.vecscope {
+      %mask = pto.pset_b32 "PAT_ALL" : !mb32
+      scf.for %i = %c0 to %bound step %c1 {
+        %offset = arith.muli %i, %c32 : index
+        pto.vsts %value, %dst[%offset], %mask : !v64xf32, !pf32ub, index, !mb32
+      }
+    }
+    return
+  }
+
+// CHECK-LABEL: func.func @unknown_bound(
+// CHECK: pto.mem_bar "VV_ALL"
+// CHECK: return
+  func.func @unknown_bound(%n: index) {
+    %zero = arith.constant 0 : i64
+    %ub = pto.castptr %zero : i64 -> !pf32ub
+    %c0 = arith.constant 0 : index
+    %c1 = arith.constant 1 : index
+    %c64 = arith.constant 64 : index
+    %c4096 = arith.constant 4096 : index
+    %src = pto.addptr %ub, %c0 : !pto.ptr<f32, ub>, index -> !pto.ptr<f32, ub>
+    %dst = pto.addptr %ub, %c4096 : !pto.ptr<f32, ub>, index -> !pto.ptr<f32, ub>
+    pto.vecscope {
+      %mask = pto.pset_b32 "PAT_ALL" : !mb32
+      scf.for %i = %c0 to %n step %c1 {
+        %offset = arith.muli %i, %c64 : index
+        %v = pto.vlds %src[%offset] : !pf32ub, index -> !v64xf32
+        pto.vsts %v, %dst[%offset], %mask : !v64xf32, !pf32ub, index, !mb32
+      }
+    }
+    return
+  }
+
+// CHECK-LABEL: func.func @unknown_step(
+// CHECK: pto.mem_bar "VV_ALL"
+// CHECK: return
+  func.func @unknown_step(%n: index, %step: index) {
+    %zero = arith.constant 0 : i64
+    %ub = pto.castptr %zero : i64 -> !pf32ub
+    %c0 = arith.constant 0 : index
+    %c64 = arith.constant 64 : index
+    %c4096 = arith.constant 4096 : index
+    %src = pto.addptr %ub, %c0 : !pto.ptr<f32, ub>, index -> !pto.ptr<f32, ub>
+    %dst = pto.addptr %ub, %c4096 : !pto.ptr<f32, ub>, index -> !pto.ptr<f32, ub>
+    %bound = arith.minui %n, %c64 : index
+    pto.vecscope {
+      %mask = pto.pset_b32 "PAT_ALL" : !mb32
+      scf.for %i = %c0 to %bound step %step {
+        %offset = arith.muli %i, %c64 : index
+        %v = pto.vlds %src[%offset] : !pf32ub, index -> !v64xf32
+        pto.vsts %v, %dst[%offset], %mask : !v64xf32, !pf32ub, index, !mb32
+      }
+    }
+    return
+  }
+
+// CHECK-LABEL: func.func @bounded_carried_raw(
+// CHECK: pto.mem_bar "VST_VLD"
+// CHECK: return
+  func.func @bounded_carried_raw(%n: index) {
+    %zero = arith.constant 0 : i64
+    %ub = pto.castptr %zero : i64 -> !pf32ub
+    %c0 = arith.constant 0 : index
+    %c1 = arith.constant 1 : index
+    %c64 = arith.constant 64 : index
+    %src = pto.addptr %ub, %c0 : !pto.ptr<f32, ub>, index -> !pto.ptr<f32, ub>
+    %bound = arith.minui %n, %c64 : index
+    %cprev = arith.constant 64 : index
+    pto.vecscope {
+      %mask = pto.pset_b32 "PAT_ALL" : !mb32
+      scf.for %i = %c0 to %bound step %c1 {
+        %offset = arith.muli %i, %c64 : index
+        %next = arith.addi %offset, %cprev : index
+        %v = pto.vlds %src[%offset] : !pf32ub, index -> !v64xf32
+        pto.vsts %v, %src[%next], %mask : !v64xf32, !pf32ub, index, !mb32
+      }
+    }
+    return
+  }
+
+// CHECK-LABEL: func.func @bounded_carried_war(
+// CHECK: pto.mem_bar "VLD_VST"
+// CHECK: return
+  func.func @bounded_carried_war(%n: index) {
+    %zero = arith.constant 0 : i64
+    %ub = pto.castptr %zero : i64 -> !pf32ub
+    %c0 = arith.constant 0 : index
+    %c1 = arith.constant 1 : index
+    %c64 = arith.constant 64 : index
+    %src = pto.addptr %ub, %c0 : !pto.ptr<f32, ub>, index -> !pto.ptr<f32, ub>
+    %bound = arith.minui %n, %c64 : index
+    %cprev = arith.constant 64 : index
+    pto.vecscope {
+      %mask = pto.pset_b32 "PAT_ALL" : !mb32
+      scf.for %i = %c0 to %bound step %c1 {
+        %offset = arith.muli %i, %c64 : index
+        %next = arith.addi %offset, %cprev : index
+        %v = pto.vlds %src[%next] : !pf32ub, index -> !v64xf32
+        pto.vsts %v, %src[%offset], %mask : !v64xf32, !pf32ub, index, !mb32
+      }
+    }
+    return
+  }
+
+// CHECK-LABEL: func.func @bounded_unknown_roots(
+// CHECK: pto.mem_bar "VV_ALL"
+// CHECK: return
+  func.func @bounded_unknown_roots(%n: index, %a: !pf32ub, %b: !pf32ub) {
+    %c0 = arith.constant 0 : index
+    %c1 = arith.constant 1 : index
+    %c64 = arith.constant 64 : index
+    %bound = arith.minui %n, %c64 : index
+    pto.vecscope {
+      %mask = pto.pset_b32 "PAT_ALL" : !mb32
+      scf.for %i = %c0 to %bound step %c1 {
+        %offset = arith.muli %i, %c64 : index
+        %v = pto.vlds %a[%offset] : !pf32ub, index -> !v64xf32
+        pto.vsts %v, %b[%offset], %mask : !v64xf32, !pf32ub, index, !mb32
+      }
+    }
+    return
+  }
+
+// CHECK-LABEL: func.func @bounded_nonzero_step(
+// CHECK-NOT: pto.mem_bar
+// CHECK: return
+// CHECK-NOT: pto.mem_bar
+  func.func @bounded_nonzero_step(%n: index) {
+    %zero = arith.constant 0 : i64
+    %ub = pto.castptr %zero : i64 -> !pf32ub
+    %c0 = arith.constant 0 : index
+    %c64 = arith.constant 64 : index
+    %c4096 = arith.constant 4096 : index
+    %src = pto.addptr %ub, %c0 : !pto.ptr<f32, ub>, index -> !pto.ptr<f32, ub>
+    %dst = pto.addptr %ub, %c4096 : !pto.ptr<f32, ub>, index -> !pto.ptr<f32, ub>
+    %bound = arith.minui %n, %c64 : index
+    %c2 = arith.constant 2 : index
+    %c3 = arith.constant 3 : index
+    pto.vecscope {
+      %mask = pto.pset_b32 "PAT_ALL" : !mb32
+      scf.for %i = %c3 to %bound step %c2 {
+        %offset = arith.muli %i, %c64 : index
+        %v = pto.vlds %src[%offset] : !pf32ub, index -> !v64xf32
+        pto.vsts %v, %dst[%offset], %mask : !v64xf32, !pf32ub, index, !mb32
+      }
+    }
+    return
+  }
+
+// CHECK-LABEL: func.func @bounded_wrapping_offset(
+// CHECK: pto.mem_bar "VST_VST"
+// CHECK: return
+  func.func @bounded_wrapping_offset(%n: index, %value: !v64xf32) {
+    %zero = arith.constant 0 : i64
+    %ub = pto.castptr %zero : i64 -> !pf32ub
+    %c0 = arith.constant 0 : index
+    %c1 = arith.constant 1 : index
+    %c64 = arith.constant 64 : index
+    %c4096 = arith.constant 4096 : index
+    %dst = pto.addptr %ub, %c4096 : !pto.ptr<f32, ub>, index -> !pto.ptr<f32, ub>
+    %bound = arith.minui %n, %c64 : index
+    pto.vecscope {
+      %mask = pto.pset_b32 "PAT_ALL" : !mb32
+      scf.for %i = %c0 to %bound step %c1 {
+        %small = arith.index_cast %i : index to i8
+        %c64_i8 = arith.constant 64 : i8
+        %wrapped = arith.muli %small, %c64_i8 : i8
+        %offset = arith.index_cast %wrapped : i8 to index
+        pto.vsts %value, %dst[%offset], %mask : !v64xf32, !pf32ub, index, !mb32
+      }
+    }
+    return
+  }
+
+// CHECK-LABEL: func.func @bounded_truncating_offset(
+// CHECK: pto.mem_bar "VST_VST"
+// CHECK: return
+  func.func @bounded_truncating_offset(%n: index, %value: !v64xf32) {
+    %zero = arith.constant 0 : i64
+    %ub = pto.castptr %zero : i64 -> !pf32ub
+    %c0 = arith.constant 0 : index
+    %c1 = arith.constant 1 : index
+    %c64 = arith.constant 64 : index
+    %c4096 = arith.constant 4096 : index
+    %dst = pto.addptr %ub, %c4096 : !pto.ptr<f32, ub>, index -> !pto.ptr<f32, ub>
+    %bound = arith.minui %n, %c64 : index
+    pto.vecscope {
+      %mask = pto.pset_b32 "PAT_ALL" : !mb32
+      scf.for %i = %c0 to %bound step %c1 {
+        %wide = arith.muli %i, %c64 : index
+        %small = arith.index_cast %wide : index to i8
+        %offset = arith.index_cast %small : i8 to index
+        pto.vsts %value, %dst[%offset], %mask : !v64xf32, !pf32ub, index, !mb32
+      }
+    }
+    return
+  }
+
+// CHECK-LABEL: func.func @unsigned_signbit_bound(
+// CHECK: pto.mem_bar "VST_VST"
+// CHECK: return
+  func.func @unsigned_signbit_bound(%n: index, %value: !v64xf32) {
+    %zero = arith.constant 0 : i64
+    %ub = pto.castptr %zero : i64 -> !pf32ub
+    %c0 = arith.constant 0 : index
+    %c1 = arith.constant 1 : index
+    %c64 = arith.constant 64 : index
+    %c4096 = arith.constant 4096 : index
+    %dst = pto.addptr %ub, %c4096 : !pto.ptr<f32, ub>, index -> !pto.ptr<f32, ub>
+    %negative = arith.constant -1 : index
+    %bound = arith.minui %n, %negative : index
+    pto.vecscope {
+      %mask = pto.pset_b32 "PAT_ALL" : !mb32
+      scf.for %i = %c0 to %bound step %c1 {
+        %offset = arith.muli %i, %c64 : index
+        pto.vsts %value, %dst[%offset], %mask : !v64xf32, !pf32ub, index, !mb32
+      }
+    }
+    return
+  }
+
+// CHECK-LABEL: func.func @trip_count_overflow(
+// CHECK: pto.mem_bar "VST_VST"
+// CHECK: return
+  func.func @trip_count_overflow(%n: index, %value: !v64xf32) {
+    %zero = arith.constant 0 : i64
+    %ub = pto.castptr %zero : i64 -> !pf32ub
+    %c0 = arith.constant -9223372036854775808 : index
+    %c1 = arith.constant 1 : index
+    %c64 = arith.constant 64 : index
+    %c4096 = arith.constant 4096 : index
+    %dst = pto.addptr %ub, %c4096 : !pto.ptr<f32, ub>, index -> !pto.ptr<f32, ub>
+    %bound = arith.minui %n, %c64 : index
+    pto.vecscope {
+      %mask = pto.pset_b32 "PAT_ALL" : !mb32
+      scf.for %i = %c0 to %bound step %c1 {
+        %offset = arith.muli %i, %c64 : index
+        pto.vsts %value, %dst[%offset], %mask : !v64xf32, !pf32ub, index, !mb32
+      }
+    }
+    return
+  }
+
+// CHECK-LABEL: func.func @narrow_iv_increment_overflow(
+// CHECK: pto.mem_bar "VST_VST"
+// CHECK: return
+  func.func @narrow_iv_increment_overflow(%n: index, %value: !v64xf32) {
+    %zero = arith.constant 0 : i64
+    %ub = pto.castptr %zero : i64 -> !pf32ub
+    %c64 = arith.constant 64 : index
+    %c4096 = arith.constant 4096 : index
+    %dst = pto.addptr %ub, %c4096 : !pto.ptr<f32, ub>, index -> !pto.ptr<f32, ub>
+    %c64_i8 = arith.constant 120 : i8
+    %c0_i8 = arith.constant 0 : i8
+    %c100_i8 = arith.constant 100 : i8
+    %n8 = arith.index_cast %n : index to i8
+    %bound = arith.minui %n8, %c64_i8 : i8
+    pto.vecscope {
+      %mask = pto.pset_b32 "PAT_ALL" : !mb32
+      scf.for %small = %c0_i8 to %bound step %c100_i8 : i8 {
+        %i = arith.index_cast %small : i8 to index
+        %offset = arith.muli %i, %c64 : index
+        pto.vsts %value, %dst[%offset], %mask : !v64xf32, !pf32ub, index, !mb32
+      }
+    }
+    return
+  }
+
+// CHECK-LABEL: func.func @address_product_overflow(
+// CHECK: pto.mem_bar "VST_VST"
+// CHECK: return
+  func.func @address_product_overflow(%n: index, %value: !v64xf32) {
+    %zero = arith.constant 0 : i64
+    %ub = pto.castptr %zero : i64 -> !pf32ub
+    %c0 = arith.constant 0 : index
+    %c1 = arith.constant 1 : index
+    %c64 = arith.constant 64 : index
+    %c4096 = arith.constant 4096 : index
+    %dst = pto.addptr %ub, %c4096 : !pto.ptr<f32, ub>, index -> !pto.ptr<f32, ub>
+    %bound = arith.minui %n, %c64 : index
+    %limit = arith.constant 9223372036854775807 : index
+    pto.vecscope {
+      %mask = pto.pset_b32 "PAT_ALL" : !mb32
+      scf.for %i = %c0 to %bound step %c1 {
+        %offset = arith.muli %i, %limit : index
+        pto.vsts %value, %dst[%offset], %mask : !v64xf32, !pf32ub, index, !mb32
+      }
+    }
+    return
+  }
+
+// CHECK-LABEL: func.func @bounded_independent_symbols_overlap(
+// CHECK: pto.mem_bar "VST_VLD"
+// CHECK: return
+  func.func @bounded_independent_symbols_overlap(%n: index, %a: i16, %b: i16,
+                                                %value: !v64xf32) {
+    %zero = arith.constant 0 : i64
+    %ub = pto.castptr %zero : i64 -> !pf32ub
+    %c0 = arith.constant 0 : index
+    %c1 = arith.constant 1 : index
+    %c64 = arith.constant 64 : index
+    %bound = arith.minui %n, %c64 : index
+    %sa = arith.index_cast %a : i16 to index
+    %sb = arith.index_cast %b : i16 to index
+    pto.vecscope {
+      %mask = pto.pset_b32 "PAT_ALL" : !mb32
+      scf.for %i = %c0 to %bound step %c1 {
+        %row = arith.muli %i, %c64 : index
+        %store_offset = arith.addi %row, %sa : index
+        %load_offset = arith.addi %row, %sb : index
+        pto.vsts %value, %ub[%store_offset], %mask : !v64xf32, !pf32ub, index, !mb32
+        %v = pto.vlds %ub[%load_offset] : !pf32ub, index -> !v64xf32
+      }
+    }
+    return
+  }
+}

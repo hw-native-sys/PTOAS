@@ -1702,6 +1702,10 @@ def PTOPrintAddressAnalysis
                            "mlir::pto::PTODialect",
                            "mlir::arith::ArithDialect",
                            "mlir::scf::SCFDialect"];
+  let options = [
+    Option<"memoryQueries", "memory-queries", "bool", "false",
+           "Print contextual range and memory overlap queries">
+  ];
 }
 
 def PTOVPTOPtrBoundary

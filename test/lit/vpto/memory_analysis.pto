@@ -1,0 +1,137 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+
+// RUN: pto-test-opt %s -mlir-disable-threading -pto-print-address-analysis="memory-queries=true" 2>&1 | FileCheck %s
+
+module attributes {pto.target_arch = "a5"} {
+  // CHECK-LABEL: address-analysis @guarded_trunc
+  // CHECK: contextual-trunc range=[1,2] preserves=true
+  // CHECK: loop-envelope=[0,2) step=1 exact-trip=unknown
+  func.func @guarded_trunc(%n: i32, %offset: i32) {
+    %n64 = arith.extsi %n : i32 to i64
+    %o64 = arith.extsi %offset : i32 to i64
+    %guard = arith.cmpi slt, %o64, %n64 : i64
+    scf.if %guard {
+      %left = arith.subi %n64, %o64 : i64
+      %two = arith.constant 2 : i64
+      %limit = arith.minsi %left, %two : i64
+      %bound = arith.trunci %limit : i64 to i16
+      %zero = arith.constant 0 : i16
+      %one = arith.constant 1 : i16
+      scf.for %row = %zero to %bound step %one : i16 {}
+    }
+    return
+  }
+
+  // CHECK-LABEL: address-analysis @unguarded_trunc
+  // CHECK: contextual-trunc range=[-32768,32767] preserves=unknown
+  func.func @unguarded_trunc(%n: i32, %offset: i32) {
+    %n64 = arith.extsi %n : i32 to i64
+    %o64 = arith.extsi %offset : i32 to i64
+    %left = arith.subi %n64, %o64 : i64
+    %two = arith.constant 2 : i64
+    %limit = arith.minsi %left, %two : i64
+    %bound = arith.trunci %limit : i64 to i16
+    return
+  }
+
+  // CHECK-LABEL: address-analysis @adjacent_accesses
+  // CHECK: memory-pair 0,1 disjoint=true carried=0
+  // CHECK: scheduler-memory-pair 0,1 may-alias=false byte-difference=256
+  func.func @adjacent_accesses(%p: !pto.ptr<f32, ub>, %value: !pto.vreg<64xf32>, %mask: !pto.mask<b32>) {
+    %zero = arith.constant 0 : index
+    %next = arith.constant 64 : index
+    pto.vsts %value, %p[%zero], %mask : !pto.vreg<64xf32>, !pto.ptr<f32, ub>, index, !pto.mask<b32>
+    %v = pto.vlds %p[%next] : !pto.ptr<f32, ub>, index -> !pto.vreg<64xf32>
+    return
+  }
+
+  // CHECK-LABEL: address-analysis @ub_accumulator
+  // CHECK: loop-envelope=[0,4) step=1 exact-trip=4
+  // CHECK: memory-pair 0,1 disjoint=unknown carried=1
+  // CHECK: scheduler-memory-pair 0,1 may-alias=true byte-difference=0
+  func.func @ub_accumulator(%p: !pto.ptr<f32, ub>, %mask: !pto.mask<b32>) {
+    %zero = arith.constant 0 : index
+    %one = arith.constant 1 : index
+    %four = arith.constant 4 : index
+    scf.for %chunk = %zero to %four step %one {
+      %v = pto.vlds %p[%zero] : !pto.ptr<f32, ub>, index -> !pto.vreg<64xf32>
+      pto.vsts %v, %p[%zero], %mask : !pto.vreg<64xf32>, !pto.ptr<f32, ub>, index, !pto.mask<b32>
+    }
+    return
+  }
+  // CHECK-LABEL: address-analysis @wrapped_trunc
+  // CHECK: contextual-trunc range=[-25536,-25536] preserves=unknown
+  func.func @wrapped_trunc() {
+    %wide = arith.constant 40000 : i64
+    %narrow = arith.trunci %wide : i64 to i16
+    return
+  }
+
+  // CHECK-LABEL: address-analysis @guard_does_not_escape
+  // CHECK: contextual-trunc range=[-32768,32767] preserves=unknown
+  func.func @guard_does_not_escape(%x: i64) {
+    %zero = arith.constant 0 : i64
+    %two = arith.constant 2 : i64
+    %positive = arith.cmpi sgt, %x, %zero : i64
+    scf.if %positive {}
+    %clamp = arith.minsi %x, %two : i64
+    %narrow = arith.trunci %clamp : i64 to i16
+    return
+  }
+
+  // CHECK-LABEL: address-analysis @overflowing_backedge
+  // CHECK: loop-envelope=unknown
+  func.func @overflowing_backedge() {
+    %zero = arith.constant 0 : i16
+    %max = arith.constant 32767 : i16
+    %two = arith.constant 2 : i16
+    scf.for %i = %zero to %max step %two : i16 {}
+    return
+  }
+
+  // CHECK-LABEL: address-analysis @wrapped_constant
+  // CHECK: memory-pair 0,1 disjoint=unknown carried=0
+  // CHECK: scheduler-memory-pair 0,1 may-alias=true byte-difference=0
+  func.func @wrapped_constant(%p: !pto.ptr<f32, ub>, %v: !pto.vreg<64xf32>, %m: !pto.mask<b32>) {
+    %max = arith.constant 32767 : i16
+    %one = arith.constant 1 : i16
+    %actual = arith.constant -32768 : i16
+    %wrapped = arith.addi %max, %one : i16
+    %wi = arith.index_cast %wrapped : i16 to index
+    %ai = arith.index_cast %actual : i16 to index
+    pto.vecscope {
+    pto.vsts %v, %p[%wi], %m : !pto.vreg<64xf32>, !pto.ptr<f32, ub>, index, !pto.mask<b32>
+    %x = pto.vlds %p[%ai] : !pto.ptr<f32, ub>, index -> !pto.vreg<64xf32>
+    }
+    return
+  }
+
+  // CHECK-LABEL: address-analysis @unknown_roots
+  // CHECK: scheduler-memory-pair 0,1 may-alias=true byte-difference=unknown
+  func.func @unknown_roots(%p: !pto.ptr<f32, ub>, %q: !pto.ptr<f32, ub>, %v: !pto.vreg<64xf32>, %m: !pto.mask<b32>) {
+    %zero = arith.constant 0 : index
+    pto.vsts %v, %p[%zero], %m : !pto.vreg<64xf32>, !pto.ptr<f32, ub>, index, !pto.mask<b32>
+    %x = pto.vlds %q[%zero] : !pto.ptr<f32, ub>, index -> !pto.vreg<64xf32>
+    return
+  }
+
+  // CHECK-LABEL: address-analysis @overlapping_shift
+  // CHECK: scheduler-memory-pair 0,1 may-alias=true byte-difference=128
+  // CHECK: scheduler-memory-pair 0,2 may-alias=true byte-difference=unknown
+  func.func @overlapping_shift(%p: !pto.ptr<f32, ub>, %n: index, %v: !pto.vreg<64xf32>, %m: !pto.mask<b32>) {
+    %zero = arith.constant 0 : index
+    %half = arith.constant 32 : index
+    %q = pto.addptr %p, %half : !pto.ptr<f32, ub>, index -> !pto.ptr<f32, ub>
+    pto.vsts %v, %p[%zero], %m : !pto.vreg<64xf32>, !pto.ptr<f32, ub>, index, !pto.mask<b32>
+    %x = pto.vlds %q[%zero] : !pto.ptr<f32, ub>, index -> !pto.vreg<64xf32>
+    %y = pto.vlds %p[%n] : !pto.ptr<f32, ub>, index -> !pto.vreg<64xf32>
+    return
+  }
+
+}

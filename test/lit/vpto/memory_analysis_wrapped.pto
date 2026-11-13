@@ -1,0 +1,29 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+
+// RUN: pto-test-opt %s -pto-insert-vecscope-membar | FileCheck %s
+// CHECK-LABEL: func.func @wrapped_constant
+// CHECK: pto.vsts
+// CHECK-NEXT: pto.mem_bar "VST_VLD"
+// CHECK-NEXT: {{.*}}pto.vlds
+// CHECK: return
+module attributes {pto.target_arch = "a5"} {
+  func.func @wrapped_constant(%p: !pto.ptr<f32, ub>, %v: !pto.vreg<64xf32>, %m: !pto.mask<b32>) {
+    %max = arith.constant 32767 : i16
+    %one = arith.constant 1 : i16
+    %actual = arith.constant -32768 : i16
+    %wrapped = arith.addi %max, %one : i16
+    %wi = arith.index_cast %wrapped : i16 to index
+    %ai = arith.index_cast %actual : i16 to index
+    pto.vecscope {
+    pto.vsts %v, %p[%wi], %m : !pto.vreg<64xf32>, !pto.ptr<f32, ub>, index, !pto.mask<b32>
+    %x = pto.vlds %p[%ai] : !pto.ptr<f32, ub>, index -> !pto.vreg<64xf32>
+    }
+    return
+  }
+}

@@ -1,0 +1,47 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+
+// RUN: pto-test-opt %s --pto-insert-vecscope-membar | FileCheck %s
+// RUN: pto-test-opt %s --pto-insert-vecscope-membar --pto-insert-vecscope-membar | FileCheck %s
+// RUN: ptoas --pto-arch=a5 --pto-backend=vpto --emit-vpto --enable-vecscope-mem-bar=true %s -o - | FileCheck %s
+
+// PK_B16 packs 256 physical bytes into 128 stored bytes (micro-ISA load/store spec).
+module attributes {pto.target_arch = "a5"} {
+  func.func @adjacent_128(%p: !pto.ptr<f8E4M3FN, ub>, %v: !pto.vreg<256xf8E4M3FN>) {
+    %z = arith.constant 0 : index
+    %offset = arith.constant 128 : index
+    pto.vecscope {
+      %all = pto.pset_b16 "PAT_ALL" : !pto.mask<b16>
+      pto.vsts %v, %p[%z], %all {dist = "PK_B16"} : !pto.vreg<256xf8E4M3FN>, !pto.ptr<f8E4M3FN, ub>, index, !pto.mask<b16>
+      pto.vsts %v, %p[%offset], %all {dist = "PK_B16"} : !pto.vreg<256xf8E4M3FN>, !pto.ptr<f8E4M3FN, ub>, index, !pto.mask<b16>
+    }
+    return
+  }
+  func.func @overlap_64(%p: !pto.ptr<f8E4M3FN, ub>, %v: !pto.vreg<256xf8E4M3FN>) {
+    %z = arith.constant 0 : index
+    %offset = arith.constant 64 : index
+    pto.vecscope {
+      %all = pto.pset_b16 "PAT_ALL" : !pto.mask<b16>
+      pto.vsts %v, %p[%z], %all {dist = "PK_B16"} : !pto.vreg<256xf8E4M3FN>, !pto.ptr<f8E4M3FN, ub>, index, !pto.mask<b16>
+      pto.vsts %v, %p[%offset], %all {dist = "PK_B16"} : !pto.vreg<256xf8E4M3FN>, !pto.ptr<f8E4M3FN, ub>, index, !pto.mask<b16>
+    }
+    return
+  }
+}
+// CHECK-LABEL: func.func @adjacent_128(
+// CHECK-NOT: pto.mem_bar
+// CHECK: pto.vsts
+// CHECK-NEXT: pto.vsts
+// CHECK-NOT: pto.mem_bar
+// CHECK: return
+// CHECK-NOT: pto.mem_bar
+// CHECK-LABEL: func.func @overlap_64(
+// CHECK: pto.vsts
+// CHECK-NEXT: pto.mem_bar "VST_VST"
+// CHECK-NEXT: pto.vsts
+// CHECK: return

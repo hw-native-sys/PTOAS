@@ -18,13 +18,15 @@
 //===----------------------------------------------------------------------===//
 
 #include "PTO/Transforms/VecScopeMemBar/VecScopeMemBarAnalysis.h"
-#include "mlir/Analysis/Presburger/IntegerRelation.h"
-#include "mlir/Analysis/Presburger/PresburgerSpace.h"
+#include "PTO/Analysis/PTOMemoryDependenceAnalysis.h"
+#include "PTO/Analysis/PTOIntegerRange.h"
+#include "mlir/Dialect/Affine/IR/AffineOps.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/SCF/IR/SCF.h"
 #include "mlir/IR/Operation.h"
 #include "mlir/IR/Region.h"
 #include "mlir/IR/Value.h"
+#include "mlir/Interfaces/InferIntRangeInterface.h"
 #include "mlir/Interfaces/SideEffectInterfaces.h"
 #include "mlir/Support/LLVM.h"
 #include "llvm/ADT/DenseSet.h"
@@ -37,7 +39,7 @@
 using namespace mlir;
 using namespace mlir::pto;
 using namespace mlir::pto::vecscopemembar;
-using mlir::presburger::IntegerPolyhedron;
+using namespace mlir::pto::integer_range;
 
 namespace {
 
@@ -53,8 +55,7 @@ static bool definesUBWrite(Operation* defOp)
     SmallVector<SideEffects::EffectInstance<MemoryEffects::Effect>, 4> eff;
     iface.getEffects(eff);
     return llvm::any_of(eff, [](const auto& e) {
-        return isa<MemoryEffects::Write>(e.getEffect()) && e.getValue() &&
-               vecscopemembar::isUBBackedType(e.getValue().getType());
+        return isa<MemoryEffects::Write>(e.getEffect()) && e.getValue() && pto::isUBBackedType(e.getValue().getType());
     });
 }
 
@@ -162,27 +163,27 @@ static bool anyStoredValueDependsOnLoaded(ArrayRef<Value> storedVals, ArrayRef<V
 
 static std::optional<MemBarKind> hazardKind(const AccessOccurrence& producer, const AccessOccurrence& consumer)
 {
-    bool producerVector = producer.unit == VecScopeAccessUnit::Vector;
-    bool consumerVector = consumer.unit == VecScopeAccessUnit::Vector;
+    bool producerVector = producer.unit == PTOMemoryAccessUnit::Vector;
+    bool consumerVector = consumer.unit == PTOMemoryAccessUnit::Vector;
     // Scalar UB accesses are issued by the ordered scalar pipeline.  The
     // automatic vecscope pass only needs barriers when a vector pipeline is
     // involved; scalar-to-scalar ordering does not require a membar.
     if (!producerVector && !consumerVector) {
         return std::nullopt;
     }
-    if (producer.kind == VecScopeAccessKind::Store && consumer.kind == VecScopeAccessKind::Load) {
+    if (producer.kind == PTOMemoryAccessKind::Store && consumer.kind == PTOMemoryAccessKind::Load) {
         if (producerVector) {
             return consumerVector ? MemBarKind::VST_VLD : MemBarKind::VST_LD;
         }
         return MemBarKind::ST_VLD;
     }
-    if (producer.kind == VecScopeAccessKind::Store && consumer.kind == VecScopeAccessKind::Store) {
+    if (producer.kind == PTOMemoryAccessKind::Store && consumer.kind == PTOMemoryAccessKind::Store) {
         if (producerVector) {
             return consumerVector ? MemBarKind::VST_VST : MemBarKind::VST_ST;
         }
         return MemBarKind::ST_VST;
     }
-    if (producer.kind == VecScopeAccessKind::Load && consumer.kind == VecScopeAccessKind::Store) {
+    if (producer.kind == PTOMemoryAccessKind::Load && consumer.kind == PTOMemoryAccessKind::Store) {
         if (producerVector) {
             return consumerVector ? MemBarKind::VLD_VST : MemBarKind::VLD_ST;
         }
@@ -209,50 +210,6 @@ static SmallVector<Value, 2> collectIVs(Operation* op, Operation* scope)
     return ivs;
 }
 
-// Try to evaluate `v` as a constant int64.
-static std::optional<int64_t> getConstantInt(Value v)
-{
-    APInt c;
-    if (matchPattern(v, m_ConstantInt(&c))) {
-        return c.getSExtValue();
-    }
-    return std::nullopt;
-}
-
-// Constant lower/upper/step for an scf.for, else nullopt (dynamic).
-struct ConstLoopBounds {
-    int64_t lb = 0;
-    int64_t ub = 0;
-    int64_t step = 1;
-    bool valid = false;
-    // Number of iterations = (ub - lb + step - 1) / step (>=0).
-    std::optional<int64_t> tripCount() const
-    {
-        if (!valid || step == 0) {
-            return std::nullopt;
-        }
-        int64_t diff = ub - lb;
-        if (diff <= 0) {
-            return 0;
-        }
-        return (diff + (step > 0 ? step : -step) - 1) / (step > 0 ? step : -step);
-    }
-};
-static ConstLoopBounds getConstBounds(scf::ForOp forOp)
-{
-    ConstLoopBounds b;
-    auto lb = getConstantInt(forOp.getLowerBound());
-    auto ub = getConstantInt(forOp.getUpperBound());
-    auto step = getConstantInt(forOp.getStep());
-    if (lb && ub && step && *step != 0) {
-        b.lb = *lb;
-        b.ub = *ub;
-        b.step = *step;
-        b.valid = true;
-    }
-    return b;
-}
-
 // Whether any loop enclosing `op` within the vecscope `scope` has non-constant
 // bounds. Loops outside the scope are invisible to the analysis (see
 // `collectIVs`).
@@ -268,16 +225,6 @@ static bool hasDynamicLoopDomain(Operation* op, Operation* scope)
     return false;
 }
 
-static std::optional<unsigned> loopIdForIV(const VecScopeMemBarAnalysisResult& r, Value iv)
-{
-    for (const auto& l : r.loops) {
-        if (l.inductionVar == iv) {
-            return l.id;
-        }
-    }
-    return std::nullopt;
-}
-
 static void recordUnknown(
     VecScopeMemBarAnalysisResult& result, unsigned i, unsigned j, MemBarKind kind, DependenceReason reason,
     VecScopeHazardScope scope = VecScopeHazardScope::SameIteration, std::optional<unsigned> carryingLoop = {})
@@ -287,22 +234,10 @@ static void recordUnknown(
 
 static VecScopeHazardScope carriedScopeAt(unsigned level, unsigned numCommonLoops)
 {
-    return level + 1 == numCommonLoops ? VecScopeHazardScope::InnerLoopCarried
-                                       : VecScopeHazardScope::OuterLoopCarried;
+    return level + 1 == numCommonLoops ? VecScopeHazardScope::InnerLoopCarried : VecScopeHazardScope::OuterLoopCarried;
 }
 
 // Record an unknown carried dependence on every shared loop.
-static void recordUnknownOnLoops(
-    VecScopeMemBarAnalysisResult& result, unsigned i, unsigned j, MemBarKind kind, DependenceReason reason,
-    ArrayRef<unsigned> loopIds)
-{
-    for (auto [level, loopId] : llvm::enumerate(loopIds)) {
-        recordUnknown(result, i, j, kind, reason, carriedScopeAt(level, loopIds.size()), loopId);
-    }
-}
-
-// An unknown dependence cannot justify omitting synchronization: turn every
-// entry recorded since `begin` into a conservative hazard.
 static void materializeUnknownDependences(VecScopeMemBarAnalysisResult& result, Operation* scope, unsigned begin)
 {
     for (unsigned u = begin; u < result.unknownDependences.size(); ++u) {
@@ -356,361 +291,6 @@ static void buildSchedule(Operation* scope, VecScopeMemBarAnalysisResult& result
     });
 }
 
-static SmallVector<unsigned, 2> commonLoopPrefix(const AccessOccurrence& a, const AccessOccurrence& b)
-{
-    SmallVector<unsigned, 2> common;
-    for (auto [lhs, rhs] : llvm::zip(a.loopNest, b.loopNest)) {
-        if (lhs != rhs) {
-            break;
-        }
-        common.push_back(lhs);
-    }
-    return common;
-}
-
-// Presburger loop-carried dependence relation
-
-static bool addIterationDomain(IntegerPolyhedron& p, unsigned pos, const ConstLoopBounds& b)
-{
-    auto trip = b.tripCount();
-    if (!trip) {
-        return false;
-    }
-    // Convention: coeffs[var...] + constant >= 0.
-    SmallVector<int64_t> lo(p.getNumVars() + 1, 0);
-    lo[pos] = 1;
-    p.addInequality(lo);
-    SmallVector<int64_t> hi(p.getNumVars() + 1, 0);
-    hi[pos] = -1;
-    hi.back() = *trip - 1;
-    p.addInequality(hi);
-    return true;
-}
-
-// Resolve the loop carrying an IV. IVs are scf.for block arguments (no
-// defining op), so the loop is found via the analysis result's recorded
-// inductionVar.
-static scf::ForOp resolveLoopForIV(const VecScopeMemBarAnalysisResult& r, Value iv)
-{
-    if (auto id = loopIdForIV(r, iv)) {
-        for (const auto& l : r.loops) {
-            if (l.id == *id) {
-                return l.op;
-            }
-        }
-    }
-    return scf::ForOp();
-}
-
-// Gather the constant bounds of every IV in `ivs` (outermost first). Returns
-// false when an IV has no recorded loop or a non-constant domain.
-static bool gatherConstBounds(
-    const VecScopeMemBarAnalysisResult& result, ArrayRef<Value> ivs, SmallVectorImpl<ConstLoopBounds>& bounds)
-{
-    for (Value iv : ivs) {
-        scf::ForOp forOp = resolveLoopForIV(result, iv);
-        if (!forOp) {
-            return false;
-        }
-        bounds.push_back(getConstBounds(forOp));
-        if (!bounds.back().valid) {
-            return false;
-        }
-    }
-    return true;
-}
-
-// Rewrite byte-offset coefficients from loop-IV coordinates to iteration-
-// counter coordinates (iv = lb + step * iter), folding the lb products into
-// the constant. Fails when any scaled coefficient or constant overflows.
-static bool convertToIterationCounters(
-    SmallVectorImpl<int64_t>& coeffs, ArrayRef<ConstLoopBounds> bounds, int64_t& constant)
-{
-    __int128 adjusted = constant;
-    for (unsigned k = 0; k < coeffs.size(); ++k) {
-        adjusted += static_cast<__int128>(coeffs[k]) * bounds[k].lb;
-        __int128 scaled = static_cast<__int128>(coeffs[k]) * bounds[k].step;
-        if (scaled < INT64_MIN || scaled > INT64_MAX) {
-            return false;
-        }
-        coeffs[k] = static_cast<int64_t>(scaled);
-    }
-    if (adjusted < INT64_MIN || adjusted > INT64_MAX) {
-        return false;
-    }
-    constant = static_cast<int64_t>(adjusted);
-    return true;
-}
-
-// Whether an absolute base is present and representable as int64.
-static bool absoluteBaseComparable(const VecScopeMemoryFootprint& fp)
-{
-    return fp.absoluteBase && *fp.absoluteBase <= static_cast<uint64_t>(INT64_MAX);
-}
-
-// Early feasibility checks for the sequential-overlap model: closed byte
-// ranges on both sides, no forced-MayAlias footprint, and comparable roots.
-static bool sequentialRootsComparable(const VecScopeMemoryFootprint& P, const VecScopeMemoryFootprint& C)
-{
-    // Need closed byte ranges on both sides. forcesMayAlias footprints (e.g.
-    // vsstb) with an open upper bound cannot be disproven here because their
-    // upper bound is unknown.
-    if (!P.byteSize || !C.byteSize || !P.byteOffset.exact || !C.byteOffset.exact) {
-        return false;
-    }
-    if (P.forcesMayAlias || C.forcesMayAlias) {
-        return false;
-    }
-    // Both must resolve to a comparable root: same symbolic/allocation root, or
-    // both absolute (absolute bases are comparable regardless of SSA identity).
-    bool bothAbsolute = P.rootKind == MemoryRootKind::Absolute && C.rootKind == MemoryRootKind::Absolute;
-    bool sameNonAbsoluteRoot =
-        (P.rootKind == MemoryRootKind::Symbolic || P.rootKind == MemoryRootKind::ProvenAllocation) &&
-        (C.rootKind == MemoryRootKind::Symbolic || C.rootKind == MemoryRootKind::ProvenAllocation) && P.root == C.root;
-    if (!bothAbsolute && !sameNonAbsoluteRoot) {
-        return false;
-    }
-    if (bothAbsolute && (!absoluteBaseComparable(P) || !absoluteBaseComparable(C))) {
-        return false;
-    }
-    // Distinct proven allocations are already NoAlias at `aliasSameIteration`;
-    // reaching here means roots are comparable, so continue.
-    return true;
-}
-
-// A relation currently has dimensions for IVs only. Never silently discard
-// opaque index terms that were retained for same-iteration cancellation.
-static bool hasOnlyIVTerms(const VecScopeMemoryFootprint& footprint, ArrayRef<Value> ivs)
-{
-    return llvm::all_of(footprint.byteOffset.coefficients, [&](const auto& term) {
-        return term.second == 0 || llvm::is_contained(ivs, term.first);
-    });
-}
-
-// Resolved loop-nest layout of a sequential-region access pair. Dual-set
-// dims are [p0.., c0..]; single-set dims are [v0..] with v shared.
-struct SequentialOverlapLayout {
-    SmallVector<Value, 2> pi;        // producer IVs (outermost first)
-    SmallVector<Value, 2> pj;        // consumer IVs (outermost first)
-    SmallVector<unsigned, 2> common; // shared loop-id prefix
-    SmallVector<ConstLoopBounds> boundsP;
-    SmallVector<ConstLoopBounds> boundsC;
-    // single-nest iff one IV set is a prefix of the other (incl. equal/empty).
-    bool singleNest = false;
-    unsigned numDims = 0;
-};
-
-// Resolve the IV layout for the pair. Handled shapes:
-//  (a) pi == pj (same loop nest): single IV set, shared IVs identical.
-//  (b) one IV set is a proper prefix of the other (one access further out,
-//      e.g. a top-level store feeding a load inside a loop, or the reverse):
-//      single IV set = the longer of pi/pj, the shorter side's coefficients
-//      read against that set (0 for IVs it does not carry).
-//  (c) pi and pj share a common prefix but diverge (producer and consumer in
-//      sibling loops): dual IV sets [pi..., pj...], shared prefix constrained
-//      equal, non-shared IVs independent.
-// Returns false when a loop has a non-constant domain. Presburger relations
-// are not limited to two dimensions; the small-vector inline capacity only
-// avoids allocation for the common shallow-nest case.
-static bool resolveSequentialIVLayout(
-    const VecScopeMemBarAnalysisResult& result, const AccessOccurrence& prod, const AccessOccurrence& cons,
-    SequentialOverlapLayout& layout)
-{
-    layout.pi = collectIVs(prod.op, result.scope);
-    layout.pj = collectIVs(cons.op, result.scope);
-    layout.common = commonLoopPrefix(prod, cons);
-    bool prefixP = layout.pi.size() <= layout.pj.size() && layout.common.size() == layout.pi.size();
-    bool prefixC = layout.pj.size() <= layout.pi.size() && layout.common.size() == layout.pj.size();
-    layout.singleNest = prefixP || prefixC;
-    if (!gatherConstBounds(result, layout.pi, layout.boundsP)) {
-        return false;
-    }
-    if (!gatherConstBounds(result, layout.pj, layout.boundsC)) {
-        return false;
-    }
-    unsigned depthP = layout.pi.size();
-    unsigned depthC = layout.pj.size();
-    layout.numDims = layout.singleNest ? std::max(depthP, depthC) : (depthP + depthC);
-    return true;
-}
-
-// Consumer coordinate k: shared with the producer in the single-nest layout,
-// offset by the producer nest in the dual-set layout.
-static unsigned consumerDim(const SequentialOverlapLayout& layout, unsigned k)
-{
-    return layout.singleNest ? k : (unsigned(layout.pi.size()) + k);
-}
-
-// Build the base polyhedron of the pair: iteration domains for every used IV
-// (pi then pj, dedup shared by position), and in the dual-set case the
-// shared-prefix same-iteration equality. Returns null when a domain cannot
-// be modelled.
-static std::unique_ptr<IntegerPolyhedron> buildSequentialPolyhedron(
-    const VecScopeMemBarAnalysisResult& result, const SequentialOverlapLayout& layout)
-{
-    unsigned depthP = layout.pi.size();
-    unsigned depthC = layout.pj.size();
-    auto space = presburger::PresburgerSpace::getSetSpace(layout.numDims);
-    auto poly = std::make_unique<IntegerPolyhedron>(space);
-    if (layout.singleNest) {
-        // Coefficients are read against the longer IV set; use whichever side is
-        // longer as the coordinate basis.
-        const auto& singleIVs = (depthP >= depthC) ? layout.pi : layout.pj;
-        for (unsigned k = 0; k < singleIVs.size(); ++k) {
-            auto forOp = resolveLoopForIV(result, singleIVs[k]);
-            if (!addIterationDomain(*poly, k, getConstBounds(forOp))) {
-                return nullptr;
-            }
-        }
-    } else {
-        for (unsigned k = 0; k < depthP; ++k) {
-            if (!addIterationDomain(*poly, k, layout.boundsP[k])) {
-                return nullptr;
-            }
-        }
-        for (unsigned k = 0; k < depthC; ++k) {
-            if (!addIterationDomain(*poly, depthP + k, layout.boundsC[k])) {
-                return nullptr;
-            }
-        }
-        // Constrain the shared prefix equal (same iteration for the common loops).
-        for (unsigned k = 0; k < layout.common.size(); ++k) {
-            SmallVector<int64_t> eq(layout.numDims + 1, 0);
-            eq[k] -= 1;
-            eq[depthP + k] += 1;
-            poly->addInequality(eq);
-            SmallVector<int64_t> eq2(layout.numDims + 1, 0);
-            eq2[k] += 1;
-            eq2[depthP + k] -= 1;
-            poly->addInequality(eq2);
-        }
-    }
-    return poly;
-}
-
-// Base bytes. For absolute roots combine the absolute base with the constant
-// part of the byte offset; for symbolic/allocation roots use the constant
-// part only (relative to the shared root).
-static bool sequentialRootBase(const VecScopeMemoryFootprint& fp, int64_t& base)
-{
-    if (fp.rootKind == MemoryRootKind::Symbolic || fp.rootKind == MemoryRootKind::ProvenAllocation) {
-        base = fp.byteOffset.constant;
-        return true;
-    }
-    if (fp.rootKind != MemoryRootKind::Absolute || !fp.absoluteBase ||
-        *fp.absoluteBase > static_cast<uint64_t>(INT64_MAX)) {
-        return false;
-    }
-    __int128 v = static_cast<__int128>(*fp.absoluteBase) + static_cast<__int128>(fp.byteOffset.constant);
-    if (v < INT64_MIN || v > INT64_MAX) {
-        return false;
-    }
-    base = static_cast<int64_t>(v);
-    return true;
-}
-
-// Intersection constraints (same shape as the loop-carried addIntersection):
-//   addrP < addrC + sizeC  =>  addrC - addrP + sizeC - 1 >= 0
-//   addrC < addrP + sizeP  =>  addrP - addrC + sizeP - 1 >= 0
-// If the conjunction is empty, the intervals never overlap -> NoAlias.
-static bool addSequentialIntersection(
-    IntegerPolyhedron& poly, const SequentialOverlapLayout& layout, ArrayRef<int64_t> coeffP, ArrayRef<int64_t> coeffC,
-    int64_t constP, int64_t constC, int64_t sizeP, int64_t sizeC)
-{
-    unsigned depthP = layout.pi.size();
-    unsigned depthC = layout.pj.size();
-    SmallVector<int64_t> row(layout.numDims + 1, 0);
-    for (unsigned k = 0; k < depthP; ++k) {
-        row[k] -= coeffP[k];
-    }
-    for (unsigned k = 0; k < depthC; ++k) {
-        row[consumerDim(layout, k)] += coeffC[k];
-    }
-    __int128 rc = static_cast<__int128>(constC) - constP + sizeC - 1;
-    if (rc < INT64_MIN || rc > INT64_MAX) {
-        return false;
-    }
-    row.back() = static_cast<int64_t>(rc);
-    poly.addInequality(row);
-
-    SmallVector<int64_t> row2(layout.numDims + 1, 0);
-    for (unsigned k = 0; k < depthP; ++k) {
-        row2[k] += coeffP[k];
-    }
-    for (unsigned k = 0; k < depthC; ++k) {
-        row2[consumerDim(layout, k)] -= coeffC[k];
-    }
-    rc = static_cast<__int128>(constP) - constC + sizeP - 1;
-    if (rc < INT64_MIN || rc > INT64_MAX) {
-        return false;
-    }
-    row2.back() = static_cast<int64_t>(rc);
-    poly.addInequality(row2);
-    return true;
-}
-
-// Analyze interval overlap across two sequential execution regions. A
-// non-empty exact Presburger relation is ProvenDependence, an empty one is
-// NoDependence, and any incomplete root/domain/footprint model is Unknown.
-// Modelled dimensions: the union of producer and consumer IVs. Shared loops
-// (common prefix of the two loop nests) are constrained equal (same
-// iteration); IVs that only one side carries are left as free dims of that
-// side. The address-intersection constraints mirror `addIntersection`: a pair
-// of intervals is disjoint iff NOT (addrP < addrC + sizeC AND addrC < addrP +
-// sizeP), so proving the polyhedron of the conjunction empty proves disjoint.
-static DependenceStatus analyzeSequentialOverlap(
-    const VecScopeMemBarAnalysisResult& result, const AccessOccurrence& prod, const AccessOccurrence& cons)
-{
-    const auto& P = prod.footprint;
-    const auto& C = cons.footprint;
-    if (!sequentialRootsComparable(P, C)) {
-        return DependenceStatus::Unknown;
-    }
-
-    SequentialOverlapLayout layout;
-    if (!resolveSequentialIVLayout(result, prod, cons, layout)) {
-        return DependenceStatus::Unknown;
-    }
-    if (!hasOnlyIVTerms(P, layout.pi) || !hasOnlyIVTerms(C, layout.pj)) {
-        return DependenceStatus::Unknown;
-    }
-    auto poly = buildSequentialPolyhedron(result, layout);
-    if (!poly) {
-        return DependenceStatus::Unknown;
-    }
-
-    int64_t constP = 0;
-    int64_t constC = 0;
-    if (!sequentialRootBase(P, constP) || !sequentialRootBase(C, constC)) {
-        return DependenceStatus::Unknown;
-    }
-    int64_t sizeP = static_cast<int64_t>(*P.byteSize);
-    int64_t sizeC = static_cast<int64_t>(*C.byteSize);
-
-    // Producer coefficients in the producer's IV coordinates, consumer
-    // coefficients in the consumer's. In the single-nest layout the producer's
-    // IVs are a prefix of the consumer's, so producer coefficients for IVs it
-    // does not carry are 0 (getCoeff returns 0 for an absent IV).
-    SmallVector<int64_t, 2> coeffP;
-    SmallVector<int64_t, 2> coeffC;
-    for (unsigned k = 0; k < layout.pi.size(); ++k) {
-        coeffP.push_back(P.byteOffset.getCoeff(layout.pi[k]));
-    }
-    for (unsigned k = 0; k < layout.pj.size(); ++k) {
-        coeffC.push_back(C.byteOffset.getCoeff(layout.pj[k]));
-    }
-    if (!convertToIterationCounters(coeffP, layout.boundsP, constP) ||
-        !convertToIterationCounters(coeffC, layout.boundsC, constC)) {
-        return DependenceStatus::Unknown;
-    }
-
-    if (!addSequentialIntersection(*poly, layout, coeffP, coeffC, constP, constC, sizeP, sizeC)) {
-        return DependenceStatus::Unknown;
-    }
-
-    return poly->isIntegerEmpty() ? DependenceStatus::NoDependence : DependenceStatus::ProvenDependence;
-}
-
 // A mem_bar is a vector micro-op and must remain inside the consumer's
 // vector scope. For a dependence crossing sibling vecscopes, anchor at the
 // first operation in the consumer scope rather than before the scope
@@ -756,7 +336,7 @@ static bool collectAccessOccurrences(Operation* scope, VecScopeMemBarAnalysisRes
         occ.op = op;
         occ.lexicalOrder = order++;
         auto ivs = collectIVs(op, scope);
-        auto maybe = buildAccessDescriptor(op, ivs);
+        auto maybe = buildMemoryAccessDescriptor(op, ivs);
         if (failed(maybe)) {
             anyFailed = true;
             return;
@@ -764,18 +344,14 @@ static bool collectAccessOccurrences(Operation* scope, VecScopeMemBarAnalysisRes
         occ.kind = (*maybe).kind;
         occ.unit = (*maybe).unit;
         recordEnclosingLoopNest(result, ivs, occ);
-        if ((*maybe).blockByteOffsets.empty()) {
-            occ.footprint = footprintFromDescriptor(*maybe, ivs);
+        auto footprints = getMemoryFootprints(*maybe, ivs);
+        if (footprints.empty()) {
+            anyFailed = true;
+            return;
+        }
+        for (const auto& footprint : footprints) {
+            occ.footprint = footprint;
             result.accesses.push_back(occ);
-        } else {
-            for (int64_t offset : (*maybe).blockByteOffsets) {
-                auto piece = *maybe;
-                AffineByteExpr displacement;
-                displacement.constant = offset;
-                piece.byteOffset.combine(displacement);
-                occ.footprint = footprintFromDescriptor(piece, ivs);
-                result.accesses.push_back(occ);
-            }
         }
     });
     return !anyFailed;
@@ -811,67 +387,83 @@ static void collectExistingBarriers(Operation* scope, VecScopeMemBarAnalysisResu
 }
 
 // --- Sequential-region RAW/WAW dependences ---
+static void recordSequentialHazard(
+    VecScopeMemBarAnalysisResult& result, const AccessOccurrence& producer, const AccessOccurrence& consumer,
+    unsigned producerIndex, unsigned consumerIndex, MemBarKind kind, Operation* scope)
+{
+    MemoryHazard h;
+    h.id = result.hazards.size();
+    h.producer = producerIndex;
+    h.consumer = consumerIndex;
+    h.kind = kind;
+    h.scope = VecScopeHazardScope::SameIteration;
+    h.sameIterationAnchor = findSameIterationAnchor(producer.op, consumer.op, scope);
+    if (!h.sameIterationAnchor) {
+        h.sameIterationAnchor = consumer.op;
+    }
+    result.hazards.push_back(h);
+}
+
+static DependenceStatus sequentialOverlapStatus(
+    const AccessOccurrence& producer, const AccessOccurrence& consumer, Operation* scope)
+{
+    auto status =
+        querySequentialMemoryOverlap({producer.op, producer.footprint}, {consumer.op, consumer.footprint}, scope);
+    if (status == PTOMemoryDependenceStatus::NoDependence) {
+        return DependenceStatus::NoDependence;
+    }
+    return status == PTOMemoryDependenceStatus::Unknown ? DependenceStatus::Unknown :
+                                                          DependenceStatus::ProvenDependence;
+}
+
+static void analyzeSequentialPair(
+    VecScopeMemBarAnalysisResult& result, Operation* scope, unsigned i, unsigned j,
+    SmallVectorImpl<std::pair<unsigned, unsigned>>& pendingWAR)
+{
+    const auto& A = result.accesses;
+    if (A[i].op == A[j].op) {
+        return;
+    }
+    auto kind = hazardKind(A[i], A[j]);
+    if (!kind) {
+        return;
+    }
+    const bool sameIterationNoAlias =
+        aliasMemorySameIteration(A[i].footprint, A[j].footprint) == PTOMemoryAliasResult::NoAlias;
+    if (sameIterationNoAlias) {
+        return;
+    }
+    bool dynamicDomain = hasDynamicLoopDomain(A[i].op, scope) || hasDynamicLoopDomain(A[j].op, scope);
+    bool envelopeDisjoint =
+        querySequentialMemoryOverlap({A[i].op, A[i].footprint}, {A[j].op, A[j].footprint}, scope, true) ==
+        PTOMemoryDependenceStatus::NoDependence;
+    DependenceStatus status = sequentialOverlapStatus(A[i], A[j], scope);
+    if (dynamicDomain) {
+        status = envelopeDisjoint ? DependenceStatus::NoDependence : DependenceStatus::ProvenDependence;
+    } else if (status == DependenceStatus::Unknown && envelopeDisjoint) {
+        status = DependenceStatus::NoDependence;
+    }
+    if (status == DependenceStatus::NoDependence) {
+        return;
+    }
+    if (status == DependenceStatus::Unknown) {
+        recordUnknown(result, i, j, *kind, DependenceReason::DynamicUnmodelledExpression);
+        return;
+    }
+    if (A[i].kind == PTOMemoryAccessKind::Load && A[j].kind == PTOMemoryAccessKind::Store) {
+        pendingWAR.push_back({i, j});
+        return;
+    }
+    recordSequentialHazard(result, A[i], A[j], i, j, *kind, scope);
+}
+
 static void enumerateSequentialHazards(
     VecScopeMemBarAnalysisResult& result, Operation* scope, SmallVectorImpl<std::pair<unsigned, unsigned>>& pendingWAR)
 {
-    const auto& A = result.accesses;
-    const unsigned N = A.size();
+    const unsigned N = result.accesses.size();
     for (unsigned i = 0; i < N; ++i) {
         for (unsigned j = i + 1; j < N; ++j) {
-            // Pieces of one block-strided instruction execute as one access.
-            if (A[i].op == A[j].op) {
-                continue;
-            }
-            auto kind = hazardKind(A[i], A[j]);
-            if (!kind) {
-                continue;
-            }
-
-            // A same-iteration proof of disjointness is sound regardless of
-            // whether the loop-carried model can represent the surrounding
-            // nest. In particular, distinct proven allocations must not be
-            // turned into conservative barriers merely because the sequential
-            // Presburger model has no shared root.
-            if (aliasSameIteration(A[i].footprint, A[j].footprint) == VecScopeAliasResult::NoAlias) {
-                continue;
-            }
-
-            bool dynamicDomain = hasDynamicLoopDomain(A[i].op, scope) || hasDynamicLoopDomain(A[j].op, scope);
-            if (dynamicDomain && aliasSameIteration(A[i].footprint, A[j].footprint) == VecScopeAliasResult::NoAlias) {
-                continue;
-            }
-            DependenceStatus status =
-                dynamicDomain ? DependenceStatus::ProvenDependence : analyzeSequentialOverlap(result, A[i], A[j]);
-            if (status == DependenceStatus::NoDependence) {
-                continue;
-            }
-            if (status == DependenceStatus::Unknown) {
-                recordUnknown(result, i, j, *kind, DependenceReason::DynamicUnmodelledExpression);
-                continue;
-            }
-            // Delay load-to-store materialization until all RAW barriers are known. A WAR
-            // chain may be indirect:
-            //
-            //   load A -> value -> store B --VST_VLD--> load C -> value -> store A
-            //
-            // The first store-to-load edge is supplied by SSA, while VST_VLD orders
-            // every store before the later load. Checking only load A's direct
-            // value flow into the final store A would incorrectly add VLD_VST.
-            if (A[i].kind == VecScopeAccessKind::Load && A[j].kind == VecScopeAccessKind::Store) {
-                pendingWAR.push_back({i, j});
-                continue;
-            }
-            MemoryHazard h;
-            h.id = result.hazards.size();
-            h.producer = i;
-            h.consumer = j;
-            h.kind = *kind;
-            h.scope = VecScopeHazardScope::SameIteration;
-            h.sameIterationAnchor = findSameIterationAnchor(A[i].op, A[j].op, scope);
-            if (!h.sameIterationAnchor) {
-                h.sameIterationAnchor = A[j].op;
-            }
-            result.hazards.push_back(h);
+            analyzeSequentialPair(result, scope, i, j, pendingWAR);
         }
     }
 }
@@ -914,7 +506,7 @@ static void addSSADataEdges(const VecScopeMemBarAnalysisResult& result, Ordering
     const auto& A = result.accesses;
     const unsigned N = A.size();
     for (unsigned load = 0; load < N; ++load) {
-        if (A[load].kind != VecScopeAccessKind::Load) {
+        if (A[load].kind != PTOMemoryAccessKind::Load) {
             continue;
         }
         SmallVector<Value, 2> loadedVals = getLoadedValues(A[load].op);
@@ -922,7 +514,7 @@ static void addSSADataEdges(const VecScopeMemBarAnalysisResult& result, Ordering
             continue;
         }
         for (unsigned store = load + 1; store < N; ++store) {
-            if (A[store].kind != VecScopeAccessKind::Store) {
+            if (A[store].kind != PTOMemoryAccessKind::Store) {
                 continue;
             }
             SmallVector<Value, 2> storedVals = getStoredValues(A[store].op);
@@ -937,16 +529,16 @@ static void addSSADataEdges(const VecScopeMemBarAnalysisResult& result, Ordering
 // Only use endpoints in that block: lexical order across a conditional or
 // zero-trip region does not prove that the barrier executes between them.
 static void addCutOrderingEdges(
-    ArrayRef<AccessOccurrence> A, Operation* anchor, VecScopeAccessUnit storeUnit, VecScopeAccessUnit loadUnit,
+    ArrayRef<AccessOccurrence> A, Operation* anchor, PTOMemoryAccessUnit storeUnit, PTOMemoryAccessUnit loadUnit,
     OrderingEdges& edges)
 {
     for (unsigned store = 0; store < A.size(); ++store) {
-        if (A[store].kind != VecScopeAccessKind::Store || A[store].unit != storeUnit ||
+        if (A[store].kind != PTOMemoryAccessKind::Store || A[store].unit != storeUnit ||
             A[store].op->getBlock() != anchor->getBlock() || !A[store].op->isBeforeInBlock(anchor)) {
             continue;
         }
         for (unsigned load = 0; load < A.size(); ++load) {
-            if (A[load].kind == VecScopeAccessKind::Load && A[load].unit == loadUnit &&
+            if (A[load].kind == PTOMemoryAccessKind::Load && A[load].unit == loadUnit &&
                 A[load].op->getBlock() == anchor->getBlock() &&
                 (A[load].op == anchor || anchor->isBeforeInBlock(A[load].op))) {
                 addOrderingEdge(edges, store, load);
@@ -969,12 +561,12 @@ static void addHazardCutEdges(const VecScopeMemBarAnalysisResult& result, Orderi
             h.consumer >= N) {
             continue;
         }
-        VecScopeAccessUnit storeUnit = h.kind == MemBarKind::VST_VLD || h.kind == MemBarKind::VST_LD ?
-                                           VecScopeAccessUnit::Vector :
-                                           VecScopeAccessUnit::Scalar;
-        VecScopeAccessUnit loadUnit = h.kind == MemBarKind::VST_VLD || h.kind == MemBarKind::ST_VLD ?
-                                          VecScopeAccessUnit::Vector :
-                                          VecScopeAccessUnit::Scalar;
+        PTOMemoryAccessUnit storeUnit = h.kind == MemBarKind::VST_VLD || h.kind == MemBarKind::VST_LD ?
+                                            PTOMemoryAccessUnit::Vector :
+                                            PTOMemoryAccessUnit::Scalar;
+        PTOMemoryAccessUnit loadUnit = h.kind == MemBarKind::VST_VLD || h.kind == MemBarKind::ST_VLD ?
+                                           PTOMemoryAccessUnit::Vector :
+                                           PTOMemoryAccessUnit::Scalar;
         Operation* anchor = h.sameIterationAnchor ? h.sameIterationAnchor : A[h.consumer].op;
         addCutOrderingEdges(A, anchor, storeUnit, loadUnit, edges);
     }
@@ -987,24 +579,44 @@ static void addHazardCutEdges(const VecScopeMemBarAnalysisResult& result, Orderi
 // Cross-region proofs require control-flow reasoning and remain conservative.
 // Both units are derived from the barrier kind's family: the family's
 // first letter is the store unit, its second letter the load unit.
-static void addBarrierSpanEdges(
-    ArrayRef<AccessOccurrence> A, const ExistingBarrier& barrier, OrderingEdges& edges)
+static std::optional<std::pair<PTOMemoryAccessUnit, PTOMemoryAccessUnit>> barrierStoreLoadUnits(MemBarKind kind)
 {
+    using Unit = PTOMemoryAccessUnit;
+    switch (kind) {
+        case MemBarKind::VST_VLD:
+        case MemBarKind::VV_ALL:
+            return std::make_pair(Unit::Vector, Unit::Vector);
+        case MemBarKind::VST_LD:
+        case MemBarKind::VS_ALL:
+            return std::make_pair(Unit::Vector, Unit::Scalar);
+        case MemBarKind::ST_VLD:
+        case MemBarKind::SV_ALL:
+            return std::make_pair(Unit::Scalar, Unit::Vector);
+        case MemBarKind::ST_LD:
+        case MemBarKind::SS_ALL:
+            return std::make_pair(Unit::Scalar, Unit::Scalar);
+        default:
+            return std::nullopt;
+    }
+}
+
+static void addBarrierSpanEdges(ArrayRef<AccessOccurrence> A, const ExistingBarrier& barrier, OrderingEdges& edges)
+{
+    auto units = barrierStoreLoadUnits(barrier.kind);
+    if (!units) {
+        return;
+    }
     const unsigned N = A.size();
     for (unsigned store = 0; store < N; ++store) {
-        if (A[store].kind != VecScopeAccessKind::Store ||
-            A[store].unit != (static_cast<unsigned>(barrier.kind) / 4 < 2 ? VecScopeAccessUnit::Vector :
-                                                                            VecScopeAccessUnit::Scalar) ||
-            A[store].op->getBlock() != barrier.op->getBlock() ||
-            !A[store].op->isBeforeInBlock(barrier.op)) {
+        if (A[store].kind != PTOMemoryAccessKind::Store ||
+            A[store].unit != units->first ||
+            A[store].op->getBlock() != barrier.op->getBlock() || !A[store].op->isBeforeInBlock(barrier.op)) {
             continue;
         }
         for (unsigned load = 0; load < N; ++load) {
-            if (A[load].kind != VecScopeAccessKind::Load ||
-                A[load].unit != (static_cast<unsigned>(barrier.kind) / 4 % 2 == 0 ? VecScopeAccessUnit::Vector :
-                                                                                    VecScopeAccessUnit::Scalar) ||
-                A[load].op->getBlock() != barrier.op->getBlock() ||
-                !barrier.op->isBeforeInBlock(A[load].op)) {
+            if (A[load].kind != PTOMemoryAccessKind::Load ||
+                A[load].unit != units->second ||
+                A[load].op->getBlock() != barrier.op->getBlock() || !barrier.op->isBeforeInBlock(A[load].op)) {
                 continue;
             }
             addOrderingEdge(edges, store, load);
@@ -1066,282 +678,59 @@ static void resolvePendingWARHazards(
     }
 }
 
-// Per-pair model for the loop-carried Presburger relations: the resolved
-// loop depths, iteration domains, and modelled byte coefficients of one
-// producer/consumer pair.
-struct CarriedPairModel {
-    unsigned depthP = 0;
-    unsigned depthC = 0;
-    unsigned numDims = 0;
-    SmallVector<ConstLoopBounds> boundsP;
-    SmallVector<ConstLoopBounds> boundsC;
-    SmallVector<int64_t, 2> coeffP;
-    SmallVector<int64_t, 2> coeffC;
-    int64_t constP = 0;
-    int64_t constC = 0;
-    int64_t sizeP = 0;
-    int64_t sizeC = 0;
-    bool offsetsExact = true;
-};
-
-// Dimensions: [ip0, ip1?, ic0, ic1?]: producer coordinates first, then
-// consumer coordinates (both depths are <= 2 by the time a model is built).
-static unsigned carriedDimPos(const CarriedPairModel& m, bool producer, unsigned k)
+static DependenceReason dependenceReason(PTOMemoryDependenceReason reason)
 {
-    return producer ? k : (m.depthP + k);
+    switch (reason) {
+        case PTOMemoryDependenceReason::InvalidContext:
+            return DependenceReason::DynamicUnmodelledExpression;
+        case PTOMemoryDependenceReason::UnknownRoot:
+            return DependenceReason::UnknownRoot;
+        case PTOMemoryDependenceReason::DynamicUnmodelledExpression:
+            return DependenceReason::DynamicUnmodelledExpression;
+        case PTOMemoryDependenceReason::DynamicLoopBounds:
+            return DependenceReason::DynamicLoopBounds;
+        case PTOMemoryDependenceReason::UnsupportedAccessShape:
+            return DependenceReason::UnsupportedAccessShape;
+    }
+    llvm_unreachable("invalid memory dependence reason");
 }
 
-// Build the base relation polyhedron: the iteration domains of both sides.
-// Returns null when a domain cannot be modelled.
-static std::unique_ptr<IntegerPolyhedron> buildCarriedBase(const CarriedPairModel& m)
-{
-    auto space = presburger::PresburgerSpace::getSetSpace(m.numDims);
-    auto poly = std::make_unique<IntegerPolyhedron>(space);
-    for (unsigned k = 0; k < m.depthP; ++k) {
-        if (!addIterationDomain(*poly, carriedDimPos(m, true, k), m.boundsP[k])) {
-            return std::unique_ptr<IntegerPolyhedron>(nullptr);
-        }
-    }
-    for (unsigned k = 0; k < m.depthC; ++k) {
-        if (!addIterationDomain(*poly, carriedDimPos(m, false, k), m.boundsC[k])) {
-            return std::unique_ptr<IntegerPolyhedron>(nullptr);
-        }
-    }
-    return poly;
-}
-
-// addrP(x) < addrC(y) + sizeC => addrP - addrC - sizeC < 0
-// addrC(y) < addrP(x) + sizeP => addrC - addrP - sizeP < 0
-// addrP = producerConstByte + sum(ivCoeff_k * ivP_k)
-// addrC = consumerConstByte + sum(ivCoeff_k * ivC_k)
-// Only modelable when both byte offsets are exact affine in the IVs with
-// known coefficients and constant sizes.
-static bool addCarriedIntersection(IntegerPolyhedron& poly, const CarriedPairModel& m)
-{
-    if (!m.offsetsExact) {
-        return false;
-    }
-    // addrP - addrC - sizeC < 0 => -(addrP - addrC - sizeC) > 0
-    // => addrC - addrP + sizeC > 0 => addrC - addrP + sizeC - 1 >= 0
-    SmallVector<int64_t> row(m.numDims + 1, 0);
-    for (unsigned k = 0; k < m.depthP; ++k) {
-        row[carriedDimPos(m, true, k)] -= m.coeffP[k];
-    }
-    for (unsigned k = 0; k < m.depthC; ++k) {
-        row[carriedDimPos(m, false, k)] += m.coeffC[k];
-    }
-    __int128 rowConstant = static_cast<__int128>(m.constC) - m.constP + m.sizeC - 1;
-    if (rowConstant < INT64_MIN || rowConstant > INT64_MAX) {
-        return false;
-    }
-    row.back() = static_cast<int64_t>(rowConstant);
-    poly.addInequality(row);
-    // addrC - addrP - sizeP < 0 => addrP - addrP + sizeP - 1 >= 0
-    SmallVector<int64_t> row2(m.numDims + 1, 0);
-    for (unsigned k = 0; k < m.depthP; ++k) {
-        row2[carriedDimPos(m, true, k)] += m.coeffP[k];
-    }
-    for (unsigned k = 0; k < m.depthC; ++k) {
-        row2[carriedDimPos(m, false, k)] -= m.coeffC[k];
-    }
-    rowConstant = static_cast<__int128>(m.constP) - m.constC + m.sizeP - 1;
-    if (rowConstant < INT64_MIN || rowConstant > INT64_MAX) {
-        return false;
-    }
-    row2.back() = static_cast<int64_t>(rowConstant);
-    poly.addInequality(row2);
-    return true;
-}
-
-// Model a footprint's base byte: symbolic/allocation roots use the constant
-// byte offset; absolute roots combine the absolute base with it. Fails when
-// the offset is inexact, the size is unknown, or either overflows int64.
-static bool modelCarriedRoot(const VecScopeMemoryFootprint& fp, int64_t& base)
-{
-    if (!fp.byteOffset.exact || !fp.byteSize || *fp.byteSize > static_cast<uint64_t>(INT64_MAX)) {
-        return false;
-    }
-    if (fp.rootKind == MemoryRootKind::Symbolic || fp.rootKind == MemoryRootKind::ProvenAllocation) {
-        base = fp.byteOffset.constant;
-        return true;
-    }
-    if (fp.rootKind != MemoryRootKind::Absolute || !fp.absoluteBase ||
-        *fp.absoluteBase > static_cast<uint64_t>(INT64_MAX)) {
-        return false;
-    }
-    __int128 value = static_cast<__int128>(*fp.absoluteBase) + static_cast<__int128>(fp.byteOffset.constant);
-    if (value < INT64_MIN || value > INT64_MAX) {
-        return false;
-    }
-    base = static_cast<int64_t>(value);
-    return true;
-}
-
-// Relationship between the two access roots: same symbolic/allocation root,
-// both absolute, or distinct proven allocations (definitely disjoint).
-struct RootRelation {
-    bool sameRoot = false;
-    bool bothAbsolute = false;
-    bool distinctProvenAllocations = false;
-};
-
-static RootRelation classifyRootRelation(
-    const VecScopeMemoryFootprint& producer, const VecScopeMemoryFootprint& consumer)
-{
-    RootRelation rel;
-    rel.sameRoot =
-        (producer.rootKind == MemoryRootKind::Symbolic || producer.rootKind == MemoryRootKind::ProvenAllocation) &&
-        (consumer.rootKind == MemoryRootKind::Symbolic || consumer.rootKind == MemoryRootKind::ProvenAllocation) &&
-        producer.root == consumer.root;
-    rel.distinctProvenAllocations = producer.rootKind == MemoryRootKind::ProvenAllocation &&
-                                    consumer.rootKind == MemoryRootKind::ProvenAllocation &&
-                                    producer.root != consumer.root;
-    rel.bothAbsolute = producer.rootKind == MemoryRootKind::Absolute && consumer.rootKind == MemoryRootKind::Absolute;
-    return rel;
-}
-
-// Model the roots, byte sizes, and IV coefficients of a carried pair. On
-// failure, `failure` names the unmodelled part.
-static bool modelCarriedPairRoots(
-    const VecScopeMemBarAnalysisResult& result, unsigned i, unsigned j, ArrayRef<Value> pi, ArrayRef<Value> pj,
-    CarriedPairModel& m, DependenceReason& failure)
-{
-    const auto& A = result.accesses;
-    if (!hasOnlyIVTerms(A[i].footprint, pi) || !hasOnlyIVTerms(A[j].footprint, pj)) {
-        failure = DependenceReason::DynamicUnmodelledExpression;
-        return false;
-    }
-    bool sizesAndRootsKnown = modelCarriedRoot(A[i].footprint, m.constP) &&
-                              modelCarriedRoot(A[j].footprint, m.constC) && A[i].footprint.byteSize &&
-                              A[j].footprint.byteSize;
-    if (sizesAndRootsKnown) {
-        m.sizeP = static_cast<int64_t>(*A[i].footprint.byteSize);
-        m.sizeC = static_cast<int64_t>(*A[j].footprint.byteSize);
-    }
-    RootRelation rel = classifyRootRelation(A[i].footprint, A[j].footprint);
-    if (!rel.sameRoot && !rel.bothAbsolute) {
-        failure = DependenceReason::UnknownRoot;
-        return false;
-    }
-    if (!sizesAndRootsKnown) {
-        failure = DependenceReason::UnsupportedAccessShape;
-        return false;
-    }
-    for (unsigned k = 0; k < m.depthP; ++k) {
-        m.coeffP.push_back(A[i].footprint.byteOffset.getCoeff(pi[k]));
-    }
-    for (unsigned k = 0; k < m.depthC; ++k) {
-        m.coeffC.push_back(A[j].footprint.byteOffset.getCoeff(pj[k]));
-    }
-    if (!convertToIterationCounters(m.coeffP, m.boundsP, m.constP) ||
-        !convertToIterationCounters(m.coeffC, m.boundsC, m.constC)) {
-        failure = DependenceReason::DynamicUnmodelledExpression;
-        return false;
-    }
-    return true;
-}
-
-// Evaluate a fully-constrained carried relation: an unmodelable address
-// intersection is Unknown; a satisfiable relation proves a carried hazard on
-// `carryingLoop`.
-static void recordCarriedQuery(
-    IntegerPolyhedron& poly, const CarriedPairModel& m, VecScopeMemBarAnalysisResult& result, unsigned i, unsigned j,
-    MemBarKind kind, VecScopeHazardScope scope, std::optional<unsigned> carryingLoop)
-{
-    if (!addCarriedIntersection(poly, m)) {
-        recordUnknown(result, i, j, kind, DependenceReason::DynamicUnmodelledExpression, scope, carryingLoop);
-        return;
-    }
-    if (poly.isIntegerEmpty()) {
-        return;
-    }
-    MemoryHazard h;
-    h.id = result.hazards.size();
-    h.producer = i;
-    h.consumer = j;
-    h.kind = kind;
-    h.scope = scope;
-    h.carryingLoop = carryingLoop;
-    h.distance.positive = true;
-    result.hazards.push_back(h);
-}
-
-// Query each shared carrying loop independently. Earlier coordinates must
-// match; the carrying coordinate advances and all later coordinates are free.
-static void queryCarriedRelation(
-    const CarriedPairModel& m, VecScopeMemBarAnalysisResult& result, unsigned i, unsigned j, MemBarKind kind,
-    ArrayRef<unsigned> commonLoops, unsigned level)
-{
-    auto scope = carriedScopeAt(level, commonLoops.size());
-    auto poly = buildCarriedBase(m);
-    if (!poly) {
-        recordUnknown(result, i, j, kind, DependenceReason::UnsupportedAccessShape, scope, commonLoops[level]);
-        return;
-    }
-    for (unsigned k = 0; k < level; ++k) {
-        SmallVector<int64_t> eq(m.numDims + 1, 0);
-        eq[carriedDimPos(m, true, k)] = -1;
-        eq[carriedDimPos(m, false, k)] = 1;
-        poly->addEquality(eq);
-    }
-    SmallVector<int64_t> gt(m.numDims + 1, 0);
-    gt[carriedDimPos(m, false, level)] = 1;
-    gt[carriedDimPos(m, true, level)] = -1;
-    gt.back() = -1;
-    poly->addInequality(gt);
-    recordCarriedQuery(*poly, m, result, i, j, kind, scope, commonLoops[level]);
-}
-
-// Loop-carried RAW/WAW relations for one ordered pair (i, j) (including
-// self pairs). A relation is "empty" => no carried hazard; satisfiable =>
-// proven carried hazard; unmodelable => Unknown, materialized conservatively.
 static void analyzeLoopCarriedPair(VecScopeMemBarAnalysisResult& result, unsigned i, unsigned j, Operation* scope)
 {
-    const auto& A = result.accesses;
-    auto kind = hazardKind(A[i], A[j]);
+    const auto& producer = result.accesses[i];
+    const auto& consumer = result.accesses[j];
+    auto kind = hazardKind(producer, consumer);
     if (!kind) {
         return;
     }
-    auto pi = collectIVs(A[i].op, scope);
-    auto pj = collectIVs(A[j].op, scope);
-    auto commonLoops = commonLoopPrefix(A[i], A[j]);
-    if (commonLoops.empty()) {
-        return;
-    }
-
-    // Different address spaces are definitely disjoint for both same- and
-    // cross-iteration relations. Do not use same-iteration NoAlias for any
-    // other case: an IV shift may make a relation overlap.
-    if (A[i].footprint.addressSpace && A[j].footprint.addressSpace &&
-        *A[i].footprint.addressSpace != *A[j].footprint.addressSpace) {
-        return;
-    }
-
-    // Gather loop bounds for each access independently. A cross-hierarchy
-    // pair has two iteration domains: the producer may carry an inner loop
-    // that the consumer does not, or the two accesses may be in sibling
-    // inner loops.
-    CarriedPairModel model;
-    model.depthP = pi.size();
-    model.depthC = pj.size();
-    model.numDims = model.depthP + model.depthC;
-    bool allConst = gatherConstBounds(result, pi, model.boundsP);
-    allConst = gatherConstBounds(result, pj, model.boundsC) && allConst;
-    if (!allConst) {
-        recordUnknownOnLoops(result, i, j, *kind, DependenceReason::DynamicLoopBounds, commonLoops);
-        return;
-    }
-    if (classifyRootRelation(A[i].footprint, A[j].footprint).distinctProvenAllocations) {
-        return;
-    }
-    DependenceReason failure = DependenceReason::UnsupportedAccessShape;
-    if (!modelCarriedPairRoots(result, i, j, pi, pj, model, failure)) {
-        recordUnknownOnLoops(result, i, j, *kind, failure, commonLoops);
-        return;
-    }
-
-    for (unsigned level = 0; level < commonLoops.size(); ++level) {
-        queryCarriedRelation(model, result, i, j, *kind, commonLoops, level);
+    auto common = getCommonLoopPrefix(producer.loopNest, consumer.loopNest);
+    auto answers =
+        queryCarriedMemoryOverlap({producer.op, producer.footprint}, {consumer.op, consumer.footprint}, scope);
+    for (const auto& answer : answers) {
+        auto found = llvm::find_if(result.loops, [&](const auto& loop) { return loop.op == answer.loop; });
+        if (found == result.loops.end()) {
+            recordUnknown(result, i, j, *kind, DependenceReason::DynamicUnmodelledExpression);
+            for (auto [level, id] : llvm::enumerate(common)) {
+                recordUnknown(result, i, j, *kind, DependenceReason::DynamicUnmodelledExpression,
+                              carriedScopeAt(level, common.size()), id);
+            }
+            continue;
+        }
+        unsigned level = llvm::find(common, found->id) - common.begin();
+        auto hazardScope = carriedScopeAt(level, common.size());
+        if (answer.status == PTOMemoryDependenceStatus::Unknown) {
+            recordUnknown(result, i, j, *kind, dependenceReason(answer.reason), hazardScope, found->id);
+            continue;
+        }
+        MemoryHazard hazard;
+        hazard.id = result.hazards.size();
+        hazard.producer = i;
+        hazard.consumer = j;
+        hazard.kind = *kind;
+        hazard.scope = hazardScope;
+        hazard.carryingLoop = found->id;
+        hazard.distance.positive = true;
+        result.hazards.push_back(hazard);
     }
 }
 

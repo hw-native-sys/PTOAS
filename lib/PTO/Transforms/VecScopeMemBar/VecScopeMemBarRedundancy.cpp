@@ -14,6 +14,7 @@
 // relay ordering through a possibly empty third loop or a conditional region.
 
 #include "PTO/Transforms/VecScopeMemBar/VecScopeMemBarPlacement.h"
+#include "PTO/Analysis/PTOIntegerRange.h"
 
 #include "mlir/Dialect/SCF/IR/SCF.h"
 #include "mlir/Interfaces/SideEffectInterfaces.h"
@@ -48,12 +49,13 @@ static bool ordersAccessPair(MemBarKind kind, const AccessOccurrence& producer, 
     unsigned direction = static_cast<unsigned>(kind) % 4;
     bool producerScalar = family >= 2;
     bool consumerScalar = family == 1 || family == 3;
-    if ((producer.unit == VecScopeAccessUnit::Scalar) != producerScalar ||
-        (consumer.unit == VecScopeAccessUnit::Scalar) != consumerScalar) {
+    bool unitMismatch = (producer.unit == PTOMemoryAccessUnit::Scalar) != producerScalar ||
+        (consumer.unit == PTOMemoryAccessUnit::Scalar) != consumerScalar;
+    if (unitMismatch) {
         return false;
     }
-    bool storeBefore = producer.kind == VecScopeAccessKind::Store;
-    bool storeAfter = consumer.kind == VecScopeAccessKind::Store;
+    bool storeBefore = producer.kind == PTOMemoryAccessKind::Store;
+    bool storeAfter = consumer.kind == PTOMemoryAccessKind::Store;
     switch (direction) {
         case 0:
             return true;
@@ -110,9 +112,46 @@ static bool straightLineDependsOn(Value sink, Value source, Block* block)
     return false;
 }
 
+// Lift a load through a reduction only if every iteration contributes to
+// the yielded result and each later iteration also consumes that result.
+// Merely reaching an init operand is insufficient: the body may overwrite it.
 static bool hasValueRelay(Operation* load, Operation* store, Block* block)
 {
-    for (Value loaded : getLoadedValues(load)) {
+    SmallVector<Value, 4> values = getLoadedValues(load);
+    Block* current = load->getBlock();
+    while (current != block) {
+        auto loop = dyn_cast_or_null<scf::ForOp>(current->getParentOp());
+        if (!loop) {
+            return false;
+        }
+        auto bounds = mlir::pto::integer_range::getConstBounds(loop);
+        auto envelope = mlir::pto::integer_range::getLoopEnvelope(loop);
+        auto trip = bounds.exactTripCount();
+        if (!trip || *trip <= 0 || !envelope.valid) {
+            return false;
+        }
+        SmallVector<Value, 4> lifted;
+        auto yield = cast<scf::YieldOp>(loop.getBody()->getTerminator());
+        for (unsigned index = 0; index < loop.getNumResults(); ++index) {
+            Value next = yield.getOperand(index);
+            Value carry = loop.getRegionIterArgs()[index];
+            if (!straightLineDependsOn(next, carry, current)) {
+                continue;
+            }
+            for (Value value : values) {
+                if (straightLineDependsOn(next, value, current)) {
+                    lifted.push_back(loop.getResult(index));
+                    break;
+                }
+            }
+        }
+        if (lifted.empty()) {
+            return false;
+        }
+        values = std::move(lifted);
+        current = loop->getBlock();
+    }
+    for (Value loaded : values) {
         for (Value stored : getStoredValues(store)) {
             if (straightLineDependsOn(stored, loaded, block)) {
                 return true;
@@ -122,19 +161,42 @@ static bool hasValueRelay(Operation* load, Operation* store, Block* block)
     return false;
 }
 
-static OrderGraph buildValueEdges(ArrayRef<AccessOccurrence> accesses)
+// A relay inside another loop is usable only when that entire enclosing
+// path executes. Conditions and possibly empty loops never supply witnesses.
+static bool guaranteedRelayInBlock(Operation* op, Block* block)
+{
+    bool nested = op->getBlock() != block;
+    while (nested) {
+        auto loop = dyn_cast_or_null<scf::ForOp>(op->getParentOp());
+        if (!loop) {
+            return false;
+        }
+        auto bounds = mlir::pto::integer_range::getConstBounds(loop);
+        auto envelope = mlir::pto::integer_range::getLoopEnvelope(loop);
+        auto trip = bounds.exactTripCount();
+        if (!trip || *trip <= 0 || !envelope.valid) {
+            return false;
+        }
+        op = loop;
+        nested = op->getBlock() != block;
+    }
+    return true;
+}
+
+static OrderGraph buildValueEdges(ArrayRef<AccessOccurrence> accesses, Block* cutBlock, bool reductions)
 {
     OrderGraph edges(accesses.size());
     for (unsigned from = 0; from < accesses.size(); ++from) {
         const auto& load = accesses[from];
-        if (load.kind != VecScopeAccessKind::Load) {
+        if (load.kind != PTOMemoryAccessKind::Load) {
             continue;
         }
-        Block* block = load.op->getBlock();
         for (unsigned to = from + 1; to < accesses.size(); ++to) {
             const auto& store = accesses[to];
-            if (store.kind == VecScopeAccessKind::Store && store.op->getBlock() == block &&
-                hasValueRelay(load.op, store.op, block)) {
+            if (store.kind == PTOMemoryAccessKind::Store &&
+                (load.op->getBlock() == store.op->getBlock() ||
+                 (reductions && guaranteedRelayInBlock(store.op, cutBlock))) &&
+                hasValueRelay(load.op, store.op, store.op->getBlock())) {
                 edges[from].push_back(to);
             }
         }
@@ -143,7 +205,8 @@ static OrderGraph buildValueEdges(ArrayRef<AccessOccurrence> accesses)
 }
 
 static bool reaches(
-    const OrderGraph& edges, ArrayRef<AccessOccurrence> accesses, Block* block, unsigned from, unsigned to)
+    const OrderGraph& edges, ArrayRef<AccessOccurrence> accesses, Block* block, unsigned from, unsigned to,
+    bool reductions)
 {
     SmallVector<bool, 16> visited(edges.size(), false);
     SmallVector<unsigned, 16> worklist{from};
@@ -154,8 +217,10 @@ static bool reaches(
             return true;
         }
         Block* currentBlock = accesses[current].op->getBlock();
-        if (current != from && currentBlock != block && currentBlock != accesses[from].op->getBlock() &&
-            currentBlock != accesses[to].op->getBlock()) {
+        bool endpointBlock = currentBlock == accesses[from].op->getBlock() ||
+                             currentBlock == accesses[to].op->getBlock();
+        if (current != from && currentBlock != block &&
+            (reductions ? !guaranteedRelayInBlock(accesses[current].op, block) : !endpointBlock)) {
             continue;
         }
         for (unsigned next : edges[current]) {
@@ -175,10 +240,11 @@ static bool isOrdinaryCutInBlock(const BarrierPlacement& barrier, Block* block)
 }
 
 static OrderGraph buildSurvivingEdges(
-    const VecScopeMemBarAnalysisResult& result, const VecScopeMemBarPlan& plan, ArrayRef<bool> live, unsigned excluded)
+    const VecScopeMemBarAnalysisResult& result, const VecScopeMemBarPlan& plan, ArrayRef<bool> live, unsigned excluded,
+    bool reductions = false)
 {
     Block* block = plan.barriers[excluded].anchor->getBlock();
-    OrderGraph edges = buildValueEdges(result.accesses);
+    OrderGraph edges = buildValueEdges(result.accesses, block, reductions);
     for (const auto& barrier : result.existingBarriers) {
         if (barrier.op->getBlock() == block) {
             addBarrierEdges(edges, result.accesses, barrier.op, barrier.kind);
@@ -193,7 +259,8 @@ static OrderGraph buildSurvivingEdges(
     return edges;
 }
 
-static bool preservesHazards(const VecScopeMemBarAnalysisResult& result, const OrderGraph& edges, Block* block)
+static bool preservesHazards(
+    const VecScopeMemBarAnalysisResult& result, const OrderGraph& edges, Block* block, bool reductions = false)
 {
     for (const auto& hazard : result.hazards) {
         if (hazard.scope != VecScopeHazardScope::SameIteration || hazard.producer >= result.accesses.size() ||
@@ -205,7 +272,7 @@ static bool preservesHazards(const VecScopeMemBarAnalysisResult& result, const O
         if (!producer || !consumer || producer == consumer) {
             continue;
         }
-        if (!reaches(edges, result.accesses, block, hazard.producer, hazard.consumer)) {
+        if (!reaches(edges, result.accesses, block, hazard.producer, hazard.consumer, reductions)) {
             return false;
         }
     }
@@ -248,6 +315,11 @@ void vecscopemembar::eliminateTransitiveMemBars(const VecScopeMemBarAnalysisResu
         }
         OrderGraph edges = buildSurvivingEdges(result, plan, live, index);
         if (preservesHazards(result, edges, candidate.anchor->getBlock())) {
+            live[index] = false;
+            continue;
+        }
+        edges = buildSurvivingEdges(result, plan, live, index, true);
+        if (preservesHazards(result, edges, candidate.anchor->getBlock(), true)) {
             live[index] = false;
         }
     }

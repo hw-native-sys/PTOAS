@@ -8,87 +8,20 @@
 
 #ifndef PTO_TRANSFORMS_VECSCOPEMEMBAR_VECSCOPEMEMORYFOOTPRINT_H
 #define PTO_TRANSFORMS_VECSCOPEMEMBAR_VECSCOPEMEMORYFOOTPRINT_H
-
-#include "PTO/IR/PTO.h"
-#include "PTO/Transforms/VecScopeMemBar/VecScopeMemBarIR.h"
-
-#include "mlir/IR/Operation.h"
-#include "mlir/IR/Value.h"
-#include "mlir/Support/LLVM.h"
-#include "llvm/ADT/SmallVector.h"
-
-#include <optional>
-#include <utility>
+#include "PTO/Analysis/PTOMemoryAccessAnalysis.h"
 
 namespace mlir::pto::vecscopemembar {
-
-struct AffineByteExpr {
-    int64_t constant = 0;
-    SmallVector<std::pair<Value, int64_t>, 2> coefficients;
-    bool exact = true;
-
-    int64_t getCoeff(Value v) const;
-    bool isConstant() const { return coefficients.empty(); }
-    AffineByteExpr& scale(int64_t factor);
-    AffineByteExpr& combine(const AffineByteExpr& other);
-};
-
-enum class MemoryRootKind {
-    Absolute,
-    ProvenAllocation,
-    Symbolic,
-    Unknown,
-};
-
-struct VecScopeMemoryFootprint {
-    MemoryRootKind rootKind = MemoryRootKind::Unknown;
-    Value root;
-    std::optional<uint64_t> absoluteBase;
-    std::optional<AddressSpace> addressSpace;
-    AffineByteExpr byteOffset;
-    std::optional<uint64_t> byteSize;
-    bool forcesMayAlias = false;
-};
-
-enum class VecScopeAccessKind { Load, Store };
-
 struct AccessOccurrence {
     unsigned id = 0;
     Operation* op = nullptr;
-    VecScopeAccessKind kind = VecScopeAccessKind::Load;
-    VecScopeAccessUnit unit = VecScopeAccessUnit::Vector;
-    VecScopeMemoryFootprint footprint;
+    PTOMemoryAccessKind kind = PTOMemoryAccessKind::Load;
+    PTOMemoryAccessUnit unit = PTOMemoryAccessUnit::Vector;
+    PTOMemoryFootprint footprint;
     SmallVector<unsigned, 2> loopNest;
     SmallVector<unsigned, 2> schedulePath;
     unsigned lexicalOrder = 0;
 };
 
-struct VecMemoryAccessDescriptor {
-    VecScopeAccessKind kind = VecScopeAccessKind::Load;
-    VecScopeAccessUnit unit = VecScopeAccessUnit::Vector;
-    Value base;
-    std::optional<AddressSpace> addressSpace;
-    AffineByteExpr byteOffset;
-    std::optional<uint64_t> conservativeByteSize;
-    bool forcesMayAlias = false;
-    // Disjoint 32-byte pieces of a block-strided store, relative to byteOffset.
-    // Empty means the descriptor represents a single interval.
-    SmallVector<int64_t, 8> blockByteOffsets;
-};
 
-enum class VecScopeAliasResult {
-    NoAlias,
-    MayAlias,
-    MustOrPartialAlias,
-};
-
-FailureOr<VecMemoryAccessDescriptor> buildAccessDescriptor(Operation* op, ArrayRef<Value> ivs);
-
-VecScopeAliasResult aliasSameIteration(
-    const VecScopeMemoryFootprint& producer, const VecScopeMemoryFootprint& consumer);
-
-VecScopeMemoryFootprint footprintFromDescriptor(const VecMemoryAccessDescriptor& desc, ArrayRef<Value> ivs);
-
-} // namespace mlir::pto::vecscopemembar
-
-#endif // PTO_TRANSFORMS_VECSCOPEMEMBAR_VECSCOPEMEMORYFOOTPRINT_H
+}
+#endif

@@ -9,6 +9,16 @@
 add_mlir_library(PTOAnalysis
   PTOValueEvolutionAnalysis.cpp
   PTOAddressAnalysis.cpp
+  PTOContextRange.cpp
+  PTOIntegerRange.cpp
+  PTORemainderRange.cpp
+  PTOMemoryDependenceAnalysis.cpp
+  PTOMemoryEffects.cpp
+  PTOMemoryAccessAnalysis.cpp
+  PTOMemoryOverlap.cpp
+  PTOMemoryAliasAnalysis.cpp
+  PTOPointerProvenance.cpp
+  PTOMemoryIndexRange.cpp
 
   ADDITIONAL_HEADER_DIRS
   ${PROJECT_SOURCE_DIR}/include/PTO
@@ -20,6 +30,11 @@ add_mlir_library(PTOAnalysis
   PTOIR
   MLIRIR
   MLIRAnalysis
+  MLIRPresburger
+  MLIRAffineDialect
+  MLIRMemRefDialect
+  MLIRTensorDialect
+  MLIRBufferizationDialect
   MLIRArithDialect
   MLIRFuncDialect
   MLIRSCFDialect

@@ -1,0 +1,190 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// the CANN Open Software License Agreement Version 2.0 (the "License").
+// You may not use this file except in compliance with the License.
+// You may refer to the License for details.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+
+// RUN: pto-test-opt --pto-insert-vecscope-membar %s | FileCheck %s
+// RUN: pto-test-opt --pto-insert-vecscope-membar --pto-insert-vecscope-membar %s | FileCheck %s
+
+// Wrapping-loop controls intentionally exercise analysis without executing them.
+!mb32 = !pto.mask<b32>
+!pf32ub = !pto.ptr<f32, ub>
+!v64xf32 = !pto.vreg<64xf32>
+
+module attributes {pto.target_arch = "a5"} {
+// CHECK-LABEL: func.func @finite_i8_disjoint(
+// CHECK-NOT: pto.mem_bar
+// CHECK: return
+// CHECK-NOT: pto.mem_bar
+  func.func @finite_i8_disjoint(%bound: i8, %value: !v64xf32) {
+    %zero = arith.constant 0 : i64
+    %p = pto.castptr %zero : i64 -> !pf32ub
+    %z8 = arith.constant 0 : i8
+    %o8 = arith.constant 1 : i8
+    %stride = arith.constant 64 : index
+    %far = arith.constant 8192 : index
+    pto.vecscope {
+      %mask = pto.pset_b32 "PAT_ALL" : !mb32
+      scf.for %i = %z8 to %bound step %o8 : i8 {
+        %idx = arith.index_cast %i : i8 to index
+        %off = arith.muli %idx, %stride : index
+        pto.vsts %value, %p[%off], %mask : !v64xf32, !pf32ub, index, !mb32
+        %load = pto.vlds %p[%far] : !pf32ub, index -> !v64xf32
+      }
+    }
+    return
+  }
+
+// CHECK-LABEL: func.func @finite_i8_wrapping_increment(
+// CHECK: scf.for
+// CHECK: pto.vsts
+// CHECK: pto.mem_bar "VST_VST"
+// CHECK: return
+  func.func @finite_i8_wrapping_increment(%bound: i8, %value: !v64xf32) {
+    %zero = arith.constant 0 : i64
+    %p = pto.castptr %zero : i64 -> !pf32ub
+    %z8 = arith.constant 0 : i8
+    %two = arith.constant 2 : i8
+    %z = arith.constant 0 : index
+    pto.vecscope {
+      %mask = pto.pset_b32 "PAT_ALL" : !mb32
+      scf.for %i = %z8 to %bound step %two : i8 {
+        pto.vsts %value, %p[%z], %mask : !v64xf32, !pf32ub, index, !mb32
+      }
+    }
+    return
+  }
+
+// CHECK-LABEL: func.func @dynamic_outer_disjoint(
+// CHECK-NOT: pto.mem_bar
+// CHECK: return
+// CHECK-NOT: pto.mem_bar
+  func.func @dynamic_outer_disjoint(%n: i32, %value: !v64xf32) {
+    %zero = arith.constant 0 : i64
+    %p = pto.castptr %zero : i64 -> !pf32ub
+    %z32 = arith.constant 0 : i32
+    %o32 = arith.constant 1 : i32
+    %limit = arith.constant 127 : i32
+    %stride = arith.constant 64 : i32
+    %far = arith.constant 8192 : index
+    %bound = arith.andi %n, %limit : i32
+    scf.for %i = %z32 to %bound step %o32 : i32 {
+      %offset = arith.muli %i, %stride : i32
+      %idx = arith.index_cast %offset : i32 to index
+      pto.vecscope {
+        %mask = pto.pset_b32 "PAT_ALL" : !mb32
+        pto.vsts %value, %p[%idx], %mask : !v64xf32, !pf32ub, index, !mb32
+        %load = pto.vlds %p[%far] : !pf32ub, index -> !v64xf32
+      }
+    }
+    return
+  }
+
+// CHECK-LABEL: func.func @dynamic_outer_overlap(
+// CHECK: scf.for
+// CHECK: pto.vsts
+// CHECK: pto.mem_bar "VST_VLD"
+// CHECK: pto.vlds
+// CHECK: return
+  func.func @dynamic_outer_overlap(%n: i32, %value: !v64xf32) {
+    %zero = arith.constant 0 : i64
+    %p = pto.castptr %zero : i64 -> !pf32ub
+    %z32 = arith.constant 0 : i32
+    %o32 = arith.constant 1 : i32
+    %limit = arith.constant 127 : i32
+    %stride = arith.constant 64 : i32
+    %near = arith.constant 4096 : index
+    %bound = arith.andi %n, %limit : i32
+    scf.for %i = %z32 to %bound step %o32 : i32 {
+      %offset = arith.muli %i, %stride : i32
+      %idx = arith.index_cast %offset : i32 to index
+      pto.vecscope {
+        %mask = pto.pset_b32 "PAT_ALL" : !mb32
+        pto.vsts %value, %p[%idx], %mask : !v64xf32, !pf32ub, index, !mb32
+        %load = pto.vlds %p[%near] : !pf32ub, index -> !v64xf32
+      }
+    }
+    return
+  }
+
+// CHECK-LABEL: func.func @wrapped_guard_overlap(
+// CHECK: scf.for
+// CHECK: pto.vlds
+// CHECK: pto.vsts
+// CHECK: pto.mem_bar "VV_ALL"
+// CHECK: return
+  func.func @wrapped_guard_overlap(%n: i32, %core: i32, %value: !v64xf32) {
+    %zero = arith.constant 0 : i64
+    %p = pto.castptr %zero : i64 -> !pf32ub
+    %c16 = arith.constant 16 : i32
+    %one = arith.constant 1 : i32
+    %z16 = arith.constant 0 : i16
+    %o16 = arith.constant 1 : i16
+    %rstd = arith.constant 49152 : index
+    %mean = arith.constant 49184 : index
+    %c8 = arith.constant 8 : index
+    %ofs = arith.muli %core, %c16 : i32
+    %guard = arith.cmpi slt, %ofs, %n : i32
+    scf.if %guard {
+      %remain = arith.subi %n, %ofs : i32
+      %clamp = arith.minsi %remain, %one : i32
+      %bound = arith.trunci %clamp : i32 to i16
+      pto.vecscope {
+        %mask = pto.pset_b32 "PAT_VL1" : !mb32
+        scf.for %row = %z16 to %bound step %o16 : i16 {
+          %i = arith.index_cast %row : i16 to index
+          %r = arith.muli %i, %c8 : index
+          %roff = arith.addi %r, %rstd : index
+          %moff = arith.addi %i, %mean : index
+          %load = pto.vlds %p[%roff] {dist = "BRC_B32"} : !pf32ub, index -> !v64xf32
+          pto.vsts %value, %p[%moff], %mask {dist = "1PT_B32"} : !v64xf32, !pf32ub, index, !mb32
+        }
+      }
+    }
+    return
+  }
+
+// CHECK-LABEL: func.func @uncontracted_block_overlap(
+// CHECK: pto.get_block_idx
+// CHECK: scf.for
+// CHECK: pto.vlds
+// CHECK: pto.vsts
+// CHECK: pto.mem_bar "VV_ALL"
+// CHECK: return
+  func.func @uncontracted_block_overlap(%n: i32, %value: !v64xf32) {
+    %bid = pto.get_block_idx
+    %core = arith.trunci %bid : i64 to i32
+    %zero = arith.constant 0 : i64
+    %p = pto.castptr %zero : i64 -> !pf32ub
+    %c16 = arith.constant 16 : i32
+    %one = arith.constant 1 : i32
+    %z16 = arith.constant 0 : i16
+    %o16 = arith.constant 1 : i16
+    %rstd = arith.constant 49152 : index
+    %mean = arith.constant 49184 : index
+    %c8 = arith.constant 8 : index
+    %ofs = arith.muli %core, %c16 : i32
+    %guard = arith.cmpi slt, %ofs, %n : i32
+    scf.if %guard {
+      %remain = arith.subi %n, %ofs : i32
+      %clamp = arith.minsi %remain, %one : i32
+      %bound = arith.trunci %clamp : i32 to i16
+      pto.vecscope {
+        %mask = pto.pset_b32 "PAT_VL1" : !mb32
+        scf.for %row = %z16 to %bound step %o16 : i16 {
+          %i = arith.index_cast %row : i16 to index
+          %r = arith.muli %i, %c8 : index
+          %roff = arith.addi %r, %rstd : index
+          %moff = arith.addi %i, %mean : index
+          %load = pto.vlds %p[%roff] {dist = "BRC_B32"} : !pf32ub, index -> !v64xf32
+          pto.vsts %value, %p[%moff], %mask {dist = "1PT_B32"} : !v64xf32, !pf32ub, index, !mb32
+        }
+      }
+    }
+    return
+  }
+}
