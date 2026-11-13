@@ -1013,6 +1013,23 @@ stage_ptoas_wheel() {
     "--config-settings=cmake.define.CANN_3RD_LIB_PATH=${CANN_3RD_LIB_PATH}"
     "--config-settings=cmake.define.ENABLE_PACKAGE=OFF"
   )
+  # The BSPUB data-type define and the libstdc++ ABI must match the LLVM/MLIR
+  # cache on every image, not only on the devtoolset-7 (CentOS) one: the cache
+  # is configured with _GLIBCXX_USE_CXX11_ABI=${PTOAS_GLIBCXX_ABI}, so a wheel
+  # built without the define picks the compiler default (ABI=1) and fails to
+  # link against the cached ABI=0 libraries ("undefined reference to
+  # llvm::toString[abi:cxx11](llvm::Error)"). The devtoolset sysroot flags stay
+  # additive and are appended only when that toolchain is in use.
+  local _wheel_c_flags=""
+  local _wheel_cxx_flags="-DBSPUB_NPU_DATA_TYPE -D_GLIBCXX_USE_CXX11_ABI=${PTOAS_GLIBCXX_ABI}"
+  if [ -n "${DEVTOOLSET_TOOLCHAIN_FLAGS}" ]; then
+    _wheel_c_flags="${DEVTOOLSET_TOOLCHAIN_FLAGS}"
+    _wheel_cxx_flags="${_wheel_cxx_flags} ${DEVTOOLSET_TOOLCHAIN_FLAGS}"
+  fi
+  wheel_feature_args+=(
+    "--config-settings=cmake.define.CMAKE_C_FLAGS=${_wheel_c_flags}"
+    "--config-settings=cmake.define.CMAKE_CXX_FLAGS=${_wheel_cxx_flags}"
+  )
   # Pass the devtoolset-7 sysroot + gcc-toolchain through CMake defines so the
   # wheel's native extension links against the CentOS7 libc floor, matching the
   # LLVM/MLIR runtime libraries packaged alongside it.
@@ -1027,8 +1044,6 @@ stage_ptoas_wheel() {
       _wheel_rt_flags="-Wl,-u,__muloti4 ${PTOAS_COMPILER_RT}"
     fi
     wheel_feature_args+=(
-      "--config-settings=cmake.define.CMAKE_C_FLAGS=${DEVTOOLSET_TOOLCHAIN_FLAGS}"
-      "--config-settings=cmake.define.CMAKE_CXX_FLAGS=-DBSPUB_NPU_DATA_TYPE -D_GLIBCXX_USE_CXX11_ABI=0 ${DEVTOOLSET_TOOLCHAIN_FLAGS}"
       "--config-settings=cmake.define.CMAKE_EXE_LINKER_FLAGS=-fuse-ld=lld -lstdc++ ${_wheel_rt_flags}"
       "--config-settings=cmake.define.CMAKE_SHARED_LINKER_FLAGS=-fuse-ld=lld -lstdc++ ${_wheel_rt_flags}"
       "--config-settings=cmake.define.CMAKE_MODULE_LINKER_FLAGS=-fuse-ld=lld -lstdc++ ${_wheel_rt_flags}"
