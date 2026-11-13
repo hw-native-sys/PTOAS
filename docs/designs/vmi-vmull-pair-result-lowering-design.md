@@ -314,8 +314,8 @@ The complete implementation crosses the following layers:
 | ODS | `include/PTO/IR/VMIOps.td` | Change one `Lxi64` result to `(low, high)` `Lxi32` results and update syntax/description |
 | Verifier | `lib/PTO/IR/VMI.cpp` | Enforce legal lane counts, exact signless/unsigned types, pair equality, mask shape, and zero-only pmode |
 | Mask assignment | `lib/PTO/Transforms/VMIMaskGranularityAssignment.cpp` | Request `b32` for the mask use |
-| Layout assignment | `lib/PTO/Transforms/VMI/VMILayoutAssignment.cpp` | Use ordinary elementwise `unite()` bookkeeping for both inputs and both results; do not use `uniteDataEquivalent` |
-| Layout propagation | `lib/PTO/Transforms/VMI/VMILayoutPropagation.cpp` | Register VMULL as a same-layout relation |
+| Layout assignment | `lib/PTO/Transforms/VMI/Layout/VMILayoutAssignment.cpp` | Use ordinary elementwise `unite()` bookkeeping for both inputs and both results; do not use `uniteDataEquivalent` |
+| Layout propagation | `lib/PTO/Transforms/VMI/Layout/VMILayoutPropagation.cpp` | Register VMULL as a same-layout relation |
 | Unified bridge | `lib/PTO/Transforms/VMI/VMILowerUnifiedToLegacy.cpp` | Keep VMULL on the direct-to-VPTO path; update comments only if needed |
 | Physicalization | `lib/PTO/Transforms/VMIToVPTO.cpp` | Add preflight validation, pair-result 1:N pattern, and pattern registration |
 | PTODSL | `ptodsl/ptodsl/_vmi_namespace.py` | Return two results and infer their types from the inputs |

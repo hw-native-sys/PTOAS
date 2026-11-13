@@ -209,7 +209,7 @@ otherwise use `PK`.
 Current-stage implementation:
 
 ```text
-lib/PTO/Transforms/VMI/VMILayoutAssignment.cpp
+lib/PTO/Transforms/VMI/Layout/VMILayoutAssignment.cpp
 
 VMIMaskedStoreOp keeps the existing conservative request:
   requestDataUse(value, contiguous)
@@ -497,7 +497,7 @@ lib/PTO/Transforms/VMIToVPTO.cpp
   instructions
 
 include/PTO/Transforms/VMILayoutSupport.h
-lib/PTO/Transforms/VMI/VMILayoutSupport.cpp
+lib/PTO/Transforms/VMI/LayoutSupport/VMILayoutSupport.cpp
   extend dense store layout facts with lane_stride=2/4 cases
   extend VMILayoutMaterializationSupportKind with:
     ContiguousToLaneStrideViaUnpack
@@ -516,7 +516,7 @@ lib/PTO/Transforms/VMI/VMILayoutSupport.cpp
   update canMaterializeDataLayout for contiguous <-> dense lane_stride through
   register pack/unpack when the element/carrier path is supported
 
-lib/PTO/Transforms/VMI/VMILayoutAssignment.cpp
+lib/PTO/Transforms/VMI/Layout/VMILayoutAssignment.cpp
   teach natural/preferred layout collection to accept dense lane_stride facts
   from VMILayoutSupport
   keep conflict handling unchanged: insert ensure_layout at mismatched uses
@@ -550,7 +550,7 @@ lib/PTO/Transforms/VMILayoutFold.cpp
   fold exact dense lane-map identity helpers
   do not fold unsupported LS=4 b16/b32 cases
 
-lib/PTO/Transforms/VMI/VMILayoutSinkMaterialization.cpp
+lib/PTO/Transforms/VMI/Layout/VMILayoutSinkMaterialization.cpp
   include laneStride in dense layout equality/support checks
   reuse existing layout-transparent sinking logic
   do not add lane-stride-specific sinking through casts or memory ops
@@ -1497,7 +1497,7 @@ Concrete implementation plan for lane-stride `group_broadcast_load`:
 
 ```text
 include/PTO/Transforms/VMILayoutSupport.h
-lib/PTO/Transforms/VMI/VMILayoutSupport.cpp
+lib/PTO/Transforms/VMI/LayoutSupport/VMILayoutSupport.cpp
 
 1. Split semantic support from E2B strategy checks:
 
@@ -1524,7 +1524,7 @@ lib/PTO/Transforms/VMI/VMILayoutSupport.cpp
 ```
 
 ```text
-lib/PTO/Transforms/VMI/VMILayoutAssignment.cpp
+lib/PTO/Transforms/VMI/Layout/VMILayoutAssignment.cpp
 
 3. Rename strategy helpers so the direction is clear:
 

@@ -205,7 +205,7 @@ lib/PTO/IR/VMI.cpp
 
 include/PTO/Transforms/Passes.td
 lib/PTO/Transforms/Passes/PTOValidateVMIIR.cpp
-lib/PTO/Transforms/VMI/VMILayoutAssignment.cpp
+lib/PTO/Transforms/VMI/Layout/VMILayoutAssignment.cpp
 lib/PTO/Transforms/VMIToVPTO.cpp
 small layout fact/materialization helpers under lib/PTO/Transforms
 

@@ -135,30 +135,30 @@ add_mlir_dialect_library(PTOTransforms
   VMI/VMIMaskGranularityAssignment.cpp
   VMI/VMILowerUnifiedToLegacy.cpp
   VMI/VMINormalizeSignlessIntToUnsigned.cpp
-  VMI/VMILayoutRematerializeWeakProducers.cpp
-  VMI/VMILayoutStructuralAssignment.cpp
-  VMI/VMILayoutAssignment.cpp
-  VMI/VMILayoutSpineAnalysis.cpp
-  VMI/VMILayoutFold.cpp
-  VMI/VMILayoutPropagation.cpp
-  VMI/VMILayoutConflictSolver.cpp
-  VMI/VMILayoutCostGraph.cpp
-  VMI/VMILayoutCostOperations.cpp
-  VMI/VMILayoutCostMaterialization.cpp
-  VMI/VMILayoutCostModel.cpp
-  VMI/VMILayoutSupport.cpp
-  VMI/VMILayoutSupportAlignment.cpp
-  VMI/VMILayoutSupportBF16.cpp
-  VMI/VMILayoutSupportGroupSlots.cpp
-  VMI/VMILayoutRematerialize.cpp
-  VMI/VMILayoutSinkMaterialization.cpp
-  VMI/VMILayoutOpClasses.cpp
-  VMI/VMILayoutRelations.cpp
-  VMI/VMILayoutCasts.cpp
-  VMI/VMILayoutMemory.cpp
-  VMI/VMILayoutArithmetic.cpp
-  VMI/VMILayoutPlanner.cpp
-  VMI/VMILayoutComponentGraph.cpp
+  VMI/Layout/VMILayoutRematerializeWeakProducers.cpp
+  VMI/Layout/VMILayoutStructuralAssignment.cpp
+  VMI/Layout/VMILayoutAssignment.cpp
+  VMI/Layout/VMILayoutSpineAnalysis.cpp
+  VMI/Layout/VMILayoutFold.cpp
+  VMI/Layout/VMILayoutPropagation.cpp
+  VMI/Layout/VMILayoutConflictSolver.cpp
+  VMI/Layout/VMILayoutCostGraph.cpp
+  VMI/Layout/VMILayoutCostOperations.cpp
+  VMI/Layout/VMILayoutCostMaterialization.cpp
+  VMI/Layout/VMILayoutCostModel.cpp
+  VMI/LayoutSupport/VMILayoutSupport.cpp
+  VMI/LayoutSupport/VMILayoutSupportAlignment.cpp
+  VMI/LayoutSupport/VMILayoutSupportBF16.cpp
+  VMI/LayoutSupport/VMILayoutSupportGroupSlots.cpp
+  VMI/Layout/VMILayoutRematerialize.cpp
+  VMI/Layout/VMILayoutSinkMaterialization.cpp
+  VMI/Layout/VMILayoutOpClasses.cpp
+  VMI/Layout/VMILayoutRelations.cpp
+  VMI/Layout/VMILayoutCasts.cpp
+  VMI/Layout/VMILayoutMemory.cpp
+  VMI/Layout/VMILayoutArithmetic.cpp
+  VMI/Layout/VMILayoutPlanner.cpp
+  VMI/Layout/VMILayoutComponentGraph.cpp
   VMIToVPTO/VMIToVPTO.cpp
   ${_ptoas_vmi_split_units}
   VPTO/VPTOStatefulStreamFusion.cpp
