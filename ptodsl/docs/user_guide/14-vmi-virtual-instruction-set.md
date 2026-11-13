@@ -1191,12 +1191,19 @@ as `vdhist` but each bin accumulates the sum of counts for all bins ≤ its inde
 offsets. Only masked-on lanes participate; masked-off lanes are written as 0
 (zero fill), consistent with `pmode="zero"`.
 
+Signed and signless offsets preserve their bits when interpreted as unsigned
+element positions. For example, the signed byte bit pattern `0x80` selects
+element 128, and the signed 16-bit pattern `0x8000` selects element 32768,
+including for 32-bit sources. Normalization and zero-extension do not clamp or
+check bounds; active offsets must refer to valid elements. The same offset
+semantics apply to `pto.vmi.vscatter`.
+
 **Parameters**:
 
 | Parameter | Type | Description |
 |-----------|------|-------------|
 | `source` | `PtrType` (ub) | UB source pointer |
-| `offsets` | `VRegType` | Per-lane element offsets. 32-bit integer offsets (`i32`/`ui32`) select the B32 path; 16-bit integer offsets (`i16`/`ui16`) select the B16 path |
+| `offsets` | `VRegType` | Per-lane element offsets. Signed/signless integer offsets are first interpreted as same-width unsigned. For 32-bit sources, 8/16-bit offsets are then zero-extended to `ui32`; for 8/16-bit sources, 8-bit offsets are zero-extended to `ui16`. Wider offsets are never implicitly narrowed. |
 | `mask` | VMI mask | **Required.** Predicate mask gating lane participation |
 | `pmode` | `str` or `None` | Optional predicate mode: `"zero"` writes 0 to predicate-inactive lanes |
 
@@ -1257,7 +1264,7 @@ irregular memory locations using per-lane element offsets.
 |-----------|------|-------------|
 | `value` | `VRegType` | Source vector to scatter |
 | `destination` | `PtrType` (ub) | UB destination pointer |
-| `offsets` | `VRegType` | Per-lane element offsets (integer VMI vector) |
+| `offsets` | `VRegType` | Per-lane element offsets. Signed/signless integer offsets are first interpreted as same-width unsigned. For 32-bit values, 8/16-bit offsets are then zero-extended to `ui32`; for 8/16-bit values, 8-bit offsets are zero-extended to `ui16`. Wider offsets are never implicitly narrowed. |
 | `mask` | VMI mask | **Required.** Predicate mask gating lane participation |
 | `pmode` | `str` or `None` | Direct lowering accepts `None` or `"zero"`; inactive requests perform no write |
 

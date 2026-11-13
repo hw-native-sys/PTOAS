@@ -446,6 +446,12 @@ loads at 64/128 lanes use bounded 2/4-block reads at aligned addresses.
 > **Category C** — contiguous-required. `pto.as` materializes `.contiguous()`
 > before these ops if the input layout is non-contiguous.
 
+Offsets are unsigned element positions: B32 memory requires 32-bit offsets,
+while B8/B16 memory requires 16-bit offsets. Signless offsets have unsigned
+index semantics. Active offsets must refer to valid elements. Duplicate active
+scatter offsets allow only one guaranteed write, whose value is undefined.
+
+
 ### `pto.vmi.vgather`
 
 - **semantics:** Indexed gather from UB at B32/B16 granularity. For each active

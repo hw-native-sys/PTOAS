@@ -555,9 +555,61 @@ def _derive_hist_result_type(acc, *, context: str):
     )
 
 
-def _derive_vgather_result_type(source, offsets, *, context: str):
+def _normalize_indexed_offsets(offsets, *, context: str, loc=None, ip=None):
+    """Interpret integer offsets as same-width unsigned element positions.
+
+    This is a bit-preserving DSL adaptation, not a bounds check or an integer
+    width conversion. The memory op's verifier still owns payload/index-width
+    compatibility, including its 16-bit/32-bit offset requirements.
+    """
     offsets_type = _as_vmi_vreg_type(_type_of(offsets), context=context)
-    result_elem_type = _pointer_element_type(_type_of(source), context=context)
+    element_type = offsets_type.element_type
+    if not IntegerType.isinstance(element_type):
+        raise TypeError(f"{context} requires integer offset vector elements")
+    integer_type = IntegerType(element_type)
+    if integer_type.width not in (8, 16, 32):
+        raise TypeError(f"{context} requires 8-bit, 16-bit or 32-bit integer offsets")
+    _check_vmi_lane_count(offsets_type.element_count, context=f"{context} offsets")
+    if integer_type.is_unsigned:
+        return offsets
+    return _VMINamespace.vinterpret_cast(
+        offsets, IntegerType.get_unsigned(integer_type.width), loc=loc, ip=ip
+    )
+
+
+def _indexed_memory_element_bit_width(type_obj, *, context: str):
+    """Return payload storage width without changing arithmetic type support."""
+    if _isinstance_pto_type(type_obj, "HiF8x2Type"):
+        return 16
+    if any(
+        _isinstance_pto_type(type_obj, type_name)
+        for type_name in ("HiF8Type", "F8E8M0Type")
+    ):
+        return 8
+    return _type_bit_width(type_obj, context=context)
+
+
+def _prepare_indexed_offsets(
+    offsets, payload_element_type, *, context: str, loc=None, ip=None
+):
+    """Normalize bits, then zero-extend carriers to the hardware index width.
+
+    B32 memory accepts 8/16-bit carriers by widening them to ui32; B8/B16
+    memory widens only byte carriers to ui16. Wider offsets are never narrowed.
+    """
+    offsets = _normalize_indexed_offsets(offsets, context=context, loc=loc, ip=ip)
+    element_type = _vmi_element_type(_type_of(offsets), context=context)
+    payload_bits = _indexed_memory_element_bit_width(payload_element_type, context=context)
+    target_bits = 32 if payload_bits == 32 else 16
+    if IntegerType(element_type).width < target_bits:
+        offsets = _VMINamespace.vcvt(
+            offsets, IntegerType.get_unsigned(target_bits), loc=loc, ip=ip
+        )
+    return offsets
+
+
+def _derive_vgather_result_type(result_elem_type, offsets, *, context: str):
+    offsets_type = _as_vmi_vreg_type(_type_of(offsets), context=context)
     # 8-bit integer sources use the B16 gather promotion path (i8 -> i16,
     # ui8 -> ui16, si8 -> si16).
     if IntegerType.isinstance(result_elem_type):
@@ -1378,9 +1430,17 @@ class _VMINamespace:
 
     @staticmethod
     def vgather(source, offsets, mask, *, pmode=None, loc=None, ip=None):
+        source_element_type = _pointer_element_type(_type_of(source), context="pto.vmi.vgather(...)")
+        offsets = _prepare_indexed_offsets(
+            offsets,
+            source_element_type,
+            context="pto.vmi.vgather(...)",
+            loc=loc,
+            ip=ip,
+        )
         return _call_value(
             "vgather",
-            _derive_vgather_result_type(source, offsets, context="pto.vmi.vgather(...)"),
+            _derive_vgather_result_type(source_element_type, offsets, context="pto.vmi.vgather(...)"),
             _raw(source),
             _raw(offsets),
             _required_mask(mask, context="pto.vmi.vgather(...)"),
@@ -1408,6 +1468,13 @@ class _VMINamespace:
 
     @staticmethod
     def vscatter(value, destination, offsets, mask, *, pmode=None, loc=None, ip=None):
+        offsets = _prepare_indexed_offsets(
+            offsets,
+            _vmi_element_type(_type_of(value), context="pto.vmi.vscatter(...)"),
+            context="pto.vmi.vscatter(...)",
+            loc=loc,
+            ip=ip,
+        )
         _check_vmi_operand_lanes(
             (("value", value), ("offsets", offsets)),
             mask,
