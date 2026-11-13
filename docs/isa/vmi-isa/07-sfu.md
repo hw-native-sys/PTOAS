@@ -545,7 +545,9 @@ scatter offsets allow only one guaranteed write, whose value is undefined.
   the low bytes of B16 request slots, bitcasts back to the original byte type,
   unpacks the matching predicate half to b16, and masks the last request group.
   The number of physical scatters is `ceil(L/64)` for B32 and `ceil(L/128)`
-  for B16/B8. Active indices must be valid and pairwise distinct.
+  for B16/B8. Active indices must be valid. Duplicate active offsets are
+  allowed: when multiple active lanes target the same element, only one write
+  is guaranteed and the written value is undefined.
 
 - **example:**
   ```mlir
