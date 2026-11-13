@@ -27,11 +27,24 @@ LOW_PRECISION_LOAD_STORE_DTYPES = ("f8e4m3", "f8e5m2", "hif8", "f4e1m2x2", "f4e2
 LOAD_STORE_DTYPES = tuple(
     (dtype, dtype) for dtype in NUMERIC_DTYPES + INTEGER_LOAD_STORE_DTYPES + LOW_PRECISION_LOAD_STORE_DTYPES
 )
-# GM -> MAT tload packs the source matrix into the NZ fractal form.  Like the
-# MAT -> LEFT/RIGHT moves it is a dtype pass-through (the element type is
-# carried by the pointer types), so it shares one table with them.
-MAT_LOAD_DTYPE_NAMES = CUBE_MOVE_DTYPE_NAMES
-MAT_LOAD_DTYPES = CUBE_MOVE_DTYPES
+# GM -> MAT tload packs the source matrix into the NZ fractal form.  The move
+# itself is a dtype pass-through (the element type is carried by the pointer
+# types), so the accepted dtypes are decided purely by the consumers that
+# later read the MAT (L1) tile back out:
+#   1. operand path -- pto.tmov m2l/m2r and pto.textract mat2left/right feed
+#      the L0A/L0B multiply operands, so they accept the cube matmul operand
+#      element types (CUBE_MOVE_DTYPE_NAMES).  i32 is NOT among them: no
+#      matmul consumes i32 operands, and the m2l/m2r tables must keep
+#      rejecting it.
+#   2. bias path -- pto.tmov m2b stages cube bias vectors into the bt slots
+#      via pto.mte_l1_bt (which supports i32 -> i32); the bias element type
+#      follows the i32 accumulator of i8 x i8 -> i32 gemv_bias (#1742), so
+#      i32 extends only this load table.
+#   3. scaling path -- pto.tmov m2s feeds the fixpipe scale buffer but only
+#      accepts f32, which the operand table already covers.
+BIAS_STAGING_DTYPE_NAMES = ("i32",)
+MAT_LOAD_DTYPE_NAMES = CUBE_MOVE_DTYPE_NAMES + BIAS_STAGING_DTYPE_NAMES
+MAT_LOAD_DTYPES = tuple((name, name) for name in MAT_LOAD_DTYPE_NAMES)
 ACC_STORE_DTYPES = (
     ("f32", "f32"),
     ("f32", "f16"),
