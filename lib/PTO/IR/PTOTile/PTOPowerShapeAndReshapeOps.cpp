@@ -238,63 +238,134 @@ static LogicalResult verifyMxScaleTReshape(TReshapeOp op, TileBufType srcTb,
   return dispatchVerifierByArch(op.getOperation(), verifyA2A3, verifyA5);
 }
 
-mlir::LogicalResult mlir::pto::TReshapeOp::verify() {
-  Type ts = getSrc().getType();
-  Type tr = getResult().getType();
-  auto srcTb = dyn_cast<pto::TileBufType>(ts);
-  auto dstTb = dyn_cast<pto::TileBufType>(tr);
-  if (!srcTb || !dstTb) {
-    return emitOpError("expects src/result to be !pto.tile_buf types");
-  }
+// Tile-config constraints of the packed E8M0 scale storage view: vec storage
+// and byte-preserving views across the boxed/non-boxed boundary.
+static LogicalResult verifyPackedE8M0ScaleViewA5(TReshapeOp op,
+    TileBufType srcTb, TileBufType dstTb)
+{
+    auto loc = getPTOMemorySpaceEnum(srcTb);
+    if (!loc || *loc != pto::AddressSpace::VEC) {
+        return op.emitOpError(
+            "expects packed E8M0 scale treshape to use vec storage");
+    }
+    if (failed(verifyTileBufLayoutConstraints(op, srcTb, "src"))) {
+        return failure();
+    }
+    if (failed(verifyTileBufLayoutConstraints(op, dstTb, "dst"))) {
+        return failure();
+    }
+    // TRESHAPE aliases the whole buffer; the result type initializes its valid
+    // extents, mirroring the E8M0 scale transpose view.
+    auto dstValid = dstTb.getValidShape();
+    if (dstValid[0] <= 0 || dstValid[1] <= 0) {
+        return op.emitOpError(
+            "expects packed E8M0 scale treshape result valid extents to be "
+            "positive and static");
+    }
+    return success();
+}
 
-  // Byte-preserving low-precision views are accepted (issue #1651); the
-  // element-width query covers every low-precision storage width.
-  if (failed(verifyTileBufCommon(*this, ts, "src",
-                                 /*allowLowPrecision=*/true)) ||
-      failed(verifyTileBufCommon(*this, tr, "dst",
-                                 /*allowLowPrecision=*/true))) {
-    return failure();
-  }
+static LogicalResult verifyPackedE8M0ScaleViewTReshape(TReshapeOp op,
+    TileBufType srcTb, TileBufType dstTb)
+{
+    auto verifyA2A3 = [&op]() -> LogicalResult {
+        return op.emitOpError(
+            "expects packed E8M0 scale treshape to target A5");
+    };
+    auto verifyA5 = [&]() -> LogicalResult {
+        return verifyPackedE8M0ScaleViewA5(op, srcTb, dstTb);
+    };
+    return dispatchVerifierByArch(op.getOperation(), verifyA2A3, verifyA5);
+}
 
-  if (srcTb.getMemorySpace() != dstTb.getMemorySpace()) {
-    return emitOpError("expects src and dst to use the same loc");
-  }
+// Shared treshape prechecks: common tile verification (byte-preserving
+// low-precision views are accepted; the element-width query covers every
+// low-precision storage width), matching storage, resolvable element byte
+// widths, static shapes, and equal total byte size.
+static LogicalResult verifyTReshapeBasics(TReshapeOp op, TileBufType srcTb,
+    TileBufType dstTb)
+{
+    Type ts = op.getSrc().getType();
+    Type tr = op.getResult().getType();
+    Type srcElem = srcTb.getElementType();
+    Type dstElem = dstTb.getElementType();
+    const bool allowLowPrecision = true;
+    bool srcCommon = succeeded(
+        verifyTileBufCommon(op, ts, "src", allowLowPrecision));
+    bool dstCommon = succeeded(
+        verifyTileBufCommon(op, tr, "dst", allowLowPrecision));
+    if (!srcCommon || !dstCommon) {
+        return failure();
+    }
 
-  Type srcElem = srcTb.getElementType();
-  Type dstElem = dstTb.getElementType();
-  auto srcElemBytes = getElemBytes(srcElem);
-  auto dstElemBytes = getElemBytes(dstElem);
-  if (!srcElem || !dstElem || !srcElemBytes.has_value() ||
-      !dstElemBytes.has_value()) {
-    return emitOpError("failed to get element byte width for src/dst");
-  }
+    bool sameSpace = srcTb.getMemorySpace() == dstTb.getMemorySpace();
+    if (!sameSpace) {
+        return op.emitOpError("expects src and dst to use the same loc");
+    }
 
-  auto srcNumel = getStaticNumElements(getShapeVec(ts));
-  auto dstNumel = getStaticNumElements(getShapeVec(tr));
-  if (!srcNumel.has_value() || !dstNumel.has_value()) {
-    return emitOpError("expects static shapes for treshape");
-  }
+    auto srcElemBytes = getElemBytes(srcElem);
+    auto dstElemBytes = getElemBytes(dstElem);
+    bool elemBytesKnown = srcElem && dstElem &&
+        srcElemBytes.has_value() && dstElemBytes.has_value();
+    if (!elemBytesKnown) {
+        return op.emitOpError("failed to get element byte width for src/dst");
+    }
 
-  if (srcElemBytes.value() * srcNumel.value() !=
-      dstElemBytes.value() * dstNumel.value()) {
-    return emitOpError("expects src and dst to have the same total byte size");
-  }
+    auto srcNumel = getStaticNumElements(getShapeVec(ts));
+    auto dstNumel = getStaticNumElements(getShapeVec(tr));
+    bool staticShapes = srcNumel.has_value() && dstNumel.has_value();
+    if (!staticShapes) {
+        return op.emitOpError("expects static shapes for treshape");
+    }
 
-  bool srcBoxed =
-      srcTb.getSLayoutValueI32() != static_cast<int32_t>(pto::SLayout::NoneBox);
-  bool dstBoxed =
-      dstTb.getSLayoutValueI32() != static_cast<int32_t>(pto::SLayout::NoneBox);
-  if (srcBoxed != dstBoxed) {
-    return emitOpError("cannot reshape between boxed and non-boxed tile layouts");
-  }
+    bool sameTotalBytes = srcElemBytes.value() * srcNumel.value() ==
+        dstElemBytes.value() * dstNumel.value();
+    if (!sameTotalBytes) {
+        return op.emitOpError(
+            "expects src and dst to have the same total byte size");
+    }
+    return success();
+}
 
-  // The MX scale transpose view keeps its dedicated constraints; every other
-  // byte-preserving view only needs the generic checks above.
-  const bool isMxScale = isPTOF8E8M0Type(srcElem) && srcElem == dstElem;
-  if (isMxScale) {
-    return verifyMxScaleTReshape(*this, srcTb, dstTb);
-  }
-  return success();
+mlir::LogicalResult mlir::pto::TReshapeOp::verify()
+{
+    Type ts = getSrc().getType();
+    Type tr = getResult().getType();
+    auto srcTb = dyn_cast<pto::TileBufType>(ts);
+    auto dstTb = dyn_cast<pto::TileBufType>(tr);
+    if (!srcTb || !dstTb) {
+        return emitOpError("expects src/result to be !pto.tile_buf types");
+    }
+
+    if (failed(verifyTReshapeBasics(*this, srcTb, dstTb))) {
+        return failure();
+    }
+
+    Type srcElem = srcTb.getElementType();
+    Type dstElem = dstTb.getElementType();
+    bool srcBoxed = srcTb.getSLayoutValueI32() !=
+        static_cast<int32_t>(pto::SLayout::NoneBox);
+    bool dstBoxed = dstTb.getSLayoutValueI32() !=
+        static_cast<int32_t>(pto::SLayout::NoneBox);
+    // MX E8M0 scales are byte payloads: flat Vec views over packed scale tiles
+    // cross the boxed/non-boxed boundary while preserving bytes, so this
+    // specific crossing is allowed to alias the bytes.
+    const bool isMxScale = isPTOF8E8M0Type(srcElem) && srcElem == dstElem;
+    const bool isPackedE8M0ScaleView = isMxScale && srcBoxed != dstBoxed;
+    if (srcBoxed != dstBoxed && !isPackedE8M0ScaleView) {
+        return emitOpError(
+            "cannot reshape between boxed and non-boxed tile layouts");
+    }
+
+    // The MX scale transpose view keeps its dedicated constraints; every other
+    // byte-preserving view only needs the generic checks above.
+    if (isMxScale && !isPackedE8M0ScaleView) {
+        return verifyMxScaleTReshape(*this, srcTb, dstTb);
+    }
+    if (isPackedE8M0ScaleView) {
+        return verifyPackedE8M0ScaleViewTReshape(*this, srcTb, dstTb);
+    }
+    return success();
 }
 
 static LogicalResult verifyNumericBitcastOperands(Operation *op, Type srcType,
