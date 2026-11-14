@@ -1,0 +1,40 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+
+// Issue 1740, nested divergence: every level of divergent nesting can reduce the
+// active mask again, so an identical collective at each level must survive.
+//
+// RUN: pto-test-opt -cse %s | FileCheck %s --check-prefix=CSE
+
+module attributes {pto.target_arch = "a5", pto.backend = "vpto"} {
+  func.func @nested(%dst: !pto.ptr<i32, gm>) attributes {pto.simt_entry} {
+    %lane = pto.get_laneid : i32
+    %c4 = arith.constant 4 : i32
+    %c8 = arith.constant 8 : i32
+    %c24 = arith.constant 24 : i32
+    %idx = arith.index_cast %lane : i32 to index
+    %pred = arith.cmpi slt, %lane, %c24 : i32
+    %level0 = pto.vote_ballot %pred : i1 -> i32
+    pto.store %level0, %dst[%idx] : !pto.ptr<i32, gm>, index, i32
+    %outer_guard = arith.cmpi slt, %lane, %c24 : i32
+    scf.if %outer_guard {
+      %level1 = pto.vote_ballot %pred : i1 -> i32
+      pto.store %level1, %dst[%idx] : !pto.ptr<i32, gm>, index, i32
+      %inner_guard = arith.cmpi slt, %lane, %c8 : i32
+      scf.if %inner_guard {
+        %level2 = pto.vote_ballot %pred : i1 -> i32
+        pto.store %level2, %dst[%idx] : !pto.ptr<i32, gm>, index, i32
+      }
+    }
+    return
+  }
+}
+
+// Three nesting levels, three evaluations.
+// CSE-LABEL: func.func @nested
+// CSE-COUNT-3: pto.vote_ballot

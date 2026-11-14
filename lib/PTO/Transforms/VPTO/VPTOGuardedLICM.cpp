@@ -83,12 +83,13 @@ static bool isDivOrRem(Operation *op) {
 
 // Explicit allow-list of deterministic, referentially transparent scalar
 // operations.  The generic isPure() is intentionally not the gate here:
-// several PTO operations are marked pure but are not referentially
-// transparent, e.g. pto.get_clock32/64 (time sampling), pto.get_vms4_sr
-// (VMS4 status register), and pto.vote_*/pto.shuffle_*/pto.redux_*
-// (active-lane collectives).  Hoisting any of them changes the value the
-// guard observes, so only the operations listed below may move out of a
-// guard; everything else stays in place.  Both the signed and the unsigned
+// several PTO operations are not referentially transparent, e.g.
+// pto.get_clock32/64 (time sampling), pto.get_vms4_sr (VMS4 status register),
+// and pto.vote_*/pto.shuffle_*/pto.redux_* (active-lane collectives, which
+// declare a read of the implicit active-lane mask and are therefore no longer
+// Pure).  Hoisting any of them changes the value the guard observes, so only
+// the operations listed below may move out of a guard; everything else stays
+// in place.  Both the signed and the unsigned
 // index<->integer casts (arith.index_cast / arith.index_castui) are allowed:
 // VPTO soft post-update emits the unsigned form for offset/block computations,
 // and excluding it would leave the whole guarded base chain behind.

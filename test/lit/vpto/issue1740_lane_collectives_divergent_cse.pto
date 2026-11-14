@@ -1,0 +1,157 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+
+// Issue 1740 covers the whole lane-collective family: every vote, shuffle and
+// redux op reads the warp's implicit active-lane mask, so none of them may be
+// reused across divergent control flow. Each op appears once outside and once
+// inside a divergent scf.if with identical operands; CSE must keep both.
+//
+// RUN: pto-test-opt -cse %s | FileCheck %s --check-prefix=CSE
+// RUN: ptoas --pto-arch=a5 --pto-backend=vpto --emit-vpto-llvm-ir %s -o %t.ll
+// RUN: FileCheck %s --check-prefix=LLVM < %t.ll
+
+module attributes {pto.target_arch = "a5", pto.backend = "vpto"} {
+  func.func @launch(%dst: !pto.ptr<i32, gm>, %dstf: !pto.ptr<f32, gm>) attributes {pto.aiv} {
+    %one = arith.constant 1 : i32
+    %warp = arith.constant 32 : i32
+    pto.simt_launch @family<<<%warp, %one, %one>>>(%dst, %dstf) : (!pto.ptr<i32, gm>, !pto.ptr<f32, gm>) -> ()
+    return
+  }
+  func.func @family(%dst: !pto.ptr<i32, gm>, %dstf: !pto.ptr<f32, gm>) attributes {pto.simt_entry} {
+    %lane = pto.get_laneid : i32
+    %c24 = arith.constant 24 : i32
+    %c16 = arith.constant 16 : i32
+    %c1 = arith.constant 1 : i32
+    %c32 = arith.constant 32 : index
+    %c0 = arith.constant 0 : index
+    %idx = arith.index_cast %lane : i32 to index
+    %idx_hi = arith.addi %idx, %c32 : index
+    %pred = arith.cmpi slt, %lane, %c24 : i32
+    %lane_f = arith.sitofp %lane : i32 to f32
+    %v_all = pto.vote_all %pred : i1 -> i1
+    %v_all_i = arith.extui %v_all : i1 to i32
+    %v_any = pto.vote_any %pred : i1 -> i1
+    %v_any_i = arith.extui %v_any : i1 to i32
+    %v_uni = pto.vote_uni %pred : i1 -> i1
+    %v_uni_i = arith.extui %v_uni : i1 to i32
+    %v_ballot = pto.vote_ballot %pred : i1 -> i32
+    %s_idx = pto.shuffle_idx %lane, %c1 : i32, i32 -> i32
+    %s_up = pto.shuffle_up %lane, %c1 : i32, i32 -> i32
+    %s_down = pto.shuffle_down %lane, %c1 : i32, i32 -> i32
+    %s_bfly = pto.shuffle_bfly %lane, %c1 : i32, i32 -> i32
+    %r_addi = pto.redux_addi %lane : i32 -> i32
+    %r_maxi = pto.redux_maxi %lane signed : i32 -> i32
+    %r_mini = pto.redux_mini %lane unsigned : i32 -> i32
+    %r_addf = pto.redux_addf %lane_f : f32 -> f32
+    %r_maxf = pto.redux_maxf %lane_f : f32 -> f32
+    %r_minf = pto.redux_minf %lane_f : f32 -> f32
+    pto.store %v_all_i, %dst[%idx] : !pto.ptr<i32, gm>, index, i32
+    pto.store %v_any_i, %dst[%c0] : !pto.ptr<i32, gm>, index, i32
+    pto.store %v_uni_i, %dst[%c0] : !pto.ptr<i32, gm>, index, i32
+    pto.store %v_ballot, %dst[%idx] : !pto.ptr<i32, gm>, index, i32
+    pto.store %s_idx, %dst[%idx] : !pto.ptr<i32, gm>, index, i32
+    pto.store %s_up, %dst[%idx] : !pto.ptr<i32, gm>, index, i32
+    pto.store %s_down, %dst[%idx] : !pto.ptr<i32, gm>, index, i32
+    pto.store %s_bfly, %dst[%idx] : !pto.ptr<i32, gm>, index, i32
+    pto.store %r_addi, %dst[%idx] : !pto.ptr<i32, gm>, index, i32
+    pto.store %r_maxi, %dst[%idx] : !pto.ptr<i32, gm>, index, i32
+    pto.store %r_mini, %dst[%idx] : !pto.ptr<i32, gm>, index, i32
+    pto.store %r_addf, %dstf[%idx] : !pto.ptr<f32, gm>, index, f32
+    pto.store %r_maxf, %dstf[%idx] : !pto.ptr<f32, gm>, index, f32
+    pto.store %r_minf, %dstf[%idx] : !pto.ptr<f32, gm>, index, f32
+    %branch = arith.cmpi slt, %lane, %c16 : i32
+    scf.if %branch {
+      %i_all = pto.vote_all %pred : i1 -> i1
+      %i_all_i = arith.extui %i_all : i1 to i32
+      %i_any = pto.vote_any %pred : i1 -> i1
+      %i_any_i = arith.extui %i_any : i1 to i32
+      %i_uni = pto.vote_uni %pred : i1 -> i1
+      %i_uni_i = arith.extui %i_uni : i1 to i32
+      %i_ballot = pto.vote_ballot %pred : i1 -> i32
+      %j_idx = pto.shuffle_idx %lane, %c1 : i32, i32 -> i32
+      %j_up = pto.shuffle_up %lane, %c1 : i32, i32 -> i32
+      %j_down = pto.shuffle_down %lane, %c1 : i32, i32 -> i32
+      %j_bfly = pto.shuffle_bfly %lane, %c1 : i32, i32 -> i32
+      %k_addi = pto.redux_addi %lane : i32 -> i32
+      %k_maxi = pto.redux_maxi %lane signed : i32 -> i32
+      %k_mini = pto.redux_mini %lane unsigned : i32 -> i32
+      %k_addf = pto.redux_addf %lane_f : f32 -> f32
+      %k_maxf = pto.redux_maxf %lane_f : f32 -> f32
+      %k_minf = pto.redux_minf %lane_f : f32 -> f32
+      pto.store %i_all_i, %dst[%idx_hi] : !pto.ptr<i32, gm>, index, i32
+      pto.store %i_any_i, %dst[%idx_hi] : !pto.ptr<i32, gm>, index, i32
+      pto.store %i_uni_i, %dst[%idx_hi] : !pto.ptr<i32, gm>, index, i32
+      pto.store %i_ballot, %dst[%idx_hi] : !pto.ptr<i32, gm>, index, i32
+      pto.store %j_idx, %dst[%idx_hi] : !pto.ptr<i32, gm>, index, i32
+      pto.store %j_up, %dst[%idx_hi] : !pto.ptr<i32, gm>, index, i32
+      pto.store %j_down, %dst[%idx_hi] : !pto.ptr<i32, gm>, index, i32
+      pto.store %j_bfly, %dst[%idx_hi] : !pto.ptr<i32, gm>, index, i32
+      pto.store %k_addi, %dst[%idx_hi] : !pto.ptr<i32, gm>, index, i32
+      pto.store %k_maxi, %dst[%idx_hi] : !pto.ptr<i32, gm>, index, i32
+      pto.store %k_mini, %dst[%idx_hi] : !pto.ptr<i32, gm>, index, i32
+      pto.store %k_addf, %dstf[%idx_hi] : !pto.ptr<f32, gm>, index, f32
+      pto.store %k_maxf, %dstf[%idx_hi] : !pto.ptr<f32, gm>, index, f32
+      pto.store %k_minf, %dstf[%idx_hi] : !pto.ptr<f32, gm>, index, f32
+    }
+    return
+  }
+}
+
+// One surviving evaluation per lane collective, outside and inside the branch,
+// in dump order: all fourteen ops of the enclosing block, then the same
+// fourteen ops of the divergent region.
+// CSE: pto.vote_all
+// CSE: pto.vote_any
+// CSE: pto.vote_uni
+// CSE: pto.vote_ballot
+// CSE: pto.shuffle_idx
+// CSE: pto.shuffle_up
+// CSE: pto.shuffle_down
+// CSE: pto.shuffle_bfly
+// CSE: pto.redux_addi
+// CSE: pto.redux_maxi
+// CSE: pto.redux_mini
+// CSE: pto.redux_addf
+// CSE: pto.redux_maxf
+// CSE: pto.redux_minf
+// CSE: pto.vote_all
+// CSE: pto.vote_any
+// CSE: pto.vote_uni
+// CSE: pto.vote_ballot
+// CSE: pto.shuffle_idx
+// CSE: pto.shuffle_up
+// CSE: pto.shuffle_down
+// CSE: pto.shuffle_bfly
+// CSE: pto.redux_addi
+// CSE: pto.redux_maxi
+// CSE: pto.redux_mini
+// CSE: pto.redux_addf
+// CSE: pto.redux_maxf
+// CSE: pto.redux_minf
+
+// Every emitted lane-collective declaration is convergent, not only the ballot:
+// all fourteen ops of this module are emitted through the vote/shfl/redux callee
+// builders, and one shared attribute group proves the marker reaches each of
+// them. A fifteenth collective whose callee is not added to
+// isSIMTConvergentCallee (VPTOCANN900LLVMEmitterTemplates.h) leaves this list
+// short of its own declaration and fails here.
+// LLVM-DAG: declare i1 @llvm.hivm.vote.all(i1) #[[CONV:[0-9]+]]
+// LLVM-DAG: declare i1 @llvm.hivm.vote.any(i1) #[[CONV]]
+// LLVM-DAG: declare i1 @llvm.hivm.vote.uni(i1) #[[CONV]]
+// LLVM-DAG: declare i32 @llvm.hivm.vote.ballot(i1) #[[CONV]]
+// LLVM-DAG: declare i32 @llvm.hivm.shfl.idx.i32(i32, i32) #[[CONV]]
+// LLVM-DAG: declare i32 @llvm.hivm.shfl.up.i32(i32, i32) #[[CONV]]
+// LLVM-DAG: declare i32 @llvm.hivm.shfl.down.i32(i32, i32) #[[CONV]]
+// LLVM-DAG: declare i32 @llvm.hivm.shfl.bfly.i32(i32, i32) #[[CONV]]
+// LLVM-DAG: declare i32 @llvm.hivm.redux.add.s32(i32) #[[CONV]]
+// LLVM-DAG: declare i32 @llvm.hivm.redux.max.s32(i32) #[[CONV]]
+// LLVM-DAG: declare i32 @llvm.hivm.redux.min.u32(i32) #[[CONV]]
+// LLVM-DAG: declare float @llvm.hivm.redux.add.f32(float) #[[CONV]]
+// LLVM-DAG: declare float @llvm.hivm.redux.max.f32(float) #[[CONV]]
+// LLVM-DAG: declare float @llvm.hivm.redux.min.f32(float) #[[CONV]]
+// LLVM: attributes #[[CONV]] = { convergent }

@@ -74,6 +74,53 @@ void ThreadfenceBlockOp::getEffects(
                        SideEffects::DefaultResource::get());
 }
 
+// Lane collectives (vote/shuffle/redux) read the warp's implicit active-lane
+// mask: their result is a function of the lanes that participate in the
+// collective at the execution point, not only of their SSA operands. The mask is
+// implicit machine state, so it is modelled as a dedicated resource instead of
+// an SSA address; nothing in a straight-line region can write it, so the effect
+// only stops transformations that would move a collective across control flow.
+// The read is deliberately not a write: MLIR CSE still merges duplicates inside
+// one block, where the active mask is invariant (issue 1740).
+namespace {
+struct SimtActiveLaneMaskResource final
+    : SideEffects::Resource::Base<SimtActiveLaneMaskResource> {
+  MLIR_DEFINE_EXPLICIT_INTERNAL_INLINE_TYPE_ID(SimtActiveLaneMaskResource)
+  StringRef getName() final { return "pto.simt_active_lane_mask"; }
+};
+
+void addActiveLaneMaskRead(
+    SmallVectorImpl<SideEffects::EffectInstance<MemoryEffects::Effect>>
+        &effects) {
+  effects.emplace_back(MemoryEffects::Read::get(),
+                       SimtActiveLaneMaskResource::get());
+}
+} // namespace
+
+#define PTO_LANE_COLLECTIVE_EFFECTS(OP)                                        \
+  void pto::OP::getEffects(                                                    \
+      SmallVectorImpl<SideEffects::EffectInstance<MemoryEffects::Effect>>      \
+          &effects) {                                                          \
+    addActiveLaneMaskRead(effects);                                            \
+  }
+
+PTO_LANE_COLLECTIVE_EFFECTS(VoteAllOp)
+PTO_LANE_COLLECTIVE_EFFECTS(VoteAnyOp)
+PTO_LANE_COLLECTIVE_EFFECTS(VoteUniOp)
+PTO_LANE_COLLECTIVE_EFFECTS(VoteBallotOp)
+PTO_LANE_COLLECTIVE_EFFECTS(ShuffleIdxOp)
+PTO_LANE_COLLECTIVE_EFFECTS(ShuffleUpOp)
+PTO_LANE_COLLECTIVE_EFFECTS(ShuffleDownOp)
+PTO_LANE_COLLECTIVE_EFFECTS(ShuffleBflyOp)
+PTO_LANE_COLLECTIVE_EFFECTS(ReduxAddIOp)
+PTO_LANE_COLLECTIVE_EFFECTS(ReduxAddFOp)
+PTO_LANE_COLLECTIVE_EFFECTS(ReduxMaxIOp)
+PTO_LANE_COLLECTIVE_EFFECTS(ReduxMaxFOp)
+PTO_LANE_COLLECTIVE_EFFECTS(ReduxMinIOp)
+PTO_LANE_COLLECTIVE_EFFECTS(ReduxMinFOp)
+
+#undef PTO_LANE_COLLECTIVE_EFFECTS
+
 static Operation *getLastSimtPayloadOp(KeepOp op) {
   Block *block = op->getBlock();
   bool insideSection =

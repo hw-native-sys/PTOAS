@@ -1,0 +1,55 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+
+// Regression for issue 1740: pto.vote_ballot depends on the set of lanes active
+// at the execution point, so CSE must not reuse the ballot of an enclosing
+// region inside a divergent scf.if. The emitted lane-collective declarations
+// must additionally stay "convergent" so LLVM may not re-merge or move them.
+//
+// RUN: pto-test-opt -cse %s | FileCheck %s --check-prefix=CSE
+// RUN: ptoas --pto-arch=a5 --pto-backend=vpto --emit-vpto-llvm-ir %s -o %t.ll
+// RUN: FileCheck %s --check-prefix=LLVM < %t.ll
+
+module attributes {pto.target_arch = "a5", pto.backend = "vpto"} {
+  func.func @launch(%dst: !pto.ptr<i32, gm>) attributes {pto.aiv} {
+    %one = arith.constant 1 : i32
+    %warp = arith.constant 32 : i32
+    pto.simt_launch @ballot<<<%warp, %one, %one>>>(%dst) : (!pto.ptr<i32, gm>) -> ()
+    return
+  }
+  func.func @ballot(%dst: !pto.ptr<i32, gm>) attributes {pto.simt_entry} {
+    %lane = pto.get_laneid : i32
+    %c24 = arith.constant 24 : i32
+    %c16 = arith.constant 16 : i32
+    %c32 = arith.constant 32 : index
+    %lane_index = arith.index_cast %lane : i32 to index
+    %pred = arith.cmpi slt, %lane, %c24 : i32
+    %outer = pto.vote_ballot %pred : i1 -> i32
+    pto.store %outer, %dst[%lane_index] : !pto.ptr<i32, gm>, index, i32
+    %branch = arith.cmpi slt, %lane, %c16 : i32
+    scf.if %branch {
+      %inner = pto.vote_ballot %pred : i1 -> i32
+      %offset = arith.addi %c32, %lane_index : index
+      pto.store %inner, %dst[%offset] : !pto.ptr<i32, gm>, index, i32
+    }
+    return
+  }
+}
+
+// The same predicate is voted outside and inside the divergent region; CSE must
+// keep two evaluations, each feeding its own store.
+// CSE:      %[[OUTER:[0-9]+]] = pto.vote_ballot
+// CSE-NEXT: pto.store %[[OUTER]],
+// CSE:      %[[INNER:[0-9]+]] = pto.vote_ballot
+// CSE:      pto.store %[[INNER]],
+
+// The lane collective reads the implicit active-lane mask: the emitted
+// declaration is convergent so downstream LLVM passes keep both calls.
+// LLVM: declare i32 @llvm.hivm.vote.ballot(i1) #[[CONV:[0-9]+]]
+// LLVM-COUNT-2: call i32 @llvm.hivm.vote.ballot
+// LLVM: attributes #[[CONV]] = { convergent }

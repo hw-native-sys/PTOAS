@@ -1,0 +1,55 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+
+// Issue 1740, loop shape: a lane collective inside an scf.for body must stay in
+// the body. MLIR LICM hoists "memory-effect-free and speculatable" ops, so while
+// the collectives were Pure they were hoisted out of the loop - the same
+// wrong-result class as the reported CSE merge, because the loop body can be
+// entered under a reduced active mask. Inside one iteration the mask is
+// invariant, so the two identical body collectives still merge.
+//
+// RUN: pto-test-opt -cse --loop-invariant-code-motion %s | FileCheck %s --check-prefix=CSE
+// RUN: pto-test-opt --loop-invariant-code-motion %s | FileCheck %s --check-prefix=LICM
+
+module attributes {pto.target_arch = "a5", pto.backend = "vpto"} {
+  func.func @loop(%dst: !pto.ptr<i32, gm>) attributes {pto.simt_entry} {
+    %lane = pto.get_laneid : i32
+    %c0 = arith.constant 0 : index
+    %c1 = arith.constant 1 : index
+    %c4 = arith.constant 4 : index
+    %c24 = arith.constant 24 : i32
+    %c32 = arith.constant 32 : index
+    %idx = arith.index_cast %lane : i32 to index
+    %slot = arith.addi %idx, %c32 : index
+    %pred = arith.cmpi slt, %lane, %c24 : i32
+    %outer = pto.vote_ballot %pred : i1 -> i32
+    pto.store %outer, %dst[%idx] : !pto.ptr<i32, gm>, index, i32
+    scf.for %i = %c0 to %c4 step %c1 {
+      %body = pto.vote_ballot %pred : i1 -> i32
+      %body_dup = pto.vote_ballot %pred : i1 -> i32
+      %sum = arith.addi %body, %body_dup : i32
+      pto.store %sum, %dst[%slot] : !pto.ptr<i32, gm>, index, i32
+    }
+    return
+  }
+}
+
+// LICM must not move a collective out of the loop: both the enclosing block and
+// the loop body keep their own evaluation.
+// LICM-LABEL: func.func @loop
+// LICM: pto.vote_ballot
+// LICM: scf.for
+// LICM: pto.vote_ballot
+
+// With CSE first, the same-iteration duplicate merges into one evaluation and
+// the single body collective still stays inside the loop.
+// CSE-LABEL: func.func @loop
+// CSE: %[[OUTER:[0-9]+]] = pto.vote_ballot
+// CSE: scf.for
+// CSE: %[[INNER:[0-9]+]] = pto.vote_ballot
+// CSE-NOT: pto.vote_ballot

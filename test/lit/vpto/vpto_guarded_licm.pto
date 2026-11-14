@@ -299,10 +299,10 @@ module attributes {pto.target_arch = "a5"} {
 
   // Negative (SIMT referential transparency): pto.get_clock32 reads the
   // clock, pto.get_vms4_sr reads the VMS4 status register, and
-  // pto.vote_ballot / pto.shuffle_idx are active-lane collectives.  Although
-  // these ops are marked pure, hoisting any of them out of the guard changes
-  // the value observed inside the guard, so none may move even though every
-  // operand is defined outside the loop.
+  // pto.vote_ballot / pto.shuffle_idx are active-lane collectives, which
+  // declare an implicit read of the active-lane mask.  Hoisting any of them
+  // out of the guard changes the value observed inside the guard, so none may
+  // move even though every operand is defined outside the loop.
   func.func @guarded_licm_negative_simt(%buf: !pto.ptr<i32, ub>, %v: i32,
                                         %count: index) {
     %c0 = arith.constant 0 : index

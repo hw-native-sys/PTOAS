@@ -1,0 +1,42 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+
+// Issue 1740, scheduler view: the lane collectives declare a read of the
+// implicit active-lane mask, but that read has no ordinary memory address, so
+// the emission scheduler must keep classifying them exactly like a plain SIMT
+// scalar op (memoryBehavior = None). Without the explicit
+// getVPTOSchedulingSemantics() override on the op family, the default mapping
+// turns the resource-only effect into an unknown aliasing access and every
+// collective gains a memory-ordering edge against all memory in the region.
+//
+// RUN: pto-test-opt %s '-pto-vpto-scheduler=mode=analyze' > /dev/null 2> %t
+// RUN: FileCheck %s < %t
+
+module attributes {pto.target_arch = "a5"} {
+  func.func @simt_collective_semantics(%dst: !pto.ptr<i32, gm>) attributes {pto.simt_entry} {
+    %lane = pto.get_laneid : i32
+    %c0 = arith.constant 0 : index
+    %c24 = arith.constant 24 : i32
+    %idx = arith.index_cast %lane : i32 to index
+    %pred = arith.cmpi slt, %lane, %c24 : i32
+    pto.vecscope {
+      pto.store %lane, %dst[%c0] : !pto.ptr<i32, gm>, index, i32
+      %ballot = pto.vote_ballot %pred : i1 -> i32
+      pto.store %ballot, %dst[%idx] : !pto.ptr<i32, gm>, index, i32
+    }
+    return
+  }
+}
+
+// CHECK-LABEL: vpto-scheduler: function=simt_collective_semantics
+// CHECK: node=[[BALLOT:[0-9]+]] original-index={{[0-9]+}} op=pto.vote_ballot semantic=schedulable sched-class=scalar-zero known=true
+// The collective has no memory-ordering relation with either store: the only
+// memory edge in the region is the store-store one.
+// CHECK-NOT: ->[[BALLOT]] kind=memory
+// CHECK-NOT: edge=[[BALLOT]]->{{[0-9]+}} kind=memory
+// CHECK: vpto-scheduler: coverage

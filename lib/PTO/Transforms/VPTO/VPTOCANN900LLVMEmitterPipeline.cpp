@@ -7,6 +7,7 @@
 // See LICENSE in the root of the software repository for the full text of the License.
 
 #include "VPTOCANN900LLVMEmitterInternal.h"
+#include "VPTOCANN900LLVMEmitterTemplates.h"
 
 namespace mlir::pto::detail {
 
@@ -541,6 +542,21 @@ void applySimtEntryCallingConvention(llvm::Module &llvmModule,
   }
 }
 
+/// Lane collectives read the warp's implicit active-lane mask, so their result
+/// depends on the lanes that execute the call. The MLIR side of that contract is
+/// the active-mask read declared on the VPTO ops (issue 1740); this is the LLVM
+/// side: a "convergent" declaration is where LLVM and NVVM put that fact, so
+/// passes that respect the attribute (GVN, SimplifyCFG, speculation) keep the
+/// calls in their divergent region. The callee family list lives next to the
+/// builders that create the names, in VPTOCANN900LLVMEmitterTemplates.h.
+static void markSIMTConvergentDeclsConvergent(ModuleOp deviceModule) {
+  deviceModule.walk([&](LLVM::LLVMFuncOp func) {
+    if (func.isExternal() && isSIMTConvergentCallee(func.getSymName())) {
+      func.setConvergent(true);
+    }
+  });
+}
+
 FailureOr<EmittedLLVMModule> emitDeviceLLVMModule(ModuleOp deviceModule, StringRef kernelKind,
                                                   const VPTOEmissionOptions &options,
                                                   const llvm::StringSet<llvm::BumpPtrAllocator> &simtEntryNames,
@@ -551,6 +567,7 @@ FailureOr<EmittedLLVMModule> emitDeviceLLVMModule(ModuleOp deviceModule, StringR
   if (failed(applyQueriedTargetAttrs(deviceModule, options, diagOS))) {
     return failure();
   }
+  markSIMTConvergentDeclsConvergent(deviceModule);
 
   auto llvmContext = std::make_unique<llvm::LLVMContext>();
   registerBuiltinDialectTranslation(*deviceModule.getContext());

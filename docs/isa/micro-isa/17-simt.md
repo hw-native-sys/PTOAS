@@ -268,6 +268,23 @@ get_lanemask_ge = bits for lanes laneid .. subgroup_width-1
 
 ---
 
+## Implicit active-lane mask (lane collectives)
+
+Vote, shuffle and redux ops are lane collectives: their result is a function of
+the lanes that participate at the execution point, not only of their SSA
+operands. Every one of them therefore declares an implicit **read** of the
+active-lane mask (`pto.simt_active_lane_mask`), which is what keeps the
+compiler from merging, hoisting or duplicating a collective across divergent
+control flow (issue 1740). Duplicate collectives inside one basic block still
+share one evaluation, because the mask cannot change inside a block, and an
+unused collective is still removed like any other read-only operation.
+
+The lane-mask queries (`pto.get_lanemask_eq/le/lt/ge/gt`) do not depend on
+participation - they are pure functions of the physical lane id - and remain
+`Pure`.
+
+---
+
 ## Vote Ops
 
 Vote ops consume one `i1` predicate from each participating active lane and

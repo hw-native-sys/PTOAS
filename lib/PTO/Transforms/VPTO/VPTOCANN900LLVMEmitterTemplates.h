@@ -217,6 +217,23 @@ template <> inline StringRef buildUnaryConfigCallee<pto::SetCtrlOp>(MLIRContext 
   return StringAttr::get(context, "llvm.hivm.SET.CTRL").getValue();
 }
 
+// Callee prefixes of the SIMT lane collectives. Every callee produced by
+// buildVoteCallee / buildShuffleCallee / buildReduxCallee below belongs to one of
+// these families, and every such callee must be marked "convergent" in the
+// emitted LLVM IR: its result depends on the set of lanes that execute the call,
+// so LLVM must not merge, hoist or duplicate it across divergent control flow
+// (issue 1740). Add the prefix here when a new collective family is introduced.
+inline constexpr StringLiteral kSIMTConvergentCalleePrefixes[] = {
+    "llvm.hivm.vote.", "llvm.hivm.shfl.", "llvm.hivm.redux."};
+
+/// Return whether @p name is a lane-collective callee built by one of the
+/// builders below.
+inline bool isSIMTConvergentCallee(StringRef name) {
+  return llvm::any_of(kSIMTConvergentCalleePrefixes, [name](StringLiteral prefix) {
+    return name.starts_with(prefix);
+  });
+}
+
 template <typename VoteOp> StringRef buildVoteCallee(MLIRContext *context);
 
 template <> inline StringRef buildVoteCallee<pto::VoteAllOp>(MLIRContext *context) {

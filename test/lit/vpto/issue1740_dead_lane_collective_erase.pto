@@ -1,0 +1,45 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+
+// A lane collective declares a read of the implicit active-lane mask (issue
+// 1740). MLIR still considers such an op trivially dead when its results are
+// unused, because it only requires every effect to be a read, so dead votes,
+// shuffles and redux keep disappearing before emission. This pins that DCE
+// behaviour is unchanged by the fix.
+//
+// RUN: pto-test-opt -cse %s | FileCheck %s --check-prefix=CSE
+// RUN: pto-test-opt -canonicalize %s | FileCheck %s --check-prefix=CANON
+
+module attributes {pto.target_arch = "a5", pto.backend = "vpto"} {
+  func.func @dead(%dst: !pto.ptr<i32, gm>) attributes {pto.simt_entry} {
+    %lane = pto.get_laneid : i32
+    %c24 = arith.constant 24 : i32
+    %c1 = arith.constant 1 : i32
+    %idx = arith.index_cast %lane : i32 to index
+    %pred = arith.cmpi slt, %lane, %c24 : i32
+    %used = pto.shuffle_up %lane, %c1 : i32, i32 -> i32
+    pto.store %used, %dst[%idx] : !pto.ptr<i32, gm>, index, i32
+    %dead_ballot = pto.vote_ballot %pred : i1 -> i32
+    %dead_redux = pto.redux_addi %lane : i32 -> i32
+    return
+  }
+}
+
+// CSE removes the unused collectives, including the now dead predicate.
+// CSE-LABEL: func.func @dead
+// CSE-NOT: pto.vote_ballot
+// CSE-NOT: pto.redux_addi
+// CSE: pto.shuffle_up
+// CSE: pto.store
+
+// Canonicalization agrees.
+// CANON-LABEL: func.func @dead
+// CANON-NOT: pto.vote_ballot
+// CANON-NOT: pto.redux_addi
+// CANON: pto.shuffle_up
+// CANON: pto.store

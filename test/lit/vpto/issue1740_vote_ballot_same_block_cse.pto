@@ -1,0 +1,38 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+
+// Control for issue 1740: two lane collectives in the SAME block see the same
+// active-lane mask, so merging them is sound and must survive the fix. The
+// active-mask read is a read-only effect, which keeps MLIR CSE's same-block
+// path (MemoryEffectOpInterface::onlyHasEffect<Read>) available.
+//
+// RUN: pto-test-opt -cse %s | FileCheck %s --check-prefix=CSE
+
+module attributes {pto.target_arch = "a5", pto.backend = "vpto"} {
+  func.func @launch(%dst: !pto.ptr<i32, gm>) attributes {pto.aiv} {
+    %one = arith.constant 1 : i32
+    %warp = arith.constant 32 : i32
+    pto.simt_launch @same_block<<<%warp, %one, %one>>>(%dst) : (!pto.ptr<i32, gm>) -> ()
+    return
+  }
+  func.func @same_block(%dst: !pto.ptr<i32, gm>) attributes {pto.simt_entry} {
+    %lane = pto.get_laneid : i32
+    %c24 = arith.constant 24 : i32
+    %lane_index = arith.index_cast %lane : i32 to index
+    %pred = arith.cmpi slt, %lane, %c24 : i32
+    %first = pto.vote_ballot %pred : i1 -> i32
+    %second = pto.vote_ballot %pred : i1 -> i32
+    %sum = arith.addi %first, %second : i32
+    pto.store %sum, %dst[%lane_index] : !pto.ptr<i32, gm>, index, i32
+    return
+  }
+}
+
+// CSE-LABEL: func.func @same_block
+// CSE-COUNT-1: pto.vote_ballot
+// CSE-NOT: pto.vote_ballot

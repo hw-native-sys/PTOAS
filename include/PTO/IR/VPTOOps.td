@@ -723,7 +723,32 @@ def PTO_GetLaneMaskLtOp : PTO_DirectSimtNullaryI32PureOp<"get_lanemask_lt">;
 def PTO_GetLaneMaskGeOp : PTO_DirectSimtNullaryI32PureOp<"get_lanemask_ge">;
 def PTO_GetLaneMaskGtOp : PTO_DirectSimtNullaryI32PureOp<"get_lanemask_gt">;
 
-def PTO_VoteAllOp : PTO_SimtOp<"vote_all", [Pure]> {
+// Lane collectives (vote/shuffle/redux) read the warp's implicit active-lane
+// mask: their result is a function of the lanes that participate in the
+// collective at the execution point, not only of their SSA operands. Declaring
+// that read is what keeps them out of cross-block CSE (issue 1740), because a
+// divergent region changes the mask. The effect is deliberately read-only:
+// MLIR CSE still merges duplicate collectives inside one block, where the mask
+// is invariant. The scheduling method below keeps the emission scheduler's view
+// identical to an ordinary SIMT scalar op: the active mask is implicit state
+// with no ordinary memory address, so it cannot alias and needs no ordering
+// edge.
+class PTO_SIMTConvergentOp<string mnemonic, list<Trait> traits = []>
+    : PTO_SimtOp<mnemonic, !listconcat(traits, [
+        DeclareOpInterfaceMethods<MemoryEffectsOpInterface>
+      ])> {
+  let extraClassDeclaration = [{
+    ::mlir::pto::VPTOSchedulingSemantics getVPTOSchedulingSemantics() {
+      ::mlir::pto::VPTOSchedulingSemantics semantics;
+      semantics.schedulingClass = ::mlir::pto::VPTOSchedulingClass::Schedulable;
+      semantics.classificationKnown = true;
+      semantics.memoryBehavior = ::mlir::pto::VPTOMemoryBehavior::None;
+      return semantics;
+    }
+  }];
+}
+
+def PTO_VoteAllOp : PTO_SIMTConvergentOp<"vote_all"> {
   let arguments = (ins I1:$pred);
   let results = (outs I1:$result);
 
@@ -732,7 +757,7 @@ def PTO_VoteAllOp : PTO_SimtOp<"vote_all", [Pure]> {
   }];
 }
 
-def PTO_VoteAnyOp : PTO_SimtOp<"vote_any", [Pure]> {
+def PTO_VoteAnyOp : PTO_SIMTConvergentOp<"vote_any"> {
   let arguments = (ins I1:$pred);
   let results = (outs I1:$result);
 
@@ -741,7 +766,7 @@ def PTO_VoteAnyOp : PTO_SimtOp<"vote_any", [Pure]> {
   }];
 }
 
-def PTO_VoteUniOp : PTO_SimtOp<"vote_uni", [Pure]> {
+def PTO_VoteUniOp : PTO_SIMTConvergentOp<"vote_uni"> {
   let arguments = (ins I1:$pred);
   let results = (outs I1:$result);
 
@@ -750,7 +775,7 @@ def PTO_VoteUniOp : PTO_SimtOp<"vote_uni", [Pure]> {
   }];
 }
 
-def PTO_VoteBallotOp : PTO_SimtOp<"vote_ballot", [Pure]> {
+def PTO_VoteBallotOp : PTO_SIMTConvergentOp<"vote_ballot"> {
   let arguments = (ins I1:$pred);
   let results = (outs I32:$result);
 
@@ -759,7 +784,7 @@ def PTO_VoteBallotOp : PTO_SimtOp<"vote_ballot", [Pure]> {
   }];
 }
 
-def PTO_ShuffleIdxOp : PTO_SimtOp<"shuffle_idx", [Pure, AllTypesMatch<["value", "result"]>]> {
+def PTO_ShuffleIdxOp : PTO_SIMTConvergentOp<"shuffle_idx", [AllTypesMatch<["value", "result"]>]> {
   let arguments = (ins
     PTO_SimtShuffleValueType:$value,
     I32:$index,
@@ -773,7 +798,7 @@ def PTO_ShuffleIdxOp : PTO_SimtOp<"shuffle_idx", [Pure, AllTypesMatch<["value", 
   }];
 }
 
-def PTO_ShuffleUpOp : PTO_SimtOp<"shuffle_up", [Pure, AllTypesMatch<["value", "result"]>]> {
+def PTO_ShuffleUpOp : PTO_SIMTConvergentOp<"shuffle_up", [AllTypesMatch<["value", "result"]>]> {
   let arguments = (ins
     PTO_SimtShuffleValueType:$value,
     I32:$offset,
@@ -787,7 +812,7 @@ def PTO_ShuffleUpOp : PTO_SimtOp<"shuffle_up", [Pure, AllTypesMatch<["value", "r
   }];
 }
 
-def PTO_ShuffleDownOp : PTO_SimtOp<"shuffle_down", [Pure, AllTypesMatch<["value", "result"]>]> {
+def PTO_ShuffleDownOp : PTO_SIMTConvergentOp<"shuffle_down", [AllTypesMatch<["value", "result"]>]> {
   let arguments = (ins
     PTO_SimtShuffleValueType:$value,
     I32:$offset,
@@ -801,7 +826,7 @@ def PTO_ShuffleDownOp : PTO_SimtOp<"shuffle_down", [Pure, AllTypesMatch<["value"
   }];
 }
 
-def PTO_ShuffleBflyOp : PTO_SimtOp<"shuffle_bfly", [Pure, AllTypesMatch<["value", "result"]>]> {
+def PTO_ShuffleBflyOp : PTO_SIMTConvergentOp<"shuffle_bfly", [AllTypesMatch<["value", "result"]>]> {
   let arguments = (ins
     PTO_SimtShuffleValueType:$value,
     I32:$mask,
@@ -816,7 +841,7 @@ def PTO_ShuffleBflyOp : PTO_SimtOp<"shuffle_bfly", [Pure, AllTypesMatch<["value"
 }
 
 class PTO_ReduxIntegerOp<string mnemonic>
-    : PTO_SimtOp<mnemonic, [Pure, AllTypesMatch<["value", "result"]>]> {
+    : PTO_SIMTConvergentOp<mnemonic, [AllTypesMatch<["value", "result"]>]> {
   let arguments = (ins I32:$value);
   let results = (outs I32:$result);
   let hasVerifier = 1;
@@ -826,7 +851,7 @@ class PTO_ReduxIntegerOp<string mnemonic>
 }
 
 class PTO_ReduxSignedIntegerOp<string mnemonic>
-    : PTO_SimtOp<mnemonic, [Pure, AllTypesMatch<["value", "result"]>]> {
+    : PTO_SIMTConvergentOp<mnemonic, [AllTypesMatch<["value", "result"]>]> {
   let arguments = (ins I32:$value, PTO_SignednessAttr:$signedness);
   let results = (outs I32:$result);
   let hasVerifier = 1;
@@ -837,7 +862,7 @@ class PTO_ReduxSignedIntegerOp<string mnemonic>
 }
 
 class PTO_ReduxFloatOp<string mnemonic>
-    : PTO_SimtOp<mnemonic, [Pure, AllTypesMatch<["value", "result"]>]> {
+    : PTO_SIMTConvergentOp<mnemonic, [AllTypesMatch<["value", "result"]>]> {
   let arguments = (ins AnyTypeOf<[F16, F32], "floating-point scalar">:$value);
   let results = (outs AnyTypeOf<[F16, F32], "floating-point scalar">:$result);
   let hasVerifier = 1;
