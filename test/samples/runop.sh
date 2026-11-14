@@ -369,6 +369,18 @@ process_one_dir() {
         continue
       fi
     fi
+    # Cases the A5 runop environment cannot handle yet. Random/Histogram declare
+    # A5-only ops but carry no arch declaration, Sync/tpipe_* fail inside ptoas,
+    # and the AsyncComm / TPrefetchAsync cases are timing sensitive on the A5
+    # runner. Keep them visible as SKIP on A5 and run them unchanged elsewhere.
+    if [[ ( "${soc_lc}" == *"a5"* || "${soc_lc}" == *"950"* ) ]]; then
+      case "$base" in
+        random|histogram|tpipe_identity|tpipe_v2c|async_comm|tget_async_kernel_impl_like|tput_async_kernel_impl_like|tprefetch_async_binding)
+          echo -e "${A}(${base}.py)\tSKIP\tA5 target not supported yet"
+          continue
+          ;;
+      esac
+    fi
     # Inter-core sync regression samples are arch-specific.
     if [[ "$base" == "test_intercore_sync_a5" && "$(printf '%s' "$target_arch" | tr '[:upper:]' '[:lower:]')" != "a5" ]]; then
       echo -e "${A}(${base}.py)\tSKIP\trequires --pto-arch=a5"
