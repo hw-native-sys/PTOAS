@@ -9,6 +9,7 @@
 //===- PTOToEmitCPass.cpp - pass entry + pattern registration ----------===//
 //===----------------------------------------------------------------------===//
 
+#include "ScalarMisc/SignalWaitBackoffSupport.h"
 #include "PTOToEmitCPatterns.h"
 #include "PTO/Transforms/Passes.h"
 #include "PTO/Transforms/Tf32ModeSupport.h"
@@ -737,6 +738,18 @@ struct EmitPTOManualPass
       }
       pto::annotatePTOEntryFunctions(mop);
 
+      if (targetArch != PTOArch::A3) {
+          bool unsupportedBackoff = false;
+          mop.walk([&](pto::TWaitOp wait) {
+              if (auto ticks = wait.getBackoffTicksAttr(); ticks && ticks.getInt() > 0) {
+                  wait.emitError("positive backoffTicks currently requires A3");
+                  unsupportedBackoff = true;
+              }
+          });
+          if (unsupportedBackoff)
+              return failure();
+      }
+
       // A3 requires explicit FFTS base setup for inter-core sync ops.
       if (targetArch == PTOArch::A3) {
           bool hasMissingSetFFTs = false;
@@ -779,9 +792,14 @@ struct EmitPTOManualPass
     bool bitcast = false;
     bool convTileInit = false;
     bool debugHeader = false;
+    bool signalWaitBackoff = false;
   };
 
   static void setHelperFlagsForOp(Operation *op, HelperFlags &flags) {
+      if (auto wait = dyn_cast<pto::TWaitOp>(op)) {
+          if (auto ticks = wait.getBackoffTicksAttr(); ticks && ticks.getInt() > 0)
+              flags.signalWaitBackoff = true;
+      }
     if (isa<mlir::pto::AssertOp>(op)) {
       flags.debugHeader = true;
     }
@@ -902,6 +920,9 @@ static AICORE inline void PTOAS__INIT_CONVTILE_CONFIG(
   static void emitPreambleRuntimeHelpers(ModuleOp mop, OpBuilder &builder,
                                          const HelperFlags &flags) {
     Location loc = mop->getLoc();
+    if (flags.signalWaitBackoff) {
+        builder.create<emitc::VerbatimOp>(loc, builder.getStringAttr(kSignalWaitBackoffSupport));
+    }
     if (flags.globalTensorData) {
       builder.create<emitc::VerbatimOp>(
           loc, builder.getStringAttr(R"cpp(

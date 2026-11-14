@@ -1,0 +1,39 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+
+// RUN: split-file %s %t
+// RUN: not ptoas --pto-arch=a3 --emit-pto-ir %t/negative.pto 2>&1 | FileCheck %s --check-prefix=NEGATIVE
+// RUN: not ptoas --pto-arch=a3 --emit-pto-ir %t/compare.pto 2>&1 | FileCheck %s --check-prefix=COMPARE
+// RUN: not ptoas --pto-arch=a3 --emit-pto-ir %t/shape.pto 2>&1 | FileCheck %s --check-prefix=SHAPE
+// NEGATIVE: expects backoffTicks in [0, INT32_MAX]
+// COMPARE: positive backoffTicks requires the GE comparison
+// SHAPE: positive backoffTicks requires one statically sized i32 signal
+
+//--- negative.pto
+module {
+  func.func @negative(%signal: !pto.partition_tensor_view<1xi32>, %expected: i32) {
+    pto.comm.twait(%signal, %expected : !pto.partition_tensor_view<1xi32>, i32) {cmp = #pto<wait_cmp ge>, backoffTicks = -1 : i64}
+    return
+  }
+}
+
+//--- compare.pto
+module {
+  func.func @compare(%signal: !pto.partition_tensor_view<1xi32>, %expected: i32) {
+    pto.comm.twait(%signal, %expected : !pto.partition_tensor_view<1xi32>, i32) {cmp = #pto<wait_cmp eq>, backoffTicks = 150 : i64}
+    return
+  }
+}
+
+//--- shape.pto
+module {
+  func.func @shape(%signal: !pto.partition_tensor_view<2xi32>, %expected: i32) {
+    pto.comm.twait(%signal, %expected : !pto.partition_tensor_view<2xi32>, i32) {cmp = #pto<wait_cmp ge>, backoffTicks = 150 : i64}
+    return
+  }
+}

@@ -1,0 +1,36 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+
+// RUN: ptoas --pto-arch=a3 %s -o - | FileCheck %s
+// RUN: not ptoas --pto-arch=a5 %s -o - 2>&1 | FileCheck %s --check-prefix=A5
+
+module {
+  func.func @wait_backoff(%signal_ptr: !pto.ptr<i32>, %expected: i32) {
+    %c0 = arith.constant 0 : index
+    %c1 = arith.constant 1 : index
+    %view = pto.make_tensor_view %signal_ptr, shape = [%c1], strides = [%c1] : !pto.tensor_view<1xi32>
+    %signal = pto.partition_view %view, offsets = [%c0], sizes = [%c1] : !pto.tensor_view<1xi32> -> !pto.partition_tensor_view<1xi32>
+    pto.comm.twait(%signal, %expected : !pto.partition_tensor_view<1xi32>, i32) {cmp = #pto<wait_cmp ge>, backoffTicks = 150 : i64}
+    pto.comm.twait(%signal, %expected : !pto.partition_tensor_view<1xi32>, i32) {cmp = #pto<wait_cmp ge>}
+    pto.comm.twait(%signal, %expected : !pto.partition_tensor_view<1xi32>, i32) {cmp = #pto<wait_cmp eq>, backoffTicks = 0 : i64}
+    return
+  }
+}
+
+// CHECK: static AICORE inline void PTOAS__WAIT_GE_BACKOFF(
+// CHECK: volatile __gm__ int32_t*
+// CHECK: dcci((__gm__ void*)ptr, cache_line_t::SINGLE_CACHE_LINE);
+// CHECK: if (*ptr >= expected)
+// CHECK-NEXT: break;
+// CHECK: get_sys_cnt()
+// CHECK: < BackoffTicks
+// CHECK-LABEL: AICORE void wait_backoff(
+// CHECK: PTOAS__WAIT_GE_BACKOFF<150>(
+// CHECK: pto::comm::TWAIT(
+// CHECK: pto::comm::TWAIT(
+// A5: positive backoffTicks currently requires A3
