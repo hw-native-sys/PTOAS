@@ -41,8 +41,14 @@ private:
         if (!integerType) {
             return elementType;
         }
-        auto signedness = std::is_same_v<OpT, VMIExtUIOp> ? IntegerType::SignednessSemantics::Unsigned :
-                                                            IntegerType::SignednessSemantics::Signed;
+        auto signedness = IntegerType::SignednessSemantics::Unsigned;
+        if constexpr (std::is_same_v<OpT, VMICvtOp>) {
+            if (integerType.isSigned()) {
+                signedness = IntegerType::SignednessSemantics::Signed;
+            }
+        } else if constexpr (std::is_same_v<OpT, VMIExtSIOp>) {
+            signedness = IntegerType::SignednessSemantics::Signed;
+        }
         return IntegerType::get(integerType.getContext(), integerType.getWidth(), signedness);
     }
 
@@ -71,9 +77,10 @@ private:
         if (failed(vcvtSource)) {
             return failure();
         }
-        Type vcvtElementType = getVcvtElementType(expectedResultType.getElementType());
-        auto vcvtResultType =
-            VRegType::get(expectedResultType.getContext(), expectedResultType.getElementCount(), vcvtElementType);
+        Type vcvtResultElementType =
+            getVcvtElementType(expectedResultType.getElementType());
+        auto vcvtResultType = VRegType::get(
+            expectedResultType.getContext(), expectedResultType.getElementCount(), vcvtResultElementType);
         Value converted =
             rewriter
                 .create<VcvtOp>(
@@ -543,6 +550,12 @@ private:
             (slots == 2 || slots == 4 || slots == 8) && sourceBits > 0 && resultBits > sourceBits &&
             resultBits % sourceBits == 0 && (resultBits / sourceBits == 2 || resultBits / sourceBits == 4) &&
             input.sourceParts.size() == input.resultTypes.size();
+        if constexpr (std::is_same_v<OpT, VMICvtOp>) {
+            // Keep the native source/result type pair intact. In particular,
+            // si16 -> ui32 clamps negatives to zero and cannot be emulated by
+            // a signed unpack followed by a bitcast.
+            denseGroupSlotExtension = false;
+        }
         if (denseGroupSlotExtension) {
             return lowerDenseGroupSlotExtension(
                 op, input.sourceParts, input.resultTypes, input.sourceVMIType, input.resultVMIType, resultIntegerType,
@@ -572,6 +585,17 @@ public:
         OpT op, typename OneToNOpConversionPattern<OpT>::OpAdaptor adaptor,
         OneToNPatternRewriter& rewriter) const override
     {
+        if constexpr (std::is_same_v<OpT, VMICvtOp>) {
+            auto sourceType = cast<VMIVRegType>(op.getSource().getType());
+            auto resultType = cast<VMIVRegType>(op.getResult().getType());
+            unsigned sourceBits = pto::getPTOStorageElemBitWidth(sourceType.getElementType());
+            unsigned resultBits = pto::getPTOStorageElemBitWidth(resultType.getElementType());
+            bool invalidIntegerWiden = !isa<IntegerType>(sourceType.getElementType()) ||
+                                       !isa<IntegerType>(resultType.getElementType()) || sourceBits >= resultBits;
+            if (invalidIntegerWiden) {
+                return rewriter.notifyMatchFailure(op, "expected an integer widening vcvt");
+            }
+        }
         FailureOr<ExtensionLoweringInput> input = getLoweringInput(op, adaptor, rewriter);
         if (failed(input)) {
             return failure();
@@ -625,12 +649,13 @@ public:
 //   - 32-bit integer -> 8-bit integer, slots = 8, result lane_stride = 4
 //     Lowering shape: no vcvt; keep/bitcast the 32-bit carrier and let the
 //     later store consume it as PK4_B32.
-struct OneToNVMITruncIOpPattern : OneToNOpConversionPattern<VMITruncIOp> {
-    using OneToNOpConversionPattern<VMITruncIOp>::OneToNOpConversionPattern;
+template <typename OpT>
+struct OneToNVMITruncIOpPattern : OneToNOpConversionPattern<OpT> {
+    using OneToNOpConversionPattern<OpT>::OneToNOpConversionPattern;
 
 private:
     FailureOr<std::pair<VRegType, VRegType>> getUniformTruncTypes(
-        VMITruncIOp op, ValueRange sourceParts, ArrayRef<Type> resultTypes, OneToNPatternRewriter& rewriter) const
+        OpT op, ValueRange sourceParts, ArrayRef<Type> resultTypes, OneToNPatternRewriter& rewriter) const
     {
         bool emptyPhysicalParts = sourceParts.empty() || resultTypes.empty();
         if (emptyPhysicalParts) {
@@ -659,7 +684,7 @@ private:
     }
 
     void finalizeResults(
-        VMITruncIOp op, SmallVectorImpl<Value>& results, bool requiresResultBitcast, ArrayRef<Type> originalResultTypes,
+        OpT op, SmallVectorImpl<Value>& results, bool requiresResultBitcast, ArrayRef<Type> originalResultTypes,
         OneToNPatternRewriter& rewriter) const
     {
         if (requiresResultBitcast) {
@@ -671,7 +696,7 @@ private:
     }
 
     FailureOr<Value> lowerGroupSlotTruncPart(
-        VMITruncIOp op, Value sourcePart, VRegType resultType, VMIVRegType resultVMIType, VMILayoutAttr resultLayout,
+        OpT op, Value sourcePart, VRegType resultType, VMIVRegType resultVMIType, VMILayoutAttr resultLayout,
         unsigned sourceLogicalBits, unsigned resultLogicalBits, Value activeSlotMask, bool masked, StringAttr sat,
         OneToNPatternRewriter& rewriter) const
     {
@@ -706,7 +731,7 @@ private:
     }
 
     FailureOr<Value> lowerGroupSlotDirectCarrier(
-        VMITruncIOp op, Value sourcePart, VRegType resultType, OneToNPatternRewriter& rewriter) const
+        OpT op, Value sourcePart, VRegType resultType, OneToNPatternRewriter& rewriter) const
     {
         return sourcePart.getType() == resultType ?
                    sourcePart :
@@ -714,7 +739,7 @@ private:
     }
 
     FailureOr<Value> lowerGroupSlotWideCarrier(
-        VMITruncIOp op, Value sourcePart, VRegType resultType, VMIVRegType resultVMIType, Value activeSlotMask,
+        OpT op, Value sourcePart, VRegType resultType, VMIVRegType resultVMIType, Value activeSlotMask,
         StringAttr sat, OneToNPatternRewriter& rewriter) const
     {
         FailureOr<int64_t> lanes = getDataLanesPerPart(resultVMIType.getElementType());
@@ -735,7 +760,7 @@ private:
     }
 
     FailureOr<std::pair<bool, bool>> getGroupSlotTruncModes(
-        VMITruncIOp op, VMIVRegType sourceVMIType, VMIVRegType resultVMIType, VMILayoutAttr sourceLayout,
+        OpT op, VMIVRegType sourceVMIType, VMIVRegType resultVMIType, VMILayoutAttr sourceLayout,
         VMILayoutAttr resultLayout, ValueRange sourceParts, ArrayRef<Type> resultTypes,
         OneToNPatternRewriter& rewriter) const
     {
@@ -758,7 +783,7 @@ private:
     }
 
     FailureOr<SmallVector<Value>> lowerGroupSlotTruncParts(
-        VMITruncIOp op, ValueRange sourceParts, ArrayRef<Type> resultTypes, VMIVRegType resultVMIType,
+        OpT op, ValueRange sourceParts, ArrayRef<Type> resultTypes, VMIVRegType resultVMIType,
         VMILayoutAttr resultLayout, unsigned sourceBits, unsigned resultBits, bool supportsPacked, Value activeSlotMask,
         ValueRange partMasks, StringAttr sat, OneToNPatternRewriter& rewriter) const
     {
@@ -795,7 +820,8 @@ private:
     }
 
     LogicalResult lowerGroupSlotTrunc(
-        VMITruncIOp op, OpAdaptor adaptor, OneToNPatternRewriter& rewriter, VMIVRegType sourceVMIType,
+        OpT op, typename OneToNOpConversionPattern<OpT>::OpAdaptor adaptor,
+        OneToNPatternRewriter& rewriter, VMIVRegType sourceVMIType,
         VMIVRegType resultVMIType, VMILayoutAttr sourceLayout, VMILayoutAttr resultLayout, ArrayRef<Type> resultTypes,
         ValueRange masks) const
     {
@@ -809,7 +835,7 @@ private:
         unsigned resultLogicalBits = pto::getPTOStorageElemBitWidth(resultVMIType.getElementType());
         bool supportsPacked = modes->second;
 
-        StringAttr sat = op->getAttrOfType<StringAttr>("saturate");
+        StringAttr sat = op->template getAttrOfType<StringAttr>("saturate");
         bool forwarding = sourceLogicalBits == 16 && resultLogicalBits == 8 && sat && sat.getValue() == "NOSAT";
         if (forwarding) {
             return lowerGroupSlotTruncForwarding(op, sourceParts, resultTypes, masks, rewriter);
@@ -844,7 +870,7 @@ private:
     /// particular A5 has no signed 16-to-signed-8 vcvt instruction, so a masked
     /// cast has no instruction to carry its predicate (issue #1671).
     LogicalResult lowerGroupSlotTruncForwarding(
-        VMITruncIOp op, ValueRange sourceParts, ArrayRef<Type> resultTypes, ValueRange masks,
+        OpT op, ValueRange sourceParts, ArrayRef<Type> resultTypes, ValueRange masks,
         OneToNPatternRewriter& rewriter) const
     {
         if (!masks.empty()) {
@@ -871,7 +897,7 @@ private:
     /// slots, so the two are ANDed: the conversion still never converts a padding
     /// slot while the conversion contract zeroes the inactive active slots.
     FailureOr<SmallVector<Value>> buildGroupSlotTruncPartMasks(
-        VMITruncIOp op, ValueRange sourceParts, ValueRange masks, Value activeSlotMask,
+        OpT op, ValueRange sourceParts, ValueRange masks, Value activeSlotMask,
         OneToNPatternRewriter& rewriter) const
     {
         SmallVector<Value> partMasks;
@@ -904,7 +930,7 @@ private:
     }
 
     LogicalResult lowerDenseLaneStrideTrunc(
-        VMITruncIOp op, ValueRange sourceParts, ArrayRef<Type> resultTypes, int64_t factor, StringAttr sat,
+        OpT op, ValueRange sourceParts, ArrayRef<Type> resultTypes, int64_t factor, StringAttr sat,
         bool requiresResultBitcast, ArrayRef<Type> originalResultTypes, ValueRange masks,
         OneToNPatternRewriter& rewriter) const
     {
@@ -942,7 +968,7 @@ private:
     }
 
     LogicalResult lowerNoSatDenseCarrier(
-        VMITruncIOp op, ValueRange sourceParts, ArrayRef<Type> resultTypes, ValueRange masks,
+        OpT op, ValueRange sourceParts, ArrayRef<Type> resultTypes, ValueRange masks,
         OneToNPatternRewriter& rewriter) const
     {
         // NOSAT dense narrowing forwards the wide carrier and lets the consumer
@@ -991,7 +1017,7 @@ private:
     };
 
     FailureOr<Value> buildFactorTruncResult(
-        VMITruncIOp op, ValueRange sourceParts, Type resultType, int64_t resultIndex, const TruncINarrowingPlan& plan,
+        OpT op, ValueRange sourceParts, Type resultType, int64_t resultIndex, const TruncINarrowingPlan& plan,
         StringAttr sat, Value sourceMask, ValueRange masks, Value resultMask, OneToNPatternRewriter& rewriter) const
     {
         bool invalidPlan = plan.factor <= 0 || plan.sourceFactor <= 0 || plan.resultLaneStride <= 0 ||
@@ -1041,7 +1067,7 @@ private:
     }
 
     LogicalResult lowerFactorTrunc(
-        VMITruncIOp op, ValueRange sourceParts, ArrayRef<Type> resultTypes, const TruncINarrowingPlan& plan,
+        OpT op, ValueRange sourceParts, ArrayRef<Type> resultTypes, const TruncINarrowingPlan& plan,
         StringAttr sat, bool requiresResultBitcast, ArrayRef<Type> originalResultTypes, ValueRange masks,
         OneToNPatternRewriter& rewriter) const
     {
@@ -1086,7 +1112,7 @@ private:
     };
 
     FailureOr<TruncIPhysicalPlan> buildPhysicalPlan(
-        VMITruncIOp op, ValueRange sourceParts, ArrayRef<Type> resultTypes, VMILayoutAttr sourceLayout,
+        OpT op, ValueRange sourceParts, ArrayRef<Type> resultTypes, VMILayoutAttr sourceLayout,
         VMILayoutAttr resultLayout, OneToNPatternRewriter& rewriter) const
     {
         FailureOr<std::pair<VRegType, VRegType>> uniformTypes =
@@ -1110,7 +1136,7 @@ private:
         }
         return TruncIPhysicalPlan{
             uniformTypes->first, uniformTypes->second, factor, denseLaneStride,
-            op->getAttrOfType<StringAttr>("saturate")};
+            op->template getAttrOfType<StringAttr>("saturate")};
     }
 
     struct TruncIAliasPlan {
@@ -1121,30 +1147,30 @@ private:
     };
 
     TruncIAliasPlan materializeSignedNarrowingAlias(
-        VMITruncIOp op, ValueRange sourceParts, ArrayRef<Type> resultTypes, const TruncIPhysicalPlan& physicalPlan,
+        OpT op, ValueRange sourceParts, ArrayRef<Type> resultTypes, const TruncIPhysicalPlan& physicalPlan,
         OneToNPatternRewriter& rewriter) const
     {
         TruncIAliasPlan aliasPlan;
         auto sourceIntegerType = dyn_cast<IntegerType>(physicalPlan.sourceType.getElementType());
         auto resultIntegerType = dyn_cast<IntegerType>(physicalPlan.resultType.getElementType());
-        bool signedNarrowing = sourceIntegerType && resultIntegerType && sourceIntegerType.isSigned() &&
-                               resultIntegerType.isSigned() &&
+        bool signedByteDestination = sourceIntegerType && resultIntegerType && resultIntegerType.isSigned() &&
+                               resultIntegerType.getWidth() == mlir::pto::kValue8 &&
                                sourceIntegerType.getWidth() > resultIntegerType.getWidth();
-        // A5 has no signed vcvt to an 8-bit destination (S16/S32 -> S8); the wider
-        // signed destinations such as S32 -> S16 are native.  For the non-native
-        // pairs a non-saturating truncation is bit-identical to the unsigned
-        // conversion, which is the only form the hardware offers.
+        // A5 has no signed vcvt to an 8-bit destination, including unsigned
+        // sources targeting signed bytes. NOSAT is bit-identical to the
+        // corresponding unsigned conversion, so reinterpret both carriers.
         bool noSat = !physicalPlan.saturate || physicalPlan.saturate.getValue() == "NOSAT";
-        bool noNativeSignedNarrow = resultIntegerType.getWidth() == mlir::pto::kValue8;
-        bool requiresAlias = signedNarrowing && noSat && noNativeSignedNarrow;
+        bool requiresAlias = signedByteDestination && noSat;
         if (!requiresAlias) {
             aliasPlan.sourceParts.assign(sourceParts.begin(), sourceParts.end());
             aliasPlan.resultTypes.assign(resultTypes.begin(), resultTypes.end());
             return aliasPlan;
         }
         // Both carrier aliases use unsigned integer element types.
-        auto uSourceElemTy = rewriter.getIntegerType(sourceIntegerType.getWidth(), false);
-        auto uResultElemTy = rewriter.getIntegerType(resultIntegerType.getWidth(), false);
+        auto uSourceElemTy =
+            IntegerType::get(rewriter.getContext(), sourceIntegerType.getWidth(), IntegerType::Unsigned);
+        auto uResultElemTy =
+            IntegerType::get(rewriter.getContext(), resultIntegerType.getWidth(), IntegerType::Unsigned);
         aliasPlan.originalResultTypes.assign(resultTypes.begin(), resultTypes.end());
         aliasPlan.sourceParts.reserve(sourceParts.size());
         for (Value sourcePart : sourceParts) {
@@ -1168,7 +1194,7 @@ private:
     }
 
     FailureOr<TruncINarrowingPlan> buildTruncINarrowingPlan(
-        VMITruncIOp op, const TruncIPhysicalPlan& physicalPlan, VMIVRegType resultVMIType, VMILayoutAttr sourceLayout,
+        OpT op, const TruncIPhysicalPlan& physicalPlan, VMIVRegType resultVMIType, VMILayoutAttr sourceLayout,
         size_t sourcePartCount, size_t resultPartCount, OneToNPatternRewriter& rewriter) const
     {
         int64_t factor = physicalPlan.factor;
@@ -1203,7 +1229,7 @@ private:
     }
 
     LogicalResult lowerNonGroupSlotTrunc(
-        VMITruncIOp op, ValueRange sourceParts, SmallVector<Type> resultTypes, VMILayoutAttr sourceLayout,
+        OpT op, ValueRange sourceParts, SmallVector<Type> resultTypes, VMILayoutAttr sourceLayout,
         VMILayoutAttr resultLayout, ValueRange masks, OneToNPatternRewriter& rewriter) const
     {
         FailureOr<TruncIPhysicalPlan> physicalPlan =
@@ -1235,8 +1261,21 @@ private:
     }
 
 public:
-    LogicalResult matchAndRewrite(VMITruncIOp op, OpAdaptor adaptor, OneToNPatternRewriter& rewriter) const override
+    LogicalResult matchAndRewrite(
+        OpT op, typename OneToNOpConversionPattern<OpT>::OpAdaptor adaptor,
+        OneToNPatternRewriter& rewriter) const override
     {
+        if constexpr (std::is_same_v<OpT, VMICvtOp>) {
+            auto sourceType = cast<VMIVRegType>(op.getSource().getType());
+            auto resultType = cast<VMIVRegType>(op.getResult().getType());
+            unsigned sourceBits = pto::getPTOStorageElemBitWidth(sourceType.getElementType());
+            unsigned resultBits = pto::getPTOStorageElemBitWidth(resultType.getElementType());
+            bool invalidIntegerNarrow = !isa<IntegerType>(sourceType.getElementType()) ||
+                                        !isa<IntegerType>(resultType.getElementType()) || sourceBits <= resultBits;
+            if (invalidIntegerNarrow) {
+                return rewriter.notifyMatchFailure(op, "expected an integer narrowing vcvt");
+            }
+        }
         FailureOr<VMIPhysicalConversionInput> input =
             getVMIPhysicalConversionInput(op, adaptor, *this->getTypeConverter());
         if (failed(input)) {

@@ -1412,8 +1412,8 @@ def VMICvtOp : VMI_Op<"vcvt", [Pure]> {
     - fp → fp, |dst| < |src|:  floating-point narrowing   (replaces truncf)
     - fp → int:                 signedness follows the result type
     - int → fp:                 currently requires an explicitly signed source
-    - int → int, |dst| > |src|: integer extension          (replaces extsi/extui)
-    - int → int, |dst| < |src|: integer truncation         (replaces trunci)
+    - int → int, |dst| > |src|: supported VCVTII widening pair
+    - int → int, |dst| < |src|: supported VCVTII narrowing pair
 
     Attributes:
     - `rounding`: rounding mode for fp narrowing and fp-to-integer
@@ -1421,12 +1421,17 @@ def VMICvtOp : VMI_Op<"vcvt", [Pure]> {
       H=half-up, Z=toward-zero; fp-to-integer accepts the hardware modes
       R/A/F/C/Z.
     - `saturate`: "SAT" or "NOSAT"; required for fp narrowing, integer
-      narrowing, and fp-to-int conversion.
+      narrowing, and fp-to-int conversion. Signed 8-bit integer destinations
+      from wider integer sources accept only "NOSAT".
     - `pmode`: predication mode; only "zero" is accepted.
 
     Signless integer element types use unsigned semantics. Thus fp→signless
-    follows the unsigned conversion path, and signless int→int widening uses
-    zero extension. Signed conversion semantics require explicit `siN` types.
+    follows the unsigned conversion path, and signless int→int widening follows
+    the unsigned VCVTII pair. Signed conversion semantics require explicit
+    `siN` types. Integer-to-integer pairs must be supported by VCVTII: in
+    particular, `si16`→`ui32` is supported and clamps negative values to zero;
+    it is not equivalent to zero extension. Unsupported width/sign pairs are
+    rejected.
 
     Example:
     ```mlir

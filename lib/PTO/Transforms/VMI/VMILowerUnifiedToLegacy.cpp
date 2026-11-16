@@ -63,6 +63,7 @@
 
 #include "PTO/Support/CodeConstants.h"
 #include "PTO/IR/PTO.h"
+#include "PTO/IR/IntegerVcvtContract.h"
 #include "PTO/IR/PTOTypeUtils.h"
 #include "PTO/Transforms/Passes.h"
 #include "PTO/Transforms/VMILayoutSupport.h"
@@ -1181,6 +1182,12 @@ void VMILowerUnifiedToLegacyPass::runOnOperation() {
   // Collect all unified VMI ops (walk encounters them in IR order).
   module.walk([&](Operation *op) {
     // Category A
+    bool directIntegerCvt = false;
+    if (auto cvt = dyn_cast<VMICvtOp>(op)) {
+      Type sourceElement = getVMIElementType(cvt.getSource());
+      Type resultElement = getVMIElementType(cvt.getResult());
+      directIntegerCvt = isDirectIntegerVcvtWidthChange(sourceElement, resultElement);
+    }
     if (isa<VMIVciOp, VMIVinterpretCastOp, VMIvSelOp, VMIVbrcOp>(op) ||
         // Category B — dual-form bitwise ops are split onto the mask interface
         // (mask operands) or the vreg interface (vreg operands, governed mask
@@ -1188,8 +1195,9 @@ void VMILowerUnifiedToLegacyPass::runOnOperation() {
         isa<VMIVandOp, VMIVorOp, VMIVxorOp, VMIVnotOp>(op) ||
         // Category C1
         isa<VMIVcmpOp, VMIVcmpsOp>(op) ||
-        // Category C2
-        isa<VMICvtOp>(op) ||
+        // Category C2 — small integer vcvt stays unified through layout and
+        // VMI-to-VPTO so the original VCVTII type pair is preserved.
+        (isa<VMICvtOp>(op) && !directIntegerCvt) ||
         // Category C3
         isa<VMIvLoadOp, VMIvStoreOp, VMIVsstbOp>(op) ||
         // Category C4

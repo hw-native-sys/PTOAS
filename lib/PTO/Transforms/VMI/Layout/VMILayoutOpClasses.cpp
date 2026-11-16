@@ -17,11 +17,17 @@
 //===----------------------------------------------------------------------===//
 
 #include "PTO/IR/PTO.h"
+#include "PTO/IR/IntegerVcvtContract.h"
 #include "PTO/Transforms/VMILayoutPlanner.h"
 
 using namespace mlir;
 
 bool mlir::pto::isVMILayoutCastOp(Operation* op)
 {
+    if (auto cvt = dyn_cast<VMICvtOp>(op)) {
+        auto sourceType = cast<VMIVRegType>(cvt.getSource().getType());
+        auto resultType = cast<VMIVRegType>(cvt.getResult().getType());
+        return isDirectIntegerVcvtWidthChange(sourceType.getElementType(), resultType.getElementType());
+    }
     return isa<VMIExtFOp, VMIExtSIOp, VMIExtUIOp, VMITruncFOp, VMITruncIOp, VMIFPToSIOp, VMIFPToUIOp, VMISIToFPOp>(op);
 }

@@ -10,6 +10,7 @@
 //===----------------------------------------------------------------------===//
 
 #include "PTO/IR/PTO.h"
+#include "PTO/IR/IntegerVcvtContract.h"
 #include "PTO/IR/PTOTypeUtils.h"
 #include "PTO/IR/VMIUtils.h"
 #include "PTO/Support/CodeConstants.h"
@@ -1120,6 +1121,18 @@ struct LayoutSolver {
     std::optional<WalkResult> addCastConstraint(Operation* op)
     {
         return llvm::TypeSwitch<Operation*, std::optional<WalkResult>>(op)
+            .Case<VMICvtOp>([this, op](VMICvtOp castOp) {
+                auto sourceType = cast<VMIVRegType>(castOp.getSource().getType());
+                auto resultType = cast<VMIVRegType>(castOp.getResult().getType());
+                if (!isDirectIntegerVcvtWidthChange(sourceType.getElementType(), resultType.getElementType())) {
+                    return std::optional<WalkResult>();
+                }
+                unsigned sourceBits = pto::getPTOStorageElemBitWidth(sourceType.getElementType());
+                unsigned resultBits = pto::getPTOStorageElemBitWidth(resultType.getElementType());
+                WalkResult result =
+                    sourceBits < resultBits ? addExtensionConstraint(castOp, op) : addTruncationConstraint(castOp, op);
+                return std::optional<WalkResult>(result);
+            })
             .Case<VMIFPToSIOp, VMIFPToUIOp, VMISIToFPOp>(
             [this, op](auto castOp) { return addConversionConstraint(castOp, op); })
             .Case<VMIExtFOp, VMIExtSIOp, VMIExtUIOp>(

@@ -10,6 +10,7 @@
 //===----------------------------------------------------------------------===//
 
 #include "VMIInternal.h"
+#include "PTO/IR/IntegerVcvtContract.h"
 
 using namespace mlir;
 using namespace mlir::pto;
@@ -542,23 +543,18 @@ static LogicalResult verifyCvtSaturateNarrow(
     if (satVal != "SAT" && satVal != "NOSAT") {
       return op.emitOpError("saturate must be 'SAT' or 'NOSAT'");
     }
-    bool signedSource = isa<IntegerType>(srcElem) &&
-                        cast<IntegerType>(srcElem).isSigned();
     bool signedResult = isa<IntegerType>(dstElem) &&
                         cast<IntegerType>(dstElem).isSigned();
-    // Only si32 -> si16 has a native signed int-narrow conversion.  The
-    // narrower signed destinations have no native hardware form, so the
-    // lowering aliases them through the unsigned conversion, which is
-    // bit-pattern equal ONLY under NOSAT (SAT would clamp to
-    // [0, 2^dstBits - 1] instead of the signed range).
-    bool nativeSignedNarrow =
-        srcBits == mlir::pto::kValue32 && dstBits == mlir::pto::kValue16;
+    // Signed 8-bit results from wider sources have no native form and can only
+    // preserve their low bits under NOSAT.
+    bool signedByteNarrow =
+        signedResult && dstBits == mlir::pto::kValue8 &&
+        (srcBits == mlir::pto::kValue16 || srcBits == mlir::pto::kValue32);
     if (dir == CvtDirection::IntNarrow && satVal == "SAT" &&
-        signedSource && signedResult && !nativeSignedNarrow) {
+        signedByteNarrow) {
       return op.emitOpError(
-          "signed int-narrow to a signed destination does not support "
-          "saturate=\"SAT\" (no native hardware form; only "
-          "saturate=\"NOSAT\" is allowed)");
+          "integer narrowing to a signed 8-bit destination from a wider "
+          "integer source only supports saturate=\"NOSAT\"");
     }
   } else if (satAttr && dir == CvtDirection::FpNarrow) {
     return op.emitOpError("'saturate' attribute is not valid for this fp-to-fp "
@@ -611,6 +607,18 @@ bool srcInt = isVMIIntegerLikeType(srcElem), dstInt = isVMIIntegerLikeType(dstEl
                                   srcFp, dstFp, srcInt, dstInt, fpContract,
                                   dir))) {
     return failure();
+  }
+  if (srcInt && dstInt && srcBits <= 32 && dstBits <= 32) {
+    auto sourceInteger = dyn_cast<IntegerType>(srcElem);
+    auto resultInteger = dyn_cast<IntegerType>(dstElem);
+    bool sourceSigned = sourceInteger && sourceInteger.isSigned();
+    bool resultSigned = resultInteger && resultInteger.isSigned();
+    auto integerContract = lookupIntegerVcvtContract(srcBits, sourceSigned, dstBits, resultSigned);
+    bool signedByteAlias = isIntegerVcvtSignedByteAlias(srcBits, dstBits, resultSigned);
+    if (!integerContract && !signedByteAlias) {
+      return emitOpError("unsupported integer vcvt source/result element type "
+                         "pair or saturate mode");
+    }
   }
   if (failed(verifyCvtRounding(*this, dir, fpContract))) {
     return failure();

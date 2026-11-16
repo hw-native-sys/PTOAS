@@ -1,0 +1,28 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software; you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+
+// RUN: pto-test-opt %s -split-input-file -verify-diagnostics
+
+module {
+  func.func @ui16_to_si32_is_not_a_vcvtii_pair(%src: !pto.vmi.vreg<128xui16>) {
+    // expected-error@+1 {{unsupported integer vcvt source/result element type pair or saturate mode}}
+    %result = pto.vmi.vcvt %src : !pto.vmi.vreg<128xui16> -> !pto.vmi.vreg<128xsi32>
+    return
+  }
+}
+
+// -----
+
+module {
+  func.func @ui16_to_si8_cannot_saturate(%src: !pto.vmi.vreg<128xui16>) {
+    // expected-error@+1 {{integer narrowing to a signed 8-bit destination from a wider integer source only supports saturate="NOSAT"}}
+    %result = pto.vmi.vcvt %src {saturate = "SAT"}
+        : !pto.vmi.vreg<128xui16> -> !pto.vmi.vreg<128xsi8>
+    return
+  }
+}

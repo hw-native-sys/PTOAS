@@ -10,6 +10,7 @@
 //===----------------------------------------------------------------------===//
 
 #include "PTO/IR/PTO.h"
+#include "PTO/IR/IntegerVcvtContract.h"
 #include "PTO/IR/PTOTypeUtils.h"
 #include "PTO/IR/VMIUtils.h"
 #include "PTO/Support/CodeConstants.h"
@@ -64,6 +65,15 @@ static bool getDirectionSpineLeg(Operation *op, DirectionSpineLeg &leg) {
   } else if (auto trunci = dyn_cast<VMITruncIOp>(op)) {
     source = trunci.getSource();
     result = trunci.getResult();
+  } else if (auto cvt = dyn_cast<VMICvtOp>(op)) {
+    auto sourceType = dyn_cast<VMIVRegType>(cvt.getSource().getType());
+    auto resultType = dyn_cast<VMIVRegType>(cvt.getResult().getType());
+    if (!sourceType || !resultType ||
+        !isDirectIntegerVcvtWidthChange(sourceType.getElementType(), resultType.getElementType())) {
+      return false;
+    }
+    source = cvt.getSource();
+    result = cvt.getResult();
   } else {
     return false;
   }
@@ -214,7 +224,13 @@ static void extendDirectionSpineWindow(
 // Whether \p op is a widening cast, i.e. the kind of op that closes a
 // narrow->wide handoff.
 static bool isSpineWideningCast(Operation *op) {
-  return isa<VMIExtFOp, VMIExtSIOp, VMIExtUIOp>(op);
+  DirectionSpineLeg leg;
+  return getDirectionSpineLeg(op, leg) && leg.widening;
+}
+
+static bool isSpineNarrowingCast(Operation *op) {
+  DirectionSpineLeg leg;
+  return getDirectionSpineLeg(op, leg) && !leg.widening;
 }
 
 //===----------------------------------------------------------------------===//
@@ -452,7 +468,9 @@ void mlir::pto::collectSpineScopedCasts(
     const llvm::SmallPtrSetImpl<Operation *> &spineLegs,
     llvm::SmallPtrSetImpl<Operation *> &scopedCasts) {
   for (Operation *op : spineLegs) {
-    if (!isa<VMITruncFOp, VMITruncIOp>(op) || op->getNumResults() != 1) {
+    bool isNarrowingCast = isSpineNarrowingCast(op);
+    bool hasSingleResult = op->getNumResults() == 1;
+    if (!isNarrowingCast || !hasSingleResult) {
       continue;
     }
     Value narrow = op->getResult(0);

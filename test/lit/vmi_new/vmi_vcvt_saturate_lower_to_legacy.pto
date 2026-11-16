@@ -99,15 +99,15 @@ module {
 // CHECK: pto.vmi.truncf {{.*}}saturate = "SAT"{{.*}} : !pto.vmi.vreg<64xf32> -> !pto.vmi.vreg<64xf16>
 
 // CHECK-LABEL: func.func @intnarrow_sat(
-// CHECK: pto.vmi.trunci
+// CHECK: pto.vmi.vcvt
 // CHECK-SAME: saturate = "SAT"
 
 // CHECK-LABEL: func.func @intnarrow_nosat(
-// CHECK: pto.vmi.trunci
+// CHECK: pto.vmi.vcvt
 // CHECK-SAME: saturate = "NOSAT"
 
 // CHECK-LABEL: func.func @intnarrow_default(
-// CHECK: pto.vmi.trunci {{.*}}saturate = "SAT"{{.*}} : !pto.vmi.vreg<64xsi32> -> !pto.vmi.vreg<64xsi16>
+// CHECK: pto.vmi.vcvt {{.*}}saturate = "SAT"{{.*}} : !pto.vmi.vreg<64xsi32> -> !pto.vmi.vreg<64xsi16>
 
 // CHECK-LABEL: func.func @fptosi_sat(
 // CHECK: pto.vmi.fptosi

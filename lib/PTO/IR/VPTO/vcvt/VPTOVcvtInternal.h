@@ -21,6 +21,7 @@
 #define PTO_IR_VPTO_VPTOVCVT_INTERNAL_H
 
 #include "VPTOInternal.h"
+#include "PTO/IR/IntegerVcvtContract.h"
 
 namespace mlir::pto::vcvt_detail {
 
@@ -83,6 +84,28 @@ using namespace mlir::pto;
     std::optional<VcvtPartFamily> partFamily = std::nullopt;
     const char *allowedRndModes = nullptr;
   };
+
+  [[maybe_unused]] inline std::optional<std::pair<unsigned, bool>>
+  getIntegerVcvtShape(VcvtElemKind elem) {
+    switch (elem) {
+    case VcvtElemKind::U8:
+      return std::make_pair(8u, false);
+    case VcvtElemKind::S8:
+      return std::make_pair(8u, true);
+    case VcvtElemKind::U16:
+      return std::make_pair(16u, false);
+    case VcvtElemKind::S16:
+      return std::make_pair(16u, true);
+    case VcvtElemKind::U32:
+      return std::make_pair(32u, false);
+    case VcvtElemKind::S32:
+      return std::make_pair(32u, true);
+    case VcvtElemKind::S64:
+      return std::make_pair(64u, true);
+    default:
+      return std::nullopt;
+    }
+  }
 
   [[maybe_unused]] inline VcvtElemKind classifyVcvtElemType(Type type) {
     if (type.isF16()) {
@@ -245,28 +268,21 @@ using namespace mlir::pto;
   }
 
   [[maybe_unused]] inline std::optional<VcvtContract> lookupU8Contract(VcvtElemKind dst) {
-    if (dst == VcvtElemKind::F16 || dst == VcvtElemKind::U16 ||
-        dst == VcvtElemKind::U32) {
+    if (dst == VcvtElemKind::F16) {
       return VcvtContract{false, false, true};
     }
     return std::nullopt;
   }
 
   [[maybe_unused]] inline std::optional<VcvtContract> lookupS8Contract(VcvtElemKind dst) {
-    if (dst == VcvtElemKind::F16 || dst == VcvtElemKind::S16 ||
-        dst == VcvtElemKind::S32) {
+    if (dst == VcvtElemKind::F16) {
       return VcvtContract{false, false, true};
     }
     return std::nullopt;
   }
 
   [[maybe_unused]] inline std::optional<VcvtContract> lookupU16Contract(VcvtElemKind dst) {
-    if (dst == VcvtElemKind::U8) {
-      return VcvtContract{false, true, true};
-    }
-    if (dst == VcvtElemKind::U32) {
-      return VcvtContract{false, false, true};
-    }
+    (void)dst;
     return std::nullopt;
   }
 
@@ -274,21 +290,14 @@ using namespace mlir::pto;
     if (dst == VcvtElemKind::F16) {
       return VcvtContract{true, false, false};
     }
-    if (dst == VcvtElemKind::U8) {
-      return VcvtContract{false, true, true};
-    }
-    if (dst == VcvtElemKind::F32 || dst == VcvtElemKind::U32 ||
-        dst == VcvtElemKind::S32) {
+    if (dst == VcvtElemKind::F32) {
       return VcvtContract{false, false, true};
     }
     return std::nullopt;
   }
 
   [[maybe_unused]] inline std::optional<VcvtContract> lookupU32Contract(VcvtElemKind dst) {
-    if (dst == VcvtElemKind::U8 || dst == VcvtElemKind::U16 ||
-        dst == VcvtElemKind::S16) {
-      return VcvtContract{false, true, true};
-    }
+    (void)dst;
     return std::nullopt;
   }
 
@@ -298,10 +307,6 @@ using namespace mlir::pto;
     }
     if (dst == VcvtElemKind::S64) {
       return VcvtContract{false, false, true};
-    }
-    if (dst == VcvtElemKind::U8 || dst == VcvtElemKind::U16 ||
-        dst == VcvtElemKind::S16) {
-      return VcvtContract{false, true, true};
     }
     return std::nullopt;
   }
@@ -316,8 +321,26 @@ using namespace mlir::pto;
     return std::nullopt;
   }
 
-  [[maybe_unused]] inline std::optional<VcvtContract> lookupVcvtContract(VcvtElemKind src,
-                                                        VcvtElemKind dst) {
+  [[maybe_unused]] inline std::optional<VcvtContract>
+  lookupVcvtContract(VcvtElemKind src, VcvtElemKind dst) {
+    auto sourceInteger = getIntegerVcvtShape(src);
+    auto resultInteger = getIntegerVcvtShape(dst);
+    if (sourceInteger && resultInteger) {
+      auto integerContract = lookupIntegerVcvtContract(
+          sourceInteger->first, sourceInteger->second, resultInteger->first,
+          resultInteger->second);
+      if (!integerContract) {
+        return std::nullopt;
+      }
+      std::optional<VcvtPartFamily> partFamily;
+      if (integerContract->requiresPart) {
+        partFamily = integerContract->partFamily == IntegerVcvtPartFamily::EvenOdd
+                         ? VcvtPartFamily::EvenOdd
+                         : VcvtPartFamily::Packed4;
+      }
+      return VcvtContract{false, integerContract->requiresSaturate,
+                          integerContract->requiresPart, partFamily};
+    }
     switch (src) {
     case VcvtElemKind::F32: return lookupF32Contract(dst);
     case VcvtElemKind::F16: return lookupF16Contract(dst);

@@ -660,7 +660,9 @@ static void populateVMIReductionAndConversionPatterns(
       OneToNVMIExtFOpPattern,
       OneToNVMIVUnzipOpPattern, OneToNVMIVZipOpPattern,
       OneToNVMIExtIOpPattern<VMIExtSIOp>, OneToNVMIExtIOpPattern<VMIExtUIOp>,
-      OneToNVMITruncIOpPattern, OneToNVMIFPToSIOpPattern,
+      OneToNVMIExtIOpPattern<VMICvtOp>,
+      OneToNVMITruncIOpPattern<VMITruncIOp>, OneToNVMITruncIOpPattern<VMICvtOp>,
+      OneToNVMIFPToSIOpPattern,
       OneToNVMIFPToUIOpPattern,
       OneToNVMISIToFPOpPattern, OneToNVMIBitcastOpPattern,
       OneToNVMIInterleaveOpPattern<VMIVintlvOp, VintlvOp>,
@@ -835,6 +837,25 @@ LogicalResult checkSupportedTruncIShape(VMITruncIOp op,
                                         std::string *reason = nullptr) {
   VMILayoutSupport supports;
   if (failed(supports.getTruncISupport(op, reason))) {
+    return failure();
+  }
+  return success();
+}
+
+LogicalResult checkSupportedIntegerCvtShape(VMICvtOp op,
+                                           std::string *reason = nullptr) {
+  auto sourceType = cast<VMIVRegType>(op.getSource().getType());
+  auto resultType = cast<VMIVRegType>(op.getResult().getType());
+  VMILayoutAttr sourceLayout = sourceType.getLayoutAttr();
+  VMILayoutAttr resultLayout = resultType.getLayoutAttr();
+  if (!sourceLayout || !resultLayout) {
+    if (reason) {
+      *reason = "requires assigned source/result layouts";
+    }
+    return failure();
+  }
+  if (failed(VMILayoutSupport().getCastLayoutFactForLayouts(
+          sourceType, resultType, sourceLayout, resultLayout, reason))) {
     return failure();
   }
   return success();

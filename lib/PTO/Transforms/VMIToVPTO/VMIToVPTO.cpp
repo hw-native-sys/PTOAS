@@ -11,6 +11,7 @@
 
 #include "PTO/Analysis/PTOAddressAnalysis.h"
 #include "PTO/IR/PTO.h"
+#include "PTO/IR/IntegerVcvtContract.h"
 #include "PTO/IR/PTOTypeUtils.h"
 #include "PTO/IR/VMIUtils.h"
 #include "PTO/IR/VPTOMemoryDist.h"

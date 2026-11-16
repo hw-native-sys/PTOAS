@@ -879,6 +879,20 @@ mask is carried as the predicate of the emitted `pto.vmi.vcvt` and reaches
 For `vcvt`, signless integer types (`i8`/`i16`/`i32`) are treated as
 unsigned. Use `siN` types for signed conversion semantics.
 
+Integer-to-integer conversions are limited to the supported VCVTII pairs:
+
+- Widening: `ui8→ui16/ui32`, `si8→si16/si32`, `ui16→ui32`, and
+  `si16→si32/ui32`. The `si16→ui32` conversion maps negative inputs to zero.
+- Narrowing: `ui16→ui8`, `si16→ui8`, `ui32→ui8/ui16/si16`, and
+  `si32→ui8/ui16/si16`, with `saturate="SAT"` or `"NOSAT"`.
+- A signed 8-bit result from a 16/32-bit integer source is supported with
+  `saturate="NOSAT"` and keeps the low 8 result bits. `saturate="SAT"` is
+  rejected for these pairs.
+
+Other integer width/sign pairs are rejected, even when the destination is
+wider. A `vcvt` mask selects input lanes for both widening and narrowing; masked
+off results are zero.
+
 **Parameters**:
 
 | Parameter | Type | Description |

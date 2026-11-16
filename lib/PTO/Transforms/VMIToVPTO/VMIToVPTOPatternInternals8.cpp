@@ -830,6 +830,22 @@ static std::optional<WalkResult> verifySupportedVMIFloatConversionOp(
 
 static std::optional<WalkResult> verifySupportedVMIIntegerConversionOp(
     Operation *op) {
+  if (auto vcvt = dyn_cast<VMICvtOp>(op)) {
+    auto sourceType = cast<VMIVRegType>(vcvt.getSource().getType());
+    auto resultType = cast<VMIVRegType>(vcvt.getResult().getType());
+    bool sourceIsInteger = isa<IntegerType>(sourceType.getElementType());
+    bool resultIsInteger = isa<IntegerType>(resultType.getElementType());
+    if (sourceIsInteger && resultIsInteger) {
+      unsigned sourceBits = pto::getPTOStorageElemBitWidth(sourceType.getElementType());
+      unsigned resultBits = pto::getPTOStorageElemBitWidth(resultType.getElementType());
+      if (sourceBits <= 32 && resultBits <= 32) {
+        return verifySupportedShapeOp(
+            vcvt, checkSupportedIntegerCvtShape,
+            "pto.vmi.vcvt integer conversion requires a supported assigned "
+            "layout pair (");
+      }
+    }
+  }
   if (auto extsi = dyn_cast<VMIExtSIOp>(op)) {
     return verifySupportedShapeOp(
         extsi, checkSupportedExtSIShape,

@@ -120,7 +120,9 @@ LogicalResult PlanGraphBuilder::buildRelation(const VMILayoutOpRelation& relatio
         .Case<VMIStrideStoreOp, VMIScatterOp, VMICompressStoreOp>([&](auto) { return buildIndexedStore(relation); })
         .Case<VMIMaskedStoreOp>([&](auto) { return buildMaskedStore(relation); })
         .Case<VMIVUnzipOp, VMIVZipOp>([&](auto) { return buildPairedShuffle(op, relation); })
-        .Case<VMIExtFOp, VMIExtSIOp, VMIExtUIOp, VMITruncFOp, VMITruncIOp, VMIFPToSIOp, VMIFPToUIOp, VMISIToFPOp>(
+        .Case<VMICvtOp, VMIExtFOp, VMIExtSIOp, VMIExtUIOp,
+              VMITruncFOp, VMITruncIOp, VMIFPToSIOp, VMIFPToUIOp,
+              VMISIToFPOp>(
             [&](auto) { return buildCast(op, relation); })
         .Default([&](Operation*) {
             return isVMISameLayoutOp(op) || isa<VMIVexpdifOp>(op) ? buildSameLayoutOp(op, relation) : failure();
@@ -1475,7 +1477,10 @@ FailureOr<SmallVector<PhysicalValue, mlir::pto::kValue4>> PlanGraphBuilder::buil
     // Native widening emits one VCVT per result carrier, for both integer and
     // floating types. A replacement recipe (integer unpack or BF16 interleave)
     // is charged intrinsically instead; its result views emit no extra VCVTs.
-    bool nativeExtension = isa<VMIExtFOp, VMIExtUIOp, VMIExtSIOp>(op) && relation.intrinsicRearrangementCost == 0;
+    bool nativeExtension =
+        (isa<VMIExtFOp, VMIExtUIOp, VMIExtSIOp>(op) ||
+         (isa<VMICvtOp>(op) && sourceBits < resultBits)) &&
+        relation.intrinsicRearrangementCost == 0;
     PhysicalActionKind conversionKind = nativeExtension ? PhysicalActionKind::Compute : PhysicalActionKind::Semantic;
     if (sourceBits != resultBits) {
         return sourceBits < resultBits ? buildWideningCast(source, resultArity, scope, conversionKind, predicate) :

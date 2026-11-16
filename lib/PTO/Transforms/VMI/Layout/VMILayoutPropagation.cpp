@@ -11,6 +11,7 @@
 
 #include "PTO/Transforms/VMILayoutPropagation.h"
 
+#include "PTO/IR/IntegerVcvtContract.h"
 #include "PTO/Support/CodeConstants.h"
 #include "PTO/IR/VMIUtils.h"
 #include "PTO/Transforms/VMILayoutSupport.h"
@@ -249,8 +250,14 @@ static bool isEqualWidthBitcastOp(Operation *op) {
 }
 
 static bool isCastOp(Operation *op) {
+  if (auto cvt = dyn_cast<VMICvtOp>(op)) {
+    auto sourceType = dyn_cast<VMIVRegType>(cvt.getSource().getType());
+    auto resultType = dyn_cast<VMIVRegType>(cvt.getResult().getType());
+    return sourceType && resultType &&
+           isDirectIntegerVcvtWidthChange(sourceType.getElementType(), resultType.getElementType());
+  }
   return isa<VMIExtFOp, VMIExtSIOp, VMIExtUIOp, VMITruncFOp, VMITruncIOp,
-               VMIFPToSIOp, VMIFPToUIOp, VMISIToFPOp>(op);
+             VMIFPToSIOp, VMIFPToUIOp, VMISIToFPOp>(op);
 }
 
 class VMISameLayoutTransfer final : public VMILayoutTransfer {

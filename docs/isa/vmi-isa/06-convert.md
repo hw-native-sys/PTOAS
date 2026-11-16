@@ -34,9 +34,14 @@
   5. **SiToFp** — `signed int → fp`. The currently supported pairs are
      `si32 → f32` and `si8 → f16` (see the conversion contract matrix below).
 
-  6. **IntWiden** — `int → int`, `|dst| > |src|`.
+  6. **IntWiden** — `int → int`, `|dst| > |src|`, restricted to the
+     supported VCVTII type pairs. `si16 → ui32` clamps negative inputs to
+     zero by default.
 
-  7. **IntNarrow** — `int → int`, `|dst| < |src|`.
+  7. **IntNarrow** — `int → int`, `|dst| < |src|`, restricted to the
+     supported VCVTII type pairs. A signed 8-bit destination is also allowed
+     from 16/32-bit integer sources with `saturate = "NOSAT"`, which keeps the
+     low 8 result bits.
 
 - **syntax:**
   ```mlir
@@ -89,8 +94,9 @@
 | FpToSi | `f16→si32` | optional: `R`/`A`/`F`/`C`/`Z` | forbidden |
 | FpToUi | `f16→ui8`  | optional: `R`/`A`/`F`/`C`/`Z` | required: `SAT`/`NOSAT` |
 | SiToFp | `si32→f32`, `si8→f16`  | forbidden | forbidden |
-| IntWiden | any `si8/si16/si32`, `ui8/ui16/ui32`, pair with a wider destination (e.g. `ui8→ui16`, `si16→si32`,); same-width is rejected | forbidden | forbidden |
-| IntNarrow | any `si8/si16/si32`, `ui8/ui16/ui32`, pair with a narrower destination (e.g. `ui32→ui8`, `si32→si16`) | forbidden | required: `SAT`/`NOSAT`; `si32→si8` accepts only `NOSAT` |
+| IntWiden | `ui8→ui16/ui32`, `si8→si16/si32`, `ui16→ui32`, `si16→si32/ui32`; same-width is rejected | forbidden | forbidden |
+| IntNarrow (native VCVTII) | `ui16→ui8`, `si16→ui8`, `ui32→ui8/ui16/si16`, `si32→ui8/ui16/si16` | forbidden | required: `SAT`/`NOSAT` |
+| IntNarrow (signed 8-bit result) | `si16/ui16/si32/ui32→si8` | forbidden | required: `NOSAT` only; keeps the low 8 result bits |
 
 
 - **lowering to `pto.mi`:**
@@ -182,6 +188,11 @@
 - **notes:**
   - `vcvt` **does not change lane count** — `src.L == dst.L` always. The
     physical register count `K` changes because `bitwidth(T)` changes.
+  - Integer conversions accept only the type pairs listed above. A conversion
+    such as `ui16→si32` is rejected even though the destination is wider.
+    The native `si16→ui32` conversion maps negative inputs to zero.
+  - A `vcvt` mask applies to input lanes for widening, narrowing, and
+    same-width conversions. Predicate-inactive results are zero.
   - The `part`/`parity`/`width` axes are lowering-only; the user never writes
     `EVEN`/`ODD`/`P0..P3`.
   - Radix-4 (8↔32) is **not** a stacked predicate chain and **not** a UB

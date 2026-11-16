@@ -25,27 +25,36 @@ static FailureOr<VMILoadSafetyPolicy> parseLoadSafetyPolicy(StringRef value) {
 }
 
 /// Rejects a masked unified pto.vmi.vcvt that reached VMI-to-VPTO conversion
-/// without first being expanded into the legacy casts.  The other cast forms
-/// carry the predicate through their own lowering, so only the unified form is
-/// checked here; the walk stops at the first offender to keep one diagnostic.
+/// without first being expanded, except for the integer widths lowered directly
+/// from their VCVTII type pair. The walk stops at the first offender.
 static LogicalResult verifyNoUnexpandedMaskedCvt(ModuleOp module)
 {
-    Operation* unexpandedMaskedCvt = nullptr;
-    module.walk([&](Operation* op) {
-        bool maskedUnifiedCvt = isa<VMICvtOp>(op) && op->getNumOperands() == 2;
-        if (maskedUnifiedCvt) {
-            unexpandedMaskedCvt = op;
-            return WalkResult::interrupt();
-        }
-        return WalkResult::advance();
-    });
-    if (!unexpandedMaskedCvt) {
-        return success();
+  Operation *unexpandedMaskedCvt = nullptr;
+  module.walk([&](Operation *op) {
+    auto cvt = dyn_cast<VMICvtOp>(op);
+    bool maskedUnifiedCvt = false;
+    bool hasPredicateOperand = op->getNumOperands() == 2;
+    if (cvt && hasPredicateOperand) {
+      auto sourceType = dyn_cast<VMIVRegType>(cvt.getSource().getType());
+      auto resultType = dyn_cast<VMIVRegType>(cvt.getResult().getType());
+      bool directIntegerCvt =
+          sourceType && resultType &&
+          isDirectIntegerVcvtWidthChange(sourceType.getElementType(), resultType.getElementType());
+      maskedUnifiedCvt = !directIntegerCvt;
     }
-    unexpandedMaskedCvt->emitError() << "masked pto.vmi.vcvt must be expanded by "
-                                        "-vmi-lower-unified-to-legacy before VMI-to-VPTO conversion "
-                                        "(issue #1671)";
-    return failure();
+    if (maskedUnifiedCvt) {
+      unexpandedMaskedCvt = op;
+      return WalkResult::interrupt();
+    }
+    return WalkResult::advance();
+  });
+  if (!unexpandedMaskedCvt) {
+    return success();
+  }
+  unexpandedMaskedCvt->emitError() << "masked pto.vmi.vcvt must be expanded by "
+                                      "-vmi-lower-unified-to-legacy before VMI-to-VPTO conversion "
+                                      "(issue #1671)";
+  return failure();
 }
 
 struct VMIToVPTOPass : public mlir::pto::impl::VMIToVPTOBase<VMIToVPTOPass> {
@@ -84,17 +93,12 @@ struct VMIToVPTOPass : public mlir::pto::impl::VMIToVPTOBase<VMIToVPTOPass> {
       signalPassFailure();
       return;
     }
-    // Every legacy VMI cast forwards its conversion predicate as the mask
-    // operand of the pto.vcvt it emits (or ANDs it into the active-slot gate of
-    // a group-slot conversion), so pto.vcvt's zero-inactive contract carries the
-    // VMI contract.  Sub-paths that have no conversion instruction at all fail
-    // loudly inside their own pattern instead of dropping the predicate.
-    //
-    // The unified pto.vmi.vcvt is the exception: it must be expanded into those
-    // legacy casts before this pass can lower its predicate.
+    // Cast lowerings either forward their conversion predicate to pto.vcvt (or
+    // combine it with an active-slot mask), or reject paths without an instruction
+    // that can preserve it. Integer VMICvtOp is lowered directly here.
     if (failed(verifyNoUnexpandedMaskedCvt(module))) {
-        signalPassFailure();
-        return;
+      signalPassFailure();
+      return;
     }
     if (failed(verifySupportedVMIToVPTOOps(
         module, enableStableGatherMaskedLoad, *loadSafetyPolicy,

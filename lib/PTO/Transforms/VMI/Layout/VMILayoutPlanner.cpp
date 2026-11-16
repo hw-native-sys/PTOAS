@@ -16,6 +16,7 @@
 #include "VMILayoutComponentGraph.h"
 #include "VMILayoutRelations.h"
 
+#include "PTO/IR/IntegerVcvtContract.h"
 #include "PTO/IR/PTOTypeUtils.h"
 #include "PTO/IR/VMIUtils.h"
 #include "PTO/Transforms/VMIControlFlowSupport.h"
@@ -139,15 +140,17 @@ static bool isVMILayoutStructuralOp(Operation* op)
         scf::ExecuteRegionOp, scf::ForOp, scf::IfOp, scf::IndexSwitchOp, scf::YieldOp, scf::WhileOp>(op);
 }
 
-/// Unified-dialect spellings that -vmi-lower-unified-to-legacy replaces with a
-/// legacy op later in the pipeline.  Upstream runs layout assignment before
-/// that lowering, and its own constraint walk (collect() in
-/// VMILayoutAssignment.cpp) states no relation for these spellings: it knows
-/// pto.vmi.load, pto.vmi.store and pto.vmi.extf, not their unified forms.  A
-/// component must therefore not fail merely because the relation provider has
-/// no case for the unified spelling - the lowering decides the layout from the
-/// value it is handed, exactly as it does in upstream's own flow.
-static bool isPreLoweringUnifiedOp(Operation* op) { return isa<VMICvtOp, VMIvLoadOp, VMIvStoreOp, VMIVsstbOp>(op); }
+/// Unified spellings that -vmi-lower-unified-to-legacy replaces after layout
+/// assignment and that do not have an independent layout relation.
+static bool isPreLoweringUnifiedOp(Operation *op) {
+  if (auto cvt = dyn_cast<VMICvtOp>(op)) {
+    auto sourceType = dyn_cast<VMIVRegType>(cvt.getSource().getType());
+    auto resultType = dyn_cast<VMIVRegType>(cvt.getResult().getType());
+    return !sourceType || !resultType ||
+           !isDirectIntegerVcvtWidthChange(sourceType.getElementType(), resultType.getElementType());
+  }
+  return isa<VMIvLoadOp, VMIvStoreOp, VMIVsstbOp>(op);
+}
 
 static bool isStructuralTransportValue(Value value)
 {
