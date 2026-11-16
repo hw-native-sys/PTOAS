@@ -12,6 +12,7 @@
 import ast
 from itertools import product
 from pathlib import Path
+import re
 import unittest
 
 import ptodsl.tilelib as tilelib
@@ -1627,6 +1628,34 @@ class TileLibCatalogTest(unittest.TestCase):
                 selected = select("pto.tinsert", "a5", specs)
                 self.assertEqual(selected.name, "template_tinsert_acc_to_mat_basic")
                 self.assertIn("pto.mte_l0c_l1", selected.specialize(**specs).mlir_text())
+
+    def test_tinsert_acc_to_mat_stride_units(self):
+        # FIXPIPE takes source C0 units and destination elements, never bytes.
+        for use_fp, (src_rows, dst_rows, src_stride, dst_stride) in product(
+            (False, True), ((16, 16, 16, 128), (32, 48, 32, 384))
+        ):
+            with self.subTest(use_fp=use_fp, src_rows=src_rows, dst_rows=dst_rows):
+                specs = {
+                    "src": TileSpec(
+                        shape=(src_rows, 16), dtype=ScalarType("f32"), memory_space="acc",
+                        b_layout="col_major", s_layout="row_major",
+                    ),
+                    "index_row": ScalarSpec(dtype=ScalarType("i32"), value=0),
+                    "index_col": ScalarSpec(dtype=ScalarType("i32"), value=0),
+                    "dst": TileSpec(
+                        shape=(dst_rows, 32), dtype=ScalarType("f32"), memory_space="mat",
+                        b_layout="col_major", s_layout="row_major", s_fractal_size=512,
+                    ),
+                }
+                if use_fp:
+                    specs["fp"] = TileSpec(shape=(1, 16), dtype=ScalarType("f32"), memory_space="scaling")
+                rendered = select("pto.tinsert", "a5", specs).specialize(**specs).mlir_text()
+                strides = re.search(
+                    r"pto.mte_l0c_l1 %\w+, %\w+, %\w+, %\w+, (%\w+), (%\w+)", rendered
+                )
+                self.assertIsNotNone(strides, rendered)
+                for operand, expected in zip(strides.groups(), (src_stride, dst_stride)):
+                    self.assertIn(f"{operand} = pto.constant {expected} : i64", rendered)
 
     def test_tinsert_acc_to_mat_f32_fractal_512_uses_nz_channel_split(self):
         common = {

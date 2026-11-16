@@ -293,8 +293,9 @@ def template_tinsert_acc_to_mat_basic(
         pto.addptr(dst.as_ptr(), dst_offset),
         valid_rows,
         n_size,
-        src.shape[0] * pto.bytewidth(src.dtype),
-        dst.shape[0] * c0_size * elem_bytes,
+        # FIXPIPE strides use C0 units for L0C and elements for L1.
+        src.shape[0],
+        dst.shape[0] * c0_size,
         layout=_acc_to_mat_layout(dst),
         pre_relu=_tinsert_pre_relu(),
     )
@@ -335,8 +336,9 @@ def template_tinsert_fp_acc_to_mat(
         pto.addptr(dst.as_ptr(), dst_offset),
         valid_rows,
         n_size,
-        src.shape[0] * pto.bytewidth(src.dtype),
-        dst.shape[0] * c0_size * elem_bytes,
+        # FIXPIPE strides use C0 units for L0C and elements for L1.
+        src.shape[0],
+        dst.shape[0] * c0_size,
         layout=_acc_to_mat_layout(dst),
         pre_quant=(fp.as_ptr(), _tinsert_fp_quant_mode(src.dtype, dst.dtype)),
         pre_relu=_tinsert_pre_relu(),

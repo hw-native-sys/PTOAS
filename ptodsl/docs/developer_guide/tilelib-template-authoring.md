@@ -77,6 +77,13 @@ Use the spec fields rather than re-deriving them from names. For example,
 valid-shape-sensitive templates should read `tile.valid_shape`; view-sensitive
 load/store templates should read `view.shape` and `view.strides`.
 
+For ACC-to-MAT FIXPIPE transfers, `mte_l0c_l1` takes the source stride in
+C0-size units and the destination stride in destination elements. Do not
+multiply either stride by the dtype byte width. For a 16-row f32 source
+inserted into a 16-row f32 MAT with fractal size 512, the strides are 16 and
+128; the NZ layout uses channel split with C0 equal to 8. Check stride operands
+alongside layout flags when adding writeback regression coverage.
+
 ## Constraint Predicates
 
 Constraint predicates are called by parameter-name matching. A predicate can
