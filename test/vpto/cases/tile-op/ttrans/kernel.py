@@ -10,12 +10,16 @@
 
 """Runtime numeric regression for the ``pto.ttrans`` tile templates (issue #1604).
 
-Four shapes cover all four b8/b16 ttrans templates on the VPTO path:
+Shapes cover all four b8/b16 ttrans templates on the VPTO path:
 
 - i8  [32,32] tall: b8 colwise (vgather2 zero-extend + PK_B16 packed store)
 - ui8 [32,32] tall: b8 colwise
 - f16 [16,32] wide: b16 rowwise (vlds + 16-bit-offset vscatter)
 - i8  [32,64] wide: b8 rowwise (UNPK_B8 load + even-byte vscatter)
+
+When a tile holds more than 65536 elements (rows * cols > 2**16, i.e.
+the largest linear offset row * stride + col exceeds 65535), the
+transpose result must still match the golden (src.T) element by element.
 
 The host side mirrors the other PTODSL VPTO cases (e.g. micro-op/
 cube-matmul/mad_mx_e8m0_stage_abi): torch_npu owns device memory and the
@@ -60,6 +64,13 @@ SHAPES = (
     ("ttrans_ui8_tall_32x32", pto.ui8, np.uint8, 32, 32),
     ("ttrans_f16_wide_16x32", pto.f16, np.float16, 16, 32),
     ("ttrans_i8_wide_32x64", pto.i8, np.int8, 32, 64),
+    # issue #1604 reopen: 83968-element b8 tiles exceed the 16-bit offset span.
+    ("ttrans_i8_tall_ubmax_2624x32", pto.i8, np.int8, 2624, 32),
+    ("ttrans_ui8_tall_ubmax_2624x32", pto.ui8, np.uint8, 2624, 32),
+    ("ttrans_i8_wide_ubmax_32x2624", pto.i8, np.int8, 32, 2624),
+    ("ttrans_ui8_wide_ubmax_32x2624", pto.ui8, np.uint8, 32, 2624),
+    # boundary: exactly 2**16 elements, max offset 65535 of the old single-base form.
+    ("ttrans_i8_tall_2048x32", pto.i8, np.int8, 2048, 32),
 )
 
 KERNELS = {

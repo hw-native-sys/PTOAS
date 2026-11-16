@@ -1856,6 +1856,7 @@ For each element (i, j):
     - 2 bytes: `i16`, `f16`, `bf16`
     - 1 byte: `i8`
   - The implementation operates over the static tile shape (`rows/cols`) and does not consult the valid region.
+  - The b8/b16 vector forms address through 16-bit element offsets, while a b8 tile can hold more than `2**16` elements inside the vector buffer. The b8 paths therefore rebase the gather/scatter base pointer per chunk so every offset stays within one chunk span; a stride whose single `128`-lane chunk needs more than `2**16 - 1` element offsets is rejected (mirroring the upstream `TTrans.hpp` `static_assert`).
 - **Temporary tile**:
   - The current PTO IR surface requires `tmp`.
   - PTO IR does not require `tmp` to match the shape or valid shape of `src` / `dst`.

@@ -40,6 +40,14 @@ CASE_SHAPES = [
     ("ui8_32x32", pto.ui8, 32, 32),  # tall b8
     ("i8_32x64", pto.i8, 32, 64),    # wide b8: RowWise UNPK_B8 path (64*1=64 aligned)
     ("ui8_32x64", pto.ui8, 32, 64),  # wide b8
+    # issue #1604 reopen: b8 tiles beyond 2**16 elements overflow the 16-bit
+    # vgather2/vscatter offset span; every b8 chunk now gathers/scatters
+    # through an addptr-rebased base pointer.
+    ("i8_2624x32", pto.i8, 2624, 32),    # tall b8 ubmax
+    ("ui8_2624x32", pto.ui8, 2624, 32),  # tall b8 ubmax
+    ("i8_32x2624", pto.i8, 32, 2624),    # wide b8 ubmax
+    ("ui8_32x2624", pto.ui8, 32, 2624),  # wide b8 ubmax
+    ("i8_2048x32", pto.i8, 2048, 32),    # boundary: exactly 2**16 elements
 ]
 
 
