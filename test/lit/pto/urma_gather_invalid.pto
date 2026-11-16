@@ -1,0 +1,176 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+
+// RUN: pto-test-opt --split-input-file --verify-diagnostics %s
+
+module attributes {pto.target_arch = "a3"} {
+  func.func @a3(%workspace: !pto.ptr<i8, gm>)
+      attributes {pto.kernel_kind = #pto.kernel_kind<vector>} {
+    // expected-error @+1 {{requires the A5 target}}
+    %s, %ok = pto.comm.build_urma_session workspace(%workspace : !pto.ptr<i8, gm>)
+        -> !pto.async_session<urma>, i1
+    return
+  }
+}
+
+// -----
+
+module attributes {pto.target_arch = "a5"} {
+  func.func @empty_requires_final(%workspace: !pto.ptr<i8, gm>)
+      attributes {pto.kernel_kind = #pto.kernel_kind<vector>} {
+    %s, %init = pto.comm.build_urma_session workspace(%workspace : !pto.ptr<i8, gm>)
+        -> !pto.async_session<urma>, i1
+    // expected-error @+1 {{requires final and defer_and_submit for empty Gather}}
+    %event, %ok = pto.comm.tput_async_gather session(%s : !pto.async_session<urma>)
+        -> !pto.async_event<urma>, i1
+    return
+  }
+}
+
+// -----
+
+module attributes {pto.target_arch = "a5"} {
+  func.func @static_zero(%workspace: !pto.ptr<i8, gm>, %desc: !pto.ptr<i8, gm>, %n: ui32)
+      attributes {pto.kernel_kind = #pto.kernel_kind<vector>} {
+    %s, %init = pto.comm.build_urma_session workspace(%workspace : !pto.ptr<i8, gm>)
+        -> !pto.async_session<urma>, i1
+    %zero = arith.constant 0 : i32
+    %count = builtin.unrealized_conversion_cast %zero : i32 to ui32
+    // expected-error @+1 {{expects positive descriptor counts for payload Gather}}
+    %event, %ok = pto.comm.tput_async_gather destinations(%desc, %count : !pto.ptr<i8, gm>, ui32)
+        segments(%desc, %n : !pto.ptr<i8, gm>, ui32) session(%s : !pto.async_session<urma>)
+        -> !pto.async_event<urma>, i1
+    return
+  }
+}
+
+// -----
+
+module attributes {pto.target_arch = "a5"} {
+  func.func @zero_batch_size(%workspace: !pto.ptr<i8, gm>)
+      attributes {pto.kernel_kind = #pto.kernel_kind<vector>} {
+    %s, %init = pto.comm.build_urma_session workspace(%workspace : !pto.ptr<i8, gm>)
+        -> !pto.async_session<urma>, i1
+    // expected-error @+1 {{requires nonzero batch_size for deferred submission}}
+    %event, %ok = pto.comm.tput_async_gather session(%s : !pto.async_session<urma>)
+        {cqe_policy = #pto.urma_cqe_policy<final>,
+         submit_mode = #pto.async_submit_mode<defer_and_submit>, batch_size = 0 : ui32}
+        -> !pto.async_event<urma>, i1
+    return
+  }
+}
+
+// -----
+
+module attributes {pto.target_arch = "a5"} {
+  func.func @scratch_too_small(%workspace: !pto.ptr<i8, gm>, %scratch: !pto.tile_buf<vec, 1x1024xi8>)
+      attributes {pto.kernel_kind = #pto.kernel_kind<vector>} {
+    // expected-error @+1 {{expects scratch to provide at least 1184 bytes}}
+    %s, %ok = pto.comm.build_urma_session workspace(%workspace : !pto.ptr<i8, gm>)
+        scratch(%scratch : !pto.tile_buf<vec, 1x1024xi8>) -> !pto.async_session<urma>, i1
+    return
+  }
+}
+
+// -----
+
+module attributes {pto.target_arch = "a5"} {
+  func.func @wrong_scratch(%workspace: !pto.ptr<i8, gm>,
+                          %scratch: !pto.tile_buf<vec, 1x1280xi8>, %other: !pto.tile_buf<vec, 1x1280xi8>)
+      attributes {pto.kernel_kind = #pto.kernel_kind<vector>} {
+    %s, %init = pto.comm.build_urma_session workspace(%workspace : !pto.ptr<i8, gm>)
+        scratch(%scratch : !pto.tile_buf<vec, 1x1280xi8>) -> !pto.async_session<urma>, i1
+    // expected-error @+1 {{requires the same scratch operand as build_urma_session}}
+    %event, %ok = pto.comm.tput_async_gather session(%s : !pto.async_session<urma>)
+        scratch(%other : !pto.tile_buf<vec, 1x1280xi8>)
+        {cqe_policy = #pto.urma_cqe_policy<final>, submit_mode = #pto.async_submit_mode<defer_and_submit>}
+        -> !pto.async_event<urma>, i1
+    return
+  }
+}
+
+// -----
+
+module attributes {pto.target_arch = "a5"} {
+  func.func @wrong_urma_session(%workspace: !pto.ptr<i8, gm>, %other: !pto.async_session<urma>)
+      attributes {pto.kernel_kind = #pto.kernel_kind<vector>} {
+    %s, %init = pto.comm.build_urma_session workspace(%workspace : !pto.ptr<i8, gm>)
+        -> !pto.async_session<urma>, i1
+    %event, %ok = pto.comm.tput_async_gather session(%s : !pto.async_session<urma>)
+        {cqe_policy = #pto.urma_cqe_policy<final>, submit_mode = #pto.async_submit_mode<defer_and_submit>}
+        -> !pto.async_event<urma>, i1
+    // expected-error @+1 {{requires a Gather event and its submitting session in the same function}}
+    %done = pto.comm.wait_async_event(%event, %other : !pto.async_event<urma>, !pto.async_session<urma>) -> i1
+    return
+  }
+}
+
+// -----
+
+module attributes {pto.target_arch = "a5"} {
+  func.func @mixed_engines(%event: !pto.async_event<urma>, %sdma: !pto.async_session)
+      attributes {pto.kernel_kind = #pto.kernel_kind<vector>} {
+    // expected-error @+1 {{requires matching async event and session engine types}}
+    %done = pto.comm.test_async_event(%event, %sdma : !pto.async_event<urma>, !pto.async_session) -> i1
+    return
+  }
+}
+
+// -----
+
+module attributes {pto.target_arch = "a5"} {
+  func.func @wait_no_cqe(%workspace: !pto.ptr<i8, gm>, %desc: !pto.ptr<i8, gm>, %n: ui32)
+      attributes {pto.kernel_kind = #pto.kernel_kind<vector>} {
+    %s, %init = pto.comm.build_urma_session workspace(%workspace : !pto.ptr<i8, gm>)
+        -> !pto.async_session<urma>, i1
+    %event, %ok = pto.comm.tput_async_gather destinations(%desc, %n : !pto.ptr<i8, gm>, ui32)
+        segments(%desc, %n : !pto.ptr<i8, gm>, ui32) session(%s : !pto.async_session<urma>)
+        {cqe_policy = #pto.urma_cqe_policy<no_cqe>} -> !pto.async_event<urma>, i1
+    // expected-error @+1 {{cannot wait on or test a no_cqe Gather event}}
+    %done = pto.comm.wait_async_event(%event, %s : !pto.async_event<urma>, !pto.async_session<urma>) -> i1
+    return
+  }
+}
+
+// -----
+
+module attributes {pto.target_arch = "a5"} {
+  func.func @cube(%workspace: !pto.ptr<i8, gm>) attributes {pto.kernel_kind = #pto.kernel_kind<cube>} {
+    // expected-error @+1 {{requires an AIV kernel function or vector section}}
+    %s, %ok = pto.comm.build_urma_session workspace(%workspace : !pto.ptr<i8, gm>)
+        -> !pto.async_session<urma>, i1
+    return
+  }
+}
+
+// -----
+
+module attributes {pto.target_arch = "a5"} {
+  func.func @vector_section_in_cube(%workspace: !pto.ptr<i8, gm>)
+      attributes {pto.kernel_kind = #pto.kernel_kind<cube>} {
+    pto.section.vector {
+      // expected-error @+1 {{requires an AIV kernel function or vector section}}
+      %s, %ok = pto.comm.build_urma_session workspace(%workspace : !pto.ptr<i8, gm>)
+          -> !pto.async_session<urma>, i1
+    }
+    return
+  }
+}
+
+// -----
+
+module attributes {pto.target_arch = "a5"} {
+  func.func @simt(%workspace: !pto.ptr<i8, gm>) attributes {pto.kernel_kind = #pto.kernel_kind<vector>} {
+    pto.section.simt <<<32, 1, 1>>> {
+      // expected-error @+1 {{is not supported in SIMT execution scope}}
+      %s, %ok = pto.comm.build_urma_session workspace(%workspace : !pto.ptr<i8, gm>)
+          -> !pto.async_session<urma>, i1
+    }
+    return
+  }
+}

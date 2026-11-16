@@ -1098,6 +1098,10 @@ private:
 
   LogicalResult validateEmissionOperationSurface() {
     WalkResult walkResult = helper.getModule().walk([](Operation *op) {
+      if (isa<BuildUrmaSessionOp, TPutAsyncGatherOp>(op)) {
+        op->emitOpError("is not supported by the VPTO backend; URMA Gather requires EmitC");
+        return WalkResult::interrupt();
+      }
       if (isa<BuildAsyncSessionOp, TPutAsyncOp, TGetAsyncOp,
               WaitAsyncEventOp, TestAsyncEventOp>(op)) {
         op->emitOpError()

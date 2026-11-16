@@ -45,7 +45,8 @@ void WaitAsyncEventOp::getEffects(
     SmallVectorImpl<SideEffects::EffectInstance<MemoryEffects::Effect>>
         &effects) {
   addEffect(effects, &getEventMutable(), MemoryEffects::Read::get());
-  addEffect(effects, &getSessionMutable(), MemoryEffects::Read::get());
+  addReadWriteEffects(effects, getSessionMutable());
+  addAsyncMemoryEffects(effects);
   addEffect(effects, getOperation()->getOpResult(0), MemoryEffects::Write::get());
 }
 
@@ -53,7 +54,8 @@ void TestAsyncEventOp::getEffects(
     SmallVectorImpl<SideEffects::EffectInstance<MemoryEffects::Effect>>
         &effects) {
   addEffect(effects, &getEventMutable(), MemoryEffects::Read::get());
-  addEffect(effects, &getSessionMutable(), MemoryEffects::Read::get());
+  addReadWriteEffects(effects, getSessionMutable());
+  addAsyncMemoryEffects(effects);
   addEffect(effects, getOperation()->getOpResult(0), MemoryEffects::Write::get());
 }
 

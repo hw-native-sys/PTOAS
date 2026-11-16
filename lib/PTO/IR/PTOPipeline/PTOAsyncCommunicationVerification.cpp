@@ -103,33 +103,35 @@ slotElementType, slotShape)) {
   return verifyInternalPipeEntryBytes(op, entryViewTy, initOp);
 }
 
-static LogicalResult verifyAsyncSessionScratch(BuildAsyncSessionOp op) {
-  Type scratchTy = op.getScratch().getType();
+static LogicalResult verifyAsyncSessionScratch(Operation *op, Value scratch,
+                                                uint64_t minimumBytes) {
+  Type scratchTy = scratch.getType();
   if (!isa<pto::TileBufType>(scratchTy)) {
-    return op.emitOpError("expects scratch to be tile_buf type");
+    return op->emitOpError("expects scratch to be tile_buf type");
   }
 
   auto scratchSpace = getPTOMemorySpaceEnum(scratchTy);
   if (!scratchSpace || *scratchSpace != pto::AddressSpace::VEC) {
-    return op.emitOpError("expects scratch to be in vec address space");
+    return op->emitOpError("expects scratch to be in vec address space");
   }
 
   auto scratchShape = getShapeVec(scratchTy);
   if (scratchShape.empty() || scratchShape.size() > mlir::pto::kValue2) {
-      return op.emitOpError("expects scratch to be rank-1 or rank-2");
+    return op->emitOpError("expects scratch to be rank-1 or rank-2");
   }
   for (int64_t dim : scratchShape) {
     if (dim == ShapedType::kDynamic) {
-      return op.emitOpError("expects scratch to have a static shape");
+      return op->emitOpError("expects scratch to have a static shape");
     }
   }
 
   auto scratchBytes = getStaticByteSize(scratchTy);
   if (!scratchBytes) {
-    return op.emitOpError("expects scratch byte size to be statically known");
+    return op->emitOpError("expects scratch byte size to be statically known");
   }
-  if (*scratchBytes < sizeof(uint64_t)) {
-    return op.emitOpError("expects scratch to provide at least 8 bytes");
+  if (*scratchBytes < minimumBytes) {
+    return op->emitOpError("expects scratch to provide at least ")
+           << minimumBytes << " bytes";
   }
   return success();
 }
@@ -156,8 +158,10 @@ static LogicalResult verifyAsyncSessionAttrs(BuildAsyncSessionOp op) {
 }
 
 LogicalResult BuildAsyncSessionOp::verify() {
-  if (failed(verifyAsyncSessionScratch(*this)))
+  if (failed(verifyAsyncSessionScratch(getOperation(), getScratch(),
+                                       sizeof(uint64_t)))) {
     return failure();
+  }
   auto workspaceTy = dyn_cast<pto::PtrType>(getWorkspace().getType());
   if (!workspaceTy) {
     return emitOpError("expects workspace to be !pto.ptr type");
@@ -168,6 +172,173 @@ LogicalResult BuildAsyncSessionOp::verify() {
   }
 
   return verifyAsyncSessionAttrs(*this);
+}
+
+static bool isInsideSimtExecutionScope(Operation *op);
+
+static LogicalResult verifyUrmaExecutionScope(Operation *op) {
+  const auto target = getVerifierTargetArch(op);
+  if (target != VerifierTargetArch::A5) {
+    return op->emitOpError("requires the A5 target");
+  }
+  if (isInsideSimtExecutionScope(op)) {
+    return op->emitOpError("is not supported in SIMT execution scope");
+  }
+  const bool inCube = isInsideCubeKernelOrSection(op);
+  const bool inVector = isInsideVectorKernelOrSection(op);
+  if (inCube || !inVector) {
+    return op->emitOpError("requires an AIV kernel function or vector section");
+  }
+  return success();
+}
+
+static LogicalResult verifyUrmaBytePointer(Operation *op, Value value,
+                                            StringRef name) {
+  auto ptr = cast<pto::PtrType>(value.getType());
+  auto memorySpace = ptr.getMemorySpace();
+  const bool isGm = memorySpace && memorySpace.getAddressSpace() == pto::AddressSpace::GM;
+  const bool isByte = ptr.getElementType().isSignlessInteger(mlir::pto::kValue8);
+  if (!isGm || !isByte) {
+    return op->emitOpError("expects ") << name << " to be !pto.ptr<i8, gm>";
+  }
+  return success();
+}
+
+LogicalResult pto::BuildUrmaSessionOp::verify() {
+  const auto engine = getSession().getType().getEngine();
+  if (engine != pto::DmaEngine::Urma) {
+    return emitOpError("expects an !pto.async_session<urma> result");
+  }
+  if (failed(verifyUrmaExecutionScope(getOperation()))) {
+    return failure();
+  }
+  if (failed(verifyUrmaBytePointer(getOperation(), getWorkspace(), "workspace"))) {
+    return failure();
+  }
+  // PTO-ISA also checks sizeof(UrmaGatherSimtScratch) in its device builder.
+  constexpr uint64_t kGatherSimtScratchBytes = 1184;
+  if (Value scratch = getScratch()) {
+    return verifyAsyncSessionScratch(getOperation(), scratch,
+                                     kGatherSimtScratchBytes);
+  }
+  return success();
+}
+
+static bool isKnownZeroGatherCount(Value value) {
+  // Arith integer constants are signless. A same-width cast supplies ui32
+  // without changing the count's bits.
+  while (auto conversion = value.getDefiningOp<mlir::UnrealizedConversionCastOp>()) {
+    const auto inputs = conversion.getInputs();
+    const auto results = conversion.getResults();
+    const bool singleInput = llvm::hasSingleElement(inputs);
+    const bool singleResult = llvm::hasSingleElement(results);
+    if (!singleInput || !singleResult) {
+      break;
+    }
+    Value input = inputs.front();
+    auto inputType = dyn_cast<IntegerType>(input.getType());
+    auto resultType = dyn_cast<IntegerType>(value.getType());
+    if (!inputType || !resultType) {
+      break;
+    }
+    const unsigned inputWidth = inputType.getWidth();
+    if (inputWidth != resultType.getWidth()) {
+      break;
+    }
+    value = input;
+  }
+  llvm::APInt count;
+  return matchPattern(value, mlir::m_ConstantInt(&count)) && count.isZero();
+}
+
+static LogicalResult verifyUrmaGatherPayload(pto::TPutAsyncGatherOp op) {
+  Value destinations = op.getDestinations();
+  Value destinationCount = op.getDestinationCount();
+  Value segments = op.getSegments();
+  Value segmentCount = op.getSegmentCount();
+  if (!destinations && !destinationCount && !segments && !segmentCount) {
+    const auto policy = op.getCqePolicy();
+    const auto mode = op.getSubmitMode();
+    if (policy != pto::UrmaCqePolicy::Final || mode != pto::AsyncSubmitMode::DeferAndSubmit) {
+      return op.emitOpError("requires final and defer_and_submit for empty Gather");
+    }
+    return success();
+  }
+  if (!destinations || !destinationCount || !segments || !segmentCount) {
+    return op.emitOpError("expects both descriptor pointers and both counts");
+  }
+  const bool zeroDestinations = isKnownZeroGatherCount(destinationCount);
+  const bool zeroSegments = isKnownZeroGatherCount(segmentCount);
+  if (zeroDestinations || zeroSegments) {
+    return op.emitOpError("expects positive descriptor counts for payload Gather");
+  }
+  if (failed(verifyUrmaBytePointer(op.getOperation(), destinations,
+                                  "destinations"))) {
+    return failure();
+  }
+  return verifyUrmaBytePointer(op.getOperation(), segments, "segments");
+}
+
+LogicalResult pto::TPutAsyncGatherOp::verify() {
+  const auto sessionEngine = getSession().getType().getEngine();
+  const auto eventEngine = getEvent().getType().getEngine();
+  if (sessionEngine != pto::DmaEngine::Urma || eventEngine != pto::DmaEngine::Urma) {
+    return emitOpError("expects !pto.async_session<urma> and !pto.async_event<urma>");
+  }
+  if (failed(verifyUrmaExecutionScope(getOperation()))) {
+    return failure();
+  }
+  auto builder = getSession().getDefiningOp<pto::BuildUrmaSessionOp>();
+  const auto parent = getOperation()->getParentOfType<func::FuncOp>();
+  const bool isLocalBuilder = builder && builder->getParentOfType<func::FuncOp>() == parent;
+  if (!isLocalBuilder) {
+    return emitOpError("requires a session from build_urma_session in the same function");
+  }
+  const Value builderScratch = builder.getScratch();
+  if (builderScratch != getScratch()) {
+    return emitOpError("requires the same scratch operand as build_urma_session");
+  }
+  auto batchSize = getBatchSizeAttr();
+  const bool deferred = getSubmitMode() != pto::AsyncSubmitMode::Immediate;
+  if (deferred && batchSize && batchSize.getValue().isZero()) {
+    return emitOpError("requires nonzero batch_size for deferred submission");
+  }
+  return verifyUrmaGatherPayload(*this);
+}
+
+static LogicalResult verifyAsyncEventSession(Operation *op, Value event,
+                                             Value session) {
+  auto eventEngine = cast<pto::AsyncEventType>(event.getType()).getEngine();
+  auto sessionEngine = cast<pto::AsyncSessionType>(session.getType()).getEngine();
+  if (eventEngine != sessionEngine) {
+    return op->emitOpError("requires matching async event and session engine types");
+  }
+  if (!eventEngine) {
+    return success();
+  }
+  if (failed(verifyUrmaExecutionScope(op))) {
+    return failure();
+  }
+  auto submit = event.getDefiningOp<pto::TPutAsyncGatherOp>();
+  const auto parent = op->getParentOfType<func::FuncOp>();
+  const bool matchesSubmission =
+      submit && submit->getParentOfType<func::FuncOp>() == parent && submit.getSession() == session;
+  if (!matchesSubmission) {
+    return op->emitOpError("requires a Gather event and its submitting session in the same function");
+  }
+  const auto policy = submit.getCqePolicy();
+  if (policy == pto::UrmaCqePolicy::NoCqe) {
+    return op->emitOpError("cannot wait on or test a no_cqe Gather event");
+  }
+  return success();
+}
+
+LogicalResult pto::WaitAsyncEventOp::verify() {
+  return verifyAsyncEventSession(getOperation(), getEvent(), getSession());
+}
+
+LogicalResult pto::TestAsyncEventOp::verify() {
+  return verifyAsyncEventSession(getOperation(), getEvent(), getSession());
 }
 
 static LogicalResult verifyAsyncTransferOp(Operation *op, Value dst, Value src) {

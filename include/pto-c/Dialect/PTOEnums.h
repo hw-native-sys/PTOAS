@@ -54,6 +54,18 @@ enum class MlirPTOLoadCachePolicy {
   L2Bypass = 1,
 };
 
+enum class MlirPTOUrmaCqePolicy {
+  NoCqe = 0,
+  OneCqe = 1,
+  Final = 2,
+};
+
+enum class MlirPTOAsyncSubmitMode {
+  Immediate = 0,
+  Defer = 1,
+  DeferAndSubmit = 2,
+};
+
 enum class MlirPTOLoadL2Hint {
   NormalFirstVictim = 0,
   NormalLastVictim = 1,

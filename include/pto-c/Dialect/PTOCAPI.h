@@ -34,8 +34,10 @@ MLIR_CAPI_EXPORTED MlirAttribute mlirPTOPtrTypeGetMemorySpace(MlirType type);
 // ---- !pto.async_session / !pto.async_event ----
 MLIR_CAPI_EXPORTED bool mlirPTOTypeIsAAsyncSessionType(MlirType type);
 MLIR_CAPI_EXPORTED MlirType mlirPTOAsyncSessionTypeGet(MlirContext ctx);
+MLIR_CAPI_EXPORTED MlirType mlirPTOAsyncSessionTypeGetUrma(MlirContext ctx);
 MLIR_CAPI_EXPORTED bool mlirPTOTypeIsAAsyncEventType(MlirType type);
 MLIR_CAPI_EXPORTED MlirType mlirPTOAsyncEventTypeGet(MlirContext ctx);
+MLIR_CAPI_EXPORTED MlirType mlirPTOAsyncEventTypeGetUrma(MlirContext ctx);
 
 // ---- !pto.dma_session<sdma|urma|rdma> ----
 // The engine an async session drives. Numbered to match mlir::pto::DmaEngine.
@@ -81,6 +83,16 @@ MLIR_CAPI_EXPORTED MlirAttribute
 mlirPTOLoadCachePolicyAttrGet(MlirContext ctx, int32_t value);
 MLIR_CAPI_EXPORTED int32_t
 mlirPTOLoadCachePolicyAttrGetValue(MlirAttribute attr);
+
+// ---- URMA Gather policies; unknown enum values return a null attr. ----
+MLIR_CAPI_EXPORTED bool mlirPTOAttrIsAUrmaCqePolicyAttr(MlirAttribute attr);
+MLIR_CAPI_EXPORTED MlirAttribute
+mlirPTOUrmaCqePolicyAttrGet(MlirContext ctx, int32_t value);
+MLIR_CAPI_EXPORTED int32_t mlirPTOUrmaCqePolicyAttrGetValue(MlirAttribute attr);
+MLIR_CAPI_EXPORTED bool mlirPTOAttrIsAAsyncSubmitModeAttr(MlirAttribute attr);
+MLIR_CAPI_EXPORTED MlirAttribute
+mlirPTOAsyncSubmitModeAttrGet(MlirContext ctx, int32_t value);
+MLIR_CAPI_EXPORTED int32_t mlirPTOAsyncSubmitModeAttrGetValue(MlirAttribute attr);
 
 // ---- A5 per-transfer L2 hints; invalid integer values return a null attr. ----
 MLIR_CAPI_EXPORTED bool mlirPTOAttrIsALoadL2HintAttr(MlirAttribute attr);

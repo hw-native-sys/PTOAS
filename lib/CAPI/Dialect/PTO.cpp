@@ -304,6 +304,10 @@ MlirType mlirPTOAsyncSessionTypeGet(MlirContext ctx) {
   return wrap(mlir::pto::AsyncSessionType::get(unwrap(ctx)));
 }
 
+MlirType mlirPTOAsyncSessionTypeGetUrma(MlirContext ctx) {
+  return wrap(mlir::pto::AsyncSessionType::get(unwrap(ctx), mlir::pto::DmaEngine::Urma));
+}
+
 bool mlirPTOTypeIsADmaSessionType(MlirType type) { return isa<mlir::pto::DmaSessionType>(unwrap(type)); }
 
 MlirType mlirPTODmaSessionTypeGet(MlirContext ctx, MlirPTODmaEngine engine)
@@ -320,6 +324,10 @@ bool mlirPTOTypeIsAAsyncEventType(MlirType type) { return isa<mlir::pto::AsyncEv
 
 MlirType mlirPTOAsyncEventTypeGet(MlirContext ctx) {
   return wrap(mlir::pto::AsyncEventType::get(unwrap(ctx)));
+}
+
+MlirType mlirPTOAsyncEventTypeGetUrma(MlirContext ctx) {
+  return wrap(mlir::pto::AsyncEventType::get(unwrap(ctx), mlir::pto::DmaEngine::Urma));
 }
 
 bool mlirPTOTypeIsAPrefetchAsyncContextType(MlirType type) {
@@ -420,6 +428,40 @@ MlirAttribute mlirPTOLoadCachePolicyAttrGet(MlirContext ctx, int32_t value) {
 int32_t mlirPTOLoadCachePolicyAttrGetValue(MlirAttribute attr) {
   auto policy = mlir::cast<mlir::pto::LoadCachePolicyAttr>(unwrap(attr));
   return static_cast<int32_t>(policy.getValue());
+}
+
+bool mlirPTOAttrIsAUrmaCqePolicyAttr(MlirAttribute attr) {
+  return isa<mlir::pto::UrmaCqePolicyAttr>(unwrap(attr));
+}
+
+MlirAttribute mlirPTOUrmaCqePolicyAttrGet(MlirContext ctx, int32_t value) {
+  auto policy = mlir::pto::symbolizeUrmaCqePolicy(static_cast<uint32_t>(value));
+  if (!policy) {
+    return MlirAttribute{nullptr};
+  }
+  return wrap(mlir::pto::UrmaCqePolicyAttr::get(unwrap(ctx), *policy));
+}
+
+int32_t mlirPTOUrmaCqePolicyAttrGetValue(MlirAttribute attr) {
+  return static_cast<int32_t>(
+      cast<mlir::pto::UrmaCqePolicyAttr>(unwrap(attr)).getValue());
+}
+
+bool mlirPTOAttrIsAAsyncSubmitModeAttr(MlirAttribute attr) {
+  return isa<mlir::pto::AsyncSubmitModeAttr>(unwrap(attr));
+}
+
+MlirAttribute mlirPTOAsyncSubmitModeAttrGet(MlirContext ctx, int32_t value) {
+  auto mode = mlir::pto::symbolizeAsyncSubmitMode(static_cast<uint32_t>(value));
+  if (!mode) {
+    return MlirAttribute{nullptr};
+  }
+  return wrap(mlir::pto::AsyncSubmitModeAttr::get(unwrap(ctx), *mode));
+}
+
+int32_t mlirPTOAsyncSubmitModeAttrGetValue(MlirAttribute attr) {
+  return static_cast<int32_t>(
+      cast<mlir::pto::AsyncSubmitModeAttr>(unwrap(attr)).getValue());
 }
 
 bool mlirPTOAttrIsALoadL2HintAttr(MlirAttribute attr) {

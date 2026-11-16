@@ -131,6 +131,30 @@ def PTO_DmaEngineEnum : PTO_I32Enum<
     PTO_DmaEngine_Rdma
   ]>;
 
+def PTO_UrmaCqePolicyEnum : PTO_I32Enum<
+  "UrmaCqePolicy", "URMA Gather completion notification policy", [
+    I32EnumAttrCase<"NoCqe", 0, "no_cqe">,
+    I32EnumAttrCase<"OneCqe", 1, "one_cqe">,
+    I32EnumAttrCase<"Final", 2, "final">
+  ]>;
+
+def PTO_UrmaCqePolicyAttr
+    : EnumAttr<PTO_Dialect, PTO_UrmaCqePolicyEnum, "urma_cqe_policy"> {
+  let assemblyFormat = "`<` params `>`";
+}
+
+def PTO_AsyncSubmitModeEnum : PTO_I32Enum<
+  "AsyncSubmitMode", "Asynchronous communication publication mode", [
+    I32EnumAttrCase<"Immediate", 0, "immediate">,
+    I32EnumAttrCase<"Defer", 1, "defer">,
+    I32EnumAttrCase<"DeferAndSubmit", 2, "defer_and_submit">
+  ]>;
+
+def PTO_AsyncSubmitModeAttr
+    : EnumAttr<PTO_Dialect, PTO_AsyncSubmitModeEnum, "async_submit_mode"> {
+  let assemblyFormat = "`<` params `>`";
+}
+
 //===----------------------------------------------------------------------===//
 // Tile load cache policy
 //===----------------------------------------------------------------------===//

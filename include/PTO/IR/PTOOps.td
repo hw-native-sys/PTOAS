@@ -89,6 +89,17 @@ def PTO_ElementOffset
       // materialises on its own, and that type is the platform index type.
       BuildableType<"$_builder.getIndexType()">;
 
+// Preserve result inference for the existing unparameterized async builders.
+def PTO_LegacyAsyncSession : Type<And<[AsyncSessionType.predicate,
+    CPred<"!::llvm::cast<::mlir::pto::AsyncSessionType>($_self).getEngine()">]>,
+    "unparameterized PTO async session", "::mlir::pto::AsyncSessionType">,
+    BuildableType<"::mlir::pto::AsyncSessionType::get($_builder.getContext())">;
+
+def PTO_LegacyAsyncEvent : Type<And<[AsyncEventType.predicate,
+    CPred<"!::llvm::cast<::mlir::pto::AsyncEventType>($_self).getEngine()">]>,
+    "unparameterized PTO async event", "::mlir::pto::AsyncEventType">,
+    BuildableType<"::mlir::pto::AsyncEventType::get($_builder.getContext())">;
+
 //===----------------------------------------------------------------------===//
 // Op Class
 //===----------------------------------------------------------------------===//
@@ -804,7 +815,7 @@ def GetPrefetchAsyncSessionOp : PTO_Op<"get_prefetch_async_session", [Pure]> {
   );
 
   let results = (outs
-    AsyncSessionType:$session
+    PTO_LegacyAsyncSession:$session
   );
 
   let assemblyFormat = [{
@@ -824,7 +835,7 @@ def TPrefetchAsyncOp : PTO_Op<"tprefetch_async"> {
   );
 
   let results = (outs
-    AsyncEventType:$event
+    PTO_LegacyAsyncEvent:$event
   );
 
   let hasVerifier = 1;
@@ -2181,12 +2192,57 @@ def BuildAsyncSessionOp : PTO_Op<"comm.build_async_session", [
       OptionalAttr<I64Attr>:$channel_group_idx
   );
 
-  let results = (outs AsyncSessionType:$session);
+  let results = (outs PTO_LegacyAsyncSession:$session);
   let hasVerifier = 1;
 
   let assemblyFormat = [{
     `(` $scratch `,` $workspace `:` qualified(type($scratch)) `,` qualified(type($workspace)) `)`
     attr-dict `->` qualified(type($session))
+  }];
+}
+
+def BuildUrmaSessionOp : PTO_Op<"comm.build_urma_session", [
+    DeclareOpInterfaceMethods<MemoryEffectsOpInterface>
+]> {
+  let summary = "Build a peer-independent URMA Gather session";
+  let arguments = (ins PtrType:$workspace, Optional<TileBufType>:$scratch);
+  let results = (outs AsyncSessionType:$session, I1:$initOk);
+  let hasVerifier = 1;
+  let assemblyFormat = [{
+    `workspace` `(` $workspace `:` qualified(type($workspace)) `)`
+    (`scratch` `(` $scratch^ `:` qualified(type($scratch)) `)`)?
+    attr-dict `->` qualified(type($session)) `,` type($initOk)
+  }];
+}
+
+def TPutAsyncGatherOp : PTO_Op<"comm.tput_async_gather", [
+    AttrSizedOperandSegments,
+    DeclareOpInterfaceMethods<MemoryEffectsOpInterface>
+]> {
+  let summary = "Submit ordered GM segments to one or more remote URMA destinations";
+  let arguments = (ins
+      Optional<PtrType>:$destinations,
+      Optional<UI32>:$destinationCount,
+      Optional<PtrType>:$segments,
+      Optional<UI32>:$segmentCount,
+      AsyncSessionType:$session,
+      Optional<TileBufType>:$scratch,
+      DefaultValuedAttr<PTO_UrmaCqePolicyAttr,
+                        "::mlir::pto::UrmaCqePolicy::OneCqe">:$cqe_policy,
+      DefaultValuedAttr<PTO_AsyncSubmitModeAttr,
+                        "::mlir::pto::AsyncSubmitMode::Immediate">:$submit_mode,
+      OptionalAttr<UI32Attr>:$batch_size
+  );
+  let results = (outs AsyncEventType:$event, I1:$postOk);
+  let hasVerifier = 1;
+  let assemblyFormat = [{
+    (`destinations` `(` $destinations^ `,` $destinationCount `:`
+        qualified(type($destinations)) `,` type($destinationCount) `)`
+     `segments` `(` $segments `,` $segmentCount `:`
+        qualified(type($segments)) `,` type($segmentCount) `)`)?
+    `session` `(` $session `:` qualified(type($session)) `)`
+    (`scratch` `(` $scratch^ `:` qualified(type($scratch)) `)`)?
+    attr-dict `->` qualified(type($event)) `,` type($postOk)
   }];
 }
 
@@ -2198,10 +2254,10 @@ def TPutAsyncOp : PTO_Op<"comm.tput_async", [
   let arguments = (ins
       PTOCommType:$dst,
       PTOCommType:$src,
-      AsyncSessionType:$session
+      PTO_LegacyAsyncSession:$session
   );
 
-  let results = (outs AsyncEventType:$event);
+  let results = (outs PTO_LegacyAsyncEvent:$event);
   let hasVerifier = 1;
 
   let assemblyFormat = [{
@@ -2219,10 +2275,10 @@ def TGetAsyncOp : PTO_Op<"comm.tget_async", [
   let arguments = (ins
       PTOCommType:$dst,
       PTOCommType:$src,
-      AsyncSessionType:$session
+      PTO_LegacyAsyncSession:$session
   );
 
-  let results = (outs AsyncEventType:$event);
+  let results = (outs PTO_LegacyAsyncEvent:$event);
   let hasVerifier = 1;
 
   let assemblyFormat = [{
@@ -2243,6 +2299,7 @@ def WaitAsyncEventOp : PTO_Op<"comm.wait_async_event", [
   );
 
   let results = (outs I1:$completed);
+  let hasVerifier = 1;
 
   let assemblyFormat = [{
     `(` $event `,` $session `:`
@@ -2262,6 +2319,7 @@ def TestAsyncEventOp : PTO_Op<"comm.test_async_event", [
   );
 
   let results = (outs I1:$completed);
+  let hasVerifier = 1;
 
   let assemblyFormat = [{
     `(` $event `,` $session `:`

@@ -234,6 +234,119 @@ struct PTOBuildAsyncSessionToEmitC
   }
 };
 
+struct PTOBuildUrmaSessionToEmitC
+    : public OpConversionPattern<BuildUrmaSessionOp> {
+  using OpConversionPattern::OpConversionPattern;
+
+  LogicalResult matchAndRewrite(
+      BuildUrmaSessionOp op, OpAdaptor adaptor,
+      ConversionPatternRewriter &rewriter) const override {
+    Location loc = op.getLoc();
+    auto *ctx = rewriter.getContext();
+    auto sessionTy = getTypeConverter()->convertType(op.getSession().getType());
+    auto boolTy = getTypeConverter()->convertType(op.getInitOk().getType());
+    Value workspace = castToGMBytePointer(rewriter, loc, adaptor.getWorkspace());
+    Value session = rewriter
+        .create<emitc::VariableOp>(loc, getEmitCVariableResultType(sessionTy),
+                                  emitc::OpaqueAttr::get(ctx, "{}"))
+        .getResult();
+    SmallVector<Value> args{workspace};
+    if (Value scratch = op.getScratch()) {
+      auto tile = buildAsyncScratchTileValue(rewriter, loc, scratch,
+                                             adaptor.getScratch());
+      if (failed(tile)) {
+        return rewriter.notifyMatchFailure(op, "failed to materialize URMA scratch tile");
+      }
+      args.push_back(*tile);
+    }
+    args.push_back(session);
+    Value initOk = rewriter
+        .create<emitc::CallOpaqueOp>(
+            loc, TypeRange{boolTy},
+            "pto::comm::BuildAsyncSession<pto::comm::DmaEngine::URMA>",
+            ArrayAttr{}, ArrayAttr{}, args)
+        .getResult(0);
+    rewriter.replaceOp(op, ValueRange{session, initOk});
+    return success();
+  }
+};
+
+static StringRef urmaCqePolicyToken(UrmaCqePolicy policy) {
+  switch (policy) {
+  case UrmaCqePolicy::NoCqe:
+    return "pto::comm::urma::UrmaCqePolicy::NoCqe";
+  case UrmaCqePolicy::OneCqe:
+    return "pto::comm::urma::UrmaCqePolicy::OneCqe";
+  case UrmaCqePolicy::Final:
+    return "pto::comm::urma::UrmaCqePolicy::Final";
+  }
+  llvm_unreachable("invalid URMA CQE policy");
+}
+
+static StringRef asyncSubmitModeToken(AsyncSubmitMode mode) {
+  switch (mode) {
+  case AsyncSubmitMode::Immediate:
+    return "pto::comm::AsyncSubmitMode::IMMEDIATE";
+  case AsyncSubmitMode::Defer:
+    return "pto::comm::AsyncSubmitMode::DEFER";
+  case AsyncSubmitMode::DeferAndSubmit:
+    return "pto::comm::AsyncSubmitMode::DEFER_AND_SUBMIT";
+  }
+  llvm_unreachable("invalid async submit mode");
+}
+
+static std::string urmaGatherCallee(TPutAsyncGatherOp op) {
+  auto size = op.getBatchSizeAttr();
+  std::string batchSize = size
+      ? std::to_string(size.getValue().getZExtValue()) + "u"
+      : "UINT32_MAX";
+  return (llvm::Twine("ptoas_urma_gather<") +
+          (op.getDestinations() ? "true, " : "false, ") +
+          urmaCqePolicyToken(op.getCqePolicy()) + ", " +
+          asyncSubmitModeToken(op.getSubmitMode()) + ", " + batchSize + ">")
+      .str();
+}
+
+struct PTOPutAsyncGatherToEmitC : public OpConversionPattern<TPutAsyncGatherOp> {
+  using OpConversionPattern::OpConversionPattern;
+
+  LogicalResult matchAndRewrite(
+      TPutAsyncGatherOp op, OpAdaptor adaptor,
+      ConversionPatternRewriter &rewriter) const override {
+    Location loc = op.getLoc();
+    auto *ctx = rewriter.getContext();
+    auto eventTy = getTypeConverter()->convertType(op.getEvent().getType());
+    auto boolTy = getTypeConverter()->convertType(op.getPostOk().getType());
+    SmallVector<Value> args;
+    if (Value destinations = adaptor.getDestinations()) {
+      args = {castToGMBytePointer(rewriter, loc, destinations),
+              adaptor.getDestinationCount(),
+              castToGMBytePointer(rewriter, loc, adaptor.getSegments()),
+              adaptor.getSegmentCount()};
+    } else {
+      auto ptrTy = emitc::PointerType::get(emitc::OpaqueType::get(ctx, "__gm__ uint8_t"));
+      Value null = makeEmitCOpaqueConstant(rewriter, loc, ptrTy, "nullptr");
+      auto countTy = emitc::OpaqueType::get(ctx, "uint32_t");
+      Value zero = makeEmitCOpaqueConstant(rewriter, loc, countTy, "0u");
+      args = {null, zero, null, zero};
+    }
+    args.push_back(adaptor.getSession());
+    Value event = rewriter
+        .create<emitc::CallOpaqueOp>(loc, TypeRange{eventTy},
+                                     urmaGatherCallee(op), ArrayAttr{},
+                                     ArrayAttr{}, args)
+        .getResult(0);
+    Value postFailed = rewriter
+        .create<emitc::MemberOp>(loc, boolTy, rewriter.getStringAttr("postFailed"),
+                                 event)
+        .getResult();
+    Value postOk =
+        rewriter.create<emitc::LogicalNotOp>(loc, boolTy, postFailed).getResult();
+    rewriter.replaceOp(op, ValueRange{event, postOk});
+    return success();
+  }
+};
+
 template <typename AsyncOp>
 struct PTOAsyncTransferToEmitC : public OpConversionPattern<AsyncOp> {
   using OpConversionPattern<AsyncOp>::OpConversionPattern;
@@ -298,6 +411,10 @@ void populateScalarMiscAsyncSessionPatterns(RewritePatternSet &patterns,
                         TypeConverter &typeConverter, MLIRContext *ctx,
                         PTOArch targetArch) {
   patterns.add<PTOBuildAsyncSessionToEmitC>(typeConverter, ctx);
+  if (targetArch == PTOArch::A5) {
+    patterns.add<PTOBuildUrmaSessionToEmitC, PTOPutAsyncGatherToEmitC>(
+        typeConverter, ctx);
+  }
   patterns.add<PTOAsyncTransferToEmitC<pto::TPutAsyncOp>>(typeConverter, ctx,
       "pto::comm::TPUT_ASYNC<pto::comm::DmaEngine::SDMA>");
   patterns.add<PTOAsyncTransferToEmitC<pto::TGetAsyncOp>>(typeConverter, ctx,

@@ -10679,6 +10679,7 @@ This section documents PTO communication primitives. PTOAS currently exposes:
 - Synchronous signal ops: `pto.comm.tnotify`, `pto.comm.twait`, `pto.comm.ttest`
 - Synchronous collective ops: `pto.comm.tbroadcast`, `pto.comm.tgather`, `pto.comm.tscatter`, `pto.comm.treduce`
 - Asynchronous communication/session ops: `pto.comm.build_async_session`, `pto.comm.tput_async`, `pto.comm.tget_async`, `pto.comm.wait_async_event`, `pto.comm.test_async_event`
+- A5 URMA Gather ops: `pto.comm.build_urma_session`, `pto.comm.tput_async_gather`
 
 ##### `pto.comm.build_async_session` - Create Async DMA Session
 
@@ -10767,9 +10768,40 @@ This section documents PTO communication primitives. PTOAS currently exposes:
 
 ---
 
+##### `pto.comm.build_urma_session` / `pto.comm.tput_async_gather` - A5 URMA Gather
+
+URMA Gather writes ordered local GM segments into contiguous remote GM destinations. Each destination descriptor selects a peer rank and gives the number of source segments to consume from the segment table.
+
+These operations require the EmitC backend and an A5 (3510) AIV kernel or vector section. The host must initialize the GM workspace with PTO-ISA's `UrmaWorkspaceManager`. The destination and segment operands point to arrays of PTO-ISA `GatherDestination` and `GatherSegment` respectively. Their layout and alignment follow PTO-ISA. Each count has type `ui32` and must be positive for a payload call.
+
+```mlir
+%session, %init_ok = pto.comm.build_urma_session
+    workspace(%workspace : !pto.ptr<i8, gm>) -> !pto.async_session<urma>, i1
+%event, %post_ok = pto.comm.tput_async_gather
+    destinations(%dsts, %nd : !pto.ptr<i8, gm>, ui32)
+    segments(%segs, %ns : !pto.ptr<i8, gm>, ui32)
+    session(%session : !pto.async_session<urma>) -> !pto.async_event<urma>, i1
+%done = pto.comm.wait_async_event(
+    %event, %session : !pto.async_event<urma>, !pto.async_session<urma>) -> i1
+```
+
+Check `init_ok` and `post_ok` before depending on the transfer. The example uses the default `one_cqe` and `immediate` policies. The table lists the optional attributes.
+
+| Attribute | Values | Behavior |
+|-----------|--------|----------|
+| `cqe_policy` | `#pto.urma_cqe_policy<one_cqe>`, `<no_cqe>`, `<final>` | `one_cqe` gives this operation a completion event. `no_cqe` adds payload to a prefix whose completion is tracked by a subsequent `final`. |
+| `submit_mode` | `#pto.async_submit_mode<immediate>`, `<defer>`, `<defer_and_submit>` | Publish immediately, defer per queue, or publish all staged operations. |
+| `batch_size` | `ui32`, defaults to `UINT32_MAX` | Nonzero per-queue threshold for deferred submission. |
+
+Both descriptor clauses may be omitted for an empty `final` with `defer_and_submit`. If there is no open `no_cqe` prefix, the call can still publish staged work and return a successful empty event. Keep the original `one_cqe` events for that work and wait on them after publishing. In general, only wait once on an event with a completion target, and only after the relevant queues have been published. Use the same session that produced the event. A `no_cqe` payload event cannot be used with Wait or Test.
+
+For SIMT SQE filling, optionally provide `scratch(%tile : !pto.tile_buf<vec, 1x1280xi8>)` to the builder and each Gather using that session, after the workspace and session clauses respectively. The same VEC tile must be used throughout, with at least 1184 bytes of static storage. PTO-ISA chooses the filling path. The host and device must keep payload buffers and the workspace valid through completion.
+
+---
+
 ##### `pto.comm.wait_async_event` / `pto.comm.test_async_event` - Async Event Completion
 
-**Summary:** Consume an async event produced by `pto.comm.tput_async` / `pto.comm.tget_async`.
+**Summary:** Wait for or poll an async event from an async transfer or prefetch.
 
 **Arguments:**
 
@@ -10780,9 +10812,8 @@ This section documents PTO communication primitives. PTOAS currently exposes:
 
 **Constraints & Verification:**
 
-- `event` must have type `!pto.async_event`.
-- `session` must have type `!pto.async_session`.
-- The event/session pair is expected to come from the same async communication flow.
+- SDMA and prefetch use `!pto.async_event` and `!pto.async_session`.
+- URMA Gather uses `!pto.async_event<urma>` and `!pto.async_session<urma>`. Pass the event directly from Gather and the session that produced it.
 
 **Basic Example:**
 

@@ -1,0 +1,100 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+
+
+// Device functions called by the multi-rank A5 test launcher.
+module attributes {pto.target_arch = "a5"} {
+  func.func @urma_immediate(%workspace: !pto.ptr<i8, gm>, %dsts: !pto.ptr<i8, gm>,
+                            %segs: !pto.ptr<i8, gm>, %nd: ui32, %ns: ui32) -> i32
+      attributes {pto.kernel_kind = #pto.kernel_kind<vector>} {
+    %session, %init = pto.comm.build_urma_session
+        workspace(%workspace : !pto.ptr<i8, gm>) -> !pto.async_session<urma>, i1
+    %event, %posted = pto.comm.tput_async_gather
+        destinations(%dsts, %nd : !pto.ptr<i8, gm>, ui32)
+        segments(%segs, %ns : !pto.ptr<i8, gm>, ui32)
+        session(%session : !pto.async_session<urma>) -> !pto.async_event<urma>, i1
+    %done = pto.comm.wait_async_event(%event, %session : !pto.async_event<urma>, !pto.async_session<urma>) -> i1
+    %accepted = arith.andi %init, %posted : i1
+    %success = arith.andi %accepted, %done : i1
+    %result = arith.extui %success : i1 to i32
+    return %result : i32
+  }
+
+  func.func @urma_batch(%workspace: !pto.ptr<i8, gm>, %prefix_dsts: !pto.ptr<i8, gm>,
+                        %deferred_dsts: !pto.ptr<i8, gm>, %immediate_dsts: !pto.ptr<i8, gm>,
+                        %segs: !pto.ptr<i8, gm>, %nd: ui32, %ns: ui32, %bad_count: ui32) -> i32
+      attributes {pto.kernel_kind = #pto.kernel_kind<vector>} {
+    %scratch = pto.alloc_tile : !pto.tile_buf<vec, 1x1280xi8>
+    %session, %init = pto.comm.build_urma_session
+        workspace(%workspace : !pto.ptr<i8, gm>) scratch(%scratch : !pto.tile_buf<vec, 1x1280xi8>)
+        -> !pto.async_session<urma>, i1
+    %zero = arith.constant 0 : index
+    %one = arith.constant 1 : index
+    %rounds = arith.constant 65 : index
+    %true = arith.constant true
+    %success = scf.for %i = %zero to %rounds step %one iter_args(%ok = %init) -> (i1) {
+      %prefix, %staged = pto.comm.tput_async_gather
+          destinations(%prefix_dsts, %nd : !pto.ptr<i8, gm>, ui32)
+          segments(%segs, %ns : !pto.ptr<i8, gm>, ui32)
+          session(%session : !pto.async_session<urma>) scratch(%scratch : !pto.tile_buf<vec, 1x1280xi8>)
+          {cqe_policy = #pto.urma_cqe_policy<no_cqe>, submit_mode = #pto.async_submit_mode<defer>}
+          -> !pto.async_event<urma>, i1
+      %bad, %bad_post = pto.comm.tput_async_gather
+          destinations(%prefix_dsts, %bad_count : !pto.ptr<i8, gm>, ui32)
+          segments(%segs, %bad_count : !pto.ptr<i8, gm>, ui32)
+          session(%session : !pto.async_session<urma>) scratch(%scratch : !pto.tile_buf<vec, 1x1280xi8>)
+          {cqe_policy = #pto.urma_cqe_policy<final>, submit_mode = #pto.async_submit_mode<defer_and_submit>}
+          -> !pto.async_event<urma>, i1
+      %rejected = arith.xori %bad_post, %true : i1
+      %final, %published = pto.comm.tput_async_gather
+          session(%session : !pto.async_session<urma>) scratch(%scratch : !pto.tile_buf<vec, 1x1280xi8>)
+          {cqe_policy = #pto.urma_cqe_policy<final>, submit_mode = #pto.async_submit_mode<defer_and_submit>}
+          -> !pto.async_event<urma>, i1
+      %done = pto.comm.wait_async_event(%final, %session : !pto.async_event<urma>, !pto.async_session<urma>) -> i1
+      %a = arith.andi %ok, %staged : i1
+      %b = arith.andi %a, %rejected : i1
+      %c = arith.andi %b, %published : i1
+      %next = arith.andi %c, %done : i1
+      scf.yield %next : i1
+    }
+    %deferred, %queued = pto.comm.tput_async_gather
+        destinations(%deferred_dsts, %nd : !pto.ptr<i8, gm>, ui32)
+        segments(%segs, %ns : !pto.ptr<i8, gm>, ui32)
+        session(%session : !pto.async_session<urma>) scratch(%scratch : !pto.tile_buf<vec, 1x1280xi8>)
+        {submit_mode = #pto.async_submit_mode<defer>} -> !pto.async_event<urma>, i1
+    %early = pto.comm.test_async_event(%deferred, %session : !pto.async_event<urma>, !pto.async_session<urma>) -> i1
+    %pending = arith.xori %early, %true : i1
+    %empty, %flushed = pto.comm.tput_async_gather
+        session(%session : !pto.async_session<urma>) scratch(%scratch : !pto.tile_buf<vec, 1x1280xi8>)
+        {cqe_policy = #pto.urma_cqe_policy<final>, submit_mode = #pto.async_submit_mode<defer_and_submit>}
+        -> !pto.async_event<urma>, i1
+    %empty_done = pto.comm.wait_async_event(%empty, %session : !pto.async_event<urma>, !pto.async_session<urma>) -> i1
+    %deferred_done = scf.if %flushed -> (i1) {
+      %ready = pto.comm.wait_async_event(%deferred, %session : !pto.async_event<urma>, !pto.async_session<urma>) -> i1
+      scf.yield %ready : i1
+    } else {
+      %false = arith.constant false
+      scf.yield %false : i1
+    }
+    %default, %posted = pto.comm.tput_async_gather
+        destinations(%immediate_dsts, %nd : !pto.ptr<i8, gm>, ui32)
+        segments(%segs, %ns : !pto.ptr<i8, gm>, ui32)
+        session(%session : !pto.async_session<urma>) scratch(%scratch : !pto.tile_buf<vec, 1x1280xi8>)
+        -> !pto.async_event<urma>, i1
+    %done = pto.comm.wait_async_event(%default, %session : !pto.async_event<urma>, !pto.async_session<urma>) -> i1
+    %a = arith.andi %success, %queued : i1
+    %b = arith.andi %a, %pending : i1
+    %c = arith.andi %b, %flushed : i1
+    %d = arith.andi %c, %empty_done : i1
+    %e = arith.andi %d, %deferred_done : i1
+    %f = arith.andi %e, %posted : i1
+    %pass = arith.andi %f, %done : i1
+    %result = arith.extui %pass : i1 to i32
+    return %result : i32
+  }
+}

@@ -53,6 +53,10 @@ DmaEngine = _export_optional_cext_symbol("DmaEngine")
 DmaSessionType = _export_optional_cext_symbol("DmaSessionType")
 AsyncSessionType = _pto_mod.AsyncSessionType
 AsyncEventType = _pto_mod.AsyncEventType
+UrmaCqePolicy = _pto_mod.UrmaCqePolicy
+UrmaCqePolicyAttr = _pto_mod.UrmaCqePolicyAttr
+AsyncSubmitMode = _pto_mod.AsyncSubmitMode
+AsyncSubmitModeAttr = _pto_mod.AsyncSubmitModeAttr
 PrefetchAsyncContextType = _export_optional_cext_symbol("PrefetchAsyncContextType")
 HiF8Type = _pto_mod.HiF8Type
 HiF8x2Type = _pto_mod.HiF8x2Type
@@ -236,6 +240,12 @@ def _install_enum_attr_builders():
     def store_l2_hint_attr_builder(value, context=None):
         return StoreL2HintAttr.get(value, context)
 
+    def urma_cqe_policy_attr_builder(value, context=None):
+        return UrmaCqePolicyAttr.get(value, context)
+
+    def async_submit_mode_attr_builder(value, context=None):
+        return AsyncSubmitModeAttr.get(value, context)
+
     _ods_ir.AttrBuilder.insert(
         "PTO_AddressSpaceAttr", address_space_attr_builder, replace=True
     )
@@ -250,6 +260,12 @@ def _install_enum_attr_builders():
     )
     _ods_ir.AttrBuilder.insert(
         "PTO_StoreL2HintAttr", store_l2_hint_attr_builder, replace=True
+    )
+    _ods_ir.AttrBuilder.insert(
+        "PTO_UrmaCqePolicyAttr", urma_cqe_policy_attr_builder, replace=True
+    )
+    _ods_ir.AttrBuilder.insert(
+        "PTO_AsyncSubmitModeAttr", async_submit_mode_attr_builder, replace=True
     )
 
 
@@ -267,6 +283,10 @@ __all__ = [
     "AlignType",
     "AsyncSessionType",
     "AsyncEventType",
+    "UrmaCqePolicy",
+    "UrmaCqePolicyAttr",
+    "AsyncSubmitMode",
+    "AsyncSubmitModeAttr",
     "HiF8Type",
     "HiF8x2Type",
     "F8E8M0Type",

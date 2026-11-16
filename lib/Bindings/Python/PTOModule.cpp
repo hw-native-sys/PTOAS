@@ -155,6 +155,18 @@ static void registerPTOTransferL2HintEnums(py::module_ &m) {
         .value("NotAllocClean", MlirPTOStoreL2Hint::NotAllocClean);
 }
 
+static void registerPTOUrmaEnums(py::module_& m)
+{
+    py::enum_<MlirPTOUrmaCqePolicy>(m, "UrmaCqePolicy")
+        .value("NoCqe", MlirPTOUrmaCqePolicy::NoCqe)
+        .value("OneCqe", MlirPTOUrmaCqePolicy::OneCqe)
+        .value("Final", MlirPTOUrmaCqePolicy::Final);
+    py::enum_<MlirPTOAsyncSubmitMode>(m, "AsyncSubmitMode")
+        .value("Immediate", MlirPTOAsyncSubmitMode::Immediate)
+        .value("Defer", MlirPTOAsyncSubmitMode::Defer)
+        .value("DeferAndSubmit", MlirPTOAsyncSubmitMode::DeferAndSubmit);
+}
+
 static void registerPTOEnums1(py::module_& m)
 {
     // [保留 HEAD]: AddressSpace 枚举定义
@@ -177,7 +189,7 @@ static void registerPTOEnums1(py::module_& m)
     py::enum_<MlirPTOLoadCachePolicy>(m, "LoadCachePolicy")
         .value("Default", MlirPTOLoadCachePolicy::Default)
         .value("L2Bypass", MlirPTOLoadCachePolicy::L2Bypass);
-
+    registerPTOUrmaEnums(m);
     registerPTOTransferL2HintEnums(m);
     py::enum_<MlirPTOBLayout>(m, "BLayout")
         .value("RowMajor", MlirPTOBLayout::RowMajor)
@@ -618,6 +630,12 @@ static void registerPTOValueAttrs2(py::module_ &m) {
                     mlirPTOAttrIsALoadCachePolicyAttr,
                     mlirPTOLoadCachePolicyAttrGet,
                     mlirPTOLoadCachePolicyAttrGetValue);
+    bindPTOEnumAttr(m, "UrmaCqePolicyAttr", "UrmaCqePolicy",
+                    mlirPTOAttrIsAUrmaCqePolicyAttr,
+                    mlirPTOUrmaCqePolicyAttrGet, mlirPTOUrmaCqePolicyAttrGetValue);
+    bindPTOEnumAttr(m, "AsyncSubmitModeAttr", "AsyncSubmitMode",
+                    mlirPTOAttrIsAAsyncSubmitModeAttr,
+                    mlirPTOAsyncSubmitModeAttrGet, mlirPTOAsyncSubmitModeAttrGetValue);
 
     mlir_attribute_subclass(
         m, "RoundModeAttr",
@@ -1292,7 +1310,10 @@ static void registerPTOTypes5(py::module_ &m) {
                 }
                 return fields;
             });
+}
 
+static void registerPTOAsyncSessionType(py::module_& m)
+{
     mlir_type_subclass(
         m, "AsyncSessionType",
         [](MlirType type) -> bool { return mlirPTOTypeIsAAsyncSessionType(type); })
@@ -1301,6 +1322,12 @@ static void registerPTOTypes5(py::module_ &m) {
             [](py::object cls, MlirContext context) -> py::object {
                 MlirType t = mlirPTOAsyncSessionTypeGet(context);
                 return cls.attr("__call__")(t);
+            },
+            py::arg("cls"), py::arg("context") = py::none())
+        .def_classmethod(
+            "get_urma",
+            [](py::object cls, MlirContext context) {
+                return cls.attr("__call__")(mlirPTOAsyncSessionTypeGetUrma(context));
             },
             py::arg("cls"), py::arg("context") = py::none());
 }
@@ -1313,6 +1340,12 @@ static void registerPTOTypes6(py::module_& m)
             [](py::object cls, MlirContext context) -> py::object {
                 MlirType t = mlirPTOAsyncEventTypeGet(context);
                 return cls.attr("__call__")(t);
+            },
+            py::arg("cls"), py::arg("context") = py::none())
+        .def_classmethod(
+            "get_urma",
+            [](py::object cls, MlirContext context) {
+                return cls.attr("__call__")(mlirPTOAsyncEventTypeGetUrma(context));
             },
             py::arg("cls"), py::arg("context") = py::none());
 
@@ -1924,6 +1957,7 @@ void mlir::pto::python::populatePTODialectBindings(pybind11::module_& m)
     registerPTOTypes4(m);
     registerPTOTypes4b(m);
     registerPTOTypes5(m);
+    registerPTOAsyncSessionType(m);
     registerPTOTypes6(m);
     registerPTOTypes6b(m);
     registerPTOTypes6c(m);

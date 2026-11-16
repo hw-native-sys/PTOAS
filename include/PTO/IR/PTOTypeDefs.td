@@ -403,7 +403,17 @@ def PipeType : TypeDef<PTO_Dialect, "Pipe"> {
   let summary = "Opaque pipe handle type for TPUSH/TPOP communication";
 }
 
-def AsyncSessionType : TypeDef<PTO_Dialect, "AsyncSession"> {
+class PTO_AsyncHandleType<string name> : TypeDef<PTO_Dialect, name> {
+  let parameters = (ins OptionalParameter<
+      "::std::optional<::mlir::pto::DmaEngine>">:$engine);
+  let hasCustomAssemblyFormat = 1;
+  let genVerifyDecl = 1;
+  let builders = [
+    TypeBuilder<(ins), [{ return Base::get($_ctxt, ::std::nullopt); }]>
+  ];
+}
+
+def AsyncSessionType : PTO_AsyncHandleType<"AsyncSession"> {
   let mnemonic = "async_session";
   let summary = "Opaque async DMA session handle type";
 }
@@ -429,7 +439,7 @@ def DmaSessionType : TypeDef<PTO_Dialect, "DmaSession"> {
   let assemblyFormat = "`<` params `>`";
 }
 
-def AsyncEventType : TypeDef<PTO_Dialect, "AsyncEvent"> {
+def AsyncEventType : PTO_AsyncHandleType<"AsyncEvent"> {
   let mnemonic = "async_event";
   let summary = "Opaque async DMA event handle type";
 }

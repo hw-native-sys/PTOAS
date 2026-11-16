@@ -1,0 +1,44 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+
+// RUN: ptoas --pto-arch=a3 %s -o - | FileCheck %s
+// RUN: pto-test-opt --pto-test-async-effects %s -o /dev/null
+
+module {
+  func.func @legacy_events(%dst: !pto.partition_tensor_view<128xf32>,
+                           %src: !pto.partition_tensor_view<128xf32>, %workspace: !pto.ptr<i8, gm>) {
+    %scratch = pto.alloc_tile : !pto.tile_buf<vec, 1x256xi8>
+    %session = pto.comm.build_async_session(%scratch, %workspace :
+        !pto.tile_buf<vec, 1x256xi8>, !pto.ptr<i8, gm>) -> !pto.async_session
+    %put = pto.comm.tput_async(%dst, %src, %session :
+        !pto.partition_tensor_view<128xf32>, !pto.partition_tensor_view<128xf32>,
+        !pto.async_session) -> !pto.async_event
+    %get = pto.comm.tget_async(%src, %dst, %session :
+        !pto.partition_tensor_view<128xf32>, !pto.partition_tensor_view<128xf32>,
+        !pto.async_session) -> !pto.async_event
+    %ctx = pto.make_prefetch_async_context(%workspace : !pto.ptr<i8, gm>) -> !pto.prefetch_async_context
+    %prefetch = pto.tprefetch_async(%src, %ctx :
+        !pto.partition_tensor_view<128xf32>, !pto.prefetch_async_context) -> !pto.async_event
+    %prefetch_session = pto.get_prefetch_async_session %ctx :
+        !pto.prefetch_async_context -> !pto.async_session
+    cf.br ^wait(%put, %get, %prefetch : !pto.async_event, !pto.async_event, !pto.async_event)
+  ^wait(%p: !pto.async_event, %g: !pto.async_event, %f: !pto.async_event):
+    %done = pto.comm.wait_async_event(%p, %session : !pto.async_event, !pto.async_session) -> i1
+    %ready = pto.comm.test_async_event(%g, %session : !pto.async_event, !pto.async_session) -> i1
+    %fetched = pto.comm.wait_async_event(%f, %prefetch_session : !pto.async_event, !pto.async_session) -> i1
+    return
+  }
+}
+
+// CHECK-LABEL: void legacy_events(
+// CHECK: TPUT_ASYNC<pto::comm::DmaEngine::SDMA>
+// CHECK: TGET_ASYNC<pto::comm::DmaEngine::SDMA>
+// CHECK: TPREFETCH_ASYNC
+// CHECK: .Wait(
+// CHECK: .Test(
+// CHECK: .Wait(

@@ -232,6 +232,13 @@ static void addReadWriteEffects(MemoryEffectList &effects,
   addEffect(effects, &operand, MemoryEffects::Write::get());
 }
 
+// Asynchronous communication also accesses GM state behind opaque handles
+// and descriptor pointers.
+static void addAsyncMemoryEffects(MemoryEffectList &effects) {
+  effects.emplace_back(MemoryEffects::Read::get());
+  effects.emplace_back(MemoryEffects::Write::get());
+}
+
 static void addOptionalReadWriteEffects(MemoryEffectList &effects,
                                         mlir::MutableOperandRange operands) {
   if (auto it = operands.begin(); it != operands.end())
@@ -256,8 +263,9 @@ static void addAsyncTransferEffects(MemoryEffectList &effects,
                                     OpOperand &session, OpResult event) {
   addEffect(effects, &dst, MemoryEffects::Write::get());
   addEffect(effects, &src, MemoryEffects::Read::get());
-  addEffect(effects, &session, MemoryEffects::Read::get());
+  addReadWriteEffects(effects, session);
   addEffect(effects, event, MemoryEffects::Write::get());
+  addAsyncMemoryEffects(effects);
 }
 
 static void addSyncTransferEffects(MemoryEffectList &effects,
@@ -275,6 +283,25 @@ void BuildAsyncSessionOp::getEffects(
   addEffect(effects, &getScratchMutable(), MemoryEffects::Read::get());
   addEffect(effects, &getWorkspaceMutable(), MemoryEffects::Read::get());
   addEffect(effects, getOperation()->getOpResult(0), MemoryEffects::Write::get());
+}
+
+void pto::BuildUrmaSessionOp::getEffects(MemoryEffectList &effects) {
+  addEffect(effects, &getWorkspaceMutable(), MemoryEffects::Read::get());
+  addGroupEffects(effects, getScratchMutable(), MemoryEffects::Read::get());
+  for (OpResult result : getOperation()->getResults()) {
+    addEffect(effects, result, MemoryEffects::Write::get());
+  }
+}
+
+void pto::TPutAsyncGatherOp::getEffects(MemoryEffectList &effects) {
+  addGroupEffects(effects, getDestinationsMutable(), MemoryEffects::Read::get());
+  addGroupEffects(effects, getSegmentsMutable(), MemoryEffects::Read::get());
+  addReadWriteEffects(effects, getSessionMutable());
+  addOptionalReadWriteEffects(effects, getScratchMutable());
+  for (OpResult result : getOperation()->getResults()) {
+    addEffect(effects, result, MemoryEffects::Write::get());
+  }
+  addAsyncMemoryEffects(effects);
 }
 
 void TPutAsyncOp::getEffects(
