@@ -8,8 +8,6 @@
 
 cmake_minimum_required(VERSION 3.20.0)
 
-include(cmake/fetch_cann_cmake.cmake)
-
 # CANN/Ascend CMake packages used by downstream PTOAS builds may still use the
 # pre-CMake-3.30 FetchContent_Populate(<declared-name>) pattern. Keep that
 # compatibility path enabled so CMake 4.x developer warnings do not become
@@ -19,6 +17,11 @@ if(POLICY CMP0169)
   cmake_policy(SET CMP0169 OLD)
   set(CMAKE_POLICY_DEFAULT_CMP0169 OLD)
 endif()
+
+# Include after the policy above: fetch_cann_cmake.cmake calls
+# FetchContent_Populate(), and a policy set after the include is too late for
+# the call inside it, so the strict CMake 4 gate fails on CMP0169.
+include(cmake/fetch_cann_cmake.cmake)
 
 # LLVM 19's AddMLIRPython.cmake still passes PRE_BUILD to the OUTPUT form of
 # add_custom_command(). CMake 4.1 diagnoses that legacy combination under the
