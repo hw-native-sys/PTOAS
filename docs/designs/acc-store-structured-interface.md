@@ -104,7 +104,13 @@ pto.mte_l0c_l1 %src, %dst, %m, %n, %src_stride, %dst_stride,
 
 `target_profile` 下不是禁止 `NZ2ND / NZ2DN` 的参数。相反，`FIX_L0C_TO_OUT.f32/s32` 明确标了 `NZ2ND Mode` 和 `NZ2DN Mode` valid；其中 `nz2dn(%loop0_src_stride)` 仍然需要把 `loop0_src_stride` 写入 `CHANNEL_PARA[63:48]`，单位是 `C0_SIZE`。
 
-`nz2nz(%split)` 只允许用于 `f32` 输出。`SPLIT_EN = 1` 且输出类型不是 `f32` 时是非法配置。
+**`nz2nz` 且未启用 `%split` 就是硬件 native normal-mode 写回**（`NZ2ND = NZ2DN = SPLIT_EN = 0`，对应 AscendNPU-IR 的 `fixpipe_normal_*` 模板，例如 `fixpipe_normal_float_to_bfloat16_t_4d_to_4d_cbuf`）。不写 layout 子句**不是**这个模式：lowering 会置 `nz2nd`（`X_t[43] = 1`），不能当作 normal-mode 写回使用。
+
+`nz2nz` 的目的元素类型限制只属于 channel split（`SPLIT_EN`）。`SPLIT_EN = 1` 且输出类型不是 `f32` 时是非法配置；`%split` 不写或为常量 0（`SPLIT_EN = 0`）时，`nz2nz` 只清掉 `NZ2ND` / `NZ2DN` 两个 layout 转换位，就是硬件 native normal-mode 写回，目的元素类型只由 `pre_quant` / `pre_relu` 决定（例如 `f32` 累加器经 `pre_quant(mode = f32_bf16)` 写成 `bf16` L1 块状 tile）。这里的“常量 0”包括 `arith.constant` 和 DSL 实际生成的 `pto.constant` 两种形式；非常量 `%split` 以及低 bit 为 1 的常量仍然要求 `f32` 目的类型。
+
+注意：`%dst_stride` 的单位随 layout 变化。`nz2nd` / `nz2dn` 用目的元素数，normal-mode `nz2nz` 用 `C0_SIZE`（32B）单位（FIXPIPE normal-mode 的 `Loop1_dst_stride` 定义）。操作数原样下发给指令，所以把同一个 store 在 `nz2nd` 和 `nz2nz` 之间切换而不重新缩放 `%dst_stride`，会静默改变含义。
+
+已知未校验项：未写 `pre_quant` 时是 `no_convert`（`quant_pre = 0`），硬件要求源/目的同为 32-bit 同类型（`f32`→`f32`、`i32`→`i32`）。本接口目前不校验这一耦合（`nz2nd` 下同样存在，属既有行为），改 dtype 的 store 必须显式给出 `pre_quant` / `pre_relu`。
 
 `loop3(...)` 不是 `nz2dn` 或 `nz2nd` 的别名，它是单独的参数组，只在 `nz2nd` 或 `nz2dn` 场景下使用。
 
@@ -114,7 +120,7 @@ pto.mte_l0c_l1 %src, %dst, %m, %n, %src_stride, %dst_stride,
 - `pre_relu(%alpha_or_fb_addr, mode = ...)` 映射到 `X_t[41:39] / ReLU_PRE`，并按模式进一步映射到 `SPR.RELU_ALPHA[31:13]` 或 `SPR.FPC[7:0] / RELU_PRE_ADDR`
 - `pre_relu(..., clip = %clip_value)?` 映射到 `X_t[31:30] / Clip_ReLU_PRE`（使能）以及 `SPR.FIX_CLIP_RELU[15:0]`
 - `unit_flag(check_only | check_and_clear)?` 映射到 `X_t[33:32] / unit_flag`
-- `nz2nz(%split)?` 映射到 `X_t[42] / SPLIT_EN`
+- `nz2nz(%split)?` 映射到 `X_t[42] / SPLIT_EN`；`SPLIT_EN = 0` 且无其他 layout 位时即 `X_t[43] NZ2ND = 0` / `X_t[62] NZ2DN = 0`，对应硬件 native normal-mode 写回
 - `nz2dn(%loop0_src_stride)` 映射到 `CHANNEL_PARA[63:48]`
 - `loop3(...)` 映射到 `SPR.LOOP3_PARA`
 - `sat` / `nosat` 映射到 `SPR.CTRL[48] / ctrl_sat_ctrl`

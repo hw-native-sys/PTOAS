@@ -1178,7 +1178,7 @@ offsets. A partial group or a mixture of shape-derived and full fields raises
 | `unit_flag` | `pto.AccStoreUnitFlagCtrl` or `None` | `CHECK_ONLY` or `CHECK_AND_CLEAR` |
 | `pre_quant` | `tuple[object, str]` or `None` | Optional pre-quantization payload and mode |
 | `pre_relu` | `tuple[str, object | None, object | None]` or `None` | Optional ReLU mode, payload, and clip payload |
-| `layout` | `object` or `None` | `None`, `"nz2nd"`, or a layout tuple such as `("nz2dn", loop0_src_stride)` / `("nz2nz", split)` |
+| `layout` | `object` or `None` | `None`, `"nz2nd"`, `"nz2nz"` (native normal-mode writeback, no channel split), or a layout tuple such as `("nz2dn", loop0_src_stride)` / `("nz2nz", split)` |
 | `loop3` | `tuple[int, int, int]` or `None` | Optional loop-3 group `(count, src_stride, dst_stride)` |
 | `sat` | `pto.SatMode` or `None` | `ON`, `OFF`, or `PRESERVE_NAN` |
 
@@ -1205,7 +1205,7 @@ offsets. A partial group or a mixture of shape-derived and full fields raises
 | `unit_flag` | `pto.AccStoreUnitFlagCtrl` or `None` | `CHECK_ONLY` or `CHECK_AND_CLEAR` |
 | `pre_quant` | `tuple[object, str]` or `None` | Optional pre-quantization payload and mode |
 | `pre_relu` | `tuple[str, object | None, object | None]` or `None` | Optional ReLU mode, payload, and clip payload |
-| `layout` | `object` or `None` | `None`, `"nz2nd"`, or a layout tuple such as `("nz2dn", loop0_src_stride)` / `("nz2nz", split)` |
+| `layout` | `object` or `None` | `None`, `"nz2nd"`, `"nz2nz"` (native normal-mode writeback, no channel split), or a layout tuple such as `("nz2dn", loop0_src_stride)` / `("nz2nz", split)` |
 | `loop3` | `tuple[int, int, int]` or `None` | Optional loop-3 group `(count, src_stride, dst_stride)` |
 | `sat` | `pto.SatMode` or `None` | `ON`, `OFF`, or `PRESERVE_NAN` |
 | `atomic` | `tuple[str, str]` or `None` | Optional GM-only atomic `(type, op)`, e.g. `("f32", "add")` |
@@ -1233,7 +1233,7 @@ offsets. A partial group or a mixture of shape-derived and full fields raises
 | `unit_flag` | `pto.AccStoreUnitFlagCtrl` or `None` | `CHECK_ONLY` or `CHECK_AND_CLEAR` |
 | `pre_quant` | `tuple[object, str]` or `None` | Optional pre-quantization payload and mode |
 | `pre_relu` | `tuple[str, object | None, object | None]` or `None` | Optional ReLU mode, payload, and clip payload |
-| `layout` | `object` or `None` | `None`, `"nz2nd"`, or a layout tuple such as `("nz2dn", loop0_src_stride)` / `("nz2nz", split)` |
+| `layout` | `object` or `None` | `None`, `"nz2nd"`, `"nz2nz"` (native normal-mode writeback, no channel split), or a layout tuple such as `("nz2dn", loop0_src_stride)` / `("nz2nz", split)` |
 | `loop3` | `tuple[int, int, int]` or `None` | Optional loop-3 group `(count, src_stride, dst_stride)` |
 | `sat` | `pto.SatMode` or `None` | `ON`, `OFF`, or `PRESERVE_NAN` |
 

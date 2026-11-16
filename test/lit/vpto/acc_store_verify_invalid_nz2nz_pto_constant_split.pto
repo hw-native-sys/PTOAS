@@ -1,0 +1,31 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+
+// Issue #1751: the split operand the DSL actually emits is `pto.constant`, which
+// is not ConstantLike. Split detection must read that form too, otherwise a
+// non-f32 destination with a `pto.constant` split constant would slip through
+// (and, symmetrically, the `("nz2nz", 0)` tilelib templates would be rejected).
+//
+// One invalid function per file; see acc_store_verify_invalid_nz2nz_split.pto.
+
+// RUN: not ptoas --pto-arch=a5 %s -o - 2>&1 | FileCheck %s
+
+module attributes {"pto.target_arch" = "a5"} {
+  func.func @acc_store_verify_invalid_nz2nz_pto_constant_split(%src: !pto.ptr<f32, l0c>,
+                                                               %dst: !pto.ptr<bf16, l1>) {
+    %c1_i64 = pto.constant 1 : i64
+    %c16_i64 = pto.constant 16 : i64
+
+    pto.mte_l0c_l1 %src, %dst, %c16_i64, %c16_i64, %c16_i64, %c16_i64, nz2nz(%c1_i64)
+      : !pto.ptr<f32, l0c>, !pto.ptr<bf16, l1>, i64, i64, i64, i64, i64
+
+    return
+  }
+}
+
+// CHECK: nz2nz requires destination element type to be f32 when the channel split may be enabled

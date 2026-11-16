@@ -881,6 +881,40 @@ StructuredAccStoreDestinationFamily
     return success();
   }
 
+  // Read a compile-time integer in either the arith or the PTO
+  // execution-domain-independent constant form. pto.constant is not
+  // ConstantLike, so m_ConstantInt alone misses the form the DSL emits.
+  std::optional<APInt> getAccStoreConstantInt(Value value) {
+    if (!value) {
+      return std::nullopt;
+    }
+    APInt constantValue;
+    if (matchPattern(value, m_ConstantInt(&constantValue))) {
+      return constantValue;
+    }
+    if (auto constantOp = value.getDefiningOp<pto::ConstantOp>()) {
+      if (auto intAttr = dyn_cast<IntegerAttr>(constantOp.getValue())) {
+        return intAttr.getValue();
+      }
+    }
+    return std::nullopt;
+  }
+
+  // SPLIT_EN is X_t[42] = split & 0x1. The f32-destination requirement of
+  // nz2nz belongs to the channel split, not to the layout mode: with
+  // SPLIT_EN cleared nz2nz also clears NZ2ND (X_t[43]) and NZ2DN (X_t[62]),
+  // i.e. it is the native normal-mode writeback, and the destination element
+  // type is only constrained by pre_quant/pre_relu. A non-constant split, or
+  // a constant whose low bit is set, may enable the split, so it keeps the
+  // f32 requirement.
+  bool isAccStoreChannelSplitEnabled(Value split) {
+    std::optional<APInt> splitValue = getAccStoreConstantInt(split);
+    if (!splitValue) {
+      return static_cast<bool>(split);
+    }
+    return !(*splitValue & 1ULL).isZero();
+  }
+
   // Validate mode (nz2nd/nz2dn/nz2nz) and related attributes.
   LogicalResult verifyStructuredAccStoreMode(
       Operation *op, Value split, Value loop0SrcStride, Value loop3Count,
@@ -920,9 +954,12 @@ StructuredAccStoreDestinationFamily
       if (loop3Count) {
         return op->emitOpError("loop3 requires nz2nd or nz2dn");
       }
-      if (!isa<FloatType>(destinationElementType) ||
-          !cast<FloatType>(destinationElementType).isF32()) {
-        return op->emitOpError("nz2nz requires destination element type to be f32");
+      if (isAccStoreChannelSplitEnabled(split) &&
+          (!isa<FloatType>(destinationElementType) ||
+           !cast<FloatType>(destinationElementType).isF32())) {
+        return op->emitOpError(
+            "nz2nz requires destination element type to be f32 when the "
+            "channel split may be enabled");
       }
       break;
     }

@@ -1220,15 +1220,34 @@ Layout modes:
 
 | Mode | Destination layout | Extra operand |
 |------|--------------------|---------------|
-| omitted | Normal target-profile writeback layout | none |
+| omitted | Same as `nz2nd` (the lowering sets `NZ2ND`) | none |
 | `nz2nd` | Logical ND order | none |
 | `nz2dn(%loop0_src_stride)` | Logical D/N-swapped order | `%loop0_src_stride` in C0-size units |
-| `nz2nz(%split)` | NZ-style destination | `%split`, destination split point |
+| `nz2nz` **without** `%split` | **Native normal-mode writeback: blocked (NZ) placement preserved, `NZ2ND` = `NZ2DN` = `SPLIT_EN` = 0** | none |
+| `nz2nz(%split)` | NZ-style destination with the f32 channel split | `%split`, destination split point |
+
+> **Normal mode is spelled `nz2nz` with the channel split off.** The native
+> `fixpipe_normal_*` templates (for example
+> `fixpipe_normal_float_to_bfloat16_t_4d_to_4d_cbuf`) are the hardware
+> normal-mode writeback, which disables BOTH `NZ2ND` and `NZ2DN`. In this
+> interface that configuration is `nz2nz` with no `%split` operand (or a
+> zero constant one); the `nz2nz` keyword is therefore not "another NZ
+> transform", it is the "leave the blocked placement alone" form. Omitting the
+> layout clause is different: it selects `nz2nd`.
+
+> **`%dst_stride` changes unit with the layout mode.** For `nz2nd` and
+> `nz2dn` it is in destination elements; for the normal-mode `nz2nz` form it
+> is in `C0_SIZE` units (32 bytes: 16 `bf16`/`f16` or 8 `f32` elements), per
+> the FIXPIPE normal-mode `Loop1_dst_stride` definition. The operand is
+> forwarded verbatim, so flipping a store between `nz2nd` and `nz2nz` without
+> rescaling `%dst_stride` silently reinterprets it. The mode is static, so
+> the unit is determinate at compile time; there is no ambiguous case to warn
+> about, and the mapping is documented here instead of guessed in a verifier.
 
 `%src_stride` is measured in C0-size units and advances the accumulator source
-between adjacent source groups selected by the layout mode. `%dst_stride` is
-measured in destination elements and advances the destination row/group
-selected by the layout mode. In `loop3`, `%src_stride3` is in C0-size units and
+between adjacent source groups selected by the layout mode. `%dst_stride`
+advances the destination row/group selected by the layout mode, in the unit
+that mode defines (see the note above). In `loop3`, `%src_stride3` is in C0-size units and
 `%dst_stride3` is in destination elements.
 
 Reference semantics:
@@ -1256,17 +1275,31 @@ for r in 0 .. repeat_count-1:
       write_destination(dst_r, y, m, n, dst_stride, layout_mode)
 ```
 
-When no layout clause is present, the store uses the target-profile normal
-writeback layout for the destination address space. This mode performs no
-explicit ND/DN/NZ layout transform; `%dst_stride` is still the destination
-start-to-start stride in destination elements for the normal writeback rows or
-groups.
+When no layout clause is present, the store lowers to `nz2nd`: the emitted
+configuration sets `NZ2ND` (X_t[43]) and clears `NZ2DN` (X_t[62]), so
+`write_destination` produces ND order and `%dst_stride` is the destination
+start-to-start stride in destination elements for the ND rows. That is not the
+native normal-mode writeback; use `nz2nz` for it (see below).
 
 For `nz2nd`, `write_destination` stores logical `y[m, n]` in ND order. For
 `nz2dn`, it stores the same logical result with the D/N dimensions swapped; the
 extra `%loop0_src_stride` selects how the swapped source walk advances through
 the accumulator tile. For `nz2nz`, it preserves NZ-style destination packing
 and uses `%split` as the destination split point.
+
+`nz2nz` is also the representation of the native normal-mode writeback: it
+clears both layout-transform bits (`NZ2ND` = X_t[43], `NZ2DN` = X_t[62]) and,
+when `%split` is absent or a zero constant, it leaves `SPLIT_EN` (X_t[42])
+cleared as well. That is the hardware normal-mode `L0C -> L1` transfer: no
+ND/DN/NZ layout conversion, blocked (NZ) destination placement preserved, and
+the destination element type is whatever `pre_quant`/`pre_relu` produce, e.g.
+`f32` accumulators converted to `bf16` by `pre_quant(mode = f32_bf16)` so a
+later Cube op can consume the `bf16` L1 tile. Omitting the layout clause is
+*not* that mode: it selects `nz2nd` (`NZ2ND` = 1). In normal mode the hardware
+requires `%n` to be a multiple of 16 and keeps `C0_pad_en` (X_t[59]) cleared,
+which is the C0 packaging AscendC uses for its own normal-mode `L0C -> L1`
+fixpipe. `%dst_stride` follows the normal-mode unit described above
+(`C0_SIZE` = 32 bytes, not elements).
 
 ### `pto.mte_l0c_l1`
 
@@ -1317,8 +1350,22 @@ pto.mte_l0c_l1 %src, %dst, %m, %n, %src_stride, %dst_stride
 - `nz2dn` requires `%loop0_src_stride`; `nz2nd` and `nz2nz` do not accept it.
 - `unit_flag` must be omitted when `nz2dn(%loop0_src_stride)` uses a value
   other than 1.
-- `nz2nz` requires `f32` destination element type and does not accept `loop3`.
+- `nz2nz` requires an `f32` destination element type only when `%split`
+  may enable the channel split (`SPLIT_EN`): a non-constant split, or a
+  constant whose low bit is set. Without `%split` (or with a constant-zero one,
+  in either the `arith.constant` or the `pto.constant` form the DSL emits) it
+  is the native normal-mode writeback and any destination element type
+  compatible with `pre_quant`/`pre_relu` is accepted. It does not accept
+  `loop3`.
 - `sat`, `sat(preserve_nan)`, and `nosat` are mutually exclusive.
+- **Known gap (not verified today):** when `pre_quant` is absent the store is
+  `no_convert` (`quant_pre` = 0), and the hardware couples that mode to
+  matching 32-bit source/destination types (`f32` -> `f32`, `i32` -> `i32`).
+  This interface does not check that coupling, so a dtype-changing store that
+  omits `pre_quant` is accepted here even though the emitted intrinsic name
+  carries the conversion. It is pre-existing and reachable through `nz2nd` as
+  well; a store that changes dtype must select a `pre_quant` (or `pre_relu`
+  clip) mode, and the verifier enforcing that is a separate change.
 
 **Example:**
 

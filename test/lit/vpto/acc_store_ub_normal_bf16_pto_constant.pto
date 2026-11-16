@@ -1,0 +1,44 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+
+// Issue #1751, UB half: the acc-store verifier must honour the `pto.constant`
+// split operand that the DSL actually emits. `template_tinsert_acc_to_vec_nz_basic`
+// (lib/TileOps/a5/tinsert.py) writes f32/f16/bf16/i32 accumulators into blocked
+// (NZ) UB with `layout = ("nz2nz", 0)`, i.e. normal mode with `SPLIT_EN = 0`,
+// and ptodsl materializes the 0 as `pto.constant` (not ConstantLike). Before
+// this fix those non-f32 variants were rejected, so the template was dead for
+// them.
+//
+// X_t = unit_flag(0) | quant_pre f32_bf16 (16 << 34) | loop_src_stride(16)
+//     = 274877906960, i.e. NZ2ND (bit 43) and NZ2DN (bit 62) both clear.
+
+// RUN: ptoas --pto-arch=a5 --pto-backend=vpto --emit-vpto --mlir-print-ir-after=vpto-expand-wrapper-ops %s -o /dev/null 2>&1 | FileCheck %s --check-prefix=EXPAND
+// RUN: ( mkdir -p %T && ptoas --pto-arch=a5 --pto-backend=vpto %s -o %t --mlir-print-ir-after=convert-func-to-llvm 2>&1 || true ) | FileCheck %s --check-prefix=LLVM
+
+module attributes {pto.target_arch = "a5", pto.kernel_kind = #pto.kernel_kind<cube>} {
+  func.func @ub_normal_bf16_writeback_pto_constant_split(%acc: !pto.ptr<f32, l0c>,
+                                                         %ub: !pto.ptr<bf16, ub>) attributes {pto.kernel} {
+    %c0_i64 = pto.constant 0 : i64
+    %c16_i64 = pto.constant 16 : i64
+    %c0_bf16 = pto.constant 0.000000e+00 : bf16
+
+    pto.mte_l0c_ub %acc, %ub, %c16_i64, %c16_i64, %c16_i64, %c16_i64,
+      dst_mode(%c0_i64),
+      pre_quant(%c0_bf16, mode = f32_bf16),
+      nz2nz(%c0_i64)
+      : !pto.ptr<f32, l0c>, !pto.ptr<bf16, ub>, i64, i64, i64, i64, i64, bf16, i64
+    return
+  }
+}
+
+// EXPAND-LABEL: func.func @ub_normal_bf16_writeback_pto_constant_split(
+// EXPAND-DAG: %[[XT:.*]] = arith.constant 274877906960 : i64
+// EXPAND: pto.copy_matrix_cc_to_ub %{{.*}}, %{{.*}}, %{{.*}}, %[[XT]]
+
+// LLVM-LABEL: llvm.func @ub_normal_bf16_writeback_pto_constant_split_mix_aic
+// LLVM: llvm.call @llvm.hivm.FIX.L0C.TO.UB.f322bf16.EXT

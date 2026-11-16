@@ -264,9 +264,14 @@ def _acc_store_layout(layout):
                 None)
         raise ValueError("acc store layout tuple only supports nz2dn or nz2nz")
     normalized = _normalize_token(layout, context="acc store layout")
-    if normalized != "nz2nd":
-        raise ValueError("acc store layout string only supports nz2nd; use (mode, operand) for nz2dn/nz2nz")
-    return Attribute.parse("#pto<acc_store_mode nz2nd>"), None, None
+    # Bare nz2nz is the native normal-mode writeback: no `split` operand, so
+    # SPLIT_EN stays 0 and both layout-transform bits are cleared.
+    if normalized not in {"nz2nd", "nz2nz"}:
+        raise ValueError(
+            "acc store layout string only supports nz2nd or nz2nz; "
+            "use (mode, operand) for nz2dn or for an explicit nz2nz split"
+        )
+    return Attribute.parse(f"#pto<acc_store_mode {normalized}>"), None, None
 
 
 def _acc_store_loop3(loop3):

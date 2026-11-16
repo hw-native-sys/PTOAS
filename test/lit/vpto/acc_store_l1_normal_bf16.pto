@@ -1,0 +1,146 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+
+// Issue #1751: the native normal-layout F32-to-BF16 L0C-to-L1 fixpipe writeback.
+//
+// `nz2nz` with the channel split disabled (no `%split`, or a zero `%split`)
+// clears BOTH `NZ2ND` (X_t[43]) and `NZ2DN` (X_t[62]); that is the native
+// normal-mode transfer AscendNPU-IR emits as
+// `fixpipe_normal_float_to_bfloat16_t_4d_to_4d_cbuf`. The blocked destination
+// placement, the C0 packaging and the unit-flag semantics are the hardware
+// normal-mode ones; the F32->BF16 conversion rides on
+// `pre_quant(mode = f32_bf16)`. The BF16 L1 tile produced this way feeds the
+// next Cube op (`load_cbuf_to_ca/cb` + `mad`) like any other blocked BF16 L1
+// tile, and the emitted intrinsic is `FIX.L0C.TO.L1.f322bf16.EXT`.
+//
+// Packed X_t = loop_src_stride | quant_pre | unit_flag | NZ2ND | NZ2DN:
+//   normal, unit_flag(check_and_clear): 3 << 32 | 16 << 34 | 16 = 287762808848
+//   normal, no unit_flag / no split:                    16 << 34 | 16 = 274877906960
+//   nz2nd,  unit_flag(check_and_clear):     1 << 43 | 3 << 32 | 16 << 34 | 16
+//                                                              = 9083855831056
+// The two normal-mode constants stay below 2^43, so neither NZ2ND nor NZ2DN
+// is set; the nz2nd form is exactly the normal-mode constant plus 2^43.
+//
+// The zero-split form is covered twice because the DSL materializes literal
+// operands as `pto.constant` (not ConstantLike) while hand-written tests use
+// `arith.constant`; both must count as a disabled channel split.
+
+// RUN: ptoas --pto-arch=a5 --pto-backend=vpto --emit-vpto --mlir-print-ir-before=vpto-expand-wrapper-ops %s -o /dev/null 2>&1 | FileCheck %s --check-prefix=ROUNDTRIP
+// RUN: ptoas --pto-arch=a5 --pto-backend=vpto --emit-vpto --mlir-print-ir-after=vpto-expand-wrapper-ops %s -o /dev/null 2>&1 | FileCheck %s --check-prefix=EXPAND
+// RUN: ( mkdir -p %T && ptoas --pto-arch=a5 --pto-backend=vpto %s -o %t --mlir-print-ir-after=convert-func-to-llvm 2>&1 || true ) | FileCheck %s --check-prefix=LLVM
+
+module attributes {pto.target_arch = "a5", pto.kernel_kind = #pto.kernel_kind<cube>} {
+  // F32 accumulator -> BF16 L1, native normal-mode writeback with unit_flag.
+  func.func @l1_normal_bf16_writeback(%acc: !pto.ptr<f32, l0c>,
+                                      %l1: !pto.ptr<bf16, l1>,
+                                      %l0a: !pto.ptr<bf16, l0a>,
+                                      %l0b: !pto.ptr<bf16, l0b>,
+                                      %l0c: !pto.ptr<f32, l0c>) attributes {pto.kernel} {
+    %c0_i64 = arith.constant 0 : i64
+    %c1_i64 = arith.constant 1 : i64
+    %c16_i64 = arith.constant 16 : i64
+    %c0_bf16 = arith.constant 0.000000e+00 : bf16
+
+    // No `%split` operand: SPLIT_EN stays 0, so the destination element type
+    // is not restricted to f32.
+    pto.mte_l0c_l1 %acc, %l1, %c16_i64, %c16_i64, %c16_i64, %c16_i64,
+      unit_flag(check_and_clear),
+      pre_quant(%c0_bf16, mode = f32_bf16),
+      nz2nz
+      : !pto.ptr<f32, l0c>, !pto.ptr<bf16, l1>, i64, i64, i64, i64, bf16
+
+    // The resulting BF16 L1 tile feeds the next Cube multiplication.
+    pto.load_cbuf_to_ca %l1, %l0a, %c0_i64, %c1_i64, %c16_i64, %c16_i64, %c1_i64, %c1_i64
+      : !pto.ptr<bf16, l1>, !pto.ptr<bf16, l0a>, i64, i64, i64, i64, i64, i64
+    pto.load_cbuf_to_cb %l1, %l0b, %c0_i64, %c1_i64, %c16_i64, %c16_i64, %c1_i64, %c1_i64
+      : !pto.ptr<bf16, l1>, !pto.ptr<bf16, l0b>, i64, i64, i64, i64, i64, i64
+    pto.mad %l0a, %l0b, %l0c, %c16_i64, %c16_i64, %c16_i64
+      : !pto.ptr<bf16, l0a>, !pto.ptr<bf16, l0b>, !pto.ptr<f32, l0c>, i64, i64, i64
+    return
+  }
+
+  // A zero `%split` arith constant is the same transfer: SPLIT_EN = split & 1.
+  func.func @l1_normal_bf16_writeback_zero_split(%acc: !pto.ptr<f32, l0c>,
+                                                 %l1: !pto.ptr<bf16, l1>) attributes {pto.kernel} {
+    %c0_i64 = arith.constant 0 : i64
+    %c16_i64 = arith.constant 16 : i64
+    %c0_f32 = arith.constant 0.000000e+00 : f32
+
+    pto.mte_l0c_l1 %acc, %l1, %c16_i64, %c16_i64, %c16_i64, %c16_i64,
+      pre_quant(%c0_f32, mode = f32_bf16),
+      nz2nz(%c0_i64)
+      : !pto.ptr<f32, l0c>, !pto.ptr<bf16, l1>, i64, i64, i64, i64, f32, i64
+    return
+  }
+
+  // Same transfer with the `pto.constant` zero split the tilelib templates
+  // emit (`layout = ("nz2nz", 0)` in lib/TileOps/a5/tinsert.py).
+  func.func @l1_normal_bf16_writeback_pto_constant_split(%acc: !pto.ptr<f32, l0c>,
+                                                         %l1: !pto.ptr<bf16, l1>) attributes {pto.kernel} {
+    %c0_i64 = pto.constant 0 : i64
+    %c16_i64 = pto.constant 16 : i64
+    %c0_f32 = pto.constant 0.000000e+00 : f32
+
+    pto.mte_l0c_l1 %acc, %l1, %c16_i64, %c16_i64, %c16_i64, %c16_i64,
+      pre_quant(%c0_f32, mode = f32_bf16),
+      nz2nz(%c0_i64)
+      : !pto.ptr<f32, l0c>, !pto.ptr<bf16, l1>, i64, i64, i64, i64, f32, i64
+    return
+  }
+
+  // Control: the same store with `nz2nd` sets NZ2ND and is NOT the native
+  // normal-mode writeback.
+  func.func @l1_nz2nd_bf16_writeback(%acc: !pto.ptr<f32, l0c>,
+                                     %l1: !pto.ptr<bf16, l1>) attributes {pto.kernel} {
+    %c16_i64 = arith.constant 16 : i64
+    %c0_bf16 = arith.constant 0.000000e+00 : bf16
+
+    pto.mte_l0c_l1 %acc, %l1, %c16_i64, %c16_i64, %c16_i64, %c16_i64,
+      unit_flag(check_and_clear),
+      pre_quant(%c0_bf16, mode = f32_bf16),
+      nz2nd
+      : !pto.ptr<f32, l0c>, !pto.ptr<bf16, l1>, i64, i64, i64, i64, bf16
+    return
+  }
+}
+
+// The `nz2nz` spelling is anchored with the following " : " so the no-operand
+// (SPLIT_EN not even present) form is what this check pins.
+// ROUNDTRIP-LABEL: func.func @l1_normal_bf16_writeback(
+// ROUNDTRIP: unit_flag(check_and_clear), pre_quant(%{{.*}}, mode = f32_bf16), nz2nz :
+// ROUNDTRIP-LABEL: func.func @l1_normal_bf16_writeback_zero_split(
+// ROUNDTRIP: pre_quant(%{{.*}}, mode = f32_bf16), nz2nz(%{{.*}}) :
+// `pto.constant` is already folded to `arith.constant` before this dump, so
+// the proof that the DSL-shaped form is accepted is that the module parses and
+// reaches the expand stage at all (the store verifies at op-creation time,
+// while the split still is a pto.constant).
+// ROUNDTRIP-LABEL: func.func @l1_normal_bf16_writeback_pto_constant_split(
+// ROUNDTRIP: pre_quant(%{{.*}}, mode = f32_bf16), nz2nz(%{{.*}}) :
+
+// X_m = DstStride(16) << 32 | M(16) << 16 | N(16) << 4 | SID(0) = 68720525568.
+// The stores differ only in the layout bits of X_t: 287762808848
+// (normal + unit_flag), 274877906960 (normal, no unit_flag, zero split - both
+// the arith and the pto.constant spelling) and 9083855831056
+// (nz2nd + unit_flag = normal + 2^43). The expanded functions are matched
+// without an order assumption.
+// EXPAND-DAG: %[[XM:.*]] = arith.constant 68720525568 : i64
+// EXPAND-DAG: %[[XT:.*]] = arith.constant 287762808848 : i64
+// EXPAND-DAG: %[[XT0:.*]] = arith.constant 274877906960 : i64
+// EXPAND-DAG: %[[XTN:.*]] = arith.constant 9083855831056 : i64
+// EXPAND-DAG: pto.copy_matrix_cc_to_cbuf %{{.*}}, %{{.*}}, %[[XM]], %[[XT]]
+// EXPAND-DAG: pto.copy_matrix_cc_to_cbuf %{{.*}}, %{{.*}}, %{{.*}}, %[[XTN]]
+// EXPAND-DAG: pto.copy_matrix_cc_to_cbuf %{{.*}}, %{{.*}}, %{{.*}}, %[[XT0]]
+// EXPAND-DAG: pto.copy_matrix_cc_to_cbuf %{{.*}}, %{{.*}}, %{{.*}}, %[[XT0]]
+
+// LLVM-LABEL: llvm.func @l1_normal_bf16_writeback_mix_aic
+// LLVM: llvm.call @llvm.hivm.FIX.L0C.TO.L1.f322bf16.EXT
+// LLVM: llvm.call @llvm.hivm.LOAD.L1.TO.L0A.2Dv2.bf16
+// LLVM: llvm.call @llvm.hivm.LOAD.L1.TO.L0B.2Dv2.bf16
+// LLVM: llvm.call @llvm.hivm.MAD.bf162f32.c310
+// LLVM-LABEL: llvm.func @l1_normal_bf16_writeback_pto_constant_split_mix_aic
+// LLVM: llvm.call @llvm.hivm.FIX.L0C.TO.L1.f322bf16.EXT

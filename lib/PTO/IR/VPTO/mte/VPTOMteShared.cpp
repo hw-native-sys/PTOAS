@@ -206,8 +206,12 @@ namespace mlir::pto::mte_detail {
       return op.emitOpError("dual destination mode cannot be combined with "
                             "pre_quant, pre_relu, clip, nz2dn, nz2nz, or loop3");
     }
+    // The dual-destination path has no layout clause; an omitted clause already
+    // lowers to nz2nd (NZ2ND set). Other modes, including the normal-mode
+    // nz2nz form, are not supported here.
     if (op.getMode() && *op.getMode() != AccStoreMode::Nz2nd) {
-      return op.emitOpError("dual destination mode requires normal or nz2nd layout");
+      return op.emitOpError(
+          "dual destination mode requires an omitted layout clause or nz2nd");
     }
     APInt mValue;
     APInt nValue;
