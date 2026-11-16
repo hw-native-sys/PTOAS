@@ -408,7 +408,7 @@ static FailureOr<int64_t> getConstantI64(Value value) {
 }
 
 // Byte footprint of one allocated tile buffer, mirroring PlanMemory's
-// computeTileBufBytes/computeConvTileBytes rules (PTOPlanMemoryModern.cpp):
+// computeTileBufBytes/computeConvTileBytes rules (PTOPlanMemoryModern.cpp).
 // compact = row_plus_one buffers physically exceed product(shape) by one pad
 // element per major row, and conv buffers are sized by their explicit
 // buffer_size. Any shape that is not statically representable fails.

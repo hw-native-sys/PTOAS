@@ -898,7 +898,6 @@ static AICORE inline void PTOAS__INIT_CONVTILE_CONFIG(
 )cpp"));
   }
 
-
   static void emitPreambleRuntimeHelpers(ModuleOp mop, OpBuilder &builder,
                                          const HelperFlags &flags) {
     Location loc = mop->getLoc();

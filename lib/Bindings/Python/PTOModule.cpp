@@ -260,7 +260,6 @@ static void registerPTOEnums2(py::module_ &m) {
     .value("ON", MlirPTOSaturationMode::ON)
     .value("OFF", MlirPTOSaturationMode::OFF);
 
-
     py::enum_<MlirPTOCmpMode>(m, "CmpMode")
       .value("EQ", MlirPTOCmpMode_EQ)
       .value("NE", MlirPTOCmpMode_NE)

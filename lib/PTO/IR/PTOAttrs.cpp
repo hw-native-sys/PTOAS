@@ -402,7 +402,6 @@ LogicalResult ConvTileConfigAttr::verify(function_ref<InFlightDiagnostic()> emit
     }
     return success();
   };
-
   if (failed(checkI32(fmapH, "fmap_h")) || failed(checkI32(fmapW, "fmap_w")) ||
       failed(checkI32(filterH, "filter_h")) ||
       failed(checkI32(filterW, "filter_w")) ||

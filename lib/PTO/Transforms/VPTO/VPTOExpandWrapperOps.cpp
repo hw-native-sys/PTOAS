@@ -778,7 +778,6 @@ struct CbufControlMath {
         loc, value, rewriter.create<arith::SubIOp>(loc, divisor, one));
     return rewriter.create<arith::DivUIOp>(loc, sum, divisor);
   }
-
 };
 
 struct LoadCbufControlQuery {

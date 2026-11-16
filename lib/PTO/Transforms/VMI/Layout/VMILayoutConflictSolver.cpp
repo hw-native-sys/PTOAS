@@ -451,8 +451,8 @@ static unsigned sumLaneStrideFactors(const VMILayoutPlan& plan)
 //     only the ones a compute op must split back out are counted.
 //  5. lane-stride weight - the sum of the lane strides of every lane-strided
 //     value, absorbed ones included.  A wider stride packs more elements into
-//     one carrier and splits the stream more finely, so lane_stride = 4 costs
-//     more than = 2; fewer wins.
+//     one carrier and splits the stream more finely, so a lane stride of four
+//     costs more than one of two; fewer wins.
 //  6. preference penalty - the per-operation layout preferences.  They rank
 //     below both lane-stride keys because the tables only describe what a
 //     single operation prefers, not what the whole plan pays.

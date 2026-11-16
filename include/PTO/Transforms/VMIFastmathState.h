@@ -34,7 +34,6 @@ inline constexpr llvm::StringLiteral kVMIFastmathStateAttrName = "pto.vmi_fastma
 
 /// The module that owns the compilation-wide state: the OUTERMOST module that
 /// encloses \p scope, or null when \p scope is not nested in a module.
-///
 /// The state belongs to the compilation, not to a kernel module.  Resolving the
 /// owner from the outermost module is what makes a nested kernel module's
 /// \c pto.vmi_fastmath inert: no part of the input IR can shadow the driver's

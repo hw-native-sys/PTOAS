@@ -82,7 +82,6 @@ static bool hasGatherScatterLikeOps(func::FuncOp func) {
 /// TEST-ONLY. Routes hazard group 0 off its default mechanism, so the BUFID value
 /// is exercised end to end on kernels that would not otherwise route: set on both
 /// halves of a pair, carried through the extractor, and printed by the dumper.
-///
 /// Marks BOTH halves rather than one. `GetMatchSync` does propagate the mechanism
 /// to the half it creates, but it built this pair inside `InsertSyncAnalysis`,
 /// before any mechanism was chosen, so a later stamp on one half leaves the other
@@ -277,7 +276,6 @@ private:
 
     MoveSyncState syncMove(syncIR, syncOpsStorage);
     syncMove.Run();
-
     if (!hasGatherScatterLikeOps(func)) {
       RemoveRedundantSync removeRedundant(syncIR, syncOpsStorage, SyncAnalysisMode::NORMALSYNC);
       removeRedundant.Run();
@@ -320,7 +318,6 @@ private:
     }
 
     model = unified::buildSyncModel(syncOpsStorage, bufidCapacity, memInfoToClusters, syncIR);
-
     if (checkAddrReuse) {
       reportAddressReuseHazards(func, model);
     }

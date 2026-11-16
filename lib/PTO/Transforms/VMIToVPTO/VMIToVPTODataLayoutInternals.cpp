@@ -249,7 +249,7 @@ mergeCompactedPartsIntoContiguous(Operation *op,
 /// carriers (four parts -> two, for example 128 f32) is a carrier-compacting
 /// gather.  Part p holds the logical lanes congruent to p modulo 4 in its low
 /// half, so the two classes that share a parity interleave back into exactly
-/// one deinterleaved=2 part:
+/// one deinterleaved=2 part, as follows.
 ///   d0 = vintlv(p0, p2).low   (lanes 0, 2, 4, ...)
 ///   d1 = vintlv(p1, p3).low   (lanes 1, 3, 5, ...)
 /// The high halves of the sources are padding outside the value, so the high

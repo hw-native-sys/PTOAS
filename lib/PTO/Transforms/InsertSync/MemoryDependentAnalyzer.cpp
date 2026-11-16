@@ -340,7 +340,6 @@ static GMWindow inflateToGranule(const GMWindow &window) {
 // (b) of isGMWindowProvenDisjoint: same lattice of run starts, and the two
 // runs never meet inside one period. This is the column-slice case, where the
 // bounding-interval check (a) can never succeed.
-//
 // With identical outerDims the run starts are offA + L and offB + L for a
 // common lattice L. Let d0 = (offA - offB) mod S for the innermost stride S.
 // A byte of window A at intra-run position i (0 <= i < contigA) and a byte of

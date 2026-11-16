@@ -189,7 +189,6 @@ std::unique_ptr<Pass> createPTOInlineBackendHelpersPass(
 
 /// G3: device-id legality. `bufidCapacity` is K, the number of buffer ids the arch
 /// exposes: 0 on A3, 32 on A5.
-///
 /// `injectFault` names a synthetic fault to append to the gate's own record list, so
 /// that the gate can be shown to catch a class the IR cannot express -- an event id
 /// outside [0, 8) is unrepresentable, because `pto.set_flag` spells its id as an

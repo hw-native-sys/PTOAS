@@ -98,7 +98,6 @@ struct SyncOpRecord {
 llvm::StringRef pipelineTypeName(PipelineType pipe);
 
 /// The pipe a `get_buf`/`rls_buf` `op_type` names.
-///
 /// `PTO_PipeLikeAttr` admits three spellings -- pipe_event_type, sync_op_type, and a
 /// plain PipeAttr. A decoder handling only the first two returns PIPE_UNASSIGNED for
 /// the third rather than failing, so its caller silently loses the op.

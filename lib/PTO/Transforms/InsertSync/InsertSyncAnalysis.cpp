@@ -525,7 +525,6 @@ void InsertSyncAnalysis::InsertSync(
 //===----------------------------------------------------------------------===//
 // Affine-disjoint carried accesses
 //===----------------------------------------------------------------------===//
-//
 // An access has no loop-carried dependence on itself when it moves far enough per
 // iteration that the memory two iterations touch never meets. This proves that for
 // a `pto.partition_view` whose offset is affine in the induction variable of the loop
@@ -536,7 +535,6 @@ void InsertSyncAnalysis::InsertSync(
 // refuses the moment an input is not a compile-time constant.
 
 /// The `scf.for` whose back edge `forEndIndex` denotes, or null.
-///
 /// THE INNERMOST ENCLOSING LOOP IS THE WRONG ANSWER, and silently so. A carried
 /// dependence is analysed once per back edge, and for an access inside a nest the
 /// outer back edge and the inner one are different questions: inner iterations can

@@ -120,7 +120,6 @@ llvm::SmallVector<IdViolation> checkDeviceIdLegality(llvm::ArrayRef<SyncOpRecord
 //===----------------------------------------------------------------------===//
 // G3-macro: collision with a macro's library-internal event ids
 //===----------------------------------------------------------------------===//
-//
 // A macro op lowers to a pto-isa library call that consumes event ids INSIDE the
 // call, where no PTO IR names them. `SyncMacroModel::hiddenEvents` records which
 // (srcPipe, dstPipe, id) the library uses, so the ids are known even though the
@@ -498,7 +497,6 @@ struct CoverageProfile {
 };
 
 /// Walks `func` and derives the happens-before edges its emitted sync induces.
-///
 /// `anchorIndex`, when non-null, receives the Operation* -> anchor-index map
 /// built by the same walk. G1-self needs it to map a dependency's endpoints into
 /// this coordinate system, and taking it from here rather than rebuilding it is

@@ -535,7 +535,6 @@ bool touchesPrimedBuffer(const CompoundInstanceElement &cp, const SyncOperation 
 }
 
 // Where a synthesised head-set may sit, given the loop that carries its hazard.
-//
 // A head-set has no producer to follow, so it can move as early as its region
 // allows. This is a cycle concern, not correctness: the consumer pipe cannot start
 // until the credit is up, so a head-set parked behind unrelated compute on the

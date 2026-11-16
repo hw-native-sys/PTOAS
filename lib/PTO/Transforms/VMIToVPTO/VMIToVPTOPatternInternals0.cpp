@@ -862,7 +862,7 @@ Value createIotaLaneStrideIntRamp(Location loc, Type resultType, Value indices,
 /// laneStride=1 is the entry for the canonical DESC ramp from
 /// createIotaContiguousChunk; ASC laneStride=1 stays a bare vci there.
 /// CONTRACT – odd/non-sampled lanes contain undefined fill (laneStride ≥ 2
-/// only):
+/// only).
 ///   Float vmuls rounds (base + i + 0.5) in odd lanes for laneStride=2; these
 ///   physical lanes must not be consumed.  The only valid consumers are ops
 ///   that sample every laneStride-th lane (e.g. PK_B32 stores), as guaranteed

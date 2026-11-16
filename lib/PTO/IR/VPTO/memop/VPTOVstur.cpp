@@ -25,7 +25,6 @@ namespace {
 // the emitter derives it from this value chain, so checking the chain is
 // equivalent to checking #st. Otherwise the store length -- and therefore
 // whether and what the store writes -- is undefined, so reject the sequence.
-//
 // This is a value-chain check rather than a dominance or function-wide scan: a
 // dominating but unrelated VSQZ is emitted with #st=0 and drops its SQZN, and
 // a VSQZ in a non-dominating sibling branch cannot define SQZN on every path

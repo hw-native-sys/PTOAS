@@ -332,7 +332,6 @@ mlir::pto::oracle::checkMacroHiddenEventCollisions(const SyncIRs &syncIR, llvm::
   // over the macro's own span. Built to the same rule the incumbent reserves by,
   // so that a green result here means what a green result there means.
   auto reserved = macroReservations(syncIR);
-
   if (reserved.empty()) {
     return violations;
   }
@@ -567,7 +566,6 @@ struct BufOpen {
 constexpr int kNoOwner = -1;
 
 /// The `scf.if`/`scf.index_switch` REGIONS enclosing `op`, outermost first.
-///
 /// Loops are skipped on purpose. Two ops in different blocks of the same loop nest
 /// are still reached together whenever the loop body runs at all, and requiring the
 /// two halves of an event pair to share a block would reject the set-outside /
@@ -1393,12 +1391,12 @@ private:
   }
 
   // Rule 3: is this loop-carried EVENT pair primed by a set outside the loop?
-  //
   // P1' IS A REACHABILITY TEST, NOT A NESTING TEST -- and that distinction was
   // a REAL FALSE PASS, found by adversarial review and reproduced. The first
   // version asked only `!insideLoop(head.op, loop)`, which credits a head that
   // may never execute. Four deadlocking shapes were blessed `violations=0 OK`:
-  //   (a) `scf.if %c { set_flag }` before the loop  -- hangs when %c is false;
+  //   (a) a conditional set before the loop, which hangs when the condition is
+  //       false;
   //   (b) `scf.if %c { set_flag } else { <the loop> }` -- prime and loop on
   //       MUTUALLY EXCLUSIVE arms, so the prime provably never ran when the loop
   //       runs: hangs for EVERY value of %c;

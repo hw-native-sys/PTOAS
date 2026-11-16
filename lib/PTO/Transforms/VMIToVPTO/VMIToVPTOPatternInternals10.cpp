@@ -21,7 +21,6 @@ static bool isBF16ReduceResultElementCount(int64_t elementCount) {
 
 //===----------------------------------------------------------------------===//
 // Masked conversions (issue #1671)
-//
 // The logical VMI conversion predicate ZEROES every inactive lane
 // (docs/isa/vmi-isa/03-eltwise-compute.md:23) and the physical pto.vcvt
 // predicate has the same zero-inactive contract.  The predicate therefore rides
@@ -60,7 +59,6 @@ static StringRef getConversionMaskGranularity(unsigned elementBits)
 /// Re-express one carrier-group predicate part at the element granularity
 /// pto.vcvt requires.  `sourceElementBits` is the element width of the vector
 /// the conversion actually consumes.
-///
 /// A lane-strided mask is materialized with granularity element_bits * W, one
 /// predicate bit per carrier group, and that bit already sits on the
 /// element-granularity bit of the lane the group carries: predicate bit

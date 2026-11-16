@@ -144,7 +144,6 @@ static LogicalResult verifyTensorDumpElemType(TensorDumpOp op,
 /// tile valid shape. Comparing element counts alone is not enough: a same-count
 /// reshaped destination (for example 64x1 against a 4x16 valid shape) still
 /// walks past the tile.
-///
 /// The frontend normalises a 2-D view to the pto-isa 5-D form by prepending
 /// unit dimensions (8x16 becomes 1x1x1x8x16), so compare the trailing
 /// dimensions and require any extra leading ones to be unit.

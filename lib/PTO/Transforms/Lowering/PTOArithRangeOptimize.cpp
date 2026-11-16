@@ -804,8 +804,8 @@ struct PTOArithRangeOptimizePass
     // analysis is fixed, suppress integer-range rewrites only on the
     // data/control flow slice rooted at a mixed-result if; unrelated arithmetic
     // in the same function still receives the complete optimization set.
-    // TODO(#1560): Remove this guarded fork after the upstream LLVM range
-    // analysis handles mixed-result scf.if correctly.
+    // Tracked as issue #1560: remove this guarded fork once the upstream LLVM
+    // range analysis handles mixed-result scf.if correctly.
     // Keep the original module-level pipeline for A3: running the pass once
     // per func.func changes its rewrite scope and can produce invalid UB
     // addresses in otherwise unrelated A3 kernels.

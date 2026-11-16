@@ -128,7 +128,6 @@ static FailureOr<Type> verifyPTOShapedBinarySameElemAndShape(Operation *op,
 /// (`tpartadd` and `tpartmul`): shaped-like operands that share one element type
 /// and rank-2 shapes, with valid regions following the partial pattern -- A5
 /// allows any split, A2/A3 requires one operand to match `dst`.
-///
 /// The element types are not part of it: each op accepts the profile of the
 /// A5/A2A3 vector instruction it lowers to (`tpartadd` reaches `pto.vadd`,
 /// `tpartmul` reaches `pto.vmul`) and states it in its own verifier.

@@ -282,7 +282,6 @@ static LogicalResult verifyConvTileTExtractCoverage(TExtractOp op) {
 }
 
 static LogicalResult verifyTExtractA2A3(TExtractOp op) {
-
   auto common = verifyTExtractCommon(op, /*allowLowPrecision=*/false);
   if (failed(common)) {
     return failure();
@@ -387,7 +386,6 @@ static LogicalResult verifyTExtractA5Acc(TExtractOp op,
 }
 
 static LogicalResult verifyTExtractA5(TExtractOp op) {
-
   auto common = verifyTExtractCommon(op, /*allowLowPrecision=*/true);
   if (failed(common)) {
     return failure();

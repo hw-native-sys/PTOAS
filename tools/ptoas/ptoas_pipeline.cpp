@@ -135,18 +135,15 @@ struct FormEmitCExpressionsCompatPass final
 
   /// Whether inlining `producer` as an operand of `consumer` would hand the
   /// LLVM 19 C++ emitter an expression it groups incorrectly.
-  ///
   /// `CppEmitter::emitOperand` parenthesizes a sub-expression whose precedence
   /// is <= the enclosing context (TranslateToCpp.cpp:1334), but then pushes the
   /// *lowest* possible precedence for it (:1337) instead of its own. Everything
   /// printed inside those parentheses therefore believes it binds tighter than
   /// its parent and loses the parentheses it needs, so the emitted C++ silently
   /// re-groups the tree:
-  ///
   ///   ((a andi b) andi (c ori d)) andi e
   ///     -> (v1 & v2 & v3 | v4) & v5      instead of
   ///        (v1 & v2 & (v3 | v4)) & v5
-  ///
   /// LLVM 21 fixed the emitter by pushing the operand's own precedence
   /// unconditionally (:1536). We cannot patch the external LLVM build, so keep
   /// such producers out of the merged expression body instead: a named value

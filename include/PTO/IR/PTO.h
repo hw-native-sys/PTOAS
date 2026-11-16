@@ -372,11 +372,10 @@ bool isPTOEntryFunction(LLVM::LLVMFuncOp func);
 /// Return true if the function carries an explicit request to stay externally
 /// visible in backend artifacts: PTO entries always qualify, and any other
 /// function qualifies while it carries `pto.visibility = "external"`.
-///
 /// A `false` result does not by itself mean the function gets internalized.
 /// Internalization keys off the MLIR symbol visibility, and both backends apply
-/// the same policy -- `applyFuncSpecifiers` for EmitC,
-/// `applyArtifactVisibilityLinkage` for VPTO:
+/// the same policy -- `applyFuncSpecifiers` for EmitC and
+/// `applyArtifactVisibilityLinkage` for VPTO. The mapping is
 ///   - entry                        -> exported
 ///   - private                      -> module-local (EmitC `static`, VPTO
 ///                                     `internal`)
@@ -388,7 +387,6 @@ bool isPTOEntryFunction(LLVM::LLVMFuncOp func);
 /// Precedence is entry, then private, then the external marker, so this helper
 /// does not decide the `private` + `pto.visibility = "external"` pair on its
 /// own -- both backends resolve that to module-local.
-///
 /// The `LLVM::LLVMFuncOp` overload reports `false` for declarations; it cannot
 /// rely on `isDeclaration()` there (see the definition).
 bool hasExternalArtifactVisibility(func::FuncOp func);

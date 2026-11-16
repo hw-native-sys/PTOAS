@@ -106,7 +106,6 @@ public:
 
   /// Route to the buffer-ID token protocol, so this hazard must NOT take an event
   /// id.
-  ///
   /// THE `uselessSync` MARKS ARE NOT OPTIONAL. `SyncCodegen` dispatches on the
   /// SyncOperation TYPE, never on the mechanism, so stamping BUFID alone would
   /// still emit the set/wait pair, now with no event id. All four ops, because
@@ -204,7 +203,6 @@ public:
   bool hasEventId() const { return !setOp_->eventIds.empty(); }
 
   //-- Loop-carried compensation -----------------------------------------------
-  //
   // A loop-carried hazard's in-body pair (wait, then set) deadlocks on iteration 1
   // with nothing priming the flag. `synthesizeLoopCompensation` adds a head-set
   // before the carrying loop and a tail-wait after it, on the same id. The hazard

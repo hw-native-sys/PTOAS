@@ -22,7 +22,6 @@ using namespace mlir::pto;
 /// (plus the packed f4x2 -> bf16x2 pair).  An 8-bit source has no direct f16 or
 /// bf16 form: the hardware reaches it through f32, so reject the pair here
 /// instead of lowering it to a pto.vcvt that the LLVM emitter cannot legalize.
-///
 /// Note that pto.vmi.extf is not another name for pto.vmi.vcvt: the unified
 /// vcvt is the authored op and vmi-lower-unified-to-legacy expands it (the
 /// fp8 -> f16/bf16 pair becomes extf f8 -> f32 plus truncf f32 -> f16/bf16).
