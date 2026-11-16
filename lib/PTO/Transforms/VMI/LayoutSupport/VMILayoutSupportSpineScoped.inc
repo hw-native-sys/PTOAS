@@ -14,7 +14,7 @@
 // translation unit so the definitions below can use the file-local cast
 // helpers.  It holds the cast-layout queries the direction-spine peephole in
 // VMILayoutAssignment reaches through getSpineScopedCastLayoutFact*; the rows
-// they read are not part of the generic preferred/legal tables.
+// retain legacy preferences while sharing the generic legal relation set.
 //===----------------------------------------------------------------------===//
 
 FailureOr<VMICastLayoutFact>
@@ -57,33 +57,8 @@ FailureOr<SmallVector<VMICastLayoutFact, mlir::pto::kValue4>>
 VMILayoutSupport::getSpineScopedCastLayoutFactsForLayout(
     VMIVRegType sourceType, VMIVRegType resultType, VMICastLayoutPort port,
     VMILayoutAttr layout, std::string *reason) const {
-  // The generic legal table stays the base relation set: the scoped query is a
-  // strict superset so that a scoped op propagates exactly like an unscoped one
-  // everywhere outside the two composite rows.
-  std::pair<int64_t, int64_t> elementBits =
-      getCastElementBits(sourceType, resultType);
-  int64_t sourceBits = elementBits.first;
-  int64_t resultBits = elementBits.second;
-  int64_t numGroups =
-      layout && layout.isGroupSlots() ? layout.getNumGroups() : 0;
-  SmallVector<VMICastLayoutFact, mlir::pto::kValue4> facts;
-  collectMatchingCastFacts(kLegalCastLayoutPatterns, sourceType, resultType,
-                               port, layout, sourceBits, resultBits, numGroups,
-                               facts);
-  collectMatchingCastFacts(kSpineScopedLegalCastLayoutPatterns, sourceType,
-                               resultType, port, layout, sourceBits,
-                               resultBits, numGroups, facts);
-  if (facts.empty()) {
-    if (reason) {
-      reason->assign(port == VMICastLayoutPort::Source
-                         ? "requires a spine-scoped legal cast relation for the "
-                           "source layout"
-                         : "requires a spine-scoped legal cast relation for the "
-                           "result layout");
-    }
-    return failure();
-  }
-  return facts;
+  return getCastLayoutFactsForLayout(sourceType, resultType, port, layout,
+                                     reason);
 }
 
 #endif // VMILAYOUTSUPPORTSPINESCOPED_INC

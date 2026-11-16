@@ -1,0 +1,832 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+
+// The regular-layout product is independent of a particular kernel or spine.
+// RUN: pto-test-opt %s -vmi-set-fastmath=vmi-fastmath=true -vmi-layout-assignment | FileCheck %s --check-prefix=ASSIGN --implicit-check-not=pto.vmi.ensure_layout
+// RUN: pto-test-opt %s -vmi-set-fastmath=vmi-fastmath=true -vmi-layout-assignment -vmi-to-vpto | FileCheck %s --check-prefix=LOWER --implicit-check-not=pto.vmi.
+module {
+// ASSIGN-LABEL: @cast_1_1_1(
+// ASSIGN: pto.vmi.extf
+// ASSIGN-SAME: -> !pto.vmi.vreg<1xf32, #pto.vmi.layout<contiguous>>
+// ASSIGN: pto.vmi.truncf
+// ASSIGN-SAME: -> !pto.vmi.vreg<1xbf16, #pto.vmi.layout<contiguous>>
+// LOWER-LABEL: @cast_1_1_1(
+// LOWER: pto.vintlv
+// LOWER: pto.vdintlv
+func.func @cast_1_1_1(%x: !pto.vmi.vreg<1xbf16, #pto.vmi.layout<contiguous>>) -> !pto.vmi.vreg<1xbf16, #pto.vmi.layout<contiguous>> {
+  %w = pto.vmi.extf %x : !pto.vmi.vreg<1xbf16, #pto.vmi.layout<contiguous>> -> !pto.vmi.vreg<1xf32, #pto.vmi.layout<contiguous>>
+  %r = pto.vmi.truncf %w {rounding = "Z", saturate = "NOSAT"} : !pto.vmi.vreg<1xf32, #pto.vmi.layout<contiguous>> -> !pto.vmi.vreg<1xbf16, #pto.vmi.layout<contiguous>>
+  return %r : !pto.vmi.vreg<1xbf16, #pto.vmi.layout<contiguous>>
+}
+// ASSIGN-LABEL: @cast_1_1_2(
+// ASSIGN: pto.vmi.extf
+// ASSIGN-SAME: -> !pto.vmi.vreg<1xf32, #pto.vmi.layout<contiguous, lane_stride = 2>>
+// ASSIGN: pto.vmi.truncf
+// ASSIGN-SAME: -> !pto.vmi.vreg<1xbf16, #pto.vmi.layout<contiguous, lane_stride = 2>>
+// LOWER-LABEL: @cast_1_1_2(
+// LOWER: pto.vintlv
+// LOWER: pto.vdintlv
+func.func @cast_1_1_2(%x: !pto.vmi.vreg<1xbf16, #pto.vmi.layout<contiguous, lane_stride = 2>>) -> !pto.vmi.vreg<1xbf16, #pto.vmi.layout<contiguous, lane_stride = 2>> {
+  %w = pto.vmi.extf %x : !pto.vmi.vreg<1xbf16, #pto.vmi.layout<contiguous, lane_stride = 2>> -> !pto.vmi.vreg<1xf32, #pto.vmi.layout<contiguous, lane_stride = 2>>
+  %r = pto.vmi.truncf %w {rounding = "Z", saturate = "NOSAT"} : !pto.vmi.vreg<1xf32, #pto.vmi.layout<contiguous, lane_stride = 2>> -> !pto.vmi.vreg<1xbf16, #pto.vmi.layout<contiguous, lane_stride = 2>>
+  return %r : !pto.vmi.vreg<1xbf16, #pto.vmi.layout<contiguous, lane_stride = 2>>
+}
+// ASSIGN-LABEL: @cast_1_1_4(
+// ASSIGN: pto.vmi.extf
+// ASSIGN-SAME: -> !pto.vmi.vreg<1xf32, #pto.vmi.layout<contiguous, lane_stride = 4>>
+// ASSIGN: pto.vmi.truncf
+// ASSIGN-SAME: -> !pto.vmi.vreg<1xbf16, #pto.vmi.layout<contiguous, lane_stride = 4>>
+// LOWER-LABEL: @cast_1_1_4(
+// LOWER: pto.vintlv
+// LOWER: pto.vdintlv
+func.func @cast_1_1_4(%x: !pto.vmi.vreg<1xbf16, #pto.vmi.layout<contiguous, lane_stride = 4>>) -> !pto.vmi.vreg<1xbf16, #pto.vmi.layout<contiguous, lane_stride = 4>> {
+  %w = pto.vmi.extf %x : !pto.vmi.vreg<1xbf16, #pto.vmi.layout<contiguous, lane_stride = 4>> -> !pto.vmi.vreg<1xf32, #pto.vmi.layout<contiguous, lane_stride = 4>>
+  %r = pto.vmi.truncf %w {rounding = "Z", saturate = "NOSAT"} : !pto.vmi.vreg<1xf32, #pto.vmi.layout<contiguous, lane_stride = 4>> -> !pto.vmi.vreg<1xbf16, #pto.vmi.layout<contiguous, lane_stride = 4>>
+  return %r : !pto.vmi.vreg<1xbf16, #pto.vmi.layout<contiguous, lane_stride = 4>>
+}
+// ASSIGN-LABEL: @cast_1_2_1(
+// ASSIGN: pto.vmi.extf
+// ASSIGN-SAME: -> !pto.vmi.vreg<1xf32, #pto.vmi.layout<deinterleaved = 2>>
+// ASSIGN: pto.vmi.truncf
+// ASSIGN-SAME: -> !pto.vmi.vreg<1xbf16, #pto.vmi.layout<deinterleaved = 2>>
+// LOWER-LABEL: @cast_1_2_1(
+// LOWER: pto.vintlv
+// LOWER: pto.vdintlv
+func.func @cast_1_2_1(%x: !pto.vmi.vreg<1xbf16, #pto.vmi.layout<deinterleaved = 2>>) -> !pto.vmi.vreg<1xbf16, #pto.vmi.layout<deinterleaved = 2>> {
+  %w = pto.vmi.extf %x : !pto.vmi.vreg<1xbf16, #pto.vmi.layout<deinterleaved = 2>> -> !pto.vmi.vreg<1xf32, #pto.vmi.layout<deinterleaved = 2>>
+  %r = pto.vmi.truncf %w {rounding = "Z", saturate = "NOSAT"} : !pto.vmi.vreg<1xf32, #pto.vmi.layout<deinterleaved = 2>> -> !pto.vmi.vreg<1xbf16, #pto.vmi.layout<deinterleaved = 2>>
+  return %r : !pto.vmi.vreg<1xbf16, #pto.vmi.layout<deinterleaved = 2>>
+}
+// ASSIGN-LABEL: @cast_1_2_2(
+// ASSIGN: pto.vmi.extf
+// ASSIGN-SAME: -> !pto.vmi.vreg<1xf32, #pto.vmi.layout<deinterleaved = 2, lane_stride = 2>>
+// ASSIGN: pto.vmi.truncf
+// ASSIGN-SAME: -> !pto.vmi.vreg<1xbf16, #pto.vmi.layout<deinterleaved = 2, lane_stride = 2>>
+// LOWER-LABEL: @cast_1_2_2(
+// LOWER: pto.vintlv
+// LOWER: pto.vdintlv
+func.func @cast_1_2_2(%x: !pto.vmi.vreg<1xbf16, #pto.vmi.layout<deinterleaved = 2, lane_stride = 2>>) -> !pto.vmi.vreg<1xbf16, #pto.vmi.layout<deinterleaved = 2, lane_stride = 2>> {
+  %w = pto.vmi.extf %x : !pto.vmi.vreg<1xbf16, #pto.vmi.layout<deinterleaved = 2, lane_stride = 2>> -> !pto.vmi.vreg<1xf32, #pto.vmi.layout<deinterleaved = 2, lane_stride = 2>>
+  %r = pto.vmi.truncf %w {rounding = "Z", saturate = "NOSAT"} : !pto.vmi.vreg<1xf32, #pto.vmi.layout<deinterleaved = 2, lane_stride = 2>> -> !pto.vmi.vreg<1xbf16, #pto.vmi.layout<deinterleaved = 2, lane_stride = 2>>
+  return %r : !pto.vmi.vreg<1xbf16, #pto.vmi.layout<deinterleaved = 2, lane_stride = 2>>
+}
+// ASSIGN-LABEL: @cast_1_2_4(
+// ASSIGN: pto.vmi.extf
+// ASSIGN-SAME: -> !pto.vmi.vreg<1xf32, #pto.vmi.layout<deinterleaved = 2, lane_stride = 4>>
+// ASSIGN: pto.vmi.truncf
+// ASSIGN-SAME: -> !pto.vmi.vreg<1xbf16, #pto.vmi.layout<deinterleaved = 2, lane_stride = 4>>
+// LOWER-LABEL: @cast_1_2_4(
+// LOWER: pto.vintlv
+// LOWER: pto.vdintlv
+func.func @cast_1_2_4(%x: !pto.vmi.vreg<1xbf16, #pto.vmi.layout<deinterleaved = 2, lane_stride = 4>>) -> !pto.vmi.vreg<1xbf16, #pto.vmi.layout<deinterleaved = 2, lane_stride = 4>> {
+  %w = pto.vmi.extf %x : !pto.vmi.vreg<1xbf16, #pto.vmi.layout<deinterleaved = 2, lane_stride = 4>> -> !pto.vmi.vreg<1xf32, #pto.vmi.layout<deinterleaved = 2, lane_stride = 4>>
+  %r = pto.vmi.truncf %w {rounding = "Z", saturate = "NOSAT"} : !pto.vmi.vreg<1xf32, #pto.vmi.layout<deinterleaved = 2, lane_stride = 4>> -> !pto.vmi.vreg<1xbf16, #pto.vmi.layout<deinterleaved = 2, lane_stride = 4>>
+  return %r : !pto.vmi.vreg<1xbf16, #pto.vmi.layout<deinterleaved = 2, lane_stride = 4>>
+}
+// ASSIGN-LABEL: @cast_1_4_1(
+// ASSIGN: pto.vmi.extf
+// ASSIGN-SAME: -> !pto.vmi.vreg<1xf32, #pto.vmi.layout<deinterleaved = 4>>
+// ASSIGN: pto.vmi.truncf
+// ASSIGN-SAME: -> !pto.vmi.vreg<1xbf16, #pto.vmi.layout<deinterleaved = 4>>
+// LOWER-LABEL: @cast_1_4_1(
+// LOWER: pto.vintlv
+// LOWER: pto.vdintlv
+func.func @cast_1_4_1(%x: !pto.vmi.vreg<1xbf16, #pto.vmi.layout<deinterleaved = 4>>) -> !pto.vmi.vreg<1xbf16, #pto.vmi.layout<deinterleaved = 4>> {
+  %w = pto.vmi.extf %x : !pto.vmi.vreg<1xbf16, #pto.vmi.layout<deinterleaved = 4>> -> !pto.vmi.vreg<1xf32, #pto.vmi.layout<deinterleaved = 4>>
+  %r = pto.vmi.truncf %w {rounding = "Z", saturate = "NOSAT"} : !pto.vmi.vreg<1xf32, #pto.vmi.layout<deinterleaved = 4>> -> !pto.vmi.vreg<1xbf16, #pto.vmi.layout<deinterleaved = 4>>
+  return %r : !pto.vmi.vreg<1xbf16, #pto.vmi.layout<deinterleaved = 4>>
+}
+// ASSIGN-LABEL: @cast_1_4_2(
+// ASSIGN: pto.vmi.extf
+// ASSIGN-SAME: -> !pto.vmi.vreg<1xf32, #pto.vmi.layout<deinterleaved = 4, lane_stride = 2>>
+// ASSIGN: pto.vmi.truncf
+// ASSIGN-SAME: -> !pto.vmi.vreg<1xbf16, #pto.vmi.layout<deinterleaved = 4, lane_stride = 2>>
+// LOWER-LABEL: @cast_1_4_2(
+// LOWER: pto.vintlv
+// LOWER: pto.vdintlv
+func.func @cast_1_4_2(%x: !pto.vmi.vreg<1xbf16, #pto.vmi.layout<deinterleaved = 4, lane_stride = 2>>) -> !pto.vmi.vreg<1xbf16, #pto.vmi.layout<deinterleaved = 4, lane_stride = 2>> {
+  %w = pto.vmi.extf %x : !pto.vmi.vreg<1xbf16, #pto.vmi.layout<deinterleaved = 4, lane_stride = 2>> -> !pto.vmi.vreg<1xf32, #pto.vmi.layout<deinterleaved = 4, lane_stride = 2>>
+  %r = pto.vmi.truncf %w {rounding = "Z", saturate = "NOSAT"} : !pto.vmi.vreg<1xf32, #pto.vmi.layout<deinterleaved = 4, lane_stride = 2>> -> !pto.vmi.vreg<1xbf16, #pto.vmi.layout<deinterleaved = 4, lane_stride = 2>>
+  return %r : !pto.vmi.vreg<1xbf16, #pto.vmi.layout<deinterleaved = 4, lane_stride = 2>>
+}
+// ASSIGN-LABEL: @cast_1_4_4(
+// ASSIGN: pto.vmi.extf
+// ASSIGN-SAME: -> !pto.vmi.vreg<1xf32, #pto.vmi.layout<deinterleaved = 4, lane_stride = 4>>
+// ASSIGN: pto.vmi.truncf
+// ASSIGN-SAME: -> !pto.vmi.vreg<1xbf16, #pto.vmi.layout<deinterleaved = 4, lane_stride = 4>>
+// LOWER-LABEL: @cast_1_4_4(
+// LOWER: pto.vintlv
+// LOWER: pto.vdintlv
+func.func @cast_1_4_4(%x: !pto.vmi.vreg<1xbf16, #pto.vmi.layout<deinterleaved = 4, lane_stride = 4>>) -> !pto.vmi.vreg<1xbf16, #pto.vmi.layout<deinterleaved = 4, lane_stride = 4>> {
+  %w = pto.vmi.extf %x : !pto.vmi.vreg<1xbf16, #pto.vmi.layout<deinterleaved = 4, lane_stride = 4>> -> !pto.vmi.vreg<1xf32, #pto.vmi.layout<deinterleaved = 4, lane_stride = 4>>
+  %r = pto.vmi.truncf %w {rounding = "Z", saturate = "NOSAT"} : !pto.vmi.vreg<1xf32, #pto.vmi.layout<deinterleaved = 4, lane_stride = 4>> -> !pto.vmi.vreg<1xbf16, #pto.vmi.layout<deinterleaved = 4, lane_stride = 4>>
+  return %r : !pto.vmi.vreg<1xbf16, #pto.vmi.layout<deinterleaved = 4, lane_stride = 4>>
+}
+// ASSIGN-LABEL: @cast_2_1_1(
+// ASSIGN: pto.vmi.extf
+// ASSIGN-SAME: -> !pto.vmi.vreg<2xf32, #pto.vmi.layout<contiguous>>
+// ASSIGN: pto.vmi.truncf
+// ASSIGN-SAME: -> !pto.vmi.vreg<2xbf16, #pto.vmi.layout<contiguous>>
+// LOWER-LABEL: @cast_2_1_1(
+// LOWER: pto.vintlv
+// LOWER: pto.vdintlv
+func.func @cast_2_1_1(%x: !pto.vmi.vreg<2xbf16, #pto.vmi.layout<contiguous>>) -> !pto.vmi.vreg<2xbf16, #pto.vmi.layout<contiguous>> {
+  %w = pto.vmi.extf %x : !pto.vmi.vreg<2xbf16, #pto.vmi.layout<contiguous>> -> !pto.vmi.vreg<2xf32, #pto.vmi.layout<contiguous>>
+  %r = pto.vmi.truncf %w {rounding = "Z", saturate = "NOSAT"} : !pto.vmi.vreg<2xf32, #pto.vmi.layout<contiguous>> -> !pto.vmi.vreg<2xbf16, #pto.vmi.layout<contiguous>>
+  return %r : !pto.vmi.vreg<2xbf16, #pto.vmi.layout<contiguous>>
+}
+// ASSIGN-LABEL: @cast_2_1_2(
+// ASSIGN: pto.vmi.extf
+// ASSIGN-SAME: -> !pto.vmi.vreg<2xf32, #pto.vmi.layout<contiguous, lane_stride = 2>>
+// ASSIGN: pto.vmi.truncf
+// ASSIGN-SAME: -> !pto.vmi.vreg<2xbf16, #pto.vmi.layout<contiguous, lane_stride = 2>>
+// LOWER-LABEL: @cast_2_1_2(
+// LOWER: pto.vintlv
+// LOWER: pto.vdintlv
+func.func @cast_2_1_2(%x: !pto.vmi.vreg<2xbf16, #pto.vmi.layout<contiguous, lane_stride = 2>>) -> !pto.vmi.vreg<2xbf16, #pto.vmi.layout<contiguous, lane_stride = 2>> {
+  %w = pto.vmi.extf %x : !pto.vmi.vreg<2xbf16, #pto.vmi.layout<contiguous, lane_stride = 2>> -> !pto.vmi.vreg<2xf32, #pto.vmi.layout<contiguous, lane_stride = 2>>
+  %r = pto.vmi.truncf %w {rounding = "Z", saturate = "NOSAT"} : !pto.vmi.vreg<2xf32, #pto.vmi.layout<contiguous, lane_stride = 2>> -> !pto.vmi.vreg<2xbf16, #pto.vmi.layout<contiguous, lane_stride = 2>>
+  return %r : !pto.vmi.vreg<2xbf16, #pto.vmi.layout<contiguous, lane_stride = 2>>
+}
+// ASSIGN-LABEL: @cast_2_1_4(
+// ASSIGN: pto.vmi.extf
+// ASSIGN-SAME: -> !pto.vmi.vreg<2xf32, #pto.vmi.layout<contiguous, lane_stride = 4>>
+// ASSIGN: pto.vmi.truncf
+// ASSIGN-SAME: -> !pto.vmi.vreg<2xbf16, #pto.vmi.layout<contiguous, lane_stride = 4>>
+// LOWER-LABEL: @cast_2_1_4(
+// LOWER: pto.vintlv
+// LOWER: pto.vdintlv
+func.func @cast_2_1_4(%x: !pto.vmi.vreg<2xbf16, #pto.vmi.layout<contiguous, lane_stride = 4>>) -> !pto.vmi.vreg<2xbf16, #pto.vmi.layout<contiguous, lane_stride = 4>> {
+  %w = pto.vmi.extf %x : !pto.vmi.vreg<2xbf16, #pto.vmi.layout<contiguous, lane_stride = 4>> -> !pto.vmi.vreg<2xf32, #pto.vmi.layout<contiguous, lane_stride = 4>>
+  %r = pto.vmi.truncf %w {rounding = "Z", saturate = "NOSAT"} : !pto.vmi.vreg<2xf32, #pto.vmi.layout<contiguous, lane_stride = 4>> -> !pto.vmi.vreg<2xbf16, #pto.vmi.layout<contiguous, lane_stride = 4>>
+  return %r : !pto.vmi.vreg<2xbf16, #pto.vmi.layout<contiguous, lane_stride = 4>>
+}
+// ASSIGN-LABEL: @cast_2_2_1(
+// ASSIGN: pto.vmi.extf
+// ASSIGN-SAME: -> !pto.vmi.vreg<2xf32, #pto.vmi.layout<deinterleaved = 2>>
+// ASSIGN: pto.vmi.truncf
+// ASSIGN-SAME: -> !pto.vmi.vreg<2xbf16, #pto.vmi.layout<deinterleaved = 2>>
+// LOWER-LABEL: @cast_2_2_1(
+// LOWER: pto.vintlv
+// LOWER: pto.vdintlv
+func.func @cast_2_2_1(%x: !pto.vmi.vreg<2xbf16, #pto.vmi.layout<deinterleaved = 2>>) -> !pto.vmi.vreg<2xbf16, #pto.vmi.layout<deinterleaved = 2>> {
+  %w = pto.vmi.extf %x : !pto.vmi.vreg<2xbf16, #pto.vmi.layout<deinterleaved = 2>> -> !pto.vmi.vreg<2xf32, #pto.vmi.layout<deinterleaved = 2>>
+  %r = pto.vmi.truncf %w {rounding = "Z", saturate = "NOSAT"} : !pto.vmi.vreg<2xf32, #pto.vmi.layout<deinterleaved = 2>> -> !pto.vmi.vreg<2xbf16, #pto.vmi.layout<deinterleaved = 2>>
+  return %r : !pto.vmi.vreg<2xbf16, #pto.vmi.layout<deinterleaved = 2>>
+}
+// ASSIGN-LABEL: @cast_2_2_2(
+// ASSIGN: pto.vmi.extf
+// ASSIGN-SAME: -> !pto.vmi.vreg<2xf32, #pto.vmi.layout<deinterleaved = 2, lane_stride = 2>>
+// ASSIGN: pto.vmi.truncf
+// ASSIGN-SAME: -> !pto.vmi.vreg<2xbf16, #pto.vmi.layout<deinterleaved = 2, lane_stride = 2>>
+// LOWER-LABEL: @cast_2_2_2(
+// LOWER: pto.vintlv
+// LOWER: pto.vdintlv
+func.func @cast_2_2_2(%x: !pto.vmi.vreg<2xbf16, #pto.vmi.layout<deinterleaved = 2, lane_stride = 2>>) -> !pto.vmi.vreg<2xbf16, #pto.vmi.layout<deinterleaved = 2, lane_stride = 2>> {
+  %w = pto.vmi.extf %x : !pto.vmi.vreg<2xbf16, #pto.vmi.layout<deinterleaved = 2, lane_stride = 2>> -> !pto.vmi.vreg<2xf32, #pto.vmi.layout<deinterleaved = 2, lane_stride = 2>>
+  %r = pto.vmi.truncf %w {rounding = "Z", saturate = "NOSAT"} : !pto.vmi.vreg<2xf32, #pto.vmi.layout<deinterleaved = 2, lane_stride = 2>> -> !pto.vmi.vreg<2xbf16, #pto.vmi.layout<deinterleaved = 2, lane_stride = 2>>
+  return %r : !pto.vmi.vreg<2xbf16, #pto.vmi.layout<deinterleaved = 2, lane_stride = 2>>
+}
+// ASSIGN-LABEL: @cast_2_2_4(
+// ASSIGN: pto.vmi.extf
+// ASSIGN-SAME: -> !pto.vmi.vreg<2xf32, #pto.vmi.layout<deinterleaved = 2, lane_stride = 4>>
+// ASSIGN: pto.vmi.truncf
+// ASSIGN-SAME: -> !pto.vmi.vreg<2xbf16, #pto.vmi.layout<deinterleaved = 2, lane_stride = 4>>
+// LOWER-LABEL: @cast_2_2_4(
+// LOWER: pto.vintlv
+// LOWER: pto.vdintlv
+func.func @cast_2_2_4(%x: !pto.vmi.vreg<2xbf16, #pto.vmi.layout<deinterleaved = 2, lane_stride = 4>>) -> !pto.vmi.vreg<2xbf16, #pto.vmi.layout<deinterleaved = 2, lane_stride = 4>> {
+  %w = pto.vmi.extf %x : !pto.vmi.vreg<2xbf16, #pto.vmi.layout<deinterleaved = 2, lane_stride = 4>> -> !pto.vmi.vreg<2xf32, #pto.vmi.layout<deinterleaved = 2, lane_stride = 4>>
+  %r = pto.vmi.truncf %w {rounding = "Z", saturate = "NOSAT"} : !pto.vmi.vreg<2xf32, #pto.vmi.layout<deinterleaved = 2, lane_stride = 4>> -> !pto.vmi.vreg<2xbf16, #pto.vmi.layout<deinterleaved = 2, lane_stride = 4>>
+  return %r : !pto.vmi.vreg<2xbf16, #pto.vmi.layout<deinterleaved = 2, lane_stride = 4>>
+}
+// ASSIGN-LABEL: @cast_2_4_1(
+// ASSIGN: pto.vmi.extf
+// ASSIGN-SAME: -> !pto.vmi.vreg<2xf32, #pto.vmi.layout<deinterleaved = 4>>
+// ASSIGN: pto.vmi.truncf
+// ASSIGN-SAME: -> !pto.vmi.vreg<2xbf16, #pto.vmi.layout<deinterleaved = 4>>
+// LOWER-LABEL: @cast_2_4_1(
+// LOWER: pto.vintlv
+// LOWER: pto.vdintlv
+func.func @cast_2_4_1(%x: !pto.vmi.vreg<2xbf16, #pto.vmi.layout<deinterleaved = 4>>) -> !pto.vmi.vreg<2xbf16, #pto.vmi.layout<deinterleaved = 4>> {
+  %w = pto.vmi.extf %x : !pto.vmi.vreg<2xbf16, #pto.vmi.layout<deinterleaved = 4>> -> !pto.vmi.vreg<2xf32, #pto.vmi.layout<deinterleaved = 4>>
+  %r = pto.vmi.truncf %w {rounding = "Z", saturate = "NOSAT"} : !pto.vmi.vreg<2xf32, #pto.vmi.layout<deinterleaved = 4>> -> !pto.vmi.vreg<2xbf16, #pto.vmi.layout<deinterleaved = 4>>
+  return %r : !pto.vmi.vreg<2xbf16, #pto.vmi.layout<deinterleaved = 4>>
+}
+// ASSIGN-LABEL: @cast_2_4_2(
+// ASSIGN: pto.vmi.extf
+// ASSIGN-SAME: -> !pto.vmi.vreg<2xf32, #pto.vmi.layout<deinterleaved = 4, lane_stride = 2>>
+// ASSIGN: pto.vmi.truncf
+// ASSIGN-SAME: -> !pto.vmi.vreg<2xbf16, #pto.vmi.layout<deinterleaved = 4, lane_stride = 2>>
+// LOWER-LABEL: @cast_2_4_2(
+// LOWER: pto.vintlv
+// LOWER: pto.vdintlv
+func.func @cast_2_4_2(%x: !pto.vmi.vreg<2xbf16, #pto.vmi.layout<deinterleaved = 4, lane_stride = 2>>) -> !pto.vmi.vreg<2xbf16, #pto.vmi.layout<deinterleaved = 4, lane_stride = 2>> {
+  %w = pto.vmi.extf %x : !pto.vmi.vreg<2xbf16, #pto.vmi.layout<deinterleaved = 4, lane_stride = 2>> -> !pto.vmi.vreg<2xf32, #pto.vmi.layout<deinterleaved = 4, lane_stride = 2>>
+  %r = pto.vmi.truncf %w {rounding = "Z", saturate = "NOSAT"} : !pto.vmi.vreg<2xf32, #pto.vmi.layout<deinterleaved = 4, lane_stride = 2>> -> !pto.vmi.vreg<2xbf16, #pto.vmi.layout<deinterleaved = 4, lane_stride = 2>>
+  return %r : !pto.vmi.vreg<2xbf16, #pto.vmi.layout<deinterleaved = 4, lane_stride = 2>>
+}
+// ASSIGN-LABEL: @cast_2_4_4(
+// ASSIGN: pto.vmi.extf
+// ASSIGN-SAME: -> !pto.vmi.vreg<2xf32, #pto.vmi.layout<deinterleaved = 4, lane_stride = 4>>
+// ASSIGN: pto.vmi.truncf
+// ASSIGN-SAME: -> !pto.vmi.vreg<2xbf16, #pto.vmi.layout<deinterleaved = 4, lane_stride = 4>>
+// LOWER-LABEL: @cast_2_4_4(
+// LOWER: pto.vintlv
+// LOWER: pto.vdintlv
+func.func @cast_2_4_4(%x: !pto.vmi.vreg<2xbf16, #pto.vmi.layout<deinterleaved = 4, lane_stride = 4>>) -> !pto.vmi.vreg<2xbf16, #pto.vmi.layout<deinterleaved = 4, lane_stride = 4>> {
+  %w = pto.vmi.extf %x : !pto.vmi.vreg<2xbf16, #pto.vmi.layout<deinterleaved = 4, lane_stride = 4>> -> !pto.vmi.vreg<2xf32, #pto.vmi.layout<deinterleaved = 4, lane_stride = 4>>
+  %r = pto.vmi.truncf %w {rounding = "Z", saturate = "NOSAT"} : !pto.vmi.vreg<2xf32, #pto.vmi.layout<deinterleaved = 4, lane_stride = 4>> -> !pto.vmi.vreg<2xbf16, #pto.vmi.layout<deinterleaved = 4, lane_stride = 4>>
+  return %r : !pto.vmi.vreg<2xbf16, #pto.vmi.layout<deinterleaved = 4, lane_stride = 4>>
+}
+// ASSIGN-LABEL: @cast_4_1_1(
+// ASSIGN: pto.vmi.extf
+// ASSIGN-SAME: -> !pto.vmi.vreg<4xf32, #pto.vmi.layout<contiguous>>
+// ASSIGN: pto.vmi.truncf
+// ASSIGN-SAME: -> !pto.vmi.vreg<4xbf16, #pto.vmi.layout<contiguous>>
+// LOWER-LABEL: @cast_4_1_1(
+// LOWER: pto.vintlv
+// LOWER: pto.vdintlv
+func.func @cast_4_1_1(%x: !pto.vmi.vreg<4xbf16, #pto.vmi.layout<contiguous>>) -> !pto.vmi.vreg<4xbf16, #pto.vmi.layout<contiguous>> {
+  %w = pto.vmi.extf %x : !pto.vmi.vreg<4xbf16, #pto.vmi.layout<contiguous>> -> !pto.vmi.vreg<4xf32, #pto.vmi.layout<contiguous>>
+  %r = pto.vmi.truncf %w {rounding = "Z", saturate = "NOSAT"} : !pto.vmi.vreg<4xf32, #pto.vmi.layout<contiguous>> -> !pto.vmi.vreg<4xbf16, #pto.vmi.layout<contiguous>>
+  return %r : !pto.vmi.vreg<4xbf16, #pto.vmi.layout<contiguous>>
+}
+// ASSIGN-LABEL: @cast_4_1_2(
+// ASSIGN: pto.vmi.extf
+// ASSIGN-SAME: -> !pto.vmi.vreg<4xf32, #pto.vmi.layout<contiguous, lane_stride = 2>>
+// ASSIGN: pto.vmi.truncf
+// ASSIGN-SAME: -> !pto.vmi.vreg<4xbf16, #pto.vmi.layout<contiguous, lane_stride = 2>>
+// LOWER-LABEL: @cast_4_1_2(
+// LOWER: pto.vintlv
+// LOWER: pto.vdintlv
+func.func @cast_4_1_2(%x: !pto.vmi.vreg<4xbf16, #pto.vmi.layout<contiguous, lane_stride = 2>>) -> !pto.vmi.vreg<4xbf16, #pto.vmi.layout<contiguous, lane_stride = 2>> {
+  %w = pto.vmi.extf %x : !pto.vmi.vreg<4xbf16, #pto.vmi.layout<contiguous, lane_stride = 2>> -> !pto.vmi.vreg<4xf32, #pto.vmi.layout<contiguous, lane_stride = 2>>
+  %r = pto.vmi.truncf %w {rounding = "Z", saturate = "NOSAT"} : !pto.vmi.vreg<4xf32, #pto.vmi.layout<contiguous, lane_stride = 2>> -> !pto.vmi.vreg<4xbf16, #pto.vmi.layout<contiguous, lane_stride = 2>>
+  return %r : !pto.vmi.vreg<4xbf16, #pto.vmi.layout<contiguous, lane_stride = 2>>
+}
+// ASSIGN-LABEL: @cast_4_1_4(
+// ASSIGN: pto.vmi.extf
+// ASSIGN-SAME: -> !pto.vmi.vreg<4xf32, #pto.vmi.layout<contiguous, lane_stride = 4>>
+// ASSIGN: pto.vmi.truncf
+// ASSIGN-SAME: -> !pto.vmi.vreg<4xbf16, #pto.vmi.layout<contiguous, lane_stride = 4>>
+// LOWER-LABEL: @cast_4_1_4(
+// LOWER: pto.vintlv
+// LOWER: pto.vdintlv
+func.func @cast_4_1_4(%x: !pto.vmi.vreg<4xbf16, #pto.vmi.layout<contiguous, lane_stride = 4>>) -> !pto.vmi.vreg<4xbf16, #pto.vmi.layout<contiguous, lane_stride = 4>> {
+  %w = pto.vmi.extf %x : !pto.vmi.vreg<4xbf16, #pto.vmi.layout<contiguous, lane_stride = 4>> -> !pto.vmi.vreg<4xf32, #pto.vmi.layout<contiguous, lane_stride = 4>>
+  %r = pto.vmi.truncf %w {rounding = "Z", saturate = "NOSAT"} : !pto.vmi.vreg<4xf32, #pto.vmi.layout<contiguous, lane_stride = 4>> -> !pto.vmi.vreg<4xbf16, #pto.vmi.layout<contiguous, lane_stride = 4>>
+  return %r : !pto.vmi.vreg<4xbf16, #pto.vmi.layout<contiguous, lane_stride = 4>>
+}
+// ASSIGN-LABEL: @cast_4_2_1(
+// ASSIGN: pto.vmi.extf
+// ASSIGN-SAME: -> !pto.vmi.vreg<4xf32, #pto.vmi.layout<deinterleaved = 2>>
+// ASSIGN: pto.vmi.truncf
+// ASSIGN-SAME: -> !pto.vmi.vreg<4xbf16, #pto.vmi.layout<deinterleaved = 2>>
+// LOWER-LABEL: @cast_4_2_1(
+// LOWER: pto.vintlv
+// LOWER: pto.vdintlv
+func.func @cast_4_2_1(%x: !pto.vmi.vreg<4xbf16, #pto.vmi.layout<deinterleaved = 2>>) -> !pto.vmi.vreg<4xbf16, #pto.vmi.layout<deinterleaved = 2>> {
+  %w = pto.vmi.extf %x : !pto.vmi.vreg<4xbf16, #pto.vmi.layout<deinterleaved = 2>> -> !pto.vmi.vreg<4xf32, #pto.vmi.layout<deinterleaved = 2>>
+  %r = pto.vmi.truncf %w {rounding = "Z", saturate = "NOSAT"} : !pto.vmi.vreg<4xf32, #pto.vmi.layout<deinterleaved = 2>> -> !pto.vmi.vreg<4xbf16, #pto.vmi.layout<deinterleaved = 2>>
+  return %r : !pto.vmi.vreg<4xbf16, #pto.vmi.layout<deinterleaved = 2>>
+}
+// ASSIGN-LABEL: @cast_4_2_2(
+// ASSIGN: pto.vmi.extf
+// ASSIGN-SAME: -> !pto.vmi.vreg<4xf32, #pto.vmi.layout<deinterleaved = 2, lane_stride = 2>>
+// ASSIGN: pto.vmi.truncf
+// ASSIGN-SAME: -> !pto.vmi.vreg<4xbf16, #pto.vmi.layout<deinterleaved = 2, lane_stride = 2>>
+// LOWER-LABEL: @cast_4_2_2(
+// LOWER: pto.vintlv
+// LOWER: pto.vdintlv
+func.func @cast_4_2_2(%x: !pto.vmi.vreg<4xbf16, #pto.vmi.layout<deinterleaved = 2, lane_stride = 2>>) -> !pto.vmi.vreg<4xbf16, #pto.vmi.layout<deinterleaved = 2, lane_stride = 2>> {
+  %w = pto.vmi.extf %x : !pto.vmi.vreg<4xbf16, #pto.vmi.layout<deinterleaved = 2, lane_stride = 2>> -> !pto.vmi.vreg<4xf32, #pto.vmi.layout<deinterleaved = 2, lane_stride = 2>>
+  %r = pto.vmi.truncf %w {rounding = "Z", saturate = "NOSAT"} : !pto.vmi.vreg<4xf32, #pto.vmi.layout<deinterleaved = 2, lane_stride = 2>> -> !pto.vmi.vreg<4xbf16, #pto.vmi.layout<deinterleaved = 2, lane_stride = 2>>
+  return %r : !pto.vmi.vreg<4xbf16, #pto.vmi.layout<deinterleaved = 2, lane_stride = 2>>
+}
+// ASSIGN-LABEL: @cast_4_2_4(
+// ASSIGN: pto.vmi.extf
+// ASSIGN-SAME: -> !pto.vmi.vreg<4xf32, #pto.vmi.layout<deinterleaved = 2, lane_stride = 4>>
+// ASSIGN: pto.vmi.truncf
+// ASSIGN-SAME: -> !pto.vmi.vreg<4xbf16, #pto.vmi.layout<deinterleaved = 2, lane_stride = 4>>
+// LOWER-LABEL: @cast_4_2_4(
+// LOWER: pto.vintlv
+// LOWER: pto.vdintlv
+func.func @cast_4_2_4(%x: !pto.vmi.vreg<4xbf16, #pto.vmi.layout<deinterleaved = 2, lane_stride = 4>>) -> !pto.vmi.vreg<4xbf16, #pto.vmi.layout<deinterleaved = 2, lane_stride = 4>> {
+  %w = pto.vmi.extf %x : !pto.vmi.vreg<4xbf16, #pto.vmi.layout<deinterleaved = 2, lane_stride = 4>> -> !pto.vmi.vreg<4xf32, #pto.vmi.layout<deinterleaved = 2, lane_stride = 4>>
+  %r = pto.vmi.truncf %w {rounding = "Z", saturate = "NOSAT"} : !pto.vmi.vreg<4xf32, #pto.vmi.layout<deinterleaved = 2, lane_stride = 4>> -> !pto.vmi.vreg<4xbf16, #pto.vmi.layout<deinterleaved = 2, lane_stride = 4>>
+  return %r : !pto.vmi.vreg<4xbf16, #pto.vmi.layout<deinterleaved = 2, lane_stride = 4>>
+}
+// ASSIGN-LABEL: @cast_4_4_1(
+// ASSIGN: pto.vmi.extf
+// ASSIGN-SAME: -> !pto.vmi.vreg<4xf32, #pto.vmi.layout<deinterleaved = 4>>
+// ASSIGN: pto.vmi.truncf
+// ASSIGN-SAME: -> !pto.vmi.vreg<4xbf16, #pto.vmi.layout<deinterleaved = 4>>
+// LOWER-LABEL: @cast_4_4_1(
+// LOWER: pto.vintlv
+// LOWER: pto.vdintlv
+func.func @cast_4_4_1(%x: !pto.vmi.vreg<4xbf16, #pto.vmi.layout<deinterleaved = 4>>) -> !pto.vmi.vreg<4xbf16, #pto.vmi.layout<deinterleaved = 4>> {
+  %w = pto.vmi.extf %x : !pto.vmi.vreg<4xbf16, #pto.vmi.layout<deinterleaved = 4>> -> !pto.vmi.vreg<4xf32, #pto.vmi.layout<deinterleaved = 4>>
+  %r = pto.vmi.truncf %w {rounding = "Z", saturate = "NOSAT"} : !pto.vmi.vreg<4xf32, #pto.vmi.layout<deinterleaved = 4>> -> !pto.vmi.vreg<4xbf16, #pto.vmi.layout<deinterleaved = 4>>
+  return %r : !pto.vmi.vreg<4xbf16, #pto.vmi.layout<deinterleaved = 4>>
+}
+// ASSIGN-LABEL: @cast_4_4_2(
+// ASSIGN: pto.vmi.extf
+// ASSIGN-SAME: -> !pto.vmi.vreg<4xf32, #pto.vmi.layout<deinterleaved = 4, lane_stride = 2>>
+// ASSIGN: pto.vmi.truncf
+// ASSIGN-SAME: -> !pto.vmi.vreg<4xbf16, #pto.vmi.layout<deinterleaved = 4, lane_stride = 2>>
+// LOWER-LABEL: @cast_4_4_2(
+// LOWER: pto.vintlv
+// LOWER: pto.vdintlv
+func.func @cast_4_4_2(%x: !pto.vmi.vreg<4xbf16, #pto.vmi.layout<deinterleaved = 4, lane_stride = 2>>) -> !pto.vmi.vreg<4xbf16, #pto.vmi.layout<deinterleaved = 4, lane_stride = 2>> {
+  %w = pto.vmi.extf %x : !pto.vmi.vreg<4xbf16, #pto.vmi.layout<deinterleaved = 4, lane_stride = 2>> -> !pto.vmi.vreg<4xf32, #pto.vmi.layout<deinterleaved = 4, lane_stride = 2>>
+  %r = pto.vmi.truncf %w {rounding = "Z", saturate = "NOSAT"} : !pto.vmi.vreg<4xf32, #pto.vmi.layout<deinterleaved = 4, lane_stride = 2>> -> !pto.vmi.vreg<4xbf16, #pto.vmi.layout<deinterleaved = 4, lane_stride = 2>>
+  return %r : !pto.vmi.vreg<4xbf16, #pto.vmi.layout<deinterleaved = 4, lane_stride = 2>>
+}
+// ASSIGN-LABEL: @cast_4_4_4(
+// ASSIGN: pto.vmi.extf
+// ASSIGN-SAME: -> !pto.vmi.vreg<4xf32, #pto.vmi.layout<deinterleaved = 4, lane_stride = 4>>
+// ASSIGN: pto.vmi.truncf
+// ASSIGN-SAME: -> !pto.vmi.vreg<4xbf16, #pto.vmi.layout<deinterleaved = 4, lane_stride = 4>>
+// LOWER-LABEL: @cast_4_4_4(
+// LOWER: pto.vintlv
+// LOWER: pto.vdintlv
+func.func @cast_4_4_4(%x: !pto.vmi.vreg<4xbf16, #pto.vmi.layout<deinterleaved = 4, lane_stride = 4>>) -> !pto.vmi.vreg<4xbf16, #pto.vmi.layout<deinterleaved = 4, lane_stride = 4>> {
+  %w = pto.vmi.extf %x : !pto.vmi.vreg<4xbf16, #pto.vmi.layout<deinterleaved = 4, lane_stride = 4>> -> !pto.vmi.vreg<4xf32, #pto.vmi.layout<deinterleaved = 4, lane_stride = 4>>
+  %r = pto.vmi.truncf %w {rounding = "Z", saturate = "NOSAT"} : !pto.vmi.vreg<4xf32, #pto.vmi.layout<deinterleaved = 4, lane_stride = 4>> -> !pto.vmi.vreg<4xbf16, #pto.vmi.layout<deinterleaved = 4, lane_stride = 4>>
+  return %r : !pto.vmi.vreg<4xbf16, #pto.vmi.layout<deinterleaved = 4, lane_stride = 4>>
+}
+// ASSIGN-LABEL: @cast_8_1_1(
+// ASSIGN: pto.vmi.extf
+// ASSIGN-SAME: -> !pto.vmi.vreg<8xf32, #pto.vmi.layout<contiguous>>
+// ASSIGN: pto.vmi.truncf
+// ASSIGN-SAME: -> !pto.vmi.vreg<8xbf16, #pto.vmi.layout<contiguous>>
+// LOWER-LABEL: @cast_8_1_1(
+// LOWER: pto.vintlv
+// LOWER: pto.vdintlv
+func.func @cast_8_1_1(%x: !pto.vmi.vreg<8xbf16, #pto.vmi.layout<contiguous>>) -> !pto.vmi.vreg<8xbf16, #pto.vmi.layout<contiguous>> {
+  %w = pto.vmi.extf %x : !pto.vmi.vreg<8xbf16, #pto.vmi.layout<contiguous>> -> !pto.vmi.vreg<8xf32, #pto.vmi.layout<contiguous>>
+  %r = pto.vmi.truncf %w {rounding = "Z", saturate = "NOSAT"} : !pto.vmi.vreg<8xf32, #pto.vmi.layout<contiguous>> -> !pto.vmi.vreg<8xbf16, #pto.vmi.layout<contiguous>>
+  return %r : !pto.vmi.vreg<8xbf16, #pto.vmi.layout<contiguous>>
+}
+// ASSIGN-LABEL: @cast_8_1_2(
+// ASSIGN: pto.vmi.extf
+// ASSIGN-SAME: -> !pto.vmi.vreg<8xf32, #pto.vmi.layout<contiguous, lane_stride = 2>>
+// ASSIGN: pto.vmi.truncf
+// ASSIGN-SAME: -> !pto.vmi.vreg<8xbf16, #pto.vmi.layout<contiguous, lane_stride = 2>>
+// LOWER-LABEL: @cast_8_1_2(
+// LOWER: pto.vintlv
+// LOWER: pto.vdintlv
+func.func @cast_8_1_2(%x: !pto.vmi.vreg<8xbf16, #pto.vmi.layout<contiguous, lane_stride = 2>>) -> !pto.vmi.vreg<8xbf16, #pto.vmi.layout<contiguous, lane_stride = 2>> {
+  %w = pto.vmi.extf %x : !pto.vmi.vreg<8xbf16, #pto.vmi.layout<contiguous, lane_stride = 2>> -> !pto.vmi.vreg<8xf32, #pto.vmi.layout<contiguous, lane_stride = 2>>
+  %r = pto.vmi.truncf %w {rounding = "Z", saturate = "NOSAT"} : !pto.vmi.vreg<8xf32, #pto.vmi.layout<contiguous, lane_stride = 2>> -> !pto.vmi.vreg<8xbf16, #pto.vmi.layout<contiguous, lane_stride = 2>>
+  return %r : !pto.vmi.vreg<8xbf16, #pto.vmi.layout<contiguous, lane_stride = 2>>
+}
+// ASSIGN-LABEL: @cast_8_1_4(
+// ASSIGN: pto.vmi.extf
+// ASSIGN-SAME: -> !pto.vmi.vreg<8xf32, #pto.vmi.layout<contiguous, lane_stride = 4>>
+// ASSIGN: pto.vmi.truncf
+// ASSIGN-SAME: -> !pto.vmi.vreg<8xbf16, #pto.vmi.layout<contiguous, lane_stride = 4>>
+// LOWER-LABEL: @cast_8_1_4(
+// LOWER: pto.vintlv
+// LOWER: pto.vdintlv
+func.func @cast_8_1_4(%x: !pto.vmi.vreg<8xbf16, #pto.vmi.layout<contiguous, lane_stride = 4>>) -> !pto.vmi.vreg<8xbf16, #pto.vmi.layout<contiguous, lane_stride = 4>> {
+  %w = pto.vmi.extf %x : !pto.vmi.vreg<8xbf16, #pto.vmi.layout<contiguous, lane_stride = 4>> -> !pto.vmi.vreg<8xf32, #pto.vmi.layout<contiguous, lane_stride = 4>>
+  %r = pto.vmi.truncf %w {rounding = "Z", saturate = "NOSAT"} : !pto.vmi.vreg<8xf32, #pto.vmi.layout<contiguous, lane_stride = 4>> -> !pto.vmi.vreg<8xbf16, #pto.vmi.layout<contiguous, lane_stride = 4>>
+  return %r : !pto.vmi.vreg<8xbf16, #pto.vmi.layout<contiguous, lane_stride = 4>>
+}
+// ASSIGN-LABEL: @cast_8_2_1(
+// ASSIGN: pto.vmi.extf
+// ASSIGN-SAME: -> !pto.vmi.vreg<8xf32, #pto.vmi.layout<deinterleaved = 2>>
+// ASSIGN: pto.vmi.truncf
+// ASSIGN-SAME: -> !pto.vmi.vreg<8xbf16, #pto.vmi.layout<deinterleaved = 2>>
+// LOWER-LABEL: @cast_8_2_1(
+// LOWER: pto.vintlv
+// LOWER: pto.vdintlv
+func.func @cast_8_2_1(%x: !pto.vmi.vreg<8xbf16, #pto.vmi.layout<deinterleaved = 2>>) -> !pto.vmi.vreg<8xbf16, #pto.vmi.layout<deinterleaved = 2>> {
+  %w = pto.vmi.extf %x : !pto.vmi.vreg<8xbf16, #pto.vmi.layout<deinterleaved = 2>> -> !pto.vmi.vreg<8xf32, #pto.vmi.layout<deinterleaved = 2>>
+  %r = pto.vmi.truncf %w {rounding = "Z", saturate = "NOSAT"} : !pto.vmi.vreg<8xf32, #pto.vmi.layout<deinterleaved = 2>> -> !pto.vmi.vreg<8xbf16, #pto.vmi.layout<deinterleaved = 2>>
+  return %r : !pto.vmi.vreg<8xbf16, #pto.vmi.layout<deinterleaved = 2>>
+}
+// ASSIGN-LABEL: @cast_8_2_2(
+// ASSIGN: pto.vmi.extf
+// ASSIGN-SAME: -> !pto.vmi.vreg<8xf32, #pto.vmi.layout<deinterleaved = 2, lane_stride = 2>>
+// ASSIGN: pto.vmi.truncf
+// ASSIGN-SAME: -> !pto.vmi.vreg<8xbf16, #pto.vmi.layout<deinterleaved = 2, lane_stride = 2>>
+// LOWER-LABEL: @cast_8_2_2(
+// LOWER: pto.vintlv
+// LOWER: pto.vdintlv
+func.func @cast_8_2_2(%x: !pto.vmi.vreg<8xbf16, #pto.vmi.layout<deinterleaved = 2, lane_stride = 2>>) -> !pto.vmi.vreg<8xbf16, #pto.vmi.layout<deinterleaved = 2, lane_stride = 2>> {
+  %w = pto.vmi.extf %x : !pto.vmi.vreg<8xbf16, #pto.vmi.layout<deinterleaved = 2, lane_stride = 2>> -> !pto.vmi.vreg<8xf32, #pto.vmi.layout<deinterleaved = 2, lane_stride = 2>>
+  %r = pto.vmi.truncf %w {rounding = "Z", saturate = "NOSAT"} : !pto.vmi.vreg<8xf32, #pto.vmi.layout<deinterleaved = 2, lane_stride = 2>> -> !pto.vmi.vreg<8xbf16, #pto.vmi.layout<deinterleaved = 2, lane_stride = 2>>
+  return %r : !pto.vmi.vreg<8xbf16, #pto.vmi.layout<deinterleaved = 2, lane_stride = 2>>
+}
+// ASSIGN-LABEL: @cast_8_2_4(
+// ASSIGN: pto.vmi.extf
+// ASSIGN-SAME: -> !pto.vmi.vreg<8xf32, #pto.vmi.layout<deinterleaved = 2, lane_stride = 4>>
+// ASSIGN: pto.vmi.truncf
+// ASSIGN-SAME: -> !pto.vmi.vreg<8xbf16, #pto.vmi.layout<deinterleaved = 2, lane_stride = 4>>
+// LOWER-LABEL: @cast_8_2_4(
+// LOWER: pto.vintlv
+// LOWER: pto.vdintlv
+func.func @cast_8_2_4(%x: !pto.vmi.vreg<8xbf16, #pto.vmi.layout<deinterleaved = 2, lane_stride = 4>>) -> !pto.vmi.vreg<8xbf16, #pto.vmi.layout<deinterleaved = 2, lane_stride = 4>> {
+  %w = pto.vmi.extf %x : !pto.vmi.vreg<8xbf16, #pto.vmi.layout<deinterleaved = 2, lane_stride = 4>> -> !pto.vmi.vreg<8xf32, #pto.vmi.layout<deinterleaved = 2, lane_stride = 4>>
+  %r = pto.vmi.truncf %w {rounding = "Z", saturate = "NOSAT"} : !pto.vmi.vreg<8xf32, #pto.vmi.layout<deinterleaved = 2, lane_stride = 4>> -> !pto.vmi.vreg<8xbf16, #pto.vmi.layout<deinterleaved = 2, lane_stride = 4>>
+  return %r : !pto.vmi.vreg<8xbf16, #pto.vmi.layout<deinterleaved = 2, lane_stride = 4>>
+}
+// ASSIGN-LABEL: @cast_8_4_1(
+// ASSIGN: pto.vmi.extf
+// ASSIGN-SAME: -> !pto.vmi.vreg<8xf32, #pto.vmi.layout<deinterleaved = 4>>
+// ASSIGN: pto.vmi.truncf
+// ASSIGN-SAME: -> !pto.vmi.vreg<8xbf16, #pto.vmi.layout<deinterleaved = 4>>
+// LOWER-LABEL: @cast_8_4_1(
+// LOWER: pto.vintlv
+// LOWER: pto.vdintlv
+func.func @cast_8_4_1(%x: !pto.vmi.vreg<8xbf16, #pto.vmi.layout<deinterleaved = 4>>) -> !pto.vmi.vreg<8xbf16, #pto.vmi.layout<deinterleaved = 4>> {
+  %w = pto.vmi.extf %x : !pto.vmi.vreg<8xbf16, #pto.vmi.layout<deinterleaved = 4>> -> !pto.vmi.vreg<8xf32, #pto.vmi.layout<deinterleaved = 4>>
+  %r = pto.vmi.truncf %w {rounding = "Z", saturate = "NOSAT"} : !pto.vmi.vreg<8xf32, #pto.vmi.layout<deinterleaved = 4>> -> !pto.vmi.vreg<8xbf16, #pto.vmi.layout<deinterleaved = 4>>
+  return %r : !pto.vmi.vreg<8xbf16, #pto.vmi.layout<deinterleaved = 4>>
+}
+// ASSIGN-LABEL: @cast_8_4_2(
+// ASSIGN: pto.vmi.extf
+// ASSIGN-SAME: -> !pto.vmi.vreg<8xf32, #pto.vmi.layout<deinterleaved = 4, lane_stride = 2>>
+// ASSIGN: pto.vmi.truncf
+// ASSIGN-SAME: -> !pto.vmi.vreg<8xbf16, #pto.vmi.layout<deinterleaved = 4, lane_stride = 2>>
+// LOWER-LABEL: @cast_8_4_2(
+// LOWER: pto.vintlv
+// LOWER: pto.vdintlv
+func.func @cast_8_4_2(%x: !pto.vmi.vreg<8xbf16, #pto.vmi.layout<deinterleaved = 4, lane_stride = 2>>) -> !pto.vmi.vreg<8xbf16, #pto.vmi.layout<deinterleaved = 4, lane_stride = 2>> {
+  %w = pto.vmi.extf %x : !pto.vmi.vreg<8xbf16, #pto.vmi.layout<deinterleaved = 4, lane_stride = 2>> -> !pto.vmi.vreg<8xf32, #pto.vmi.layout<deinterleaved = 4, lane_stride = 2>>
+  %r = pto.vmi.truncf %w {rounding = "Z", saturate = "NOSAT"} : !pto.vmi.vreg<8xf32, #pto.vmi.layout<deinterleaved = 4, lane_stride = 2>> -> !pto.vmi.vreg<8xbf16, #pto.vmi.layout<deinterleaved = 4, lane_stride = 2>>
+  return %r : !pto.vmi.vreg<8xbf16, #pto.vmi.layout<deinterleaved = 4, lane_stride = 2>>
+}
+// ASSIGN-LABEL: @cast_8_4_4(
+// ASSIGN: pto.vmi.extf
+// ASSIGN-SAME: -> !pto.vmi.vreg<8xf32, #pto.vmi.layout<deinterleaved = 4, lane_stride = 4>>
+// ASSIGN: pto.vmi.truncf
+// ASSIGN-SAME: -> !pto.vmi.vreg<8xbf16, #pto.vmi.layout<deinterleaved = 4, lane_stride = 4>>
+// LOWER-LABEL: @cast_8_4_4(
+// LOWER: pto.vintlv
+// LOWER: pto.vdintlv
+func.func @cast_8_4_4(%x: !pto.vmi.vreg<8xbf16, #pto.vmi.layout<deinterleaved = 4, lane_stride = 4>>) -> !pto.vmi.vreg<8xbf16, #pto.vmi.layout<deinterleaved = 4, lane_stride = 4>> {
+  %w = pto.vmi.extf %x : !pto.vmi.vreg<8xbf16, #pto.vmi.layout<deinterleaved = 4, lane_stride = 4>> -> !pto.vmi.vreg<8xf32, #pto.vmi.layout<deinterleaved = 4, lane_stride = 4>>
+  %r = pto.vmi.truncf %w {rounding = "Z", saturate = "NOSAT"} : !pto.vmi.vreg<8xf32, #pto.vmi.layout<deinterleaved = 4, lane_stride = 4>> -> !pto.vmi.vreg<8xbf16, #pto.vmi.layout<deinterleaved = 4, lane_stride = 4>>
+  return %r : !pto.vmi.vreg<8xbf16, #pto.vmi.layout<deinterleaved = 4, lane_stride = 4>>
+}
+// ASSIGN-LABEL: @cast_64_1_1(
+// ASSIGN: pto.vmi.extf
+// ASSIGN-SAME: -> !pto.vmi.vreg<64xf32, #pto.vmi.layout<contiguous>>
+// ASSIGN: pto.vmi.truncf
+// ASSIGN-SAME: -> !pto.vmi.vreg<64xbf16, #pto.vmi.layout<contiguous>>
+// LOWER-LABEL: @cast_64_1_1(
+// LOWER: pto.vintlv
+// LOWER: pto.vdintlv
+func.func @cast_64_1_1(%x: !pto.vmi.vreg<64xbf16, #pto.vmi.layout<contiguous>>) -> !pto.vmi.vreg<64xbf16, #pto.vmi.layout<contiguous>> {
+  %w = pto.vmi.extf %x : !pto.vmi.vreg<64xbf16, #pto.vmi.layout<contiguous>> -> !pto.vmi.vreg<64xf32, #pto.vmi.layout<contiguous>>
+  %r = pto.vmi.truncf %w {rounding = "Z", saturate = "NOSAT"} : !pto.vmi.vreg<64xf32, #pto.vmi.layout<contiguous>> -> !pto.vmi.vreg<64xbf16, #pto.vmi.layout<contiguous>>
+  return %r : !pto.vmi.vreg<64xbf16, #pto.vmi.layout<contiguous>>
+}
+// ASSIGN-LABEL: @cast_64_1_2(
+// ASSIGN: pto.vmi.extf
+// ASSIGN-SAME: -> !pto.vmi.vreg<64xf32, #pto.vmi.layout<contiguous, lane_stride = 2>>
+// ASSIGN: pto.vmi.truncf
+// ASSIGN-SAME: -> !pto.vmi.vreg<64xbf16, #pto.vmi.layout<contiguous, lane_stride = 2>>
+// LOWER-LABEL: @cast_64_1_2(
+// LOWER: pto.vintlv
+// LOWER: pto.vdintlv
+func.func @cast_64_1_2(%x: !pto.vmi.vreg<64xbf16, #pto.vmi.layout<contiguous, lane_stride = 2>>) -> !pto.vmi.vreg<64xbf16, #pto.vmi.layout<contiguous, lane_stride = 2>> {
+  %w = pto.vmi.extf %x : !pto.vmi.vreg<64xbf16, #pto.vmi.layout<contiguous, lane_stride = 2>> -> !pto.vmi.vreg<64xf32, #pto.vmi.layout<contiguous, lane_stride = 2>>
+  %r = pto.vmi.truncf %w {rounding = "Z", saturate = "NOSAT"} : !pto.vmi.vreg<64xf32, #pto.vmi.layout<contiguous, lane_stride = 2>> -> !pto.vmi.vreg<64xbf16, #pto.vmi.layout<contiguous, lane_stride = 2>>
+  return %r : !pto.vmi.vreg<64xbf16, #pto.vmi.layout<contiguous, lane_stride = 2>>
+}
+// ASSIGN-LABEL: @cast_64_1_4(
+// ASSIGN: pto.vmi.extf
+// ASSIGN-SAME: -> !pto.vmi.vreg<64xf32, #pto.vmi.layout<contiguous, lane_stride = 4>>
+// ASSIGN: pto.vmi.truncf
+// ASSIGN-SAME: -> !pto.vmi.vreg<64xbf16, #pto.vmi.layout<contiguous, lane_stride = 4>>
+// LOWER-LABEL: @cast_64_1_4(
+// LOWER: pto.vintlv
+// LOWER: pto.vdintlv
+func.func @cast_64_1_4(%x: !pto.vmi.vreg<64xbf16, #pto.vmi.layout<contiguous, lane_stride = 4>>) -> !pto.vmi.vreg<64xbf16, #pto.vmi.layout<contiguous, lane_stride = 4>> {
+  %w = pto.vmi.extf %x : !pto.vmi.vreg<64xbf16, #pto.vmi.layout<contiguous, lane_stride = 4>> -> !pto.vmi.vreg<64xf32, #pto.vmi.layout<contiguous, lane_stride = 4>>
+  %r = pto.vmi.truncf %w {rounding = "Z", saturate = "NOSAT"} : !pto.vmi.vreg<64xf32, #pto.vmi.layout<contiguous, lane_stride = 4>> -> !pto.vmi.vreg<64xbf16, #pto.vmi.layout<contiguous, lane_stride = 4>>
+  return %r : !pto.vmi.vreg<64xbf16, #pto.vmi.layout<contiguous, lane_stride = 4>>
+}
+// ASSIGN-LABEL: @cast_64_2_1(
+// ASSIGN: pto.vmi.extf
+// ASSIGN-SAME: -> !pto.vmi.vreg<64xf32, #pto.vmi.layout<deinterleaved = 2>>
+// ASSIGN: pto.vmi.truncf
+// ASSIGN-SAME: -> !pto.vmi.vreg<64xbf16, #pto.vmi.layout<deinterleaved = 2>>
+// LOWER-LABEL: @cast_64_2_1(
+// LOWER: pto.vintlv
+// LOWER: pto.vdintlv
+func.func @cast_64_2_1(%x: !pto.vmi.vreg<64xbf16, #pto.vmi.layout<deinterleaved = 2>>) -> !pto.vmi.vreg<64xbf16, #pto.vmi.layout<deinterleaved = 2>> {
+  %w = pto.vmi.extf %x : !pto.vmi.vreg<64xbf16, #pto.vmi.layout<deinterleaved = 2>> -> !pto.vmi.vreg<64xf32, #pto.vmi.layout<deinterleaved = 2>>
+  %r = pto.vmi.truncf %w {rounding = "Z", saturate = "NOSAT"} : !pto.vmi.vreg<64xf32, #pto.vmi.layout<deinterleaved = 2>> -> !pto.vmi.vreg<64xbf16, #pto.vmi.layout<deinterleaved = 2>>
+  return %r : !pto.vmi.vreg<64xbf16, #pto.vmi.layout<deinterleaved = 2>>
+}
+// ASSIGN-LABEL: @cast_64_2_2(
+// ASSIGN: pto.vmi.extf
+// ASSIGN-SAME: -> !pto.vmi.vreg<64xf32, #pto.vmi.layout<deinterleaved = 2, lane_stride = 2>>
+// ASSIGN: pto.vmi.truncf
+// ASSIGN-SAME: -> !pto.vmi.vreg<64xbf16, #pto.vmi.layout<deinterleaved = 2, lane_stride = 2>>
+// LOWER-LABEL: @cast_64_2_2(
+// LOWER: pto.vintlv
+// LOWER: pto.vdintlv
+func.func @cast_64_2_2(%x: !pto.vmi.vreg<64xbf16, #pto.vmi.layout<deinterleaved = 2, lane_stride = 2>>) -> !pto.vmi.vreg<64xbf16, #pto.vmi.layout<deinterleaved = 2, lane_stride = 2>> {
+  %w = pto.vmi.extf %x : !pto.vmi.vreg<64xbf16, #pto.vmi.layout<deinterleaved = 2, lane_stride = 2>> -> !pto.vmi.vreg<64xf32, #pto.vmi.layout<deinterleaved = 2, lane_stride = 2>>
+  %r = pto.vmi.truncf %w {rounding = "Z", saturate = "NOSAT"} : !pto.vmi.vreg<64xf32, #pto.vmi.layout<deinterleaved = 2, lane_stride = 2>> -> !pto.vmi.vreg<64xbf16, #pto.vmi.layout<deinterleaved = 2, lane_stride = 2>>
+  return %r : !pto.vmi.vreg<64xbf16, #pto.vmi.layout<deinterleaved = 2, lane_stride = 2>>
+}
+// ASSIGN-LABEL: @cast_64_2_4(
+// ASSIGN: pto.vmi.extf
+// ASSIGN-SAME: -> !pto.vmi.vreg<64xf32, #pto.vmi.layout<deinterleaved = 2, lane_stride = 4>>
+// ASSIGN: pto.vmi.truncf
+// ASSIGN-SAME: -> !pto.vmi.vreg<64xbf16, #pto.vmi.layout<deinterleaved = 2, lane_stride = 4>>
+// LOWER-LABEL: @cast_64_2_4(
+// LOWER: pto.vintlv
+// LOWER: pto.vdintlv
+func.func @cast_64_2_4(%x: !pto.vmi.vreg<64xbf16, #pto.vmi.layout<deinterleaved = 2, lane_stride = 4>>) -> !pto.vmi.vreg<64xbf16, #pto.vmi.layout<deinterleaved = 2, lane_stride = 4>> {
+  %w = pto.vmi.extf %x : !pto.vmi.vreg<64xbf16, #pto.vmi.layout<deinterleaved = 2, lane_stride = 4>> -> !pto.vmi.vreg<64xf32, #pto.vmi.layout<deinterleaved = 2, lane_stride = 4>>
+  %r = pto.vmi.truncf %w {rounding = "Z", saturate = "NOSAT"} : !pto.vmi.vreg<64xf32, #pto.vmi.layout<deinterleaved = 2, lane_stride = 4>> -> !pto.vmi.vreg<64xbf16, #pto.vmi.layout<deinterleaved = 2, lane_stride = 4>>
+  return %r : !pto.vmi.vreg<64xbf16, #pto.vmi.layout<deinterleaved = 2, lane_stride = 4>>
+}
+// ASSIGN-LABEL: @cast_64_4_1(
+// ASSIGN: pto.vmi.extf
+// ASSIGN-SAME: -> !pto.vmi.vreg<64xf32, #pto.vmi.layout<deinterleaved = 4>>
+// ASSIGN: pto.vmi.truncf
+// ASSIGN-SAME: -> !pto.vmi.vreg<64xbf16, #pto.vmi.layout<deinterleaved = 4>>
+// LOWER-LABEL: @cast_64_4_1(
+// LOWER: pto.vintlv
+// LOWER: pto.vdintlv
+func.func @cast_64_4_1(%x: !pto.vmi.vreg<64xbf16, #pto.vmi.layout<deinterleaved = 4>>) -> !pto.vmi.vreg<64xbf16, #pto.vmi.layout<deinterleaved = 4>> {
+  %w = pto.vmi.extf %x : !pto.vmi.vreg<64xbf16, #pto.vmi.layout<deinterleaved = 4>> -> !pto.vmi.vreg<64xf32, #pto.vmi.layout<deinterleaved = 4>>
+  %r = pto.vmi.truncf %w {rounding = "Z", saturate = "NOSAT"} : !pto.vmi.vreg<64xf32, #pto.vmi.layout<deinterleaved = 4>> -> !pto.vmi.vreg<64xbf16, #pto.vmi.layout<deinterleaved = 4>>
+  return %r : !pto.vmi.vreg<64xbf16, #pto.vmi.layout<deinterleaved = 4>>
+}
+// ASSIGN-LABEL: @cast_64_4_2(
+// ASSIGN: pto.vmi.extf
+// ASSIGN-SAME: -> !pto.vmi.vreg<64xf32, #pto.vmi.layout<deinterleaved = 4, lane_stride = 2>>
+// ASSIGN: pto.vmi.truncf
+// ASSIGN-SAME: -> !pto.vmi.vreg<64xbf16, #pto.vmi.layout<deinterleaved = 4, lane_stride = 2>>
+// LOWER-LABEL: @cast_64_4_2(
+// LOWER: pto.vintlv
+// LOWER: pto.vdintlv
+func.func @cast_64_4_2(%x: !pto.vmi.vreg<64xbf16, #pto.vmi.layout<deinterleaved = 4, lane_stride = 2>>) -> !pto.vmi.vreg<64xbf16, #pto.vmi.layout<deinterleaved = 4, lane_stride = 2>> {
+  %w = pto.vmi.extf %x : !pto.vmi.vreg<64xbf16, #pto.vmi.layout<deinterleaved = 4, lane_stride = 2>> -> !pto.vmi.vreg<64xf32, #pto.vmi.layout<deinterleaved = 4, lane_stride = 2>>
+  %r = pto.vmi.truncf %w {rounding = "Z", saturate = "NOSAT"} : !pto.vmi.vreg<64xf32, #pto.vmi.layout<deinterleaved = 4, lane_stride = 2>> -> !pto.vmi.vreg<64xbf16, #pto.vmi.layout<deinterleaved = 4, lane_stride = 2>>
+  return %r : !pto.vmi.vreg<64xbf16, #pto.vmi.layout<deinterleaved = 4, lane_stride = 2>>
+}
+// ASSIGN-LABEL: @cast_64_4_4(
+// ASSIGN: pto.vmi.extf
+// ASSIGN-SAME: -> !pto.vmi.vreg<64xf32, #pto.vmi.layout<deinterleaved = 4, lane_stride = 4>>
+// ASSIGN: pto.vmi.truncf
+// ASSIGN-SAME: -> !pto.vmi.vreg<64xbf16, #pto.vmi.layout<deinterleaved = 4, lane_stride = 4>>
+// LOWER-LABEL: @cast_64_4_4(
+// LOWER: pto.vintlv
+// LOWER: pto.vdintlv
+func.func @cast_64_4_4(%x: !pto.vmi.vreg<64xbf16, #pto.vmi.layout<deinterleaved = 4, lane_stride = 4>>) -> !pto.vmi.vreg<64xbf16, #pto.vmi.layout<deinterleaved = 4, lane_stride = 4>> {
+  %w = pto.vmi.extf %x : !pto.vmi.vreg<64xbf16, #pto.vmi.layout<deinterleaved = 4, lane_stride = 4>> -> !pto.vmi.vreg<64xf32, #pto.vmi.layout<deinterleaved = 4, lane_stride = 4>>
+  %r = pto.vmi.truncf %w {rounding = "Z", saturate = "NOSAT"} : !pto.vmi.vreg<64xf32, #pto.vmi.layout<deinterleaved = 4, lane_stride = 4>> -> !pto.vmi.vreg<64xbf16, #pto.vmi.layout<deinterleaved = 4, lane_stride = 4>>
+  return %r : !pto.vmi.vreg<64xbf16, #pto.vmi.layout<deinterleaved = 4, lane_stride = 4>>
+}
+// ASSIGN-LABEL: @cast_128_1_1(
+// ASSIGN: pto.vmi.extf
+// ASSIGN-SAME: -> !pto.vmi.vreg<128xf32, #pto.vmi.layout<contiguous>>
+// ASSIGN: pto.vmi.truncf
+// ASSIGN-SAME: -> !pto.vmi.vreg<128xbf16, #pto.vmi.layout<contiguous>>
+// LOWER-LABEL: @cast_128_1_1(
+// LOWER: pto.vintlv
+// LOWER: pto.vdintlv
+func.func @cast_128_1_1(%x: !pto.vmi.vreg<128xbf16, #pto.vmi.layout<contiguous>>) -> !pto.vmi.vreg<128xbf16, #pto.vmi.layout<contiguous>> {
+  %w = pto.vmi.extf %x : !pto.vmi.vreg<128xbf16, #pto.vmi.layout<contiguous>> -> !pto.vmi.vreg<128xf32, #pto.vmi.layout<contiguous>>
+  %r = pto.vmi.truncf %w {rounding = "Z", saturate = "NOSAT"} : !pto.vmi.vreg<128xf32, #pto.vmi.layout<contiguous>> -> !pto.vmi.vreg<128xbf16, #pto.vmi.layout<contiguous>>
+  return %r : !pto.vmi.vreg<128xbf16, #pto.vmi.layout<contiguous>>
+}
+// ASSIGN-LABEL: @cast_128_1_2(
+// ASSIGN: pto.vmi.extf
+// ASSIGN-SAME: -> !pto.vmi.vreg<128xf32, #pto.vmi.layout<contiguous, lane_stride = 2>>
+// ASSIGN: pto.vmi.truncf
+// ASSIGN-SAME: -> !pto.vmi.vreg<128xbf16, #pto.vmi.layout<contiguous, lane_stride = 2>>
+// LOWER-LABEL: @cast_128_1_2(
+// LOWER: pto.vintlv
+// LOWER: pto.vdintlv
+func.func @cast_128_1_2(%x: !pto.vmi.vreg<128xbf16, #pto.vmi.layout<contiguous, lane_stride = 2>>) -> !pto.vmi.vreg<128xbf16, #pto.vmi.layout<contiguous, lane_stride = 2>> {
+  %w = pto.vmi.extf %x : !pto.vmi.vreg<128xbf16, #pto.vmi.layout<contiguous, lane_stride = 2>> -> !pto.vmi.vreg<128xf32, #pto.vmi.layout<contiguous, lane_stride = 2>>
+  %r = pto.vmi.truncf %w {rounding = "Z", saturate = "NOSAT"} : !pto.vmi.vreg<128xf32, #pto.vmi.layout<contiguous, lane_stride = 2>> -> !pto.vmi.vreg<128xbf16, #pto.vmi.layout<contiguous, lane_stride = 2>>
+  return %r : !pto.vmi.vreg<128xbf16, #pto.vmi.layout<contiguous, lane_stride = 2>>
+}
+// ASSIGN-LABEL: @cast_128_1_4(
+// ASSIGN: pto.vmi.extf
+// ASSIGN-SAME: -> !pto.vmi.vreg<128xf32, #pto.vmi.layout<contiguous, lane_stride = 4>>
+// ASSIGN: pto.vmi.truncf
+// ASSIGN-SAME: -> !pto.vmi.vreg<128xbf16, #pto.vmi.layout<contiguous, lane_stride = 4>>
+// LOWER-LABEL: @cast_128_1_4(
+// LOWER: pto.vintlv
+// LOWER: pto.vdintlv
+func.func @cast_128_1_4(%x: !pto.vmi.vreg<128xbf16, #pto.vmi.layout<contiguous, lane_stride = 4>>) -> !pto.vmi.vreg<128xbf16, #pto.vmi.layout<contiguous, lane_stride = 4>> {
+  %w = pto.vmi.extf %x : !pto.vmi.vreg<128xbf16, #pto.vmi.layout<contiguous, lane_stride = 4>> -> !pto.vmi.vreg<128xf32, #pto.vmi.layout<contiguous, lane_stride = 4>>
+  %r = pto.vmi.truncf %w {rounding = "Z", saturate = "NOSAT"} : !pto.vmi.vreg<128xf32, #pto.vmi.layout<contiguous, lane_stride = 4>> -> !pto.vmi.vreg<128xbf16, #pto.vmi.layout<contiguous, lane_stride = 4>>
+  return %r : !pto.vmi.vreg<128xbf16, #pto.vmi.layout<contiguous, lane_stride = 4>>
+}
+// ASSIGN-LABEL: @cast_128_2_1(
+// ASSIGN: pto.vmi.extf
+// ASSIGN-SAME: -> !pto.vmi.vreg<128xf32, #pto.vmi.layout<deinterleaved = 2>>
+// ASSIGN: pto.vmi.truncf
+// ASSIGN-SAME: -> !pto.vmi.vreg<128xbf16, #pto.vmi.layout<deinterleaved = 2>>
+// LOWER-LABEL: @cast_128_2_1(
+// LOWER: pto.vintlv
+// LOWER: pto.vdintlv
+func.func @cast_128_2_1(%x: !pto.vmi.vreg<128xbf16, #pto.vmi.layout<deinterleaved = 2>>) -> !pto.vmi.vreg<128xbf16, #pto.vmi.layout<deinterleaved = 2>> {
+  %w = pto.vmi.extf %x : !pto.vmi.vreg<128xbf16, #pto.vmi.layout<deinterleaved = 2>> -> !pto.vmi.vreg<128xf32, #pto.vmi.layout<deinterleaved = 2>>
+  %r = pto.vmi.truncf %w {rounding = "Z", saturate = "NOSAT"} : !pto.vmi.vreg<128xf32, #pto.vmi.layout<deinterleaved = 2>> -> !pto.vmi.vreg<128xbf16, #pto.vmi.layout<deinterleaved = 2>>
+  return %r : !pto.vmi.vreg<128xbf16, #pto.vmi.layout<deinterleaved = 2>>
+}
+// ASSIGN-LABEL: @cast_128_2_2(
+// ASSIGN: pto.vmi.extf
+// ASSIGN-SAME: -> !pto.vmi.vreg<128xf32, #pto.vmi.layout<deinterleaved = 2, lane_stride = 2>>
+// ASSIGN: pto.vmi.truncf
+// ASSIGN-SAME: -> !pto.vmi.vreg<128xbf16, #pto.vmi.layout<deinterleaved = 2, lane_stride = 2>>
+// LOWER-LABEL: @cast_128_2_2(
+// LOWER: pto.vintlv
+// LOWER: pto.vdintlv
+func.func @cast_128_2_2(%x: !pto.vmi.vreg<128xbf16, #pto.vmi.layout<deinterleaved = 2, lane_stride = 2>>) -> !pto.vmi.vreg<128xbf16, #pto.vmi.layout<deinterleaved = 2, lane_stride = 2>> {
+  %w = pto.vmi.extf %x : !pto.vmi.vreg<128xbf16, #pto.vmi.layout<deinterleaved = 2, lane_stride = 2>> -> !pto.vmi.vreg<128xf32, #pto.vmi.layout<deinterleaved = 2, lane_stride = 2>>
+  %r = pto.vmi.truncf %w {rounding = "Z", saturate = "NOSAT"} : !pto.vmi.vreg<128xf32, #pto.vmi.layout<deinterleaved = 2, lane_stride = 2>> -> !pto.vmi.vreg<128xbf16, #pto.vmi.layout<deinterleaved = 2, lane_stride = 2>>
+  return %r : !pto.vmi.vreg<128xbf16, #pto.vmi.layout<deinterleaved = 2, lane_stride = 2>>
+}
+// ASSIGN-LABEL: @cast_128_2_4(
+// ASSIGN: pto.vmi.extf
+// ASSIGN-SAME: -> !pto.vmi.vreg<128xf32, #pto.vmi.layout<deinterleaved = 2, lane_stride = 4>>
+// ASSIGN: pto.vmi.truncf
+// ASSIGN-SAME: -> !pto.vmi.vreg<128xbf16, #pto.vmi.layout<deinterleaved = 2, lane_stride = 4>>
+// LOWER-LABEL: @cast_128_2_4(
+// LOWER: pto.vintlv
+// LOWER: pto.vdintlv
+func.func @cast_128_2_4(%x: !pto.vmi.vreg<128xbf16, #pto.vmi.layout<deinterleaved = 2, lane_stride = 4>>) -> !pto.vmi.vreg<128xbf16, #pto.vmi.layout<deinterleaved = 2, lane_stride = 4>> {
+  %w = pto.vmi.extf %x : !pto.vmi.vreg<128xbf16, #pto.vmi.layout<deinterleaved = 2, lane_stride = 4>> -> !pto.vmi.vreg<128xf32, #pto.vmi.layout<deinterleaved = 2, lane_stride = 4>>
+  %r = pto.vmi.truncf %w {rounding = "Z", saturate = "NOSAT"} : !pto.vmi.vreg<128xf32, #pto.vmi.layout<deinterleaved = 2, lane_stride = 4>> -> !pto.vmi.vreg<128xbf16, #pto.vmi.layout<deinterleaved = 2, lane_stride = 4>>
+  return %r : !pto.vmi.vreg<128xbf16, #pto.vmi.layout<deinterleaved = 2, lane_stride = 4>>
+}
+// ASSIGN-LABEL: @cast_128_4_1(
+// ASSIGN: pto.vmi.extf
+// ASSIGN-SAME: -> !pto.vmi.vreg<128xf32, #pto.vmi.layout<deinterleaved = 4>>
+// ASSIGN: pto.vmi.truncf
+// ASSIGN-SAME: -> !pto.vmi.vreg<128xbf16, #pto.vmi.layout<deinterleaved = 4>>
+// LOWER-LABEL: @cast_128_4_1(
+// LOWER: pto.vintlv
+// LOWER: pto.vdintlv
+func.func @cast_128_4_1(%x: !pto.vmi.vreg<128xbf16, #pto.vmi.layout<deinterleaved = 4>>) -> !pto.vmi.vreg<128xbf16, #pto.vmi.layout<deinterleaved = 4>> {
+  %w = pto.vmi.extf %x : !pto.vmi.vreg<128xbf16, #pto.vmi.layout<deinterleaved = 4>> -> !pto.vmi.vreg<128xf32, #pto.vmi.layout<deinterleaved = 4>>
+  %r = pto.vmi.truncf %w {rounding = "Z", saturate = "NOSAT"} : !pto.vmi.vreg<128xf32, #pto.vmi.layout<deinterleaved = 4>> -> !pto.vmi.vreg<128xbf16, #pto.vmi.layout<deinterleaved = 4>>
+  return %r : !pto.vmi.vreg<128xbf16, #pto.vmi.layout<deinterleaved = 4>>
+}
+// ASSIGN-LABEL: @cast_128_4_2(
+// ASSIGN: pto.vmi.extf
+// ASSIGN-SAME: -> !pto.vmi.vreg<128xf32, #pto.vmi.layout<deinterleaved = 4, lane_stride = 2>>
+// ASSIGN: pto.vmi.truncf
+// ASSIGN-SAME: -> !pto.vmi.vreg<128xbf16, #pto.vmi.layout<deinterleaved = 4, lane_stride = 2>>
+// LOWER-LABEL: @cast_128_4_2(
+// LOWER: pto.vintlv
+// LOWER: pto.vdintlv
+func.func @cast_128_4_2(%x: !pto.vmi.vreg<128xbf16, #pto.vmi.layout<deinterleaved = 4, lane_stride = 2>>) -> !pto.vmi.vreg<128xbf16, #pto.vmi.layout<deinterleaved = 4, lane_stride = 2>> {
+  %w = pto.vmi.extf %x : !pto.vmi.vreg<128xbf16, #pto.vmi.layout<deinterleaved = 4, lane_stride = 2>> -> !pto.vmi.vreg<128xf32, #pto.vmi.layout<deinterleaved = 4, lane_stride = 2>>
+  %r = pto.vmi.truncf %w {rounding = "Z", saturate = "NOSAT"} : !pto.vmi.vreg<128xf32, #pto.vmi.layout<deinterleaved = 4, lane_stride = 2>> -> !pto.vmi.vreg<128xbf16, #pto.vmi.layout<deinterleaved = 4, lane_stride = 2>>
+  return %r : !pto.vmi.vreg<128xbf16, #pto.vmi.layout<deinterleaved = 4, lane_stride = 2>>
+}
+// ASSIGN-LABEL: @cast_128_4_4(
+// ASSIGN: pto.vmi.extf
+// ASSIGN-SAME: -> !pto.vmi.vreg<128xf32, #pto.vmi.layout<deinterleaved = 4, lane_stride = 4>>
+// ASSIGN: pto.vmi.truncf
+// ASSIGN-SAME: -> !pto.vmi.vreg<128xbf16, #pto.vmi.layout<deinterleaved = 4, lane_stride = 4>>
+// LOWER-LABEL: @cast_128_4_4(
+// LOWER: pto.vintlv
+// LOWER: pto.vdintlv
+func.func @cast_128_4_4(%x: !pto.vmi.vreg<128xbf16, #pto.vmi.layout<deinterleaved = 4, lane_stride = 4>>) -> !pto.vmi.vreg<128xbf16, #pto.vmi.layout<deinterleaved = 4, lane_stride = 4>> {
+  %w = pto.vmi.extf %x : !pto.vmi.vreg<128xbf16, #pto.vmi.layout<deinterleaved = 4, lane_stride = 4>> -> !pto.vmi.vreg<128xf32, #pto.vmi.layout<deinterleaved = 4, lane_stride = 4>>
+  %r = pto.vmi.truncf %w {rounding = "Z", saturate = "NOSAT"} : !pto.vmi.vreg<128xf32, #pto.vmi.layout<deinterleaved = 4, lane_stride = 4>> -> !pto.vmi.vreg<128xbf16, #pto.vmi.layout<deinterleaved = 4, lane_stride = 4>>
+  return %r : !pto.vmi.vreg<128xbf16, #pto.vmi.layout<deinterleaved = 4, lane_stride = 4>>
+}
+// ASSIGN-LABEL: @cast_256_1_1(
+// ASSIGN: pto.vmi.extf
+// ASSIGN-SAME: -> !pto.vmi.vreg<256xf32, #pto.vmi.layout<contiguous>>
+// ASSIGN: pto.vmi.truncf
+// ASSIGN-SAME: -> !pto.vmi.vreg<256xbf16, #pto.vmi.layout<contiguous>>
+// LOWER-LABEL: @cast_256_1_1(
+// LOWER: pto.vintlv
+// LOWER: pto.vdintlv
+func.func @cast_256_1_1(%x: !pto.vmi.vreg<256xbf16, #pto.vmi.layout<contiguous>>) -> !pto.vmi.vreg<256xbf16, #pto.vmi.layout<contiguous>> {
+  %w = pto.vmi.extf %x : !pto.vmi.vreg<256xbf16, #pto.vmi.layout<contiguous>> -> !pto.vmi.vreg<256xf32, #pto.vmi.layout<contiguous>>
+  %r = pto.vmi.truncf %w {rounding = "Z", saturate = "NOSAT"} : !pto.vmi.vreg<256xf32, #pto.vmi.layout<contiguous>> -> !pto.vmi.vreg<256xbf16, #pto.vmi.layout<contiguous>>
+  return %r : !pto.vmi.vreg<256xbf16, #pto.vmi.layout<contiguous>>
+}
+// ASSIGN-LABEL: @cast_256_1_2(
+// ASSIGN: pto.vmi.extf
+// ASSIGN-SAME: -> !pto.vmi.vreg<256xf32, #pto.vmi.layout<contiguous, lane_stride = 2>>
+// ASSIGN: pto.vmi.truncf
+// ASSIGN-SAME: -> !pto.vmi.vreg<256xbf16, #pto.vmi.layout<contiguous, lane_stride = 2>>
+// LOWER-LABEL: @cast_256_1_2(
+// LOWER: pto.vintlv
+// LOWER: pto.vdintlv
+func.func @cast_256_1_2(%x: !pto.vmi.vreg<256xbf16, #pto.vmi.layout<contiguous, lane_stride = 2>>) -> !pto.vmi.vreg<256xbf16, #pto.vmi.layout<contiguous, lane_stride = 2>> {
+  %w = pto.vmi.extf %x : !pto.vmi.vreg<256xbf16, #pto.vmi.layout<contiguous, lane_stride = 2>> -> !pto.vmi.vreg<256xf32, #pto.vmi.layout<contiguous, lane_stride = 2>>
+  %r = pto.vmi.truncf %w {rounding = "Z", saturate = "NOSAT"} : !pto.vmi.vreg<256xf32, #pto.vmi.layout<contiguous, lane_stride = 2>> -> !pto.vmi.vreg<256xbf16, #pto.vmi.layout<contiguous, lane_stride = 2>>
+  return %r : !pto.vmi.vreg<256xbf16, #pto.vmi.layout<contiguous, lane_stride = 2>>
+}
+// ASSIGN-LABEL: @cast_256_1_4(
+// ASSIGN: pto.vmi.extf
+// ASSIGN-SAME: -> !pto.vmi.vreg<256xf32, #pto.vmi.layout<contiguous, lane_stride = 4>>
+// ASSIGN: pto.vmi.truncf
+// ASSIGN-SAME: -> !pto.vmi.vreg<256xbf16, #pto.vmi.layout<contiguous, lane_stride = 4>>
+// LOWER-LABEL: @cast_256_1_4(
+// LOWER: pto.vintlv
+// LOWER: pto.vdintlv
+func.func @cast_256_1_4(%x: !pto.vmi.vreg<256xbf16, #pto.vmi.layout<contiguous, lane_stride = 4>>) -> !pto.vmi.vreg<256xbf16, #pto.vmi.layout<contiguous, lane_stride = 4>> {
+  %w = pto.vmi.extf %x : !pto.vmi.vreg<256xbf16, #pto.vmi.layout<contiguous, lane_stride = 4>> -> !pto.vmi.vreg<256xf32, #pto.vmi.layout<contiguous, lane_stride = 4>>
+  %r = pto.vmi.truncf %w {rounding = "Z", saturate = "NOSAT"} : !pto.vmi.vreg<256xf32, #pto.vmi.layout<contiguous, lane_stride = 4>> -> !pto.vmi.vreg<256xbf16, #pto.vmi.layout<contiguous, lane_stride = 4>>
+  return %r : !pto.vmi.vreg<256xbf16, #pto.vmi.layout<contiguous, lane_stride = 4>>
+}
+// ASSIGN-LABEL: @cast_256_2_1(
+// ASSIGN: pto.vmi.extf
+// ASSIGN-SAME: -> !pto.vmi.vreg<256xf32, #pto.vmi.layout<deinterleaved = 2>>
+// ASSIGN: pto.vmi.truncf
+// ASSIGN-SAME: -> !pto.vmi.vreg<256xbf16, #pto.vmi.layout<deinterleaved = 2>>
+// LOWER-LABEL: @cast_256_2_1(
+// LOWER: pto.vintlv
+// LOWER: pto.vdintlv
+func.func @cast_256_2_1(%x: !pto.vmi.vreg<256xbf16, #pto.vmi.layout<deinterleaved = 2>>) -> !pto.vmi.vreg<256xbf16, #pto.vmi.layout<deinterleaved = 2>> {
+  %w = pto.vmi.extf %x : !pto.vmi.vreg<256xbf16, #pto.vmi.layout<deinterleaved = 2>> -> !pto.vmi.vreg<256xf32, #pto.vmi.layout<deinterleaved = 2>>
+  %r = pto.vmi.truncf %w {rounding = "Z", saturate = "NOSAT"} : !pto.vmi.vreg<256xf32, #pto.vmi.layout<deinterleaved = 2>> -> !pto.vmi.vreg<256xbf16, #pto.vmi.layout<deinterleaved = 2>>
+  return %r : !pto.vmi.vreg<256xbf16, #pto.vmi.layout<deinterleaved = 2>>
+}
+// ASSIGN-LABEL: @cast_256_2_2(
+// ASSIGN: pto.vmi.extf
+// ASSIGN-SAME: -> !pto.vmi.vreg<256xf32, #pto.vmi.layout<deinterleaved = 2, lane_stride = 2>>
+// ASSIGN: pto.vmi.truncf
+// ASSIGN-SAME: -> !pto.vmi.vreg<256xbf16, #pto.vmi.layout<deinterleaved = 2, lane_stride = 2>>
+// LOWER-LABEL: @cast_256_2_2(
+// LOWER: pto.vintlv
+// LOWER: pto.vdintlv
+func.func @cast_256_2_2(%x: !pto.vmi.vreg<256xbf16, #pto.vmi.layout<deinterleaved = 2, lane_stride = 2>>) -> !pto.vmi.vreg<256xbf16, #pto.vmi.layout<deinterleaved = 2, lane_stride = 2>> {
+  %w = pto.vmi.extf %x : !pto.vmi.vreg<256xbf16, #pto.vmi.layout<deinterleaved = 2, lane_stride = 2>> -> !pto.vmi.vreg<256xf32, #pto.vmi.layout<deinterleaved = 2, lane_stride = 2>>
+  %r = pto.vmi.truncf %w {rounding = "Z", saturate = "NOSAT"} : !pto.vmi.vreg<256xf32, #pto.vmi.layout<deinterleaved = 2, lane_stride = 2>> -> !pto.vmi.vreg<256xbf16, #pto.vmi.layout<deinterleaved = 2, lane_stride = 2>>
+  return %r : !pto.vmi.vreg<256xbf16, #pto.vmi.layout<deinterleaved = 2, lane_stride = 2>>
+}
+// ASSIGN-LABEL: @cast_256_2_4(
+// ASSIGN: pto.vmi.extf
+// ASSIGN-SAME: -> !pto.vmi.vreg<256xf32, #pto.vmi.layout<deinterleaved = 2, lane_stride = 4>>
+// ASSIGN: pto.vmi.truncf
+// ASSIGN-SAME: -> !pto.vmi.vreg<256xbf16, #pto.vmi.layout<deinterleaved = 2, lane_stride = 4>>
+// LOWER-LABEL: @cast_256_2_4(
+// LOWER: pto.vintlv
+// LOWER: pto.vdintlv
+func.func @cast_256_2_4(%x: !pto.vmi.vreg<256xbf16, #pto.vmi.layout<deinterleaved = 2, lane_stride = 4>>) -> !pto.vmi.vreg<256xbf16, #pto.vmi.layout<deinterleaved = 2, lane_stride = 4>> {
+  %w = pto.vmi.extf %x : !pto.vmi.vreg<256xbf16, #pto.vmi.layout<deinterleaved = 2, lane_stride = 4>> -> !pto.vmi.vreg<256xf32, #pto.vmi.layout<deinterleaved = 2, lane_stride = 4>>
+  %r = pto.vmi.truncf %w {rounding = "Z", saturate = "NOSAT"} : !pto.vmi.vreg<256xf32, #pto.vmi.layout<deinterleaved = 2, lane_stride = 4>> -> !pto.vmi.vreg<256xbf16, #pto.vmi.layout<deinterleaved = 2, lane_stride = 4>>
+  return %r : !pto.vmi.vreg<256xbf16, #pto.vmi.layout<deinterleaved = 2, lane_stride = 4>>
+}
+// ASSIGN-LABEL: @cast_256_4_1(
+// ASSIGN: pto.vmi.extf
+// ASSIGN-SAME: -> !pto.vmi.vreg<256xf32, #pto.vmi.layout<deinterleaved = 4>>
+// ASSIGN: pto.vmi.truncf
+// ASSIGN-SAME: -> !pto.vmi.vreg<256xbf16, #pto.vmi.layout<deinterleaved = 4>>
+// LOWER-LABEL: @cast_256_4_1(
+// LOWER: pto.vintlv
+// LOWER: pto.vdintlv
+func.func @cast_256_4_1(%x: !pto.vmi.vreg<256xbf16, #pto.vmi.layout<deinterleaved = 4>>) -> !pto.vmi.vreg<256xbf16, #pto.vmi.layout<deinterleaved = 4>> {
+  %w = pto.vmi.extf %x : !pto.vmi.vreg<256xbf16, #pto.vmi.layout<deinterleaved = 4>> -> !pto.vmi.vreg<256xf32, #pto.vmi.layout<deinterleaved = 4>>
+  %r = pto.vmi.truncf %w {rounding = "Z", saturate = "NOSAT"} : !pto.vmi.vreg<256xf32, #pto.vmi.layout<deinterleaved = 4>> -> !pto.vmi.vreg<256xbf16, #pto.vmi.layout<deinterleaved = 4>>
+  return %r : !pto.vmi.vreg<256xbf16, #pto.vmi.layout<deinterleaved = 4>>
+}
+// ASSIGN-LABEL: @cast_256_4_2(
+// ASSIGN: pto.vmi.extf
+// ASSIGN-SAME: -> !pto.vmi.vreg<256xf32, #pto.vmi.layout<deinterleaved = 4, lane_stride = 2>>
+// ASSIGN: pto.vmi.truncf
+// ASSIGN-SAME: -> !pto.vmi.vreg<256xbf16, #pto.vmi.layout<deinterleaved = 4, lane_stride = 2>>
+// LOWER-LABEL: @cast_256_4_2(
+// LOWER: pto.vintlv
+// LOWER: pto.vdintlv
+func.func @cast_256_4_2(%x: !pto.vmi.vreg<256xbf16, #pto.vmi.layout<deinterleaved = 4, lane_stride = 2>>) -> !pto.vmi.vreg<256xbf16, #pto.vmi.layout<deinterleaved = 4, lane_stride = 2>> {
+  %w = pto.vmi.extf %x : !pto.vmi.vreg<256xbf16, #pto.vmi.layout<deinterleaved = 4, lane_stride = 2>> -> !pto.vmi.vreg<256xf32, #pto.vmi.layout<deinterleaved = 4, lane_stride = 2>>
+  %r = pto.vmi.truncf %w {rounding = "Z", saturate = "NOSAT"} : !pto.vmi.vreg<256xf32, #pto.vmi.layout<deinterleaved = 4, lane_stride = 2>> -> !pto.vmi.vreg<256xbf16, #pto.vmi.layout<deinterleaved = 4, lane_stride = 2>>
+  return %r : !pto.vmi.vreg<256xbf16, #pto.vmi.layout<deinterleaved = 4, lane_stride = 2>>
+}
+// ASSIGN-LABEL: @cast_256_4_4(
+// ASSIGN: pto.vmi.extf
+// ASSIGN-SAME: -> !pto.vmi.vreg<256xf32, #pto.vmi.layout<deinterleaved = 4, lane_stride = 4>>
+// ASSIGN: pto.vmi.truncf
+// ASSIGN-SAME: -> !pto.vmi.vreg<256xbf16, #pto.vmi.layout<deinterleaved = 4, lane_stride = 4>>
+// LOWER-LABEL: @cast_256_4_4(
+// LOWER: pto.vintlv
+// LOWER: pto.vdintlv
+func.func @cast_256_4_4(%x: !pto.vmi.vreg<256xbf16, #pto.vmi.layout<deinterleaved = 4, lane_stride = 4>>) -> !pto.vmi.vreg<256xbf16, #pto.vmi.layout<deinterleaved = 4, lane_stride = 4>> {
+  %w = pto.vmi.extf %x : !pto.vmi.vreg<256xbf16, #pto.vmi.layout<deinterleaved = 4, lane_stride = 4>> -> !pto.vmi.vreg<256xf32, #pto.vmi.layout<deinterleaved = 4, lane_stride = 4>>
+  %r = pto.vmi.truncf %w {rounding = "Z", saturate = "NOSAT"} : !pto.vmi.vreg<256xf32, #pto.vmi.layout<deinterleaved = 4, lane_stride = 4>> -> !pto.vmi.vreg<256xbf16, #pto.vmi.layout<deinterleaved = 4, lane_stride = 4>>
+  return %r : !pto.vmi.vreg<256xbf16, #pto.vmi.layout<deinterleaved = 4, lane_stride = 4>>
+}
+}

@@ -45,6 +45,7 @@
 #include "llvm/ADT/TypeSwitch.h"
 #include "llvm/Support/CommandLine.h"
 
+#include <array>
 #include <limits>
 
 namespace mlir {
@@ -137,46 +138,6 @@ FailureOr<VMICastLayoutFact> selectCastLayoutFactForResultLayout(
     return failure();
   }
   return *selected;
-}
-
-// Checker-side acceptance for the two composite 32<->8 spine rows.
-// This predicate is deliberately *not* part of the cast candidate path: it is
-// consulted only by the "is this assigned pair supportable" validators below
-// (getTruncFSupport / getExtFSupport and the matching residual-op guards in
-// VMIToVPTO), never by the layout solver or by the propagation transfer, which
-// reach the same rows exclusively through the spine-scoped queries.  Accepting
-// the pair here is what makes an already-seeded composite pair lowerable; it
-// cannot make any chain reach the pair on its own.
-bool isSpineScopedCastLayoutPair(VMIVRegType sourceType,
-                                 VMIVRegType resultType,
-                                 VMILayoutAttr sourceLayout,
-                                 VMILayoutAttr resultLayout) {
-  if (!sourceLayout || !resultLayout) {
-    return false;
-  }
-  int64_t sourceBits =
-      pto::getPTOStorageElemBitWidth(sourceType.getElementType());
-  int64_t resultBits =
-      pto::getPTOStorageElemBitWidth(resultType.getElementType());
-  MLIRContext *ctx = sourceType.getContext();
-  int64_t numGroups =
-      sourceLayout.isGroupSlots() ? sourceLayout.getNumGroups() : 0;
-  for (const LegalCastLayoutPattern &pattern :
-       kSpineScopedLegalCastLayoutPatterns) {
-    bool matchingElementBits =
-        matchesElementBitsPattern(pattern.sourceBits, sourceBits) &&
-        matchesElementBitsPattern(pattern.resultBits, resultBits);
-    if (!matchingElementBits) {
-      continue;
-    }
-    if (matchesLayoutPattern(ctx, pattern.sourceLayout, sourceLayout,
-                             numGroups) &&
-        matchesLayoutPattern(ctx, pattern.resultLayout, resultLayout,
-                             numGroups)) {
-      return true;
-    }
-  }
-  return false;
 }
 
 // vunzip / vzip only change the element width and keep the logical lane
@@ -539,7 +500,6 @@ VMILayoutSupport::getGroupBroadcastLayoutFactsForLayout(
   return facts;
 }
 
-
 FailureOr<VMIGroupBroadcastLoadLayoutFact>
 VMILayoutSupport::getGroupBroadcastLoadLayoutFact(VMIGroupBroadcastLoadOp op,
                                                   std::string *reason) const {
@@ -683,11 +643,9 @@ static VMICastLayoutFact makeCastLayoutFact(int64_t sourceBits,
 }
 
 // Iterate one legal cast-relation table and append every matching
-// VMICastLayoutFact for the requested port/layout.  The generic and the
-// spine-scoped cast reconciliation share this step; they differ only in the
-// table they pass in.  Defined here (not in an earlier .inc) because it needs
-// makeCastLayoutFact above; the spine-scoped .inc is included at the end of
-// this translation unit and reaches it too.
+// VMICastLayoutFact for the requested port/layout. Generic and legacy
+// spine-scoped reconciliation use the same legal relation set. Defined here
+// because it needs makeCastLayoutFact above.
 static void collectMatchingCastFacts(
     ArrayRef<LegalCastLayoutPattern> patterns, VMIVRegType sourceType,
     VMIVRegType resultType, VMICastLayoutPort port, VMILayoutAttr layout,
@@ -721,6 +679,10 @@ static void collectMatchingCastFacts(
       continue;
     }
     if (port == VMICastLayoutPort::Result && resultLayout != layout) {
+      continue;
+    }
+    if (pattern.typeClass == CastTypeClass::BF16F32 && sourceLayout == resultLayout &&
+        !isBF16SameLayoutCastPair(sourceType, resultType, sourceLayout, resultLayout)) {
       continue;
     }
     VMICastLayoutFact fact = makeCastLayoutFact(sourceBits, resultBits, sourceLayout, resultLayout);

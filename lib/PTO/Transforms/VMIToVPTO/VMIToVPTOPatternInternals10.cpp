@@ -519,8 +519,8 @@ private:
         op, "unsupported physical extf source/result width relation");
   }
 
-  // Spine-scoped composite widening: the narrow source is deinterleaved=4 with
-  // each physical part carrying one modulo-4 lane partition, so one
+  // Composite widening: the narrow source is deinterleaved=2/4 with
+  // each physical part carrying one modulo-factor lane partition, so one
   // part-per-chunk vcvt (EVEN for 16-bit, P0 for 8-bit) is the whole
   // conversion and no pto.vor merge is needed.
   FailureOr<bool> tryLowerSpineCompositeWidening(
@@ -1239,13 +1239,9 @@ private:
       }
       bool matchingPhysicalArity = sourceParts.size() == resultTypes.size();
       if (matchingPhysicalArity) {
-          // One source part per result part: each part is converted on its own.  For
-          // a same-layout *split* pair (d(2)/d(4) or lane-stride 2/4 on both sides)
-          // this is the honest lowering, because the result layout itself says the
-          // converted lanes sit where the vcvt puts them.  The dense contiguous
-          // `{c, c}` pair is the exception - there the same per-part vcvt writes
-          // the lanes at lane_stride 2 into a value that claims to be dense - and it
-          // is rejected by the caller before reaching this branch.
+          // Dense same-layout pairs are rejected by the caller: per-part vcvt
+          // writes lane_stride 2, including within deinterleaved partitions.
+          // The remaining sparse same-layout pairs use the per-part conversion.
           return lowerDenseLaneStride(
               op, sourceParts, resultTypes, masks, "EVEN",
               /*sourceIsPackedBF16x2=*/false, sourceType, rewriter);
@@ -1299,7 +1295,7 @@ private:
       bool useNaNRelaxedFastPath = masks.empty() && enableVmiFastmath && rounding && rounding.getValue() == "Z" &&
                                    saturate && saturate.getValue() == "NOSAT";
       if (!useNaNRelaxedFastPath) {
-          // The matching-arity dense contiguous same-layout pair is only ever
+          // The matching-arity dense same-layout pair is only ever
           // produced densely by the NaN-relaxed fastmath lowering above.  A legal
           // layout assignment can no longer select it outside that state (candidate
           // enumeration is state-qualified), so this is a defensive backstop for IR
@@ -1309,8 +1305,8 @@ private:
           // A masked dense pair lands here too: the NaN-relaxed fast path is the
           // predicate-free vdintlv, so no state lowers this pair with a mask.
           if (requiresBF16NaNRelaxedLowering(sourceVMIType, resultVMIType, sourceLayout, resultLayout)) {
-              op.emitError() << "a dense same-layout f32-to-bf16 narrowing (contiguous -> "
-                                "contiguous) is only implemented by the NaN-relaxed fastmath "
+              op.emitError() << "a dense same-layout f32-to-bf16 narrowing is only implemented by the "
+                                "NaN-relaxed fastmath "
                                 "lowering, which requires "
                              << describeBF16NarrowingState(op, enableVmiFastmath);
               return failure();
@@ -1573,8 +1569,8 @@ private:
       return true;
   }
 
-  // Spine-scoped composite narrowing: the f32 source is deinterleaved=4 and the
-  // narrow result keeps the same four parts, so one part-per-chunk
+  // Composite narrowing: the f32 source is deinterleaved=2/4 and the
+  // narrow result keeps the same physical parts, so one part-per-chunk
   // lowerDenseLaneStride (EVEN for 16-bit, P0 for 8-bit) is the whole
   // conversion and no pto.vor merge is emitted.
   FailureOr<bool> tryLowerSpineCompositeNarrowing(

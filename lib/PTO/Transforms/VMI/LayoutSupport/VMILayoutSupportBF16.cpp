@@ -13,6 +13,8 @@
 
 #include "PTO/IR/VMIUtils.h"
 
+#include <utility>
+
 namespace mlir::pto {
 
 bool isDenseBF16NarrowingCast(VMIVRegType sourceType,
@@ -25,7 +27,8 @@ bool isDenseBF16NarrowingCast(VMIVRegType sourceType,
         return false;
     }
     int64_t elementCount = sourceType.getElementCount();
-    return elementCount == 64 || elementCount == 128 || elementCount == 256;
+    return elementCount == 1 || elementCount == 2 || elementCount == 4 || elementCount == 8 ||
+           elementCount == 64 || elementCount == 128 || elementCount == 256;
 }
 
 bool isDenseBF16NarrowingSameLayoutPair(VMIVRegType sourceType,
@@ -35,8 +38,7 @@ bool isDenseBF16NarrowingSameLayoutPair(VMIVRegType sourceType,
 {
     if (!isDenseBF16NarrowingCast(sourceType, resultType) || !sourceLayout ||
         !resultLayout || sourceLayout != resultLayout ||
-        !sourceLayout.isContiguous() ||
-        sourceLayout.getLaneStride() != 1) {
+        (!sourceLayout.isContiguous() && !sourceLayout.isDeinterleaved())) {
         return false;
     }
     // A group-slot layout is dense in its own way, but its narrowing is realized
@@ -107,14 +109,51 @@ std::string describeBF16NarrowingState(Operation *op, bool enableVmiFastmath)
     return description;
 }
 
-// Validation-only acceptance for an already assigned BF16/F32 cast pair.
-// Regular contiguous, deinterleaved, and supported group-slot lane maps
-// preserve their padding and part order through the pairwise physical
-// intlv/dintlv lowering. Layout candidates remain defined by the cast tables.
+// Dense and group-slot shapes the pairwise BF16/F32 cast supports.
+static bool isSupportedBF16CastLogicalShape(VMIVRegType resultType,
+                                            VMILayoutAttr sourceLayout,
+                                            int64_t elementCount) {
+  bool supportedDenseShape = elementCount == 1 || elementCount == 2 ||
+                             elementCount == 4 || elementCount == 8 ||
+                             elementCount == 64 || elementCount == 128 ||
+                             elementCount == 256;
+  bool supportedGroupSlotShape =
+      sourceLayout.isGroupSlots() &&
+      (elementCount == 2 || elementCount == 4 || elementCount == 8);
+  return elementCount == resultType.getElementCount() &&
+         (supportedDenseShape || supportedGroupSlotShape);
+}
+
+// Physical arities of the assigned source/result types, or failure.
+static FailureOr<std::pair<int64_t, int64_t>>
+getAssignedCastArities(VMIVRegType sourceType, VMIVRegType resultType,
+                       VMILayoutAttr sourceLayout, VMILayoutAttr resultLayout,
+                       int64_t elementCount) {
+  auto assignedSource = VMIVRegType::get(
+      sourceType.getContext(), elementCount, sourceType.getElementType(),
+      sourceLayout);
+  auto assignedResult = VMIVRegType::get(
+      resultType.getContext(), elementCount, resultType.getElementType(),
+      resultLayout);
+  FailureOr<int64_t> sourceArity = getVMIPhysicalArity(assignedSource);
+  FailureOr<int64_t> resultArity = getVMIPhysicalArity(assignedResult);
+  if (failed(sourceArity) || failed(resultArity) || *sourceArity <= 0 ||
+      *resultArity <= 0) {
+    return failure();
+  }
+  return std::make_pair(*sourceArity, *resultArity);
+}
+
+// Shared candidate/lowering contract for pairwise BF16/F32 casts.
+// Regular layouts preserve the partition and sparse lane index; block layouts
+// change their block size with element width and are deliberately excluded.
 bool isBF16SameLayoutCastPair(VMIVRegType sourceType,
                               VMIVRegType resultType,
                               VMILayoutAttr sourceLayout,
                               VMILayoutAttr resultLayout) {
+  if (!sourceType || !resultType) {
+    return false;
+  }
   bool regularLayout =
       sourceLayout && resultLayout && sourceLayout == resultLayout &&
       (sourceLayout.isContiguous() || sourceLayout.isDeinterleaved());
@@ -142,26 +181,17 @@ bool isBF16SameLayoutCastPair(VMIVRegType sourceType,
     return false;
   }
   int64_t elementCount = sourceType.getElementCount();
-  bool supportedDenseShape =
-      elementCount == 64 || elementCount == 128 || elementCount == 256;
-  bool supportedGroupSlotShape =
-      sourceLayout.isGroupSlots() &&
-      (elementCount == 2 || elementCount == 4 || elementCount == 8);
-  bool supportedLogicalShape = elementCount == resultType.getElementCount() &&
-                               (supportedDenseShape || supportedGroupSlotShape);
-  if (!supportedLogicalShape) {
+  if (!isSupportedBF16CastLogicalShape(resultType, sourceLayout, elementCount)) {
     return false;
   }
 
-  FailureOr<int64_t> sourceArity = getVMIPhysicalArity(sourceType);
-  FailureOr<int64_t> resultArity = getVMIPhysicalArity(resultType);
-  bool validArity = succeeded(sourceArity) && succeeded(resultArity) &&
-                    *sourceArity > 0 && *resultArity > 0;
-  if (!validArity) {
+  FailureOr<std::pair<int64_t, int64_t>> arities = getAssignedCastArities(
+      sourceType, resultType, sourceLayout, resultLayout, elementCount);
+  if (failed(arities)) {
     return false;
   }
-  int64_t wideArity = isF32ToBF16 ? *sourceArity : *resultArity;
-  int64_t narrowArity = isF32ToBF16 ? *resultArity : *sourceArity;
+  int64_t wideArity = isF32ToBF16 ? arities->first : arities->second;
+  int64_t narrowArity = isF32ToBF16 ? arities->second : arities->first;
   return wideArity == narrowArity ||
          (wideArity % kValue2 == 0 && wideArity / kValue2 == narrowArity);
 }

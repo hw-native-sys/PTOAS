@@ -9,24 +9,20 @@
 // This larger fused graph needs an explicit search budget; ordinary kernels
 // retain the smaller defaults. Check both default limits and reject zero.
 // RUN: not ptoas --pto-arch=a5 --pto-backend=vpto --vpto-scheduler=off --emit-vpto %s 2>&1 | FileCheck %s --check-prefix=DEFAULT-FRONTIER
-// RUN: not ptoas --pto-arch=a5 --pto-backend=vpto --vpto-scheduler=off --vmi-layout-max-frontier-entries=1024 --emit-vpto %s 2>&1 | FileCheck %s --check-prefix=DEFAULT-TRANSITIONS
+// RUN: not ptoas --pto-arch=a5 --pto-backend=vpto --vpto-scheduler=off --vmi-layout-max-frontier-entries=2048 --emit-vpto %s 2>&1 | FileCheck %s --check-prefix=DEFAULT-TRANSITIONS
 // RUN: not ptoas --pto-arch=a5 --pto-backend=vpto --vmi-layout-max-frontier-entries=0 --emit-vpto %s 2>&1 | FileCheck %s --check-prefix=INVALID
 // RUN: not ptoas --pto-arch=a5 --pto-backend=vpto --vmi-layout-max-transitions=0 --emit-vpto %s 2>&1 | FileCheck %s --check-prefix=INVALID
-// RUN: ptoas --pto-arch=a5 --pto-backend=vpto --enable-vecscope-mem-bar=false --vpto-scheduler=off --vmi-layout-max-frontier-entries=1024 --vmi-layout-max-transitions=32768 --emit-vpto %s | FileCheck %s --check-prefix=VPTO --implicit-check-not=pto.vmi. --implicit-check-not='!pto.vmi' --implicit-check-not=pto.pge_ --implicit-check-not=pto.pintlv --implicit-check-not=pto.pdintlv --implicit-check-not=pto.mem_bar --implicit-check-not=E2B_B16 --implicit-check-not=pto.vor
+// RUN: ptoas --pto-arch=a5 --pto-backend=vpto --enable-vecscope-mem-bar=false --vpto-scheduler=off --vmi-layout-max-frontier-entries=2048 --vmi-layout-max-transitions=32768 --emit-vpto %s | FileCheck %s --check-prefix=VPTO --implicit-check-not=pto.vmi. --implicit-check-not='!pto.vmi' --implicit-check-not=pto.pge_ --implicit-check-not=pto.pintlv --implicit-check-not=pto.pdintlv --implicit-check-not=pto.mem_bar --implicit-check-not=E2B_B16
 
 // DEFAULT-FRONTIER: VMI layout search frontier budget exhausted (limit=288)
 // DEFAULT-TRANSITIONS: VMI layout search transition budget exhausted (limit=16384)
 // INVALID: VMI layout search budgets must be positive
 
 // Fused FP8 quantization and BF16 dequantization with dynamic double buffering.
-// Keep the row body as scf.for for hardware-loop lowering. The costed plan
-// shares contiguous loads between reduction and quantization as long as no
-// store intervenes (a pto.vstus is a real UB write, so CSE conservatively
-// reloads the quantized inputs after it), materializes the
-// reduction's deinterleaved layout after vand, and broadcasts reciprocal slots
-// directly in registers. BF16 widening uses zero interleaves and bitcasts;
-// four separate FP8 parts feed dequantization without a packed intermediate.
-// Final rounded BF16 conversions are compacted by vdintlv before the stores.
+// Keep the row body as scf.for for hardware-loop lowering. D2 loads feed
+// reduction and quantization directly; each reciprocal serves both partitions.
+// BF16 widening uses zero interleaves and bitcasts. Four FP8 parts feed
+// dequantization, and EVEN/ODD rounded conversions reconstruct contiguous stores.
 
 // VPTO-LABEL: func.func @fused_qd_vmi_current
 // VPTO-DAG: pto.pset_b16 "PAT_ALL"
@@ -36,24 +32,20 @@
 // VPTO: %[[ZERO:[^ ]+]] = pto.vdup {{.*}} : bf16,
 // VPTO: %[[SCALE_LOOP:.*]]:{{[0-9]+}} = scf.for
 // VPTO-SAME: iter_args(%[[SCALE_BASE_ARG:.*]] = %[[SCALE_BASE]], %[[SCALE_ALIGN_ARG:.*]] = %[[SCALE_ALIGN]]{{.*}})
-// VPTO: %[[LOAD_LOW:[^,]+]], %{{.*}} = pto.vlds
-// VPTO: %[[LOAD_HIGH:[^,]+]], %{{.*}} = pto.vlds
+// VPTO: %[[LOAD_LOW:[^,]+]], %[[LOAD_HIGH:[^,]+]], %{{.*}} = pto.vldsx2 {{.*}} "DINTLV_B16"
 // VPTO: %[[BITS_LOW:[^ ]+]] = pto.vbitcast %[[LOAD_LOW]]
 // VPTO: %[[BITS_HIGH:[^ ]+]] = pto.vbitcast %[[LOAD_HIGH]]
 // VPTO: %[[ABS_LOW:[^ ]+]] = pto.vand %[[BITS_LOW]],
 // VPTO: %[[ABS_HIGH:[^ ]+]] = pto.vand %[[BITS_HIGH]],
-// VPTO: %[[REDUCE_LOW:[^,]+]], %[[REDUCE_HIGH:[^,]+]] = pto.vdintlv %[[ABS_LOW]], %[[ABS_HIGH]]
-// VPTO: %[[REDUCE_MAX:[^ ]+]] = pto.vmax %[[REDUCE_LOW]], %[[REDUCE_HIGH]],
+// VPTO: %[[REDUCE_MAX:[^ ]+]] = pto.vmax %[[ABS_LOW]], %[[ABS_HIGH]],
 // VPTO: pto.vcgmax %[[REDUCE_MAX]],
 // VPTO: pto.vcvt {{.*}} {part = "EVEN", sat = "SAT"}
 // VPTO: %[[SCALE_ALIGN_OUT:.*]], %[[SCALE_BASE_OUT:.*]] = pto.vstus %[[SCALE_ALIGN_ARG]], {{.*}}, {{.*}}, %[[SCALE_BASE_ARG]]
 // VPTO: %[[RECIP_LOW:[^ ]+]] = pto.vselr {{.*}} : !pto.vreg<128xbf16>, !pto.vreg<128xui16> -> !pto.vreg<128xbf16>
-// VPTO: %[[RECIP_HIGH:[^ ]+]] = pto.vselr {{.*}} : !pto.vreg<128xbf16>, !pto.vreg<128xui16> -> !pto.vreg<128xbf16>
 // VPTO-NOT: scf.yield
-// VPTO: %[[SCALED_LOAD_LOW:[^,]+]], %{{.*}} = pto.vlds
-// VPTO: %[[SCALED_LOAD_HIGH:[^,]+]], %{{.*}} = pto.vlds
+// VPTO: %[[SCALED_LOAD_LOW:[^,]+]], %[[SCALED_LOAD_HIGH:[^,]+]], %{{.*}} = pto.vldsx2 {{.*}} "DINTLV_B16"
 // VPTO: %[[SCALED_LOW:[^ ]+]] = pto.vmul %[[SCALED_LOAD_LOW]], %[[RECIP_LOW]]
-// VPTO: %[[SCALED_HIGH:[^ ]+]] = pto.vmul %[[SCALED_LOAD_HIGH]], %[[RECIP_HIGH]]
+// VPTO: %[[SCALED_HIGH:[^ ]+]] = pto.vmul %[[SCALED_LOAD_HIGH]], %[[RECIP_LOW]]
 // VPTO: %[[WIDE_0:[^,]+]], %[[WIDE_1:[^,]+]] = pto.vintlv %[[ZERO]], %[[SCALED_LOW]]
 // VPTO: %[[WIDE_2:[^,]+]], %[[WIDE_3:[^,]+]] = pto.vintlv %[[ZERO]], %[[SCALED_HIGH]]
 // VPTO: %[[F32_0:[^ ]+]] = pto.vbitcast %[[WIDE_0]]
@@ -65,33 +57,23 @@
 // VPTO: %[[FP8_2:[^ ]+]] = pto.vcvt %[[F32_2]], {{.*}} {part = "P0", rnd = "R", sat = "SAT"}
 // VPTO: %[[FP8_3:[^ ]+]] = pto.vcvt %[[F32_3]], {{.*}} {part = "P0", rnd = "R", sat = "SAT"}
 // VPTO: %[[SCALE_LOW:[^ ]+]] = pto.vselr {{.*}} : !pto.vreg<128xbf16>, !pto.vreg<128xui16> -> !pto.vreg<128xbf16>
-// VPTO: %[[SCALE_HIGH:[^ ]+]] = pto.vselr {{.*}} : !pto.vreg<128xbf16>, !pto.vreg<128xui16> -> !pto.vreg<128xbf16>
 // VPTO: %[[DQ_0:[^ ]+]] = pto.vcvt %[[FP8_0]], {{.*}} {part = "P0"}
 // VPTO: %[[DQ_1:[^ ]+]] = pto.vcvt %[[FP8_1]], {{.*}} {part = "P0"}
 // VPTO: %[[DQ_2:[^ ]+]] = pto.vcvt %[[FP8_2]], {{.*}} {part = "P0"}
 // VPTO: %[[DQ_3:[^ ]+]] = pto.vcvt %[[FP8_3]], {{.*}} {part = "P0"}
 // VPTO: %[[SWIDE_0:[^,]+]], %[[SWIDE_1:[^,]+]] = pto.vintlv %[[ZERO]], %[[SCALE_LOW]]
-// VPTO: %[[SWIDE_2:[^,]+]], %[[SWIDE_3:[^,]+]] = pto.vintlv %[[ZERO]], %[[SCALE_HIGH]]
 // VPTO: %[[SCALE_F32_0:[^ ]+]] = pto.vbitcast %[[SWIDE_0]]
 // VPTO: %[[SCALE_F32_1:[^ ]+]] = pto.vbitcast %[[SWIDE_1]]
-// VPTO: %[[SCALE_F32_2:[^ ]+]] = pto.vbitcast %[[SWIDE_2]]
-// VPTO: %[[SCALE_F32_3:[^ ]+]] = pto.vbitcast %[[SWIDE_3]]
 // VPTO: %[[OUT_0:[^ ]+]] = pto.vmul %[[DQ_0]], %[[SCALE_F32_0]]
 // VPTO: %[[OUT_1:[^ ]+]] = pto.vmul %[[DQ_1]], %[[SCALE_F32_1]]
-// VPTO: %[[OUT_2:[^ ]+]] = pto.vmul %[[DQ_2]], %[[SCALE_F32_2]]
-// VPTO: %[[OUT_3:[^ ]+]] = pto.vmul %[[DQ_3]], %[[SCALE_F32_3]]
+// VPTO: %[[OUT_2:[^ ]+]] = pto.vmul %[[DQ_2]], %[[SCALE_F32_0]]
+// VPTO: %[[OUT_3:[^ ]+]] = pto.vmul %[[DQ_3]], %[[SCALE_F32_1]]
 // VPTO: %[[BF16_0:[^ ]+]] = pto.vcvt %[[OUT_0]], {{.*}} {part = "EVEN", rnd = "R", sat = "SAT"}
+// VPTO: %[[BF16_2:[^ ]+]] = pto.vcvt %[[OUT_2]], {{.*}} {part = "ODD", rnd = "R", sat = "SAT"}
+// VPTO: %[[STORE_LOW:[^ ]+]] = pto.vor %[[BF16_0]], %[[BF16_2]]
 // VPTO: %[[BF16_1:[^ ]+]] = pto.vcvt %[[OUT_1]], {{.*}} {part = "EVEN", rnd = "R", sat = "SAT"}
-// VPTO: %[[HALF_0:[^ ]+]] = pto.vbitcast %[[BF16_0]]
-// VPTO: %[[HALF_1:[^ ]+]] = pto.vbitcast %[[BF16_1]]
-// VPTO: %[[PACK_LOW:[^,]+]], %{{.*}} = pto.vdintlv %[[HALF_0]], %[[HALF_1]]
-// VPTO: %[[STORE_LOW:[^ ]+]] = pto.vbitcast %[[PACK_LOW]]
-// VPTO: %[[BF16_2:[^ ]+]] = pto.vcvt %[[OUT_2]], {{.*}} {part = "EVEN", rnd = "R", sat = "SAT"}
-// VPTO: %[[BF16_3:[^ ]+]] = pto.vcvt %[[OUT_3]], {{.*}} {part = "EVEN", rnd = "R", sat = "SAT"}
-// VPTO: %[[HALF_2:[^ ]+]] = pto.vbitcast %[[BF16_2]]
-// VPTO: %[[HALF_3:[^ ]+]] = pto.vbitcast %[[BF16_3]]
-// VPTO: %[[PACK_HIGH:[^,]+]], %{{.*}} = pto.vdintlv %[[HALF_2]], %[[HALF_3]]
-// VPTO: %[[STORE_HIGH:[^ ]+]] = pto.vbitcast %[[PACK_HIGH]]
+// VPTO: %[[BF16_3:[^ ]+]] = pto.vcvt %[[OUT_3]], {{.*}} {part = "ODD", rnd = "R", sat = "SAT"}
+// VPTO: %[[STORE_HIGH:[^ ]+]] = pto.vor %[[BF16_1]], %[[BF16_3]]
 // VPTO: pto.vsts %[[STORE_LOW]], {{.*}} -> !pto.ptr<bf16, ub>
 // VPTO: pto.vsts %[[STORE_HIGH]], {{.*}} -> !pto.ptr<bf16, ub>
 // VPTO: scf.yield %[[SCALE_BASE_OUT]], %[[SCALE_ALIGN_OUT]]

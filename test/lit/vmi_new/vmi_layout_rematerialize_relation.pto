@@ -114,35 +114,32 @@ module {
   }
 }
 
+// Multiple legal source layouts now reach the wide cast result. The legacy
+// rematerializer requires a unique relation, so it conservatively keeps the
+// authored widening followed by ensure_layout. The solver handles the choice.
 // REMAT-LABEL: func.func @vmi_layout_rematerialize_direct_ext(
 // REMAT: %[[X16:.*]] = pto.vmi.load
-// REMAT: %[[X16_D2:.*]] = pto.vmi.ensure_layout %[[X16]]
-// REMAT-SAME: !pto.vmi.vreg<256xf16, #pto.vmi.layout<contiguous>> -> !pto.vmi.vreg<256xf16, #pto.vmi.layout<deinterleaved = 2>>
-// REMAT: %[[X32_D4:.*]] = pto.vmi.extf %[[X16_D2]]
-// REMAT-SAME: !pto.vmi.vreg<256xf16, #pto.vmi.layout<deinterleaved = 2>> -> !pto.vmi.vreg<256xf32, #pto.vmi.layout<deinterleaved = 4>>
-// REMAT: pto.vmi.truncf %[[X32_D4]]
-// REMAT-NOT: !pto.vmi.vreg<256xf32, #pto.vmi.layout<deinterleaved = 2>> -> !pto.vmi.vreg<256xf32, #pto.vmi.layout<deinterleaved = 4>>
+// REMAT: %[[X32:.*]] = pto.vmi.extf %[[X16]]
+// REMAT-SAME: -> !pto.vmi.vreg<256xf32, #pto.vmi.layout<deinterleaved = 2>>
+// REMAT: %[[D4:.*]] = pto.vmi.ensure_layout %[[X32]]
+// REMAT-SAME: -> !pto.vmi.vreg<256xf32, #pto.vmi.layout<deinterleaved = 4>>
+// REMAT: pto.vmi.truncf %[[D4]]
 
 // REMAT-LABEL: func.func @vmi_layout_rematerialize_mulf_chain(
-// REMAT-DAG: %[[LHS_D2:.*]] = pto.vmi.ensure_layout
-// REMAT-DAG: %[[RHS_D2:.*]] = pto.vmi.ensure_layout
-// REMAT-DAG: %[[LHS_D4:.*]] = pto.vmi.extf %[[LHS_D2]]
-// REMAT-DAG: %[[RHS_D4:.*]] = pto.vmi.extf %[[RHS_D2]]
+// REMAT: %[[LHS:.*]] = pto.vmi.extf
+// REMAT: %[[RHS:.*]] = pto.vmi.extf
+// REMAT: %[[LHS_D4:.*]] = pto.vmi.ensure_layout %[[LHS]]
+// REMAT: %[[RHS_D4:.*]] = pto.vmi.ensure_layout %[[RHS]]
 // REMAT: %[[MUL_D4:.*]] = pto.vmi.vmul %[[LHS_D4]], %[[RHS_D4]]
 // REMAT-SAME: -> !pto.vmi.vreg<256xf32, #pto.vmi.layout<deinterleaved = 4>>
 // REMAT: pto.vmi.truncf %[[MUL_D4]]
-// REMAT-NOT: !pto.vmi.vreg<256xf32, #pto.vmi.layout<deinterleaved = 2>> -> !pto.vmi.vreg<256xf32, #pto.vmi.layout<deinterleaved = 4>>
 
 // REMAT-LABEL: func.func @vmi_layout_rematerialize_ext_multi_consumer(
 // REMAT: %[[X16:.*]] = pto.vmi.load
-// REMAT: %[[X32_D2:.*]] = pto.vmi.extf %[[X16]]
-// REMAT-SAME: !pto.vmi.vreg<256xf16, #pto.vmi.layout<contiguous>> -> !pto.vmi.vreg<256xf32, #pto.vmi.layout<deinterleaved = 2>>
-// REMAT: pto.vmi.truncf %[[X32_D2]]
-// REMAT: %[[X16_D2:.*]] = pto.vmi.ensure_layout %[[X16]]
-// REMAT: %[[X32_D4:.*]] = pto.vmi.extf %[[X16_D2]]
-// REMAT-SAME: !pto.vmi.vreg<256xf16, #pto.vmi.layout<deinterleaved = 2>> -> !pto.vmi.vreg<256xf32, #pto.vmi.layout<deinterleaved = 4>>
-// REMAT: pto.vmi.truncf %[[X32_D4]]
-// REMAT-NOT: !pto.vmi.vreg<256xf32, #pto.vmi.layout<deinterleaved = 2>> -> !pto.vmi.vreg<256xf32, #pto.vmi.layout<deinterleaved = 4>>
+// REMAT: %[[X32:.*]] = pto.vmi.extf %[[X16]]
+// REMAT: pto.vmi.truncf %[[X32]]
+// REMAT: %[[D4:.*]] = pto.vmi.ensure_layout %[[X32]]
+// REMAT: pto.vmi.truncf %[[D4]]
 
 // REMAT-LABEL: func.func @vmi_layout_rematerialize_keeps_wider_source(
 // REMAT: %[[X16:.*]] = pto.vmi.load
@@ -161,8 +158,7 @@ module {
 // REMAT-NOT: !pto.vmi.vreg<256xi32, #pto.vmi.layout<deinterleaved = 4>> -> !pto.vmi.vreg<256xi32, #pto.vmi.layout<deinterleaved = 2>>
 
 // LOWER-LABEL: func.func @vmi_layout_rematerialize_direct_ext(
-// LOWER: pto.vldsx2
-// LOWER-SAME: "DINTLV_B16"
+// LOWER: pto.vlds
 // LOWER-COUNT-2: pto.vcvt {{.*}} {part = "EVEN"}
 // LOWER-COUNT-2: pto.vcvt {{.*}} {part = "ODD"}
 // LOWER: pto.vcvt {{.*}} {part = "P0"
@@ -173,8 +169,7 @@ module {
 // LOWER-NOT: !pto.vmi.
 
 // LOWER-LABEL: func.func @vmi_layout_rematerialize_mulf_chain(
-// LOWER-COUNT-2: pto.vldsx2
-// LOWER-SAME: "DINTLV_B16"
+// LOWER-COUNT-4: pto.vlds
 // LOWER: pto.vmul
 // LOWER-NOT: pto.vmi.
 // LOWER-NOT: !pto.vmi.

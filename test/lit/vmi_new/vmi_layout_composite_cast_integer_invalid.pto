@@ -1,0 +1,43 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+
+// Integer narrowing cannot implement a one-part-per-chunk composite carrier.
+// RUN: pto-test-opt %s -split-input-file -vmi-layout-assignment -verify-diagnostics
+
+module {
+ func.func @invalid(%x: !pto.vmi.vreg<256xsi32, #pto.vmi.layout<deinterleaved = 2>>) -> !pto.vmi.vreg<256xsi8, #pto.vmi.layout<deinterleaved = 2, lane_stride = 4>> {
+  // expected-error@+1 {{no legal VMI layout relation is registered for pto.vmi.trunci}}
+  %r = pto.vmi.trunci %x {saturate = "SAT"} : !pto.vmi.vreg<256xsi32, #pto.vmi.layout<deinterleaved = 2>> -> !pto.vmi.vreg<256xsi8, #pto.vmi.layout<deinterleaved = 2, lane_stride = 4>>
+  return %r : !pto.vmi.vreg<256xsi8, #pto.vmi.layout<deinterleaved = 2, lane_stride = 4>>
+ }
+}
+// -----
+module {
+ func.func @invalid(%x: !pto.vmi.vreg<256xsi32, #pto.vmi.layout<deinterleaved = 4>>) -> !pto.vmi.vreg<256xsi8, #pto.vmi.layout<deinterleaved = 4, lane_stride = 4>> {
+  // expected-error@+1 {{no legal VMI layout relation is registered for pto.vmi.trunci}}
+  %r = pto.vmi.trunci %x {saturate = "SAT"} : !pto.vmi.vreg<256xsi32, #pto.vmi.layout<deinterleaved = 4>> -> !pto.vmi.vreg<256xsi8, #pto.vmi.layout<deinterleaved = 4, lane_stride = 4>>
+  return %r : !pto.vmi.vreg<256xsi8, #pto.vmi.layout<deinterleaved = 4, lane_stride = 4>>
+ }
+}
+// -----
+module {
+ func.func @invalid(%x: !pto.vmi.vreg<256xsi32, #pto.vmi.layout<deinterleaved = 2>>) -> !pto.vmi.vreg<256xsi16, #pto.vmi.layout<deinterleaved = 2, lane_stride = 2>> {
+  // expected-error@+1 {{no legal VMI layout relation is registered for pto.vmi.trunci}}
+  %r = pto.vmi.trunci %x {saturate = "SAT"} : !pto.vmi.vreg<256xsi32, #pto.vmi.layout<deinterleaved = 2>> -> !pto.vmi.vreg<256xsi16, #pto.vmi.layout<deinterleaved = 2, lane_stride = 2>>
+  return %r : !pto.vmi.vreg<256xsi16, #pto.vmi.layout<deinterleaved = 2, lane_stride = 2>>
+ }
+}
+// -----
+module {
+ func.func @invalid(%x: !pto.vmi.vreg<256xsi32, #pto.vmi.layout<deinterleaved = 4>>) -> !pto.vmi.vreg<256xsi16, #pto.vmi.layout<deinterleaved = 4, lane_stride = 2>> {
+  // expected-error@+1 {{no legal VMI layout relation is registered for pto.vmi.trunci}}
+  %r = pto.vmi.trunci %x {saturate = "SAT"} : !pto.vmi.vreg<256xsi32, #pto.vmi.layout<deinterleaved = 4>> -> !pto.vmi.vreg<256xsi16, #pto.vmi.layout<deinterleaved = 4, lane_stride = 2>>
+  return %r : !pto.vmi.vreg<256xsi16, #pto.vmi.layout<deinterleaved = 4, lane_stride = 2>>
+ }
+}
+// -----

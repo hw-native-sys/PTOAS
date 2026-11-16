@@ -25,7 +25,7 @@ namespace mlir::pto::layout_relations {
 
 // Whether this enumerated cast fact may be offered as a solver candidate.
 // One relation is state-qualified rather than table-defined: the *matching
-// arity* (K=1) dense same-layout `{c, c}` BF16/F32 narrowing pair.  The cast
+// arity* (K=1) dense same-layout BF16/F32 narrowing pair.  The cast
 // tables list it, but only the NaN-relaxed fastmath lowering turns one physical
 // F32 source part into a dense BF16 value; every other state lowers the per-part
 // vcvt, which places the converted lanes at lane_stride 2.  Offering that pair
@@ -51,6 +51,16 @@ bool VMILayoutRelations::isAdmissibleCastFact(const VMICastLayoutFact& fact) con
     auto resultType = dyn_cast<VMIVRegType>(op->getResult(0).getType());
     if (!sourceType || !resultType) {
         return true;
+    }
+    // Sparse cast predicates require a wider physical granularity. Hardware
+    // predicates stop at b32, including when the data relation itself is legal.
+    if (castMaskOperand && isBF16SameLayoutCastPair(
+            sourceType, resultType, fact.sourceLayout, fact.resultLayout)) {
+        unsigned sourceBits = pto::getPTOStorageElemBitWidth(sourceType.getElementType());
+        int64_t physicalMaskBits = sourceBits * fact.sourceLayout.getLaneStride();
+        if (physicalMaskBits > kValue32) {
+            return false;
+        }
     }
     if (!requiresBF16NaNRelaxedLowering(sourceType, resultType, fact.sourceLayout, fact.resultLayout)) {
         return true;

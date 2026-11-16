@@ -32,6 +32,8 @@ enum class CastTypeClass {
   Any,
   // Both source and result are floating-point-like VMI element types.
   Float,
+  // Scalar floating-point values, excluding packed FP4/BF16 pairs.
+  DenseFloat,
   // Both source and result are integer element types.
   Integer,
   // Integer conversion whose physical destination must be unsigned.
@@ -158,6 +160,11 @@ inline bool matchesCastTypeClass(CastTypeClass typeClass, Type sourceType,
             pto::isPTOLowPrecisionType(sourceType)) &&
            (isa<FloatType>(resultType) ||
             pto::isPTOLowPrecisionType(resultType));
+  case CastTypeClass::DenseFloat:
+    return (isa<FloatType>(sourceType) || pto::isPTOFloat8Type(sourceType) ||
+            pto::isPTOHiFloat8Type(sourceType)) &&
+           (isa<FloatType>(resultType) || pto::isPTOFloat8Type(resultType) ||
+            pto::isPTOHiFloat8Type(resultType));
   case CastTypeClass::Integer:
     return isa<IntegerType>(sourceType) && isa<IntegerType>(resultType);
   case CastTypeClass::IntegerToUnsigned:
@@ -187,6 +194,7 @@ inline unsigned getCastTypeClassSpecificity(CastTypeClass typeClass) {
   case CastTypeClass::Float:
   case CastTypeClass::Integer:
     return 1;
+  case CastTypeClass::DenseFloat:
   case CastTypeClass::IntegerToUnsigned:
     return 2;
   case CastTypeClass::F4E2M1x2ToBF16x2:

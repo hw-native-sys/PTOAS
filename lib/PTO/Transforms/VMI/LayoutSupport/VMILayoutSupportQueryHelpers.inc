@@ -254,10 +254,7 @@ inline LogicalResult getNarrowCastSupport(VMIVRegType sourceType,
           resultType.getLayoutAttr(), reason))) {
     return success();
   }
-  return success(isSpineScopedCastLayoutPair(
-                     sourceType, resultType, sourceType.getLayoutAttr(),
-                     resultType.getLayoutAttr()) ||
-                 isDeinterleaved4ToContiguousBF16CastPair(
+  return success(isDeinterleaved4ToContiguousBF16CastPair(
                      sourceType, resultType, sourceType.getLayoutAttr(),
                      resultType.getLayoutAttr()));
 }
@@ -328,11 +325,6 @@ LogicalResult VMILayoutSupport::getExtFSupport(VMIExtFOp op,
           resultType.getLayoutAttr(), reason))) {
     return success();
   }
-  if (isSpineScopedCastLayoutPair(sourceType, resultType,
-                                  sourceType.getLayoutAttr(),
-                                  resultType.getLayoutAttr())) {
-    return success();
-  }
   return success(isBF16SameLayoutCastPair(
       sourceType, resultType, sourceType.getLayoutAttr(),
       resultType.getLayoutAttr()));
@@ -363,9 +355,7 @@ inline LogicalResult getExtISupportImpl(OpT op, std::string *reason) {
           resultType.getLayoutAttr(), reason))) {
     return success();
   }
-  return success(isSpineScopedCastLayoutPair(
-      sourceType, resultType, sourceType.getLayoutAttr(),
-      resultType.getLayoutAttr()));
+  return failure();
 }
 
 LogicalResult VMILayoutSupport::getExtSISupport(VMIExtSIOp op,

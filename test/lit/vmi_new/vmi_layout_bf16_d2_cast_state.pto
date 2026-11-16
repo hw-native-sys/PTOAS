@@ -1,0 +1,23 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+
+// A one-chunk-per-part dense D2 narrowing requires the same state as dense C.
+// RUN: not pto-test-opt %s -vmi-set-fastmath=vmi-fastmath=false -vmi-layout-assignment 2>&1 | FileCheck %s
+// RUN: not pto-test-opt %s -vmi-set-fastmath=vmi-fastmath=false -vmi-to-vpto 2>&1 | FileCheck %s --check-prefix=LOWER
+// RUN: sed -e 's/128x/256x/g' -e 's/deinterleaved = 2/deinterleaved = 4/g' %s | not pto-test-opt -vmi-set-fastmath=vmi-fastmath=false -vmi-to-vpto 2>&1 | FileCheck %s --check-prefix=LOWER
+// RUN: sed -e 's/128x/64x/g' -e 's/deinterleaved = 2/deinterleaved = 4, lane_stride = 2/g' %s | not pto-test-opt -vmi-set-fastmath=vmi-fastmath=false -vmi-to-vpto 2>&1 | FileCheck %s --check-prefix=LOWER
+// CHECK: dense same-layout BF16 narrowing
+// CHECK-SAME: NaN-relaxed fastmath
+// LOWER: dense same-layout BF16 narrowing relation
+
+module {
+  func.func @strict_d2(%x: !pto.vmi.vreg<128xf32, #pto.vmi.layout<deinterleaved = 2>>) -> !pto.vmi.vreg<128xbf16, #pto.vmi.layout<deinterleaved = 2>> {
+    %y = pto.vmi.truncf %x {rounding = "Z", saturate = "NOSAT"} : !pto.vmi.vreg<128xf32, #pto.vmi.layout<deinterleaved = 2>> -> !pto.vmi.vreg<128xbf16, #pto.vmi.layout<deinterleaved = 2>>
+    return %y : !pto.vmi.vreg<128xbf16, #pto.vmi.layout<deinterleaved = 2>>
+  }
+}

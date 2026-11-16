@@ -1,0 +1,53 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+
+// Dense D2 casts preserve modulo-2 partitions without layout materialization.
+// RUN: pto-test-opt %s -vmi-set-fastmath=vmi-fastmath=true -vmi-layout-assignment | FileCheck %s --check-prefix=ASSIGN --implicit-check-not=pto.vmi.ensure_layout
+// RUN: pto-test-opt %s -vmi-set-fastmath=vmi-fastmath=true -vmi-layout-assignment -vmi-to-vpto | FileCheck %s --check-prefix=LOWER --implicit-check-not=pto.vmi.
+
+module {
+  // ASSIGN-LABEL: func.func @roundtrip_64(
+  // ASSIGN: pto.vmi.extf
+  // ASSIGN-SAME: -> !pto.vmi.vreg<64xf32, #pto.vmi.layout<deinterleaved = 2>>
+  // ASSIGN: pto.vmi.truncf
+  // ASSIGN-SAME: -> !pto.vmi.vreg<64xbf16, #pto.vmi.layout<deinterleaved = 2>>
+  // LOWER-LABEL: func.func @roundtrip_64(
+  // LOWER: pto.vintlv
+  // LOWER: pto.vdintlv
+  func.func @roundtrip_64(%x: !pto.vmi.vreg<64xbf16, #pto.vmi.layout<deinterleaved = 2>>) -> !pto.vmi.vreg<64xbf16, #pto.vmi.layout<deinterleaved = 2>> {
+    %w = pto.vmi.extf %x : !pto.vmi.vreg<64xbf16, #pto.vmi.layout<deinterleaved = 2>> -> !pto.vmi.vreg<64xf32, #pto.vmi.layout<deinterleaved = 2>>
+    %y = pto.vmi.truncf %w {rounding = "Z", saturate = "NOSAT"} : !pto.vmi.vreg<64xf32, #pto.vmi.layout<deinterleaved = 2>> -> !pto.vmi.vreg<64xbf16, #pto.vmi.layout<deinterleaved = 2>>
+    return %y : !pto.vmi.vreg<64xbf16, #pto.vmi.layout<deinterleaved = 2>>
+  }
+  // ASSIGN-LABEL: func.func @roundtrip_128(
+  // ASSIGN: pto.vmi.extf
+  // ASSIGN-SAME: -> !pto.vmi.vreg<128xf32, #pto.vmi.layout<deinterleaved = 2>>
+  // ASSIGN: pto.vmi.truncf
+  // ASSIGN-SAME: -> !pto.vmi.vreg<128xbf16, #pto.vmi.layout<deinterleaved = 2>>
+  // LOWER-LABEL: func.func @roundtrip_128(
+  // LOWER: pto.vintlv
+  // LOWER: pto.vdintlv
+  func.func @roundtrip_128(%x: !pto.vmi.vreg<128xbf16, #pto.vmi.layout<deinterleaved = 2>>) -> !pto.vmi.vreg<128xbf16, #pto.vmi.layout<deinterleaved = 2>> {
+    %w = pto.vmi.extf %x : !pto.vmi.vreg<128xbf16, #pto.vmi.layout<deinterleaved = 2>> -> !pto.vmi.vreg<128xf32, #pto.vmi.layout<deinterleaved = 2>>
+    %y = pto.vmi.truncf %w {rounding = "Z", saturate = "NOSAT"} : !pto.vmi.vreg<128xf32, #pto.vmi.layout<deinterleaved = 2>> -> !pto.vmi.vreg<128xbf16, #pto.vmi.layout<deinterleaved = 2>>
+    return %y : !pto.vmi.vreg<128xbf16, #pto.vmi.layout<deinterleaved = 2>>
+  }
+  // ASSIGN-LABEL: func.func @roundtrip_256(
+  // ASSIGN: pto.vmi.extf
+  // ASSIGN-SAME: -> !pto.vmi.vreg<256xf32, #pto.vmi.layout<deinterleaved = 2>>
+  // ASSIGN: pto.vmi.truncf
+  // ASSIGN-SAME: -> !pto.vmi.vreg<256xbf16, #pto.vmi.layout<deinterleaved = 2>>
+  // LOWER-LABEL: func.func @roundtrip_256(
+  // LOWER: pto.vintlv
+  // LOWER: pto.vdintlv
+  func.func @roundtrip_256(%x: !pto.vmi.vreg<256xbf16, #pto.vmi.layout<deinterleaved = 2>>) -> !pto.vmi.vreg<256xbf16, #pto.vmi.layout<deinterleaved = 2>> {
+    %w = pto.vmi.extf %x : !pto.vmi.vreg<256xbf16, #pto.vmi.layout<deinterleaved = 2>> -> !pto.vmi.vreg<256xf32, #pto.vmi.layout<deinterleaved = 2>>
+    %y = pto.vmi.truncf %w {rounding = "Z", saturate = "NOSAT"} : !pto.vmi.vreg<256xf32, #pto.vmi.layout<deinterleaved = 2>> -> !pto.vmi.vreg<256xbf16, #pto.vmi.layout<deinterleaved = 2>>
+    return %y : !pto.vmi.vreg<256xbf16, #pto.vmi.layout<deinterleaved = 2>>
+  }
+}

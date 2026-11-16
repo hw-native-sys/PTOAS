@@ -8,8 +8,10 @@
 
 // The VMI conversion state is recorded once on the module (vmi-set-fastmath)
 // and read back by every VMI pass, so both runs pin it explicitly.
+// D4 has one source per result part: strict vcvt would leave lane gaps.
+// Its rejection is covered separately; exclude it from the strict positive run.
 // RUN: pto-test-opt %s -vmi-set-fastmath=vmi-fastmath=true -vmi-lower-unified-to-legacy -vmi-to-vpto | FileCheck %s
-// RUN: pto-test-opt %s -vmi-set-fastmath=vmi-fastmath=false -vmi-lower-unified-to-legacy -vmi-to-vpto | FileCheck %s --check-prefix=STRICT
+// RUN: sed "/^  func.func @trunc_d4(/,/^  }/d" %s | pto-test-opt -vmi-set-fastmath=vmi-fastmath=false -vmi-lower-unified-to-legacy -vmi-to-vpto | FileCheck %s --check-prefix=STRICT
 
 module {
   func.func @trunc_d2(
@@ -150,8 +152,6 @@ module {
 // STRICT: pto.vcvt
 // STRICT: pto.vbitcast
 // STRICT: pto.vdintlv
-// STRICT-LABEL: func.func @trunc_d4(
-// STRICT: pto.vcvt
 // STRICT-LABEL: func.func @trunc_ls2(
 // STRICT: pto.vcvt
 // STRICT: pto.vbitcast

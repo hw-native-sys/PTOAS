@@ -6,6 +6,13 @@
 
 不使用早期 VMI 草稿作为设计输入。
 
+复合 cast 关系 `d(2/4) ↔ d(2/4)×lane_stride` 由通用合法表提供：
+浮点 32↔8 使用 stride 4，浮点 32↔16 使用 stride 2。通用候选枚举与显式
+layout 查询共享这组关系，不要求匹配四段 direction-spine，也不要求窄端
+只有一个消费者。旧 spine 接口仅保留偏好查询；候选是否划算由 solver
+统一计入转换、物化和消费者成本后决定。整数 cast 不开放复合关系，
+因为其 narrowing lowering 尚不支持该形式。
+
 ## 1. Pipeline
 
 默认 driver 的 layout pipeline（省略其他前处理）：

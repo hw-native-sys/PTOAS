@@ -385,20 +385,8 @@ public:
         VMIVRegType sourceType, VMIVRegType resultType, std::string* reason = nullptr,
         bool allowLaneStridePreference = true) const;
 
-    // Spine-*scoped* cast layout query.
-    // These queries are the only way to reach kSpineScopedCastLayoutPatterns /
-    // kSpineScopedLegalCastLayoutPatterns.  Those rows are not part of the
-    // generic preferred/legal tables, so a caller that does not explicitly ask
-    // for the spine-scoped variant can never observe them - the scope is enforced
-    // by construction (the rows are reachable from this entry point only), not by
-    // "the candidate happened not to be selected".
-    // The direction-spine peephole in VMILayoutAssignment calls this variant for
-    // the cast ops of a matched <up,down,up,down> chain whose narrowing leg is
-    // handed straight to the closing widening leg.  The scoped table adds the
-    // composite 16<->32 and 32<->8 rows (deinterleaved=4 -> deinterleaved=4 with
-    // an explicit lane stride) that keep the narrow value split over the four
-    // physical parts of its wide side, so the narrowing and the widening are
-    // per-chunk 1:1 and need no pto.vor assembly.
+    // Legacy direction-spine preference query. Composite relations are shared
+    // with the generic legal table; only the preferred ranking is spine-scoped.
     FailureOr<VMICastLayoutFact> getSpineScopedCastLayoutFact(
         VMIVRegType sourceType, VMIVRegType resultType, std::string* reason = nullptr) const;
 
@@ -809,8 +797,8 @@ bool isDirectMemoryDistAddressLegal(
 
 /// True when an already assigned BF16/F32 cast pair preserves one of the
 /// regular physical lane maps that the pairwise intlv/dintlv lowering can
-/// preserve.  This is validation-only: it is not a layout candidate and must
-/// not participate in layout assignment or propagation.
+/// preserve. Candidate enumeration, cost construction and lowering share this
+/// contract, including sparse regular layouts.
 bool isBF16SameLayoutCastPair(
     VMIVRegType sourceType, VMIVRegType resultType, VMILayoutAttr sourceLayout, VMILayoutAttr resultLayout);
 
@@ -819,9 +807,8 @@ bool isBF16SameLayoutCastPair(
 bool isDeinterleaved4ToContiguousBF16CastPair(
     VMIVRegType sourceType, VMIVRegType resultType, VMILayoutAttr sourceLayout, VMILayoutAttr resultLayout);
 
-/// True when the element types and element count name the dense (64/128/256
-/// element, non group-slot) F32 -> BF16 narrowing family.  Only this family has
-/// a dense same-layout `{c, c}` relation, and whether that relation is real
+/// True when the types name the regular F32 -> BF16 narrowing family with
+/// 1/2/4/8/64/128/256 elements. Whether its same-layout relation is real
 /// depends on how the cast lowers, not on the width pair: only the NaN-relaxed
 /// fastmath lowering produces a dense BF16 result from one physical source
 /// part.  The strict per-part vcvt writes the converted lanes at lane_stride 2,
@@ -830,7 +817,7 @@ bool isDeinterleaved4ToContiguousBF16CastPair(
 bool isDenseBF16NarrowingCast(VMIVRegType sourceType, VMIVRegType resultType);
 
 /// True for the dense same-layout pair of the family above, i.e. the
-/// `{c(1), c(1)}` relation whose result claims one dense BF16 value per lane.
+/// equal regular layouts, including their sparse lane-stride forms.
 bool isDenseBF16NarrowingSameLayoutPair(
     VMIVRegType sourceType, VMIVRegType resultType, VMILayoutAttr sourceLayout, VMILayoutAttr resultLayout);
 

@@ -1,0 +1,68 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+
+// Two F32 chunks per BF16 chunk preserve sparse lanes through strict paired conversion.
+// RUN: pto-test-opt %s -vmi-set-fastmath=vmi-fastmath=false -vmi-layout-assignment -vmi-to-vpto | FileCheck %s --implicit-check-not=pto.vmi.
+module {
+// CHECK-LABEL: @strict_64_1_2(
+// CHECK: pto.vcvt
+// CHECK: pto.vdintlv
+func.func @strict_64_1_2(%x: !pto.vmi.vreg<64xf32, #pto.vmi.layout<contiguous, lane_stride = 2>>) -> !pto.vmi.vreg<64xbf16, #pto.vmi.layout<contiguous, lane_stride = 2>> {
+  %r = pto.vmi.truncf %x {rounding = "R", saturate = "SAT"} : !pto.vmi.vreg<64xf32, #pto.vmi.layout<contiguous, lane_stride = 2>> -> !pto.vmi.vreg<64xbf16, #pto.vmi.layout<contiguous, lane_stride = 2>>
+  return %r : !pto.vmi.vreg<64xbf16, #pto.vmi.layout<contiguous, lane_stride = 2>>
+}
+// CHECK-LABEL: @strict_64_1_4(
+// CHECK: pto.vcvt
+// CHECK: pto.vdintlv
+func.func @strict_64_1_4(%x: !pto.vmi.vreg<64xf32, #pto.vmi.layout<contiguous, lane_stride = 4>>) -> !pto.vmi.vreg<64xbf16, #pto.vmi.layout<contiguous, lane_stride = 4>> {
+  %r = pto.vmi.truncf %x {rounding = "R", saturate = "SAT"} : !pto.vmi.vreg<64xf32, #pto.vmi.layout<contiguous, lane_stride = 4>> -> !pto.vmi.vreg<64xbf16, #pto.vmi.layout<contiguous, lane_stride = 4>>
+  return %r : !pto.vmi.vreg<64xbf16, #pto.vmi.layout<contiguous, lane_stride = 4>>
+}
+// CHECK-LABEL: @strict_64_2_4(
+// CHECK: pto.vcvt
+// CHECK: pto.vdintlv
+func.func @strict_64_2_4(%x: !pto.vmi.vreg<64xf32, #pto.vmi.layout<deinterleaved = 2, lane_stride = 4>>) -> !pto.vmi.vreg<64xbf16, #pto.vmi.layout<deinterleaved = 2, lane_stride = 4>> {
+  %r = pto.vmi.truncf %x {rounding = "R", saturate = "SAT"} : !pto.vmi.vreg<64xf32, #pto.vmi.layout<deinterleaved = 2, lane_stride = 4>> -> !pto.vmi.vreg<64xbf16, #pto.vmi.layout<deinterleaved = 2, lane_stride = 4>>
+  return %r : !pto.vmi.vreg<64xbf16, #pto.vmi.layout<deinterleaved = 2, lane_stride = 4>>
+}
+// CHECK-LABEL: @strict_128_1_1(
+// CHECK: pto.vcvt
+// CHECK: pto.vdintlv
+func.func @strict_128_1_1(%x: !pto.vmi.vreg<128xf32, #pto.vmi.layout<contiguous>>) -> !pto.vmi.vreg<128xbf16, #pto.vmi.layout<contiguous>> {
+  %r = pto.vmi.truncf %x {rounding = "R", saturate = "SAT"} : !pto.vmi.vreg<128xf32, #pto.vmi.layout<contiguous>> -> !pto.vmi.vreg<128xbf16, #pto.vmi.layout<contiguous>>
+  return %r : !pto.vmi.vreg<128xbf16, #pto.vmi.layout<contiguous>>
+}
+// CHECK-LABEL: @strict_128_2_2(
+// CHECK: pto.vcvt
+// CHECK: pto.vdintlv
+func.func @strict_128_2_2(%x: !pto.vmi.vreg<128xf32, #pto.vmi.layout<deinterleaved = 2, lane_stride = 2>>) -> !pto.vmi.vreg<128xbf16, #pto.vmi.layout<deinterleaved = 2, lane_stride = 2>> {
+  %r = pto.vmi.truncf %x {rounding = "R", saturate = "SAT"} : !pto.vmi.vreg<128xf32, #pto.vmi.layout<deinterleaved = 2, lane_stride = 2>> -> !pto.vmi.vreg<128xbf16, #pto.vmi.layout<deinterleaved = 2, lane_stride = 2>>
+  return %r : !pto.vmi.vreg<128xbf16, #pto.vmi.layout<deinterleaved = 2, lane_stride = 2>>
+}
+// CHECK-LABEL: @strict_128_4_4(
+// CHECK: pto.vcvt
+// CHECK: pto.vdintlv
+func.func @strict_128_4_4(%x: !pto.vmi.vreg<128xf32, #pto.vmi.layout<deinterleaved = 4, lane_stride = 4>>) -> !pto.vmi.vreg<128xbf16, #pto.vmi.layout<deinterleaved = 4, lane_stride = 4>> {
+  %r = pto.vmi.truncf %x {rounding = "R", saturate = "SAT"} : !pto.vmi.vreg<128xf32, #pto.vmi.layout<deinterleaved = 4, lane_stride = 4>> -> !pto.vmi.vreg<128xbf16, #pto.vmi.layout<deinterleaved = 4, lane_stride = 4>>
+  return %r : !pto.vmi.vreg<128xbf16, #pto.vmi.layout<deinterleaved = 4, lane_stride = 4>>
+}
+// CHECK-LABEL: @strict_256_4_2(
+// CHECK: pto.vcvt
+// CHECK: pto.vdintlv
+func.func @strict_256_4_2(%x: !pto.vmi.vreg<256xf32, #pto.vmi.layout<deinterleaved = 4, lane_stride = 2>>) -> !pto.vmi.vreg<256xbf16, #pto.vmi.layout<deinterleaved = 4, lane_stride = 2>> {
+  %r = pto.vmi.truncf %x {rounding = "R", saturate = "SAT"} : !pto.vmi.vreg<256xf32, #pto.vmi.layout<deinterleaved = 4, lane_stride = 2>> -> !pto.vmi.vreg<256xbf16, #pto.vmi.layout<deinterleaved = 4, lane_stride = 2>>
+  return %r : !pto.vmi.vreg<256xbf16, #pto.vmi.layout<deinterleaved = 4, lane_stride = 2>>
+}
+// CHECK-LABEL: @strict_256_4_4(
+// CHECK: pto.vcvt
+// CHECK: pto.vdintlv
+func.func @strict_256_4_4(%x: !pto.vmi.vreg<256xf32, #pto.vmi.layout<deinterleaved = 4, lane_stride = 4>>) -> !pto.vmi.vreg<256xbf16, #pto.vmi.layout<deinterleaved = 4, lane_stride = 4>> {
+  %r = pto.vmi.truncf %x {rounding = "R", saturate = "SAT"} : !pto.vmi.vreg<256xf32, #pto.vmi.layout<deinterleaved = 4, lane_stride = 4>> -> !pto.vmi.vreg<256xbf16, #pto.vmi.layout<deinterleaved = 4, lane_stride = 4>>
+  return %r : !pto.vmi.vreg<256xbf16, #pto.vmi.layout<deinterleaved = 4, lane_stride = 4>>
+}
+}

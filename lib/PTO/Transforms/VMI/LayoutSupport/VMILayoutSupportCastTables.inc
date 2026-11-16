@@ -136,13 +136,7 @@ static constexpr HighPriorityCastLayoutPattern
         {bits<32>(), bits<8>(), chunk<1>(), chunk<1>(), c(), ls(4)},
 };
 
-static constexpr LegalCastLayoutPattern kLegalCastLayoutPatterns[] = {
-    // Same-layout BF16/F32 casts are legal for the fast and strict vcvt
-    // lowering paths; group-slot short reductions are limited to 2/4/8 lanes.
-    {bits<16>(), bits<32>(), c(), c(), CastTypeClass::BF16F32,
-     N<64, 128, 256>()},
-    {bits<32>(), bits<16>(), c(), c(), CastTypeClass::BF16F32,
-     N<64, 128, 256>()},
+static constexpr LegalCastLayoutPattern kBaseLegalCastLayoutPatterns[] = {
     {bits<16>(), bits<32>(), gs(8), gs(8), CastTypeClass::BF16F32,
      N<2, 4, 8>()},
     {bits<32>(), bits<16>(), gs(8), gs(8), CastTypeClass::BF16F32,
@@ -199,7 +193,45 @@ static constexpr LegalCastLayoutPattern kLegalCastLayoutPatterns[] = {
     {bits<32>(), bits<16>(), gs(8), gs(8, 2)},
     {bits<32>(), bits<8>(), gs(1), gs(1)},
     {bits<32>(), bits<8>(), gs(8), gs(8, 4)},
+    // Composite carriers are ordinary legal candidates, independent of cast
+    // chain shape. Each wide part maps to one narrow part (EVEN/P0), avoiding
+    // assembly followed by splitting. Integer casts remain dense because
+    // their narrowing lowering does not implement the composite relation.
+    {bits<32>(), bits<16>(), d(4), dls(4, 2), CastTypeClass::DenseFloat},
+    {bits<16>(), bits<32>(), dls(4, 2), d(4), CastTypeClass::DenseFloat},
+    {bits<32>(), bits<8>(), d(4), dls(4, 4), CastTypeClass::DenseFloat},
+    {bits<8>(), bits<32>(), dls(4, 4), d(4), CastTypeClass::DenseFloat},
+    {bits<32>(), bits<16>(), d(2), dls(2, 2), CastTypeClass::DenseFloat},
+    {bits<16>(), bits<32>(), dls(2, 2), d(2), CastTypeClass::DenseFloat},
+    {bits<32>(), bits<8>(), d(2), dls(2, 4), CastTypeClass::DenseFloat},
+    {bits<8>(), bits<32>(), dls(2, 4), d(2), CastTypeClass::DenseFloat},
 };
+
+// Pairwise interleave preserves the partition and the sparse lane index.
+// Expand the full regular-layout product, rather than registering layouts
+// discovered by individual kernels. Candidate matching and lowering share the
+// physical lane-map check in isBF16SameLayoutCastPair.
+static constexpr auto makeLegalCastLayoutPatterns()
+{
+    constexpr LayoutPattern regularLayouts[] = {
+        c(), ls(2), ls(4), d(2), dls(2, 2), dls(2, 4), d(4), dls(4, 2), dls(4, 4)};
+    constexpr size_t baseCount = sizeof(kBaseLegalCastLayoutPatterns) / sizeof(LegalCastLayoutPattern);
+    constexpr size_t layoutCount = sizeof(regularLayouts) / sizeof(LayoutPattern);
+    std::array<LegalCastLayoutPattern, baseCount + kValue2 * layoutCount> patterns{};
+    size_t index = 0;
+    for (const auto& pattern : kBaseLegalCastLayoutPatterns) {
+        patterns[index++] = pattern;
+    }
+    for (LayoutPattern layout : regularLayouts) {
+        patterns[index++] = {bits<16>(), bits<32>(), layout, layout, CastTypeClass::BF16F32,
+                             N<1, 2, 4, 8, 64, 128, 256>()};
+        patterns[index++] = {bits<32>(), bits<16>(), layout, layout, CastTypeClass::BF16F32,
+                             N<1, 2, 4, 8, 64, 128, 256>()};
+    }
+    return patterns;
+}
+
+static constexpr auto kLegalCastLayoutPatterns = makeLegalCastLayoutPatterns();
 
 static constexpr LegalMaskGranularityCastLayoutPattern
     kLegalMaskGranularityCastLayoutPatterns[] = {

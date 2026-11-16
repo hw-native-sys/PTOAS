@@ -1,0 +1,132 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+
+// Composite casts must be available without the legacy four-leg spine.
+// Fixed wide endpoints make the two-leg round trip choose the one-part-per-chunk
+// candidate. Both the selected narrow layout and its lowering are checked.
+// RUN: pto-test-opt %s -vmi-layout-assignment | FileCheck %s --check-prefix=ASSIGN
+// RUN: pto-test-opt %s -vmi-layout-assignment -vmi-to-vpto | FileCheck %s --check-prefix=LOWER --implicit-check-not=pto.vor --implicit-check-not=pto.vmi.
+
+module {
+  // ASSIGN-LABEL: func.func @roundtrip_f8E4M3FN_d2_128(
+  // ASSIGN: pto.vmi.truncf
+  // ASSIGN-SAME: -> !pto.vmi.vreg<128xf8E4M3FN, #pto.vmi.layout<deinterleaved = 2, lane_stride = 4>>
+  // ASSIGN: pto.vmi.extf
+  // LOWER-LABEL: func.func @roundtrip_f8E4M3FN_d2_128(
+  // LOWER: pto.vcvt
+  func.func @roundtrip_f8E4M3FN_d2_128(%x: !pto.vmi.vreg<128xf32, #pto.vmi.layout<deinterleaved = 2>>) -> !pto.vmi.vreg<128xf32, #pto.vmi.layout<deinterleaved = 2>> {
+    %q = pto.vmi.truncf %x {rounding = "R", saturate = "SAT"} : !pto.vmi.vreg<128xf32, #pto.vmi.layout<deinterleaved = 2>> -> !pto.vmi.vreg<128xf8E4M3FN>
+    %y = pto.vmi.extf %q : !pto.vmi.vreg<128xf8E4M3FN> -> !pto.vmi.vreg<128xf32, #pto.vmi.layout<deinterleaved = 2>>
+    return %y : !pto.vmi.vreg<128xf32, #pto.vmi.layout<deinterleaved = 2>>
+  }
+
+  // ASSIGN-LABEL: func.func @roundtrip_f16_d2_128(
+  // ASSIGN: pto.vmi.truncf
+  // ASSIGN-SAME: -> !pto.vmi.vreg<128xf16, #pto.vmi.layout<deinterleaved = 2, lane_stride = 2>>
+  // ASSIGN: pto.vmi.extf
+  // LOWER-LABEL: func.func @roundtrip_f16_d2_128(
+  // LOWER: pto.vcvt
+  func.func @roundtrip_f16_d2_128(%x: !pto.vmi.vreg<128xf32, #pto.vmi.layout<deinterleaved = 2>>) -> !pto.vmi.vreg<128xf32, #pto.vmi.layout<deinterleaved = 2>> {
+    %q = pto.vmi.truncf %x {rounding = "R", saturate = "SAT"} : !pto.vmi.vreg<128xf32, #pto.vmi.layout<deinterleaved = 2>> -> !pto.vmi.vreg<128xf16>
+    %y = pto.vmi.extf %q : !pto.vmi.vreg<128xf16> -> !pto.vmi.vreg<128xf32, #pto.vmi.layout<deinterleaved = 2>>
+    return %y : !pto.vmi.vreg<128xf32, #pto.vmi.layout<deinterleaved = 2>>
+  }
+
+  // ASSIGN-LABEL: func.func @roundtrip_f8E4M3FN_d2_256(
+  // ASSIGN: pto.vmi.truncf
+  // ASSIGN-SAME: -> !pto.vmi.vreg<256xf8E4M3FN, #pto.vmi.layout<deinterleaved = 2, lane_stride = 4>>
+  // ASSIGN: pto.vmi.extf
+  // LOWER-LABEL: func.func @roundtrip_f8E4M3FN_d2_256(
+  // LOWER: pto.vcvt
+  func.func @roundtrip_f8E4M3FN_d2_256(%x: !pto.vmi.vreg<256xf32, #pto.vmi.layout<deinterleaved = 2>>) -> !pto.vmi.vreg<256xf32, #pto.vmi.layout<deinterleaved = 2>> {
+    %q = pto.vmi.truncf %x {rounding = "R", saturate = "SAT"} : !pto.vmi.vreg<256xf32, #pto.vmi.layout<deinterleaved = 2>> -> !pto.vmi.vreg<256xf8E4M3FN>
+    %y = pto.vmi.extf %q : !pto.vmi.vreg<256xf8E4M3FN> -> !pto.vmi.vreg<256xf32, #pto.vmi.layout<deinterleaved = 2>>
+    return %y : !pto.vmi.vreg<256xf32, #pto.vmi.layout<deinterleaved = 2>>
+  }
+
+  // ASSIGN-LABEL: func.func @roundtrip_f16_d2_256(
+  // ASSIGN: pto.vmi.truncf
+  // ASSIGN-SAME: -> !pto.vmi.vreg<256xf16, #pto.vmi.layout<deinterleaved = 2, lane_stride = 2>>
+  // ASSIGN: pto.vmi.extf
+  // LOWER-LABEL: func.func @roundtrip_f16_d2_256(
+  // LOWER: pto.vcvt
+  func.func @roundtrip_f16_d2_256(%x: !pto.vmi.vreg<256xf32, #pto.vmi.layout<deinterleaved = 2>>) -> !pto.vmi.vreg<256xf32, #pto.vmi.layout<deinterleaved = 2>> {
+    %q = pto.vmi.truncf %x {rounding = "R", saturate = "SAT"} : !pto.vmi.vreg<256xf32, #pto.vmi.layout<deinterleaved = 2>> -> !pto.vmi.vreg<256xf16>
+    %y = pto.vmi.extf %q : !pto.vmi.vreg<256xf16> -> !pto.vmi.vreg<256xf32, #pto.vmi.layout<deinterleaved = 2>>
+    return %y : !pto.vmi.vreg<256xf32, #pto.vmi.layout<deinterleaved = 2>>
+  }
+
+  // ASSIGN-LABEL: func.func @roundtrip_f8E4M3FN_d4_256(
+  // ASSIGN: pto.vmi.truncf
+  // ASSIGN-SAME: -> !pto.vmi.vreg<256xf8E4M3FN, #pto.vmi.layout<deinterleaved = 4, lane_stride = 4>>
+  // ASSIGN: pto.vmi.extf
+  // LOWER-LABEL: func.func @roundtrip_f8E4M3FN_d4_256(
+  // LOWER: pto.vcvt
+  func.func @roundtrip_f8E4M3FN_d4_256(%x: !pto.vmi.vreg<256xf32, #pto.vmi.layout<deinterleaved = 4>>) -> !pto.vmi.vreg<256xf32, #pto.vmi.layout<deinterleaved = 4>> {
+    %q = pto.vmi.truncf %x {rounding = "R", saturate = "SAT"} : !pto.vmi.vreg<256xf32, #pto.vmi.layout<deinterleaved = 4>> -> !pto.vmi.vreg<256xf8E4M3FN>
+    %y = pto.vmi.extf %q : !pto.vmi.vreg<256xf8E4M3FN> -> !pto.vmi.vreg<256xf32, #pto.vmi.layout<deinterleaved = 4>>
+    return %y : !pto.vmi.vreg<256xf32, #pto.vmi.layout<deinterleaved = 4>>
+  }
+
+  // ASSIGN-LABEL: func.func @roundtrip_f16_d4_256(
+  // ASSIGN: pto.vmi.truncf
+  // ASSIGN-SAME: -> !pto.vmi.vreg<256xf16, #pto.vmi.layout<deinterleaved = 4, lane_stride = 2>>
+  // ASSIGN: pto.vmi.extf
+  // LOWER-LABEL: func.func @roundtrip_f16_d4_256(
+  // LOWER: pto.vcvt
+  func.func @roundtrip_f16_d4_256(%x: !pto.vmi.vreg<256xf32, #pto.vmi.layout<deinterleaved = 4>>) -> !pto.vmi.vreg<256xf32, #pto.vmi.layout<deinterleaved = 4>> {
+    %q = pto.vmi.truncf %x {rounding = "R", saturate = "SAT"} : !pto.vmi.vreg<256xf32, #pto.vmi.layout<deinterleaved = 4>> -> !pto.vmi.vreg<256xf16>
+    %y = pto.vmi.extf %q : !pto.vmi.vreg<256xf16> -> !pto.vmi.vreg<256xf32, #pto.vmi.layout<deinterleaved = 4>>
+    return %y : !pto.vmi.vreg<256xf32, #pto.vmi.layout<deinterleaved = 4>>
+  }
+
+  // ASSIGN-LABEL: func.func @roundtrip_bf16_d2_128(
+  // ASSIGN: pto.vmi.truncf
+  // ASSIGN-SAME: -> !pto.vmi.vreg<128xbf16, #pto.vmi.layout<deinterleaved = 2, lane_stride = 2>>
+  // ASSIGN: pto.vmi.extf
+  // LOWER-LABEL: func.func @roundtrip_bf16_d2_128(
+  // LOWER: pto.vcvt
+  func.func @roundtrip_bf16_d2_128(%x: !pto.vmi.vreg<128xf32, #pto.vmi.layout<deinterleaved = 2>>) -> !pto.vmi.vreg<128xf32, #pto.vmi.layout<deinterleaved = 2>> {
+    %q = pto.vmi.truncf %x {rounding = "R", saturate = "SAT"} : !pto.vmi.vreg<128xf32, #pto.vmi.layout<deinterleaved = 2>> -> !pto.vmi.vreg<128xbf16>
+    %y = pto.vmi.extf %q : !pto.vmi.vreg<128xbf16> -> !pto.vmi.vreg<128xf32, #pto.vmi.layout<deinterleaved = 2>>
+    return %y : !pto.vmi.vreg<128xf32, #pto.vmi.layout<deinterleaved = 2>>
+  }
+
+  // ASSIGN-LABEL: func.func @roundtrip_f16_d2_64(
+  // ASSIGN: pto.vmi.truncf
+  // ASSIGN-SAME: -> !pto.vmi.vreg<64xf16, #pto.vmi.layout<deinterleaved = 2, lane_stride = 2>>
+  // ASSIGN: pto.vmi.extf
+  // LOWER-LABEL: func.func @roundtrip_f16_d2_64(
+  // LOWER: pto.vcvt
+  func.func @roundtrip_f16_d2_64(%x: !pto.vmi.vreg<64xf32, #pto.vmi.layout<deinterleaved = 2>>) -> !pto.vmi.vreg<64xf32, #pto.vmi.layout<deinterleaved = 2>> {
+    %q = pto.vmi.truncf %x {rounding = "R", saturate = "SAT"} : !pto.vmi.vreg<64xf32, #pto.vmi.layout<deinterleaved = 2>> -> !pto.vmi.vreg<64xf16>
+    %y = pto.vmi.extf %q : !pto.vmi.vreg<64xf16> -> !pto.vmi.vreg<64xf32, #pto.vmi.layout<deinterleaved = 2>>
+    return %y : !pto.vmi.vreg<64xf32, #pto.vmi.layout<deinterleaved = 2>>
+  }
+
+  // A second consumer must not hide the composite candidate.
+  // ASSIGN-LABEL: func.func @shared_fp8(
+  // ASSIGN: pto.vmi.truncf
+  // ASSIGN-SAME: -> !pto.vmi.vreg<128xf8E4M3FN, #pto.vmi.layout<deinterleaved = 2, lane_stride = 4>>
+  // LOWER-LABEL: func.func @shared_fp8(
+  // LOWER: pto.vcvt
+  func.func @shared_fp8(
+      %x: !pto.vmi.vreg<128xf32, #pto.vmi.layout<deinterleaved = 2>>)
+      -> (!pto.vmi.vreg<128xf32, #pto.vmi.layout<deinterleaved = 2>>,
+          !pto.vmi.vreg<128xf32, #pto.vmi.layout<deinterleaved = 2>>) {
+    %q = pto.vmi.truncf %x {rounding = "R", saturate = "SAT"}
+        : !pto.vmi.vreg<128xf32, #pto.vmi.layout<deinterleaved = 2>>
+        -> !pto.vmi.vreg<128xf8E4M3FN>
+    %a = pto.vmi.extf %q : !pto.vmi.vreg<128xf8E4M3FN>
+        -> !pto.vmi.vreg<128xf32, #pto.vmi.layout<deinterleaved = 2>>
+    %b = pto.vmi.extf %q : !pto.vmi.vreg<128xf8E4M3FN>
+        -> !pto.vmi.vreg<128xf32, #pto.vmi.layout<deinterleaved = 2>>
+    return %a, %b : !pto.vmi.vreg<128xf32, #pto.vmi.layout<deinterleaved = 2>>,
+                    !pto.vmi.vreg<128xf32, #pto.vmi.layout<deinterleaved = 2>>
+  }
+}
