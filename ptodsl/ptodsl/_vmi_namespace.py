@@ -28,6 +28,7 @@ from ptoas.mlir.ir import (
 
 from ._ops_common import _validate_reduction_element_type
 from ._ops_common import _normalize_enum_attr
+from ._ops_core import unspecified_value as _unspecified_value
 from ._scalar_coercion import coerce_scalar_to_type
 from ._diagnostics import deprecated
 from ._surface_values import _coerce_index_value, _try_get_constant_index, unwrap_surface_value, wrap_surface_value
@@ -852,9 +853,21 @@ def _emit_reduce(
 
 
 class _VMINamespace:
-    vreg = staticmethod(vmi_vreg_type)
-    mask = staticmethod(vmi_mask_type)
+    vreg_type = staticmethod(vmi_vreg_type)
+    mask_type = staticmethod(vmi_mask_type)
     bf16x2 = _vmi_bf16x2
+
+    @staticmethod
+    def vreg(lanes, dtype, *, loc=None, ip=None):
+        """Create an unspecified VMI vector SSA value with the given type."""
+        result_type = _resolve(vmi_vreg_type(lanes, dtype))
+        return _unspecified_value(result_type, loc=loc, ip=ip)
+
+    @staticmethod
+    def mask(lanes, *, loc=None, ip=None):
+        """Create an unspecified VMI mask SSA value with the given type."""
+        result_type = _resolve(vmi_mask_type(lanes))
+        return _unspecified_value(result_type, loc=loc, ip=ip)
 
     @staticmethod
     def vload(

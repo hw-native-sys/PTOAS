@@ -16,13 +16,15 @@ static bool isC220Target(StringRef march) {
 }
 
 void populateVPTOOpLoweringPatterns(VPTOTypeConverter &typeConverter, RewritePatternSet &patterns,
-                                    LoweringState &state, StringRef march) {
-  populateVPTOArithmeticPatterns(typeConverter, patterns, state);
-  populateVPTOVectorMemoryPatterns(typeConverter, patterns, state);
-  populateVPTOScalarPatterns(typeConverter, patterns, state);
-  if (isC220Target(march)) {
-    ubuf::populateVPTOUbufPatterns(typeConverter, patterns, state, march.str());
-  }
+                                    LoweringState &state, StringRef march)
+{
+    populateLowerUnspecifiedValueOpPattern(typeConverter, patterns);
+    populateVPTOArithmeticPatterns(typeConverter, patterns, state);
+    populateVPTOVectorMemoryPatterns(typeConverter, patterns, state);
+    populateVPTOScalarPatterns(typeConverter, patterns, state);
+    if (isC220Target(march)) {
+        ubuf::populateVPTOUbufPatterns(typeConverter, patterns, state, march.str());
+    }
 }
 
 void markIllegalVPTOSyncOps(ConversionTarget &target) {
@@ -100,6 +102,7 @@ void configureVPTOOpLoweringTarget(ConversionTarget &target, StringRef march) {
   target.addLegalDialect<arith::ArithDialect, cf::ControlFlowDialect, LLVM::LLVMDialect, func::FuncDialect,
                          scf::SCFDialect>();
   target.addLegalOp<UnrealizedConversionCastOp>();
+  target.addIllegalOp<pto::PTOUnspecifiedValueOp>();
   markIllegalVPTOSyncOps(target);
   markIllegalVPTOSimtOps(target);
   markIllegalVPTOConfigOps(target);

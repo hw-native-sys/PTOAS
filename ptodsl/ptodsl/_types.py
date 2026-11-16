@@ -202,31 +202,31 @@ class _VMIVRegDescriptor(_DType):
     def __init__(self, lanes: int, elem):
         if lanes not in VMI_LANE_COUNTS:
             raise ValueError(
-                "pto.vmi.vreg(...) requires lanes to be one of "
+                "pto.vmi.vreg_type(...) requires lanes to be one of "
                 "1, 2, 4, 8, 64, 128, 256"
             )
         self._lanes = lanes
         self._elem = elem
 
     def resolve(self) -> Type:
-        elem = _ensure_tensor_storage_dtype(self._elem, context="pto.vmi.vreg(...)")
+        elem = _ensure_tensor_storage_dtype(self._elem, context="pto.vmi.vreg_type(...)")
         vreg_type_cls = getattr(_pto, "VMIVRegType", None)
         if vreg_type_cls is None:
             raise TypeError(
                 "The current PTO Python bindings do not expose VMIVRegType. "
-                "Rebuild the PTO Python extension before using pto.vmi.vreg(...)."
+                "Rebuild the PTO Python extension before using pto.vmi.vreg_type(...)."
             )
         return vreg_type_cls.get(self._lanes, elem)
 
     def __repr__(self):
-        return f"<pto.vmi.vreg {self._lanes}x{self._elem}>"
+        return f"<pto.vmi.vreg_type {self._lanes}x{self._elem}>"
 
 
 class _VMIMaskDescriptor(_DType):
     def __init__(self, lanes: int):
         if lanes not in VMI_LANE_COUNTS:
             raise ValueError(
-                "pto.vmi.mask(...) requires lanes to be one of "
+                "pto.vmi.mask_type(...) requires lanes to be one of "
                 "1, 2, 4, 8, 64, 128, 256"
             )
         self._lanes = lanes
@@ -237,12 +237,12 @@ class _VMIMaskDescriptor(_DType):
         if mask_type_cls is None:
             raise TypeError(
                 "The current PTO Python bindings do not expose VMIMaskType. "
-                "Rebuild the PTO Python extension before using pto.vmi.mask(...)."
+                "Rebuild the PTO Python extension before using pto.vmi.mask_type(...)."
             )
         return mask_type_cls.get(self._lanes, self._granularity)
 
     def __repr__(self):
-        return f"<pto.vmi.mask {self._lanes}x{self._granularity}>"
+        return f"<pto.vmi.mask_type {self._lanes}x{self._granularity}>"
 
 class _VecDescriptor(_DType):
     def __init__(self, elem, size: int):

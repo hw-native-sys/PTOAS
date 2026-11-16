@@ -10,6 +10,7 @@
 //===----------------------------------------------------------------------===//
 
 #include "PTO/IR/PTO.h"
+#include "PTO/IR/VMIUtils.h"
 #include "PTO/Support/CodeConstants.h"
 #include "PTO/Transforms/Passes.h"
 
@@ -32,8 +33,9 @@ using namespace mlir::pto;
 namespace {
 
 static bool isLayoutPolymorphicProducer(Operation *op) {
-  return isa<VMIConstantOp, VMIBroadcastOp, VMIIotaOp, VMICreateMaskOp,
-             VMICreateGroupMaskOp, VMIConstantMaskOp>(op);
+    return isVMIUnspecifiedValue(op) ||
+           isa<VMIConstantOp, VMIBroadcastOp, VMIIotaOp, VMICreateMaskOp,
+               VMICreateGroupMaskOp, VMIConstantMaskOp>(op);
 }
 
 struct VMILayoutRematerializeWeakProducersPass

@@ -10,6 +10,7 @@
 //===----------------------------------------------------------------------===//
 
 #include "PTO/IR/PTO.h"
+#include "PTO/IR/VMIUtils.h"
 #include "PTO/Transforms/Passes.h"
 #include "PTO/Transforms/VMILayoutSupport.h"
 
@@ -182,6 +183,10 @@ static Value rematerializeMask(Value mask, VMILayoutAttr layout,
   auto resultType = VMIMaskType::get(
       maskType.getContext(), maskType.getElementCount(),
       maskType.getGranularity(), layout);
+    if (isVMIUnspecifiedValue(mask.getDefiningOp())) {
+        return builder.create<PTOUnspecifiedValueOp>(mask.getLoc(), resultType)
+            .getResult();
+    }
   if (auto createMask = mask.getDefiningOp<VMICreateMaskOp>()) {
     return builder
         .create<VMICreateMaskOp>(createMask.getLoc(), resultType,
@@ -291,8 +296,12 @@ static bool hasCompatibleElementwiseSink(
     if (!collected.directMask) {
       return true;
     }
-    if (!isa<VMICreateMaskOp, VMICreateGroupMaskOp, VMIConstantMaskOp>(
-            collected.directMask.getDefiningOp())) {
+    Operation *directMaskProducer = collected.directMask.getDefiningOp();
+    bool supportedDirectMaskProducer =
+        isVMIUnspecifiedValue(directMaskProducer) ||
+        isa<VMICreateMaskOp, VMICreateGroupMaskOp, VMIConstantMaskOp>(
+            directMaskProducer);
+    if (!supportedDirectMaskProducer) {
       return false;
     }
     // A directly produced mask is re-stamped with the data source layout by

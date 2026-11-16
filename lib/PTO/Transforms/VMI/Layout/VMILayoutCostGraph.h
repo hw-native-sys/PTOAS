@@ -327,6 +327,8 @@ private:
 
     LogicalResult buildRelation(const VMILayoutOpRelation& relation);
 
+    LogicalResult buildUnspecifiedValue(const VMILayoutOpRelation& relation);
+
     LogicalResult buildGeneratedMask(const VMILayoutOpRelation& relation);
 
     LogicalResult buildStaticMask(const VMILayoutOpRelation& relation);

@@ -91,6 +91,7 @@ from ._vmi_namespace import vmi  # noqa: F401
 from ._ops import (             # noqa: F401
     const,
     declare_struct, struct_get, struct_set,
+    unspecified_value,
     session_init, sdma_gm_gm,
     get_op_attr,
     castptr, addptr,

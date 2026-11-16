@@ -19,13 +19,13 @@ VMI is not a replacement for the existing top-level vector helpers
 remain the established PTODSL vector programming surface, while `pto.vmi` is
 the explicit, instruction-set-oriented alternative.
 
-## 14.1 VMI logical types
+## 14.1 VMI logical types and value constructors
 
-VMI introduces two logical type constructors. They describe a logical vector
-register and a logical predicate mask at the PTODSL level — the physical
-register mapping is handled by the backend.
+VMI exposes type descriptors for logical vectors and predicate masks, along
+with SSA constructors for unspecified vector and mask values. The descriptors
+carry the logical shape; the backend handles the physical register mapping.
 
-### `pto.vmi.vreg(lanes, dtype) -> TypeDescriptor`
+### `pto.vmi.vreg_type(lanes, dtype) -> TypeDescriptor`
 
 **Description**: Creates a logical VMI vector register type descriptor.
 `lanes` is the logical lane count (not a physical register count). `dtype` is
@@ -50,7 +50,7 @@ a PTODSL element type token such as `pto.f32`, `pto.f16`, `pto.i32`, etc.
   counts are `1`, `2`, `4`, `8` — the logical value then occupies only part
   of one physical register.
 - `lanes · bitwidth(dtype)` determines the physical register count
-  `K = ⌈ lanes · bitwidth(dtype) / 2048 ⌉`. Each physical register is
+  `K = max(1, ⌈ lanes · bitwidth(dtype) / 2048 ⌉)`. Each physical register is
   256 B (2048 bits).
 - Individual operations may impose additional operation-specific shape,
   layout, or mask restrictions on top of these lane counts; see each op's
@@ -63,22 +63,22 @@ a PTODSL element type token such as `pto.f32`, `pto.f16`, `pto.i32`, etc.
   | `f16`, `bf16`, `i16`, `ui16`, `si16` | 16 | 128 | 64, 128, 256 |
   | `i8`, `ui8`, `si8`, `fp8_e4m3`, `fp8_e5m2` | 8 | 256 | 64, 128, 256 |
 
-- Compact/partial vectors (`K < 1` in the formula above, e.g. `vreg(64, pto.f16)`
-  = 128 B) still occupy one physical register; lanes outside the logical value
-  are undefined and must be masked out.
+- Compact/partial vectors with fewer than 2048 logical bits (for example,
+  `vreg_type(64, pto.f16)` = 128 B) still occupy one physical register. Lanes
+  outside the logical vector must be masked out.
 
 **Example**:
 
 ```python
-vec_f32 = pto.vmi.vreg(64, pto.f32)    # 1 physical reg (64 × 32b = 256B)
-vec_i32 = pto.vmi.vreg(64, pto.i32)    # 1 physical reg
-vec_f16 = pto.vmi.vreg(128, pto.f16)   # 1 physical reg (128 × 16b = 256B)
-vec_f32_x2 = pto.vmi.vreg(128, pto.f32) # 2 physical regs (128 × 32b = 512B)
+vec_f32 = pto.vmi.vreg_type(64, pto.f32)    # 1 physical reg (64 × 32b = 256B)
+vec_i32 = pto.vmi.vreg_type(64, pto.i32)    # 1 physical reg
+vec_f16 = pto.vmi.vreg_type(128, pto.f16)   # 1 physical reg (128 × 16b = 256B)
+vec_f32_x2 = pto.vmi.vreg_type(128, pto.f32) # 2 physical regs (128 × 32b = 512B)
 ```
 
 ---
 
-### `pto.vmi.mask(lanes) -> TypeDescriptor`
+### `pto.vmi.mask_type(lanes) -> TypeDescriptor`
 
 **Description**: Creates a logical VMI mask type descriptor. The predicate
 granularity is always per-lane: one mask bit governs one vector lane.
@@ -97,37 +97,55 @@ granularity is always per-lane: one mask bit governs one vector lane.
 
 **Constraints**:
 
-- `lanes` must match the lane count of the vector being gated. A `mask(64)`
-  gates a `vreg(64, ...)`; a `mask(128)` gates a `vreg(128, ...)`.
+- `lanes` must match the lane count of the vector being gated. A
+  `mask_type(64)` gates a `vreg_type(64, ...)`; a `mask_type(128)` gates a
+  `vreg_type(128, ...)`.
 
 **Example**:
 
 ```python
-mask64 = pto.vmi.mask(64)    # gates a vreg(64, ...)
-mask128 = pto.vmi.mask(128)  # gates a vreg(128, ...)
+mask64 = pto.vmi.mask_type(64)    # type for a mask over 64 lanes
+mask128 = pto.vmi.mask_type(128)  # type for a mask over 128 lanes
 ```
 
 **About VMI layouts.** A VMI logical vector value may span `K` physical vector
 registers (256 B each). PTOAS tracks the logical lane layout internally during
-lowering; PTODSL does not expose layout selection on `pto.vmi.vreg(...)` or
-`pto.vmi.mask(...)`. Two common internal layouts are:
+lowering; PTODSL does not expose layout selection on `pto.vmi.vreg_type(...)`,
+`pto.vmi.mask_type(...)`, or their value constructors. Two common internal layouts are:
 
 | Layout | Description |
 |--------|-------------|
 | `contiguous` (default) | Stride-1 mapping: lane `i` sits at position `i mod (2048/bitwidth(T))` within physical register `⌊i / (2048/bitwidth(T))⌋` |
 | `deinterleaved` | Parity split: EVEN lanes occupy the first `K/2` physical registers, ODD lanes occupy the second `K/2`. This is the natural output layout of a widening `vcvt` (e.g., `f16 → f32`) |
 
-Layouts are a lowering concern managed by `ptoas`. The system
-propagates layouts automatically through Category A ops (most elementwise
-compute) and inserts materialization at Category C boundaries. In day-to-day
-authoring you do not spell layouts explicitly; just declare the logical lane
-count and element type, and let PTOAS infer the internal layout.
+Layouts are a lowering concern managed by `ptoas`. The system propagates
+layouts automatically through Category A ops (most elementwise compute) and
+inserts materialization at Category C boundaries. In day-to-day authoring you
+do not spell layouts explicitly; declare the logical lane count and element
+type and let PTOAS infer the internal layout.
 
-VMI types are mainly used as type annotations. They
-are not Python callables that produce values — use `pto.vmi.vload`,
-`pto.vmi.vci`, etc. to produce actual VMI vector values, and
-`pto.vmi.create_mask` to produce actual VMI mask
-values.
+### `pto.unspecified_value(type) -> SSA value`
+
+Creates a typed vector or mask SSA value whose initial contents are
+unspecified. Pass a VMI type descriptor such as `pto.vmi.vreg_type(...)` or
+`pto.vmi.mask_type(...)`; physical `pto.vreg_type(...)` and `pto.mask_type(...)`
+descriptors are also accepted. Define each lane or predicate bit before it can
+affect an observable result.
+
+```python
+scratch = pto.unspecified_value(pto.vmi.vreg_type(64, pto.f32))
+```
+
+For convenience, the VMI namespace provides equivalent typed constructors:
+
+```python
+scratch = pto.vmi.vreg(64, pto.f32)
+predicate = pto.vmi.mask(64)
+```
+
+These constructors produce SSA values, not type descriptors. Type descriptors
+remain available as `pto.vmi.vreg_type(...)` and `pto.vmi.mask_type(...)`.
+Use `pto.vmi.create_mask` when the desired mask is a prefix or grouped mask.
 
 ---
 
@@ -1477,7 +1495,7 @@ surface no longer asks you to spell the full result type manually.
 
 | Aspect | Top-level helpers | `pto.vmi` |
 |--------|-------------------|-----------|
-| Type system | `VRegType` / `MaskType` | `pto.vmi.vreg(...)` / `pto.vmi.mask(...)` |
+| Type system | `pto.vreg_type(...)` / `pto.mask_type(...)` | `pto.vmi.vreg_type(...)` / `pto.vmi.mask_type(...)` |
 | Naming | `pto.vadd`, `pto.vlds` | `pto.vmi.vadd`, `pto.vmi.vload` |
 | Style | PTODSL vector programming model | Formal VMI instruction set |
 | Predicate creation | `pto.make_mask`, `pto.pset_b32` | `pto.vmi.create_mask` |
@@ -1485,8 +1503,11 @@ surface no longer asks you to spell the full result type manually.
 
 Key differences in practice:
 
-- `pto.vmi.vreg(...)` is distinct from `pto.vreg_type(...)`.
-- `pto.vmi.mask(...)` is distinct from `pto.mask_type(...)`.
+- `pto.vmi.vreg_type(...)` and `pto.vmi.mask_type(...)` describe logical VMI
+  types; `pto.unspecified_value(...)` creates a typed value for either a
+  logical VMI or physical PTO vector/mask type.
+- `pto.vmi.vreg(...)` and `pto.vmi.mask(...)` are convenient VMI value
+  constructors.
 - `pto.vmi.vadd(...)` is a formal VMI call, not a synonym for `pto.vadd(...)`.
 - VMI operations return values rather than writing to destination buffers.
 

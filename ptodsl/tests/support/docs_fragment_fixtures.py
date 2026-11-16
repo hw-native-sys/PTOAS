@@ -209,8 +209,8 @@ FRAGMENT_FIXTURES = {
             dst_ptr = dst_tile.as_ptr()
             offset = pto.const(0, dtype=pto.index)
             active_lanes = pto.const(64, dtype=pto.index)
-            vec_ty = pto.vmi.vreg(64, pto.f32)
-            mask_ty = pto.vmi.mask(64)
+            vec_ty = pto.vmi.vreg_type(64, pto.f32)
+            mask_ty = pto.vmi.mask_type(64)
             {SNIPPET_PLACEHOLDER}
         """
     ),

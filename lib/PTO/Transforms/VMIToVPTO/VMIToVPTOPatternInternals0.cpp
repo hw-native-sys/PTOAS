@@ -1510,6 +1510,45 @@ public:
     return lowerSplat(op, splatAttr, resultTypes, rewriter);
   }
 };
+
+struct OneToNUnspecifiedValueOpPattern
+    : OneToNOpConversionPattern<PTOUnspecifiedValueOp> {
+    using OneToNOpConversionPattern<PTOUnspecifiedValueOp>::
+        OneToNOpConversionPattern;
+    using OpAdaptor =
+        typename OneToNOpConversionPattern<PTOUnspecifiedValueOp>::OpAdaptor;
+
+    LogicalResult
+    matchAndRewrite(PTOUnspecifiedValueOp op, OpAdaptor adaptor,
+                    OneToNPatternRewriter &rewriter) const override
+    {
+        (void)adaptor;
+        if (!isa<VMIVRegType, VMIMaskType>(op.getResult().getType())) {
+            return rewriter.notifyMatchFailure(
+                op, "only VMI unspecified values need VMI-to-VPTO conversion");
+        }
+        FailureOr<SmallVector<Type>> resultTypes =
+            getConvertedResultTypesOrFailure(op, *this->getTypeConverter());
+        if (failed(resultTypes)) {
+            return failure();
+        }
+
+        SmallVector<Value> results;
+        results.reserve(resultTypes->size());
+        for (Type resultType : *resultTypes) {
+            if (!isa<VRegType, MaskType>(resultType)) {
+                return rewriter.notifyMatchFailure(
+                    op, "unspecified value must convert to a physical vreg or mask");
+            }
+            results.push_back(
+                rewriter.create<PTOUnspecifiedValueOp>(op.getLoc(), resultType)
+                    .getResult());
+        }
+        return replacePhysicalResults(rewriter, op, results,
+                                      *this->getTypeConverter());
+    }
+};
+
 struct OneToNVMIConstantMaskOpPattern
     : OneToNOpConversionPattern<VMIConstantMaskOp> {
   using OneToNOpConversionPattern<VMIConstantMaskOp>::OneToNOpConversionPattern;

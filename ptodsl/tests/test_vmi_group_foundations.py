@@ -46,17 +46,17 @@ def invalid_reinterpret_lane_count_probe():
 
 def main() -> None:
     for lanes in (1, 2, 4, 8, 64, 128, 256):
-        pto.vmi.vreg(lanes, pto.f32)
-        pto.vmi.mask(lanes)
+        pto.vmi.vreg_type(lanes, pto.f32)
+        pto.vmi.mask_type(lanes)
     for lanes in (3, 16, 32, 512):
         try:
-            pto.vmi.vreg(lanes, pto.f32)
+            pto.vmi.vreg_type(lanes, pto.f32)
         except ValueError as exc:
             assert "1, 2, 4, 8, 64, 128, 256" in str(exc)
         else:
             raise AssertionError(f"PTODSL VMI vreg must reject lanes={lanes}")
         try:
-            pto.vmi.mask(lanes)
+            pto.vmi.mask_type(lanes)
         except ValueError as exc:
             assert "1, 2, 4, 8, 64, 128, 256" in str(exc)
         else:

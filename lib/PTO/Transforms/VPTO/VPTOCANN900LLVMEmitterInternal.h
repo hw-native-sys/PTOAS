@@ -579,6 +579,8 @@ LogicalResult materializeDecls(ModuleOp module, ArrayRef<PlannedDecl> plannedDec
 
 void populateVPTOArithmeticPatterns(const VPTOTypeConverter &typeConverter, RewritePatternSet &patterns,
                                     LoweringState &state);
+void populateLowerUnspecifiedValueOpPattern(const TypeConverter &typeConverter,
+                                            RewritePatternSet &patterns);
 void populateVPTOMemoryPatterns(const VPTOTypeConverter &typeConverter, RewritePatternSet &patterns,
                                 LoweringState &state);
 void populateVPTOVectorMemoryPatterns(const VPTOTypeConverter &typeConverter, RewritePatternSet &patterns,

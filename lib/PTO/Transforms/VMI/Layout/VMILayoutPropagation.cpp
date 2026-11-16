@@ -1112,6 +1112,13 @@ struct TransferRegistry {
 
   const VMILayoutTransfer *lookupDirect(Operation *op) {
     return llvm::TypeSwitch<Operation *, const VMILayoutTransfer *>(op)
+        .Case<PTOUnspecifiedValueOp>(
+            [this](PTOUnspecifiedValueOp value) -> const VMILayoutTransfer* {
+                if (isa<VMIVRegType, VMIMaskType>(value.getResult().getType())) {
+                    return &freeResultLayout;
+                }
+                return nullptr;
+            })
         .Case<VMIConstantOp, VMIBroadcastOp, VMIIotaOp, VMICreateMaskOp,
               VMICreateGroupMaskOp, VMIConstantMaskOp>(
             [this](auto) { return &freeResultLayout; })

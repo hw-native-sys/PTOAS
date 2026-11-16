@@ -54,9 +54,9 @@ def build(kind, n, active=None, mask_n=None, offsets_n=None):
     mask_n = n if mask_n is None else mask_n
     offsets_n = n if offsets_n is None else offsets_n
     if kind == 'vreg':
-        return str(pto.vmi.vreg(n, pto.f32)), ''
+        return str(pto.vmi.vreg_type(n, pto.f32)), ''
     if kind == 'mask':
-        return str(pto.vmi.mask(n)), ''
+        return str(pto.vmi.mask_type(n)), ''
     with ir.Context() as ctx, ir.Location.unknown():
         dialect.register_dialect(ctx)
         types = probe_argument_types(kind, n, mask_n, offsets_n)

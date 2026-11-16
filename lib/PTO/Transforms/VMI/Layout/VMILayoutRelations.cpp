@@ -64,6 +64,15 @@ RelationResult VMILayoutRelations::build()
         .Case<VMIShuffleOp>([&](VMIShuffleOp shuffle) { return buildShuffle(shuffle); })
         .Case<VMIVdhistOp, VMIVchistOp>([&](auto) { return buildHistogram(); })
         .Case<VMIVselrOp>([&](VMIVselrOp vselr) { return buildSelect(vselr); })
+        .Case<PTOUnspecifiedValueOp>([&](PTOUnspecifiedValueOp value) {
+            if (isa<VMIMaskType>(value.getResult().getType())) {
+                return buildMaskProducer();
+            }
+            if (isa<VMIVRegType>(value.getResult().getType())) {
+                return buildProducer();
+            }
+            return RelationResult(failure());
+        })
         .Case<VMICreateMaskOp, VMICreateGroupMaskOp, VMIConstantMaskOp, VMIPsetOp, VMIPgeOp, VMIPltOp>(
             [&](auto) { return buildMaskProducer(); })
         .Case<VMIConstantOp, VMIBroadcastOp, VMIIotaOp, VMIGroupIotaOp, VMIVciOp, VMIVbrcOp>(

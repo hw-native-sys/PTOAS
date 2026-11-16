@@ -15,6 +15,7 @@
 #include "PTO/IR/VMIUtils.h"
 #include "PTO/Transforms/Passes.h"
 #include "PTO/Transforms/VMILayoutSupport.h"
+#include "VMI/VMIMaskRematerialization.h"
 
 #include "mlir/Dialect/ControlFlow/IR/ControlFlowOps.h"
 #include "mlir/Dialect/Func/IR/FuncOps.h"
@@ -169,6 +170,10 @@ static std::optional<Value> rematerializeDataProducer(Value value,
     }
   }
 
+    if (isVMIUnspecifiedValue(value.getDefiningOp())) {
+        return builder.create<PTOUnspecifiedValueOp>(loc, resultType).getResult();
+    }
+
   if (auto constant = value.getDefiningOp<VMIConstantOp>()) {
     auto denseAttr = dyn_cast<DenseElementsAttr>(constant.getValue());
     if (denseAttr && denseAttr.isSplat()) {
@@ -203,36 +208,13 @@ static std::optional<Value> rematerializeDataProducer(Value value,
   return std::nullopt;
 }
 
-static std::optional<Value> rematerializeMaskProducer(Value value,
-                                                      VMIMaskType resultType,
-                                                      Location loc,
-                                                      OpBuilder &builder) {
-  if (!hasConcreteLayout(resultType)) {
-    return std::nullopt;
-  }
-
-  if (auto createMask = value.getDefiningOp<VMICreateMaskOp>()) {
-    return builder
-        .create<VMICreateMaskOp>(loc, resultType, createMask.getActiveLanes())
-        .getResult();
-  }
-
-  if (auto createGroupMask = value.getDefiningOp<VMICreateGroupMaskOp>()) {
-    return builder
-        .create<VMICreateGroupMaskOp>(loc, resultType,
-                                      createGroupMask.getActiveElemsPerGroup(),
-                                      createGroupMask.getNumGroupsAttr(),
-                                      createGroupMask.getGroupSizeAttr())
-        .getResult();
-  }
-
-  if (auto constantMask = value.getDefiningOp<VMIConstantMaskOp>()) {
-    return builder
-        .create<VMIConstantMaskOp>(loc, resultType, constantMask.getValueAttr())
-        .getResult();
-  }
-
-  return std::nullopt;
+static std::optional<Value> rematerializeMaskProducer(
+    Value value, VMIMaskType resultType, Location loc, OpBuilder& builder)
+{
+    if (!hasConcreteLayout(resultType)) {
+        return std::nullopt;
+    }
+    return mask_rematerialization::rematerializeMaskProducer(value, resultType, loc, builder);
 }
 
 static bool tryReplaceDataEnsure(VMIEnsureLayoutOp ensure) {

@@ -120,7 +120,8 @@ bool isVMILayoutHelperOp(Operation *op) {
 
 bool isVMISemanticOp(Operation *op) {
   StringRef name = op->getName().getStringRef();
-  return name.starts_with("pto.vmi.") && !isVMIHelperOp(op);
+  return (name.starts_with("pto.vmi.") && !isVMIHelperOp(op)) ||
+         isVMIUnspecifiedValue(op);
 }
 
 bool isStructuralOp(Operation *op) {

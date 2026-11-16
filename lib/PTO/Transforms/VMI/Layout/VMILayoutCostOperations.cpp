@@ -85,6 +85,7 @@ LogicalResult PlanGraphBuilder::buildRelation(const VMILayoutOpRelation& relatio
     Operation* op = relation.op;
     return llvm::TypeSwitch<Operation*, LogicalResult>(op)
         .Case<VMICreateGroupMaskOp>([&](auto) { return buildGeneratedMask(relation); })
+        .Case<PTOUnspecifiedValueOp>([&](auto) { return buildUnspecifiedValue(relation); })
         .Case<VMICreateMaskOp, VMIConstantMaskOp, VMIPsetOp, VMIPgeOp, VMIPltOp>(
             [&](auto) { return buildStaticMask(relation); })
         .Case<VMIEnsureLayoutOp, VMIEnsureMaskLayoutOp>([&](auto) { return buildEnsure(relation); })
@@ -125,6 +126,18 @@ LogicalResult PlanGraphBuilder::buildRelation(const VMILayoutOpRelation& relatio
         .Default([&](Operation*) {
             return isVMISameLayoutOp(op) || isa<VMIVexpdifOp>(op) ? buildSameLayoutOp(op, relation) : failure();
         });
+}
+
+LogicalResult PlanGraphBuilder::buildUnspecifiedValue(const VMILayoutOpRelation& relation)
+{
+    Type resultType = relation.op->getResult(0).getType();
+    if (isa<VMIMaskType>(resultType)) {
+        return buildStaticMask(relation);
+    }
+    if (isa<VMIVRegType>(resultType)) {
+        return buildProducer(relation);
+    }
+    return failure();
 }
 
 LogicalResult PlanGraphBuilder::buildGeneratedMask(const VMILayoutOpRelation& relation)

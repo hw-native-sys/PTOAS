@@ -22,6 +22,7 @@
 #include "PTO/IR/VMIUtils.h"
 #include "PTO/Transforms/Passes.h"
 #include "PTO/Transforms/VMIControlFlowSupport.h"
+#include "VMI/VMIMaskRematerialization.h"
 
 #include "mlir/Dialect/ControlFlow/IR/ControlFlowOps.h"
 #include "mlir/Dialect/Func/IR/FuncOps.h"
@@ -367,6 +368,14 @@ struct MaskGranularitySolver {
         .Case<VMIVintlvOp, VMIVdintlvOp>([this, op](auto maskOp) {
           return constraintResult(requestMaskUseForSource(
               maskOp.getMaskMutable(), maskOp.getLhs(), op));
+        })
+        .Case<VMIvStoreOp>([this, op](auto maskOp) {
+            MutableOperandRange masks = maskOp.getMaskMutable();
+            if (masks.empty()) {
+                return constraintResult(success());
+            }
+            return constraintResult(
+                requestMaskUseForSource(*masks.begin(), maskOp.getValue(), op));
         })
         .Case<VMIMaskedStoreOp, VMIStrideStoreOp, VMIScatterOp,
               VMICompressStoreOp>([this, op](auto maskOp) {
@@ -800,45 +809,18 @@ struct MaskGranularitySolver {
       }
 
       builder.setInsertionPoint(request.operand->getOwner());
-      auto resultType = VMIMaskType::get(ctx, sourceType.getElementCount(),
-                                         request.granularity,
-                                         sourceType.getLayoutAttr());
-      Value current = rematerializeMaskProducer(
+      auto resultType =
+          VMIMaskType::get(ctx, sourceType.getElementCount(), request.granularity, sourceType.getLayoutAttr());
+      std::optional<Value> rematerialized = mask_rematerialization::rematerializeMaskProducer(
           value, resultType, request.operand->getOwner()->getLoc(), builder);
+      Value current = rematerialized.value_or(Value{});
       if (!current) {
-        current = builder.create<VMIEnsureMaskGranularityOp>(
-            request.operand->getOwner()->getLoc(), resultType, value);
+          current =
+              builder.create<VMIEnsureMaskGranularityOp>(request.operand->getOwner()->getLoc(), resultType, value);
       }
       request.operand->set(current);
     }
     return success();
-  }
-
-  Value rematerializeMaskProducer(Value value, VMIMaskType resultType,
-                                  Location loc, OpBuilder &builder) const {
-    if (auto createMask = value.getDefiningOp<VMICreateMaskOp>()) {
-      return builder
-          .create<VMICreateMaskOp>(loc, resultType, createMask.getActiveLanes())
-          .getResult();
-    }
-
-    if (auto createGroupMask = value.getDefiningOp<VMICreateGroupMaskOp>()) {
-      return builder
-          .create<VMICreateGroupMaskOp>(
-              loc, resultType, createGroupMask.getActiveElemsPerGroup(),
-              createGroupMask.getNumGroupsAttr(),
-              createGroupMask.getGroupSizeAttr())
-          .getResult();
-    }
-
-    if (auto constantMask = value.getDefiningOp<VMIConstantMaskOp>()) {
-      return builder
-          .create<VMIConstantMaskOp>(loc, resultType,
-                                     constantMask.getValueAttr())
-          .getResult();
-    }
-
-    return {};
   }
 
   LogicalResult run() {

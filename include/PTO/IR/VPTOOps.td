@@ -36,6 +36,12 @@ def PTO_B16MaskTypeConstraint : Type<
 def PTO_B32MaskTypeConstraint : Type<
   CPred<"::llvm::isa<::mlir::pto::MaskType>($_self) && ::llvm::cast<::mlir::pto::MaskType>($_self).isB32()">,
   "PTO low-level b32 mask type">;
+def PTO_PhysicalValueTypeConstraint : AnyTypeOf<
+  [PTO_VectorType, PTO_MaskTypeConstraint],
+  "PTO physical vector or mask type">;
+def PTO_UnspecifiedValueTypeConstraint : AnyTypeOf<
+  [PTO_PhysicalValueTypeConstraint, VMI_ValueTypeConstraint],
+  "VMI logical or PTO physical vector or mask type">;
 def PTO_AlignTypeConstraint : Type<CPred<"::llvm::isa<::mlir::pto::AlignType>($_self)">,
                                     "PTO low-level align type">;
 
@@ -167,6 +173,21 @@ class PTO_SimtOp<string mnemonic, list<Trait> traits = []>
 // accesses do not affect SIMT legality or section-kind inference.
 class PTO_ScalarOp<string mnemonic, list<Trait> traits = []>
     : PTO_MicroOp<mnemonic, traits>;
+
+// Typed SSA value with unspecified contents at either the VMI or VPTO stage.
+// After type conversion, the LLVM emitter replaces physical values with a
+// backend-supported arbitrary value.
+def PTOUnspecifiedValueOp : PTO_Op<"unspecified_value", [Pure]> {
+  let summary = "Create a typed vector or mask SSA value with unspecified contents";
+  let description = [{
+    Creates a vector or mask SSA value whose initial contents are unspecified.
+    The result type may be a logical VMI type or a physical VPTO type. A
+    program must define each lane or predicate bit before observing it.
+    This is a pure value operation and does not represent a hardware instruction.
+  }];
+  let results = (outs PTO_UnspecifiedValueTypeConstraint:$result);
+  let assemblyFormat = "attr-dict `:` type($result)";
+}
 
 def PTOLoadOp : PTO_ScalarOp<"load", [
     OpPipeInterface,

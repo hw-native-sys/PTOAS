@@ -20,6 +20,13 @@
 
 namespace mlir::pto {
 
+inline bool isVMIUnspecifiedValue(Operation *op)
+{
+    auto unspecifiedValue = dyn_cast_or_null<PTOUnspecifiedValueOp>(op);
+    return unspecifiedValue &&
+        isa<VMIVRegType, VMIMaskType>(unspecifiedValue.getResult().getType());
+}
+
 inline constexpr StringLiteral kVMIDiagUnsupported = "VMI-UNSUPPORTED";
 inline constexpr StringLiteral kVMIDiagLayoutContract =
     "VMI-LAYOUT-CONTRACT";

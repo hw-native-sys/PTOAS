@@ -6214,16 +6214,16 @@ def main() -> None:
             "pto.mask_b32 should resolve to the public 32-bit mask type",
         )
         expect(
-            str(pto.vmi.vreg(128, pto.f32).resolve()) == "!pto.vmi.vreg<128xf32>",
-            "pto.vmi.vreg(...) should resolve to the public logical VMI vector type",
+            str(pto.vmi.vreg_type(128, pto.f32).resolve()) == "!pto.vmi.vreg<128xf32>",
+            "pto.vmi.vreg_type(...) should resolve to the public logical VMI vector type",
         )
         expect(
-            str(pto.vmi.mask(128).resolve()) == "!pto.vmi.mask<128xpred>",
-            "pto.vmi.mask(...) should resolve to the public logical VMI mask type",
+            str(pto.vmi.mask_type(128).resolve()) == "!pto.vmi.mask<128xpred>",
+            "pto.vmi.mask_type(...) should resolve to the public logical VMI mask type",
         )
         expect(
-            str(pto.vmi.vreg(128, pto.f8e4m3).resolve()) == "!pto.vmi.vreg<128xf8E4M3FN>",
-            "pto.vmi.vreg(...) should preserve low-precision authored element types",
+            str(pto.vmi.vreg_type(128, pto.f8e4m3).resolve()) == "!pto.vmi.vreg<128xf8E4M3FN>",
+            "pto.vmi.vreg_type(...) should preserve low-precision authored element types",
         )
 
         lp_tile_ty = pto_types.tile_buf_type([16, 16], pto.hif8, [16, 16])

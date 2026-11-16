@@ -30,6 +30,20 @@ def const(value: int, *, dtype=None):
     )
 
 
+def unspecified_value(result_type, *, loc=None, ip=None):
+    """Create a typed vector or mask SSA value with unspecified contents."""
+    resolved_type = _resolve(result_type)
+    supported_types = ("VMIVRegType", "VMIMaskType", "VRegType", "MaskType")
+    if not any(_isinstance_pto_type(resolved_type, name) for name in supported_types):
+        raise TypeError(
+            "pto.unspecified_value(...) expects a VMI or PTO vector/mask type, "
+            f"got {resolved_type}"
+        )
+    return wrap_surface_value(
+        _pto.unspecified_value(resolved_type, loc=loc, ip=ip)
+    )
+
+
 # ── Stack-local structs ──────────────────────────────────────────
 
 def _normalize_struct_path(path, *, op_name: str) -> tuple[int, ...]:

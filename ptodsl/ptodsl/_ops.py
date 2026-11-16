@@ -34,6 +34,7 @@ from ._ops_core import (  # noqa: F401
     get_op_attr,
     struct_get,
     struct_set,
+    unspecified_value,
 )
 from ._ops_common import (  # noqa: F401
     _CMP_MODE_TOKENS,
