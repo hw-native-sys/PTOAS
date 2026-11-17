@@ -22,6 +22,7 @@
 #ifndef MLIR_DIALECT_PTO_TRANSFORMS_INSERTSYNC_SYNCORACLEEXTRACT_H
 #define MLIR_DIALECT_PTO_TRANSFORMS_INSERTSYNC_SYNCORACLEEXTRACT_H
 
+#include "PTO/Support/CodeConstants.h"
 #include "PTO/Transforms/InsertSync/SyncCommon.h"
 #include "mlir/Dialect/Func/IR/FuncOps.h"
 #include "llvm/ADT/ArrayRef.h"
@@ -75,7 +76,6 @@ struct SyncOpRecord {
   /// `SyncOperation::MechanismName` of the resource class the allocator routed this
   /// sync to -- and so whether it is SyncIR-positioned (event/barrier) or op-anchored
   /// (bufid). Empty until the pre-codegen extractor fills it.
-  ///
   /// RENDERING ONLY. Unlike `type`, this has no numeric companion, so nothing can
   /// switch on it without string-matching a name. A gate that needs the mechanism as
   /// a decision should get a `mechanismCode` beside this, the way `typeCode` sits
@@ -83,7 +83,7 @@ struct SyncOpRecord {
   std::string mechanism;
   int srcPipe = -1;
   int dstPipe = -1;
-  llvm::SmallVector<int, 2> eventIds;
+  llvm::SmallVector<int, mlir::pto::kValue2> eventIds;
   unsigned syncIndex = 0;
   unsigned irIndex = 0;
   /// Mirrors `SyncOperation::isCompensation` / `compensationOf`. G2's syncops scan
@@ -104,10 +104,8 @@ llvm::StringRef pipelineTypeName(PipelineType pipe);
 pto::PIPE bufSyncPipe(mlir::Attribute opTypeAttr);
 
 /// Render a report and write it to stderr atomically.
-///
 /// STDERR, NEVER STDOUT: stdout carries the emitted kernel source, so a report
 /// written there is spliced into the C++ and it stops compiling.
-///
 /// MLIR runs nested func::FuncOp passes in PARALLEL and ptoas does not disable
 /// threading, so unsynchronized writes from several functions interleave mid-line.
 /// Every oracle pass must print through here. Ordering *between* functions stays

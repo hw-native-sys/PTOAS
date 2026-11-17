@@ -31,8 +31,10 @@ static IntegerType indexElementType(Value value)
 static bool indexMaskMatches(Value mask, IntegerType elem)
 {
     auto type = dyn_cast<pto::MaskType>(mask.getType());
-    bool supported = elem && (elem.getWidth() == 16 || elem.getWidth() == 32);
-    return type && supported && type.getGranularity() == (elem.getWidth() == 16 ? "b16" : "b32");
+    bool supported =
+        elem && (elem.getWidth() == mlir::pto::kValue16 || elem.getWidth() == mlir::pto::kValue32);
+    return type && supported &&
+           type.getGranularity() == (elem.getWidth() == mlir::pto::kValue16 ? "b16" : "b32");
 }
 
 static Value stripIndexBitcast(Value value)

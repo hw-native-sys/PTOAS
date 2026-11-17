@@ -132,7 +132,7 @@ static LogicalResult verifyMxLayout(mlir::pto::MakeTensorViewOp op,
     unsigned packedDim = isPackedOnSecondDim ? 1 : 0;
     int64_t packedExtent = shape[packedDim];
     bool isPackedExtentStatic = !ShapedType::isDynamic(packedExtent);
-    if (isPackedExtentStatic && packedExtent % 2 != 0) {
+    if (isPackedExtentStatic && packedExtent % mlir::pto::kValue2 != 0) {
         return op.emitOpError() << "MX layout=" << stringifyLayout(layout)
                                 << " requires packed dimension " << packedDim
                                 << " to be divisible by 2";

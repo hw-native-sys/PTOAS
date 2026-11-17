@@ -20,8 +20,11 @@ struct DebugTunnel {
 };
 } // namespace cce::internal
 
-extern "C" __attribute__((used)) inline void __DebugTunnel_Close(cce::internal::DebugTunnelData *data,
-                                    void *stream) {
-  (void)aclrtSynchronizeStream(static_cast<aclrtStream>(stream));
-  cce::internal::DebugTunnel::Close(data, stream);
+extern "C" __attribute__((used)) inline void closeDebugTunnel(cce::internal::DebugTunnelData* data, void* stream)
+    asm("__DebugTunnel_Close");
+
+extern "C" __attribute__((used)) inline void closeDebugTunnel(cce::internal::DebugTunnelData* data, void* stream)
+{
+    (void)aclrtSynchronizeStream(static_cast<aclrtStream>(stream));
+    cce::internal::DebugTunnel::Close(data, stream);
 }

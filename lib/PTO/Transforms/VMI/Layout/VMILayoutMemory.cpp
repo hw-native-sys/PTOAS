@@ -7,6 +7,7 @@
 // See LICENSE in the root of the software repository for the full text of the License.
 
 // Layout relation enumeration: memory.
+#include "PTO/Support/CodeConstants.h"
 #include "VMILayoutRelations.h"
 #include "PTO/Transforms/VMILayoutPropagation.h"
 #include "llvm/ADT/TypeSwitch.h"
@@ -53,7 +54,7 @@ RelationResult VMILayoutRelations::buildStrideLoad()
 RelationResult VMILayoutRelations::buildGather()
 {
     auto contiguous = VMILayoutAttr::getContiguous(op->getContext());
-    if (op->getNumOperands() != 4 || op->getNumResults() != 1) {
+    if (op->getNumOperands() != mlir::pto::kValue4 || op->getNumResults() != 1) {
         return failure();
     }
     return makeReachableRelation(
@@ -85,7 +86,7 @@ RelationResult VMILayoutRelations::buildStrideStore()
 RelationResult VMILayoutRelations::buildScatter()
 {
     auto contiguous = VMILayoutAttr::getContiguous(op->getContext());
-    if (op->getNumOperands() != 4 || op->getNumResults() != 0) {
+    if (op->getNumOperands() != mlir::pto::kValue4 || op->getNumResults() != 0) {
         return failure();
     }
     return makeReachableRelation(
@@ -95,7 +96,7 @@ RelationResult VMILayoutRelations::buildScatter()
 RelationResult VMILayoutRelations::buildCompressStore()
 {
     auto contiguous = VMILayoutAttr::getContiguous(op->getContext());
-    if (op->getNumOperands() != 4 || op->getNumResults() != 0) {
+    if (op->getNumOperands() != mlir::pto::kValue4 || op->getNumResults() != 0) {
         return failure();
     }
     return makeReachableRelation({op, {operandPort(0, contiguous), operandPort(3, contiguous)}, false}, supports);
@@ -104,7 +105,7 @@ RelationResult VMILayoutRelations::buildCompressStore()
 RelationResult VMILayoutRelations::buildExpandLoad()
 {
     auto contiguous = VMILayoutAttr::getContiguous(op->getContext());
-    if (op->getNumOperands() != 4 || op->getNumResults() != 1) {
+    if (op->getNumOperands() != mlir::pto::kValue4 || op->getNumResults() != 1) {
         return failure();
     }
     return makeReachableRelation(
@@ -441,7 +442,7 @@ RelationResult VMILayoutRelations::buildGroupBroadcastLoad(VMIGroupBroadcastLoad
         if (explicitLayout && explicitLayout != fact.resultLayout) {
             continue;
         }
-        if (load.getNumGroupsAttr().getInt() > 8 && !fact.resultLayout.isContiguous()) {
+        if (load.getNumGroupsAttr().getInt() > mlir::pto::kValue8 && !fact.resultLayout.isContiguous()) {
             continue;
         }
         // An aligned E2B lowering and the contiguous BRC lowering are both

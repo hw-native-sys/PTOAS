@@ -818,17 +818,16 @@ static bool appendOperandSpecJson(std::string &json, Value operand,
 
 static std::optional<std::string>
 buildOperandSpecsJson(Operation *operation) {
-  SmallVector<Value, 4> operands =
-      pto::detail::getArgReductionTemplateOperands(operation);
+    SmallVector<Value, mlir::pto::kValue4> operands = pto::detail::getArgReductionTemplateOperands(operation);
 
-  std::string json = "[";
-  for (auto [index, operand] : llvm::enumerate(operands)) {
-    if (index != 0) {
-      json += ",";
-    }
-    if (!appendOperandSpecJson(json, operand, operation)) {
-      return std::nullopt;
-    }
+    std::string json = "[";
+    for (auto [index, operand] : llvm::enumerate(operands)) {
+        if (index != 0) {
+            json += ",";
+        }
+        if (!appendOperandSpecJson(json, operand, operation)) {
+            return std::nullopt;
+        }
   }
   json += "]";
   return json;

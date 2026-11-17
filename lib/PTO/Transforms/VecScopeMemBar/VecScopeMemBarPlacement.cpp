@@ -16,6 +16,7 @@
 //
 //===----------------------------------------------------------------------===//
 
+#include "PTO/Support/CodeConstants.h"
 #include "PTO/Transforms/VecScopeMemBar/VecScopeMemBarPlacement.h"
 
 #include "mlir/Dialect/SCF/IR/SCF.h"
@@ -42,7 +43,7 @@ namespace {
 // last id here would hide obligations from the redundancy checker.
 struct BarrierKindHazards {
     MemBarKind kind = MemBarKind::VV_ALL;
-    SmallVector<unsigned, 4> hazards;
+    SmallVector<unsigned, mlir::pto::kValue4> hazards;
 };
 
 // An insertion anchor keyed by the op it precedes, for de-duplication.
@@ -75,7 +76,8 @@ static void sortUniqueHazards(SmallVectorImpl<unsigned>& hazards)
 static bool barrierCovers(MemBarKind covering, MemBarKind covered)
 {
     const auto family = [](MemBarKind kind) { return static_cast<unsigned>(kind) / 4; };
-    return covering == covered || (family(covering) == family(covered) && static_cast<unsigned>(covering) % 4 == 0);
+    return covering == covered ||
+           (family(covering) == family(covered) && static_cast<unsigned>(covering) % mlir::pto::kValue4 == 0);
 }
 
 static bool coveredByExisting(
@@ -128,7 +130,7 @@ static bool coveredByExisting(
 struct AnchorPlacements {
     DenseMap<AnchorKey, SmallVector<BarrierKindHazards>, AnchorKeyInfo> kinds;
     DenseSet<AnchorKey, AnchorKeyInfo> latchAnchors;
-    SmallVector<Operation*, 8> order;
+    SmallVector<Operation*, mlir::pto::kValue8> order;
 };
 
 // Register one hazard at an anchor: track the kinds merged at the anchor and
@@ -225,7 +227,7 @@ static void normalizeBarriers(VecScopeMemBarPlan& plan)
             return other.anchor == barrier.anchor && static_cast<unsigned>(other.kind) / 4 == family;
         });
         if (existing != merged.end()) {
-            existing->kind = static_cast<MemBarKind>(family * 4);
+            existing->kind = static_cast<MemBarKind>(family * mlir::pto::kValue4);
             for (unsigned id : barrier.resolvedHazards) {
                 appendUniqueHazard(existing->resolvedHazards, id);
             }
@@ -236,8 +238,8 @@ static void normalizeBarriers(VecScopeMemBarPlan& plan)
         auto adjacent = dyn_cast_or_null<pto::MemBarOp>(barrier.anchor->getPrevNode());
         if (adjacent) {
             MemBarKind kind = adjacent.getKind().getKind();
-            if (static_cast<unsigned>(kind) / 4 == family && kind != barrier.kind) {
-                merged.back().kind = static_cast<MemBarKind>(family * 4);
+            if (static_cast<unsigned>(kind) / mlir::pto::kValue4 == family && kind != barrier.kind) {
+                merged.back().kind = static_cast<MemBarKind>(family * mlir::pto::kValue4);
             }
         }
     }

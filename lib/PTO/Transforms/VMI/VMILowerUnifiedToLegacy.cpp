@@ -916,8 +916,8 @@ static LegacyReductionKind getLegacyReductionKind(ReductionOp op) {
   }
   if (auto integerType = dyn_cast<IntegerType>(elementType)) {
     unsigned width = integerType.getWidth();
-    if (width == 16 || width == 32) {
-      return LegacyReductionKind::Integer;
+    if (width == mlir::pto::kValue16 || width == mlir::pto::kValue32) {
+        return LegacyReductionKind::Integer;
     }
   }
   return LegacyReductionKind::Unsupported;
@@ -1143,7 +1143,7 @@ struct DiscardableAttributeForwarder {
     Block* block;
     Operation* before;
     Operation* after;
-    SmallVector<NamedAttribute, 4> attributes;
+    SmallVector<NamedAttribute, mlir::pto::kValue4> attributes;
 
     ~DiscardableAttributeForwarder()
     {
@@ -1162,9 +1162,9 @@ struct DiscardableAttributeForwarder {
     }
 };
 
-static SmallVector<NamedAttribute, 4> getDiscardableAttributes(Operation* op)
+static SmallVector<NamedAttribute, mlir::pto::kValue4> getDiscardableAttributes(Operation* op)
 {
-    SmallVector<NamedAttribute, 4> attributes;
+    SmallVector<NamedAttribute, mlir::pto::kValue4> attributes;
     for (NamedAttribute attribute : op->getAttrs()) {
         if (attribute.getName().getValue().contains('.')) {
             attributes.push_back(attribute);

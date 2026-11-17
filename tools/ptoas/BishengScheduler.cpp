@@ -6,6 +6,7 @@
 // INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
 // See LICENSE in the root of the software repository for the full text of the License.
 
+#include "PTO/Support/CodeConstants.h"
 #include "BishengScheduler.h"
 
 #include "llvm/ADT/SmallString.h"
@@ -156,8 +157,8 @@ bool retryWithoutScheduler(
     llvm::raw_ostream& diagnostics)
 {
     bool keepOn = on != nullptr;
-    llvm::SmallString<128> offObject;
-    llvm::SmallString<128> offLog;
+    llvm::SmallString<mlir::pto::kValue128> offObject;
+    llvm::SmallString<mlir::pto::kValue128> offLog;
     if (std::error_code error = llvm::sys::fs::createTemporaryFile("ptoas-bisheng-off", "o", offObject)) {
         return reportRetrySetupFailure(error, keepOn, diagnostics);
     }

@@ -7,6 +7,7 @@
 // See LICENSE in the root of the software repository for the full text of the License.
 
 #include "PTO/Analysis/PTOIntegerRange.h"
+#include "PTO/Support/CodeConstants.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/IR/Matchers.h"
 
@@ -24,9 +25,9 @@ struct ConstantOperand {
 static std::optional<ConstantOperand> matchConstantOperand(Operation* binary)
 {
     APInt constant;
-    for (unsigned side = 0; side < 2; ++side) {
+    for (unsigned side = 0; side < kValue2; ++side) {
         bool isConstant = matchPattern(binary->getOperand(side), m_ConstantInt(&constant));
-        bool fitsInt64 = isConstant && constant.isSignedIntN(64);
+        bool fitsInt64 = isConstant && constant.isSignedIntN(kValue64);
         if (isConstant && fitsInt64) {
             return ConstantOperand{binary->getOperand(1 - side), constant.getSExtValue()};
         }

@@ -9,6 +9,7 @@
 //===- VMILayoutSupportBF16.cpp - BF16/F32 cast layout support ---===//
 //===----------------------------------------------------------------------===//
 
+#include "PTO/Support/CodeConstants.h"
 #include "PTO/Transforms/VMILayoutSupport.h"
 
 #include "PTO/IR/VMIUtils.h"
@@ -27,8 +28,9 @@ bool isDenseBF16NarrowingCast(VMIVRegType sourceType,
         return false;
     }
     int64_t elementCount = sourceType.getElementCount();
-    return elementCount == 1 || elementCount == 2 || elementCount == 4 || elementCount == 8 ||
-           elementCount == 64 || elementCount == 128 || elementCount == 256;
+    return elementCount == mlir::pto::kValue2 || elementCount == mlir::pto::kValue4 ||
+           elementCount == mlir::pto::kValue8 || elementCount == mlir::pto::kValue64 ||
+           elementCount == mlir::pto::kValue128 || elementCount == mlir::pto::kValue256;
 }
 
 bool isDenseBF16NarrowingSameLayoutPair(VMIVRegType sourceType,
@@ -211,13 +213,11 @@ bool isDeinterleaved4ToContiguousBF16CastPair(VMIVRegType sourceType,
     return false;
   }
   int64_t elementCount = sourceType.getElementCount();
-  return sourceType.getElementType().isF32() &&
-         resultType.getElementType().isBF16() &&
+  return sourceType.getElementType().isF32() && resultType.getElementType().isBF16() &&
          resultType.getElementCount() == elementCount &&
-         (elementCount == 128 || elementCount == 256) &&
-         sourceLayout.isDeinterleaved() && sourceLayout.getFactor() == 4 &&
-         sourceLayout.getLaneStride() == 1 && resultLayout.isContiguous() &&
-         resultLayout.getLaneStride() == 1;
+         (elementCount == mlir::pto::kValue128 || elementCount == mlir::pto::kValue256) &&
+         sourceLayout.isDeinterleaved() && sourceLayout.getFactor() == mlir::pto::kValue4 &&
+         sourceLayout.getLaneStride() == 1 && resultLayout.isContiguous() && resultLayout.getLaneStride() == 1;
 }
 
 } // namespace mlir::pto

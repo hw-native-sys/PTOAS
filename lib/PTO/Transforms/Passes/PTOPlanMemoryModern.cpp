@@ -229,10 +229,9 @@ static FailureOr<uint64_t> computeTileBufBytes(TileBufType type) {
 
   if (type.getCompactModeI32() ==
       static_cast<int32_t>(CompactMode::RowPlusOne)) {
-    if (shape.size() != 2 ||
-        llvm::is_contained(shape, ShapedType::kDynamic)) {
-      return failure();
-    }
+      if (shape.size() != mlir::pto::kValue2 || llvm::is_contained(shape, ShapedType::kDynamic)) {
+          return failure();
+      }
 
     bool rowMajor = type.getBLayoutValueI32() ==
                     static_cast<int32_t>(BLayout::RowMajor);

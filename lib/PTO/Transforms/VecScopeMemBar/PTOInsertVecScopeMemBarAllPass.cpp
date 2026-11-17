@@ -6,6 +6,7 @@
 // INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
 // See LICENSE in the root of the software repository for the full text of the License.
 
+#include "PTO/Support/CodeConstants.h"
 #include "mlir/Dialect/Func/IR/FuncOps.h"
 #include "mlir/Dialect/SCF/IR/SCF.h"
 #include "mlir/IR/Operation.h"
@@ -51,7 +52,7 @@ static LogicalResult insertVecScopeMemBarAll(Operation* scope)
         return failure();
     }
 
-    SmallVector<Operation*, 16> accesses;
+    SmallVector<Operation*, mlir::pto::kValue16> accesses;
     scope->walk([&](Operation* op) {
         if (isNearestScope(op, scope) && isUBMemoryOp(op)) {
             accesses.push_back(op);
@@ -59,7 +60,7 @@ static LogicalResult insertVecScopeMemBarAll(Operation* scope)
     });
 
     for (Operation* access : accesses) {
-        SmallVector<MemBarKind, 2> kinds;
+        SmallVector<MemBarKind, mlir::pto::kValue2> kinds;
         if (isUBVectorMemoryOp(access)) {
             kinds = {MemBarKind::SV_ALL, MemBarKind::VV_ALL};
         } else if (isUBScalarMemoryOp(access)) {
@@ -82,7 +83,7 @@ struct PTOInsertVecScopeMemBarAllPass : pto::impl::PTOInsertVecScopeMemBarAllBas
     void runOnOperation() override
     {
         func::FuncOp func = getOperation();
-        SmallVector<Operation*, 4> scopes;
+        SmallVector<Operation*, mlir::pto::kValue4> scopes;
         func.walk([&](Operation* op) {
             if (isa<pto::VecScopeOp, pto::StrictVecScopeOp>(op)) {
                 scopes.push_back(op);

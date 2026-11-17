@@ -19,37 +19,28 @@ namespace pto {
 namespace detail {
 
 template <typename OpTy>
-SmallVector<Value, 4> getArgReductionTemplateOperands(OpTy op)
+SmallVector<Value, kValue4> getArgReductionTemplateOperands(OpTy op)
 {
     Value src = op.getSrc();
     Value tmp = op.getTmp();
     Value dstVal = op.getDstVal();
     // Keep the tmp slot stable for candidate matching when the IR omits tmp.
-    SmallVector<Value, 4> operands{src, tmp ? tmp : src, op.getDstIdx()};
+    SmallVector<Value, kValue4> operands{src, tmp ? tmp : src, op.getDstIdx()};
     if (dstVal) {
         operands.push_back(dstVal);
     }
     return operands;
 }
 
-inline SmallVector<Value, 4> getArgReductionTemplateOperands(Operation *op)
+inline SmallVector<Value, kValue4> getArgReductionTemplateOperands(Operation* op)
 {
-    return llvm::TypeSwitch<Operation *, SmallVector<Value, 4>>(op)
-        .Case<TRowArgMaxOp>([](auto typedOp) {
-            return getArgReductionTemplateOperands(typedOp);
-        })
-        .Case<TRowArgMinOp>([](auto typedOp) {
-            return getArgReductionTemplateOperands(typedOp);
-        })
-        .Case<TColArgMaxOp>([](auto typedOp) {
-            return getArgReductionTemplateOperands(typedOp);
-        })
-        .Case<TColArgMinOp>([](auto typedOp) {
-            return getArgReductionTemplateOperands(typedOp);
-        })
-        .Default([](Operation *genericOp) {
-            return SmallVector<Value, 4>(genericOp->getOperands().begin(),
-                                         genericOp->getOperands().end());
+    return llvm::TypeSwitch<Operation*, SmallVector<Value, kValue4>>(op)
+        .Case<TRowArgMaxOp>([](auto typedOp) { return getArgReductionTemplateOperands(typedOp); })
+        .Case<TRowArgMinOp>([](auto typedOp) { return getArgReductionTemplateOperands(typedOp); })
+        .Case<TColArgMaxOp>([](auto typedOp) { return getArgReductionTemplateOperands(typedOp); })
+        .Case<TColArgMinOp>([](auto typedOp) { return getArgReductionTemplateOperands(typedOp); })
+        .Default([](Operation* genericOp) {
+            return SmallVector<Value, kValue4>(genericOp->getOperands().begin(), genericOp->getOperands().end());
         });
 }
 

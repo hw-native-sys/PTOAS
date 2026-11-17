@@ -6,6 +6,7 @@
 // INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
 // See LICENSE in the root of the software repository for the full text of the License.
 
+#include "PTO/Support/CodeConstants.h"
 #include "PTO/IR/PTO.h"
 #include "PTO/IR/VPTOBridgeRegistry.h"
 
@@ -28,10 +29,10 @@ bool matchesBridgeValue(BridgeValueType expected, Type type) {
   case BridgeValueKind::F32:
     return type.isF32();
   case BridgeValueKind::I32:
-    return type.isInteger(32);
+    return type.isInteger(mlir::pto::kValue32);
   case BridgeValueKind::I64:
   case BridgeValueKind::U64:
-    return type.isInteger(64);
+    return type.isInteger(mlir::pto::kValue64);
   case BridgeValueKind::Pointer:
     return matchesBridgePointer(expected.space, type);
   case BridgeValueKind::ObjectHandle:
@@ -173,99 +174,85 @@ BridgeObjectCreateOp::verifySymbolUses(SymbolTableCollection &symbolTable) {
 // Bridge specializations
 //===----------------------------------------------------------------------===//
 
-LogicalResult
-BridgeTileSpecAttr::verify(function_ref<InFlightDiagnostic()> emitError,
-                           TileBufType tile) {
-  if (!tile) {
-    return emitError() << "bridge tile spec requires a tile_buf type";
-  }
-  ArrayRef<int64_t> shape = tile.getShape();
-  ArrayRef<int64_t> valid = tile.getValidShape();
-  const bool wrongRank = shape.size() != 2 || valid.size() != 2;
-  if (wrongRank) {
-    return emitError() << "bridge tile spec requires a rank-2 tile, got " << tile;
-  }
-  for (unsigned dim = 0; dim < 2; ++dim) {
-    const bool unusableShape =
-        ShapedType::isDynamic(shape[dim]) || shape[dim] <= 0;
-    if (unusableShape) {
-      return emitError() << "bridge tile spec requires a static positive shape, got "
-                         << tile;
+LogicalResult BridgeTileSpecAttr::verify(function_ref<InFlightDiagnostic()> emitError, TileBufType tile)
+{
+    if (!tile) {
+        return emitError() << "bridge tile spec requires a tile_buf type";
     }
-    if (ShapedType::isDynamic(valid[dim])) {
-      return emitError() << "bridge tile spec requires static valid dimensions";
+    ArrayRef<int64_t> shape = tile.getShape();
+    ArrayRef<int64_t> valid = tile.getValidShape();
+    const bool wrongRank = shape.size() != 2 || valid.size() != 2;
+    if (wrongRank) {
+        return emitError() << "bridge tile spec requires a rank-2 tile, got " << tile;
     }
-    const bool validFits = valid[dim] > 0 && valid[dim] <= shape[dim];
-    if (!validFits) {
-      return emitError() << "bridge tile spec valid shape exceeds its shape in "
-                         << tile;
+    for (unsigned dim = 0; dim < mlir::pto::kValue2; ++dim) {
+        const bool unusableShape = ShapedType::isDynamic(shape[dim]) || shape[dim] <= 0;
+        if (unusableShape) {
+            return emitError() << "bridge tile spec requires a static positive shape, got " << tile;
+        }
+        if (ShapedType::isDynamic(valid[dim])) {
+            return emitError() << "bridge tile spec requires static valid dimensions";
+        }
+        const bool validFits = valid[dim] > 0 && valid[dim] <= shape[dim];
+        if (!validFits) {
+            return emitError() << "bridge tile spec valid shape exceeds its shape in " << tile;
+        }
     }
-  }
-  auto memory = llvm::dyn_cast_or_null<AddressSpaceAttr>(tile.getMemorySpace());
-  if (!memory) {
-    return emitError() << "bridge tile spec requires a tile memory space, got "
-                       << tile;
-  }
-  switch (memory.getAddressSpace()) {
-  case AddressSpace::LEFT:
-  case AddressSpace::RIGHT:
-  case AddressSpace::ACC:
-  case AddressSpace::VEC:
-  case AddressSpace::MAT:
-    break;
-  default:
-    return emitError() << "bridge tile spec has unsupported tile kind in " << tile;
-  }
-  Type element = tile.getElementType();
-  const bool knownElement = element.isF16() || element.isBF16() ||
-                            element.isF32() || element.isInteger(8) ||
-                            element.isInteger(16) || element.isInteger(32);
-  if (!knownElement) {
-    return emitError() << "bridge tile spec has unsupported element type "
-                       << element;
-  }
-  return success();
+    auto memory = llvm::dyn_cast_or_null<AddressSpaceAttr>(tile.getMemorySpace());
+    if (!memory) {
+        return emitError() << "bridge tile spec requires a tile memory space, got " << tile;
+    }
+    switch (memory.getAddressSpace()) {
+        case AddressSpace::LEFT:
+        case AddressSpace::RIGHT:
+        case AddressSpace::ACC:
+        case AddressSpace::VEC:
+        case AddressSpace::MAT:
+            break;
+        default:
+            return emitError() << "bridge tile spec has unsupported tile kind in " << tile;
+    }
+    Type element = tile.getElementType();
+    const bool knownElement = element.isF16() || element.isBF16() || element.isF32() || element.isInteger(8) ||
+                              element.isInteger(16) || element.isInteger(32);
+    if (!knownElement) {
+        return emitError() << "bridge tile spec has unsupported element type " << element;
+    }
+    return success();
 }
 
-LogicalResult
-BridgePipeSpecAttr::verify(function_ref<InFlightDiagnostic()> emitError,
-                           int32_t dirMask, int32_t slotSize, int32_t slotNum,
-                           int32_t localSlotNum, int32_t flagBase,
-                           BoolAttr nosplit, std::optional<int32_t> split,
-                           BridgeTileSpecAttr producer,
-                           BridgeTileSpecAttr consumer) {
-  if (dirMask != 1 && dirMask != 2) {
-    return emitError() << "bridge pipe spec supports dir_mask 1 (C2V) or 2 (V2C), got "
-                       << dirMask;
-  }
-  if (slotSize <= 0 || slotNum <= 0 || localSlotNum <= 0 || flagBase < 0) {
-    return emitError() << "bridge pipe spec requires positive slot sizes and "
-                          "counts and a non-negative flag base";
-  }
-  if (!nosplit) {
-    return emitError() << "bridge pipe spec requires a nosplit flag";
-  }
-  if (split && (*split < 0 || *split > 4)) {
-    return emitError() << "bridge pipe spec has unsupported split " << *split;
-  }
-  // C2V produces on cube (Acc) and consumes on vector (Vec); V2C the reverse.
-  auto hasSpace = [](BridgeTileSpecAttr spec, AddressSpace space) {
-    auto memory = llvm::cast<AddressSpaceAttr>(spec.getTile().getMemorySpace());
-    return memory.getAddressSpace() == space;
-  };
-  const AddressSpace producerSpace =
-      dirMask == 1 ? AddressSpace::ACC : AddressSpace::VEC;
-  const AddressSpace consumerSpace =
-      dirMask == 1 ? AddressSpace::VEC : AddressSpace::MAT;
-  if (producer && !hasSpace(producer, producerSpace)) {
-    return emitError() << "bridge pipe spec producer tile does not match dir_mask "
-                       << dirMask;
-  }
-  if (consumer && !hasSpace(consumer, consumerSpace)) {
-    return emitError() << "bridge pipe spec consumer tile does not match dir_mask "
-                       << dirMask;
-  }
-  return success();
+LogicalResult BridgePipeSpecAttr::verify(
+    function_ref<InFlightDiagnostic()> emitError, int32_t dirMask, int32_t slotSize, int32_t slotNum,
+    int32_t localSlotNum, int32_t flagBase, BoolAttr nosplit, std::optional<int32_t> split, BridgeTileSpecAttr producer,
+    BridgeTileSpecAttr consumer)
+{
+    if (dirMask != 1 && dirMask != mlir::pto::kValue2) {
+        return emitError() << "bridge pipe spec supports dir_mask 1 (C2V) or 2 (V2C), got " << dirMask;
+    }
+    if (slotSize <= 0 || slotNum <= 0 || localSlotNum <= 0 || flagBase < 0) {
+        return emitError() << "bridge pipe spec requires positive slot sizes and "
+                              "counts and a non-negative flag base";
+    }
+    if (!nosplit) {
+        return emitError() << "bridge pipe spec requires a nosplit flag";
+    }
+    if (split && (*split < 0 || *split > mlir::pto::kValue4)) {
+        return emitError() << "bridge pipe spec has unsupported split " << *split;
+    }
+    // C2V produces on cube (Acc) and consumes on vector (Vec); V2C the reverse.
+    auto hasSpace = [](BridgeTileSpecAttr spec, AddressSpace space) {
+        auto memory = llvm::cast<AddressSpaceAttr>(spec.getTile().getMemorySpace());
+        return memory.getAddressSpace() == space;
+    };
+    const AddressSpace producerSpace = dirMask == 1 ? AddressSpace::ACC : AddressSpace::VEC;
+    const AddressSpace consumerSpace = dirMask == 1 ? AddressSpace::VEC : AddressSpace::MAT;
+    if (producer && !hasSpace(producer, producerSpace)) {
+        return emitError() << "bridge pipe spec producer tile does not match dir_mask " << dirMask;
+    }
+    if (consumer && !hasSpace(consumer, consumerSpace)) {
+        return emitError() << "bridge pipe spec consumer tile does not match dir_mask " << dirMask;
+    }
+    return success();
 }
 
 LogicalResult

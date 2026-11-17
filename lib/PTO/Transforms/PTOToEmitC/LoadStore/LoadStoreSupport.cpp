@@ -8,6 +8,7 @@
 //===- LoadStoreSupport.cpp - LoadStore lowering helpers --------------------------------===//
 //===----------------------------------------------------------------------===//
 
+#include "PTO/Support/CodeConstants.h"
 #include "../PTOToEmitCEmitters.h"
 #include "LoadStoreInternal.h"
 
@@ -36,7 +37,7 @@ static bool isPackedFp4TransferDim(int64_t dim, int64_t rank, bool isColMajor) {
 // dimensions are batch/group dimensions and must remain unchanged.
 static bool isPackedFp4ShapeDim(int64_t dim, int64_t rank, bool isColMajor) {
   if (isColMajor) {
-    return dim == (rank > 1 ? rank - 2 : 0);
+      return dim == (rank > 1 ? rank - mlir::pto::kValue2 : 0);
   }
   return dim + 1 == rank;
 }

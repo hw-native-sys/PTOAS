@@ -6,6 +6,7 @@
 // INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
 // See LICENSE in the root of the software repository for the full text of the License.
 
+#include "PTO/Support/CodeConstants.h"
 #include "VPTOCANN900LLVMEmitterInternal.h"
 
 #include "PTO/IR/PTO.h"
@@ -159,7 +160,7 @@ static FailureOr<Value> packCopyUbToGmCfgV220(Operation* anchor, ValueRange oper
 // form rounds anything under 32 bytes down to a transfer of nothing.
 static FailureOr<Value> packCopyUbToGmCfgAlignV220(Operation* anchor, ValueRange operands)
 {
-    if (operands.size() != 8) {
+    if (operands.size() != mlir::pto::kValue8) {
         return failure();
     }
 

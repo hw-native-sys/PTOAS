@@ -11,6 +11,7 @@
 //===- VMILayoutPlanner.cpp - VMI layout planning model ------------------===//
 //===----------------------------------------------------------------------===//
 
+#include "PTO/Support/CodeConstants.h"
 #include "PTO/Transforms/VMILayoutPlanner.h"
 
 #include "VMILayoutComponentGraph.h"
@@ -96,7 +97,7 @@ static SmallVector<VMILayoutDecisionGroup, mlir::pto::kValue4> buildDecisionGrou
     llvm::StringMap<unsigned> classIndices;
     SmallVector<VMILayoutDecisionGroup, mlir::pto::kValue4> groups;
     for (auto [opIndex, solverOp] : llvm::enumerate(plannerOps)) {
-        if (solverOp.relations.size() < 2) {
+        if (solverOp.relations.size() < mlir::pto::kValue2) {
             continue;
         }
         SmallVector<std::string, mlir::pto::kValue4> relations;
@@ -559,49 +560,35 @@ static void reportMissingRelation(Operation* op, const std::string& reason)
     op->emitError() << kVMIDiagUnsupportedPrefix << "no legal VMI layout relation is registered for " << op->getName();
 }
 
-static FailureOr<SmallVector<VMILayoutSolverOp, mlir::pto::kValue8>> buildPlannerOps(ArrayRef<Operation*> ops)
+static bool componentNeedsLayoutRelations(ArrayRef<Operation*> ops)
 {
-    VMILayoutRelationProvider provider;
-    SmallVector<VMILayoutAttr, mlir::pto::kValue8> layouts;
-    SmallVector<VMILayoutSolverOp, mlir::pto::kValue8> plannerOps;
-    plannerOps.reserve(ops.size());
-
-    // A component whose every op is either a structural transport or a unified
-    // spelling that -vmi-lower-unified-to-legacy replaces after layout assignment
-    // carries no layout decision at all: upstream's own flow never constrained
-    // those spellings, so the lowering owns them and no plan is emitted.
-    bool needsRelations = false;
     for (Operation* op : ops) {
         if (isPreLoweringUnifiedOp(op)) {
             continue;
         }
         if (auto returnOp = dyn_cast<func::ReturnOp>(op)) {
-            // A function boundary contributes a relation only for the results whose
-            // type spells a layout out; every other result is decided by the value
-            // the function returns.
             auto function = returnOp->getParentOfType<func::FuncOp>();
-            needsRelations = needsRelations || !function || returnOp.getNumOperands() != function.getNumResults();
-            if (!needsRelations) {
-                needsRelations = llvm::any_of(
-                    llvm::zip_equal(function.getResultTypes(), returnOp.getOperands()),
-                    [](auto pair) { return static_cast<bool>(getVMIExplicitLayout(std::get<0>(pair))); });
+            if (!function || returnOp.getNumOperands() != function.getNumResults()) {
+                return true;
+            }
+            bool hasExplicitResult = llvm::any_of(
+                llvm::zip_equal(function.getResultTypes(), returnOp.getOperands()),
+                [](auto pair) { return static_cast<bool>(getVMIExplicitLayout(std::get<0>(pair))); });
+            if (hasExplicitResult) {
+                return true;
             }
             continue;
         }
         if (isVMILayoutABIBoundaryOp(op) || !isVMILayoutStructuralOp(op)) {
-            needsRelations = true;
-            break;
+            return true;
         }
     }
-    if (!needsRelations) {
-        return plannerOps;
-    }
+    return false;
+}
 
-    // Collect operation-induced layout candidates before enumerating any
-    // relation.  A helper such as ensure_mask_granularity may appear before its
-    // consumer in IR order, while the consumer is what introduces the useful
-    // physical layout (for example deinterleaved=4 for partial group-reduce).
-    // A single forward pass would permanently under-constrain that helper.
+static void collectInitialPlannerLayouts(
+    ArrayRef<Operation*> ops, VMILayoutRelationProvider& provider, SmallVectorImpl<VMILayoutAttr>& layouts)
+{
     for (Operation* op : ops) {
         for (Value operand : op->getOperands()) {
             rememberLayout(getFunctionArgumentBoundaryLayout(operand), layouts);
@@ -622,173 +609,179 @@ static FailureOr<SmallVector<VMILayoutSolverOp, mlir::pto::kValue8>> buildPlanne
             rememberGroupReduceRelationLayouts(getVMIGroupReduceKind(op), sourceType, *groups, layouts);
         }
     }
+}
+
+static bool addGroupSlotLoadLayout(
+    VMIGroupSlotLoadOp groupSlot, VMILayoutSupport& supports, SmallVectorImpl<VMILayoutAttr>& layouts)
+{
+    auto resultType = dyn_cast<VMIVRegType>(groupSlot.getResult().getType());
+    if (!resultType) {
+        return false;
+    }
+    int64_t groups = groupSlot.getNumGroupsAttr().getInt();
+    VMILayoutAttr layout = VMILayoutAttr::getGroupSlots(groupSlot.getContext(), groups, groups);
+    auto typed =
+        VMIVRegType::get(resultType.getContext(), resultType.getElementCount(), resultType.getElementType(), layout);
+    if (failed(supports.getGroupSlotLoadLayoutFact(typed, groupSlot.getSourceGroupStride(), groups))) {
+        return false;
+    }
+    layouts.push_back(layout);
+    return true;
+}
+
+static bool addGroupLoadLayout(
+    VMIGroupLoadOp groupLoad, VMILayoutSupport& supports, SmallVectorImpl<VMILayoutAttr>& layouts)
+{
+    auto resultType = dyn_cast<VMIVRegType>(groupLoad.getResult().getType());
+    if (!resultType) {
+        return false;
+    }
+    int64_t groups = groupLoad.getNumGroupsAttr().getInt();
+    VMILayoutAttr contiguous = VMILayoutAttr::getContiguous(groupLoad.getContext());
+    auto typed = VMIVRegType::get(
+        resultType.getContext(), resultType.getElementCount(), resultType.getElementType(), contiguous);
+    auto fact = supports.getGroupLoadLayoutFact(typed, groupLoad.getRowStride(), groups);
+    if (succeeded(fact)) {
+        layouts.push_back(fact->resultLayout);
+        return true;
+    }
+    if (groups == 0) {
+        return false;
+    }
+    if (groups < 0 || resultType.getElementCount() % groups != 0) {
+        return false;
+    }
+    int64_t groupSize = resultType.getElementCount() / groups;
+    for (int64_t factor : {int64_t(2), int64_t(4)}) {
+        bool mismatched = (groupSize == mlir::pto::kValue16 && factor != mlir::pto::kValue2) ||
+                          (groupSize == mlir::pto::kValue32 && factor != mlir::pto::kValue4);
+        if (mismatched) {
+            continue;
+        }
+        VMILayoutAttr block = VMILayoutAttr::getBlockDeinterleaved(groupLoad.getContext(), factor);
+        auto typedBlock =
+            VMIVRegType::get(resultType.getContext(), resultType.getElementCount(), resultType.getElementType(), block);
+        if (succeeded(supports.getGroupLoadLayoutFact(typedBlock, groupLoad.getRowStride(), groups))) {
+            layouts.push_back(block);
+            return true;
+        }
+    }
+    return false;
+}
+
+static bool addGroupBroadcastLayouts(
+    VMIGroupBroadcastOp broadcast, VMILayoutSupport& supports, SmallVectorImpl<VMILayoutAttr>& layouts)
+{
+    auto sourceType = cast<VMIVRegType>(broadcast.getSource().getType());
+    auto resultType = cast<VMIVRegType>(broadcast.getResult().getType());
+    int64_t groups = broadcast.getNumGroupsAttr().getInt();
+    auto fact = supports.getGroupBroadcastLayoutFactForLayouts(sourceType, resultType, groups);
+    if (succeeded(fact)) {
+        layouts.push_back(fact->sourceLayout);
+        layouts.push_back(fact->resultLayout);
+        return true;
+    }
+    VMILayoutAttr slots = VMILayoutAttr::getGroupSlots(broadcast.getContext(), groups, mlir::pto::kValue8);
+    auto facts = supports.getGroupBroadcastLayoutFactsForLayout(
+        sourceType, resultType, groups, VMIGroupBroadcastLayoutPort::Source, slots);
+    if (failed(facts) || facts->empty()) {
+        return false;
+    }
+    for (const VMIGroupBroadcastLayoutFact& item : *facts) {
+        layouts.push_back(item.sourceLayout);
+        layouts.push_back(item.resultLayout);
+    }
+    return true;
+}
+
+static bool addFallbackPlannerLayouts(Operation* op, SmallVectorImpl<VMILayoutAttr>& layouts)
+{
+    VMILayoutSupport supports;
+    if (auto groupSlot = dyn_cast<VMIGroupSlotLoadOp>(op)) {
+        return addGroupSlotLoadLayout(groupSlot, supports, layouts);
+    }
+    if (auto groupLoad = dyn_cast<VMIGroupLoadOp>(op)) {
+        return addGroupLoadLayout(groupLoad, supports, layouts);
+    }
+    if (auto broadcast = dyn_cast<VMIGroupBroadcastOp>(op)) {
+        return addGroupBroadcastLayouts(broadcast, supports, layouts);
+    }
+    return false;
+}
+
+static LogicalResult collectPlannerLayouts(
+    ArrayRef<Operation*> ops, VMILayoutRelationProvider& provider, SmallVectorImpl<VMILayoutAttr>& layouts)
+{
     for (Operation* op : ops) {
         if (isVMILayoutStructuralOp(op)) {
             continue;
         }
         for (Type type : op->getOperandTypes()) {
-            VMILayoutAttr layout = getVMIExplicitLayout(type);
-            if (layout && !llvm::is_contained(layouts, layout)) {
-                layouts.push_back(layout);
-            }
+            rememberLayout(getVMIExplicitLayout(type), layouts);
         }
         for (Type type : op->getResultTypes()) {
-            VMILayoutAttr layout = getVMIExplicitLayout(type);
-            if (layout && !llvm::is_contained(layouts, layout)) {
-                layouts.push_back(layout);
-            }
+            rememberLayout(getVMIExplicitLayout(type), layouts);
         }
+        VMILayoutSupport supports;
         if (auto interleave = dyn_cast<VMIVintlvOp>(op)) {
-            VMILayoutSupport supports;
-            if (auto preferred =
-                    supports.getPreferredVintlvLayoutFact(cast<VMIVRegType>(interleave.getLow().getType()));
-                succeeded(preferred) && !llvm::is_contained(layouts, preferred->lhsLayout)) {
-                layouts.push_back(preferred->lhsLayout);
+            auto preferred = supports.getPreferredVintlvLayoutFact(cast<VMIVRegType>(interleave.getLow().getType()));
+            if (succeeded(preferred)) {
+                rememberLayout(preferred->lhsLayout, layouts);
             }
         } else if (auto interleave = dyn_cast<VMIVdintlvOp>(op)) {
-            VMILayoutSupport supports;
-            if (auto preferred =
-                    supports.getPreferredVdintlvLayoutFact(cast<VMIVRegType>(interleave.getLow().getType()));
-                succeeded(preferred) && !llvm::is_contained(layouts, preferred->lhsLayout)) {
-                layouts.push_back(preferred->lhsLayout);
+            auto preferred = supports.getPreferredVdintlvLayoutFact(cast<VMIVRegType>(interleave.getLow().getType()));
+            if (succeeded(preferred)) {
+                rememberLayout(preferred->lhsLayout, layouts);
             }
         }
-        std::string relationReason;
-        auto relations = provider.enumerateRelations(op, layouts, &relationReason);
+        std::string reason;
+        auto relations = provider.enumerateRelations(op, layouts, &reason);
         if (failed(relations) && isPreLoweringUnifiedOp(op)) {
             continue;
         }
-        if (failed(relations) || relations->empty()) {
-            VMILayoutSupport supports;
-            if (auto groupSlot = dyn_cast<VMIGroupSlotLoadOp>(op)) {
-                auto resultType = dyn_cast<VMIVRegType>(groupSlot.getResult().getType());
-                if (resultType) {
-                    VMILayoutAttr layout = VMILayoutAttr::getGroupSlots(
-                        op->getContext(), groupSlot.getNumGroupsAttr().getInt(), groupSlot.getNumGroupsAttr().getInt());
-                    auto typed = VMIVRegType::get(
-                        resultType.getContext(), resultType.getElementCount(), resultType.getElementType(), layout);
-                    auto fact = supports.getGroupSlotLoadLayoutFact(
-                        typed, groupSlot.getSourceGroupStride(), groupSlot.getNumGroupsAttr().getInt());
-                    if (succeeded(fact)) {
-                        layouts.push_back(layout);
-                        continue;
-                    }
-                }
-            }
-            if (auto groupLoad = dyn_cast<VMIGroupLoadOp>(op)) {
-                auto resultType = dyn_cast<VMIVRegType>(groupLoad.getResult().getType());
-                if (resultType) {
-                    VMILayoutAttr contiguous = VMILayoutAttr::getContiguous(op->getContext());
-                    auto typed = VMIVRegType::get(
-                        resultType.getContext(), resultType.getElementCount(), resultType.getElementType(), contiguous);
-                    auto fact = supports.getGroupLoadLayoutFact(
-                        typed, groupLoad.getRowStride(), groupLoad.getNumGroupsAttr().getInt());
-                    if (succeeded(fact)) {
-                        layouts.push_back(fact->resultLayout);
-                        continue;
-                    }
-                    int64_t groups = groupLoad.getNumGroupsAttr().getInt();
-                    if (groups > 0 && resultType.getElementCount() % groups == 0) {
-                        int64_t groupSize = resultType.getElementCount() / groups;
-                        bool foundBlockLayout = false;
-                        for (int64_t factor : {int64_t(2), int64_t(4)}) {
-                            if ((groupSize == 16 && factor != 2) || (groupSize == 32 && factor != 4)) {
-                                continue;
-                            }
-                            VMILayoutAttr block = VMILayoutAttr::getBlockDeinterleaved(op->getContext(), factor);
-                            auto typedBlock = VMIVRegType::get(
-                                resultType.getContext(), resultType.getElementCount(), resultType.getElementType(),
-                                block);
-                            auto blockFact =
-                                supports.getGroupLoadLayoutFact(typedBlock, groupLoad.getRowStride(), groups);
-                            if (succeeded(blockFact)) {
-                                layouts.push_back(block);
-                                foundBlockLayout = true;
-                                break;
-                            }
-                        }
-                        if (foundBlockLayout) {
-                            continue;
-                        }
-                    }
-                }
-            }
-            if (auto broadcast = dyn_cast<VMIGroupBroadcastOp>(op)) {
-                auto sourceType = cast<VMIVRegType>(broadcast.getSource().getType());
-                auto resultType = cast<VMIVRegType>(broadcast.getResult().getType());
-                int64_t groups = broadcast.getNumGroupsAttr().getInt();
-                auto fact = supports.getGroupBroadcastLayoutFactForLayouts(sourceType, resultType, groups);
-                if (succeeded(fact)) {
-                    layouts.push_back(fact->sourceLayout);
-                    layouts.push_back(fact->resultLayout);
-                    continue;
-                }
-                VMILayoutAttr slots = VMILayoutAttr::getGroupSlots(op->getContext(), groups, mlir::pto::kValue8);
-                auto facts = supports.getGroupBroadcastLayoutFactsForLayout(
-                    sourceType, resultType, groups, VMIGroupBroadcastLayoutPort::Source, slots);
-                if (succeeded(facts) && !facts->empty()) {
-                    for (const VMIGroupBroadcastLayoutFact& fact : *facts) {
-                        layouts.push_back(fact.sourceLayout);
-                        layouts.push_back(fact.resultLayout);
-                    }
-                    continue;
-                }
-            }
-            reportMissingRelation(op, relationReason);
+        if ((failed(relations) || relations->empty()) && !addFallbackPlannerLayouts(op, layouts)) {
+            reportMissingRelation(op, reason);
             return failure();
         }
-        rememberRelationLayouts(*relations, layouts);
-    }
-    if (layouts.empty()) {
-        if (!ops.empty()) {
-            ops.front()->emitError() << kVMIDiagUnsupportedPrefix
-                                     << "no candidate VMI layout is available for "
-                                        "this component";
+        if (succeeded(relations)) {
+            rememberRelationLayouts(*relations, layouts);
         }
-        return failure();
     }
+    return success();
+}
+
+static FailureOr<SmallVector<VMILayoutSolverOp, mlir::pto::kValue8>> createPlannerSolverOps(
+    ArrayRef<Operation*> ops, VMILayoutRelationProvider& provider, ArrayRef<VMILayoutAttr> layouts)
+{
+    SmallVector<VMILayoutSolverOp, mlir::pto::kValue8> plannerOps;
+    plannerOps.reserve(ops.size());
     for (Operation* op : ops) {
         if (isVMILayoutStructuralOp(op) && !isVMILayoutABIBoundaryOp(op)) {
             continue;
         }
-        std::string relationReason;
-        auto relations = provider.enumerateRelations(op, layouts, &relationReason);
+        std::string reason;
+        auto relations = provider.enumerateRelations(op, layouts, &reason);
         if (succeeded(relations) && relations->empty() && isVMILayoutABIBoundaryOp(op)) {
-            // A function boundary whose result types spell out no layout pins no
-            // layout either, so it contributes no relation to the component: the
-            // value it transports is decided by its producer.
             continue;
         }
         if (failed(relations) && isPreLoweringUnifiedOp(op)) {
             continue;
         }
-        if (failed(relations)) {
-            auto preferredRelations = provider.enumerateRelations(op, {}, &relationReason);
-            if (failed(preferredRelations) || preferredRelations->empty()) {
-                reportMissingRelation(op, relationReason);
-                return failure();
-            }
-            relations = std::move(preferredRelations);
-        }
-        if (relations->empty()) {
-            // Some table-backed producers (notably group_slot_load) have a single
-            // preferred relation that is independent of the component candidate
-            // pool.  Preserve that relation when candidate filtering has no rows.
-            auto preferredRelations = provider.enumerateRelations(op, {}, &relationReason);
-            if (succeeded(preferredRelations) && !preferredRelations->empty()) {
-                relations = std::move(preferredRelations);
+        if (failed(relations) || relations->empty()) {
+            auto preferred = provider.enumerateRelations(op, {}, &reason);
+            if (succeeded(preferred) && !preferred->empty()) {
+                relations = std::move(preferred);
             }
         }
         if (failed(relations) || relations->empty()) {
-            reportMissingRelation(op, relationReason);
+            reportMissingRelation(op, reason);
             return failure();
         }
         llvm::erase_if(
             *relations, [](const VMILayoutOpRelation& relation) { return !relationRespectsExplicitResults(relation); });
         if (relations->empty()) {
             op->emitError() << kVMIDiagUnsupportedPrefix
-                            << "all registered VMI layout relations conflict with "
-                               "explicit result layouts";
+                            << "all registered VMI layout relations conflict with explicit result layouts";
             return failure();
         }
         plannerOps.push_back(VMILayoutSolverOp{op, std::move(*relations)});
@@ -796,6 +789,26 @@ static FailureOr<SmallVector<VMILayoutSolverOp, mlir::pto::kValue8>> buildPlanne
     return plannerOps;
 }
 
+static FailureOr<SmallVector<VMILayoutSolverOp, mlir::pto::kValue8>> buildPlannerOps(ArrayRef<Operation*> ops)
+{
+    VMILayoutRelationProvider provider;
+    SmallVector<VMILayoutAttr, mlir::pto::kValue8> layouts;
+    if (!componentNeedsLayoutRelations(ops)) {
+        return SmallVector<VMILayoutSolverOp, mlir::pto::kValue8>{};
+    }
+    collectInitialPlannerLayouts(ops, provider, layouts);
+    if (failed(collectPlannerLayouts(ops, provider, layouts))) {
+        return failure();
+    }
+    if (layouts.empty()) {
+        if (!ops.empty()) {
+            ops.front()->emitError() << kVMIDiagUnsupportedPrefix
+                                     << "no candidate VMI layout is available for this component";
+        }
+        return failure();
+    }
+    return createPlannerSolverOps(ops, provider, layouts);
+}
 static FailureOr<VMILayoutPlan> solveComponent(ArrayRef<Operation*> component, const VMILayoutPlannerOptions& options)
 {
     auto ops = buildPlannerOps(component);
@@ -867,23 +880,26 @@ LogicalResult mlir::pto::commitVMILayoutPlan(const VMILayoutPlan& plan, VMILayou
     // conversion is represented as a conflict, rather than as a producer seed.
     SmallVector<VMILayoutAttr, mlir::pto::kValue4> layouts = collectPlanLayouts(plan);
     if (failed(verifySelectedRelations(plan, layouts))) {
-        return failCommit("selected cost plan no longer matches registered layout "
-                          "relations");
+        return failCommit(
+            "selected cost plan no longer matches registered layout "
+            "relations");
     }
     for (const VMILayoutEqualityConstraint& edge : plan.structuralEqualities) {
         VMILayoutAttr source = plan.valueLayouts.lookup(edge.source);
         VMILayoutAttr destination = plan.valueLayouts.lookup(edge.destination);
         if (!source || source != destination) {
-            return failCommit("selected cost plan violates a control-flow layout "
-                              "equality");
+            return failCommit(
+                "selected cost plan violates a control-flow layout "
+                "equality");
         }
     }
     if (failed(requestPlan(plan, propagator))) {
         return failCommit("failed to install validated cost-plan recipe");
     }
     if (!planWasCommitted(plan, propagator)) {
-        return failCommit("installed cost-plan recipe does not match the selected "
-                          "value/use layouts");
+        return failCommit(
+            "installed cost-plan recipe does not match the selected "
+            "value/use layouts");
     }
     propagator.endExactRequests();
     return success();

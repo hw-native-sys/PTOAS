@@ -127,7 +127,6 @@ llvm::SmallVector<IdViolation> checkDeviceIdLegality(llvm::ArrayRef<SyncOpRecord
 // compiler hazard whose interval spans the call produces a kernel where the
 // library's wait is satisfied by the wrong producer -- silently, with no op in the
 // IR to point at.
-//
 // THE RESERVATION MIRRORS THE INCUMBENT'S, deliberately, so that "legal" means the
 // same thing on both paths: the span runs from the macro's first phase to its last,
 // padded one SyncIR index each side, and the pad is what stops a hazard that ends

@@ -9,6 +9,7 @@
 //===- PTOToEmitCCommon.cpp - shared helper definitions ---------===//
 //===----------------------------------------------------------------------===//
 
+#include "PTO/Support/CodeConstants.h"
 #include "PTOToEmitCEmitters.h"
 
 using namespace mlir;
@@ -655,7 +656,7 @@ void emitConvTileConfigInitCall(ConversionPatternRewriter &rewriter,
                                 pto::ConvTileConfigAttr cfg) {
   auto *ctx = rewriter.getContext();
 
-  SmallVector<Attribute, 24> args;
+  SmallVector<Attribute, mlir::pto::kValue24> args;
   args.push_back(IntegerAttr::get(IndexType::get(ctx), 0));
 
   auto appendI32 = [&args, &rewriter](IntegerAttr attr) {
@@ -716,7 +717,7 @@ ArrayAttr getFmatrixModeTemplateArgs(
     return ArrayAttr{};
   }
   auto *ctx = rewriter.getContext();
-  SmallVector<Attribute, 3> args;
+  SmallVector<Attribute, mlir::pto::kValue3> args;
   for (const std::string &tileType : precedingTileTypes) {
     args.push_back(emitc::OpaqueAttr::get(ctx, tileType));
   }
@@ -1017,8 +1018,9 @@ std::optional<std::string> getEmitCTileTypeString(pto::TileBufType type) {
 std::optional<std::string> getEmitCConvTileBufTypeString(pto::ConvTileBufType type)
 {
     auto shape = type.getShape();
-    if (shape.empty() || shape.size() > 6)
+    if (shape.empty() || shape.size() > mlir::pto::kValue6) {
         return std::nullopt;
+    }
 
     Type elemTy = type.getElementType();
     auto layoutAttr = dyn_cast_or_null<pto::ConvLayoutAttr>(type.getLayout());

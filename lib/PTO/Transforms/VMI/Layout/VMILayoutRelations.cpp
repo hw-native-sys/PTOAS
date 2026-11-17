@@ -7,6 +7,7 @@
 // See LICENSE in the root of the software repository for the full text of the License.
 
 // Layout relation enumeration: relations.
+#include "PTO/Support/CodeConstants.h"
 #include "VMILayoutRelations.h"
 #include "PTO/Transforms/VMILayoutPropagation.h"
 #include "llvm/ADT/TypeSwitch.h"
@@ -150,7 +151,7 @@ RelationResult VMILayoutRelations::buildActivePrefixIndex()
 RelationResult VMILayoutRelations::buildCompress()
 {
     auto contiguous = VMILayoutAttr::getContiguous(op->getContext());
-    if (op->getNumOperands() != 2 || op->getNumResults() != 1) {
+    if (op->getNumOperands() != mlir::pto::kValue2 || op->getNumResults() != 1) {
         return failure();
     }
     return makeReachableRelation(

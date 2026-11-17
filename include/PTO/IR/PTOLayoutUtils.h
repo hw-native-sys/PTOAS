@@ -10,6 +10,7 @@
 #define PTO_IR_PTOLAYOUTUTILS_H
 
 #include "PTO/IR/PTO.h"
+#include "PTO/Support/CodeConstants.h"
 #include "llvm/ADT/ArrayRef.h"
 
 #include <array>
@@ -23,8 +24,7 @@ inline constexpr unsigned kPTOLayoutRank = 5;
 bool isMxLayout(Layout layout);
 
 /// Valid extents proven by the type or a locally tracked tile descriptor.
-std::array<std::optional<int64_t>, 2> getKnownTileValidShapeAt(Value tile,
-                                                            Operation *at);
+std::array<std::optional<int64_t>, kValue2> getKnownTileValidShapeAt(Value tile, Operation* at);
 
 /// Minimum single-row scratch width for A2/A3 TREM and TREMS. Use the
 /// physical width as the upper bound when the valid width is unknown.

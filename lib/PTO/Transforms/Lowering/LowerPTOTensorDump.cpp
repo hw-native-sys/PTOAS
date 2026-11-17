@@ -16,6 +16,7 @@
 //
 //===----------------------------------------------------------------------===//
 
+#include "PTO/Support/CodeConstants.h"
 #include "PTO/IR/PTO.h"
 #include "PTO/Transforms/Passes.h"
 #include "PTO/Transforms/DirectDmaUtils.h"
@@ -45,47 +46,49 @@ constexpr int64_t kDumpHeaderWords = 16;
 
 using DumpViewInfo = pto::dma::DmaViewInfo;
 
-static unsigned dumpElemSize(Type elem) {
-  const bool is2Byte = elem.isF16() || elem.isBF16() || elem.isInteger(16);
-  if (is2Byte) {
-    return 2;
-  }
-  const bool is4Byte = elem.isF32() || elem.isInteger(32);
-  if (is4Byte) {
-    return 4;
-  }
-  if (elem.isInteger(8)) {
-    return 1;
-  }
-  if (elem.isInteger(64)) {
-    return 8;
-  }
-  return 0;
+static unsigned dumpElemSize(Type elem)
+{
+    const bool is2Byte = elem.isF16() || elem.isBF16() || elem.isInteger(16);
+    if (is2Byte) {
+        return mlir::pto::kValue2;
+    }
+    const bool is4Byte = elem.isF32() || elem.isInteger(32);
+    if (is4Byte) {
+        return mlir::pto::kValue4;
+    }
+    if (elem.isInteger(mlir::pto::kValue8)) {
+        return 1;
+    }
+    if (elem.isInteger(mlir::pto::kValue64)) {
+        return mlir::pto::kValue8;
+    }
+    return 0;
 }
 
-static uint32_t dumpElemTypeCode(Type elem) {
-  if (elem.isF16()) {
-    return 1;
-  }
-  if (elem.isBF16()) {
-    return 2;
-  }
-  if (elem.isF32()) {
-    return 3;
-  }
-  if (elem.isInteger(8)) {
-    return 4;
-  }
-  if (elem.isInteger(16)) {
-    return 5;
-  }
-  if (elem.isInteger(32)) {
-    return 6;
-  }
-  if (elem.isInteger(64)) {
-    return 7;
-  }
-  return 0;
+static uint32_t dumpElemTypeCode(Type elem)
+{
+    if (elem.isF16()) {
+        return 1;
+    }
+    if (elem.isBF16()) {
+        return mlir::pto::kValue2;
+    }
+    if (elem.isF32()) {
+        return mlir::pto::kValue3;
+    }
+    if (elem.isInteger(mlir::pto::kValue8)) {
+        return mlir::pto::kValue4;
+    }
+    if (elem.isInteger(mlir::pto::kValue16)) {
+        return mlir::pto::kValue5;
+    }
+    if (elem.isInteger(mlir::pto::kValue32)) {
+        return mlir::pto::kValue6;
+    }
+    if (elem.isInteger(mlir::pto::kValue64)) {
+        return mlir::pto::kValue7;
+    }
+    return 0;
 }
 
 static Value indexConst(int64_t val, Location loc, OpBuilder &b) {
@@ -143,74 +146,64 @@ staticElemOffset(pto::TensorDumpOp op, const DumpViewInfo &info) {
 // The 64-byte header is written with 32-bit pto.stg stores, so the destination
 // address must be 4-byte aligned. Alignment of the base pointer is the caller's
 // contract; view offsets must be statically aligned or provably preserve it.
-static LogicalResult verifyKnownDumpAlignment(pto::TensorDumpOp op,
-                                              int64_t elemOffset,
-                                              unsigned elemSize) {
-  int64_t byteOffset = 0;
-  if (llvm::MulOverflow(elemOffset, static_cast<int64_t>(elemSize),
-                        byteOffset) != 0) {
-    return op.emitError("static destination byte offset overflows signed 64 bits");
-  }
-  if (byteOffset % 4 != 0) {
-    return op.emitError(
-        "expects a 4-byte aligned destination address: the dump header is "
-        "written with 32-bit stores");
-  }
-  return success();
+static LogicalResult verifyKnownDumpAlignment(pto::TensorDumpOp op, int64_t elemOffset, unsigned elemSize)
+{
+    int64_t byteOffset = 0;
+    if (llvm::MulOverflow(elemOffset, static_cast<int64_t>(elemSize), byteOffset) != 0) {
+        return op.emitError("static destination byte offset overflows signed 64 bits");
+    }
+    if (byteOffset % mlir::pto::kValue4 != 0) {
+        return op.emitError(
+            "expects a 4-byte aligned destination address: the dump header is "
+            "written with 32-bit stores");
+    }
+    return success();
 }
 
-static LogicalResult verifyDynamicDumpAlignment(pto::TensorDumpOp op,
-                                                const DumpViewInfo &info,
-                                                unsigned elemSize) {
-  if (elemSize % 4 == 0) {
+static LogicalResult verifyDynamicDumpAlignment(pto::TensorDumpOp op, const DumpViewInfo& info, unsigned elemSize)
+{
+    if (elemSize % mlir::pto::kValue4 == 0) {
+        return success();
+    }
+    int64_t byteOffsetModulo4 = 0;
+    for (size_t index = 0; index < info.offsets.size() && index < info.strides.size(); ++index) {
+        APInt offset;
+        APInt stride;
+        const bool offsetIsConst = matchPattern(info.offsets[index], m_ConstantInt(&offset));
+        const bool strideIsConst = matchPattern(info.strides[index], m_ConstantInt(&stride));
+        const bool zeroTerm = (offsetIsConst && offset.isZero()) || (strideIsConst && stride.isZero());
+        if (zeroTerm) {
+            continue;
+        }
+        if (!strideIsConst || !stride.isSignedIntN(mlir::pto::kValue64)) {
+            return op.emitError("expects destination strides to prove 4-byte header alignment");
+        }
+        if (!offsetIsConst) {
+            const int64_t strideModulo4 = stride.getSExtValue() % 4;
+            const bool alignedStride = (strideModulo4 * static_cast<int64_t>(elemSize)) % 4 == 0;
+            if (!alignedStride) {
+                return op.emitError(
+                    "expects dynamic destination offsets to preserve 4-byte header "
+                    "alignment");
+            }
+            continue;
+        }
+        if (!offset.isSignedIntN(mlir::pto::kValue64)) {
+            return op.emitError(
+                "expects static destination offsets and strides to fit in signed "
+                "64 bits");
+        }
+        const int64_t offsetModulo4 = offset.getSExtValue() % 4;
+        const int64_t strideModulo4 = stride.getSExtValue() % 4;
+        byteOffsetModulo4 = (byteOffsetModulo4 + offsetModulo4 * strideModulo4 * elemSize) % mlir::pto::kValue4;
+    }
+    if (byteOffsetModulo4 != 0) {
+        return op.emitError() << "expects a 4-byte aligned destination address: "
+                              << "the dump header is written with 32-bit stores "
+                              << "the destination view offset is not statically "
+                              << "known to preserve 4-byte alignment";
+    }
     return success();
-  }
-  int64_t byteOffsetModulo4 = 0;
-  for (size_t index = 0;
-       index < info.offsets.size() && index < info.strides.size(); ++index) {
-    APInt offset;
-    APInt stride;
-    const bool offsetIsConst =
-        matchPattern(info.offsets[index], m_ConstantInt(&offset));
-    const bool strideIsConst =
-        matchPattern(info.strides[index], m_ConstantInt(&stride));
-    const bool zeroTerm = (offsetIsConst && offset.isZero()) ||
-                          (strideIsConst && stride.isZero());
-    if (zeroTerm) {
-      continue;
-    }
-    if (!strideIsConst || !stride.isSignedIntN(64)) {
-      return op.emitError(
-          "expects destination strides to prove 4-byte header alignment");
-    }
-    if (!offsetIsConst) {
-      const int64_t strideModulo4 = stride.getSExtValue() % 4;
-      const bool alignedStride =
-          (strideModulo4 * static_cast<int64_t>(elemSize)) % 4 == 0;
-      if (!alignedStride) {
-        return op.emitError(
-            "expects dynamic destination offsets to preserve 4-byte header "
-            "alignment");
-      }
-      continue;
-    }
-    if (!offset.isSignedIntN(64)) {
-      return op.emitError(
-          "expects static destination offsets and strides to fit in signed "
-          "64 bits");
-    }
-    const int64_t offsetModulo4 = offset.getSExtValue() % 4;
-    const int64_t strideModulo4 = stride.getSExtValue() % 4;
-    byteOffsetModulo4 =
-        (byteOffsetModulo4 + offsetModulo4 * strideModulo4 * elemSize) % 4;
-  }
-  if (byteOffsetModulo4 != 0) {
-    return op.emitError() << "expects a 4-byte aligned destination address: "
-                          << "the dump header is written with 32-bit stores "
-                          << "the destination view offset is not statically "
-                          << "known to preserve 4-byte alignment";
-  }
-  return success();
 }
 
 static LogicalResult verifyDumpAlignment(pto::TensorDumpOp op,
@@ -331,31 +324,30 @@ static void emitHeaderWord(Location loc, OpBuilder &b, Value i32Ptr,
                           /*l1cache=*/nullptr, /*l2cache=*/nullptr);
 }
 
-static void emitDumpHeader(Location loc, OpBuilder &b, Value i32Ptr,
-                           Type elem, unsigned elemSize,
-                           ArrayRef<int64_t> shape, ArrayRef<int64_t> valid) {
-  auto section = b.create<pto::SectionSimtOp>(
-      loc, b.getI32IntegerAttr(1), b.getI32IntegerAttr(1),
-      b.getI32IntegerAttr(1));
-  OpBuilder::InsertionGuard guard(b);
-  b.setInsertionPointToStart(&section.getBody().emplaceBlock());
-  emitHeaderWord(loc, b, i32Ptr, 0, kDumpMagic);
-  emitHeaderWord(loc, b, i32Ptr, 1, 1);
-  emitHeaderWord(loc, b, i32Ptr, 2, elemSize);
-  emitHeaderWord(loc, b, i32Ptr, 3, dumpElemTypeCode(elem));
-  emitHeaderWord(loc, b, i32Ptr, 4, static_cast<uint32_t>(shape.size()));
-  emitHeaderWord(loc, b, i32Ptr, 5, static_cast<uint32_t>(shape[0]));
-  emitHeaderWord(loc, b, i32Ptr, 6, static_cast<uint32_t>(shape[1]));
-  auto validWord = [](int64_t dim) -> uint32_t {
-    return dim == ShapedType::kDynamic ? UINT32_MAX
-                                      : static_cast<uint32_t>(dim);
-  };
-  emitHeaderWord(loc, b, i32Ptr, 7, valid.size() > 0 ? validWord(valid[0]) : 0);
-  emitHeaderWord(loc, b, i32Ptr, 8, valid.size() > 1 ? validWord(valid[1]) : 0);
-  emitHeaderWord(loc, b, i32Ptr, 9, kDumpHeaderBytes);
-  for (int i = 10; i < kDumpHeaderWords; ++i) {
-    emitHeaderWord(loc, b, i32Ptr, i, 0);
-  }
+static void emitDumpHeader(
+    Location loc, OpBuilder& b, Value i32Ptr, Type elem, unsigned elemSize, ArrayRef<int64_t> shape,
+    ArrayRef<int64_t> valid)
+{
+    auto section =
+        b.create<pto::SectionSimtOp>(loc, b.getI32IntegerAttr(1), b.getI32IntegerAttr(1), b.getI32IntegerAttr(1));
+    OpBuilder::InsertionGuard guard(b);
+    b.setInsertionPointToStart(&section.getBody().emplaceBlock());
+    emitHeaderWord(loc, b, i32Ptr, 0, kDumpMagic);
+    emitHeaderWord(loc, b, i32Ptr, 1, 1);
+    emitHeaderWord(loc, b, i32Ptr, mlir::pto::kValue2, elemSize);
+    emitHeaderWord(loc, b, i32Ptr, mlir::pto::kValue3, dumpElemTypeCode(elem));
+    emitHeaderWord(loc, b, i32Ptr, mlir::pto::kValue4, static_cast<uint32_t>(shape.size()));
+    emitHeaderWord(loc, b, i32Ptr, mlir::pto::kValue5, static_cast<uint32_t>(shape[0]));
+    emitHeaderWord(loc, b, i32Ptr, mlir::pto::kValue6, static_cast<uint32_t>(shape[1]));
+    auto validWord = [](int64_t dim) -> uint32_t {
+        return dim == ShapedType::kDynamic ? UINT32_MAX : static_cast<uint32_t>(dim);
+    };
+    emitHeaderWord(loc, b, i32Ptr, mlir::pto::kValue7, valid.size() > 0 ? validWord(valid[0]) : 0);
+    emitHeaderWord(loc, b, i32Ptr, mlir::pto::kValue8, valid.size() > 1 ? validWord(valid[1]) : 0);
+    emitHeaderWord(loc, b, i32Ptr, mlir::pto::kValue9, kDumpHeaderBytes);
+    for (int i = 10; i < kDumpHeaderWords; ++i) {
+        emitHeaderWord(loc, b, i32Ptr, i, 0);
+    }
 }
 
 static Value resolveUbPtr(Location loc, OpBuilder &b, pto::TensorDumpOp op,

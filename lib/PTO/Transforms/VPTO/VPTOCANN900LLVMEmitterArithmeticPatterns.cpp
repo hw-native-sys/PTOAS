@@ -6,6 +6,7 @@
 // INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
 // See LICENSE in the root of the software repository for the full text of the License.
 
+#include "PTO/Support/CodeConstants.h"
 #include "VPTOCANN900LLVMEmitterConfigTemplates.h"
 #include "VPTOCANN900LLVMEmitterPredicateTemplates.h"
 #include "VPTOCANN900LLVMEmitterScalarTemplates.h"
@@ -1051,51 +1052,55 @@ static FailureOr<Value> packL1L0a3dPck0(Operation *anchor, Value mStart, Value k
   builder.setInsertionPoint(anchor);
   Value result = getI64Constant(builder, anchor->getLoc(), 0);
   if (failed(packI64ControlField(anchor, builder, kStep, 0xffff, 0, result)) ||
-      failed(packI64ControlField(anchor, builder, mStep, 0xffff, 16, result)) ||
-      failed(packI64ControlField(anchor, builder, kStart, 0xffff, 32, result)) ||
-      failed(packI64ControlField(anchor, builder, mStart, 0xffff, 48, result))) {
+        failed(packI64ControlField(anchor, builder, mStep, 0xffff, mlir::pto::kValue16, result)) ||
+        failed(packI64ControlField(anchor, builder, kStart, 0xffff, mlir::pto::kValue32, result)) ||
+        failed(packI64ControlField(anchor, builder, mStart, 0xffff, mlir::pto::kValue48, result))) {
     return failure();
   }
   return result;
 }
 
-static FailureOr<Value> packL1L0a3dPck1(Operation *anchor, Value strideW, Value strideH, Value filterW,
-                                        Value filterH, Value dilationW, Value dilationH, Value channelSize,
-                                        bool transpose, int64_t fmatrixMode) {
-  OpBuilder builder(anchor);
-  builder.setInsertionPoint(anchor);
-  Value result = getI64Constant(builder, anchor->getLoc(), 0);
-  if (failed(packI64ControlField(anchor, builder, strideW, 0x3f, 0, result)) ||
-      failed(packI64ControlField(anchor, builder, strideH, 0x3f, 6, result)) ||
-      failed(packI64ControlField(anchor, builder, filterW, 0xff, 12, result)) ||
-      failed(packI64ControlField(anchor, builder, filterH, 0xff, 20, result)) ||
-      failed(packI64ControlField(anchor, builder, dilationW, 0xff, 28, result)) ||
-      failed(packI64ControlField(anchor, builder, dilationH, 0xff, 36, result)) ||
-      failed(packI64ControlField(anchor, builder,
-                                 getI64Constant(builder, anchor->getLoc(), transpose ? 1 : 0),
-                                 1, 46, result)) ||
-      failed(packI64ControlField(anchor, builder,
-                                 getI64Constant(builder, anchor->getLoc(), fmatrixMode),
-                                 1, 47, result)) ||
-      failed(packI64ControlField(anchor, builder, channelSize, 0xffff, 48, result))) {
-    return failure();
-  }
-
-  auto addHighFilterBit = [&anchor, &builder, &result](Value value, uint64_t shift) -> LogicalResult {
-    Value i64 = castIntegerLikeTo(anchor, value, builder.getI64Type());
-    if (!i64) {
-      return failure();
+static FailureOr<Value> packL1L0a3dPck1(
+    Operation* anchor, Value strideW, Value strideH, Value filterW, Value filterH, Value dilationW, Value dilationH,
+    Value channelSize, bool transpose, int64_t fmatrixMode)
+{
+    OpBuilder builder(anchor);
+    builder.setInsertionPoint(anchor);
+    Value result = getI64Constant(builder, anchor->getLoc(), 0);
+    const bool failedToPackControls =
+        failed(packI64ControlField(anchor, builder, strideW, 0x3f, 0, result)) ||
+        failed(packI64ControlField(anchor, builder, strideH, 0x3f, mlir::pto::kValue6, result)) ||
+        failed(packI64ControlField(anchor, builder, filterW, 0xff, mlir::pto::kValue12, result)) ||
+        failed(packI64ControlField(anchor, builder, filterH, 0xff, mlir::pto::kValue20, result)) ||
+        failed(packI64ControlField(anchor, builder, dilationW, 0xff, mlir::pto::kValue28, result)) ||
+        failed(packI64ControlField(anchor, builder, dilationH, 0xff, mlir::pto::kValue36, result)) ||
+        failed(packI64ControlField(
+            anchor, builder, getI64Constant(builder, anchor->getLoc(), transpose ? 1 : 0), 1, mlir::pto::kValue46,
+            result)) ||
+        failed(packI64ControlField(
+            anchor, builder, getI64Constant(builder, anchor->getLoc(), fmatrixMode), 1, mlir::pto::kValue47, result)) ||
+        failed(packI64ControlField(anchor, builder, channelSize, 0xffff, mlir::pto::kValue48, result));
+    if (failedToPackControls) {
+        return failure();
     }
-    i64 = builder.create<arith::ShRUIOp>(anchor->getLoc(), i64, getI64Constant(builder, anchor->getLoc(), 8));
-    i64 = builder.create<arith::AndIOp>(anchor->getLoc(), i64, getI64Constant(builder, anchor->getLoc(), 1));
-    i64 = builder.create<arith::ShLIOp>(anchor->getLoc(), i64, getI64Constant(builder, anchor->getLoc(), shift));
-    result = builder.create<arith::OrIOp>(anchor->getLoc(), result, i64);
-    return success();
-  };
-  if (failed(addHighFilterBit(filterW, 44)) || failed(addHighFilterBit(filterH, 45))) {
-    return failure();
-  }
-  return result;
+
+    auto addHighFilterBit = [&anchor, &builder, &result](Value value, uint64_t shift) -> LogicalResult {
+        Value i64 = castIntegerLikeTo(anchor, value, builder.getI64Type());
+        if (!i64) {
+            return failure();
+        }
+        i64 = builder.create<arith::ShRUIOp>(anchor->getLoc(), i64, getI64Constant(builder, anchor->getLoc(), 8));
+        i64 = builder.create<arith::AndIOp>(anchor->getLoc(), i64, getI64Constant(builder, anchor->getLoc(), 1));
+        i64 = builder.create<arith::ShLIOp>(anchor->getLoc(), i64, getI64Constant(builder, anchor->getLoc(), shift));
+        result = builder.create<arith::OrIOp>(anchor->getLoc(), result, i64);
+        return success();
+    };
+    const bool failedToAddHighBits = failed(addHighFilterBit(filterW, mlir::pto::kValue44)) ||
+                                         failed(addHighFilterBit(filterH, mlir::pto::kValue45));
+    if (failedToAddHighBits) {
+        return failure();
+    }
+    return result;
 }
 
 class LowerLoadL1L0a3dOpPattern final : public OpConversionPattern<pto::LoadL1L0a3dOp> {

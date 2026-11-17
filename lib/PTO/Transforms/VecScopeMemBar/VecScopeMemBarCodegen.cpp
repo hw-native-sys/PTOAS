@@ -15,6 +15,7 @@
 //
 //===----------------------------------------------------------------------===//
 
+#include "PTO/Support/CodeConstants.h"
 #include "PTO/Transforms/VecScopeMemBar/VecScopeMemBarCodegen.h"
 
 #include "mlir/IR/Builders.h"
@@ -61,11 +62,14 @@ LogicalResult vecscopemembar::applyVecScopeMemBarPlan(
         if (!anchorIsValid(result, bp.anchor)) {
             return failure();
         }
-        if (static_cast<unsigned>(bp.kind) % 4 == 0) {
+        if (static_cast<unsigned>(bp.kind) % mlir::pto::kValue4 == 0) {
             if (auto existing = dyn_cast_or_null<pto::MemBarOp>(bp.anchor->getPrevNode())) {
                 MemBarKind existingKind = existing.getKind().getKind();
-                if (static_cast<unsigned>(existingKind) / 4 == static_cast<unsigned>(bp.kind) / 4 &&
-                    existingKind != bp.kind) {
+                const bool isConflictingBarrier =
+                    static_cast<unsigned>(existingKind) / mlir::pto::kValue4 ==
+                        static_cast<unsigned>(bp.kind) / mlir::pto::kValue4 &&
+                    existingKind != bp.kind;
+                if (isConflictingBarrier) {
                     existing.erase();
                 }
             }

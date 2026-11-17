@@ -1,9 +1,9 @@
 // Copyright (c) 2026 Huawei Technologies Co., Ltd.
 // This program is free software, you can redistribute it and/or modify it under the terms and conditions of
 // CANN Open Software License Agreement Version 2.0 (the "License").
-// Please refer to the License for details. Do not use this file except in compliance with the License.
-// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, EITHER EXPRESS OR IMPLIED,
-// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY OR FITNESS FOR A PARTICULAR PURPOSE.
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
 // See LICENSE in the root of the software repository for the full text of the License.
 
 // Included by PTO.cpp as part of the PTO IR implementation translation unit.
@@ -31,9 +31,8 @@ static LogicalResult verifyConvTileCommon(Operation *op, Type ty, StringRef name
   }
 
   auto shape = getShapeVec(ty);
-  if (shape.empty() || shape.size() > 6) {
-    return op->emitOpError() << "expects " << name
-                             << " to have a rank in [1, 6]";
+  if (shape.empty() || shape.size() > mlir::pto::kValue6) {
+      return op->emitOpError() << "expects " << name << " to have a rank in [1, 6]";
   }
   for (unsigned i = 0; i < shape.size(); ++i) {
     if (shape[i] <= 0) {
@@ -222,8 +221,7 @@ static LogicalResult verifyTImg2colPosKWindow(TImg2colOp op) {
                                cfg->getFilterW().getInt();
     // The dst left tile k-window spanned by this call.
     auto dstValid = dstTB.getValidShape();
-    if (dstValid.size() == 2 && dstValid[1] >= 0 &&
-        *posK + dstValid[1] > kTotal) {
+    if (dstValid.size() == mlir::pto::kValue2 && dstValid[1] >= 0 && *posK + dstValid[1] > kTotal) {
         return op.emitOpError()
                << "posK " << *posK << " + dst k-width " << dstValid[1]
                << " exceeds the fmap K extent " << kTotal

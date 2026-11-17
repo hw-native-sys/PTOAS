@@ -33,6 +33,7 @@
 // `K` is the buffer-id capacity: 0 on A3, which disables routing entirely, and 32
 // on A5.
 //===----------------------------------------------------------------------===//
+#include "PTO/Support/CodeConstants.h"
 #include "../BufidSync/BufidSyncAnalysis.h"
 #include "../BufidSync/BufidSyncCodegen.h"
 #include "../BufidSync/BufidSyncIdAlloc.h"
@@ -171,690 +172,722 @@ static bool skipUnifiedSync(func::FuncOp func) {
 /// function, while the pass itself remains safely copyable by MLIR.
 class UnifiedSyncExecutor {
 public:
-  UnifiedSyncExecutor(func::FuncOp func, unsigned capacity, llvm::StringRef forced, bool reuse, bool debug)
-      : func(func), bufidCapacity(capacity), forceMechanism(forced.str()), checkAddrReuse(reuse), debugEnabled(debug),
-        bufAnalysis(syncIR, memAnalyzer, func, false), clusters(bufAnalysis.getVirtualBufIds()) {}
-  LogicalResult run() {
-    // Macro ops are supported. A macro op is one for which `getSyncMacroModel`
-    // returns a model; every model declares `hiddenEvents`, the fixed
-    // (direction, id) pairs the library's own `PtoSetWaitFlag<SRC, DST>()` calls
-    // use. Those uses are invisible in PTO IR -- no op names them -- so without a
-    // reservation the colourer would hand one to a compiler hazard whose interval
-    // spans the call, and nothing in the emitted IR would show it.
-    //
-    // A reservation reduces effective pool capacity, so a kernel that fit in eight
-    // ids can be pushed into the spill path, and at K=0 no buffer-ID routing can
-    // absorb that. The spill path is load-bearing for macro kernels.
+    UnifiedSyncExecutor(func::FuncOp func, unsigned capacity, llvm::StringRef forced, bool reuse, bool debug)
+        : func(func),
+          bufidCapacity(capacity),
+          forceMechanism(forced.str()),
+          checkAddrReuse(reuse),
+          debugEnabled(debug),
+          bufAnalysis(syncIR, memAnalyzer, func, false),
+          clusters(bufAnalysis.getVirtualBufIds())
+    {}
+    LogicalResult run()
+    {
+        // Macro ops are supported. A macro op is one for which `getSyncMacroModel`
+        // returns a model; every model declares `hiddenEvents`, the fixed
+        // (direction, id) pairs the library's own `PtoSetWaitFlag<SRC, DST>()` calls
+        // use. Those uses are invisible in PTO IR -- no op names them -- so without a
+        // reservation the colourer would hand one to a compiler hazard whose interval
+        // spans the call, and nothing in the emitted IR would show it.
+        //
+        // A reservation reduces effective pool capacity, so a kernel that fit in eight
+        // ids can be pushed into the spill path, and at K=0 no buffer-ID routing can
+        // absorb that. The spill path is load-bearing for macro kernels.
 
-    if (failed(analyzeHazards())) {
-      return failure();
-    }
-    if (syncIR.size() <= 1) {
-      return success();
-    }
-    buildModel();
-    if (failed(settleOperations())) {
-      return failure();
-    }
-    allocateResources();
-    checkAllocation();
-    reportAllocation();
-    if (!idViolations.empty() || !interference.empty()) {
-      func.emitError() << "unified allocator failed an oracle gate: " << idViolations.size() << " illegal id(s), "
-                       << interference.size() << " interfering id(s)";
-      return failure();
-    }
+        if (failed(analyzeHazards())) {
+            return failure();
+        }
+        if (syncIR.size() <= 1) {
+            return success();
+        }
+        buildModel();
+        if (failed(settleOperations())) {
+            return failure();
+        }
+        allocateResources();
+        checkAllocation();
+        reportAllocation();
+        if (!idViolations.empty() || !interference.empty()) {
+            func.emitError() << "unified allocator failed an oracle gate: " << idViolations.size() << " illegal id(s), "
+                             << interference.size() << " interfering id(s)";
+            return failure();
+        }
 
-    // --- Emission -----------------------------------------------------------
-    // Driven exactly as the incumbent drives it (PTOInsertSync.cpp): construct
-    // over the same `syncIR` and Run(). Codegen walks syncIR's pipeBefore/
-    // pipeAfter lists -- which is why the step above had to place the synthesised
-    // head/tail pairs there, or they would be dropped silently here.
-    //
-    // Runs AFTER the in-pass gates: an allocation the oracle rejects is not
-    // emitted.
-    SyncCodegen codegen(syncIR, func, SyncAnalysisMode::NORMALSYNC);
-    codegen.Run();
-    // Fail the pass on an unrealised hazard. Only the unified path signals failure:
-    // insert-sync provably cannot reach the guard, so its shipping behaviour is
-    // untouched (the diagnostic itself is emitted from SyncCodegen either way).
-    if (codegen.sawUnrealisedHazard()) {
-      emissionFailed = true;
-    }
+        // --- Emission -----------------------------------------------------------
+        // Driven exactly as the incumbent drives it (PTOInsertSync.cpp): construct
+        // over the same `syncIR` and Run(). Codegen walks syncIR's pipeBefore/
+        // pipeAfter lists -- which is why the step above had to place the synthesised
+        // head/tail pairs there, or they would be dropped silently here.
+        //
+        // Runs AFTER the in-pass gates: an allocation the oracle rejects is not
+        // emitted.
+        SyncCodegen codegen(syncIR, func, SyncAnalysisMode::NORMALSYNC);
+        codegen.Run();
+        // Fail the pass on an unrealised hazard. Only the unified path signals failure:
+        // insert-sync provably cannot reach the guard, so its shipping behaviour is
+        // untouched (the diagnostic itself is emitted from SyncCodegen either way).
+        if (codegen.sawUnrealisedHazard()) {
+            emissionFailed = true;
+        }
 
-    if (failed(emitBufferTokens())) {
-      return failure();
+        if (failed(emitBufferTokens())) {
+            return failure();
+        }
+        return emissionFailed ? failure() : success();
     }
-    return emissionFailed ? failure() : success();
-  }
 
 private:
-  func::FuncOp func;
-  unsigned bufidCapacity;
-  std::string forceMechanism;
-  bool checkAddrReuse, debugEnabled;
-  MemoryDependentAnalyzer memAnalyzer;
-  SyncIRs syncIR;
-  SyncOperations syncOpsStorage;
-  Buffer2MemInfoMap buffer2MemInfoMap;
-  // Translator is local to analyzeHazards(); keep its op-specific ranges here.
-  OpAccessMemInfos opAccessMemInfos;
-  BufidSyncAnalysis bufAnalysis;
-  const SmallVector<VirtualBufId> &clusters;
-  unified::SyncModel model;
-  unified::BufferRouteResult route;
-  unified::EventColorResult alloc;
-  llvm::SmallDenseSet<int, 8> routedLogicIds;
-  llvm::SmallVector<oracle::SyncOpRecord> syncOpRecords;
-  llvm::SmallVector<oracle::IdViolation> idViolations;
-  llvm::SmallVector<oracle::InterferenceViolation> interference;
-  unsigned feCount = 0, invCount = 0, nHazards = 0, synthPairs = 0, compCount = 0;
-  unsigned routedHazards = 0, hiddenReserved = 0, nShareReuse = 0, nShareAlias = 0;
-  bool emissionFailed = false;
-  llvm::DenseMap<int, llvm::SmallVector<const BaseMemInfo *>> clusterMemInfos;
-  unsigned keptGet = 0, keptRls = 0, bracketedHazards = 0, unbracketedHazards = 0, suppressed = 0, leaked = 0;
-  LogicalResult analyzeHazards() {
-    // --- Reused front-end: build the hazard set H (no id assignment) --------
-
-    PTOIRTranslator translator(syncIR, memAnalyzer, buffer2MemInfoMap, opAccessMemInfos, func, SyncAnalysisMode::NORMALSYNC);
-    translator.Build();
-    if (syncIR.size() <= 1) {
-      return success();
-    }
-
-    // --- Reused buffer clustering -------------------------------------------
-    // One virtual buffer id per clique of aliasing tiles (buffer-keyed, not
-    // per-hazard). Computed on the freshly-translated SyncIR -- exactly the IR
-    // BufidSyncPass sees -- before any event-sync ops are inserted. Analysis
-    // only: no physical ids assigned, no get_buf/rls_buf emitted.
-    bufAnalysis.collectDependencies();
-    bufAnalysis.classifyTiles();
-    bufAnalysis.allocateVirtualBufIds();
-
-    InsertSyncAnalysis analyzer(syncIR, memAnalyzer, syncOpsStorage, func, SyncAnalysisMode::NORMALSYNC);
-    analyzer.Run(/*insertBarAllAtLast=*/true);
-
-    MoveSyncState syncMove(syncIR, syncOpsStorage);
-    syncMove.Run();
-    if (!hasGatherScatterLikeOps(func)) {
-      RemoveRedundantSync removeRedundant(syncIR, syncOpsStorage, SyncAnalysisMode::NORMALSYNC);
-      removeRedundant.Run();
-    }
-
-    // Every SyncOperation carries a `mechanism` -- the resource class backing it --
-    // derived from its type at construction. Only the test-only injector below
-    // overrides that default on a kernel the router would otherwise leave alone.
-    if (!forceMechanism.empty() && !forceMechanismOnFirstHazard(syncOpsStorage, forceMechanism)) {
-      func.emitError() << "unknown --unified-sync-force-mechanism value '" << forceMechanism
-                       << "'; expected bufid or bufid-spill";
-      return failure();
-    }
-
-    return success();
-  }
-
-  void buildModel() {
-    // --- The unified data model ---------------------------------------------
-    // One Hazard per sync group: a mechanism must be stamped on the set and the wait
-    // together or the pair is split across two resources and hangs.
-    //
-    // Cluster identity is `MemAlias`, the relation BufidSyncAnalysis itself uses.
-    // Pointer identity alone is exact but incomplete, because the tile dedup drops
-    // the losing BaseMemInfo objects and some hazards then retain no matching
-    // pointer -- hence pointer fast path, MemAlias fallback. See
-    // `MemInfoToClusters` for the keys this must not be simplified back to.
-    unified::MemInfoToClusters memInfoToClusters;
+    func::FuncOp func;
+    unsigned bufidCapacity;
+    std::string forceMechanism;
+    bool checkAddrReuse, debugEnabled;
+    MemoryDependentAnalyzer memAnalyzer;
+    SyncIRs syncIR;
+    SyncOperations syncOpsStorage;
+    Buffer2MemInfoMap buffer2MemInfoMap;
+    // Translator is local to analyzeHazards(); keep its op-specific ranges here.
+    OpAccessMemInfos opAccessMemInfos;
+    BufidSyncAnalysis bufAnalysis;
+    const SmallVector<VirtualBufId>& clusters;
+    unified::SyncModel model;
+    unified::BufferRouteResult route;
+    unified::EventColorResult alloc;
+    llvm::SmallDenseSet<int, mlir::pto::kValue8> routedLogicIds;
+    llvm::SmallVector<oracle::SyncOpRecord> syncOpRecords;
+    llvm::SmallVector<oracle::IdViolation> idViolations;
+    llvm::SmallVector<oracle::InterferenceViolation> interference;
+    unsigned feCount = 0, invCount = 0, nHazards = 0, synthPairs = 0, compCount = 0;
+    unsigned routedHazards = 0, hiddenReserved = 0, nShareReuse = 0, nShareAlias = 0;
+    bool emissionFailed = false;
+    llvm::DenseMap<int, llvm::SmallVector<const BaseMemInfo*>> clusterMemInfos;
+    unsigned keptGet = 0, keptRls = 0, bracketedHazards = 0, unbracketedHazards = 0, suppressed = 0, leaked = 0;
+    LogicalResult analyzeHazards()
     {
-      auto hazardMemInfos = collectHazardMemInfos();
-      for (const BaseMemInfo *mi : hazardMemInfos) {
-        auto &out = memInfoToClusters[mi];
-        for (const VirtualBufId &vb : clusters) {
-          bool hit = clusterAliases(vb, mi);
-          if (hit && !llvm::is_contained(out, vb.logicId)) {
-            out.push_back(vb.logicId);
-          }
+        // --- Reused front-end: build the hazard set H (no id assignment) --------
+
+        PTOIRTranslator translator(
+            syncIR, memAnalyzer, buffer2MemInfoMap, opAccessMemInfos, func, SyncAnalysisMode::NORMALSYNC);
+        translator.Build();
+        if (syncIR.size() <= 1) {
+            return success();
         }
-      }
-    }
 
-    model = unified::buildSyncModel(syncOpsStorage, bufidCapacity, memInfoToClusters, syncIR);
-    if (checkAddrReuse) {
-      reportAddressReuseHazards(func, model);
-    }
-  }
+        // --- Reused buffer clustering -------------------------------------------
+        // One virtual buffer id per clique of aliasing tiles (buffer-keyed, not
+        // per-hazard). Computed on the freshly-translated SyncIR -- exactly the IR
+        // BufidSyncPass sees -- before any event-sync ops are inserted. Analysis
+        // only: no physical ids assigned, no get_buf/rls_buf emitted.
+        bufAnalysis.collectDependencies();
+        bufAnalysis.classifyTiles();
+        bufAnalysis.allocateVirtualBufIds();
 
-  LogicalResult settleOperations() {
-    // --- Settle the operations before any id is assigned --------------------
-    // Synthesise the head/tail compensation pair for every loop-carried hazard
-    // BEFORE coloring; without it the in-body backward pair waits on a flag nothing
-    // raised and deadlocks on iteration 1.
-    //
-    // `fe` counts hazards flagged loop-carried by GetForEndIndex, `inv` counts
-    // raw-index inversion (wait before set), `pairs` the head/tail groups appended.
-    // fe == pairs is the invariant: one head and one tail per loop-carried hazard.
+        InsertSyncAnalysis analyzer(syncIR, memAnalyzer, syncOpsStorage, func, SyncAnalysisMode::NORMALSYNC);
+        analyzer.Run(true);
 
-    for (const unified::Hazard &h : model.hazards) {
-      if (h.isBarrier()) {
-        continue;
-      }
-      if (h.setOp()->GetForEndIndex().has_value()) {
-        ++feCount;
-      }
-      if (h.waitOp() && h.waitOp()->GetSyncIRIndex() < h.setOp()->GetSyncIRIndex()) {
-        ++invCount;
-      }
-    }
-    // `hazards=` on the model report means "orderings the front end found".
-    // Capture it BEFORE compensation synthesis, which appends one group per
-    // loop-carried hazard -- reading it afterwards silently redefines the number.
-    nHazards = syncOpsStorage.size();
-
-    synthPairs = unified::synthesizeLoopCompensation(model, syncOpsStorage, syncIR);
-
-    for (const unified::Hazard &h : model.hazards) {
-      if (h.hasCompensation()) {
-        ++compCount;
-      }
-    }
-
-    // Decide which buffers take tokens before anything takes an event id, so the
-    // colourer sees the reduced demand.
-    route = unified::routeBuffers(model);
-
-    // REFUSED BEFORE ANY HAZARD IS TOUCHED. A split hazard names both a routed and an
-    // unrouted buffer, and routing is all-or-nothing, so there is no correct thing to do
-    // with it: stamping BUFID suppresses the event ops of the unrouted half without
-    // giving it a token, and declining leaves the routed half's buffer half-converted.
-    // The plan is rejected whole instead, while `model.hazards` is still untouched --
-    // `RouteToBufid` below is the first mutation, and it must not run on a plan this
-    // shape.
-    //
-    // Closing routing over each buffer-hazard component would let the plan proceed with
-    // a smaller routed set. That is a strictly better answer and a separate change; it is
-    // not needed for correctness, and refusing is what makes the invariant hold today.
-    if (route.splitHazards != 0) {
-      func.emitError() << "unified allocator: " << route.splitHazards
-                       << " hazard(s) span both a routed and an unrouted buffer, and routing is "
-                          "all-or-nothing, so no mechanism can carry them wholly -- refusing the "
-                          "routing plan rather than emitting a partially converted one";
-      return failure();
-    }
-
-    return success();
-  }
-
-  void allocateResources() {
-    // --- Buffer-ID emission ---------------------------------------------------
-    //
-    // Three things must land TOGETHER; any two without the third is the
-    // split-mechanism shape that hangs:
-    //   1. stamp BUFID on every hazard of a routed buffer, and suppress its event
-    //      ops -- codegen dispatches on TYPE, so stamping alone changes nothing;
-    //   2. the colourer skips them, so they take no event id;
-    //   3. get_buf/rls_buf are emitted for them.
-    // (1) and (2) are here; (3) is after the event codegen below.
-
-    for (const unified::Buffer &b : model.buffers) {
-      if (b.routedToBufid) {
-        routedLogicIds.insert(b.logicId);
-      }
-    }
-    if (!routedLogicIds.empty()) {
-      for (unified::Hazard &h : model.hazards) {
-        if (h.isBarrier() || h.bufferClusters.empty()) {
-          continue;
+        MoveSyncState syncMove(syncIR, syncOpsStorage);
+        syncMove.Run();
+        if (!hasGatherScatterLikeOps(func)) {
+            RemoveRedundantSync removeRedundant(syncIR, syncOpsStorage, SyncAnalysisMode::NORMALSYNC);
+            removeRedundant.Run();
         }
-        bool onRouted = llvm::any_of(h.bufferClusters, [this](int c) { return routedLogicIds.contains(c); });
-        if (!onRouted) {
-          continue;
+
+        // Every SyncOperation carries a `mechanism` -- the resource class backing it --
+        // derived from its type at construction. Only the test-only injector below
+        // overrides that default on a kernel the router would otherwise leave alone.
+        if (!forceMechanism.empty() && !forceMechanismOnFirstHazard(syncOpsStorage, forceMechanism)) {
+            func.emitError() << "unknown --unified-sync-force-mechanism value '" << forceMechanism
+                             << "'; expected bufid or bufid-spill";
+            return failure();
         }
-        h.RouteToBufid();
-        ++routedHazards;
-      }
+
+        return success();
     }
 
-    // Pre-colour the ids a macro's library implementation consumes internally,
-    // before the greedy scan can hand one out.
-    hiddenReserved = unified::seedHiddenMacroEvents(model, syncIR);
-    alloc = unified::colorEventIds(model);
-  }
+    void buildModel()
+    {
+        // --- The unified data model ---------------------------------------------
+        // One Hazard per sync group: a mechanism must be stamped on the set and the wait
+        // together or the pair is split across two resources and hangs.
+        //
+        // Cluster identity is `MemAlias`, the relation BufidSyncAnalysis itself uses.
+        // Pointer identity alone is exact but incomplete, because the tile dedup drops
+        // the losing BaseMemInfo objects and some hazards then retain no matching
+        // pointer -- hence pointer fast path, MemAlias fallback. See
+        // `MemInfoToClusters` for the keys this must not be simplified back to.
+        unified::MemInfoToClusters memInfoToClusters;
+        {
+            auto hazardMemInfos = collectHazardMemInfos();
+            for (const BaseMemInfo* mi : hazardMemInfos) {
+                auto& out = memInfoToClusters[mi];
+                for (const VirtualBufId& vb : clusters) {
+                    bool hit = clusterAliases(vb, mi);
+                    if (hit && !llvm::is_contained(out, vb.logicId)) {
+                        out.push_back(vb.logicId);
+                    }
+                }
+            }
+        }
 
-  void checkAllocation() {
-    syncOpRecords = oracle::extractFromSyncOps(syncOpsStorage);
-
-    oracle::DeviceIdLimits limits;
-    limits.bufIdCapacity = bufidCapacity;
-    idViolations = oracle::checkDeviceIdLegality(syncOpRecords, limits);
-    // A macro's library implementation consumes event ids that no PTO op names, so
-    // an id handed to a hazard spanning the call collides invisibly. `colorEventIds`
-    // already refuses a reserved id; this re-checks the result independently, because
-    // no other gate can see a use inside a library call. Folded into the same list as
-    // G3 because it is the same question -- is this id legal here -- answered against
-    // a different source.
-    for (const auto &v : oracle::checkMacroHiddenEventCollisions(syncIR, syncOpRecords)) {
-      idViolations.push_back(v);
+        model = unified::buildSyncModel(syncOpsStorage, bufidCapacity, memInfoToClusters, syncIR);
+        if (checkAddrReuse) {
+            reportAddressReuseHazards(func, model);
+        }
     }
-    interference = oracle::checkNonInterference(syncOpRecords);
 
-    // Gate violations are reported whether or not debug is on: they precede a
-    // signalPassFailure, so suppressing them would leave a failing pass with no reason.
-    // Nothing is printed when they are empty.
-    if (!idViolations.empty() || oracle::countErrors(interference) > 0) {
-      oracle::emitReport([&](llvm::raw_ostream &os) {
+    LogicalResult settleOperations()
+    {
+        // --- Settle the operations before any id is assigned --------------------
+        // Synthesise the head/tail compensation pair for every loop-carried hazard
+        // BEFORE coloring; without it the in-body backward pair waits on a flag nothing
+        // raised and deadlocks on iteration 1.
+        //
+        // `fe` counts hazards flagged loop-carried by GetForEndIndex, `inv` counts
+        // raw-index inversion (wait before set), `pairs` the head/tail groups appended.
+        // fe == pairs is the invariant: one head and one tail per loop-carried hazard.
+
+        for (const unified::Hazard& h : model.hazards) {
+            if (h.isBarrier()) {
+                continue;
+            }
+            if (h.setOp()->GetForEndIndex().has_value()) {
+                ++feCount;
+            }
+            if (h.waitOp() && h.waitOp()->GetSyncIRIndex() < h.setOp()->GetSyncIRIndex()) {
+                ++invCount;
+            }
+        }
+        // `hazards=` on the model report means "orderings the front end found".
+        // Capture it BEFORE compensation synthesis, which appends one group per
+        // loop-carried hazard -- reading it afterwards silently redefines the number.
+        nHazards = syncOpsStorage.size();
+
+        synthPairs = unified::synthesizeLoopCompensation(model, syncOpsStorage, syncIR);
+
+        for (const unified::Hazard& h : model.hazards) {
+            if (h.hasCompensation()) {
+                ++compCount;
+            }
+        }
+
+        // Decide which buffers take tokens before anything takes an event id, so the
+        // colourer sees the reduced demand.
+        route = unified::routeBuffers(model);
+        // REFUSED BEFORE ANY HAZARD IS TOUCHED. A split hazard names both a routed and an
+        // unrouted buffer, and routing is all-or-nothing, so there is no correct thing to do
+        // with it: stamping BUFID suppresses the event ops of the unrouted half without
+        // giving it a token, and declining leaves the routed half's buffer half-converted.
+        // The plan is rejected whole instead, while `model.hazards` is still untouched --
+        // `RouteToBufid` below is the first mutation, and it must not run on a plan this
+        // shape.
+        //
+        // Closing routing over each buffer-hazard component would let the plan proceed with
+        // a smaller routed set. That is a strictly better answer and a separate change; it is
+        // not needed for correctness, and refusing is what makes the invariant hold today.
+        if (route.splitHazards != 0) {
+            func.emitError() << "unified allocator: " << route.splitHazards
+                             << " hazard(s) span both a routed and an unrouted buffer, and routing is "
+                                "all-or-nothing, so no mechanism can carry them wholly -- refusing the "
+                                "routing plan rather than emitting a partially converted one";
+            return failure();
+        }
+
+        return success();
+    }
+
+    void allocateResources()
+    {
+        // --- Buffer-ID emission ---------------------------------------------------
+        //
+        // Three things must land TOGETHER; any two without the third is the
+        // split-mechanism shape that hangs:
+        //   1. stamp BUFID on every hazard of a routed buffer, and suppress its event
+        //      ops -- codegen dispatches on TYPE, so stamping alone changes nothing;
+        //   2. the colourer skips them, so they take no event id;
+        //   3. get_buf/rls_buf are emitted for them.
+        // (1) and (2) are here; (3) is after the event codegen below.
+
+        for (const unified::Buffer& b : model.buffers) {
+            if (b.routedToBufid) {
+                routedLogicIds.insert(b.logicId);
+            }
+        }
+        if (!routedLogicIds.empty()) {
+            for (unified::Hazard& h : model.hazards) {
+                if (h.isBarrier() || h.bufferClusters.empty()) {
+                    continue;
+                }
+                bool onRouted = llvm::any_of(h.bufferClusters, [this](int c) { return routedLogicIds.contains(c); });
+                if (!onRouted) {
+                    continue;
+                }
+                h.RouteToBufid();
+                ++routedHazards;
+            }
+        }
+
+        // Pre-colour the ids a macro's library implementation consumes internally,
+        // before the greedy scan can hand one out.
+        hiddenReserved = unified::seedHiddenMacroEvents(model, syncIR);
+        alloc = unified::colorEventIds(model);
+    }
+
+    void checkAllocation()
+    {
+        syncOpRecords = oracle::extractFromSyncOps(syncOpsStorage);
+
+        oracle::DeviceIdLimits limits;
+        limits.bufIdCapacity = bufidCapacity;
+        idViolations = oracle::checkDeviceIdLegality(syncOpRecords, limits);
+        // A macro's library implementation consumes event ids that no PTO op names, so
+        // an id handed to a hazard spanning the call collides invisibly. `colorEventIds`
+        // already refuses a reserved id; this re-checks the result independently, because
+        // no other gate can see a use inside a library call. Folded into the same list as
+        // G3 because it is the same question -- is this id legal here -- answered against
+        // a different source.
+        for (const auto& v : oracle::checkMacroHiddenEventCollisions(syncIR, syncOpRecords)) {
+            idViolations.push_back(v);
+        }
+        interference = oracle::checkNonInterference(syncOpRecords);
+        // Gate violations are reported whether or not debug is on: they precede a
+        // signalPassFailure, so suppressing them would leave a failing pass with no reason.
+        // Nothing is printed when they are empty.
+        if (!idViolations.empty() || oracle::countErrors(interference) > 0) {
+            oracle::emitReport([&](llvm::raw_ostream& os) {
+                oracle::printIdViolations(os, func.getSymName(), "syncops", syncOpRecords.size(), idViolations);
+                oracle::printInterferenceViolations(
+                    os, func.getSymName(), "syncops", syncOpRecords.size(), interference);
+            });
+        }
+    }
+
+    void reportAllocation()
+    {
+        for (const unified::Hazard& h : model.hazards) {
+            if (h.addressSharing == unified::Hazard::AddressSharing::Reuse) {
+                ++nShareReuse;
+            } else if (h.addressSharing == unified::Hazard::AddressSharing::AliasView) {
+                ++nShareAlias;
+            }
+        }
+
+        // One atomic report: nested func passes run in parallel (see emitReport).
+        if (debugEnabled) {
+            oracle::emitReport([&](llvm::raw_ostream& os) {
+                reportModelAndAllocation(os);
+                reportPlacement(os);
+                os << "[unified-sync codegen] codegen WIRED: emitting set_flag/wait_flag/"
+                      "barrier from the colored model\n";
+            });
+        }
+    }
+
+    LogicalResult emitBufferTokens()
+    {
+        if (routedHazards == 0) {
+            return success();
+        }
+
+        // --- Token sites come from the ALLOCATOR'S HAZARDS, not from
+        // --- BufidSyncAnalysis's own dependence set ------------------------------
+        //
+        // `BufidSyncAnalysis::collectDependencies` enumerates FORWARD pairs only
+        // (`for j = i + 1`), so a loop-carried hazard -- whose producer sits after its
+        // consumer in program order and whose ordering crosses the back edge -- can
+        // never appear in `depPairs_`. Feeding the emitter from that set while routing
+        // from this one suppressed such a hazard's event ops and emitted no token for
+        // it, losing the ordering with nothing to report it.
+        //
+        // A token DOES carry a loop-carried ordering, and needs no priming pair to do
+        // it: the counter starts free, so iteration N+1's `get_buf` blocks on
+        // iteration N's `rls_buf`. Only the emission was missing.
+        //
+        // So the sites are derived here, from each routed hazard, and BOTH endpoints
+        // are bracketed -- four anchors where the producer and consumer are distinct
+        // ops. Where several ops on the right pipe alias the cluster, ALL of them are
+        // bracketed rather than one being chosen: over-bracketing spends a token,
+        // under-bracketing loses an ordering, and those are not symmetric.
+        auto& op2BufSync = bufAnalysis.getOp2BufSync();
+        op2BufSync.clear();
+
+        // Cluster -> its tiles' memInfos, for aliasing tests below.
+        for (const VirtualBufId& vb : clusters) {
+            if (routedLogicIds.contains(vb.logicId)) {
+                for (const TileInfo& t : vb.tiles) {
+                    if (t.memInfo) {
+                        clusterMemInfos[vb.logicId].push_back(t.memInfo);
+                    }
+                }
+            }
+        }
+
+        // Bracket one op for one (pipe, cluster), de-duplicated: the emitter would
+        // otherwise emit the same get/rls twice for an op touching the cluster twice.
+
+        bracketRoutedHazards();
+
+        // Checked BEFORE the emptiness guard below, deliberately. If bracketing found no
+        // site for ANY routed cluster then `op2BufSync` is empty, the whole block below is
+        // skipped -- and `Hazard::RouteToBufid` has already suppressed those hazards' event
+        // ops. That is the total-failure form of exactly what this counts, so testing it
+        // inside the block would miss the worst case.
+        if (unbracketedHazards != 0) {
+            func.emitError() << "unified allocator: " << unbracketedHazards
+                             << " routed hazard(s) got no token bracket while their event ops "
+                                "were suppressed, so those orderings are carried by neither "
+                                "mechanism";
+            return failure();
+        }
+
+        if (!op2BufSync.empty() && failed(allocateAndEmitBuffers())) {
+            return failure();
+        }
+        return success();
+    }
+
+    llvm::SmallVector<const BaseMemInfo*> collectHazardMemInfos() const
+    {
+        llvm::SmallVector<const BaseMemInfo*> hazardMemInfos;
+        llvm::DenseSet<const BaseMemInfo*> seen;
+        for (const auto& group : syncOpsStorage) {
+            for (const auto& owned : group) {
+                if (!owned) {
+                    continue;
+                }
+                for (const BaseMemInfo* mi : owned->depMemInfos) {
+                    if (mi && seen.insert(mi).second) {
+                        hazardMemInfos.push_back(mi);
+                    }
+                }
+            }
+        }
+
+        return hazardMemInfos;
+    }
+
+    bool clusterAliases(const VirtualBufId& vb, const BaseMemInfo* mi)
+    {
+        for (const TileInfo& t : vb.tiles) {
+            if (!t.memInfo) {
+                continue;
+            }
+            if (t.memInfo == mi || memAnalyzer.MemAlias(mi, t.memInfo)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    std::pair<int, int> tailPlacement(const unified::Hazard& h) const
+    {
+        auto* tail = h.tailOp();
+        const auto& after = syncIR[tail->GetSyncIRIndex()]->pipeAfter;
+        int tPos = -1;
+        int firstSet = -1;
+        for (size_t i = 0; i < after.size(); ++i) {
+            if (after[i] == tail && tPos < 0) {
+                tPos = static_cast<int>(i);
+            }
+            if (firstSet < 0 && after[i] != tail && after[i]->GetType() == SyncOperation::TYPE::SET_EVENT) {
+                firstSet = static_cast<int>(i);
+            }
+        }
+        return {tPos, firstSet};
+    }
+
+    void reportPlacement(llvm::raw_ostream& os)
+    {
+        // --- Placement of the synthesised compensation pairs ------------------
+        // SyncCodegen walks syncIR's pipe lists, so the pair must BE in them or it
+        // is dropped silently at emission. The load-bearing part is whether the tail
+        // PRECEDES any existing loop-end SET there; a tail after a set is the
+        // broken-sequence case, reported ORDER_BAD.
+        unsigned placedHead = 0;
+        unsigned placedTail = 0;
+        unsigned orderOk = 0;
+        unsigned orderBad = 0;
+        os << "[unified-sync placement] placement into syncIR pipe lists:\n";
+        for (const unified::Hazard& h : model.hazards) {
+            if (!h.hasCompensation()) {
+                continue;
+            }
+            const SyncOperation* head = h.headOp();
+            const SyncOperation* tail = h.tailOp();
+            unsigned b = head->GetSyncIRIndex();
+            unsigned e = tail->GetSyncIRIndex();
+            const auto& before = syncIR[b]->pipeBefore;
+            const auto& after = syncIR[e]->pipeAfter;
+            auto headIt = llvm::find(before, head);
+            int hPos = headIt == before.end() ? -1 : static_cast<int>(headIt - before.begin());
+            auto [tPos, firstSet] = tailPlacement(h);
+            if (hPos >= 0) {
+                ++placedHead;
+            }
+            if (tPos >= 0) {
+                ++placedTail;
+            }
+            bool ok = (tPos >= 0) && (firstSet < 0 || tPos < firstSet);
+            ok ? ++orderOk : ++orderBad;
+            os << "  pair h#" << h.index() << " id=" << (h.hasEventId() ? h.setOp()->eventIds.front() : -1)
+               << "  head@syncIR[" << b << "].pipeBefore[" << hPos << "/" << before.size() << "]  tail@syncIR[" << e
+               << "].pipeAfter[" << tPos << "/" << after.size() << "]  firstLoopEndSet=" << firstSet
+               << (ok ? "  ORDER_OK" : "  ORDER_BAD(tail after set)") << "\n";
+        }
+        os << "[unified-sync placement] placed: heads=" << placedHead << " tails=" << placedTail
+           << " of pairs=" << synthPairs << " order_ok=" << orderOk << " order_bad=" << orderBad
+           << ((placedHead == synthPairs && placedTail == synthPairs && orderBad == 0) ? " OK" : " MISMATCH") << "\n";
+    }
+
+    void reportModelAndAllocation(llvm::raw_ostream& os)
+    {
+        os << "[unified-sync model] kernel=" << func.getSymName() << " K=" << bufidCapacity << " hazards=" << nHazards
+           << " share_reuse=" << nShareReuse << " share_alias=" << nShareAlias << "\n";
+        oracle::printSyncOpRecords(os, func.getSymName(), syncOpRecords);
         oracle::printIdViolations(os, func.getSymName(), "syncops", syncOpRecords.size(), idViolations);
         oracle::printInterferenceViolations(os, func.getSymName(), "syncops", syncOpRecords.size(), interference);
-      });
-    }
-  }
-
-  void reportAllocation() {
-    for (const unified::Hazard &h : model.hazards) {
-      if (h.addressSharing == unified::Hazard::AddressSharing::Reuse) {
-        ++nShareReuse;
-      } else if (h.addressSharing == unified::Hazard::AddressSharing::AliasView) {
-        ++nShareAlias;
-      }
-    }
-
-    // One atomic report: nested func passes run in parallel (see emitReport).
-    if (debugEnabled) {
-      oracle::emitReport([&](llvm::raw_ostream &os) {
-        reportModelAndAllocation(os);
-        reportPlacement(os);
-        os << "[unified-sync codegen] codegen WIRED: emitting set_flag/wait_flag/"
-              "barrier from the colored model\n";
-      });
-    }
-  }
-
-  LogicalResult emitBufferTokens() {
-    if (routedHazards == 0) {
-      return success();
-    }
-
-    // --- Token sites come from the ALLOCATOR'S HAZARDS, not from
-    // --- BufidSyncAnalysis's own dependence set ------------------------------
-    //
-    // `BufidSyncAnalysis::collectDependencies` enumerates FORWARD pairs only
-    // (`for j = i + 1`), so a loop-carried hazard -- whose producer sits after its
-    // consumer in program order and whose ordering crosses the back edge -- can
-    // never appear in `depPairs_`. Feeding the emitter from that set while routing
-    // from this one suppressed such a hazard's event ops and emitted no token for
-    // it, losing the ordering with nothing to report it.
-    //
-    // A token DOES carry a loop-carried ordering, and needs no priming pair to do
-    // it: the counter starts free, so iteration N+1's `get_buf` blocks on
-    // iteration N's `rls_buf`. Only the emission was missing.
-    //
-    // So the sites are derived here, from each routed hazard, and BOTH endpoints
-    // are bracketed -- four anchors where the producer and consumer are distinct
-    // ops. Where several ops on the right pipe alias the cluster, ALL of them are
-    // bracketed rather than one being chosen: over-bracketing spends a token,
-    // under-bracketing loses an ordering, and those are not symmetric.
-    auto &op2BufSync = bufAnalysis.getOp2BufSync();
-    op2BufSync.clear();
-
-    // Cluster -> its tiles' memInfos, for aliasing tests below.
-    for (const VirtualBufId &vb : clusters) {
-      if (routedLogicIds.contains(vb.logicId)) {
-        for (const TileInfo &t : vb.tiles) {
-          if (t.memInfo) {
-            clusterMemInfos[vb.logicId].push_back(t.memInfo);
-          }
+        os << "[unified-sync reachable] buffer clusters (virtual buf ids) = " << clusters.size() << "\n";
+        unsigned shownC = 0;
+        for (const VirtualBufId& vb : clusters) {
+            os << "  cluster#" << vb.logicId << " scope=" << stringifyAddressSpace(vb.scope)
+               << " aliasing_tiles=" << vb.tiles.size() << "\n";
+            if (++shownC >= mlir::pto::kValue6) {
+                break;
+            }
         }
-      }
-    }
-
-    // Bracket one op for one (pipe, cluster), de-duplicated: the emitter would
-    // otherwise emit the same get/rls twice for an op touching the cluster twice.
-
-    bracketRoutedHazards();
-
-    // Checked BEFORE the emptiness guard below, deliberately. If bracketing found no
-    // site for ANY routed cluster then `op2BufSync` is empty, the whole block below is
-    // skipped -- and `Hazard::RouteToBufid` has already suppressed those hazards' event
-    // ops. That is the total-failure form of exactly what this counts, so testing it
-    // inside the block would miss the worst case.
-    if (unbracketedHazards != 0) {
-      func.emitError() << "unified allocator: " << unbracketedHazards
-                       << " routed hazard(s) got no token bracket while their event ops "
-                          "were suppressed, so those orderings are carried by neither "
-                          "mechanism";
-      return failure();
-    }
-
-    if (!op2BufSync.empty() && failed(allocateAndEmitBuffers())) {
-      return failure();
-    }
-    return success();
-  }
-
-  llvm::SmallVector<const BaseMemInfo *> collectHazardMemInfos() const {
-    llvm::SmallVector<const BaseMemInfo *> hazardMemInfos;
-    llvm::DenseSet<const BaseMemInfo *> seen;
-    for (const auto &group : syncOpsStorage) {
-      for (const auto &owned : group) {
-        if (!owned) {
-          continue;
+        os << "[unified-sync reachable] bufid emission ops reachable: " << pto::GetBufOp::getOperationName() << ", "
+           << pto::RlsBufOp::getOperationName() << "\n";
+        unified::printSyncModel(os, func.getSymName(), model);
+        os << "[unified-sync routing] func=" << func.getSymName()
+           << " buffer routing: considered=" << route.buffersConsidered << " routed=" << route.routed
+           << " hazards_covered=" << route.hazardsCovered << " skipped(no_overflow=" << route.skippedNoOverflow
+           << " not_written_back=" << route.skippedNotWrittenBack << " K=0:" << route.skippedNoCapacity << ")"
+           << " not_expressible=" << route.skippedNotExpressible << " split=" << route.splitHazards
+           << (route.splitHazards == 0 ? " OK" : " !! SPLIT-MECHANISM") << "\n";
+        for (const unified::Buffer& b : model.buffers) {
+            if (b.routedToBufid) {
+                os << "    ROUTE " << func.getSymName() << " b#" << b.logicId << " -> bufid"
+                   << " omega=" << b.predictedPeakOverlap << ">pool=" << b.smallestPool << " wb=yes lbufid=["
+                   << b.bufidLoop.start << "," << b.bufidLoop.end << "]\n";
+            }
         }
-        for (const BaseMemInfo *mi : owned->depMemInfos) {
-          if (mi && seen.insert(mi).second) {
-            hazardMemInfos.push_back(mi);
-          }
+        // A divergence between `fe` and `inv` means compensation was synthesised for
+        // a FORWARD hazard, as `prefetch_disjoint_slots` shows.
+        //
+        // WARNING, not error, and the incumbent is the reason: it primes forward
+        // hazards too, so a divergence is not by itself wrong, and erroring would
+        // refuse multi-tile kernels that `--enable-insert-sync` compiles.
+        if (feCount != invCount) {
+            os << "[unified-sync compensation] !! predicate-divergence func=" << func.getSymName() << " fe=" << feCount
+               << " inv=" << invCount << " : compensation synthesised for " << (feCount - invCount)
+               << " hazard(s) whose in-body set precedes its wait (forward, not "
+                  "index-inverted). Not an error -- the incumbent primes these too -- but "
+                  "the two predicates are not interchangeable.\n";
         }
-      }
+        os << "[unified-sync compensation] loop-compensation: fe=" << feCount << " inv=" << invCount
+           << " pairs=" << synthPairs << " heads=" << synthPairs << " tails=" << synthPairs << " linked=" << compCount
+           << (feCount == synthPairs && synthPairs == compCount ? " OK" : " MISMATCH") << "\n";
+        os << "[unified-sync coloring] interval coloring: assigned=" << alloc.assigned << " overflow=" << alloc.overflow
+           << " spilled_to_barrier=" << alloc.spilledToBarrier << " hidden_reserved=" << hiddenReserved
+           << " reused=" << alloc.reused << " skipped_routed=" << alloc.skippedRouted << " rotating=" << alloc.rotating
+           << " ids_assigned=" << alloc.idsAssigned
+           << " (per-direction first-fit; ids reused across disjoint intervals)\n";
     }
 
-    return hazardMemInfos;
-  }
-
-  bool clusterAliases(const VirtualBufId &vb, const BaseMemInfo *mi) {
-    for (const TileInfo &t : vb.tiles) {
-      if (!t.memInfo) {
-        continue;
-      }
-      if (t.memInfo == mi || memAnalyzer.MemAlias(mi, t.memInfo)) {
-        return true;
-      }
-    }
-    return false;
-  }
-
-  std::pair<int, int> tailPlacement(const unified::Hazard &h) const {
-    auto *tail = h.tailOp();
-    const auto &after = syncIR[tail->GetSyncIRIndex()]->pipeAfter;
-    int tPos = -1, firstSet = -1;
-    for (size_t i = 0; i < after.size(); ++i) {
-      if (after[i] == tail && tPos < 0) {
-        tPos = static_cast<int>(i);
-      }
-      if (firstSet < 0 && after[i] != tail && after[i]->GetType() == SyncOperation::TYPE::SET_EVENT) {
-        firstSet = static_cast<int>(i);
-      }
-    }
-    return {tPos, firstSet};
-  }
-
-  void reportPlacement(llvm::raw_ostream &os) {
-    // --- Placement of the synthesised compensation pairs ------------------
-    // SyncCodegen walks syncIR's pipe lists, so the pair must BE in them or it
-    // is dropped silently at emission. The load-bearing part is whether the tail
-    // PRECEDES any existing loop-end SET there; a tail after a set is the
-    // broken-sequence case, reported ORDER_BAD.
-    unsigned placedHead = 0, placedTail = 0, orderOk = 0, orderBad = 0;
-    os << "[unified-sync placement] placement into syncIR pipe lists:\n";
-    for (const unified::Hazard &h : model.hazards) {
-      if (!h.hasCompensation()) {
-        continue;
-      }
-      const SyncOperation *head = h.headOp();
-      const SyncOperation *tail = h.tailOp();
-      unsigned b = head->GetSyncIRIndex();
-      unsigned e = tail->GetSyncIRIndex();
-      const auto &before = syncIR[b]->pipeBefore;
-      const auto &after = syncIR[e]->pipeAfter;
-      auto headIt = llvm::find(before, head);
-      int hPos = headIt == before.end() ? -1 : static_cast<int>(headIt - before.begin());
-      auto [tPos, firstSet] = tailPlacement(h);
-      if (hPos >= 0) {
-        ++placedHead;
-      }
-      if (tPos >= 0) {
-        ++placedTail;
-      }
-      bool ok = (tPos >= 0) && (firstSet < 0 || tPos < firstSet);
-      ok ? ++orderOk : ++orderBad;
-      os << "  pair h#" << h.index() << " id=" << (h.hasEventId() ? h.setOp()->eventIds.front() : -1)
-         << "  head@syncIR[" << b << "].pipeBefore[" << hPos << "/" << before.size() << "]  tail@syncIR[" << e
-         << "].pipeAfter[" << tPos << "/" << after.size() << "]  firstLoopEndSet=" << firstSet
-         << (ok ? "  ORDER_OK" : "  ORDER_BAD(tail after set)") << "\n";
-    }
-    os << "[unified-sync placement] placed: heads=" << placedHead << " tails=" << placedTail
-       << " of pairs=" << synthPairs << " order_ok=" << orderOk << " order_bad=" << orderBad
-       << ((placedHead == synthPairs && placedTail == synthPairs && orderBad == 0) ? " OK" : " MISMATCH") << "\n";
-  }
-
-  void reportModelAndAllocation(llvm::raw_ostream &os) {
-    os << "[unified-sync model] kernel=" << func.getSymName() << " K=" << bufidCapacity << " hazards=" << nHazards
-       << " share_reuse=" << nShareReuse << " share_alias=" << nShareAlias << "\n";
-    oracle::printSyncOpRecords(os, func.getSymName(), syncOpRecords);
-    oracle::printIdViolations(os, func.getSymName(), "syncops", syncOpRecords.size(), idViolations);
-    oracle::printInterferenceViolations(os, func.getSymName(), "syncops", syncOpRecords.size(), interference);
-    os << "[unified-sync reachable] buffer clusters (virtual buf ids) = " << clusters.size() << "\n";
-    unsigned shownC = 0;
-    for (const VirtualBufId &vb : clusters) {
-      os << "  cluster#" << vb.logicId << " scope=" << stringifyAddressSpace(vb.scope)
-         << " aliasing_tiles=" << vb.tiles.size() << "\n";
-      if (++shownC >= 6) {
-        break;
-      }
-    }
-    os << "[unified-sync reachable] bufid emission ops reachable: " << pto::GetBufOp::getOperationName() << ", "
-       << pto::RlsBufOp::getOperationName() << "\n";
-    unified::printSyncModel(os, func.getSymName(), model);
-    os << "[unified-sync routing] func=" << func.getSymName()
-       << " buffer routing: considered=" << route.buffersConsidered << " routed=" << route.routed
-       << " hazards_covered=" << route.hazardsCovered << " skipped(no_overflow=" << route.skippedNoOverflow
-       << " not_written_back=" << route.skippedNotWrittenBack << " K=0:" << route.skippedNoCapacity << ")"
-       << " not_expressible=" << route.skippedNotExpressible << " split=" << route.splitHazards
-       << (route.splitHazards == 0 ? " OK" : " !! SPLIT-MECHANISM") << "\n";
-    for (const unified::Buffer &b : model.buffers) {
-      if (b.routedToBufid) {
-        os << "    ROUTE " << func.getSymName() << " b#" << b.logicId << " -> bufid"
-           << " omega=" << b.predictedPeakOverlap << ">pool=" << b.smallestPool << " wb=yes lbufid=["
-           << b.bufidLoop.start << "," << b.bufidLoop.end << "]\n";
-      }
-    }
-    // A divergence between `fe` and `inv` means compensation was synthesised for
-    // a FORWARD hazard, as `prefetch_disjoint_slots` shows.
-    //
-    // WARNING, not error, and the incumbent is the reason: it primes forward
-    // hazards too, so a divergence is not by itself wrong, and erroring would
-    // refuse multi-tile kernels that `--enable-insert-sync` compiles.
-    if (feCount != invCount) {
-      os << "[unified-sync compensation] !! predicate-divergence func=" << func.getSymName() << " fe=" << feCount
-         << " inv=" << invCount << " : compensation synthesised for " << (feCount - invCount)
-         << " hazard(s) whose in-body set precedes its wait (forward, not "
-            "index-inverted). Not an error -- the incumbent primes these too -- but "
-            "the two predicates are not interchangeable.\n";
-    }
-    os << "[unified-sync compensation] loop-compensation: fe=" << feCount << " inv=" << invCount
-       << " pairs=" << synthPairs << " heads=" << synthPairs << " tails=" << synthPairs << " linked=" << compCount
-       << (feCount == synthPairs && synthPairs == compCount ? " OK" : " MISMATCH") << "\n";
-    os << "[unified-sync coloring] interval coloring: assigned=" << alloc.assigned << " overflow=" << alloc.overflow
-       << " spilled_to_barrier=" << alloc.spilledToBarrier << " hidden_reserved=" << hiddenReserved
-       << " reused=" << alloc.reused << " skipped_routed=" << alloc.skippedRouted << " rotating=" << alloc.rotating
-       << " ids_assigned=" << alloc.idsAssigned << " (per-direction first-fit; ids reused across disjoint intervals)\n";
-  }
-
-  bool aliasesCluster(const CompoundInstanceElement *cp, int logicId) {
-    auto it = clusterMemInfos.find(logicId);
-    if (it == clusterMemInfos.end()) {
-      return false;
-    }
-    for (const auto *vec : {&cp->defVec, &cp->useVec}) {
-      for (const BaseMemInfo *mi : *vec) {
-        if (!mi) {
-          continue;
+    bool aliasesCluster(const CompoundInstanceElement* cp, int logicId)
+    {
+        auto it = clusterMemInfos.find(logicId);
+        if (it == clusterMemInfos.end()) {
+            return false;
         }
-        for (const BaseMemInfo *tm : it->second) {
-          if (mi == tm || memAnalyzer.MemAlias(mi, tm)) {
-            return true;
-          }
+        for (const auto* vec : {&cp->defVec, &cp->useVec}) {
+            for (const BaseMemInfo* mi : *vec) {
+                if (!mi) {
+                    continue;
+                }
+                for (const BaseMemInfo* tm : it->second) {
+                    if (mi == tm || memAnalyzer.MemAlias(mi, tm)) {
+                        return true;
+                    }
+                }
+            }
         }
-      }
+        return false;
     }
-    return false;
-  }
 
-  void bracket(Operation *op, PipelineType pipe, int logicId, unsigned irIdx) {
-    if (!op) {
-      return;
-    }
-    auto &build = bufAnalysis.getOp2BufSync()[op];
-    auto present = [&logicId, &pipe](const llvm::SmallVector<BufSyncOperation> &v, BufSyncType ty) {
-      for (const BufSyncOperation &s : v) {
-        if (s.type == ty && s.logicId == logicId && s.pipe == pipe) {
-          return true;
-        }
-      }
-      return false;
-    };
-    if (!present(build.pipeBefore, BufSyncType::GET_BUF)) {
-      build.pipeBefore.push_back({BufSyncType::GET_BUF, pipe, logicId, irIdx, irIdx});
-      ++keptGet;
-    }
-    if (!present(build.pipeAfter, BufSyncType::RLS_BUF)) {
-      build.pipeAfter.push_back({BufSyncType::RLS_BUF, pipe, logicId, irIdx, irIdx});
-      ++keptRls;
-    }
-  }
-
-  void bracketRoutedHazards() {
-    for (const unified::Hazard &h : model.hazards) {
-      if (h.mechanism() != SyncOperation::MECHANISM::BUFID || h.isBarrier()) {
-        continue;
-      }
-      bool anySite = false;
-      for (int c : h.bufferClusters) {
-        if (!routedLogicIds.contains(c)) {
-          continue;
-        }
-        // Both ends: producer sites on srcPipe, consumer sites on dstPipe.
-        for (const auto &element : syncIR) {
-          auto *cp = dyn_cast_or_null<CompoundInstanceElement>(element.get());
-          if (!cp || !cp->elementOp || !aliasesCluster(cp, c)) {
-            continue;
-          }
-          if (cp->kPipeValue == h.srcPipe() || cp->kPipeValue == h.dstPipe()) {
-            bracket(cp->elementOp, cp->kPipeValue, c, cp->GetIndex());
-            anySite = true;
-          }
-        }
-      }
-      anySite ? ++bracketedHazards : ++unbracketedHazards;
-    }
-  }
-
-  LogicalResult checkSuppressedEvents() {
-    // ALL-OR-NOTHING. Every event op belonging to a routed hazard must have been
-    // suppressed, or codegen emitted a set/wait for a buffer whose ordering is
-    // carried by the token -- the counter cycle missing a step, i.e. a hang. Counted
-    // here and failed below, rather than only printed under the debug flag.
-    // Keyed on the ROUTED set, not on mechanism alone: `forceMechanismOnFirstHazard`
-    // stamps BUFID via SetMechanism without calling RouteToBufid, so those ops keep
-    // their event ops live by design and their cluster never enters `routedLogicIds`.
-    // Counting them here would fail a forced run with a message blaming routing.
-    for (const unified::Hazard &h : model.hazards) {
-      if (h.mechanism() != SyncOperation::MECHANISM::BUFID) {
-        continue;
-      }
-      if (!llvm::any_of(h.bufferClusters, [&](int c) { return routedLogicIds.contains(c); })) {
-        continue;
-      }
-      for (SyncOperation *op : {h.setOp(), h.waitOp(), h.headOp(), h.tailOp()}) {
+    void bracket(Operation* op, PipelineType pipe, int logicId, unsigned irIdx)
+    {
         if (!op) {
-          continue;
+            return;
         }
-        op->uselessSync ? ++suppressed : ++leaked;
-      }
+        auto& build = bufAnalysis.getOp2BufSync()[op];
+        auto present = [&logicId, &pipe](const llvm::SmallVector<BufSyncOperation>& v, BufSyncType ty) {
+            for (const BufSyncOperation& s : v) {
+                if (s.type == ty && s.logicId == logicId && s.pipe == pipe) {
+                    return true;
+                }
+            }
+            return false;
+        };
+        if (!present(build.pipeBefore, BufSyncType::GET_BUF)) {
+            build.pipeBefore.push_back({BufSyncType::GET_BUF, pipe, logicId, irIdx, irIdx});
+            ++keptGet;
+        }
+        if (!present(build.pipeAfter, BufSyncType::RLS_BUF)) {
+            build.pipeAfter.push_back({BufSyncType::RLS_BUF, pipe, logicId, irIdx, irIdx});
+            ++keptRls;
+        }
     }
 
-    // Failed, not merely reported. A leaked event op means a routed hazard kept a
-    // set/wait alongside its token: the counter cycle missing a step, i.e. a hang.
-    // Previously computed and printed under the debug flag only, so a regression
-    // produced a warning string in a report nobody reads and a successful compile.
-    if (leaked != 0) {
-      func.emitError() << "unified allocator: " << leaked
-                       << " event op(s) of a routed hazard were not suppressed, so "
-                          "that ordering is carried by both mechanisms at once";
-      return failure();
+    void bracketRoutedHazards()
+    {
+        for (const unified::Hazard& h : model.hazards) {
+            if (h.mechanism() != SyncOperation::MECHANISM::BUFID || h.isBarrier()) {
+                continue;
+            }
+            bool anySite = false;
+            for (int c : h.bufferClusters) {
+                if (!routedLogicIds.contains(c)) {
+                    continue;
+                }
+                // Both ends: producer sites on srcPipe, consumer sites on dstPipe.
+                for (const auto& element : syncIR) {
+                    auto* cp = dyn_cast_or_null<CompoundInstanceElement>(element.get());
+                    if (!cp || !cp->elementOp || !aliasesCluster(cp, c)) {
+                        continue;
+                    }
+                    if (cp->kPipeValue == h.srcPipe() || cp->kPipeValue == h.dstPipe()) {
+                        bracket(cp->elementOp, cp->kPipeValue, c, cp->GetIndex());
+                        anySite = true;
+                    }
+                }
+            }
+            anySite ? ++bracketedHazards : ++unbracketedHazards;
+        }
     }
 
-    return success();
-  }
+    LogicalResult checkSuppressedEvents()
+    {
+        // ALL-OR-NOTHING. Every event op belonging to a routed hazard must have been
+        // suppressed, or codegen emitted a set/wait for a buffer whose ordering is
+        // carried by the token -- the counter cycle missing a step, i.e. a hang. Counted
+        // here and failed below, rather than only printed under the debug flag.
+        // Keyed on the ROUTED set, not on mechanism alone: `forceMechanismOnFirstHazard`
+        // stamps BUFID via SetMechanism without calling RouteToBufid, so those ops keep
+        // their event ops live by design and their cluster never enters `routedLogicIds`.
+        // Counting them here would fail a forced run with a message blaming routing.
+        for (const unified::Hazard& h : model.hazards) {
+            if (h.mechanism() != SyncOperation::MECHANISM::BUFID) {
+                continue;
+            }
+            if (!llvm::any_of(h.bufferClusters, [&](int c) { return routedLogicIds.contains(c); })) {
+                continue;
+            }
+            for (SyncOperation* op : {h.setOp(), h.waitOp(), h.headOp(), h.tailOp()}) {
+                if (!op) {
+                    continue;
+                }
+                op->uselessSync ? ++suppressed : ++leaked;
+            }
+        }
 
-  void reportBufferEmission(const BufidSyncIdAlloc &idAlloc, bool nestOk, bool emitOk) {
-    const auto &op2BufSync = bufAnalysis.getOp2BufSync();
-    if (debugEnabled) {
-      oracle::emitReport([&](llvm::raw_ostream &os) {
-        os << "[unified-sync bufid] func=" << func.getSymName()
-           << " bufid emission: routed_buffers=" << routedLogicIds.size() << " routed_hazards=" << routedHazards
-           << " anchor_ops=" << op2BufSync.size() << " get=" << keptGet << " rls=" << keptRls << " physical_ids="
-           << idAlloc.getLogicToPhysical().size()
-           // These read OK whenever the report prints, because a violation
-           // returned above. Written as tests anyway so the line keeps saying
-           // what it measures rather than asserting it.
-           << " nesting=" << (nestOk ? "OK" : "VIOLATION") << " emit=" << (emitOk ? "OK" : "FAILED")
-           << " bracketed_hazards=" << bracketedHazards << " unbracketed_hazards=" << unbracketedHazards
-           << (unbracketedHazards == 0 ? "" : " !! UNBRACKETED") << " suppressed_event_ops=" << suppressed
-           << " leaked_event_ops=" << leaked << (leaked == 0 ? " ALL-OR-NOTHING-OK" : " !! SPLIT-MECHANISM") << "\n";
-      });
-    }
-  }
+        // Failed, not merely reported. A leaked event op means a routed hazard kept a
+        // set/wait alongside its token: the counter cycle missing a step, i.e. a hang.
+        // Previously computed and printed under the debug flag only, so a regression
+        // produced a warning string in a report nobody reads and a successful compile.
+        if (leaked != 0) {
+            func.emitError() << "unified allocator: " << leaked
+                             << " event op(s) of a routed hazard were not suppressed, so "
+                                "that ordering is carried by both mechanisms at once";
+            return failure();
+        }
 
-  LogicalResult allocateAndEmitBuffers() {
-    auto &op2BufSync = bufAnalysis.getOp2BufSync();
-    BufidSyncIdAlloc idAlloc(bufAnalysis.getVirtualBufIds(), op2BufSync, syncIR, bufidCapacity, false);
-
-    idAlloc.computeLifeIntervals();
-    idAlloc.linearScanAllocate();
-    idAlloc.compactPhysicalIds();
-    if (idAlloc.needsReuse()) {
-      idAlloc.reuseIds();
-      idAlloc.compactPhysicalIds();
-    }
-
-    // RE-CHECKED, because `reuseIds` is not guaranteed to converge: it leaves its
-    // `while (maxPhysicalIdUsed_ >= physicalBufIdCount_)` loop with the condition
-    // still true when no signature group holds two logic ids to merge.
-    // `BufidSyncCodegen` then casts the
-    // physical id to uint32_t with no range test, and an id past the pool aliases a
-    // different buffer's token -- corrupting an ordering that has nothing to do with
-    // this one. No oracle gate catches it either: the buf-id range check lives in the
-    // IRSyncRecord overload of `checkDeviceIdLegality`, which only PTOCheckSyncIds
-    // runs, while this pass calls the SyncOpRecord overload that has no buf-id branch.
-    if (idAlloc.needsReuse()) {
-      func.emitError() << "unified allocator: buffer-id demand exceeds the pool of " << bufidCapacity
-                       << " and id reuse did not resolve it, so a physical id would fall outside "
-                          "the pool and alias another buffer's token";
-      return failure();
+        return success();
     }
 
-    bufAnalysis.setLogicToPhysicalId(idAlloc.getLogicToPhysical());
-    bufAnalysis.mergeGetRls();
-
-    // VALIDATED AFTER THE MERGE, which is the order the production pass uses and the
-    // opposite of what this did before. `mergeGetRls` cancels an rls/get pair on one
-    // (logicId, pipe), turning two point-holds of a physical id into a single hold
-    // spanning both sites -- precisely the property being validated. Validating first
-    // inspects a structure that is not the one emitted. The validator reads
-    // `op2BufSync_` by reference, so after the merge it sees what codegen will see.
-    //
-    // A violation is a get_buf on an id already held, waiting for a release issued
-    // later in program order. That hangs, so it fails the pass rather than being
-    // reported.
-    std::string nestErr;
-    const bool nestOk = idAlloc.validateNoSamePhysicalIdNesting(&nestErr);
-    if (!nestOk) {
-      func.emitError() << "unified allocator: buffer-id token nesting is invalid: " << nestErr;
-      return failure();
+    void reportBufferEmission(const BufidSyncIdAlloc& idAlloc, bool nestOk, bool emitOk)
+    {
+        const auto& op2BufSync = bufAnalysis.getOp2BufSync();
+        if (debugEnabled) {
+            oracle::emitReport([&](llvm::raw_ostream& os) {
+                os << "[unified-sync bufid] func=" << func.getSymName()
+                   << " bufid emission: routed_buffers=" << routedLogicIds.size() << " routed_hazards=" << routedHazards
+                   << " anchor_ops=" << op2BufSync.size() << " get=" << keptGet << " rls=" << keptRls
+                   << " physical_ids="
+                   << idAlloc.getLogicToPhysical().size()
+                   // These read OK whenever the report prints, because a violation
+                   // returned above. Written as tests anyway so the line keeps saying
+                   // what it measures rather than asserting it.
+                   << " nesting=" << (nestOk ? "OK" : "VIOLATION") << " emit=" << (emitOk ? "OK" : "FAILED")
+                   << " bracketed_hazards=" << bracketedHazards << " unbracketed_hazards=" << unbracketedHazards
+                   << (unbracketedHazards == 0 ? "" : " !! UNBRACKETED") << " suppressed_event_ops=" << suppressed
+                   << " leaked_event_ops=" << leaked << (leaked == 0 ? " ALL-OR-NOTHING-OK" : " !! SPLIT-MECHANISM")
+                   << "\n";
+            });
+        }
     }
 
-    BufidSyncCodegen bufCodegen(func, op2BufSync, idAlloc);
-    const bool emitOk = succeeded(bufCodegen.run());
-    if (!emitOk) {
-      func.emitError() << "unified allocator: buffer-id emission failed, so the "
-                          "routed hazards have neither events nor tokens";
-      return failure();
-    }
+    LogicalResult allocateAndEmitBuffers()
+    {
+        auto& op2BufSync = bufAnalysis.getOp2BufSync();
+        BufidSyncIdAlloc idAlloc(bufAnalysis.getVirtualBufIds(), op2BufSync, syncIR, bufidCapacity, false);
 
-    if (failed(checkSuppressedEvents())) {
-      return failure();
+        idAlloc.computeLifeIntervals();
+        idAlloc.linearScanAllocate();
+        idAlloc.compactPhysicalIds();
+        if (idAlloc.needsReuse()) {
+            idAlloc.reuseIds();
+            idAlloc.compactPhysicalIds();
+        }
+
+        // RE-CHECKED, because `reuseIds` is not guaranteed to converge: it leaves its
+        // `while (maxPhysicalIdUsed_ >= physicalBufIdCount_)` loop with the condition
+        // still true when no signature group holds two logic ids to merge.
+        // `BufidSyncCodegen` then casts the
+        // physical id to uint32_t with no range test, and an id past the pool aliases a
+        // different buffer's token -- corrupting an ordering that has nothing to do with
+        // this one. No oracle gate catches it either: the buf-id range check lives in the
+        // IRSyncRecord overload of `checkDeviceIdLegality`, which only PTOCheckSyncIds
+        // runs, while this pass calls the SyncOpRecord overload that has no buf-id branch.
+        if (idAlloc.needsReuse()) {
+            func.emitError() << "unified allocator: buffer-id demand exceeds the pool of " << bufidCapacity
+                             << " and id reuse did not resolve it, so a physical id would fall outside "
+                                "the pool and alias another buffer's token";
+            return failure();
+        }
+
+        bufAnalysis.setLogicToPhysicalId(idAlloc.getLogicToPhysical());
+        bufAnalysis.mergeGetRls();
+
+        // VALIDATED AFTER THE MERGE, which is the order the production pass uses and the
+        // opposite of what this did before. `mergeGetRls` cancels an rls/get pair on one
+        // (logicId, pipe), turning two point-holds of a physical id into a single hold
+        // spanning both sites -- precisely the property being validated. Validating first
+        // inspects a structure that is not the one emitted. The validator reads
+        // `op2BufSync_` by reference, so after the merge it sees what codegen will see.
+        //
+        // A violation is a get_buf on an id already held, waiting for a release issued
+        // later in program order. That hangs, so it fails the pass rather than being
+        // reported.
+        std::string nestErr;
+        const bool nestOk = idAlloc.validateNoSamePhysicalIdNesting(&nestErr);
+        if (!nestOk) {
+            func.emitError() << "unified allocator: buffer-id token nesting is invalid: " << nestErr;
+            return failure();
+        }
+
+        BufidSyncCodegen bufCodegen(func, op2BufSync, idAlloc);
+        const bool emitOk = succeeded(bufCodegen.run());
+        if (!emitOk) {
+            func.emitError() << "unified allocator: buffer-id emission failed, so the "
+                                "routed hazards have neither events nor tokens";
+            return failure();
+        }
+
+        if (failed(checkSuppressedEvents())) {
+            return failure();
+        }
+        reportBufferEmission(idAlloc, nestOk, emitOk);
+        return success();
     }
-    reportBufferEmission(idAlloc, nestOk, emitOk);
-    return success();
-  }
 };
 
 struct PTOUnifiedSyncPass : public mlir::pto::impl::PTOUnifiedSyncBase<PTOUnifiedSyncPass> {

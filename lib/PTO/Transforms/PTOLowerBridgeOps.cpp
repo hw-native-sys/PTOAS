@@ -86,7 +86,7 @@ struct TMatmulBridgeAdapter {
         SmallVector<BridgeTileSpecAttr> specs;
         const Value tiles[] = {op.getDst(), op.getLhs(), op.getRhs()};
         const StringRef roles[] = {"dst", "lhs", "rhs"};
-        if (failed(collectCubeOperands(op, tiles, roles, addresses, specs))) {
+        if (failed(collectCubeOperands(op, ArrayRef<Value>(tiles), ArrayRef<StringRef>(roles), addresses, specs))) {
             return failure();
         }
         auto spec = BridgeCubeSpecAttr::getChecked(
@@ -119,7 +119,7 @@ struct TMatmulAccBridgeAdapter {
         const Value tiles[] = {op.getDst(), op.getAccIn(), op.getLhs(),
             op.getRhs()};
         const StringRef roles[] = {"dst", "acc_in", "lhs", "rhs"};
-        if (failed(collectCubeOperands(op, tiles, roles, addresses, specs))) {
+        if (failed(collectCubeOperands(op, ArrayRef<Value>(tiles), ArrayRef<StringRef>(roles), addresses, specs))) {
             return failure();
         }
         auto spec = BridgeCubeSpecAttr::getChecked(

@@ -20,9 +20,9 @@ using namespace mlir::pto;
 using namespace mlir::pto::integer_range;
 using mlir::presburger::IntegerPolyhedron;
 
-SmallVector<unsigned, 2> pto::getCommonLoopPrefix(ArrayRef<unsigned> lhs, ArrayRef<unsigned> rhs)
+SmallVector<unsigned, kValue2> pto::getCommonLoopPrefix(ArrayRef<unsigned> lhs, ArrayRef<unsigned> rhs)
 {
-    SmallVector<unsigned, 2> common;
+    SmallVector<unsigned, kValue2> common;
     for (auto [left, right] : llvm::zip(lhs, rhs)) {
         if (left != right) {
             break;
@@ -39,7 +39,7 @@ struct MemoryQueryLoop {
     Value inductionVar;
 };
 struct MemoryQueryAccess : PTOMemoryAccessOccurrence {
-    SmallVector<unsigned, 2> loopNest;
+    SmallVector<unsigned, kValue2> loopNest;
 };
 struct MemoryQueryContext {
     Operation* scope;
@@ -47,9 +47,9 @@ struct MemoryQueryContext {
     SmallVector<MemoryQueryAccess> accesses;
 };
 
-static SmallVector<Value, 2> collectIVs(Operation* op, Operation* scope)
+static SmallVector<Value, kValue2> collectIVs(Operation* op, Operation* scope)
 {
-    SmallVector<Value, 2> ivs;
+    SmallVector<Value, kValue2> ivs;
     for (Operation* parent = op->getParentOp(); parent && parent != scope; parent = parent->getParentOp()) {
         if (auto loop = dyn_cast<scf::ForOp>(parent)) {
             ivs.push_back(loop.getInductionVar());
@@ -220,7 +220,7 @@ static bool hasOnlyIVTerms(const PTOMemoryFootprint& footprint, ArrayRef<Value> 
 static bool addressArithmeticDoesNotWrap(
     Value value, ArrayRef<Value> ivs, ArrayRef<PTOLoopDomain> bounds, unsigned depth = 0)
 {
-    if (depth == 32) {
+    if (depth == kValue32) {
         return false;
     }
     if (value.getType().isIntOrIndex()) {
@@ -294,7 +294,7 @@ static bool addSymbolTermRange(__int128& lo, __int128& hi, Value symbol, __int12
 // their correlation; unmatched terms retain independent ranges.
 static bool addSymbolRanges(__int128& lo, __int128& hi, ArrayRef<std::pair<Value, __int128>> terms)
 {
-    SmallVector<bool, 8> consumed(terms.size(), false);
+    SmallVector<bool, kValue8> consumed(terms.size(), false);
     for (unsigned i = 0; i < terms.size(); ++i) {
         auto [symbol, coefficient] = terms[i];
         if (consumed[i] || coefficient == 0) {
@@ -338,7 +338,7 @@ static bool symbolicPartRange(const PTOAffineByteExpr& expr, ArrayRef<Value> ivs
     if (expr.lossy) {
         return false;
     }
-    SmallVector<std::pair<Value, __int128>, 4> terms;
+    SmallVector<std::pair<Value, __int128>, kValue4> terms;
     for (auto& [symbol, coefficient] : expr.coefficients) {
         if (!isModelledIV(symbol, ivs)) {
             terms.push_back({symbol, coefficient});
@@ -357,7 +357,7 @@ static bool symbolicDifferenceRange(
     if (lhs.lossy || rhs.lossy) {
         return false;
     }
-    SmallVector<Value, 4> symbols;
+    SmallVector<Value, kValue4> symbols;
     auto collectSymbols = [&](const PTOAffineByteExpr& expr) {
         for (auto& [symbol, coefficient] : expr.coefficients) {
             bool candidate = coefficient != 0 && !isModelledIV(symbol, ivs);
@@ -369,7 +369,7 @@ static bool symbolicDifferenceRange(
     };
     collectSymbols(lhs);
     collectSymbols(rhs);
-    SmallVector<std::pair<Value, __int128>, 4> terms;
+    SmallVector<std::pair<Value, __int128>, kValue4> terms;
     for (Value symbol : symbols) {
         __int128 difference = static_cast<__int128>(lhs.getCoeff(symbol)) - static_cast<__int128>(rhs.getCoeff(symbol));
         terms.push_back({symbol, difference});
@@ -380,9 +380,9 @@ static bool symbolicDifferenceRange(
 // Resolved loop-nest layout of a sequential-region access pair. Dual-set
 // dims are [p0.., c0..]; single-set dims are [v0..] with v shared.
 struct SequentialOverlapLayout {
-    SmallVector<Value, 2> pi;        // producer IVs (outermost first)
-    SmallVector<Value, 2> pj;        // consumer IVs (outermost first)
-    SmallVector<unsigned, 2> common; // shared loop-id prefix
+    SmallVector<Value, kValue2> pi;        // producer IVs (outermost first)
+    SmallVector<Value, kValue2> pj;        // consumer IVs (outermost first)
+    SmallVector<unsigned, kValue2> common; // shared loop-id prefix
     SmallVector<PTOLoopDomain> boundsP;
     SmallVector<PTOLoopDomain> boundsC;
     // single-nest iff one IV set is a prefix of the other (incl. equal/empty).
@@ -405,7 +405,7 @@ static bool gatherEnvelopeBounds(
             return false;
         }
         unsigned width = ConstantIntRanges::getStorageBitwidth(iv.getType());
-        if (width == 0 || width >= 128) {
+        if (width == 0 || width >= kValue128) {
             return false;
         }
         __int128 limit = static_cast<__int128>(1) << (width - 1);
@@ -532,8 +532,8 @@ struct SequentialAddressModel {
     int64_t constC = 0;
     int64_t sizeP = 0;
     int64_t sizeC = 0;
-    SmallVector<int64_t, 2> coeffP;
-    SmallVector<int64_t, 2> coeffC;
+    SmallVector<int64_t, kValue2> coeffP;
+    SmallVector<int64_t, kValue2> coeffC;
 };
 
 static void appendLoopCoefficients(
@@ -562,13 +562,13 @@ static bool modelSequentialAddresses(
 
 // Keep invariant integer symbols as integer coordinates instead of eliminating
 // them to a convex difference interval (which fills gaps between stage slots).
-using SymbolTerms = SmallVector<std::pair<Value, int64_t>, 4>;
+using SymbolTerms = SmallVector<std::pair<Value, int64_t>, kValue4>;
 
 static SymbolTerms boundedSymbolDifference(
     const PTOAffineByteExpr& lhs, const PTOAffineByteExpr& rhs, ArrayRef<Value> ivs)
 {
     SymbolTerms terms;
-    SmallVector<Value, 4> symbols;
+    SmallVector<Value, kValue4> symbols;
     for (const auto* expr : {&lhs, &rhs}) {
         for (auto [value, coefficient] : expr->coefficients) {
             bool collect = coefficient && !llvm::is_contained(ivs, value) && !llvm::is_contained(symbols, value);
@@ -758,7 +758,7 @@ static bool prepareBoundedSequentialModel(
         return false;
     }
 
-    SmallVector<Value, 4> modelledIVs;
+    SmallVector<Value, kValue4> modelledIVs;
     llvm::append_range(modelledIVs, layout.pi);
     llvm::append_range(modelledIVs, layout.pj);
     if (!symbolicDifferenceRange(P.byteOffset, C.byteOffset, modelledIVs, symDiffLo, symDiffHi)) {
@@ -781,7 +781,7 @@ static bool disproveBoundedSequentialPair(const MemoryQueryContext& result, unsi
     if (!poly) {
         return false;
     }
-    SmallVector<Value, 4> ivs(layout.pi.begin(), layout.pi.end());
+    SmallVector<Value, kValue4> ivs(layout.pi.begin(), layout.pi.end());
     llvm::append_range(ivs, layout.pj);
     auto symbols =
         boundedSymbolDifference(result.accesses[i].footprint.byteOffset, result.accesses[j].footprint.byteOffset, ivs);
@@ -905,7 +905,7 @@ static bool valueInvariantAcrossLoops(Value value, ArrayRef<scf::ForOp> carrying
     if (carryingLoops.empty()) {
         return true;
     }
-    if (depth == 16) {
+    if (depth == kValue16) {
         return false;
     }
     Operation* defOp = value.getDefiningOp();
@@ -953,9 +953,9 @@ static bool symbolInvariantAcrossLoops(Value symbol, ArrayRef<scf::ForOp> carryi
 }
 
 // Resolve the loop ops of a common-loop id prefix.
-static SmallVector<scf::ForOp, 2> resolveCommonLoops(const MemoryQueryContext& result, ArrayRef<unsigned> ids)
+static SmallVector<scf::ForOp, kValue2> resolveCommonLoops(const MemoryQueryContext& result, ArrayRef<unsigned> ids)
 {
-    SmallVector<scf::ForOp, 2> loops;
+    SmallVector<scf::ForOp, kValue2> loops;
     for (unsigned id : ids) {
         for (const auto& l : result.loops) {
             if (l.id == id) {
@@ -971,8 +971,8 @@ static bool modelCarriedSymbols(
     const MemoryQueryContext& result, const PTOMemoryFootprint& P, const PTOMemoryFootprint& C, ArrayRef<Value> pi,
     ArrayRef<Value> pj, ArrayRef<unsigned> commonLoops, CarriedPairModel& m)
 {
-    SmallVector<scf::ForOp, 2> carrying = resolveCommonLoops(result, commonLoops);
-    SmallVector<Value, 4> modelledIVs;
+    SmallVector<scf::ForOp, kValue2> carrying = resolveCommonLoops(result, commonLoops);
+    SmallVector<Value, kValue4> modelledIVs;
     llvm::append_range(modelledIVs, pi);
     llvm::append_range(modelledIVs, pj);
     bool symbolsValid = !P.byteOffset.lossy && !C.byteOffset.lossy;

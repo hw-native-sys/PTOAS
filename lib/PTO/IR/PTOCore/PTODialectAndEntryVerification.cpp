@@ -8,6 +8,7 @@
 
 // Included by PTO.cpp as part of the PTO IR implementation translation unit.
 
+#include "PTO/Support/CodeConstants.h"
 #include "llvm/ADT/APInt.h"
 
 AddressSpaceAttr mlir::pto::getPTOAddressSpaceAttr(Type type)
@@ -391,8 +392,8 @@ LogicalResult AllocTileOp::verify() {
 
   // type 上的 validShape
   auto vs = ty.getValidShape();
-  if (vs.size() != 2) {
-    return emitOpError("result tile_buf must have rank-2 validShape");
+  if (vs.size() != mlir::pto::kValue2) {
+      return emitOpError("result tile_buf must have rank-2 validShape");
   }
 
   // TileBuf valid dims use a negative sentinel (e.g. '?' / -1). Be robust to

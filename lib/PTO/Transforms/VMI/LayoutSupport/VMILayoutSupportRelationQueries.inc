@@ -76,7 +76,7 @@ FailureOr<VMIInterleaveStoreSupport> VMILayoutSupport::getInterleaveStoreSupport
         return failWithReason<FactT>(reason, "requires matching low/high input shape and element type");
     }
     unsigned elementBits = pto::getPTOStorageElemBitWidth(lowType.getElementType());
-    if (elementBits != 8 && elementBits != 16 && elementBits != 32) {
+    if (elementBits != mlir::pto::kValue8 && elementBits != mlir::pto::kValue16 && elementBits != mlir::pto::kValue32) {
         return failWithReason<FactT>(reason, "requires 8/16/32-bit element type for vstsx2 INTLV");
     }
     FailureOr<int64_t> lanes = getDataLanesPerPart(lowType.getElementType());
@@ -129,9 +129,12 @@ static LogicalResult checkVmullRelation(VMIVmullOp vmull, VMILayoutAttr layout, 
 
     auto sourceType = cast<VMIVRegType>(vmull.getA().getType());
     auto maskType = cast<VMIMaskType>(vmull.getMask().getType());
-    if ((!layout.isContiguous() &&
-         !(layout.isDeinterleaved() && (layout.getFactor() == 2 || layout.getFactor() == 4))) ||
-        layout.getLaneStride() != 1) {
+    const bool hasUnsupportedLayout =
+        (!layout.isContiguous() &&
+         !(layout.isDeinterleaved() &&
+           (layout.getFactor() == mlir::pto::kValue2 || layout.getFactor() == mlir::pto::kValue4))) ||
+        layout.getLaneStride() != 1;
+    if (hasUnsupportedLayout) {
         return failWithReason<LogicalResult>(
             reason, "vmull relation requires contiguous or deinterleaved "
                     "factor-2/factor-4 layout with lane_stride=1");

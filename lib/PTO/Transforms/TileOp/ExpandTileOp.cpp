@@ -956,17 +956,17 @@ static std::optional<OperandTypeInfo> buildOperandTypeInfo(Value value) {
   return buildScalarOperandTypeInfo(value, ty);
 }
 
-static SmallVector<Value, 4> getTileLibOperands(Operation *op) {
-  return pto::detail::getArgReductionTemplateOperands(op);
+static SmallVector<Value, mlir::pto::kValue4> getTileLibOperands(Operation* op)
+{
+    return pto::detail::getArgReductionTemplateOperands(op);
 }
-
 
 static FailureOr<SpecKey> buildSpecKey(Operation *op) {
   SpecKey key;
   key.opName = getTileOpName(op).str();
   key.targetArch = getTargetArchString(op);
 
-  SmallVector<Value, 4> operands = getTileLibOperands(op);
+  SmallVector<Value, mlir::pto::kValue4> operands = getTileLibOperands(op);
   for (Value operand : operands) {
     auto info = buildOperandTypeInfo(operand);
     if (!info) {
@@ -1457,7 +1457,7 @@ LogicalResult ExpandState::expandTileOpsInFunction(func::FuncOp func,
     // partition_tensor_view), insert an unrealized_conversion_cast bridge.
     // FoldTileBufIntrinsics will later resolve these casts.
     builder.setInsertionPoint(op);
-    SmallVector<Value, 4> operands = getTileLibOperands(op);
+    SmallVector<Value, mlir::pto::kValue4> operands = getTileLibOperands(op);
     auto fnArgTypes = dslFn.getArgumentTypes();
     for (unsigned i = 0; i < operands.size(); ++i) {
       Value operand = operands[i];

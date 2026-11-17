@@ -411,33 +411,33 @@ static std::pair<Value, Value> getLocalTileValidOperands(Value tile,
   return valid;
 }
 
-std::array<std::optional<int64_t>, 2>
-mlir::pto::getKnownTileValidShapeAt(Value tile, Operation *at) {
-  std::array<std::optional<int64_t>, 2> result{};
-  auto type = dyn_cast<TileBufType>(tile.getType());
-  if (!type) {
-    return result;
-  }
-  auto valid = type.getValidShape();
-  if (valid.size() != 2) {
-    return result;
-  }
-  for (size_t i = 0; i < result.size(); ++i) {
-    if (!ShapedType::isDynamic(valid[i])) {
-      result[i] = valid[i];
+std::array<std::optional<int64_t>, kValue2> mlir::pto::getKnownTileValidShapeAt(Value tile, Operation* at)
+{
+    std::array<std::optional<int64_t>, kValue2> result{};
+    auto type = dyn_cast<TileBufType>(tile.getType());
+    if (!type) {
+        return result;
     }
-  }
-  if (result[0] && result[1]) {
+    auto valid = type.getValidShape();
+    if (valid.size() != kValue2) {
+        return result;
+    }
+    for (size_t i = 0; i < result.size(); ++i) {
+        if (!ShapedType::isDynamic(valid[i])) {
+            result[i] = valid[i];
+        }
+    }
+    if (result[0] && result[1]) {
+        return result;
+    }
+    auto [row, col] = getLocalTileValidOperands(tile, at);
+    if (!result[0] && row) {
+        result[0] = getConstantIntValue(row);
+    }
+    if (!result[1] && col) {
+        result[1] = getConstantIntValue(col);
+    }
     return result;
-  }
-  auto [row, col] = getLocalTileValidOperands(tile, at);
-  if (!result[0] && row) {
-    result[0] = getConstantIntValue(row);
-  }
-  if (!result[1] && col) {
-    result[1] = getConstantIntValue(col);
-  }
-  return result;
 }
 
 std::optional<int64_t>

@@ -234,10 +234,10 @@ mergeCompactedPartsIntoContiguous(Operation *op,
                                   TypeRange resultTypes,
                                   PatternRewriter &rewriter) {
   Type partType = parts[0].getType();
-  if (parts.size() != 2 || partType != parts[1].getType() ||
-      partType != resultTypes[0] || partType != resultTypes[1]) {
-    return rewriter.notifyMatchFailure(
-        op, "vintlv requires operands and results to share one type");
+  const bool hasMismatchedTypes = parts.size() != mlir::pto::kValue2 || partType != parts[1].getType() ||
+                                  partType != resultTypes[0] || partType != resultTypes[1];
+  if (hasMismatchedTypes) {
+      return rewriter.notifyMatchFailure(op, "vintlv requires operands and results to share one type");
   }
   auto merged = rewriter.create<VintlvOp>(op->getLoc(), partType, partType,
                                           parts[0], parts[1]);
@@ -290,18 +290,15 @@ static FailureOr<std::optional<SmallVector<Value>>> materializeDeint4ToDeint2(
     Value classes[4] = {sourceParts[4 * group], sourceParts[4 * group + 1],
                         sourceParts[4 * group + 2],
                         sourceParts[4 * group + 3]};
-    for (int64_t parity = 0; parity < 2; ++parity) {
-      Value lhs = classes[parity];
-      Value rhs = classes[parity + 2];
-      Type lhsType = lhs.getType();
-      if (lhsType != rhs.getType() ||
-          lhsType != resultTypes[2 * group + parity]) {
-        return rewriter.notifyMatchFailure(
-            op, "vintlv requires operands and results to share one type");
-      }
-      auto interleave =
-          rewriter.create<VintlvOp>(op->getLoc(), lhsType, lhsType, lhs, rhs);
-      results.push_back(interleave.getLow());
+    for (int64_t parity = 0; parity < mlir::pto::kValue2; ++parity) {
+        Value lhs = classes[parity];
+        Value rhs = classes[parity + 2];
+        Type lhsType = lhs.getType();
+        if (lhsType != rhs.getType() || lhsType != resultTypes[2 * group + parity]) {
+            return rewriter.notifyMatchFailure(op, "vintlv requires operands and results to share one type");
+        }
+        auto interleave = rewriter.create<VintlvOp>(op->getLoc(), lhsType, lhsType, lhs, rhs);
+        results.push_back(interleave.getLow());
     }
   }
   if (resultIsContiguous) {
@@ -792,7 +789,7 @@ static DataLayoutMaterializationResult materializeDeinterleaved4DataLayout(
   // A short dense value needs four phase carriers, but only its original
   // carriers contain data. Pad the dense register list before splitting;
   // the padding must never be supplied by additional memory reads.
-  if (contiguousToDeint4 && sourceParts.size() == 2 && resultTypes.size() == kVMIDataLayoutFactor4) {
+  if (contiguousToDeint4 && sourceParts.size() == mlir::pto::kValue2 && resultTypes.size() == kVMIDataLayoutFactor4) {
       auto chunkType = dyn_cast<VRegType>(sourceParts.front().getType());
       if (!chunkType) {
           return failure();

@@ -16,6 +16,7 @@
 //
 //===----------------------------------------------------------------------===//
 
+#include "PTO/Support/CodeConstants.h"
 #include "PTO/IR/PTO.h"
 #include "PTO/IR/VPTOBridgeRegistry.h"
 #include "PTO/Transforms/Passes.h"
@@ -130,45 +131,46 @@ FailureOr<std::string> renderTile(BridgeTileSpecAttr spec) {
   return result;
 }
 
-FailureOr<std::string> renderPipeType(BridgePipeSpecAttr spec) {
-  StringRef direction;
-  switch (spec.getDirMask()) {
-  case 1:
-    direction = "DIR_C2V";
-    break;
-  case 2:
-    direction = "DIR_V2C";
-    break;
-  default:
-    return failure();
-  }
-  std::string result;
-  llvm::raw_string_ostream os(result);
-  os << "pto::TPipe<" << spec.getFlagBase() << ", pto::Direction::" << direction
-     << ", " << spec.getSlotSize() << ", " << spec.getSlotNum() << ", "
-     << spec.getLocalSlotNum() << ", "
-     << (spec.getNosplit().getValue() ? "true" : "false") << ">";
-  return result;
+FailureOr<std::string> renderPipeType(BridgePipeSpecAttr spec)
+{
+    StringRef direction;
+    switch (spec.getDirMask()) {
+        case 1:
+            direction = "DIR_C2V";
+            break;
+        case mlir::pto::kValue2:
+            direction = "DIR_V2C";
+            break;
+        default:
+            return failure();
+    }
+    std::string result;
+    llvm::raw_string_ostream os(result);
+    os << "pto::TPipe<" << spec.getFlagBase() << ", pto::Direction::" << direction << ", " << spec.getSlotSize() << ", "
+       << spec.getSlotNum() << ", " << spec.getLocalSlotNum() << ", "
+       << (spec.getNosplit().getValue() ? "true" : "false") << ">";
+    return result;
 }
 
-FailureOr<StringRef> renderSplit(BridgePipeSpecAttr spec) {
-  if (!spec.getSplit()) {
-    return failure();
-  }
-  switch (*spec.getSplit()) {
-  case 0:
-    return StringRef("pto::TileSplitAxis::TILE_NO_SPLIT");
-  case 1:
-    return StringRef("pto::TileSplitAxis::TILE_UP_DOWN");
-  case 2:
-    return StringRef("pto::TileSplitAxis::TILE_LEFT_RIGHT");
-  case 3:
-    return StringRef("pto::TileSplitAxis::TILE_UP_DOWN_ODD");
-  case 4:
-    return StringRef("pto::TileSplitAxis::TILE_LEFT_RIGHT_ODD");
-  default:
-    return failure();
-  }
+FailureOr<StringRef> renderSplit(BridgePipeSpecAttr spec)
+{
+    if (!spec.getSplit()) {
+        return failure();
+    }
+    switch (*spec.getSplit()) {
+        case 0:
+            return StringRef("pto::TileSplitAxis::TILE_NO_SPLIT");
+        case 1:
+            return StringRef("pto::TileSplitAxis::TILE_UP_DOWN");
+        case mlir::pto::kValue2:
+            return StringRef("pto::TileSplitAxis::TILE_LEFT_RIGHT");
+        case mlir::pto::kValue3:
+            return StringRef("pto::TileSplitAxis::TILE_UP_DOWN_ODD");
+        case mlir::pto::kValue4:
+            return StringRef("pto::TileSplitAxis::TILE_LEFT_RIGHT_ODD");
+        default:
+            return failure();
+    }
 }
 
 /// One Pipe lifecycle entry. The object storage bound is checked here so an
@@ -191,7 +193,7 @@ FailureOr<std::string> renderPipeInit(const BridgeFunctionDesc &desc,
      << "  static_assert(alignof(Pipe) <= " << desc.storageAlign
      << ", \"pto::TPipe exceeds the bridge object alignment bound\");\n"
      << "  new (storage) Pipe(nullptr, "
-     << (spec.getDirMask() == 2 ? "0, localBuffer" : "localBuffer, 0")
+        << (spec.getDirMask() == mlir::pto::kValue2 ? "0, localBuffer" : "localBuffer, 0")
      << ");\n}\n";
   return source;
 }

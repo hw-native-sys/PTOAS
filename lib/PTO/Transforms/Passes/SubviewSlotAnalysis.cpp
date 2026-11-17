@@ -11,6 +11,7 @@
 // Cross-iteration pruning requires its own non-reuse proof. Unsupported forms
 // fail closed.
 
+#include "PTO/Support/CodeConstants.h"
 #include "PTO/Transforms/SlotAffineAnalysis.h"
 #include "PTO/IR/PTO.h"
 #include "PTO/IR/PTOTypeUtils.h"
@@ -50,8 +51,8 @@ struct IndexRange {
 // index, use the portable 32-bit range rather than assuming a host pointer size.
 static uint64_t getIndexLimit(Type type) {
   unsigned width = type.isIndex() ? 32 : type.getIntOrFloatBitWidth();
-  if (width == 0 || width > 64) {
-    return 0;
+  if (width == 0 || width > mlir::pto::kValue64) {
+      return 0;
   }
   return (uint64_t{1} << (width - 1)) - 1;
 }

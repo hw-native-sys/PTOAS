@@ -29,7 +29,7 @@ static bool hasUBEffect(Operation* op, bool wantRead, bool wantWrite)
         return false;
     }
 
-    SmallVector<SideEffects::EffectInstance<MemoryEffects::Effect>, 4> effects;
+    SmallVector<SideEffects::EffectInstance<MemoryEffects::Effect>, kValue4> effects;
     iface.getEffects(effects);
     return llvm::any_of(effects, [&](const auto& effect) {
         Value value = effect.getValue();
@@ -76,9 +76,9 @@ bool pto::isUBScalarLoad(Operation* op) { return isScalarAccess(op) && hasUBEffe
 
 bool pto::isUBMemoryOp(Operation* op) { return isUBVectorMemoryOp(op) || isUBScalarMemoryOp(op); }
 
-SmallVector<Value, 2> pto::getStoredValues(Operation* storeOp)
+SmallVector<Value, kValue2> pto::getStoredValues(Operation* storeOp)
 {
-    SmallVector<Value, 2> out;
+    SmallVector<Value, kValue2> out;
     if (auto s = dyn_cast<pto::PTOStoreOp>(storeOp)) {
         out.push_back(s.getValue());
     } else if (auto s = dyn_cast<pto::VscatterOp>(storeOp)) {
@@ -92,9 +92,9 @@ SmallVector<Value, 2> pto::getStoredValues(Operation* storeOp)
     return out;
 }
 
-SmallVector<Value, 2> pto::getLoadedValues(Operation* loadOp)
+SmallVector<Value, kValue2> pto::getLoadedValues(Operation* loadOp)
 {
-    SmallVector<Value, 2> out;
+    SmallVector<Value, kValue2> out;
     if (auto l = dyn_cast<pto::PTOLoadOp>(loadOp)) {
         out.push_back(l.getResult());
     } else if (isa<pto::Vgather2Op, pto::Vgather2BcOp, pto::VgatherbOp>(loadOp)) {

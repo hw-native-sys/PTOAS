@@ -7,6 +7,7 @@
 // See LICENSE in the root of the software repository for the full text of the License.
 
 #include "PTO/Analysis/PTOIntegerRange.h"
+#include "PTO/Support/CodeConstants.h"
 #include "mlir/Analysis/Presburger/IntegerRelation.h"
 #include "mlir/Analysis/Presburger/PresburgerSpace.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
@@ -52,7 +53,7 @@ static std::optional<AddressRange> recurrenceDelta(Value value, Value argument, 
     if (value == stripSameWidthCast(argument)) {
         return AddressRange{0, 0};
     }
-    if (depth >= 8) {
+    if (depth >= kValue8) {
         return std::nullopt;
     }
     if (auto branch = value.getDefiningOp<scf::IfOp>()) {
@@ -133,7 +134,7 @@ static std::optional<ConstantIntRanges> inferIfResultRange(Value value, unsigned
 ConstantIntRanges inferIntegerRange(Value value, unsigned depth)
 {
     unsigned width = ConstantIntRanges::getStorageBitwidth(value.getType());
-    if (depth >= 16) {
+    if (depth >= kValue16) {
         return ConstantIntRanges::maxRange(width);
     }
     APInt constant;
@@ -155,7 +156,7 @@ ConstantIntRanges inferIntegerRange(Value value, unsigned depth)
         return *branchRange;
     }
     bool hasRegions = op && op->getNumRegions() != 0;
-    if (!op || depth == 16 || hasRegions) {
+    if (!op || depth == kValue16 || hasRegions) {
         return range;
     }
     auto interface = dyn_cast<InferIntRangeInterface>(op);
@@ -204,7 +205,7 @@ std::optional<AddressRange> inferredLeafRange(Value value)
         return AddressRange{0, *remBound};
     }
     unsigned width = ConstantIntRanges::getStorageBitwidth(value.getType());
-    if (!width || width > 64) {
+    if (!width || width > kValue64) {
         return std::nullopt;
     }
     ConstantIntRanges inferred = inferIntegerRange(value);
@@ -229,7 +230,7 @@ static std::optional<int64_t> checkedConstantBound(const IntegerPolyhedron& poly
 }
 
 struct CertifiedAffineForm {
-    SmallVector<std::pair<Value, int64_t>, 4> terms;
+    SmallVector<std::pair<Value, int64_t>, kValue4> terms;
     int64_t constant = 0;
     int64_t lo = 0;
     int64_t hi = 0;
@@ -280,7 +281,7 @@ static std::optional<unsigned> storageBitwidth(Type type)
         return std::nullopt;
     }
     unsigned width = ConstantIntRanges::getStorageBitwidth(type);
-    if (!width || width > 64) {
+    if (!width || width > kValue64) {
         return std::nullopt;
     }
     return width;
@@ -423,7 +424,7 @@ static std::optional<CertifiedAffineForm> certifiedOperationForm(
 static std::optional<CertifiedAffineForm> certifiedAffineForm(
     Value value, const CertifiedLeafRanges& ranges, unsigned depth)
 {
-    if (depth < 16) {
+    if (depth < kValue16) {
         if (auto constant = getConstantInt(value)) {
             CertifiedAffineForm form;
             form.constant = *constant;
@@ -553,7 +554,7 @@ static bool addFormConstraint(
     IntegerPolyhedron& poly, unsigned rowWidth, const DenseMap<Value, unsigned>& dimOf, const CertifiedAffineForm& form,
     int64_t rhs)
 {
-    SmallVector<int64_t, 8> row(rowWidth, 0);
+    SmallVector<int64_t, kValue8> row(rowWidth, 0);
     for (auto& [leaf, coeff] : form.terms) {
         if (coeff == 0) {
             continue;
@@ -577,10 +578,10 @@ static bool addFormConstraint(
     return true;
 }
 
-using GuardConstraints = SmallVector<std::pair<CertifiedAffineForm, int64_t>, 2>;
+using GuardConstraints = SmallVector<std::pair<CertifiedAffineForm, int64_t>, kValue2>;
 
 struct GuardLeafDimensions {
-    SmallVector<Value, 4> leaves;
+    SmallVector<Value, kValue4> leaves;
     DenseMap<Value, unsigned> dimOf;
 
     void registerForm(const CertifiedAffineForm& form)
@@ -662,7 +663,7 @@ static std::optional<DenseMap<Value, AddressRange>> refineGuardLeaves(
 static bool pinTargetForm(IntegerPolyhedron& poly, const GuardLeafDimensions& dims, const CertifiedAffineForm& form)
 {
     unsigned targetDim = dims.leaves.size();
-    SmallVector<int64_t> eq(targetDim + 2, 0);
+    SmallVector<int64_t> eq(targetDim + kValue2, 0);
     eq[targetDim] = -1;
     for (auto& [leaf, coeff] : form.terms) {
         if (coeff == 0) {
@@ -723,7 +724,7 @@ static std::optional<AddressRange> guardedValueRange(Operation* context, Value t
 static std::optional<AddressRange> getSignedRangeAtImpl(Value value, Operation* context, unsigned depth)
 {
     unsigned width = ConstantIntRanges::getStorageBitwidth(value.getType());
-    if (!width || width > 64 || !context || depth >= 16) {
+    if (!width || width > kValue64 || !context || depth >= kValue16) {
         return std::nullopt;
     }
     if (auto min = value.getDefiningOp<arith::MinSIOp>()) {
@@ -754,7 +755,7 @@ std::optional<AddressRange> getSignedRangeAt(Value value, Operation* context)
 
 static Value unwrapNarrowingBound(Value value)
 {
-    for (unsigned hop = 0; hop < 4; ++hop) {
+    for (unsigned hop = 0; hop < kValue4; ++hop) {
         Operation* op = value.getDefiningOp();
         if (!op) {
             break;
@@ -857,7 +858,7 @@ PTOLoopDomain getLoopEnvelope(scf::ForOp forOp)
     auto bounds = inferLoopEnvelope(forOp);
     auto trip = bounds.maxTripCount();
     unsigned width = ConstantIntRanges::getStorageBitwidth(forOp.getInductionVar().getType());
-    if (!bounds.valid || !trip || !width || width > 64 || bounds.step <= 0) {
+    if (!bounds.valid || !trip || !width || width > kValue64 || bounds.step <= 0) {
         return {};
     }
     __int128 limit = static_cast<__int128>(1) << (width - 1);
@@ -917,7 +918,7 @@ static std::optional<AddressRange> checkedArithmeticRange(
 std::optional<AddressRange> getAddressRange(
     Value value, ArrayRef<Value> ivs, ArrayRef<PTOLoopDomain> bounds, unsigned depth)
 {
-    if (depth == 32) {
+    if (depth == kValue32) {
         return std::nullopt;
     }
     if (auto constant = getConstantInt(value)) {
@@ -935,7 +936,7 @@ std::optional<AddressRange> getAddressRange(
         return inferredLeafRange(value);
     }
     unsigned width = ConstantIntRanges::getStorageBitwidth(value.getType());
-    if (!width || width > 64) {
+    if (!width || width > kValue64) {
         return std::nullopt;
     }
     bool arithmetic = isa<arith::AddIOp, arith::SubIOp, arith::MulIOp>(op);

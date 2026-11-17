@@ -313,6 +313,7 @@ add_mlir_dialect_library(PTOTransforms
   InsertSync/UnifiedSyncModel.cpp
   InsertSync/PTOUnifiedSync.cpp
   InsertSync/SyncOracleExtract.cpp
+  InsertSync/SyncOracleDeviceId.cpp
   InsertSync/SyncOracleGates.cpp
   BufidSync/BufidSyncPass.cpp
   BufidSync/BufidSyncAnalysis.cpp

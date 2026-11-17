@@ -6,6 +6,7 @@
 // INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
 // See LICENSE in the root of the software repository for the full text of the License.
 
+#include "PTO/Support/CodeConstants.h"
 #include "VPTOCANN900LLVMEmitterInternal.h"
 
 #include "llvm/ADT/SmallPtrSet.h"
@@ -743,26 +744,27 @@ std::optional<VcvtContract> lookupVcvtContract(VcvtElemKind src, VcvtElemKind ds
 // through pto.vbitcast view ops; emitting #st=1 without a matching VSTUR
 // consumer can deadlock the hardware SQZN queue. A VSQZ used anywhere else is
 // a plain register compaction and must keep #st=0.
-uint64_t determineVsqzStoreHint(pto::VsqzOp vsqz) {
-  SmallVector<Value, 4> worklist{vsqz.getResult()};
-  SmallPtrSet<Operation *, 8> visitedBitcasts;
-  while (!worklist.empty()) {
-    Value current = worklist.pop_back_val();
-    for (Operation *user : current.getUsers()) {
-      if (auto vstur = dyn_cast<pto::VsturOp>(user)) {
-        if (vstur.getValue() == current) {
-          return 1;
+uint64_t determineVsqzStoreHint(pto::VsqzOp vsqz)
+{
+    SmallVector<Value, mlir::pto::kValue4> worklist{vsqz.getResult()};
+    SmallPtrSet<Operation*, mlir::pto::kValue8> visitedBitcasts;
+    while (!worklist.empty()) {
+        Value current = worklist.pop_back_val();
+        for (Operation* user : current.getUsers()) {
+            if (auto vstur = dyn_cast<pto::VsturOp>(user)) {
+                if (vstur.getValue() == current) {
+                    return 1;
+                }
+                continue;
+            }
+            if (auto bitcast = dyn_cast<pto::VbitcastOp>(user)) {
+                if (visitedBitcasts.insert(bitcast).second) {
+                    worklist.push_back(bitcast.getResult());
+                }
+            }
         }
-        continue;
-      }
-      if (auto bitcast = dyn_cast<pto::VbitcastOp>(user)) {
-        if (visitedBitcasts.insert(bitcast).second) {
-          worklist.push_back(bitcast.getResult());
-        }
-      }
     }
-  }
-  return 0;
+    return 0;
 }
 
 std::optional<uint64_t> parseLoadDistImmediate(StringRef dist, Type elementType) {

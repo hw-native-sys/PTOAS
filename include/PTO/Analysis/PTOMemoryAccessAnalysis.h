@@ -11,6 +11,7 @@
 
 #include "PTO/IR/PTO.h"
 #include "PTO/Analysis/PTOAddressAnalysis.h"
+#include "PTO/Support/CodeConstants.h"
 
 #include "mlir/IR/Operation.h"
 #include "mlir/IR/Value.h"
@@ -26,7 +27,7 @@ enum class PTOMemoryAccessUnit { Vector, Scalar };
 
 struct PTOAffineByteExpr {
     int64_t constant = 0;
-    SmallVector<std::pair<Value, int64_t>, 2> coefficients;
+    SmallVector<std::pair<Value, int64_t>, kValue2> coefficients;
     bool exact = true;
     // Lossy expressions no longer describe the address. Faithful symbolic sums
     // may be bounded or cancelled; lossy ones must retain the hazard.
@@ -75,7 +76,7 @@ struct PTOMemoryAccessDescriptor {
     bool forcesMayAlias = false;
     // Disjoint 32-byte pieces of a block-strided store, relative to byteOffset.
     // Empty means the descriptor represents a single interval.
-    SmallVector<int64_t, 8> blockByteOffsets;
+    SmallVector<int64_t, kValue8> blockByteOffsets;
 };
 
 bool isUBBackedType(Type type);
@@ -94,9 +95,9 @@ bool isUBScalarLoad(Operation* op);
 
 bool isUBMemoryOp(Operation* op);
 
-SmallVector<Value, 2> getStoredValues(Operation* storeOp);
+SmallVector<Value, kValue2> getStoredValues(Operation* storeOp);
 
-SmallVector<Value, 2> getLoadedValues(Operation* loadOp);
+SmallVector<Value, kValue2> getLoadedValues(Operation* loadOp);
 
 enum class PTOMemoryAliasResult {
     NoAlias,

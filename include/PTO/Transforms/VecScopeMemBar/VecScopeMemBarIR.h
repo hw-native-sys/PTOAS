@@ -9,6 +9,7 @@
 #ifndef PTO_TRANSFORMS_VECSCOPEMEMBAR_VECSCOPEMEMBARIR_H
 #define PTO_TRANSFORMS_VECSCOPEMEMBAR_VECSCOPEMEMBARIR_H
 
+#include "PTO/Support/CodeConstants.h"
 #include "PTO/Analysis/PTOMemoryAccessAnalysis.h"
 #include "mlir/Dialect/SCF/IR/SCF.h"
 #include "mlir/IR/Operation.h"
@@ -42,7 +43,7 @@ struct VecScopeScheduleNode {
     Operation* op = nullptr;
     SmallVector<unsigned> children;
     std::optional<unsigned> parent;
-    SmallVector<unsigned, 2> schedulePath;
+    SmallVector<unsigned, mlir::pto::kValue2> schedulePath;
 };
 
 } // namespace mlir::pto::vecscopemembar

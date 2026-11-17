@@ -6,6 +6,7 @@
 // INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
 // See LICENSE in the root of the software repository for the full text of the License.
 
+#include "PTO/Support/CodeConstants.h"
 #include "Utils.h"
 #include "PTO/Analysis/PTOMemoryAliasAnalysis.h"
 
@@ -793,7 +794,7 @@ static bool rangesOverlap(const SemanticRange &lhs, const SemanticRange &rhs) {
 
 struct GuardedTileRange {
   SemanticRange range;
-  SmallVector<TileSourceEdge, 2> guards;
+  SmallVector<TileSourceEdge, mlir::pto::kValue2> guards;
 };
 
 static bool guardsCompatible(ArrayRef<TileSourceEdge> lhs,
@@ -813,8 +814,8 @@ static bool guardsCompatible(ArrayRef<TileSourceEdge> lhs,
 static SmallVector<GuardedTileRange> getGuardedTileRanges(Value tile) {
   struct Path {
     Value value;
-    SmallVector<Value, 4> views;
-    SmallVector<TileSourceEdge, 2> guards;
+    SmallVector<Value, mlir::pto::kValue4> views;
+    SmallVector<TileSourceEdge, mlir::pto::kValue2> guards;
   };
   SmallVector<Path> pending{{tile, {}, {}}};
   SmallVector<GuardedTileRange> ranges;

@@ -13,6 +13,7 @@
 // loop-latch cuts are preserved. Nested accesses may be endpoints, but cannot
 // relay ordering through a possibly empty third loop or a conditional region.
 
+#include "PTO/Support/CodeConstants.h"
 #include "PTO/Transforms/VecScopeMemBar/VecScopeMemBarPlacement.h"
 #include "PTO/Analysis/PTOIntegerRange.h"
 
@@ -27,7 +28,7 @@ using namespace mlir::pto::vecscopemembar;
 
 namespace {
 
-using OrderGraph = SmallVector<SmallVector<unsigned, 4>, 16>;
+using OrderGraph = SmallVector<SmallVector<unsigned, mlir::pto::kValue4>, mlir::pto::kValue16>;
 
 static Operation* ancestorInBlock(Operation* op, const Block* block)
 {
@@ -61,9 +62,9 @@ static bool ordersAccessPair(MemBarKind kind, const AccessOccurrence& producer, 
             return true;
         case 1:
             return storeBefore && !storeAfter;
-        case 2:
+        case mlir::pto::kValue2:
             return !storeBefore && storeAfter;
-        case 3:
+        case mlir::pto::kValue3:
             return storeBefore && storeAfter;
         default:
             return false;
@@ -94,7 +95,7 @@ static void addBarrierEdges(OrderGraph& edges, ArrayRef<AccessOccurrence> access
 // load in a branch or a zero-trip loop need not execute to produce that result.
 static bool straightLineDependsOn(Value sink, Value source, const Block* block)
 {
-    SmallVector<Value, 8> worklist{sink};
+    SmallVector<Value, mlir::pto::kValue8> worklist{sink};
     DenseSet<Value> visited;
     while (!worklist.empty()) {
         Value value = worklist.pop_back_val();
@@ -117,7 +118,7 @@ static bool straightLineDependsOn(Value sink, Value source, const Block* block)
 // Merely reaching an init operand is insufficient: the body may overwrite it.
 static bool hasValueRelay(Operation* load, Operation* store, Block* block)
 {
-    SmallVector<Value, 4> values = getLoadedValues(load);
+    SmallVector<Value, kValue4> values = getLoadedValues(load);
     Block* current = load->getBlock();
     while (current != block) {
         auto loop = dyn_cast_or_null<scf::ForOp>(current->getParentOp());
@@ -130,7 +131,7 @@ static bool hasValueRelay(Operation* load, Operation* store, Block* block)
         if (!trip || *trip <= 0 || !envelope.valid) {
             return false;
         }
-        SmallVector<Value, 4> lifted;
+        SmallVector<Value, kValue4> lifted;
         auto yield = cast<scf::YieldOp>(loop.getBody()->getTerminator());
         for (unsigned index = 0; index < loop.getNumResults(); ++index) {
             Value next = yield.getOperand(index);
@@ -208,8 +209,8 @@ static bool reaches(
     const OrderGraph& edges, ArrayRef<AccessOccurrence> accesses, const Block* block, unsigned from, unsigned to,
     bool reductions)
 {
-    SmallVector<bool, 16> visited(edges.size(), false);
-    SmallVector<unsigned, 16> worklist{from};
+    SmallVector<bool, mlir::pto::kValue16> visited(edges.size(), false);
+    SmallVector<unsigned, mlir::pto::kValue16> worklist{from};
     visited[from] = true;
     while (!worklist.empty()) {
         unsigned current = worklist.pop_back_val();
@@ -304,7 +305,7 @@ static bool canModelCut(const BarrierPlacement& candidate, const VecScopeMemBarA
 
 void vecscopemembar::eliminateTransitiveMemBars(const VecScopeMemBarAnalysisResult& result, VecScopeMemBarPlan& plan)
 {
-    SmallVector<bool, 8> live(plan.barriers.size(), true);
+    SmallVector<bool, mlir::pto::kValue8> live(plan.barriers.size(), true);
     // Each successful removal preserves every obligation, including those of
     // earlier removed candidates. One sweep is sufficient: removing more cuts
     // cannot create a new ordering proof for a previously rejected candidate.
@@ -323,7 +324,7 @@ void vecscopemembar::eliminateTransitiveMemBars(const VecScopeMemBarAnalysisResu
             live[index] = false;
         }
     }
-    SmallVector<BarrierPlacement, 8> kept;
+    SmallVector<BarrierPlacement, mlir::pto::kValue8> kept;
     for (unsigned index = 0; index < plan.barriers.size(); ++index) {
         if (live[index]) {
             kept.push_back(plan.barriers[index]);

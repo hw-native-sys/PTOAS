@@ -6,6 +6,7 @@
 // INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
 // See LICENSE in the root of the software repository for the full text of the License.
 
+#include "PTO/Support/CodeConstants.h"
 #include "PTO/Transforms/Passes.h"
 #include "PTO/Transforms/VecScopeMemBar/VecScopeMemBarAnalysis.h"
 #include "PTO/Transforms/VecScopeMemBar/VecScopeMemBarCodegen.h"
@@ -38,7 +39,7 @@ struct PTOInsertVecScopeMemBarPass : pto::impl::PTOInsertVecScopeMemBarBase<PTOI
     {
         func::FuncOp func = getOperation();
 
-        SmallVector<Operation*, 4> scopes;
+        SmallVector<Operation*, mlir::pto::kValue4> scopes;
         func.walk([&](Operation* op) {
             if (isa<pto::VecScopeOp, pto::StrictVecScopeOp>(op)) {
                 scopes.push_back(op);

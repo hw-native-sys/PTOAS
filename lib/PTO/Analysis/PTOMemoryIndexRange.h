@@ -9,6 +9,7 @@
 #ifndef PTO_ANALYSIS_PTOMEMORY_INDEX_RANGE_H
 #define PTO_ANALYSIS_PTOMEMORY_INDEX_RANGE_H
 
+#include "PTO/Support/CodeConstants.h"
 #include "mlir/IR/Value.h"
 #include "llvm/ADT/SmallVector.h"
 #include <cstdint>
@@ -18,7 +19,7 @@
 namespace mlir::pto::integer_range {
 
 bool allIntegerLanes(Value mask, uint64_t lanes, unsigned width = 0);
-std::optional<llvm::SmallVector<uint64_t, 128>> constantIndexLanes(
+std::optional<llvm::SmallVector<uint64_t, kValue128>> constantIndexLanes(
     Value value, unsigned& budget, bool allowTable = false);
 std::optional<std::pair<int64_t, uint64_t>> boundedIndexByteRange(Value offsets, Value mask, uint64_t bytes);
 

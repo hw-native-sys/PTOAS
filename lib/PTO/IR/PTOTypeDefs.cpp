@@ -10,6 +10,7 @@
 #include <limits>
 #include <mutex>
 #include <unordered_map>
+#include "PTO/Support/CodeConstants.h"
 #include "PTO/IR/PTO.h"
 #include "PTO/IR/PTOTypeUtils.h"
 #include "PTO/IR/PTOMultiBuffer.h"
@@ -804,11 +805,11 @@ namespace {
 
 struct ParsedConvTileFields {
     std::string locStr;
-    SmallVector<int64_t, 6> shape;
+    SmallVector<int64_t, mlir::pto::kValue6> shape;
     Type dtype;
     IntegerAttr bufferSize;
     ConvLayoutAttr layoutAttr;
-    SmallVector<int64_t, 6> validShape;
+    SmallVector<int64_t, mlir::pto::kValue6> validShape;
 };
 
 static std::optional<int64_t> computeConvTileBufferSize(ArrayRef<int64_t> shape) {
@@ -842,24 +843,22 @@ static void printConvTileLayoutField(AsmPrinter &printer, Attribute layoutAttr) 
   printer.printAttribute(layoutAttr);
 }
 
-static LogicalResult checkConvTileShape(AsmParser &parser,
-                                        ArrayRef<int64_t> shape) {
-  auto emitError = [&parser]() -> InFlightDiagnostic {
-    return parser.emitError(parser.getNameLoc());
-  };
-  if (shape.empty()) {
-    emitError() << "conv_tile shape must be non-empty";
-    return failure();
-  }
-  if (shape.size() > 6) {
-    emitError() << "conv_tile shape must have rank in [1, 6]";
-    return failure();
-  }
-  if (llvm::is_contained(shape, ShapedType::kDynamic)) {
-    emitError() << "conv_tile shape must be static";
-    return failure();
-  }
-  return success();
+static LogicalResult checkConvTileShape(AsmParser& parser, ArrayRef<int64_t> shape)
+{
+    auto emitError = [&parser]() -> InFlightDiagnostic { return parser.emitError(parser.getNameLoc()); };
+    if (shape.empty()) {
+        emitError() << "conv_tile shape must be non-empty";
+        return failure();
+    }
+    if (shape.size() > mlir::pto::kValue6) {
+        emitError() << "conv_tile shape must have rank in [1, 6]";
+        return failure();
+    }
+    if (llvm::is_contained(shape, ShapedType::kDynamic)) {
+        emitError() << "conv_tile shape must be static";
+        return failure();
+    }
+    return success();
 }
 
 // FRACTAL_Z is rank 4 as [C1HW, N/16, 16, C0] and also rank 5 as
@@ -872,58 +871,59 @@ static LogicalResult checkConvTileShape(AsmParser &parser,
 // and require buffer_size to cover the padded footprint implied by those
 // fixed dims -- a smaller capacity silently under-covers the transfer.
 static LogicalResult verifyConvTileBlockedDims(
-    function_ref<InFlightDiagnostic()> emitError, ConvLayout layout,
-    ArrayRef<int64_t> shape, Type elementType, [[maybe_unused]] IntegerAttr bufferSize) {
-  const int64_t elemBytes = pto::getPTOStorageElemByteSize(elementType);
-  const std::optional<int64_t> c0Opt = pto::convC0ForElemBytes(elemBytes);
-  if (!c0Opt) {
-    return emitError() << "conv_tile element type must have a known storage "
-                          "size";
-  }
-  const int64_t c0 = *c0Opt;
-  auto requireTrailing = [&shape](size_t index, int64_t fixed) {
-    return shape.size() > index && shape[index] == fixed;
-  };
-  // Every blocked layout moves data in fixed 32-byte blocks regardless of
-  // the declared dims, so each one pins its minor dims to the block
-  // geometry: NC1HWC0/NDC1HWC0 end in C0, the rank-4 fractal layouts end
-  // in [16, C0], and the rank-5 FRACTAL_Z ends in C0.
-  if ((layout == ConvLayout::NC1HWC0 ||
-       layout == ConvLayout::NDC1HWC0) &&
-      !requireTrailing(shape.size() - 1, c0)) {
-    return emitError() << "conv_tile last dim must be " << c0
-                       << " (32-byte block), got " << shape.back();
-  }
-  if ((layout == ConvLayout::FRACTAL_Z ||
-       layout == ConvLayout::FRACTAL_Z_3D) &&
-      shape.size() == 4 && !(requireTrailing(2, 16) && requireTrailing(3, c0))) {
-    return emitError() << "conv_tile rank-4 fractal trailing dims must be "
-                          "[16, "
-                       << c0 << "]";
-  }
-  if (layout == ConvLayout::FRACTAL_Z && shape.size() == 5 &&
-      !requireTrailing(4, c0)) {
-    return emitError() << "conv_tile rank-5 fractal_z last dim must be "
-                       << c0;
-  }
-  return success();
+    function_ref<InFlightDiagnostic()> emitError, ConvLayout layout, ArrayRef<int64_t> shape, Type elementType,
+    [[maybe_unused]] IntegerAttr bufferSize)
+{
+    const int64_t elemBytes = pto::getPTOStorageElemByteSize(elementType);
+    const std::optional<int64_t> c0Opt = pto::convC0ForElemBytes(elemBytes);
+    if (!c0Opt) {
+        return emitError() << "conv_tile element type must have a known storage "
+                              "size";
+    }
+    const int64_t c0 = *c0Opt;
+    auto requireTrailing = [&shape](size_t index, int64_t fixed) {
+        return shape.size() > index && shape[index] == fixed;
+    };
+    // Every blocked layout moves data in fixed 32-byte blocks regardless of
+    // the declared dims, so each one pins its minor dims to the block
+    // geometry: NC1HWC0/NDC1HWC0 end in C0, the rank-4 fractal layouts end
+    // in [16, C0], and the rank-5 FRACTAL_Z ends in C0.
+    if ((layout == ConvLayout::NC1HWC0 || layout == ConvLayout::NDC1HWC0) && !requireTrailing(shape.size() - 1, c0)) {
+        return emitError() << "conv_tile last dim must be " << c0 << " (32-byte block), got " << shape.back();
+    }
+    const bool hasInvalidRank4TrailingDims =
+        (layout == ConvLayout::FRACTAL_Z || layout == ConvLayout::FRACTAL_Z_3D) &&
+        shape.size() == mlir::pto::kValue4 &&
+        !(requireTrailing(mlir::pto::kValue2, mlir::pto::kValue16) && requireTrailing(mlir::pto::kValue3, c0));
+    if (hasInvalidRank4TrailingDims) {
+        return emitError() << "conv_tile rank-4 fractal trailing dims must be "
+                              "[16, "
+                           << c0 << "]";
+    }
+    const bool hasInvalidRank5TrailingDim = layout == ConvLayout::FRACTAL_Z &&
+                                            shape.size() == mlir::pto::kValue5 &&
+                                            !requireTrailing(mlir::pto::kValue4, c0);
+    if (hasInvalidRank5TrailingDim) {
+        return emitError() << "conv_tile rank-5 fractal_z last dim must be " << c0;
+    }
+    return success();
 }
 
 static void appendExpectedRanksForConvLayout(
     ConvLayout layout, SmallVectorImpl<size_t> &ranks) {
   switch (layout) {
   case ConvLayout::FRACTAL_Z_3D:
-    ranks.push_back(4);
+    ranks.push_back(mlir::pto::kValue4);
     break;
   case ConvLayout::FRACTAL_Z:
-    ranks.push_back(4);
-    ranks.push_back(5);
+    ranks.push_back(mlir::pto::kValue4);
+    ranks.push_back(mlir::pto::kValue5);
     break;
   case ConvLayout::NC1HWC0:
-    ranks.push_back(5);
+    ranks.push_back(mlir::pto::kValue5);
     break;
   case ConvLayout::NDC1HWC0:
-    ranks.push_back(6);
+    ranks.push_back(mlir::pto::kValue6);
     break;
   case ConvLayout::NCHW:
   case ConvLayout::NHWC:
@@ -969,10 +969,11 @@ static LogicalResult verifyConvTileValidShape(
     bool tailOk = true;
     if (layout == ConvLayout::NC1HWC0 || layout == ConvLayout::NDC1HWC0) {
         tailOk = tailIdxMustMatch(last);
-    } else if ((layout == ConvLayout::FRACTAL_Z || layout == ConvLayout::FRACTAL_Z_3D) && shape.size() == 4) {
-        tailOk = tailIdxMustMatch(2) && tailIdxMustMatch(3);
-    } else if (layout == ConvLayout::FRACTAL_Z && shape.size() == 5) {
-        tailOk = tailIdxMustMatch(4);
+    } else if ((layout == ConvLayout::FRACTAL_Z || layout == ConvLayout::FRACTAL_Z_3D) &&
+            shape.size() == mlir::pto::kValue4) {
+        tailOk = tailIdxMustMatch(mlir::pto::kValue2) && tailIdxMustMatch(3);
+    } else if (layout == ConvLayout::FRACTAL_Z && shape.size() == mlir::pto::kValue5) {
+        tailOk = tailIdxMustMatch(mlir::pto::kValue4);
     }
     if (!tailOk) {
         return emitError() << "conv_tile valid_shape must keep the blocked minor "
@@ -1087,7 +1088,7 @@ static Type buildConvTileBufType(AsmParser& parser, const ParsedConvTileFields& 
     // Canonical form: an explicitly written valid_shape equal to shape is
     // stored as "unspecified", so a tile has exactly one textual and in-memory
     // representation for the valid == declared case.
-    SmallVector<int64_t, 6> canonicalValid = fields.validShape;
+    SmallVector<int64_t, mlir::pto::kValue6> canonicalValid = fields.validShape;
     if (canonicalValid == fields.shape) {
         canonicalValid.clear();
     }
@@ -1103,7 +1104,7 @@ namespace {
 struct ParsedConvTileKeywords {
     ConvLayoutAttr layout;
     IntegerAttr bufferSize;
-    SmallVector<int64_t, 6> validShape;
+    SmallVector<int64_t, mlir::pto::kValue6> validShape;
 };
 
 static LogicalResult parseConvTileLayoutKey(AsmParser& parser, bool& seen, ConvLayoutAttr& layout)

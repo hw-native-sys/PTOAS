@@ -29,6 +29,7 @@
 //
 //===----------------------------------------------------------------------===//
 
+#include "PTO/Support/CodeConstants.h"
 #include "PTO/IR/PTO.h"
 #include "PTO/IR/VPTOBridgeRegistry.h"
 #include "PTO/Transforms/Passes.h"
@@ -94,8 +95,8 @@ struct PrintDTDataABI final : impl::VPTOPrintDTDataABIBase<PrintDTDataABI> {
     func.insertArgument(hiddenIndex, tunnelType, {}, func.getLoc());
     func.setFunctionType(FunctionType::get(context, func.getArgumentTypes(),
                                            func.getResultTypes()));
-    func->setAttr("pto.print_dtdata_index",
-                  IntegerAttr::get(IntegerType::get(context, 32), hiddenIndex));
+    func->setAttr(
+        "pto.print_dtdata_index", IntegerAttr::get(IntegerType::get(context, mlir::pto::kValue32), hiddenIndex));
     tunnel = explicitMode ? func.getArgument(0) : func.getArgument(hiddenIndex);
 
     Region &body = func.getBody();
@@ -166,9 +167,9 @@ struct PrintDTDataABI final : impl::VPTOPrintDTDataABIBase<PrintDTDataABI> {
         const unsigned hiddenIndex = func.getNumArguments();
         auto tunnelType = LLVM::LLVMPointerType::get(func.getContext(), 1);
         func.insertArgument(hiddenIndex, tunnelType, {}, func.getLoc());
-        func->setAttr("pto.print_dtdata_index",
-                      IntegerAttr::get(IntegerType::get(func.getContext(), 32),
-                                       hiddenIndex));
+        func->setAttr(
+            "pto.print_dtdata_index",
+            IntegerAttr::get(IntegerType::get(func.getContext(), mlir::pto::kValue32), hiddenIndex));
       });
     }
   }

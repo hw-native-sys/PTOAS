@@ -9,6 +9,7 @@
 #ifndef PTO_TRANSFORMS_VECSCOPEMEMBAR_VECSCOPEMEMBARANALYSIS_H
 #define PTO_TRANSFORMS_VECSCOPEMEMBAR_VECSCOPEMEMBARANALYSIS_H
 
+#include "PTO/Support/CodeConstants.h"
 #include "PTO/IR/PTO.h"
 #include "PTO/Transforms/VecScopeMemBar/VecScopeMemBarIR.h"
 #include "PTO/Transforms/VecScopeMemBar/VecScopeMemoryFootprint.h"
@@ -76,8 +77,8 @@ struct UnknownDependence {
 struct ExistingBarrier {
     Operation* op = nullptr;
     MemBarKind kind = MemBarKind::VV_ALL;
-    SmallVector<unsigned, 2> schedulePath;
-    SmallVector<unsigned, 2> enclosingLoops;
+    SmallVector<unsigned, mlir::pto::kValue2> schedulePath;
+    SmallVector<unsigned, mlir::pto::kValue2> enclosingLoops;
     enum class Phase { SameIteration, LoopLatch } phase = Phase::SameIteration;
     std::optional<unsigned> latchLoop;
 };

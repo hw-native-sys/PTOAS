@@ -1029,7 +1029,7 @@ static DmaLoopPlan configureStoreFromUbLoops(
   // A5 UB->OUT packs loop strides as `src << 40 | dst`, the opposite of
   // OUT->UB. These config ops are lowered by packLoopPair(low=first,
   // high=second), so pass (dst, src). Reverse this and every multi-dimensional
-  // store is mis-addressed; set_loop_size_ubtoout already packs loop2 high and
+  // store uses an incorrect address; set_loop_size_ubtoout already packs loop2 high and
   // loop1 low, so it needs no such swap.
   DmaLoopPlan plan{{}, {}, one};
   ArrayRef<pto::DmaLoopConfig> hardwareLoops =
@@ -1552,9 +1552,8 @@ struct ExpandMteL1L0a3dPattern
                                          "source element type is unavailable");
     }
     unsigned elementBits = elementType.getIntOrFloatBitWidth();
-    if (elementBits == 0 || elementBits % 8 != 0) {
-      return rewriter.notifyMatchFailure(op,
-                                         "source element width is unsupported");
+    if (elementBits == 0 || elementBits % mlir::pto::kValue8 != 0) {
+        return rewriter.notifyMatchFailure(op, "source element width is unsupported");
     }
 
     int64_t fmapH, fmapW, filterH, filterW, channelSize, strideH, strideW,

@@ -16,6 +16,7 @@
 //
 //===----------------------------------------------------------------------===//
 
+#include "PTO/Support/CodeConstants.h"
 #include "PTO/Transforms/VPTOBridgeTokens.h"
 #include "PTO/IR/PTO.h"
 #include "PTO/IR/PTOTypeUtils.h"
@@ -24,30 +25,29 @@
 using namespace mlir;
 using namespace mlir::pto;
 
-static FailureOr<std::string>
-buildIntegerElementTypeToken(Type elementType) {
-  if (elementType.isInteger(8)) {
-    return (elementType.isSignlessInteger(8) || elementType.isSignedInteger(8))
-               ? std::string("int8_t")
-               : std::string("uint8_t");
-  }
-  if (elementType.isInteger(16)) {
-    return (elementType.isSignlessInteger(16) ||
-            elementType.isSignedInteger(16))
-               ? std::string("int16_t")
-               : std::string("uint16_t");
-  }
-  if (elementType.isInteger(32)) {
-    return (elementType.isSignlessInteger(32) ||
-            elementType.isSignedInteger(32))
-               ? std::string("int32_t")
-               : std::string("uint32_t");
-  }
-  if (elementType.isInteger(64)) {
-    return cast<IntegerType>(elementType).isUnsigned() ? std::string("uint64_t")
-                                                       : std::string("int64_t");
-  }
-  return failure();
+static FailureOr<std::string> buildIntegerElementTypeToken(Type elementType)
+{
+    if (elementType.isInteger(mlir::pto::kValue8)) {
+        return (elementType.isSignlessInteger(mlir::pto::kValue8) || elementType.isSignedInteger(mlir::pto::kValue8)) ?
+                   std::string("int8_t") :
+                   std::string("uint8_t");
+    }
+    if (elementType.isInteger(mlir::pto::kValue16)) {
+        return (elementType.isSignlessInteger(mlir::pto::kValue16) ||
+                elementType.isSignedInteger(mlir::pto::kValue16)) ?
+                   std::string("int16_t") :
+                   std::string("uint16_t");
+    }
+    if (elementType.isInteger(mlir::pto::kValue32)) {
+        return (elementType.isSignlessInteger(mlir::pto::kValue32) ||
+                elementType.isSignedInteger(mlir::pto::kValue32)) ?
+                   std::string("int32_t") :
+                   std::string("uint32_t");
+    }
+    if (elementType.isInteger(mlir::pto::kValue64)) {
+        return cast<IntegerType>(elementType).isUnsigned() ? std::string("uint64_t") : std::string("int64_t");
+    }
+    return failure();
 }
 
 FailureOr<std::string> pto::buildBridgeElementTypeToken(Type elementType) {

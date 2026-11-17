@@ -86,7 +86,6 @@ static llvm::SmallVector<std::string, mlir::pto::kValue8> mergedBishengArgs;
 // control is placement -- the tokens go after PTOAS' own arguments and before
 // the fixed tail -- so a forwarded token that merely repeats one of our options
 // (for example a paired -o <path>) loses to ours.
-//
 // A forwarded token that TAKES an operand is the user's own doing: a bare -o,
 // -x, -mllvm or -- inserted here consumes the next token of the fixed tail, and
 // bisheng then reports its own error against the composed command line. PTOAS

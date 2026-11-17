@@ -8,6 +8,7 @@
 
 // Included by PTO.cpp as part of the PTO IR implementation translation unit.
 
+#include "PTO/Support/CodeConstants.h"
 #include "PTO/IR/PTOMultiBuffer.h"
 
 //===----------------------------------------------------------------------===//
@@ -207,7 +208,7 @@ using TLoadOperandTypes =
 static LogicalResult verifyTLoadConvFractalZTrailingDims(
     TLoadOp op, pto::ConvTileBufType dstCT, pto::ConvLayoutAttr dstLayout) {
   if (dstLayout.getValue() != pto::ConvLayout::FRACTAL_Z ||
-      dstCT.getShape().size() != 4) {
+        dstCT.getShape().size() != mlir::pto::kValue4) {
     return success();
   }
   const int64_t elemBytes = getPTOStorageElemByteSize(dstCT.getElementType());
@@ -217,7 +218,7 @@ static LogicalResult verifyTLoadConvFractalZTrailingDims(
                                "have a known storage size";
   }
   ArrayRef<int64_t> shape = dstCT.getShape();
-  if (shape[2] != 16 || shape[3] != *c0) {
+    if (shape[mlir::pto::kValue2] != mlir::pto::kValue16 || shape[mlir::pto::kValue3] != *c0) {
     return op.emitOpError()
            << "expects tload conv FRACTAL_Z dst trailing dims to be [16, "
            << *c0 << "]";
@@ -232,8 +233,8 @@ static LogicalResult verifyTLoadConvFractalZTrailingDims(
 static LogicalResult verifyTLoadConvDstElemType(TLoadOp op, Type dstTile,
                                                 Type dstElem) {
   if (!isa<pto::ConvTileBufType>(dstTile) ||
-      dstElem.isInteger(8) || dstElem.isInteger(16) ||
-      dstElem.isInteger(32) || dstElem.isF16() || dstElem.isBF16() ||
+        dstElem.isInteger(mlir::pto::kValue8) || dstElem.isInteger(mlir::pto::kValue16) ||
+        dstElem.isInteger(mlir::pto::kValue32) || dstElem.isF16() || dstElem.isBF16() ||
       dstElem.isF32() ||
       (getVerifierTargetArch(op.getOperation()) == VerifierTargetArch::A5 &&
        (pto::isPTOFloat8E4M3LikeType(dstElem) ||
@@ -471,111 +472,106 @@ static FailureOr<TLoadOperandTypes> verifyTLoadOperandTypes(TLoadOp op, bool all
     return TLoadOperandTypes(srcPart, dstTy);
 }
 
-static LogicalResult verifyTLoadA2A3Types(TLoadOp op) {
-  auto common = verifyTLoadOperandTypes(op, /*allowLowPrecision=*/false);
-  if (failed(common)) {
-    return failure();
-  }
-  auto [srcPart, dstTile] = *common;
+static LogicalResult verifyTLoadA2A3Types(TLoadOp op)
+{
+    auto common = verifyTLoadOperandTypes(op, false);
+    if (failed(common)) {
+        return failure();
+    }
+    auto [srcPart, dstTile] = *common;
 
-  Type srcElem = srcPart.getElementType();
-  Type dstElem = getElemTy(dstTile);
-  if (isPTOLowPrecisionType(srcElem) || isPTOLowPrecisionType(dstElem)) {
-    return op.emitOpError(
-        "expects A2/A3 tload low-precision element types to be unsupported");
-  }
-  if (!(dstElem.isInteger(8) || dstElem.isInteger(16) ||
-        dstElem.isInteger(32) || dstElem.isInteger(64) || dstElem.isF16() ||
-        dstElem.isBF16() || dstElem.isF32())) {
-    return op.emitOpError(
-        "expects A2/A3 tload dst element type to be i8/i16/i32/i64/u64/f16/bf16/f32");
-  }
+    Type srcElem = srcPart.getElementType();
+    Type dstElem = getElemTy(dstTile);
+    if (isPTOLowPrecisionType(srcElem) || isPTOLowPrecisionType(dstElem)) {
+        return op.emitOpError("expects A2/A3 tload low-precision element types to be unsupported");
+    }
+    const bool isSupportedDstType = dstElem.isInteger(mlir::pto::kValue8) ||
+                                    dstElem.isInteger(mlir::pto::kValue16) ||
+                                    dstElem.isInteger(mlir::pto::kValue32) ||
+                                    dstElem.isInteger(mlir::pto::kValue64) || dstElem.isF16() || dstElem.isBF16() ||
+                                    dstElem.isF32();
+    if (!isSupportedDstType) {
+        return op.emitOpError("expects A2/A3 tload dst element type to be i8/i16/i32/i64/u64/f16/bf16/f32");
+    }
 
-  auto dstSpace = getPTOMemorySpaceEnum(dstTile);
-  if (!dstSpace || (*dstSpace != pto::AddressSpace::VEC &&
-                    *dstSpace != pto::AddressSpace::MAT)) {
-    return op.emitOpError("expects A2/A3 tload dst to use loc=vec or loc=mat");
-  }
+    auto dstSpace = getPTOMemorySpaceEnum(dstTile);
+    if (!dstSpace || (*dstSpace != pto::AddressSpace::VEC && *dstSpace != pto::AddressSpace::MAT)) {
+        return op.emitOpError("expects A2/A3 tload dst to use loc=vec or loc=mat");
+    }
 
-  if (failed(verifyTLoadConvDstElemType(op, dstTile, dstElem))) {
-    return failure();
-  }
-  if (getElemByteSize(srcElem) != getElemByteSize(dstElem)) {
-    return op.emitOpError(
-        "expects src and dst element types to have the same bitwidth");
-  }
-  return verifyTLoadConvTileLayoutPair(op, PTOArch::A3, srcPart, dstTile);
+    if (failed(verifyTLoadConvDstElemType(op, dstTile, dstElem))) {
+        return failure();
+    }
+    if (getElemByteSize(srcElem) != getElemByteSize(dstElem)) {
+        return op.emitOpError("expects src and dst element types to have the same bitwidth");
+    }
+    return verifyTLoadConvTileLayoutPair(op, PTOArch::A3, srcPart, dstTile);
 }
 
-static LogicalResult verifyTLoadA5PadAndVecLayout(TLoadOp op, Type dstElem,
-                                                  Type dstTile) {
-  if (dstElem.isInteger(64)) {
-    if (auto dstTB = dyn_cast<pto::TileBufType>(dstTile)) {
-      auto pad = dstTB.getPadValueI32();
-      if (pad != static_cast<int32_t>(pto::PadValue::Null) &&
-          pad != static_cast<int32_t>(pto::PadValue::Zero)) {
-        return op.emitOpError(
-            "expects A5 i64/u64 tload dst pad to be null or zero");
-      }
+static LogicalResult verifyTLoadA5PadAndVecLayout(TLoadOp op, Type dstElem, Type dstTile)
+{
+    if (dstElem.isInteger(mlir::pto::kValue64)) {
+        if (auto dstTB = dyn_cast<pto::TileBufType>(dstTile)) {
+            auto pad = dstTB.getPadValueI32();
+            if (pad != static_cast<int32_t>(pto::PadValue::Null) && pad != static_cast<int32_t>(pto::PadValue::Zero)) {
+                return op.emitOpError("expects A5 i64/u64 tload dst pad to be null or zero");
+            }
+        }
     }
-  }
 
-  auto dstSpace = getPTOMemorySpaceEnum(dstTile);
-  if (dstSpace && *dstSpace == pto::AddressSpace::VEC) {
-    auto dstTB = dyn_cast<pto::TileBufType>(dstTile);
-    if (!dstTB) {
-      return op.emitOpError("expects A5 tload vec dst to be a tile_buf");
+    auto dstSpace = getPTOMemorySpaceEnum(dstTile);
+    if (dstSpace && *dstSpace == pto::AddressSpace::VEC) {
+        auto dstTB = dyn_cast<pto::TileBufType>(dstTile);
+        if (!dstTB) {
+            return op.emitOpError("expects A5 tload vec dst to be a tile_buf");
+        }
+        int32_t bl = dstTB.getBLayoutValueI32();
+        int32_t sl = dstTB.getSLayoutValueI32();
+        bool isND =
+            (bl == static_cast<int32_t>(pto::BLayout::RowMajor) && sl == static_cast<int32_t>(pto::SLayout::NoneBox));
+        bool isDN =
+            (bl == static_cast<int32_t>(pto::BLayout::ColMajor) && sl == static_cast<int32_t>(pto::SLayout::NoneBox));
+        bool isNZ =
+            (bl == static_cast<int32_t>(pto::BLayout::ColMajor) && sl == static_cast<int32_t>(pto::SLayout::RowMajor));
+        if (!isND && !isDN && !isNZ) {
+            return op.emitOpError("expects A5 tload vec dst layout to be ND, DN, or NZ");
+        }
     }
-    int32_t bl = dstTB.getBLayoutValueI32();
-    int32_t sl = dstTB.getSLayoutValueI32();
-    bool isND = (bl == static_cast<int32_t>(pto::BLayout::RowMajor) &&
-                 sl == static_cast<int32_t>(pto::SLayout::NoneBox));
-    bool isDN = (bl == static_cast<int32_t>(pto::BLayout::ColMajor) &&
-                 sl == static_cast<int32_t>(pto::SLayout::NoneBox));
-    bool isNZ = (bl == static_cast<int32_t>(pto::BLayout::ColMajor) &&
-                 sl == static_cast<int32_t>(pto::SLayout::RowMajor));
-    if (!isND && !isDN && !isNZ) {
-      return op.emitOpError("expects A5 tload vec dst layout to be ND, DN, or NZ");
-    }
-  }
-  return success();
+    return success();
 }
 
-static LogicalResult verifyTLoadA5Types(TLoadOp op) {
-  auto common = verifyTLoadOperandTypes(op, /*allowLowPrecision=*/true);
-  if (failed(common)) {
-    return failure();
-  }
-  auto [srcPart, dstTile] = *common;
+static LogicalResult verifyTLoadA5Types(TLoadOp op)
+{
+    auto common = verifyTLoadOperandTypes(op, true);
+    if (failed(common)) {
+        return failure();
+    }
+    auto [srcPart, dstTile] = *common;
 
-  Type srcElem = srcPart.getElementType();
-  Type dstElem = getElemTy(dstTile);
-  unsigned srcBytes = getElemByteSize(srcElem);
-  unsigned dstBytes = getElemByteSize(dstElem);
-  if (srcBytes != dstBytes) {
-    return op.emitOpError(
-        "expects src and dst element types to have the same element size");
-  }
-  if (!(dstBytes == 1 || dstBytes == 2 || dstBytes == 4 || dstBytes == 8)) {
-    return op.emitOpError(
-        "expects A5 tload dst element size to be 1, 2, 4, or 8 bytes");
-  }
-  if (!isA5TLoadStoreTransferElemType(srcElem)) {
-    return op.emitOpError(
-        "expects A5 tload src element type to be i8/i16/i32/i64/f16/bf16/f32/f8/hif8/fp4");
-  }
-  if (!isA5TLoadStoreTransferElemType(dstElem)) {
-    return op.emitOpError(
-        "expects A5 tload dst element type to be i8/i16/i32/i64/f16/bf16/f32/f8/hif8/fp4");
-  }
-  if (failed(verifyTLoadConvDstElemType(op, dstTile, dstElem))) {
-    return failure();
-  }
-  if (failed(verifyTLoadConvTileLayoutPair(op, PTOArch::A5, srcPart,
-                                           dstTile))) {
-    return failure();
-  }
-  return verifyTLoadA5PadAndVecLayout(op, dstElem, dstTile);
+    Type srcElem = srcPart.getElementType();
+    Type dstElem = getElemTy(dstTile);
+    unsigned srcBytes = getElemByteSize(srcElem);
+    unsigned dstBytes = getElemByteSize(dstElem);
+    if (srcBytes != dstBytes) {
+        return op.emitOpError("expects src and dst element types to have the same element size");
+    }
+    if (!(dstBytes == 1 || dstBytes == mlir::pto::kValue2 || dstBytes == mlir::pto::kValue4 ||
+          dstBytes == mlir::pto::kValue8)) {
+        return op.emitOpError("expects A5 tload dst element size to be 1, 2, 4, or 8 bytes");
+    }
+    if (!isA5TLoadStoreTransferElemType(srcElem)) {
+        return op.emitOpError("expects A5 tload src element type to be i8/i16/i32/i64/f16/bf16/f32/f8/hif8/fp4");
+    }
+    if (!isA5TLoadStoreTransferElemType(dstElem)) {
+        return op.emitOpError("expects A5 tload dst element type to be i8/i16/i32/i64/f16/bf16/f32/f8/hif8/fp4");
+    }
+    if (failed(verifyTLoadConvDstElemType(op, dstTile, dstElem))) {
+        return failure();
+    }
+    if (failed(verifyTLoadConvTileLayoutPair(op, PTOArch::A5, srcPart, dstTile))) {
+        return failure();
+    }
+    return verifyTLoadA5PadAndVecLayout(op, dstElem, dstTile);
 }
 
 LogicalResult TLoadOp::verify() {

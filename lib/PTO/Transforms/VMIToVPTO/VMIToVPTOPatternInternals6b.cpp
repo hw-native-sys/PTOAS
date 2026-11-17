@@ -503,9 +503,9 @@ private:
       }
       static constexpr StringRef kEvenOddParts[] = {"EVEN", "ODD"};
       return lowerNarrowFpToInt(
-          op, sourceParts, resultTypes, masks, plan->sourceFactor, plan->resultLaneStride, kEvenOddParts, rnd, sat,
-          "failed to build fptoui source mask", "failed to build narrow fptoui result mask", this->getTypeConverter(),
-          rewriter);
+          op, sourceParts, resultTypes, masks, plan->sourceFactor, plan->resultLaneStride,
+          ArrayRef<StringRef>(kEvenOddParts), rnd, sat, "failed to build fptoui source mask",
+          "failed to build narrow fptoui result mask", this->getTypeConverter(), rewriter);
   }
 
   FailureOr<FPToUILoweringInput> getLoweringInput(

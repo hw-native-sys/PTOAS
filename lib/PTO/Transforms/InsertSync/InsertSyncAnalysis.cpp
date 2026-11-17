@@ -539,9 +539,7 @@ void InsertSyncAnalysis::InsertSync(
 // iteration that the memory two iterations touch never meets. This proves that for
 // a `pto.partition_view` whose offset is affine in the induction variable of the loop
 // whose back edge carries the dependence, which is the shape a store walking a tensor
-// takes.
-//
-// Every condition is cumulative and the default is to keep the sync: each helper
+// takes. Every condition is cumulative and the default is to keep the sync: each helper
 // refuses the moment an input is not a compile-time constant.
 
 /// The `scf.for` whose back edge `forEndIndex` denotes, or null.
@@ -613,72 +611,74 @@ static std::optional<int64_t> constantIndexOf(Value v) {
 /// change between its iterations.
 static std::optional<int64_t> movementPerIteration(Value v, scf::ForOp forOp, unsigned depth = 0);
 
-static std::optional<int64_t> scaledMovement(arith::MulIOp mul, scf::ForOp forOp, unsigned depth) {
-  // Only a constant scale is usable: `iv * n` with n loop-invariant but unknown
-  // moves by an unknown amount, which must refuse.
-  if (auto c = constantIndexOf(mul.getRhs())) {
-    auto l = movementPerIteration(mul.getLhs(), forOp, depth + 1);
-    if (!l) {
-      return std::nullopt;
+static std::optional<int64_t> scaledMovement(arith::MulIOp mul, scf::ForOp forOp, unsigned depth)
+{
+    // Only a constant scale is usable: `iv * n` with n loop-invariant but unknown
+    // moves by an unknown amount, which must refuse.
+    if (auto c = constantIndexOf(mul.getRhs())) {
+        auto l = movementPerIteration(mul.getLhs(), forOp, depth + 1);
+        if (!l) {
+            return std::nullopt;
+        }
+        int64_t result;
+        if (__builtin_mul_overflow(*l, *c, &result)) {
+            return std::nullopt;
+        }
+        return result;
     }
-    int64_t result;
-    if (__builtin_mul_overflow(*l, *c, &result)) {
-      return std::nullopt;
+    if (auto c = constantIndexOf(mul.getLhs())) {
+        auto r = movementPerIteration(mul.getRhs(), forOp, depth + 1);
+        if (!r) {
+            return std::nullopt;
+        }
+        int64_t result;
+        if (__builtin_mul_overflow(*r, *c, &result)) {
+            return std::nullopt;
+        }
+        return result;
     }
-    return result;
-  }
-  if (auto c = constantIndexOf(mul.getLhs())) {
-    auto r = movementPerIteration(mul.getRhs(), forOp, depth + 1);
-    if (!r) {
-      return std::nullopt;
-    }
-    int64_t result;
-    if (__builtin_mul_overflow(*r, *c, &result)) {
-      return std::nullopt;
-    }
-    return result;
-  }
-  return std::nullopt;
+    return std::nullopt;
 }
 
-static std::optional<int64_t> movementPerIteration(Value v, scf::ForOp forOp, unsigned depth) {
-  if (!v || !forOp || depth > 8) {
+static std::optional<int64_t> movementPerIteration(Value v, scf::ForOp forOp, unsigned depth)
+{
+    if (!v || !forOp || depth > mlir::pto::kValue8) {
+        return std::nullopt;
+    }
+    if (v == forOp.getInductionVar()) {
+        return 1;
+    }
+    if (forOp.isDefinedOutsideOfLoop(v) || constantIndexOf(v)) {
+        return 0;
+    }
+    if (auto add = v.getDefiningOp<arith::AddIOp>()) {
+        auto l = movementPerIteration(add.getLhs(), forOp, depth + 1);
+        auto r = movementPerIteration(add.getRhs(), forOp, depth + 1);
+        if (!l || !r) {
+            return std::nullopt;
+        }
+        int64_t result;
+        if (__builtin_add_overflow(*l, *r, &result)) {
+            return std::nullopt;
+        }
+        return result;
+    }
+    if (auto sub = v.getDefiningOp<arith::SubIOp>()) {
+        auto l = movementPerIteration(sub.getLhs(), forOp, depth + 1);
+        auto r = movementPerIteration(sub.getRhs(), forOp, depth + 1);
+        if (!l || !r) {
+            return std::nullopt;
+        }
+        int64_t result;
+        if (__builtin_sub_overflow(*l, *r, &result)) {
+            return std::nullopt;
+        }
+        return result;
+    }
+    if (auto mul = v.getDefiningOp<arith::MulIOp>()) {
+        return scaledMovement(mul, forOp, depth);
+    }
     return std::nullopt;
-  }
-  if (v == forOp.getInductionVar()) {
-    return 1;
-  }
-  if (forOp.isDefinedOutsideOfLoop(v) || constantIndexOf(v)) {
-    return 0;
-  }
-  if (auto add = v.getDefiningOp<arith::AddIOp>()) {
-    auto l = movementPerIteration(add.getLhs(), forOp, depth + 1);
-    auto r = movementPerIteration(add.getRhs(), forOp, depth + 1);
-    if (!l || !r) {
-      return std::nullopt;
-    }
-    int64_t result;
-    if (__builtin_add_overflow(*l, *r, &result)) {
-      return std::nullopt;
-    }
-    return result;
-  }
-  if (auto sub = v.getDefiningOp<arith::SubIOp>()) {
-    auto l = movementPerIteration(sub.getLhs(), forOp, depth + 1);
-    auto r = movementPerIteration(sub.getRhs(), forOp, depth + 1);
-    if (!l || !r) {
-      return std::nullopt;
-    }
-    int64_t result;
-    if (__builtin_sub_overflow(*l, *r, &result)) {
-      return std::nullopt;
-    }
-    return result;
-  }
-  if (auto mul = v.getDefiningOp<arith::MulIOp>()) {
-    return scaledMovement(mul, forOp, depth);
-  }
-  return std::nullopt;
 }
 
 /// The strides of the tensor view a `pto.partition_view` reads, as compile-time

@@ -14,6 +14,7 @@
 // all barriers remain intact. No implicit ordering between vector operations
 // is assumed. Allocation still owns event IDs and the surviving primes/drains.
 
+#include "PTO/Support/CodeConstants.h"
 #include "PTO/Transforms/InsertSync/RemoveRedundantSync.h"
 
 #include "mlir/Dialect/Arith/IR/Arith.h"
@@ -49,7 +50,7 @@ struct LoopProof {
     int64_t lowerBound;
     int64_t upperBound;
     SmallVector<IterationEdge> edges;
-    SmallVector<SmallVector<unsigned, 2>> outgoing;
+    SmallVector<SmallVector<unsigned, mlir::pto::kValue2>> outgoing;
 
     bool contains(unsigned index) const { return begin < index && index < end; }
 };
@@ -57,7 +58,7 @@ struct LoopProof {
 std::optional<int64_t> getSignedConstant(Value value)
 {
     IntegerAttr attr;
-    if (!matchPattern(value, m_Constant(&attr)) || !attr.getValue().isSignedIntN(64)) {
+    if (!matchPattern(value, m_Constant(&attr)) || !attr.getValue().isSignedIntN(mlir::pto::kValue64)) {
         return std::nullopt;
     }
     return attr.getValue().getSExtValue();
@@ -91,7 +92,7 @@ std::optional<LoopProof> getLoopProof(const LoopInstanceElement& element, const 
 // Other symbols, non-unit rotations and narrowing casts need a richer proof.
 std::optional<unsigned> getRotationOffset(Value slot, const LoopProof& proof, unsigned count)
 {
-    if (count < 2 || count > kMaxMultiBufferCount) {
+    if (count < mlir::pto::kValue2 || count > kMaxMultiBufferCount) {
         return std::nullopt;
     }
     auto rem = slot.getDefiningOp<arith::RemUIOp>();
@@ -113,7 +114,10 @@ std::optional<unsigned> getRotationOffset(Value slot, const LoopProof& proof, un
     if (!offset || *offset < 0 || *offset > std::numeric_limits<int64_t>::max() - proof.upperBound) {
         return std::nullopt;
     }
-    return static_cast<unsigned>(*offset % count);
+    // The guard above already excludes a zero `count`; the safe divisor is what
+    // lets the remainder be checked without a division by zero (G.EXP.22).
+    unsigned safeCount = count > 0 ? count : 1;
+    return static_cast<unsigned>(*offset % safeCount);
 }
 
 bool hasCompatibleEventScope(const SyncOperation& set, const SyncOperation& wait, const LoopProof& proof)
@@ -136,9 +140,11 @@ std::optional<unsigned> getSlotEventDistance(const SyncOperation& set, const Syn
                                              const LoopProof& proof)
 {
     unsigned count = set.slotCount;
-    if (!set.GetForEndIndex() || !isSlotKeyedSync(&set) || !isSlotKeyedSync(&wait) || count < 2 ||
-        count > kMaxMultiBufferCount || wait.slotCount != count || set.eventIdNum != static_cast<int>(count) ||
-        set.eventIdNum != wait.eventIdNum) {
+    const bool hasInvalidSlotPair = !set.GetForEndIndex() || !isSlotKeyedSync(&set) || !isSlotKeyedSync(&wait) ||
+                                    count < mlir::pto::kValue2 || count > kMaxMultiBufferCount ||
+                                    wait.slotCount != count || set.eventIdNum != static_cast<int>(count) ||
+                                    set.eventIdNum != wait.eventIdNum;
+    if (hasInvalidSlotPair) {
         return std::nullopt;
     }
     auto producer = getRotationOffset(set.slotSSAExpr, proof, count);
@@ -186,7 +192,7 @@ void addBarrierEdge(SyncOperation& barrier, LoopProof& proof, const SyncIRs& syn
 
 bool isEventPairInLoop(const SyncOperations::value_type& pair, const LoopProof& proof)
 {
-    if (pair.size() != 2) {
+    if (pair.size() != mlir::pto::kValue2) {
         return false;
     }
     const auto& set = *pair[0];
@@ -269,13 +275,16 @@ bool hasAlternatePath(const IterationEdge& candidate, const LoopProof& proof)
 
 uint32_t getPendingSlots(unsigned phase, unsigned producer, unsigned consumer, unsigned count, bool producerFirst)
 {
-    if (count < 2 || count > kMaxMultiBufferCount) {
+    if (count < mlir::pto::kValue2 || count > kMaxMultiBufferCount) {
         return 0;
     }
+    // The guard above already excludes a zero `count`; the safe divisor is what
+    // lets the remainders be checked without a division by zero (G.EXP.22).
+    unsigned safeCount = count > 0 ? count : 1;
     uint32_t mask = 0;
     for (unsigned lane = 0; lane < count; ++lane) {
-        unsigned firstSet = (lane + 2 * count - phase - producer) % count;
-        unsigned firstWait = (lane + 2 * count - phase - consumer) % count;
+        unsigned firstSet = (lane + 2 * count - phase - producer) % safeCount;
+        unsigned firstWait = (lane + 2 * count - phase - consumer) % safeCount;
         bool pending = producerFirst ? firstWait < firstSet : firstWait <= firstSet;
         if (pending) {
             mask |= uint32_t{1} << lane;
@@ -290,7 +299,7 @@ void setBoundaryMasks(const IterationEdge& edge, const LoopProof& proof)
         return;
     }
     unsigned count = edge.sync->slotCount;
-    if (count < 2 || count > kMaxMultiBufferCount) {
+    if (count < mlir::pto::kValue2 || count > kMaxMultiBufferCount) {
         return;
     }
     auto producer = getRotationOffset(edge.sync->slotSSAExpr, proof, count);

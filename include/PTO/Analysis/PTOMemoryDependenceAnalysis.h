@@ -31,7 +31,7 @@ struct PTOMemoryCarriedDependence {
     PTOMemoryDependenceReason reason;
 };
 
-SmallVector<unsigned, 2> getCommonLoopPrefix(ArrayRef<unsigned> lhs, ArrayRef<unsigned> rhs);
+SmallVector<unsigned, kValue2> getCommonLoopPrefix(ArrayRef<unsigned> lhs, ArrayRef<unsigned> rhs);
 
 // Scope must be a strict common ancestor of both accesses and must not be a
 // loop: all loops below this container participate in the relation. Invalid

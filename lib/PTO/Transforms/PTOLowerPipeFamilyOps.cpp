@@ -26,6 +26,7 @@
 //
 //===----------------------------------------------------------------------===//
 
+#include "PTO/Support/CodeConstants.h"
 #include "PTO/IR/PTO.h"
 #include "PTO/IR/VPTOBridgeRegistry.h"
 #include "PTO/Transforms/VPTOBridgeTokens.h"
@@ -45,455 +46,437 @@ namespace pto {
 namespace {
 
 /// Emits a bridge call with no results and no synthesized storage.
-static BridgeCallOp emitVoidBridgeCall(OpBuilder &builder, Location loc,
-                                       BridgeEntryId entry, ValueRange args) {
-  return builder.create<BridgeCallOp>(
-      loc, /*results=*/TypeRange{}, entry,
-      /*spec=*/nullptr, /*instance=*/nullptr, args);
+static BridgeCallOp emitVoidBridgeCall(OpBuilder& builder, Location loc, BridgeEntryId entry, ValueRange args)
+{
+    return builder.create<BridgeCallOp>(loc, TypeRange{}, entry, nullptr, nullptr, args);
 }
 
 /// The init-time spec holds the pipe configuration only; split and the
 /// producer/consumer tiles are added once every lifecycle op is rewritten.
-static BridgePipeSpecAttr buildPipeConfigSpec(OpBuilder &builder,
-                                              InitializeL2LPipeOp init) {
-  return BridgePipeSpecAttr::getChecked(
-      [&] { return init.emitError(); }, builder.getContext(),
-      static_cast<int32_t>(init.getDirMask()),
-      static_cast<int32_t>(init.getSlotSize()),
-      static_cast<int32_t>(init.getSlotNum()), /*localSlotNum=*/2,
-      static_cast<int32_t>(init.getFlagBaseAttr().getInt()),
-      builder.getBoolAttr(init.getNosplitAttr() &&
-                          init.getNosplitAttr().getValue()),
-      /*split=*/std::optional<int32_t>(), /*producer=*/BridgeTileSpecAttr(),
-      /*consumer=*/BridgeTileSpecAttr());
+static BridgePipeSpecAttr buildPipeConfigSpec(OpBuilder& builder, InitializeL2LPipeOp init)
+{
+    return BridgePipeSpecAttr::getChecked(
+        [&] { return init.emitError(); }, builder.getContext(), static_cast<int32_t>(init.getDirMask()),
+        static_cast<int32_t>(init.getSlotSize()), static_cast<int32_t>(init.getSlotNum()), mlir::pto::kValue2,
+        static_cast<int32_t>(init.getFlagBaseAttr().getInt()),
+        builder.getBoolAttr(init.getNosplitAttr() && init.getNosplitAttr().getValue()), std::optional<int32_t>(),
+        BridgeTileSpecAttr(), BridgeTileSpecAttr());
 }
 
-static BridgeTileSpecAttr buildTileSpec(Operation *op, TileBufType tile) {
-  return BridgeTileSpecAttr::getChecked([&] { return op->emitError(); },
-                                        op->getContext(), tile);
+static BridgeTileSpecAttr buildTileSpec(Operation* op, TileBufType tile)
+{
+    return BridgeTileSpecAttr::getChecked([&] { return op->emitError(); }, op->getContext(), tile);
 }
 
 /// Returns the address value a tile_buf_addr operand resolves to, or nullptr
 /// when the source cannot be resolved (the caller emits the diagnostic).
 /// alloc_tile carries the planned address as an i64 operand; a declare_tile
 /// rebound by TPOP resolves to the FIFO slot address returned by the pop.
-static Value resolveTileAddress(
-    Value tile, const llvm::DenseMap<Value, Value> &popAddresses) {
-  if (auto alloc = tile.getDefiningOp<AllocTileOp>()) {
-    return alloc.getAddr();
-  }
-  if (isa_and_nonnull<DeclareTileOp>(tile.getDefiningOp())) {
-    auto it = popAddresses.find(tile);
-    if (it == popAddresses.end()) {
-      return nullptr;
+static Value resolveTileAddress(Value tile, const llvm::DenseMap<Value, Value>& popAddresses)
+{
+    if (auto alloc = tile.getDefiningOp<AllocTileOp>()) {
+        return alloc.getAddr();
     }
-    return it->second;
-  }
-  return nullptr;
+    if (isa_and_nonnull<DeclareTileOp>(tile.getDefiningOp())) {
+        auto it = popAddresses.find(tile);
+        if (it == popAddresses.end()) {
+            return nullptr;
+        }
+        return it->second;
+    }
+    return nullptr;
 }
 
 /// Capability check for the pipe bridge. The concrete configuration
 /// (slot_size/slot_num/flag_base/nosplit) is read from the op attributes
 /// and flows into the generated wrapper; only genuinely unsupported forms
 /// are rejected here.
-static bool isSupportedPipeCapability(InitializeL2LPipeOp init) {
-  int8_t dirMask = init.getDirMask();
-  if (dirMask != 1 && dirMask != 2) {
-    return false;
-  }
-  if (init.getAccPushEpilogueAttr()) {
-    return false;
-  }
-  auto localAddrTy = dyn_cast<IntegerType>(init.getLocalAddr().getType());
-  bool hasI32LocalAddress = localAddrTy && localAddrTy.getWidth() == 32;
-  if (!hasI32LocalAddress) {
-    return false;
-  }
-  return true;
+static bool isSupportedPipeCapability(InitializeL2LPipeOp init)
+{
+    int8_t dirMask = init.getDirMask();
+    if (dirMask != 1 && dirMask != mlir::pto::kValue2) {
+        return false;
+    }
+    if (init.getAccPushEpilogueAttr()) {
+        return false;
+    }
+    auto localAddrTy = dyn_cast<IntegerType>(init.getLocalAddr().getType());
+    bool hasI32LocalAddress = localAddrTy && localAddrTy.getWidth() == 32;
+    if (!hasI32LocalAddress) {
+        return false;
+    }
+    return true;
 }
 
-static const BridgeFunctionDesc *routePipeOp(Operation *op, bool &hadError) {
-  const BridgeFunctionDesc *entry =
-      findBridgeFunctionByOp(op->getName().getStringRef());
-  if (!entry || entry->family != BridgeFamily::Pipe) {
-    op->emitError("VPTO pipe bridge op has no registered handler");
-    hadError = true;
-  }
-  return entry;
+static const BridgeFunctionDesc* routePipeOp(Operation* op, bool& hadError)
+{
+    const BridgeFunctionDesc* entry = findBridgeFunctionByOp(op->getName().getStringRef());
+    if (!entry || entry->family != BridgeFamily::Pipe) {
+        op->emitError("VPTO pipe bridge op has no registered handler");
+        hadError = true;
+    }
+    return entry;
 }
 
 /// A Pipe specialization renders one shared TileSplitAxis template argument,
 /// so every lifecycle op using that object must agree.
-static bool checkSplitConsistency(Operation *op, Value pipeHandle,
-                                  int64_t split, llvm::StringRef opName,
-                                  llvm::DenseMap<Value, int64_t> &bridgedSplits,
-                                  bool &hadError) {
-  if (split < 0 || split > 4) {
-    op->emitError() << "VPTO pipe bridge " << opName
-                    << " carries an unsupported split value " << split;
-    hadError = true;
-    return false;
-  }
-  auto [it, inserted] = bridgedSplits.try_emplace(pipeHandle, split);
-  if (!inserted && it->second != split) {
-    op->emitError() << "VPTO pipe bridge " << opName << " split " << split
-                    << " does not match split " << it->second
-                    << " used by the same pipe object";
-    hadError = true;
-    return false;
-  }
-  return true;
+static bool checkSplitConsistency(
+    Operation* op, Value pipeHandle, int64_t split, llvm::StringRef opName,
+    llvm::DenseMap<Value, int64_t>& bridgedSplits, bool& hadError)
+{
+    if (split < 0 || split > mlir::pto::kValue4) {
+        op->emitError() << "VPTO pipe bridge " << opName << " carries an unsupported split value " << split;
+        hadError = true;
+        return false;
+    }
+    auto [it, inserted] = bridgedSplits.try_emplace(pipeHandle, split);
+    if (!inserted && it->second != split) {
+        op->emitError() << "VPTO pipe bridge " << opName << " split " << split << " does not match split " << it->second
+                        << " used by the same pipe object";
+        hadError = true;
+        return false;
+    }
+    return true;
 }
 
 /// Phase 1: initialize_l2l_pipe -> storage-producing bridge init call.
 /// The SSA pipe value becomes the bridge call result (the storage handle);
 /// push/pop/free below consume that same value.
-static void rewritePipeInits(ArrayRef<InitializeL2LPipeOp> inits,
-                             OpBuilder &builder, bool &hadError) {
-  for (InitializeL2LPipeOp init : inits) {
-    const BridgeFunctionDesc *entry = routePipeOp(init, hadError);
-    if (!entry) {
-      continue;
+static void rewritePipeInits(ArrayRef<InitializeL2LPipeOp> inits, OpBuilder& builder, bool& hadError)
+{
+    for (InitializeL2LPipeOp init : inits) {
+        const BridgeFunctionDesc* entry = routePipeOp(init, hadError);
+        if (!entry) {
+            continue;
+        }
+        if (!isSupportedPipeCapability(init)) {
+            init.emitError(
+                "VPTO pipe bridge supports only a local pipe with dir_mask 1 "
+                "(C2V) or 2 (V2C), no acc_push_epilogue, and an i32 local buffer "
+                "address");
+            hadError = true;
+            continue;
+        }
+        BridgePipeSpecAttr config = buildPipeConfigSpec(builder, init);
+        if (!config) {
+            hadError = true;
+            continue;
+        }
+        builder.setInsertionPoint(init);
+        BridgeObjectCreateOp call = builder.create<BridgeObjectCreateOp>(
+            init.getLoc(), init.getPipe().getType(), entry->id, config, nullptr, ValueRange{init.getLocalAddr()});
+        // The bridge call result becomes the storage handle: push/pop/free
+        // consume the same SSA value instead of the erased pipe op.
+        init.getPipe().replaceAllUsesWith(call.getResult());
+        init.erase();
     }
-    if (!isSupportedPipeCapability(init)) {
-      init.emitError(
-          "VPTO pipe bridge supports only a local pipe with dir_mask 1 "
-          "(C2V) or 2 (V2C), no acc_push_epilogue, and an i32 local buffer "
-          "address");
-      hadError = true;
-      continue;
-    }
-    BridgePipeSpecAttr config = buildPipeConfigSpec(builder, init);
-    if (!config) {
-      hadError = true;
-      continue;
-    }
-    builder.setInsertionPoint(init);
-    BridgeObjectCreateOp call = builder.create<BridgeObjectCreateOp>(
-        init.getLoc(), init.getPipe().getType(),
-        entry->id, config, /*instance=*/nullptr,
-        ValueRange{init.getLocalAddr()});
-    // The bridge call result becomes the storage handle: push/pop/free
-    // consume the same SSA value instead of the erased pipe op.
-    init.getPipe().replaceAllUsesWith(call.getResult());
-    init.erase();
-  }
 }
 
 /// Phase 2: tpop -> bridge pop call; record the returned FIFO slot address
 /// for the declared tile it rebinds.
-static void rewritePipePops(ArrayRef<TPopOp> pops, OpBuilder &builder,
-                            llvm::DenseMap<Value, Value> &popAddresses,
-                            llvm::DenseMap<Value, int64_t> &bridgedSplits,
-                            bool &hadError) {
-  for (TPopOp pop : pops) {
-    const BridgeFunctionDesc *entry = routePipeOp(pop, hadError);
-    if (!entry) {
-      continue;
+static void rewritePipePops(
+    ArrayRef<TPopOp> pops, OpBuilder& builder, llvm::DenseMap<Value, Value>& popAddresses,
+    llvm::DenseMap<Value, int64_t>& bridgedSplits, bool& hadError)
+{
+    for (TPopOp pop : pops) {
+        const BridgeFunctionDesc* entry = routePipeOp(pop, hadError);
+        if (!entry) {
+            continue;
+        }
+        if (popAddresses.count(pop.getTile()) != 0) {
+            pop.emitError(
+                "VPTO pipe bridge supports at most one TPOP per declared tile; "
+                "sequential rebind consumption is not supported yet");
+            hadError = true;
+            continue;
+        }
+        auto consumerTileTy = dyn_cast<TileBufType>(pop.getTile().getType());
+        if (!consumerTileTy) {
+            pop.emitError("VPTO pipe bridge TPOP tile must be a tile_buf");
+            hadError = true;
+            continue;
+        }
+        if (!checkSplitConsistency(pop, pop.getPipeHandle(), pop.getSplit(), "TPOP", bridgedSplits, hadError)) {
+            continue;
+        }
+        builder.setInsertionPoint(pop);
+        BridgeCallOp call = builder.create<BridgeCallOp>(
+            pop.getLoc(), TypeRange{builder.getI64Type()}, entry->id, nullptr, nullptr,
+            ValueRange{pop.getPipeHandle()});
+        call->setAttr("split", builder.getI32IntegerAttr(pop.getSplit()));
+        BridgeTileSpecAttr consumerSpec = buildTileSpec(pop, consumerTileTy);
+        if (!consumerSpec) {
+            hadError = true;
+            continue;
+        }
+        call->setAttr("consumer_tile_spec", consumerSpec);
+        popAddresses[pop.getTile()] = call.getResults().front();
+        pop.erase();
     }
-    if (popAddresses.count(pop.getTile()) != 0) {
-      pop.emitError(
-          "VPTO pipe bridge supports at most one TPOP per declared tile; "
-          "sequential rebind consumption is not supported yet");
-      hadError = true;
-      continue;
-    }
-    auto consumerTileTy = dyn_cast<TileBufType>(pop.getTile().getType());
-    if (!consumerTileTy) {
-      pop.emitError("VPTO pipe bridge TPOP tile must be a tile_buf");
-      hadError = true;
-      continue;
-    }
-    if (!checkSplitConsistency(pop, pop.getPipeHandle(), pop.getSplit(),
-                               "TPOP", bridgedSplits, hadError)) {
-      continue;
-    }
-    builder.setInsertionPoint(pop);
-    BridgeCallOp call = builder.create<BridgeCallOp>(
-        pop.getLoc(), /*results=*/TypeRange{builder.getI64Type()},
-        entry->id, /*spec=*/nullptr, /*instance=*/nullptr,
-        ValueRange{pop.getPipeHandle()});
-    call->setAttr("split", builder.getI32IntegerAttr(pop.getSplit()));
-    BridgeTileSpecAttr consumerSpec = buildTileSpec(pop, consumerTileTy);
-    if (!consumerSpec) {
-      hadError = true;
-      continue;
-    }
-    call->setAttr("consumer_tile_spec", consumerSpec);
-    popAddresses[pop.getTile()] = call.getResults().front();
-    pop.erase();
-  }
 }
 
 /// Phase 3: tile_buf_addr -> bridge_inttoptr on the resolved address.
-static void rewriteTileBufAddrs(ArrayRef<TileBufAddrOp> addrs,
-                                const llvm::DenseSet<Value> &bridgedTiles,
-                                const llvm::DenseMap<Value, Value> &popAddresses,
-                                OpBuilder &builder, DominanceInfo &dominance,
-                                bool &hadError) {
-  for (TileBufAddrOp addr : addrs) {
-    if (!bridgedTiles.contains(addr.getSrc())) {
-      continue;
+static void rewriteTileBufAddrs(
+    ArrayRef<TileBufAddrOp> addrs, const llvm::DenseSet<Value>& bridgedTiles,
+    const llvm::DenseMap<Value, Value>& popAddresses, OpBuilder& builder, DominanceInfo& dominance, bool& hadError)
+{
+    for (TileBufAddrOp addr : addrs) {
+        if (!bridgedTiles.contains(addr.getSrc())) {
+            continue;
+        }
+        Value address = resolveTileAddress(addr.getSrc(), popAddresses);
+        if (!address) {
+            addr.emitError(
+                "VPTO pipe bridge requires tile_buf_addr sources to be a planned "
+                "alloc_tile or a declare_tile rebound by tpop");
+            hadError = true;
+            continue;
+        }
+        if (auto decl = addr.getSrc().getDefiningOp<DeclareTileOp>()) {
+            Operation* producer = address.getDefiningOp();
+            if (!producer || !dominance.dominates(producer, addr.getOperation())) {
+                addr.emitError(
+                    "VPTO pipe bridge requires the matching tpop to "
+                    "dominate tile_buf_addr");
+                hadError = true;
+                continue;
+            }
+        }
+        builder.setInsertionPoint(addr);
+        CastPtrOp pointer = builder.create<CastPtrOp>(addr.getLoc(), addr.getDst().getType(), address);
+        addr.getDst().replaceAllUsesWith(pointer.getResult());
+        addr.erase();
     }
-    Value address = resolveTileAddress(addr.getSrc(), popAddresses);
-    if (!address) {
-      addr.emitError(
-          "VPTO pipe bridge requires tile_buf_addr sources to be a planned "
-          "alloc_tile or a declare_tile rebound by tpop");
-      hadError = true;
-      continue;
-    }
-    if (auto decl = addr.getSrc().getDefiningOp<DeclareTileOp>()) {
-      Operation *producer = address.getDefiningOp();
-      if (!producer || !dominance.dominates(producer, addr.getOperation())) {
-        addr.emitError("VPTO pipe bridge requires the matching tpop to "
-                       "dominate tile_buf_addr");
-        hadError = true;
-        continue;
-      }
-    }
-    builder.setInsertionPoint(addr);
-    CastPtrOp pointer = builder.create<CastPtrOp>(
-        addr.getLoc(), addr.getDst().getType(), address);
-    addr.getDst().replaceAllUsesWith(pointer.getResult());
-    addr.erase();
-  }
 }
 
 /// Phase 4: tpush -> bridge push call on the planned alloc_tile address.
-static void rewritePipePushes(ArrayRef<TPushOp> pushes, OpBuilder &builder,
-                              llvm::DenseMap<Value, int64_t> &bridgedSplits,
-                              bool &hadError) {
-  for (TPushOp push : pushes) {
-    const BridgeFunctionDesc *entry = routePipeOp(push, hadError);
-    if (!entry) {
-      continue;
+static void rewritePipePushes(
+    ArrayRef<TPushOp> pushes, OpBuilder& builder, llvm::DenseMap<Value, int64_t>& bridgedSplits, bool& hadError)
+{
+    for (TPushOp push : pushes) {
+        const BridgeFunctionDesc* entry = routePipeOp(push, hadError);
+        if (!entry) {
+            continue;
+        }
+        auto alloc = push.getTile().getDefiningOp<AllocTileOp>();
+        if (!alloc || !alloc.getAddr()) {
+            push.emitError(
+                "VPTO pipe bridge TPUSH requires a tile from an "
+                "alloc_tile with a planned address");
+            hadError = true;
+            continue;
+        }
+        auto producerTileTy = dyn_cast<TileBufType>(push.getTile().getType());
+        if (!producerTileTy) {
+            push.emitError("VPTO pipe bridge TPUSH tile must be a tile_buf");
+            hadError = true;
+            continue;
+        }
+        if (!checkSplitConsistency(push, push.getPipeHandle(), push.getSplit(), "TPUSH", bridgedSplits, hadError)) {
+            continue;
+        }
+        builder.setInsertionPoint(push);
+        BridgeCallOp call =
+            emitVoidBridgeCall(builder, push.getLoc(), entry->id, ValueRange{push.getPipeHandle(), alloc.getAddr()});
+        call->setAttr("split", builder.getI32IntegerAttr(push.getSplit()));
+        BridgeTileSpecAttr producerSpec = buildTileSpec(push, producerTileTy);
+        if (!producerSpec) {
+            hadError = true;
+            continue;
+        }
+        call->setAttr("producer_tile_spec", producerSpec);
+        push.erase();
     }
-    auto alloc = push.getTile().getDefiningOp<AllocTileOp>();
-    if (!alloc || !alloc.getAddr()) {
-      push.emitError("VPTO pipe bridge TPUSH requires a tile from an "
-                     "alloc_tile with a planned address");
-      hadError = true;
-      continue;
-    }
-    auto producerTileTy = dyn_cast<TileBufType>(push.getTile().getType());
-    if (!producerTileTy) {
-      push.emitError("VPTO pipe bridge TPUSH tile must be a tile_buf");
-      hadError = true;
-      continue;
-    }
-    if (!checkSplitConsistency(push, push.getPipeHandle(), push.getSplit(),
-                               "TPUSH", bridgedSplits, hadError)) {
-      continue;
-    }
-    builder.setInsertionPoint(push);
-    BridgeCallOp call =
-        emitVoidBridgeCall(builder, push.getLoc(), entry->id,
-                           ValueRange{push.getPipeHandle(), alloc.getAddr()});
-    call->setAttr("split", builder.getI32IntegerAttr(push.getSplit()));
-    BridgeTileSpecAttr producerSpec = buildTileSpec(push, producerTileTy);
-    if (!producerSpec) {
-      hadError = true;
-      continue;
-    }
-    call->setAttr("producer_tile_spec", producerSpec);
-    push.erase();
-  }
 }
 
 /// Phase 5: tfree -> bridge free call.
-static void rewritePipeFrees(ArrayRef<TFreeOp> frees, OpBuilder &builder,
-                             llvm::DenseMap<Value, int64_t> &bridgedSplits,
-                             bool &hadError) {
-  for (TFreeOp free : frees) {
-    const BridgeFunctionDesc *entry = routePipeOp(free, hadError);
-    if (!entry) {
-      continue;
+static void rewritePipeFrees(
+    ArrayRef<TFreeOp> frees, OpBuilder& builder, llvm::DenseMap<Value, int64_t>& bridgedSplits, bool& hadError)
+{
+    for (TFreeOp free : frees) {
+        const BridgeFunctionDesc* entry = routePipeOp(free, hadError);
+        if (!entry) {
+            continue;
+        }
+        if (free.getEntry()) {
+            free.emitError(
+                "VPTO pipe bridge TFREE supports the pipe-entry form "
+                "without a tile operand");
+            hadError = true;
+            continue;
+        }
+        if (!checkSplitConsistency(free, free.getPipeHandle(), free.getSplit(), "TFREE", bridgedSplits, hadError)) {
+            continue;
+        }
+        builder.setInsertionPoint(free);
+        BridgeCallOp call = emitVoidBridgeCall(builder, free.getLoc(), entry->id, ValueRange{free.getPipeHandle()});
+        call->setAttr("split", builder.getI32IntegerAttr(free.getSplit()));
+        free.erase();
     }
-    if (free.getEntry()) {
-      free.emitError("VPTO pipe bridge TFREE supports the pipe-entry form "
-                     "without a tile operand");
-      hadError = true;
-      continue;
-    }
-    if (!checkSplitConsistency(free, free.getPipeHandle(), free.getSplit(),
-                               "TFREE", bridgedSplits, hadError)) {
-      continue;
-    }
-    builder.setInsertionPoint(free);
-    BridgeCallOp call = emitVoidBridgeCall(builder, free.getLoc(), entry->id,
-                                           ValueRange{free.getPipeHandle()});
-    call->setAttr("split", builder.getI32IntegerAttr(free.getSplit()));
-    free.erase();
-  }
 }
 
 /// Phase 6: erase tile handles whose consumers are all bridged now.
-static void eraseBridgedTiles(ArrayRef<AllocTileOp> allocs,
-                              ArrayRef<DeclareTileOp> decls,
-                              const llvm::DenseSet<Value> &bridgedTiles,
-                              const llvm::DenseMap<Value, Value> &popAddresses,
-                              DominanceInfo &dominance,
-                              bool &hadError) {
-  for (AllocTileOp alloc : allocs) {
-    if (!bridgedTiles.contains(alloc.getResult())) {
-      continue;
+static void eraseBridgedTiles(
+    ArrayRef<AllocTileOp> allocs, ArrayRef<DeclareTileOp> decls, const llvm::DenseSet<Value>& bridgedTiles,
+    const llvm::DenseMap<Value, Value>& popAddresses, DominanceInfo& dominance, bool& hadError)
+{
+    for (AllocTileOp alloc : allocs) {
+        if (!bridgedTiles.contains(alloc.getResult())) {
+            continue;
+        }
+        if (alloc.use_empty()) {
+            alloc.erase();
+        }
     }
-    if (alloc.use_empty()) {
-      alloc.erase();
+    for (DeclareTileOp decl : decls) {
+        if (!bridgedTiles.contains(decl.getResult())) {
+            continue;
+        }
+        if (decl.use_empty()) {
+            decl.erase();
+            continue;
+        }
+        Value address = popAddresses.lookup(decl.getResult());
+        if (!address) {
+            decl.emitError("VPTO pipe bridge requires a matching tpop address");
+            hadError = true;
+            continue;
+        }
+        bool dominatesUsers = llvm::all_of(
+            decl->getUsers(), [&address, &dominance](Operation* user) { return dominance.dominates(address, user); });
+        if (!dominatesUsers) {
+            decl.emitError("VPTO pipe bridge requires tpop to dominate remaining tile users");
+            hadError = true;
+            continue;
+        }
+        OpBuilder builder(address.getDefiningOp());
+        builder.setInsertionPointAfter(address.getDefiningOp());
+        auto alloc = builder.create<AllocTileOp>(
+            decl.getLoc(), TypeRange{decl.getResult().getType()}, ValueRange{address},
+            ArrayRef<NamedAttribute>{
+                builder.getNamedAttr("operandSegmentSizes", builder.getDenseI32ArrayAttr({1, 0, 0}))});
+        decl.getResult().replaceAllUsesWith(alloc.getResult());
+        decl.erase();
     }
-  }
-  for (DeclareTileOp decl : decls) {
-    if (!bridgedTiles.contains(decl.getResult())) {
-      continue;
-    }
-    if (decl.use_empty()) {
-      decl.erase();
-      continue;
-    }
-    Value address = popAddresses.lookup(decl.getResult());
-    if (!address) {
-      decl.emitError("VPTO pipe bridge requires a matching tpop address");
-      hadError = true;
-      continue;
-    }
-    bool dominatesUsers = llvm::all_of(decl->getUsers(), [&address, &dominance](Operation *user) {
-      return dominance.dominates(address, user);
-    });
-    if (!dominatesUsers) {
-      decl.emitError("VPTO pipe bridge requires tpop to dominate remaining tile users");
-      hadError = true;
-      continue;
-    }
-    OpBuilder builder(address.getDefiningOp());
-    builder.setInsertionPointAfter(address.getDefiningOp());
-    auto alloc = builder.create<AllocTileOp>(
-        decl.getLoc(), TypeRange{decl.getResult().getType()},
-        ValueRange{address},
-        ArrayRef<NamedAttribute>{builder.getNamedAttr(
-            "operandSegmentSizes", builder.getDenseI32ArrayAttr({1, 0, 0}))});
-    decl.getResult().replaceAllUsesWith(alloc.getResult());
-    decl.erase();
-  }
 }
 
 /// A Pipe object has one specialization, so every lifecycle op must agree on
 /// the producer and consumer tiles; a conflict is reported at the op that
 /// introduces it rather than resolved by the last user.
 template <typename AttrT>
-static bool mergePipeSpecPart(BridgeCallOp call, StringRef name, AttrT &merged) {
-  auto value = call->getAttrOfType<AttrT>(name);
-  if (!value) {
+static bool mergePipeSpecPart(BridgeCallOp call, StringRef name, AttrT& merged)
+{
+    auto value = call->getAttrOfType<AttrT>(name);
+    if (!value) {
+        return true;
+    }
+    if (merged && merged != value) {
+        call.emitError() << "VPTO pipe bridge " << name << " " << value << " conflicts with " << merged
+                         << " used by the same pipe object";
+        return false;
+    }
+    merged = value;
     return true;
-  }
-  if (merged && merged != value) {
-    call.emitError() << "VPTO pipe bridge " << name << " " << value
-                     << " conflicts with " << merged
-                     << " used by the same pipe object";
-    return false;
-  }
-  merged = value;
-  return true;
 }
 
-static void assemblePipeSpec(BridgeObjectCreateOp create, bool &hadError) {
-  auto config = dyn_cast_or_null<BridgePipeSpecAttr>(create.getSpecAttr());
-  if (!config) {
-    create.emitError("Pipe bridge object is missing its pipe configuration");
-    hadError = true;
-    return;
-  }
-  IntegerAttr split;
-  BridgeTileSpecAttr producer;
-  BridgeTileSpecAttr consumer;
-  SmallVector<BridgeCallOp> calls;
-  for (Operation *user : create.getResult().getUsers()) {
-    auto call = dyn_cast<BridgeCallOp>(user);
-    if (!call) {
-      continue;
+static void assemblePipeSpec(BridgeObjectCreateOp create, bool& hadError)
+{
+    auto config = dyn_cast_or_null<BridgePipeSpecAttr>(create.getSpecAttr());
+    if (!config) {
+        create.emitError("Pipe bridge object is missing its pipe configuration");
+        hadError = true;
+        return;
     }
-    calls.push_back(call);
-    // Split agreement was already checked per pipe handle while rewriting.
-    if (auto value = call->getAttrOfType<IntegerAttr>("split")) {
-      split = value;
+    IntegerAttr split;
+    BridgeTileSpecAttr producer;
+    BridgeTileSpecAttr consumer;
+    SmallVector<BridgeCallOp> calls;
+    for (Operation* user : create.getResult().getUsers()) {
+        auto call = dyn_cast<BridgeCallOp>(user);
+        if (!call) {
+            continue;
+        }
+        calls.push_back(call);
+        // Split agreement was already checked per pipe handle while rewriting.
+        if (auto value = call->getAttrOfType<IntegerAttr>("split")) {
+            split = value;
+        }
+        const bool conflictingTiles = !mergePipeSpecPart(call, "producer_tile_spec", producer) ||
+                                      !mergePipeSpecPart(call, "consumer_tile_spec", consumer);
+        if (conflictingTiles) {
+            hadError = true;
+            return;
+        }
     }
-    const bool conflictingTiles =
-        !mergePipeSpecPart(call, "producer_tile_spec", producer) ||
-        !mergePipeSpecPart(call, "consumer_tile_spec", consumer);
-    if (conflictingTiles) {
-      hadError = true;
-      return;
+    std::optional<int32_t> splitValue;
+    if (split) {
+        splitValue = static_cast<int32_t>(split.getInt());
     }
-  }
-  std::optional<int32_t> splitValue;
-  if (split) {
-    splitValue = static_cast<int32_t>(split.getInt());
-  }
-  auto spec = BridgePipeSpecAttr::getChecked(
-      [&create] { return create.emitError(); }, create.getContext(),
-      config.getDirMask(), config.getSlotSize(), config.getSlotNum(),
-      config.getLocalSlotNum(), config.getFlagBase(), config.getNosplit(),
-      splitValue, producer, consumer);
-  if (!spec) {
-    hadError = true;
-    return;
-  }
-  create.setSpecAttr(spec);
-  for (BridgeCallOp call : calls) {
-    call.setSpecAttr(spec);
-    call->removeAttr("split");
-    call->removeAttr("producer_tile_spec");
-    call->removeAttr("consumer_tile_spec");
-  }
+    auto spec = BridgePipeSpecAttr::getChecked(
+        [&create] { return create.emitError(); }, create.getContext(), config.getDirMask(), config.getSlotSize(),
+        config.getSlotNum(), config.getLocalSlotNum(), config.getFlagBase(), config.getNosplit(), splitValue, producer,
+        consumer);
+    if (!spec) {
+        hadError = true;
+        return;
+    }
+    create.setSpecAttr(spec);
+    for (BridgeCallOp call : calls) {
+        call.setSpecAttr(spec);
+        call->removeAttr("split");
+        call->removeAttr("producer_tile_spec");
+        call->removeAttr("consumer_tile_spec");
+    }
 }
 
 struct PipeFamilyOps {
-  SmallVector<InitializeL2LPipeOp> inits;
-  SmallVector<TPushOp> pushes;
-  SmallVector<TPopOp> pops;
-  SmallVector<TFreeOp> frees;
-  SmallVector<TileBufAddrOp> addrs;
-  SmallVector<AllocTileOp> allocs;
-  SmallVector<DeclareTileOp> decls;
+    SmallVector<InitializeL2LPipeOp> inits;
+    SmallVector<TPushOp> pushes;
+    SmallVector<TPopOp> pops;
+    SmallVector<TFreeOp> frees;
+    SmallVector<TileBufAddrOp> addrs;
+    SmallVector<AllocTileOp> allocs;
+    SmallVector<DeclareTileOp> decls;
 };
 
 /// Collects the pipe family ops first; rewriting during a walk would
 /// invalidate the walker.
-static PipeFamilyOps collectPipeFamilyOps(func::FuncOp func) {
-  PipeFamilyOps ops;
-  func.walk([&](Operation *op) {
-    if (auto init = dyn_cast<InitializeL2LPipeOp>(op)) {
-      ops.inits.push_back(init);
-    } else if (auto push = dyn_cast<TPushOp>(op)) {
-      ops.pushes.push_back(push);
-    } else if (auto pop = dyn_cast<TPopOp>(op)) {
-      ops.pops.push_back(pop);
-    } else if (auto free = dyn_cast<TFreeOp>(op)) {
-      ops.frees.push_back(free);
-    } else if (auto addr = dyn_cast<TileBufAddrOp>(op)) {
-      ops.addrs.push_back(addr);
-    } else if (auto alloc = dyn_cast<AllocTileOp>(op)) {
-      ops.allocs.push_back(alloc);
-    } else if (auto decl = dyn_cast<DeclareTileOp>(op)) {
-      ops.decls.push_back(decl);
-    }
-  });
-  return ops;
+static PipeFamilyOps collectPipeFamilyOps(func::FuncOp func)
+{
+    PipeFamilyOps ops;
+    func.walk([&](Operation* op) {
+        if (auto init = dyn_cast<InitializeL2LPipeOp>(op)) {
+            ops.inits.push_back(init);
+        } else if (auto push = dyn_cast<TPushOp>(op)) {
+            ops.pushes.push_back(push);
+        } else if (auto pop = dyn_cast<TPopOp>(op)) {
+            ops.pops.push_back(pop);
+        } else if (auto free = dyn_cast<TFreeOp>(op)) {
+            ops.frees.push_back(free);
+        } else if (auto addr = dyn_cast<TileBufAddrOp>(op)) {
+            ops.addrs.push_back(addr);
+        } else if (auto alloc = dyn_cast<AllocTileOp>(op)) {
+            ops.allocs.push_back(alloc);
+        } else if (auto decl = dyn_cast<DeclareTileOp>(op)) {
+            ops.decls.push_back(decl);
+        }
+    });
+    return ops;
 }
 
 /// Only tile handles participating in the pipe protocol belong to this
 /// family lowering. Unrelated tiles in a mixed kernel continue through the
 /// regular VPTO lowering path.
-static llvm::DenseSet<Value>
-collectBridgedTiles(ArrayRef<TPushOp> pushes, ArrayRef<TPopOp> pops) {
-  llvm::DenseSet<Value> bridgedTiles;
-  for (TPushOp push : pushes) {
-    bridgedTiles.insert(push.getTile());
-  }
-  for (TPopOp pop : pops) {
-    bridgedTiles.insert(pop.getTile());
-  }
-  return bridgedTiles;
+static llvm::DenseSet<Value> collectBridgedTiles(ArrayRef<TPushOp> pushes, ArrayRef<TPopOp> pops)
+{
+    llvm::DenseSet<Value> bridgedTiles;
+    for (TPushOp push : pushes) {
+        bridgedTiles.insert(push.getTile());
+    }
+    for (TPopOp pop : pops) {
+        bridgedTiles.insert(pop.getTile());
+    }
+    return bridgedTiles;
 }
 
 } // namespace
@@ -501,39 +484,32 @@ collectBridgedTiles(ArrayRef<TPushOp> pushes, ArrayRef<TPopOp> pops) {
 /// Pipe family typed lowering, driven by the one policy that
 /// `pto-lower-bridge-ops` loads. Functions without pipe lifecycle ops keep the
 /// regular VPTO lowering path.
-LogicalResult lowerPipeFamilyOps(func::FuncOp func,
-                                 const BridgeRoutePolicy &policy) {
-  PipeFamilyOps ops = collectPipeFamilyOps(func);
-  const bool hasPipeFamilyOps = !ops.inits.empty() || !ops.pushes.empty() ||
-                                !ops.pops.empty() || !ops.frees.empty();
-  if (!hasPipeFamilyOps || !policy.routesFamily("pipe")) {
-    return success();
-  }
-  OpBuilder builder(func);
-  bool hadError = false;
-  llvm::DenseSet<Value> bridgedTiles =
-      collectBridgedTiles(ops.pushes, ops.pops);
-  // A Pipe specialization renders one shared TileSplitAxis template
-  // argument, so every lifecycle op using that object must agree.
-  llvm::DenseMap<Value, int64_t> bridgedSplits;
-  llvm::DenseMap<Value, Value> popAddresses;
-  rewritePipeInits(ops.inits, builder, hadError);
-  rewritePipePops(ops.pops, builder, popAddresses, bridgedSplits, hadError);
-  DominanceInfo dominance(func);
-  rewriteTileBufAddrs(ops.addrs, bridgedTiles, popAddresses, builder, dominance,
-                      hadError);
-  rewritePipePushes(ops.pushes, builder, bridgedSplits, hadError);
-  rewritePipeFrees(ops.frees, builder, bridgedSplits, hadError);
-  eraseBridgedTiles(ops.allocs, ops.decls, bridgedTiles, popAddresses,
-                    dominance, hadError);
-  if (!hadError) {
-    func.walk([&](BridgeObjectCreateOp create) {
-      assemblePipeSpec(create, hadError);
-    });
-  }
-  return success(!hadError);
+LogicalResult lowerPipeFamilyOps(func::FuncOp func, const BridgeRoutePolicy& policy)
+{
+    PipeFamilyOps ops = collectPipeFamilyOps(func);
+    const bool hasPipeFamilyOps = !ops.inits.empty() || !ops.pushes.empty() || !ops.pops.empty() || !ops.frees.empty();
+    if (!hasPipeFamilyOps || !policy.routesFamily("pipe")) {
+        return success();
+    }
+    OpBuilder builder(func);
+    bool hadError = false;
+    llvm::DenseSet<Value> bridgedTiles = collectBridgedTiles(ops.pushes, ops.pops);
+    // A Pipe specialization renders one shared TileSplitAxis template
+    // argument, so every lifecycle op using that object must agree.
+    llvm::DenseMap<Value, int64_t> bridgedSplits;
+    llvm::DenseMap<Value, Value> popAddresses;
+    rewritePipeInits(ops.inits, builder, hadError);
+    rewritePipePops(ops.pops, builder, popAddresses, bridgedSplits, hadError);
+    DominanceInfo dominance(func);
+    rewriteTileBufAddrs(ops.addrs, bridgedTiles, popAddresses, builder, dominance, hadError);
+    rewritePipePushes(ops.pushes, builder, bridgedSplits, hadError);
+    rewritePipeFrees(ops.frees, builder, bridgedSplits, hadError);
+    eraseBridgedTiles(ops.allocs, ops.decls, bridgedTiles, popAddresses, dominance, hadError);
+    if (!hadError) {
+        func.walk([&](BridgeObjectCreateOp create) { assemblePipeSpec(create, hadError); });
+    }
+    return success(!hadError);
 }
-
 
 } // namespace pto
 } // namespace mlir

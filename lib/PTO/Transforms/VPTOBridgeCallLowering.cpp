@@ -9,6 +9,7 @@
 // Lower resolved bridge IR to func.call at the start of VPTO LLVM lowering.
 // Declarations are derived from the registry descriptor, never from call-site
 // operand types, and object handles become their storage pointers directly.
+#include "PTO/Support/CodeConstants.h"
 #include "PTO/Transforms/Passes.h"
 #include "PTO/IR/VPTOBridgeRegistry.h"
 #include "mlir/Dialect/Func/IR/FuncOps.h"
@@ -27,10 +28,10 @@ Type getBridgeABIType(MLIRContext *context, BridgeValueType value) {
   case BridgeValueKind::F32:
     return Float32Type::get(context);
   case BridgeValueKind::I32:
-    return IntegerType::get(context, 32);
+      return IntegerType::get(context, mlir::pto::kValue32);
   case BridgeValueKind::I64:
   case BridgeValueKind::U64:
-    return IntegerType::get(context, 64);
+      return IntegerType::get(context, mlir::pto::kValue64);
   case BridgeValueKind::Pointer:
     return LLVM::LLVMPointerType::get(
         context, value.space == BridgePointerSpace::Global ? 1 : 0);

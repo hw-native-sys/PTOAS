@@ -381,7 +381,7 @@ FailureOr<SmallVector<VMIGroupIotaLayoutFact, mlir::pto::kValue4>> VMILayoutSupp
     if (VMILayoutAttr explicitLayout = resultType.getLayoutAttr(); explicitLayout && explicitLayout != contiguous) {
         return fail("group_iota directly produces only contiguous layout");
     }
-    return SmallVector<VMIGroupIotaLayoutFact, 4>{VMIGroupIotaLayoutFact{contiguous}};
+    return SmallVector<VMIGroupIotaLayoutFact, mlir::pto::kValue4>{VMIGroupIotaLayoutFact{contiguous}};
 }
 
 template <typename OpTy>
@@ -420,7 +420,8 @@ FailureOr<VMIHistogramLayoutFact> VMILayoutSupport::getPreferredVchistLayoutFact
 static bool isScalarBroadcastLoadElementType(Type elementType)
 {
     unsigned elementBits = pto::getPTOStorageElemBitWidth(elementType);
-    return elementBits == 8 || elementBits == 16 || elementBits == 32;
+    return elementBits == mlir::pto::kValue8 || elementBits == mlir::pto::kValue16 ||
+           elementBits == mlir::pto::kValue32;
 }
 
 FailureOr<VMIGroupSlotLayoutFact> VMILayoutSupport::getGroupSlotLoadLayoutFact(
@@ -439,7 +440,7 @@ FailureOr<VMIGroupSlotLayoutFact> VMILayoutSupport::getGroupSlotLoadLayoutFact(
     }
     VMILayoutAttr layout = baseFact->layout;
     std::optional<int64_t> stride = getConstantIndexValue(sourceGroupStride);
-    if (layout.getSlots() == 8) {
+    if (layout.getSlots() == mlir::pto::kValue8) {
         if (sourceGroupStride && (!stride || *stride != 1)) {
             return fail("slots=8 group_slot_load requires constant unit "
                         "source_group_stride");

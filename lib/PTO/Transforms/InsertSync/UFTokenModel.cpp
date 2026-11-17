@@ -62,13 +62,13 @@ namespace {
 UFEffect composeEffect(UFEffect lhs, UFEffect rhs)
 {
     unsigned result = 0;
-    for (unsigned input = 0; input < 2; ++input) {
-        for (unsigned middle = 0; middle < 2; ++middle) {
-            for (unsigned output = 0; output < 2; ++output) {
-                const bool first = (static_cast<unsigned>(lhs) & (1U << (input * 2 + middle))) != 0;
-                const bool second = (static_cast<unsigned>(rhs) & (1U << (middle * 2 + output))) != 0;
+    for (unsigned input = 0; input < kValue2; ++input) {
+        for (unsigned middle = 0; middle < kValue2; ++middle) {
+            for (unsigned output = 0; output < kValue2; ++output) {
+                const bool first = (static_cast<unsigned>(lhs) & (1U << (input * kValue2 + middle))) != 0;
+                const bool second = (static_cast<unsigned>(rhs) & (1U << (middle * kValue2 + output))) != 0;
                 if (first && second) {
-                    result |= 1U << (input * 2 + output);
+                    result |= 1U << (input * kValue2 + output);
                 }
             }
         }
@@ -644,8 +644,10 @@ bool UFTokenModel::handoffPreconditionHolds(const Node& front, UFTokenAction act
 const UFTokenModel::Node* UFTokenModel::pipelineBoundaryLoop(const Node& front, const Node& now) const
 {
     if (sameRegion(front, now)) {
-        if (now.childIndex != front.childIndex + 2 ||
-            actionOf(front.index) != UFTokenAction::Publish || actionOf(now.index) != UFTokenAction::Consume) {
+        const bool hasInvalidNeighborPair = now.childIndex != front.childIndex + kValue2 ||
+                                            actionOf(front.index) != UFTokenAction::Publish ||
+                                            actionOf(now.index) != UFTokenAction::Consume;
+        if (hasInvalidNeighborPair) {
             return nullptr;
         }
         return &(*front.parentSequence->nodes)[front.childIndex + 1];

@@ -8,6 +8,7 @@
 //===- VPTOSdmaGmGm.cpp - pto.sdma_gm_gm methods --------------------------===//
 //===----------------------------------------------------------------------===//
 
+#include "PTO/Support/CodeConstants.h"
 #include "PTO/Support/AsyncSessionABI.h"
 #include "VPTODmaInternal.h"
 
@@ -34,14 +35,16 @@ LogicalResult SdmaGmGmOp::verify()
     // A waiter reads the record as 64-bit words, so the pointer has to say so.
     auto recordTy = cast<PtrType>(getCqRecord().getType());
     auto recordElem = dyn_cast<IntegerType>(recordTy.getElementType());
-    if (!recordElem || recordElem.getWidth() != 64)
+    if (!recordElem || recordElem.getWidth() != mlir::pto::kValue64) {
         return emitOpError() << "completion record must point at i64, but points at " << recordTy.getElementType();
+    }
 
     // The expansion posts to the queue with scalar GM stores and, on A5, rings the
     // doorbell with pto.st_dev. None of that is legal under SIMT, so reject here
     // rather than letting the expansion fail later with a less obvious diagnostic.
-    if (isInsideSimtExecutionScope(getOperation()))
+    if (isInsideSimtExecutionScope(getOperation())) {
         return emitOpError() << "must be outside pto.simt_entry functions and pto.section.simt";
+    }
     auto funcOp = getOperation()->getParentOfType<func::FuncOp>();
     if (!funcOp || !pto::isPTOEntryFunction(funcOp))
         return emitOpError() << "requires an enclosing ordinary AICore entry function";

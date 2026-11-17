@@ -24,6 +24,7 @@
 #define DEBUG_TYPE "pto-emitc"
 #endif
 
+#include "PTO/Support/CodeConstants.h"
 #include "PTO/IR/PTO.h"
 #include "PTO/IR/PTOLayoutUtils.h"
 #include "PTO/IR/PTOSyncUtils.h"
@@ -153,13 +154,13 @@ inline std::string escapeCStringLiteral(StringRef text) {
       quoted += "\\n";
     } else if (character == '\t') {
       quoted += "\\t";
-    } else if (character < 32 || character == 127) {
-      quoted += '\\';
-      quoted += static_cast<char>(static_cast<int>('0') + ((character >> 6) & 7));
-      quoted += static_cast<char>(static_cast<int>('0') + ((character >> 3) & 7));
-      quoted += static_cast<char>(static_cast<int>('0') + (character & 7));
+    } else if (character < mlir::pto::kValue32 || character == mlir::pto::kValue127) {
+        quoted += '\\';
+        quoted += static_cast<char>(static_cast<int>('0') + ((character >> mlir::pto::kValue6) & mlir::pto::kValue7));
+        quoted += static_cast<char>(static_cast<int>('0') + ((character >> mlir::pto::kValue3) & mlir::pto::kValue7));
+        quoted += static_cast<char>(static_cast<int>('0') + (character & mlir::pto::kValue7));
     } else {
-      quoted += character;
+        quoted += character;
     }
   }
   quoted += "\"";

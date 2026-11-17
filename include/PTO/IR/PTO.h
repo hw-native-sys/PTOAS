@@ -399,7 +399,6 @@ void setExternalArtifactVisibility(func::FuncOp func, bool isExternal);
 LogicalResult validatePTOEntryFunctions(ModuleOp module);
 
 /// Validate every `pto.sched_mode` attribute in `module`.
-///
 /// The attribute must be a signless i32 holding exactly 0 (normal mode) or 1
 /// (batch mode) and must sit on a kernel entry function. Both backends call
 /// this: EmitC emits the value as the CCE `__schedmode__(n)` kernel qualifier

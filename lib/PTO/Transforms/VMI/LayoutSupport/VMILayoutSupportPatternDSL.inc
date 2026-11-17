@@ -196,11 +196,11 @@ inline unsigned getCastTypeClassSpecificity(CastTypeClass typeClass) {
     return 1;
   case CastTypeClass::DenseFloat:
   case CastTypeClass::IntegerToUnsigned:
-    return 2;
+      return mlir::pto::kValue2;
   case CastTypeClass::F4E2M1x2ToBF16x2:
   case CastTypeClass::BF16F32:
   case CastTypeClass::DenseFP8ToF32:
-    return 3;
+      return mlir::pto::kValue3;
   }
   llvm_unreachable("unknown cast type class");
 }

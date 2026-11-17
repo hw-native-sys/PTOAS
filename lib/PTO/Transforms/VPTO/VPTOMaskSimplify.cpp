@@ -10,6 +10,7 @@
 #include <optional>
 #include <string>
 
+#include "PTO/Support/CodeConstants.h"
 #include "PTO/IR/PTO.h"
 #include "PTO/Transforms/Passes.h"
 #include "mlir/IR/BuiltinOps.h"
@@ -53,13 +54,13 @@ static int64_t getMaskLaneCount(Type type)
         return 0;
     }
     if (maskType.isB8()) {
-        return 256;
+        return mlir::pto::kValue256;
     }
     if (maskType.isB16()) {
-        return 128;
+        return mlir::pto::kValue128;
     }
     if (maskType.isB32()) {
-        return 64;
+        return mlir::pto::kValue64;
     }
     return 0;
 }
@@ -118,14 +119,14 @@ static bool isSupportedPrefixLanes(int64_t lanes)
 {
     switch (lanes) {
         case 1:
-        case 2:
-        case 3:
-        case 4:
-        case 8:
-        case 16:
-        case 32:
-        case 64:
-        case 128:
+        case mlir::pto::kValue2:
+        case mlir::pto::kValue3:
+        case mlir::pto::kValue4:
+        case mlir::pto::kValue8:
+        case mlir::pto::kValue16:
+        case mlir::pto::kValue32:
+        case mlir::pto::kValue64:
+        case mlir::pto::kValue128:
             return true;
         default:
             return false;
@@ -294,7 +295,7 @@ struct FuseXorAndPredicate : OpRewritePattern<PandOp> {
             op.getMask().getType() != maskType || !isAllTrueMask(op.getMask())) {
             return failure();
         }
-        for (unsigned side = 0; side < 2; ++side) {
+        for (unsigned side = 0; side < kValue2; ++side) {
             Value value = side == 0 ? op.getSrc0() : op.getSrc1();
             Value predicate = side == 0 ? op.getSrc1() : op.getSrc0();
             auto xorOp = value.getDefiningOp<PxorOp>();

@@ -19,150 +19,134 @@ using namespace mlir::pto;
 namespace mlir {
 namespace pto {
 
-static StringRef stPhaseToken(pto::STPhase phase) {
-  switch (phase) {
-    case pto::STPhase::Unspecified:
-      return "STPhase::Unspecified";
-    case pto::STPhase::Partial:
-      return "STPhase::Partial";
-    case pto::STPhase::Final:
-      return "STPhase::Final";
-  }
-  return "STPhase::Unspecified";
+static StringRef stPhaseToken(pto::STPhase phase)
+{
+    switch (phase) {
+        case pto::STPhase::Unspecified:
+            return "STPhase::Unspecified";
+        case pto::STPhase::Partial:
+            return "STPhase::Partial";
+        case pto::STPhase::Final:
+            return "STPhase::Final";
+    }
+    return "STPhase::Unspecified";
 }
 
 static ArrayAttr buildTMovPhaseTemplateArgs(
-    pto::TMovOp op, ConversionPatternRewriter &rewriter,
-    SmallVectorImpl<Attribute> &templateArgVec, Value fp, Value preQuantScalar) {
-  auto *ctx = rewriter.getContext();
-  const bool hasFp = static_cast<bool>(fp);
-  const bool hasMode = static_cast<bool>(op.getAccToVecModeAttr());
-  const bool reluNonDefault = op.getReluPreMode() != pto::ReluPreMode::NoRelu;
-  const bool isXToZz =
-      hasFp && pto::classifyTMovForm(op.getFp()) == pto::TMovForm::XToZz;
-  // pto-isa selects the unit-flag action with a leading STPhase template
-  // argument: TMOV<STPhase::Final, DstTile, SrcTile, ...>. The phase is only
-  // valid on ACC-source moves (enforced by the op verifier).
-  const bool phaseNonDefault = op.getStPhase() != pto::STPhase::Unspecified;
-  if (phaseNonDefault) {
-    templateArgVec.insert(
-        templateArgVec.begin(),
-        emitc::OpaqueAttr::get(ctx, stPhaseToken(op.getStPhase())));
-  }
-  return !phaseNonDefault &&
-              ((isXToZz && templateArgVec.empty()) ||
-               (templateArgVec.size() == 2 && !hasFp && !preQuantScalar &&
-                !hasMode && !reluNonDefault))
-          ? ArrayAttr{}
-          : rewriter.getArrayAttr(templateArgVec);
+    pto::TMovOp op, ConversionPatternRewriter& rewriter, SmallVectorImpl<Attribute>& templateArgVec, Value fp,
+    Value preQuantScalar)
+{
+    auto* ctx = rewriter.getContext();
+    const bool hasFp = static_cast<bool>(fp);
+    const bool hasMode = static_cast<bool>(op.getAccToVecModeAttr());
+    const bool reluNonDefault = op.getReluPreMode() != pto::ReluPreMode::NoRelu;
+    const bool isXToZz = hasFp && pto::classifyTMovForm(op.getFp()) == pto::TMovForm::XToZz;
+    // pto-isa selects the unit-flag action with a leading STPhase template
+    // argument: TMOV<STPhase::Final, DstTile, SrcTile, ...>. The phase is only
+    // valid on ACC-source moves (enforced by the op verifier).
+    const bool phaseNonDefault = op.getStPhase() != pto::STPhase::Unspecified;
+    if (phaseNonDefault) {
+        templateArgVec.insert(templateArgVec.begin(), emitc::OpaqueAttr::get(ctx, stPhaseToken(op.getStPhase())));
+    }
+    return !phaseNonDefault &&
+                   ((isXToZz && templateArgVec.empty()) ||
+                    (templateArgVec.size() == kValue2 && !hasFp && !preQuantScalar && !hasMode && !reluNonDefault)) ?
+               ArrayAttr{} :
+               rewriter.getArrayAttr(templateArgVec);
 }
 
 struct PTOMovToEmitC : public OpConversionPattern<pto::TMovOp> {
-using OpConversionPattern<pto::TMovOp>::OpConversionPattern;
+    using OpConversionPattern<pto::TMovOp>::OpConversionPattern;
 
-LogicalResult matchAndRewrite(pto::TMovOp op, OpAdaptor adaptor,
-                              ConversionPatternRewriter &rewriter) const override {
-  auto loc = op.getLoc();
-  auto *ctx = rewriter.getContext();
+    LogicalResult matchAndRewrite(pto::TMovOp op, OpAdaptor adaptor, ConversionPatternRewriter& rewriter) const override
+    {
+        auto loc = op.getLoc();
+        auto* ctx = rewriter.getContext();
 
-  Value src = adaptor.getSrc();
-  Value dst = adaptor.getDst();
-  Value fp;
-  if (op.getFp()) {
-    fp = adaptor.getFp();
-  }
-  Value preQuantScalar;
-  if (op.getPreQuantScalar()) {
-    preQuantScalar = adaptor.getPreQuantScalar();
-  }
+        Value src = adaptor.getSrc();
+        Value dst = adaptor.getDst();
+        Value fp;
+        if (op.getFp()) {
+            fp = adaptor.getFp();
+        }
+        Value preQuantScalar;
+        if (op.getPreQuantScalar()) {
+            preQuantScalar = adaptor.getPreQuantScalar();
+        }
 
-  auto dstOT = mlir::dyn_cast<emitc::OpaqueType>(dst.getType());
-  auto srcOT = mlir::dyn_cast<emitc::OpaqueType>(src.getType());
-  if (!dstOT || !srcOT) {
-    return rewriter.notifyMatchFailure(
-        op, "tmov lowering expects opaque dst/src types");
-  }
+        auto dstOT = mlir::dyn_cast<emitc::OpaqueType>(dst.getType());
+        auto srcOT = mlir::dyn_cast<emitc::OpaqueType>(src.getType());
+        if (!dstOT || !srcOT) {
+            return rewriter.notifyMatchFailure(op, "tmov lowering expects opaque dst/src types");
+        }
 
-  auto modeAttr = op.getAccToVecModeAttr();
-  SmallVector<Value, mlir::pto::kValue4> operands{dst, src};
-  SmallVector<Attribute, mlir::pto::kValue5> templateArgVec{
-      emitc::OpaqueAttr::get(ctx, dstOT.getValue().str()),
-      emitc::OpaqueAttr::get(ctx, srcOT.getValue().str()),
-  };
-  StringRef callee = "TMOV";
+        auto modeAttr = op.getAccToVecModeAttr();
+        SmallVector<Value, mlir::pto::kValue4> operands{dst, src};
+        SmallVector<Attribute, mlir::pto::kValue5> templateArgVec{
+            emitc::OpaqueAttr::get(ctx, dstOT.getValue().str()),
+            emitc::OpaqueAttr::get(ctx, srcOT.getValue().str()),
+        };
+        StringRef callee = "TMOV";
 
-  if (failed(buildTMovOperandsAndTemplates(op, rewriter, ctx, fp,
-                                           preQuantScalar, modeAttr, operands,
-                                           templateArgVec, callee))) {
-    return failure();
-  }
+        LogicalResult buildResult = buildTMovOperandsAndTemplates(
+            op, rewriter, ctx, fp, preQuantScalar, modeAttr, operands, templateArgVec, callee);
+        if (failed(buildResult)) {
+            return failure();
+        }
 
-  ArrayAttr templateArgs = buildTMovPhaseTemplateArgs(
-      op, rewriter, templateArgVec, fp, preQuantScalar);
+        ArrayAttr templateArgs = buildTMovPhaseTemplateArgs(op, rewriter, templateArgVec, fp, preQuantScalar);
 
-  rewriter.create<emitc::CallOpaqueOp>(
-      loc, TypeRange{}, callee,
-      /*args=*/ArrayAttr{}, /*templateArgs=*/templateArgs,
-      /*operands=*/operands);
+        rewriter.create<emitc::CallOpaqueOp>(loc, TypeRange{}, callee, ArrayAttr{}, templateArgs, operands);
 
-  rewriter.eraseOp(op);
-  return success();
-}
-
-  // Collect the TMOV operands and template tokens for the operand flavor
-  // (fp / preQuant / mode / relu).
-  LogicalResult buildTMovOperandsAndTemplates(
-      pto::TMovOp op, ConversionPatternRewriter &rewriter,
-      MLIRContext *ctx, Value fp, Value preQuantScalar,
-      pto::AccToVecModeAttr modeAttr, SmallVectorImpl<Value> &operands,
-      SmallVectorImpl<Attribute> &templateArgVec,
-      StringRef &callee) const {
-    const bool hasFp = static_cast<bool>(fp);
-    const bool hasPreQuantScalar = static_cast<bool>(preQuantScalar);
-    const bool hasMode = static_cast<bool>(modeAttr);
-    const bool reluNonDefault = op.getReluPreMode() != pto::ReluPreMode::NoRelu;
-    const bool isXToZz =
-        hasFp && pto::classifyTMovForm(op.getFp()) == pto::TMovForm::XToZz;
-
-    if (hasFp) {
-      auto fpOT = mlir::dyn_cast<emitc::OpaqueType>(fp.getType());
-      if (!fpOT)
-        return rewriter.notifyMatchFailure(
-            op, "tmov fp lowering expects opaque fp type");
-      operands.push_back(fp);
-      if (isXToZz) {
-        templateArgVec.clear();
-        if (op.getGrpAxisAttr() &&
-            op.getGrpAxisAttr().getValue() == pto::MxGroupAxis::Axis0)
-          templateArgVec.push_back(emitc::OpaqueAttr::get(ctx, "0"));
-      } else {
-        templateArgVec.push_back(
-            emitc::OpaqueAttr::get(ctx, fpOT.getValue().str()));
-        pushModeAndReluTemplateArgs(templateArgVec, ctx, modeAttr,
-                                    reluNonDefault, op.getReluPreMode());
-        callee = hasMode ? "TMOV" : "TMOV_FP";
-      }
-    } else if (hasPreQuantScalar) {
-      operands.push_back(castScalarToCppType(rewriter, op.getLoc(),
-                                             preQuantScalar, "uint64_t"));
-      pushModeAndReluTemplateArgs(templateArgVec, ctx, modeAttr,
-                                  reluNonDefault, op.getReluPreMode());
-    } else if (hasMode) {
-      templateArgVec.push_back(emitc::OpaqueAttr::get(
-          ctx, getAccToVecModeToken(modeAttr.getValue())));
-      templateArgVec.push_back(emitc::OpaqueAttr::get(
-          ctx, getReluPreModeToken(op.getReluPreMode())));
-    } else if (reluNonDefault) {
-      templateArgVec.push_back(emitc::OpaqueAttr::get(
-          ctx, getReluPreModeToken(op.getReluPreMode())));
+        rewriter.eraseOp(op);
+        return success();
     }
-    return success();
-  }
+
+    // Collect the TMOV operands and template tokens for the operand flavor
+    // (fp / preQuant / mode / relu).
+    LogicalResult buildTMovOperandsAndTemplates(
+        pto::TMovOp op, ConversionPatternRewriter& rewriter, MLIRContext* ctx, Value fp, Value preQuantScalar,
+        pto::AccToVecModeAttr modeAttr, SmallVectorImpl<Value>& operands, SmallVectorImpl<Attribute>& templateArgVec,
+        StringRef& callee) const
+    {
+        const bool hasFp = static_cast<bool>(fp);
+        const bool hasPreQuantScalar = static_cast<bool>(preQuantScalar);
+        const bool hasMode = static_cast<bool>(modeAttr);
+        const bool reluNonDefault = op.getReluPreMode() != pto::ReluPreMode::NoRelu;
+        const bool isXToZz = hasFp && pto::classifyTMovForm(op.getFp()) == pto::TMovForm::XToZz;
+
+        if (hasFp) {
+            auto fpOT = mlir::dyn_cast<emitc::OpaqueType>(fp.getType());
+            if (!fpOT) {
+                return rewriter.notifyMatchFailure(op, "tmov fp lowering expects opaque fp type");
+            }
+            operands.push_back(fp);
+            if (isXToZz) {
+                templateArgVec.clear();
+                if (op.getGrpAxisAttr() && op.getGrpAxisAttr().getValue() == pto::MxGroupAxis::Axis0) {
+                    templateArgVec.push_back(emitc::OpaqueAttr::get(ctx, "0"));
+                }
+            } else {
+                templateArgVec.push_back(emitc::OpaqueAttr::get(ctx, fpOT.getValue().str()));
+                pushModeAndReluTemplateArgs(templateArgVec, ctx, modeAttr, reluNonDefault, op.getReluPreMode());
+                callee = hasMode ? "TMOV" : "TMOV_FP";
+            }
+        } else if (hasPreQuantScalar) {
+            operands.push_back(castScalarToCppType(rewriter, op.getLoc(), preQuantScalar, "uint64_t"));
+            pushModeAndReluTemplateArgs(templateArgVec, ctx, modeAttr, reluNonDefault, op.getReluPreMode());
+        } else if (hasMode) {
+            templateArgVec.push_back(emitc::OpaqueAttr::get(ctx, getAccToVecModeToken(modeAttr.getValue())));
+            templateArgVec.push_back(emitc::OpaqueAttr::get(ctx, getReluPreModeToken(op.getReluPreMode())));
+        } else if (reluNonDefault) {
+            templateArgVec.push_back(emitc::OpaqueAttr::get(ctx, getReluPreModeToken(op.getReluPreMode())));
+        }
+        return success();
+    }
 };
 
-void populateTensorTMovPatterns(RewritePatternSet &patterns,
-                        TypeConverter &typeConverter, MLIRContext *ctx) {
-  patterns.add<PTOMovToEmitC>(typeConverter, ctx);
+void populateTensorTMovPatterns(RewritePatternSet& patterns, TypeConverter& typeConverter, MLIRContext* ctx)
+{
+    patterns.add<PTOMovToEmitC>(typeConverter, ctx);
 }
 
 } // namespace pto

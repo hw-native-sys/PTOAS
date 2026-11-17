@@ -23,6 +23,7 @@
 #ifndef PTO_IR_VPTO_VECOP_DETAIL_SHUFFLEREDUX_H
 #define PTO_IR_VPTO_VECOP_DETAIL_SHUFFLEREDUX_H
 
+#include "PTO/Support/CodeConstants.h"
 #include "VPTOInternal.h"
 #include "VPTOVecOpArith.h"
 
@@ -46,8 +47,8 @@ using namespace mlir::pto;
   // The ISA splits the 32-lane warp with a 5-bit lane_mask whose only legal
   // values are 31, 30, 28, 24, 16 and 0, i.e. group sizes 1, 2, 4, 8, 16, 32.
   inline bool isSupportedShuffleWidth(int64_t width) {
-    return width == 1 || width == 2 || width == 4 || width == 8 ||
-           width == 16 || width == mlir::pto::kValue32;
+      return width == 1 || width == mlir::pto::kValue2 || width == mlir::pto::kValue4 || width == mlir::pto::kValue8 ||
+             width == mlir::pto::kValue16 || width == mlir::pto::kValue32;
   }
 
   // `bound` bounds the source window inside a group (the ISA calls this field

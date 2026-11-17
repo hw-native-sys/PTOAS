@@ -33,6 +33,7 @@
 #include "llvm/ADT/DenseMap.h"
  
 // 引入 PTO Dialect 定义 (获取 AddressSpace 等)
+#include "PTO/Support/CodeConstants.h"
 #include "PTO/IR/PTO.h"
  
 namespace mlir {
@@ -103,32 +104,33 @@ inline constexpr uint64_t kGmAccessGranuleBytes = 64;
 /// interval cannot express, and enumerating one address per row cannot afford
 /// on GM-sized views (issue #1624).
 struct GMWindow {
-  /// First selected byte, relative to the root buffer.
-  uint64_t byteOffset{0};
-  /// Length of the innermost contiguous run, in bytes.
-  uint64_t contigBytes{0};
-  /// Enclosing dimensions, outermost first: (stride in bytes, trip count).
-  SmallVector<std::pair<uint64_t, uint64_t>, 4> outerDims;
+    /// First selected byte, relative to the root buffer.
+    uint64_t byteOffset{0};
+    /// Length of the innermost contiguous run, in bytes.
+    uint64_t contigBytes{0};
+    /// Enclosing dimensions, outermost first: (stride in bytes, trip count).
+    SmallVector<std::pair<uint64_t, uint64_t>, mlir::pto::kValue4> outerDims;
 
-  /// Bytes spanned from `byteOffset` to the last selected byte, inclusive of
-  /// the gaps between runs.
-  uint64_t spanBytes() const {
-    uint64_t span = contigBytes;
-    for (auto [stride, count] : outerDims) {
-      if (count > 1) {
-        span += stride * (count - 1);
-      }
+    /// Bytes spanned from `byteOffset` to the last selected byte, inclusive of
+    /// the gaps between runs.
+    uint64_t spanBytes() const
+    {
+        uint64_t span = contigBytes;
+        for (auto [stride, count] : outerDims) {
+            if (count > 1) {
+                span += stride * (count - 1);
+            }
+        }
+        return span;
     }
-    return span;
-  }
 
-  bool operator==(const GMWindow &other) const {
-    return byteOffset == other.byteOffset && contigBytes == other.contigBytes &&
-           outerDims == other.outerDims;
-  }
+    bool operator==(const GMWindow& other) const
+    {
+        return byteOffset == other.byteOffset && contigBytes == other.contigBytes && outerDims == other.outerDims;
+    }
 
-  // std::optional<GMWindow> comparison needs both halves before C++20.
-  bool operator!=(const GMWindow &other) const { return !(*this == other); }
+    // std::optional<GMWindow> comparison needs both halves before C++20.
+    bool operator!=(const GMWindow& other) const { return !(*this == other); }
 };
 
 /// Meminfo of the target buffer

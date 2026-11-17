@@ -7,6 +7,7 @@
 // See LICENSE in the root of the software repository for the full text of the License.
 
 // Physical cost operations: preserves the action graph selected by the planner.
+#include "PTO/Support/CodeConstants.h"
 #include "VMILayoutCostGraph.h"
 #include "llvm/ADT/TypeSwitch.h"
 namespace mlir::pto::layout_cost {
@@ -16,7 +17,7 @@ FailureOr<int64_t> PlanGraphBuilder::getCompactReductionComputeCount(
 {
     // Singleton integer groups lower to a neutral vector and a select.
     if (fact.groupSize == 1 && isa<IntegerType>(source.getElementType())) {
-        return 2;
+        return mlir::pto::kValue2;
     }
     // Each carrier/group intersection executes a row reduction, and each
     // extra partial in a group executes one combining operation.
@@ -25,20 +26,20 @@ FailureOr<int64_t> PlanGraphBuilder::getCompactReductionComputeCount(
     for (int64_t group = 0; group < numGroups; ++group) {
         int64_t end = begin + fact.groupSize;
         int64_t partials = (end - 1) / fact.lanesPerPart - begin / fact.lanesPerPart + 1;
-        if (partials > (std::numeric_limits<int64_t>::max() - count) / 2) {
+        if (partials > (std::numeric_limits<int64_t>::max() - count) / mlir::pto::kValue2) {
             return failure();
         }
-        count += partials * 2 - 1;
+        count += partials * mlir::pto::kValue2 - 1;
         begin = end;
     }
     VMILayoutAttr resultLayout = result.getLayoutAttr();
     bool packetResult = resultLayout.getSlots() != 1;
     if (packetResult) {
         int64_t extraGroups = numGroups - 1;
-        if (extraGroups > (std::numeric_limits<int64_t>::max() - count) / 2) {
+        if (extraGroups > (std::numeric_limits<int64_t>::max() - count) / mlir::pto::kValue2) {
             return failure();
         }
-        count += extraGroups * 2; // One Vdup and Vsel per additional slot.
+        count += extraGroups * mlir::pto::kValue2; // One Vdup and Vsel per additional slot.
     }
     return count;
 }
@@ -74,10 +75,10 @@ FailureOr<int64_t> PlanGraphBuilder::getGroupReductionComputeCount(Operation* op
     // Native VCG plans reduce every source carrier, then combine the partials
     // in each result packet. Full-part row plans similarly join each row.
     int64_t outputs = fact->blockClass == VMIGroupBlockClass::FullPartMultiple ? groups.getInt() : *resultArity;
-    if (*sourceArity < outputs || *sourceArity > std::numeric_limits<int64_t>::max() / 2) {
+    if (*sourceArity < outputs || *sourceArity > std::numeric_limits<int64_t>::max() / mlir::pto::kValue2) {
         return failure();
     }
-    return *sourceArity * 2 - outputs;
+    return *sourceArity * mlir::pto::kValue2 - outputs;
 }
 
 LogicalResult PlanGraphBuilder::buildRelation(const VMILayoutOpRelation& relation)
@@ -187,8 +188,10 @@ LogicalResult PlanGraphBuilder::buildStaticMask(const VMILayoutOpRelation& relat
 LogicalResult PlanGraphBuilder::buildEnsure(const VMILayoutOpRelation& relation)
 {
     Operation* op = relation.op;
-    if (relation.ports.size() != 2 || relation.ports[0].kind != VMILayoutPortKind::Operand ||
-        relation.ports[1].kind != VMILayoutPortKind::Result) {
+    const bool hasInvalidPorts = relation.ports.size() != mlir::pto::kValue2 ||
+                                 relation.ports[0].kind != VMILayoutPortKind::Operand ||
+                                 relation.ports[1].kind != VMILayoutPortKind::Result;
+    if (hasInvalidPorts) {
         return failure();
     }
     auto source = buildOperand(op->getOpOperand(0), relation.ports[0].layout);
@@ -219,7 +222,7 @@ LogicalResult PlanGraphBuilder::buildMaskGranularity(const VMILayoutOpRelation& 
 {
     Operation* op = relation.op;
     auto ensure = cast<VMIEnsureMaskGranularityOp>(op);
-    if (relation.ports.size() != 2) {
+    if (relation.ports.size() != mlir::pto::kValue2) {
         return failure();
     }
     auto source = buildOperand(ensure.getSourceMutable(), relation.ports[0].layout);
@@ -241,8 +244,10 @@ LogicalResult PlanGraphBuilder::buildMaskGranularity(const VMILayoutOpRelation& 
 LogicalResult PlanGraphBuilder::buildBitcast(const VMILayoutOpRelation& relation)
 {
     Operation* op = relation.op;
-    if (relation.ports.size() != 2 || relation.ports[0].kind != VMILayoutPortKind::Operand ||
-        relation.ports[1].kind != VMILayoutPortKind::Result) {
+    const bool hasInvalidPorts = relation.ports.size() != mlir::pto::kValue2 ||
+                                 relation.ports[0].kind != VMILayoutPortKind::Operand ||
+                                 relation.ports[1].kind != VMILayoutPortKind::Result;
+    if (hasInvalidPorts) {
         return failure();
     }
     auto source = buildOperand(op->getOpOperand(0), relation.ports[0].layout);
@@ -278,8 +283,10 @@ LogicalResult PlanGraphBuilder::buildProducer(const VMILayoutOpRelation& relatio
     // materializing the source in its use layout costs.  Treating this
     // relation as unscoreable would drop a legal row and empty the solver's
     // frontier.
-    if (isa<VMIBroadcastOp>(op) && relation.ports.size() == 2 && relation.ports[0].kind == VMILayoutPortKind::Operand &&
-        relation.ports[1].kind == VMILayoutPortKind::Result) {
+    const bool isBroadcastRelation = isa<VMIBroadcastOp>(op) && relation.ports.size() == mlir::pto::kValue2 &&
+                                     relation.ports[0].kind == VMILayoutPortKind::Operand &&
+                                     relation.ports[1].kind == VMILayoutPortKind::Result;
+    if (isBroadcastRelation) {
         auto source = buildOperand(op->getOpOperand(relation.ports[0].index), relation.ports[0].layout);
         Value result = op->getResult(relation.ports[1].index);
         auto type = dyn_cast<VMIVRegType>(result.getType());
@@ -317,8 +324,10 @@ LogicalResult PlanGraphBuilder::buildShuffle(const VMILayoutOpRelation& relation
 {
     Operation* op = relation.op;
     auto shuffle = cast<VMIShuffleOp>(op);
-    if (relation.ports.size() != 2 || relation.ports[0].kind != VMILayoutPortKind::Operand ||
-        relation.ports[1].kind != VMILayoutPortKind::Result) {
+    const bool hasInvalidPorts = relation.ports.size() != mlir::pto::kValue2 ||
+                                 relation.ports[0].kind != VMILayoutPortKind::Operand ||
+                                 relation.ports[1].kind != VMILayoutPortKind::Result;
+    if (hasInvalidPorts) {
         return failure();
     }
     auto source = buildOperand(shuffle.getSourceMutable(), relation.ports[0].layout);
@@ -391,7 +400,7 @@ LogicalResult PlanGraphBuilder::buildActivePrefixIndex(const VMILayoutOpRelation
 {
     Operation* op = relation.op;
     auto active = cast<VMIActivePrefixIndexOp>(op);
-    if (relation.ports.size() != 2) {
+    if (relation.ports.size() != mlir::pto::kValue2) {
         return failure();
     }
     auto mask = buildOperand(active.getMaskMutable(), relation.ports[0].layout);
@@ -417,7 +426,7 @@ LogicalResult PlanGraphBuilder::buildCompress(const VMILayoutOpRelation& relatio
 {
     Operation* op = relation.op;
     auto compress = cast<VMICompressOp>(op);
-    if (relation.ports.size() != 3) {
+    if (relation.ports.size() != mlir::pto::kValue3) {
         return failure();
     }
     auto source = buildOperand(compress.getSourceMutable(), relation.ports[0].layout);
@@ -445,7 +454,7 @@ LogicalResult PlanGraphBuilder::buildExpandLoad(const VMILayoutOpRelation& relat
 {
     Operation* op = relation.op;
     auto expand = cast<VMIExpandLoadOp>(op);
-    if (relation.ports.size() != 3) {
+    if (relation.ports.size() != mlir::pto::kValue3) {
         return failure();
     }
     auto mask = buildOperand(expand.getMaskMutable(), relation.ports[0].layout);
@@ -473,8 +482,10 @@ LogicalResult PlanGraphBuilder::buildGroupBroadcast(const VMILayoutOpRelation& r
 {
     Operation* op = relation.op;
     auto broadcast = cast<VMIGroupBroadcastOp>(op);
-    if (relation.ports.size() != 2 || relation.ports[0].kind != VMILayoutPortKind::Operand ||
-        relation.ports[1].kind != VMILayoutPortKind::Result) {
+    const bool hasInvalidPorts = relation.ports.size() != mlir::pto::kValue2 ||
+                                 relation.ports[0].kind != VMILayoutPortKind::Operand ||
+                                 relation.ports[1].kind != VMILayoutPortKind::Result;
+    if (hasInvalidPorts) {
         return failure();
     }
     auto source = buildOperand(broadcast.getSourceMutable(), relation.ports[0].layout);
@@ -504,8 +515,11 @@ LogicalResult PlanGraphBuilder::buildGroupBroadcast(const VMILayoutOpRelation& r
 LogicalResult PlanGraphBuilder::buildGroupReduce(const VMILayoutOpRelation& relation)
 {
     Operation* op = relation.op;
-    if (relation.ports.size() != 3 || relation.ports[0].kind != VMILayoutPortKind::Operand ||
-        relation.ports[1].kind != VMILayoutPortKind::Operand || relation.ports[2].kind != VMILayoutPortKind::Result) {
+    const bool hasInvalidPorts = relation.ports.size() != mlir::pto::kValue3 ||
+                                 relation.ports[0].kind != VMILayoutPortKind::Operand ||
+                                 relation.ports[1].kind != VMILayoutPortKind::Operand ||
+                                 relation.ports[2].kind != VMILayoutPortKind::Result;
+    if (hasInvalidPorts) {
         return failure();
     }
     auto source = buildOperand(op->getOpOperand(0), relation.ports[0].layout);
@@ -576,7 +590,7 @@ LogicalResult PlanGraphBuilder::buildIndexedLoad(const VMILayoutOpRelation& rela
 LogicalResult PlanGraphBuilder::buildReduce(const VMILayoutOpRelation& relation)
 {
     Operation* op = relation.op;
-    if (relation.ports.size() != 3) {
+    if (relation.ports.size() != mlir::pto::kValue3) {
         return failure();
     }
     auto source = buildOperand(op->getOpOperand(0), relation.ports[0].layout);
@@ -607,7 +621,7 @@ LogicalResult PlanGraphBuilder::buildReduce(const VMILayoutOpRelation& relation)
 LogicalResult PlanGraphBuilder::buildInterleave(const VMILayoutOpRelation& relation)
 {
     Operation* op = relation.op;
-    if (relation.ports.size() != 5) {
+    if (relation.ports.size() != mlir::pto::kValue5) {
         return failure();
     }
     auto lhs = buildOperand(op->getOpOperand(0), relation.ports[0].layout);
@@ -719,8 +733,11 @@ LogicalResult PlanGraphBuilder::buildMaskedLoad(const VMILayoutOpRelation& relat
 {
     Operation* op = relation.op;
     auto load = cast<VMIMaskedLoadOp>(op);
-    if (relation.ports.size() != 3 || relation.ports[0].kind != VMILayoutPortKind::Operand ||
-        relation.ports[1].kind != VMILayoutPortKind::Operand || relation.ports[2].kind != VMILayoutPortKind::Result) {
+    const bool hasInvalidPorts = relation.ports.size() != mlir::pto::kValue3 ||
+                                 relation.ports[0].kind != VMILayoutPortKind::Operand ||
+                                 relation.ports[1].kind != VMILayoutPortKind::Operand ||
+                                 relation.ports[2].kind != VMILayoutPortKind::Result;
+    if (hasInvalidPorts) {
         return failure();
     }
     auto mask = buildOperand(load.getMaskMutable(), relation.ports[0].layout);
@@ -786,8 +803,10 @@ LogicalResult PlanGraphBuilder::buildDeinterleaveLoad(const VMILayoutOpRelation&
 {
     Operation* op = relation.op;
     auto load = cast<VMIDeinterleaveLoadOp>(op);
-    if (relation.ports.size() != 2 || relation.ports[0].kind != VMILayoutPortKind::Result ||
-        relation.ports[1].kind != VMILayoutPortKind::Result) {
+    const bool hasInvalidPorts = relation.ports.size() != mlir::pto::kValue2 ||
+                                 relation.ports[0].kind != VMILayoutPortKind::Result ||
+                                 relation.ports[1].kind != VMILayoutPortKind::Result;
+    if (hasInvalidPorts) {
         return failure();
     }
     auto lowType = dyn_cast<VMIVRegType>(load.getLow().getType());
@@ -850,8 +869,10 @@ LogicalResult PlanGraphBuilder::buildInterleaveStore(const VMILayoutOpRelation& 
 {
     Operation* op = relation.op;
     auto store = cast<VMIInterleaveStoreOp>(op);
-    if (relation.ports.size() != 2 || relation.ports[0].kind != VMILayoutPortKind::Operand ||
-        relation.ports[1].kind != VMILayoutPortKind::Operand) {
+    const bool hasInvalidPorts = relation.ports.size() != mlir::pto::kValue2 ||
+                                 relation.ports[0].kind != VMILayoutPortKind::Operand ||
+                                 relation.ports[1].kind != VMILayoutPortKind::Operand;
+    if (hasInvalidPorts) {
         return failure();
     }
     auto lowType = cast<VMIVRegType>(store.getLow().getType());
@@ -906,8 +927,10 @@ LogicalResult PlanGraphBuilder::buildMaskedStore(const VMILayoutOpRelation& rela
 {
     Operation* op = relation.op;
     auto store = cast<VMIMaskedStoreOp>(op);
-    if (relation.ports.size() != 2 || relation.ports[0].kind != VMILayoutPortKind::Operand ||
-        relation.ports[1].kind != VMILayoutPortKind::Operand) {
+    const bool hasInvalidPorts = relation.ports.size() != mlir::pto::kValue2 ||
+                                 relation.ports[0].kind != VMILayoutPortKind::Operand ||
+                                 relation.ports[1].kind != VMILayoutPortKind::Operand;
+    if (hasInvalidPorts) {
         return failure();
     }
     auto value = buildOperand(store.getValueMutable(), relation.ports[0].layout);
@@ -1024,7 +1047,7 @@ PhysicalValues PlanGraphBuilder::buildBroadcastLoadActions(
         state.direct->kind == VMIGroupBroadcastLoadDirectKind::E2B && state.producerLayout == state.layout &&
         state.layout.isContiguous() && state.arity > 1) {
         for (int64_t index = 0; index < state.arity; ++index) {
-            graph.addAction(PhysicalActionKind::Interleave, scope, {loaded[0]}, "e2b-contiguous", 2);
+            graph.addAction(PhysicalActionKind::Interleave, scope, {loaded[0]}, "e2b-contiguous", mlir::pto::kValue2);
         }
     }
     SmallVector<PhysicalValue, mlir::pto::kValue4> producerValues(state.producerArity, loaded[0]);
@@ -1054,10 +1077,10 @@ LogicalResult PlanGraphBuilder::buildGroupBroadcastLoad(
 PhysicalValues PlanGraphBuilder::buildDenseDeinterleavedLoad(int64_t arity, int64_t factor, Region* scope)
 {
     PhysicalValues results;
-    if (factor == 2) {
+    if (factor == mlir::pto::kValue2) {
         SmallVector<PhysicalValue, mlir::pto::kValue4> lows;
         SmallVector<PhysicalValue, mlir::pto::kValue4> highs;
-        for (int64_t group = 0; group < arity / 2; ++group) {
+        for (int64_t group = 0; group < arity / mlir::pto::kValue2; ++group) {
             auto loaded = graph.addAction(PhysicalActionKind::MemoryRead, scope, {}, "vldsx2", 2);
             lows.push_back(loaded[0]);
             highs.push_back(loaded[1]);
@@ -1065,7 +1088,7 @@ PhysicalValues PlanGraphBuilder::buildDenseDeinterleavedLoad(int64_t arity, int6
         results.append(lows);
         results.append(highs);
     } else {
-        for (int64_t group = 0; group < arity / 4; ++group) {
+        for (int64_t group = 0; group < arity / mlir::pto::kValue4; ++group) {
             auto first = graph.addAction(PhysicalActionKind::MemoryRead, scope, {}, "vldsx2", 2);
             auto second = graph.addAction(PhysicalActionKind::MemoryRead, scope, {}, "vldsx2", 2);
             auto even = graph.addAction(PhysicalActionKind::Deinterleave, scope, {first[0], second[0]}, "d2", 2);
@@ -1090,10 +1113,14 @@ LogicalResult PlanGraphBuilder::buildLoad(VMILoadOp load, const VMILayoutOpRelat
     Region* scope = getDynamicScope(load);
     SmallVector<PhysicalValue, mlir::pto::kValue4> results;
     bool directDenseSplit = isFullPhysicalShape(type) && *arity <= *contiguousArity;
-    if (layout.isDeinterleaved() && layout.getFactor() == 2 && directDenseSplit && *arity % 2 == 0) {
-        results = buildDenseDeinterleavedLoad(*arity, 2, scope);
-    } else if (layout.isDeinterleaved() && layout.getFactor() == 4 && directDenseSplit && *arity % 4 == 0) {
-        results = buildDenseDeinterleavedLoad(*arity, 4, scope);
+    const bool canSplitFactor2 = layout.isDeinterleaved() && layout.getFactor() == mlir::pto::kValue2 &&
+                                 directDenseSplit && *arity % mlir::pto::kValue2 == 0;
+    if (canSplitFactor2) {
+        results = buildDenseDeinterleavedLoad(*arity, mlir::pto::kValue2, scope);
+    } else if (
+        layout.isDeinterleaved() && layout.getFactor() == mlir::pto::kValue4 && directDenseSplit &&
+        *arity % mlir::pto::kValue4 == 0) {
+        results = buildDenseDeinterleavedLoad(*arity, mlir::pto::kValue4, scope);
     } else if (layout.isDeinterleaved()) {
         SmallVector<PhysicalValue, mlir::pto::kValue4> contiguous;
         for (int64_t part = 0; part < *contiguousArity; ++part) {
@@ -1129,9 +1156,11 @@ LogicalResult PlanGraphBuilder::buildStore(VMIStoreOp store, const VMILayoutOpRe
         return failure();
     }
     Region* scope = getDynamicScope(store);
-    if (layout.isDeinterleaved() && layout.getFactor() == 2 && isFullPhysicalShape(type) && input->size() % 2 == 0 &&
-        input->size() <= static_cast<size_t>(*contiguousArity)) {
-        for (size_t part = 0; part < input->size() / 2; ++part) {
+    const bool canStoreFactor2 = layout.isDeinterleaved() && layout.getFactor() == mlir::pto::kValue2 &&
+                                 isFullPhysicalShape(type) && input->size() % mlir::pto::kValue2 == 0 &&
+                                 input->size() <= static_cast<size_t>(*contiguousArity);
+    if (canStoreFactor2) {
+        for (size_t part = 0; part < input->size() / mlir::pto::kValue2; ++part) {
             graph.addAction(
                 PhysicalActionKind::MemoryWrite, scope, {(*input)[part], (*input)[input->size() / 2 + part]}, "vstsx2",
                 0);
@@ -1161,7 +1190,7 @@ FailureOr<size_t> PlanGraphBuilder::getPairedShuffleRatio(size_t wide, size_t ha
         return failure();
     }
     size_t ratio = wide / half;
-    if (ratio != 1 && ratio != 2) {
+    if (ratio != 1 && ratio != mlir::pto::kValue2) {
         return failure();
     }
     return ratio;
@@ -1169,7 +1198,7 @@ FailureOr<size_t> PlanGraphBuilder::getPairedShuffleRatio(size_t wide, size_t ha
 
 LogicalResult PlanGraphBuilder::buildPairedShuffle(Operation* op, const VMILayoutOpRelation& relation)
 {
-    if (relation.ports.size() != 3) {
+    if (relation.ports.size() != mlir::pto::kValue3) {
         return failure();
     }
     VMILayoutAttr layout = relation.ports.front().layout;

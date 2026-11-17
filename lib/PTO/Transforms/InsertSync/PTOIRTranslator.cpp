@@ -11,6 +11,7 @@
 // INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
 // See LICENSE in the root of the software repository for the full text of the License.
 
+#include "PTO/Support/CodeConstants.h"
 #include "PTO/Transforms/InsertSync/PTOIRTranslator.h"
 #include "PTO/IR/PTOMultiBuffer.h"
 #include "PTO/IR/TileProvenance.h"
@@ -140,31 +141,30 @@ static llvm::APInt applyIntegerCast(Operation *castOp, const llvm::APInt &in) {
 
 // 只穿透整数 cast，并按每一步的语义精确计算结果；直接剥掉 cast 会把
 // 例如 256 -> trunci i8 的 0 误认成 256，进而错判地址或窗口不重叠。
-static bool getConstIndexValue(Value value, int64_t &out) {
-  SmallVector<Operation *, 4> casts;
-  while (Operation *def = value.getDefiningOp()) {
-    if (!isa<arith::IndexCastOp, arith::ExtSIOp, arith::ExtUIOp,
-             arith::TruncIOp>(def)) {
-      break;
+static bool getConstIndexValue(Value value, int64_t& out)
+{
+    SmallVector<Operation*, mlir::pto::kValue4> casts;
+    while (Operation* def = value.getDefiningOp()) {
+        if (!isa<arith::IndexCastOp, arith::ExtSIOp, arith::ExtUIOp, arith::TruncIOp>(def)) {
+            break;
+        }
+        casts.push_back(def);
+        value = def->getOperand(0);
     }
-    casts.push_back(def);
-    value = def->getOperand(0);
-  }
-  auto constOp = value.getDefiningOp<arith::ConstantOp>();
-  auto intAttr =
-      constOp ? dyn_cast<IntegerAttr>(constOp.getValue()) : IntegerAttr();
-  if (!intAttr) {
-    return false;
-  }
-  llvm::APInt bits = intAttr.getValue();
-  for (Operation *castOp : llvm::reverse(casts)) {
-    bits = applyIntegerCast(castOp, bits);
-  }
-  if (!bits.isSignedIntN(64)) {
-    return false;
-  }
-  out = bits.getSExtValue();
-  return true;
+    auto constOp = value.getDefiningOp<arith::ConstantOp>();
+    auto intAttr = constOp ? dyn_cast<IntegerAttr>(constOp.getValue()) : IntegerAttr();
+    if (!intAttr) {
+        return false;
+    }
+    llvm::APInt bits = intAttr.getValue();
+    for (Operation* castOp : llvm::reverse(casts)) {
+        bits = applyIntegerCast(castOp, bits);
+    }
+    if (!bits.isSignedIntN(mlir::pto::kValue64)) {
+        return false;
+    }
+    out = bits.getSExtValue();
+    return true;
 }
 
 static std::optional<uint64_t> getKnownPhysicalAddress(Value value) {
@@ -268,10 +268,10 @@ struct AccColumnRange {
 static bool hasContiguousAccColumnLayout(pto::TileBufType type) {
   Type elementType = type.getElementType();
   return getTileAddressSpace(type) == pto::AddressSpace::ACC &&
-         (elementType.isF32() || elementType.isInteger(32)) &&
+        (elementType.isF32() || elementType.isInteger(mlir::pto::kValue32)) &&
          type.getBLayoutValueI32() == static_cast<int32_t>(pto::BLayout::ColMajor) &&
          type.getSLayoutValueI32() == static_cast<int32_t>(pto::SLayout::RowMajor) &&
-         type.getSFractalSizeI32() == 1024 &&
+        type.getSFractalSizeI32() == mlir::pto::kValue1024 &&
          type.getCompactModeI32() == static_cast<int32_t>(pto::CompactMode::Null);
 }
 
@@ -357,93 +357,92 @@ static bool canRefineAccColumnParents(
   return true;
 }
 
-static bool updateAccColumnAliasBufferInfo(pto::SubViewOp op,
-                                           const AccColumnRange &range,
-                                           Buffer2MemInfoMap &buffer2MemInfoMap) {
-  Value source = op.getSource();
-  auto &parents = buffer2MemInfoMap[source];
-  if (!canRefineAccColumnParents(parents, getExactAccColumnRoot(source), range)) {
-    return false;
-  }
-  Value result = op.getResult();
-  auto &resultInfos = buffer2MemInfoMap[result];
-  for (const auto &parent : buffer2MemInfoMap[source]) {
-    auto info = parent->clone(result);
-    info->baseAddresses = {parent->baseAddresses.front() + range.offset};
-    info->allocateSize = range.size;
-    resultInfos.emplace_back(std::move(info));
-  }
-  return true;
+static bool updateAccColumnAliasBufferInfo(
+    pto::SubViewOp op, const AccColumnRange& range, Buffer2MemInfoMap& buffer2MemInfoMap)
+{
+    Value source = op.getSource();
+    auto& parents = buffer2MemInfoMap[source];
+    if (!canRefineAccColumnParents(parents, getExactAccColumnRoot(source), range)) {
+        return false;
+    }
+    Value result = op.getResult();
+    auto& resultInfos = buffer2MemInfoMap[result];
+    for (const auto& parent : buffer2MemInfoMap[source]) {
+        auto info = parent->clone(result);
+        info->baseAddresses = {parent->baseAddresses.front() + range.offset};
+        info->allocateSize = range.size;
+        resultInfos.emplace_back(std::move(info));
+    }
+    return true;
 }
 
 // boxed Mat Tile 中一个矩形窗口的物理字节分段（相对 Tile 基址）。
 struct BoxedTileRegion {
-  SmallVector<uint64_t> offsets;
-  uint64_t segmentBytes = 0;
+    SmallVector<uint64_t> offsets;
+    uint64_t segmentBytes = 0;
 };
 
 // boxed INT8 Tile 的外层分形块尺寸；nz 表示 Nz 布局，否则为 Zn 布局。
 // 分形内层尺寸均为 2 的幂，以 log2 记录，用移位和掩码代替除法和取余。
 struct BoxedTileLayout {
-  bool nz = false;
-  int64_t rows = 0;
-  int64_t cols = 0;
-  unsigned innerRowsLog2 = 0;
-  unsigned innerColsLog2 = 0;
+    bool nz = false;
+    int64_t rows = 0;
+    int64_t cols = 0;
+    unsigned innerRowsLog2 = 0;
+    unsigned innerColsLog2 = 0;
 };
 
 // 仅接受 Mat 上普通 INT8、512B 分形、非 compact 的 Nz/Zn 静态 Tile。
-static std::optional<BoxedTileLayout> getBoxedI8Layout(pto::TileBufType type) {
-  if (!type || getTileAddressSpace(type) != pto::AddressSpace::MAT ||
-      !type.getElementType().isInteger(8) ||
-      !isStaticRank2Shape(type.getShape()) ||
-      type.getSFractalSizeI32() != 512 ||
-      type.getCompactModeI32() !=
-          static_cast<int32_t>(pto::CompactMode::Null)) {
-    return std::nullopt;
-  }
-  int32_t bl = type.getBLayoutValueI32();
-  int32_t sl = type.getSLayoutValueI32();
-  bool nz = bl == static_cast<int32_t>(pto::BLayout::ColMajor) &&
-            sl == static_cast<int32_t>(pto::SLayout::RowMajor);
-  bool zn = bl == static_cast<int32_t>(pto::BLayout::RowMajor) &&
-            sl == static_cast<int32_t>(pto::SLayout::ColMajor);
-  if (!nz && !zn) {
-    return std::nullopt;
-  }
-  constexpr unsigned kInnerShortLog2 = 4; // 16
-  constexpr unsigned kInnerLongLog2 = 5;  // 32
-  BoxedTileLayout layout;
-  layout.nz = nz;
-  layout.rows = type.getShape()[0];
-  layout.cols = type.getShape()[1];
-  layout.innerRowsLog2 = nz ? kInnerShortLog2 : kInnerLongLog2;
-  layout.innerColsLog2 = nz ? kInnerLongLog2 : kInnerShortLog2;
-  return layout;
+static std::optional<BoxedTileLayout> getBoxedI8Layout(pto::TileBufType type)
+{
+    const bool hasUnsupportedLayout = !type || getTileAddressSpace(type) != pto::AddressSpace::MAT ||
+                                      !type.getElementType().isInteger(mlir::pto::kValue8) ||
+                                      !isStaticRank2Shape(type.getShape()) ||
+                                      type.getSFractalSizeI32() != mlir::pto::kValue512 ||
+                                      type.getCompactModeI32() != static_cast<int32_t>(pto::CompactMode::Null);
+    if (hasUnsupportedLayout) {
+        return std::nullopt;
+    }
+    int32_t bl = type.getBLayoutValueI32();
+    int32_t sl = type.getSLayoutValueI32();
+    bool nz = bl == static_cast<int32_t>(pto::BLayout::ColMajor) && sl == static_cast<int32_t>(pto::SLayout::RowMajor);
+    bool zn = bl == static_cast<int32_t>(pto::BLayout::RowMajor) && sl == static_cast<int32_t>(pto::SLayout::ColMajor);
+    if (!nz && !zn) {
+        return std::nullopt;
+    }
+    constexpr unsigned kInnerShortLog2 = 4; // 16
+    constexpr unsigned kInnerLongLog2 = 5;  // 32
+    BoxedTileLayout layout;
+    layout.nz = nz;
+    layout.rows = type.getShape()[0];
+    layout.cols = type.getShape()[1];
+    layout.innerRowsLog2 = nz ? kInnerShortLog2 : kInnerLongLog2;
+    layout.innerColsLog2 = nz ? kInnerLongLog2 : kInnerShortLog2;
+    return layout;
 }
 
 // 一维窗口 [offset, offset + size) 落在 [0, extent) 内且按 2^innerLog2 对齐。
-static bool isAlignedWindow(int64_t offset, int64_t size, int64_t extent,
-                            unsigned innerLog2) {
-  const uint64_t mask = (uint64_t{1} << innerLog2) - 1;
-  return extent > 0 && offset >= 0 && size > 0 && offset <= extent - size &&
-         (static_cast<uint64_t>(extent) & mask) == 0 &&
-         (static_cast<uint64_t>(offset) & mask) == 0 &&
-         (static_cast<uint64_t>(size) & mask) == 0;
+static bool isAlignedWindow(int64_t offset, int64_t size, int64_t extent, unsigned innerLog2)
+{
+    const uint64_t mask = (uint64_t{1} << innerLog2) - 1;
+    return extent > 0 && offset >= 0 && size > 0 && offset <= extent - size &&
+           (static_cast<uint64_t>(extent) & mask) == 0 && (static_cast<uint64_t>(offset) & mask) == 0 &&
+           (static_cast<uint64_t>(size) & mask) == 0;
 }
 
 // 首尾相接的分段合并为一个连续范围，避免等价访问因表示不同而影响
 // 后续同步去重。
-static void mergeContiguousSegments(BoxedTileRegion &region) {
-  for (size_t i = 1; i < region.offsets.size(); ++i) {
-    if (region.offsets[i] != region.offsets[i - 1] + region.segmentBytes) {
-      return;
+static void mergeContiguousSegments(BoxedTileRegion& region)
+{
+    for (size_t i = 1; i < region.offsets.size(); ++i) {
+        if (region.offsets[i] != region.offsets[i - 1] + region.segmentBytes) {
+            return;
+        }
     }
-  }
-  if (region.offsets.size() > 1) {
-    region.segmentBytes *= region.offsets.size();
-    region.offsets.resize(1);
-  }
+    if (region.offsets.size() > 1) {
+        region.segmentBytes *= region.offsets.size();
+        region.offsets.resize(1);
+    }
 }
 
 // 仅证明 Mat 上普通 INT8、512B 分形的 Nz/Zn 布局，且窗口沿完整分形边界切分：

@@ -11,6 +11,7 @@
 // compilePTOASModule entry.
 //===----------------------------------------------------------------------===//
 
+#include "PTO/Support/CodeConstants.h"
 #include "ptoas_internal.h"
 #include "PTO/IR/TileProvenance.h"
 #include "llvm/ADT/DenseSet.h"
@@ -28,18 +29,17 @@ namespace {
 /// Materialize the implicit no-inline semantics of `pto.simt_entry` using the
 /// standard Func dialect attribute understood by MLIR's public inliner
 /// extension and by later LLVM lowering.
-struct ApplySIMTEntryNoInlinePass final
-    : public PassWrapper<ApplySIMTEntryNoInlinePass,
-                         OperationPass<ModuleOp>> {
-  MLIR_DEFINE_EXPLICIT_INTERNAL_INLINE_TYPE_ID(ApplySIMTEntryNoInlinePass)
+struct ApplySIMTEntryNoInlinePass final : public PassWrapper<ApplySIMTEntryNoInlinePass, OperationPass<ModuleOp>> {
+    MLIR_DEFINE_EXPLICIT_INTERNAL_INLINE_TYPE_ID(ApplySIMTEntryNoInlinePass)
 
-  void runOnOperation() final {
-    for (func::FuncOp func : getOperation().getOps<func::FuncOp>()) {
-      if (func->hasAttr(pto::kPTOSimtEntryAttrName)) {
-        func->setAttr("no_inline", UnitAttr::get(func.getContext()));
-      }
+    void runOnOperation() final
+    {
+        for (func::FuncOp func : getOperation().getOps<func::FuncOp>()) {
+            if (func->hasAttr(pto::kPTOSimtEntryAttrName)) {
+                func->setAttr("no_inline", UnitAttr::get(func.getContext()));
+            }
+        }
     }
-  }
 };
 
 /// LLVM 21 runs the EmitC expression patterns without the greedy driver's
@@ -52,960 +52,921 @@ struct ApplySIMTEntryNoInlinePass final
 /// explicit temporaries when another C expression consumes them so a ternary
 /// can never be flattened into an arithmetic expression with changed meaning.
 struct FormEmitCExpressionsCompatPass final
-    : public PassWrapper<FormEmitCExpressionsCompatPass,
-                         OperationPass<ModuleOp>> {
-  MLIR_DEFINE_EXPLICIT_INTERNAL_INLINE_TYPE_ID(FormEmitCExpressionsCompatPass)
+    : public PassWrapper<FormEmitCExpressionsCompatPass, OperationPass<ModuleOp>> {
+    MLIR_DEFINE_EXPLICIT_INTERNAL_INLINE_TYPE_ID(FormEmitCExpressionsCompatPass)
 
-  static bool containsConditionalOperator(emitc::ExpressionOp expression) {
-    for (Operation &op : expression.getBody()->without_terminator()) {
-      if (isa<emitc::ConditionalOp>(op)) {
-        return true;
-      }
-    }
-    return false;
-  }
-
-  /// Precedence of an EmitC comparison. Equality binds looser than the
-  /// relational predicates in C++, so the predicate decides the level.
-  static std::optional<int> cmpOperatorPrecedence(emitc::CmpPredicate predicate) {
-    switch (predicate) {
-    case emitc::CmpPredicate::eq:
-    case emitc::CmpPredicate::ne:
-      return 8;
-    case emitc::CmpPredicate::lt:
-    case emitc::CmpPredicate::le:
-    case emitc::CmpPredicate::gt:
-    case emitc::CmpPredicate::ge:
-      return 9;
-    case emitc::CmpPredicate::three_way:
-      return 10;
-    }
-    return std::nullopt;
-  }
-
-  /// C++ operator precedence of the operator an EmitC op prints, mirroring
-  /// `getOperatorPrecedence` in
-  /// llvm-project/mlir/lib/Target/Cpp/TranslateToCpp.cpp (LLVM 19). Only the
-  /// relative order matters: a monotone renumbering keeps every comparison
-  /// below valid. `std::nullopt` means "unknown to this table"; callers must
-  /// then take the conservative path.
-  static std::optional<int> cppOperatorPrecedence(Operation *op) {
-    if (!op) {
-      return std::nullopt;
-    }
-    if (isa<emitc::ConditionalOp>(op)) {
-      return 2;
-    }
-    if (isa<emitc::LogicalOrOp>(op)) {
-      return 3;
-    }
-    if (isa<emitc::LogicalAndOp>(op)) {
-      return 4;
-    }
-    if (isa<emitc::BitwiseOrOp>(op)) {
-      return 5;
-    }
-    if (isa<emitc::BitwiseXorOp>(op)) {
-      return 6;
-    }
-    if (isa<emitc::BitwiseAndOp>(op)) {
-      return 7;
-    }
-    if (auto cmp = dyn_cast<emitc::CmpOp>(op)) {
-      return cmpOperatorPrecedence(cmp.getPredicate());
-    }
-    if (isa<emitc::BitwiseLeftShiftOp, emitc::BitwiseRightShiftOp>(op)) {
-      return 11;
-    }
-    if (isa<emitc::AddOp, emitc::SubOp>(op)) {
-      return 12;
-    }
-    if (isa<emitc::MulOp, emitc::DivOp, emitc::RemOp>(op)) {
-      return 13;
-    }
-    if (isa<emitc::UnaryMinusOp, emitc::UnaryPlusOp, emitc::LogicalNotOp,
-            emitc::BitwiseNotOp, emitc::CastOp, emitc::ApplyOp>(op)) {
-      return 15;
-    }
-    if (isa<emitc::CallOp, emitc::CallOpaqueOp>(op)) {
-      return 16;
-    }
-    return std::nullopt;
-  }
-
-  /// Whether inlining `producer` as an operand of `consumer` would hand the
-  /// LLVM 19 C++ emitter an expression it groups incorrectly.
-  /// `CppEmitter::emitOperand` parenthesizes a sub-expression whose precedence
-  /// is <= the enclosing context (TranslateToCpp.cpp:1334), but then pushes the
-  /// *lowest* possible precedence for it (:1337) instead of its own. Everything
-  /// printed inside those parentheses therefore believes it binds tighter than
-  /// its parent and loses the parentheses it needs, so the emitted C++ silently
-  /// re-groups the tree:
-  ///   ((a andi b) andi (c ori d)) andi e
-  ///     -> (v1 & v2 & v3 | v4) & v5      instead of
-  ///        (v1 & v2 & (v3 | v4)) & v5
-  /// LLVM 21 fixed the emitter by pushing the operand's own precedence
-  /// unconditionally (:1536). We cannot patch the external LLVM build, so keep
-  /// such producers out of the merged expression body instead: a named value
-  /// needs no parentheses and the broken precedence path is never taken. The
-  /// temporaries are plain SSA values (not volatile), so the downstream C++
-  /// compiler still optimizes them.
-  static bool wouldLoseParentheses(emitc::ExpressionOp producer,
-                                   Operation &consumer) {
-    // Pre-existing guard for ternaries; also covers the case where the ternary
-    // is nested rather than being the producer root.
-    if (containsConditionalOperator(producer)) {
-      return true;
-    }
-
-    // Call operands are comma-delimited, not operator operands: the emitter
-    // pushes the lowest precedence for them in both versions, which is correct
-    // there, so nothing can be lost.
-    if (isa<emitc::CallOp, emitc::CallOpaqueOp>(&consumer)) {
-      return false;
-    }
-
-    std::optional<int> rootPrecedence =
-        cppOperatorPrecedence(producer.getRootOp());
-    std::optional<int> consumerPrecedence = cppOperatorPrecedence(&consumer);
-    if (!rootPrecedence || !consumerPrecedence) {
-      // Unknown operator: keep the merge from happening rather than guess.
-      return true;
-    }
-
-    // The emitter only parenthesizes the producer when its precedence does not
-    // exceed the consumer's; otherwise the precedence stack stays correct and
-    // the tree is printed faithfully.
-    if (*rootPrecedence > *consumerPrecedence) {
-      return false;
-    }
-
-    // Inside those parentheses the context degenerates to 0, so every direct
-    // operand of the producer root is printed without parentheses. If any of
-    // them is a body node that would have needed them, the merge must not
-    // happen. Deeper nodes are unaffected (their own context is the precedence
-    // of the node that consumes them) and were already checked when they were
-    // inlined one level down.
-    //
-    // An operand with *equal* precedence only needs parentheses when it is not
-    // the leftmost one: C++ is left-associative, so `(a + b) - c` prints as
-    // `a + b - c` with the same grouping, while `a - (b - c)` does not. Keeping
-    // left operands inline is what keeps ordinary `+`/`&` chains unchanged.
-    for (auto [index, operand] :
-         llvm::enumerate(producer.getRootOp()->getOperands())) {
-      Operation *definition = operand.getDefiningOp();
-      if (!definition) {
-        continue;  // block argument or constant
-      }
-      emitc::ExpressionOp parent =
-          definition->getParentOfType<emitc::ExpressionOp>();
-      if (!parent || parent.getOperation() != producer.getOperation()) {
-        continue;  // lives in a different expression
-      }
-      std::optional<int> operandPrecedence =
-          cppOperatorPrecedence(definition);
-      if (!operandPrecedence) {
-        return true;  // unknown operator inside the body
-      }
-      if (*operandPrecedence < *rootPrecedence ||
-          (*operandPrecedence == *rootPrecedence && index != 0)) {
-        return true;
-      }
-    }
-    return false;
-  }
-
-  static bool foldExpression(emitc::ExpressionOp expression,
-                             IRRewriter &rewriter) {
-    bool changed = false;
-    for (Operation &op : llvm::make_early_inc_range(
-             expression.getBody()->without_terminator())) {
-      auto apply = dyn_cast<emitc::ApplyOp>(op);
-      const bool isAddressOf =
-          apply && apply.getApplicableOperator() == "&";
-      if (isAddressOf) {
-        continue;
-      }
-
-      for (OpOperand &operand : llvm::make_early_inc_range(op.getOpOperands())) {
-        auto producer = operand.get().getDefiningOp<emitc::ExpressionOp>();
-        if (!producer || !producer.getResult().hasOneUse() ||
-            producer.hasSideEffects()) {
-          continue;
-        }
-
-        if (producer.getDoNotInline()) {
-          continue;
-        }
-
-        if (wouldLoseParentheses(producer, op)) {
-          producer.setDoNotInline(true);
-          changed = true;
-          continue;
-        }
-
-        rewriter.setInsertionPoint(&op);
-        IRMapping mapper;
-        for (Operation &toClone : producer.getBody()->without_terminator()) {
-          Operation *clone = rewriter.clone(toClone, mapper);
-          mapper.map(&toClone, clone);
-        }
-
-        Operation *clonedRoot = mapper.lookup(producer.getRootOp());
-        assert(clonedRoot && clonedRoot->getNumResults() == 1 &&
-               "expected a cloned single-result EmitC expression root");
-        rewriter.replaceOp(producer, clonedRoot->getResults());
-        changed = true;
-      }
-    }
-    return changed;
-  }
-
-  void runOnOperation() final {
-    ModuleOp module = getOperation();
-    OpBuilder builder(&getContext());
-    module.walk([&builder](Operation *op) {
-      const bool isTopLevelSingleResultExpression =
-          op->hasTrait<OpTrait::emitc::CExpression>() &&
-          !op->getParentOfType<emitc::ExpressionOp>() &&
-          op->getNumResults() == 1;
-      if (isTopLevelSingleResultExpression) {
-        emitc::createExpression(op, builder);
-      }
-    });
-
-    IRRewriter rewriter(&getContext());
-    bool changed;
-    do {
-      changed = false;
-      module.walk<WalkOrder::PostOrder>(
-          [&changed, &rewriter](emitc::ExpressionOp expression) {
-            if (foldExpression(expression, rewriter)) {
-              changed = true;
+    static bool containsConditionalOperator(emitc::ExpressionOp expression)
+    {
+        for (Operation& op : expression.getBody()->without_terminator()) {
+            if (isa<emitc::ConditionalOp>(op)) {
+                return true;
             }
-          });
-    } while (changed);
-  }
+        }
+        return false;
+    }
+
+    /// Precedence of an EmitC comparison. Equality binds looser than the
+    /// relational predicates in C++, so the predicate decides the level.
+    static std::optional<int> cmpOperatorPrecedence(emitc::CmpPredicate predicate)
+    {
+        switch (predicate) {
+            case emitc::CmpPredicate::eq:
+            case emitc::CmpPredicate::ne:
+                return mlir::pto::kValue8;
+            case emitc::CmpPredicate::lt:
+            case emitc::CmpPredicate::le:
+            case emitc::CmpPredicate::gt:
+            case emitc::CmpPredicate::ge:
+                return mlir::pto::kValue9;
+            case emitc::CmpPredicate::three_way:
+                return mlir::pto::kValue10;
+        }
+        return std::nullopt;
+    }
+
+    /// C++ operator precedence of the operator an EmitC op prints, mirroring
+    /// `getOperatorPrecedence` in
+    /// llvm-project/mlir/lib/Target/Cpp/TranslateToCpp.cpp (LLVM 19). Only the
+    /// relative order matters: a monotone renumbering keeps every comparison
+    /// below valid. `std::nullopt` means "unknown to this table"; callers must
+    /// then take the conservative path.
+    static std::optional<int> cppOperatorPrecedence(Operation* op)
+    {
+        if (!op) {
+            return std::nullopt;
+        }
+        if (isa<emitc::ConditionalOp>(op)) {
+            return mlir::pto::kValue2;
+        }
+        if (isa<emitc::LogicalOrOp>(op)) {
+            return mlir::pto::kValue3;
+        }
+        if (isa<emitc::LogicalAndOp>(op)) {
+            return mlir::pto::kValue4;
+        }
+        if (isa<emitc::BitwiseOrOp>(op)) {
+            return mlir::pto::kValue5;
+        }
+        if (isa<emitc::BitwiseXorOp>(op)) {
+            return mlir::pto::kValue6;
+        }
+        if (isa<emitc::BitwiseAndOp>(op)) {
+            return mlir::pto::kValue7;
+        }
+        if (auto cmp = dyn_cast<emitc::CmpOp>(op)) {
+            return cmpOperatorPrecedence(cmp.getPredicate());
+        }
+        if (isa<emitc::BitwiseLeftShiftOp, emitc::BitwiseRightShiftOp>(op)) {
+            return mlir::pto::kValue11;
+        }
+        if (isa<emitc::AddOp, emitc::SubOp>(op)) {
+            return mlir::pto::kValue12;
+        }
+        if (isa<emitc::MulOp, emitc::DivOp, emitc::RemOp>(op)) {
+            return mlir::pto::kValue13;
+        }
+        if (isa<emitc::UnaryMinusOp, emitc::UnaryPlusOp, emitc::LogicalNotOp, emitc::BitwiseNotOp, emitc::CastOp,
+                emitc::ApplyOp>(op)) {
+            return mlir::pto::kValue15;
+        }
+        if (isa<emitc::CallOp, emitc::CallOpaqueOp>(op)) {
+            return mlir::pto::kValue16;
+        }
+        return std::nullopt;
+    }
+
+    // Whether inlining `producer` as an operand of `consumer` would hand the
+    // LLVM 19 C++ emitter an expression it groups incorrectly.
+    // `CppEmitter::emitOperand` parenthesizes a sub-expression whose precedence
+    // is <= the enclosing context (TranslateToCpp.cpp:1334), but then pushes the
+    // *lowest* possible precedence for it (:1337) instead of its own. Everything
+    // printed inside those parentheses therefore believes it binds tighter than
+    // its parent and can silently regroup the emitted C++ expression.
+    // LLVM 21 fixed the emitter by pushing the operand's own precedence
+    // unconditionally (:1536). We cannot patch the external LLVM build, so keep
+    // such producers out of the merged expression body instead: a named value
+    // needs no parentheses and the broken precedence path is never taken. The
+    // temporaries are plain SSA values (not volatile), so the downstream C++
+    // compiler still optimizes them.
+    static bool wouldLoseParentheses(emitc::ExpressionOp producer, Operation& consumer)
+    {
+        // Pre-existing guard for ternaries; also covers the case where the ternary
+        // is nested rather than being the producer root.
+        if (containsConditionalOperator(producer)) {
+            return true;
+        }
+
+        // Call operands are comma-delimited, not operator operands: the emitter
+        // pushes the lowest precedence for them in both versions, which is correct
+        // there, so nothing can be lost.
+        if (isa<emitc::CallOp, emitc::CallOpaqueOp>(&consumer)) {
+            return false;
+        }
+
+        std::optional<int> rootPrecedence = cppOperatorPrecedence(producer.getRootOp());
+        std::optional<int> consumerPrecedence = cppOperatorPrecedence(&consumer);
+        if (!rootPrecedence || !consumerPrecedence) {
+            // Unknown operator: keep the merge from happening rather than guess.
+            return true;
+        }
+
+        // The emitter only parenthesizes the producer when its precedence does not
+        // exceed the consumer's; otherwise the precedence stack stays correct and
+        // the tree is printed faithfully.
+        if (*rootPrecedence > *consumerPrecedence) {
+            return false;
+        }
+
+        // Inside those parentheses the context degenerates to 0, so every direct
+        // operand of the producer root is printed without parentheses. If any of
+        // them is a body node that would have needed them, the merge must not
+        // happen. Deeper nodes are unaffected (their own context is the precedence
+        // of the node that consumes them) and were already checked when they were
+        // inlined one level down.
+        //
+        // An operand with *equal* precedence only needs parentheses when it is not
+        // the leftmost one: C++ is left-associative, so `(a + b) - c` prints as
+        // `a + b - c` with the same grouping, while `a - (b - c)` does not. Keeping
+        // left operands inline is what keeps ordinary `+`/`&` chains unchanged.
+        for (auto [index, operand] : llvm::enumerate(producer.getRootOp()->getOperands())) {
+            Operation* definition = operand.getDefiningOp();
+            if (!definition) {
+                continue; // block argument or constant
+            }
+            emitc::ExpressionOp parent = definition->getParentOfType<emitc::ExpressionOp>();
+            if (!parent || parent.getOperation() != producer.getOperation()) {
+                continue; // lives in a different expression
+            }
+            std::optional<int> operandPrecedence = cppOperatorPrecedence(definition);
+            if (!operandPrecedence) {
+                return true; // unknown operator inside the body
+            }
+            if (*operandPrecedence < *rootPrecedence || (*operandPrecedence == *rootPrecedence && index != 0)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    static LogicalResult foldExpression(emitc::ExpressionOp expression, IRRewriter& rewriter, bool& changed)
+    {
+        for (Operation& op : llvm::make_early_inc_range(expression.getBody()->without_terminator())) {
+            auto apply = dyn_cast<emitc::ApplyOp>(op);
+            const bool isAddressOf = apply && apply.getApplicableOperator() == "&";
+            if (isAddressOf) {
+                continue;
+            }
+
+            for (OpOperand& operand : llvm::make_early_inc_range(op.getOpOperands())) {
+                auto producer = operand.get().getDefiningOp<emitc::ExpressionOp>();
+                if (!producer || !producer.getResult().hasOneUse() || producer.hasSideEffects()) {
+                    continue;
+                }
+
+                if (producer.getDoNotInline()) {
+                    continue;
+                }
+
+                if (wouldLoseParentheses(producer, op)) {
+                    producer.setDoNotInline(true);
+                    changed = true;
+                    continue;
+                }
+
+                rewriter.setInsertionPoint(&op);
+                IRMapping mapper;
+                for (Operation& toClone : producer.getBody()->without_terminator()) {
+                    Operation* clone = rewriter.clone(toClone, mapper);
+                    mapper.map(&toClone, clone);
+                }
+
+                Operation* clonedRoot = mapper.lookup(producer.getRootOp());
+                if (!clonedRoot || clonedRoot->getNumResults() != 1) {
+                    return producer.emitError("expected a cloned single-result EmitC expression root");
+                }
+                rewriter.replaceOp(producer, clonedRoot->getResults());
+                changed = true;
+            }
+        }
+        return success();
+    }
+
+    void runOnOperation() final
+    {
+        ModuleOp module = getOperation();
+        OpBuilder builder(&getContext());
+        module.walk([&builder](Operation* op) {
+            const bool isTopLevelSingleResultExpression = op->hasTrait<OpTrait::emitc::CExpression>() &&
+                                                          !op->getParentOfType<emitc::ExpressionOp>() &&
+                                                          op->getNumResults() == 1;
+            if (isTopLevelSingleResultExpression) {
+                emitc::createExpression(op, builder);
+            }
+        });
+
+        IRRewriter rewriter(&getContext());
+        bool changed;
+        do {
+            changed = false;
+            auto foldExpressionBody = [&changed, &rewriter](emitc::ExpressionOp expression) {
+                return failed(foldExpression(expression, rewriter, changed)) ? WalkResult::interrupt() :
+                                                                               WalkResult::advance();
+            };
+            WalkResult result = module.walk<WalkOrder::PostOrder>(foldExpressionBody);
+            if (result.wasInterrupted()) {
+                signalPassFailure();
+                return;
+            }
+        } while (changed);
+    }
 };
 
-static std::string normalizeArch(llvm::StringRef arch) {
-  std::string normalized = arch.str();
-  for (char &c : normalized) {
-    c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
-  }
-  return normalized;
-}
-
-static bool isA2A3Arch(llvm::StringRef arch) {
-  std::string normalized = normalizeArch(arch);
-  return normalized == "a2" || normalized == "a3";
-}
-
-static bool isSupportedPTOASTargetArch(llvm::StringRef arch) {
-  std::string normalized = normalizeArch(arch);
-  return normalized == "a2" || normalized == "a3" || normalized == "a5";
-}
-
-static std::optional<std::string> getModuleTargetArchAttr(ModuleOp module) {
-  auto attr = module->getAttrOfType<mlir::StringAttr>("pto.target_arch");
-  if (!attr) {
-    return std::nullopt;
-  }
-  std::string arch = normalizeArch(attr.getValue());
-  if (!isSupportedPTOASTargetArch(arch)) {
-    return std::nullopt;
-  }
-  return arch;
-}
-
-static std::string resolveEffectiveTargetArch(ModuleOp module,
-                                              llvm::StringRef fallbackArch) {
-  if (std::optional<std::string> arch = getModuleTargetArchAttr(module)) {
-    return *arch;
-  }
-
-  std::optional<std::string> childArch;
-  for (ModuleOp child : module.getOps<ModuleOp>()) {
-    std::optional<std::string> arch = getModuleTargetArchAttr(child);
-    if (!arch) {
-      continue;
+static std::string normalizeArch(llvm::StringRef arch)
+{
+    std::string normalized = arch.str();
+    for (char& c : normalized) {
+        c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
     }
-    if (!childArch) {
-      childArch = std::move(arch);
-      continue;
-    }
-    if (*childArch != *arch) {
-      return normalizeArch(fallbackArch);
-    }
-  }
-  if (childArch) {
-    return *childArch;
-  }
+    return normalized;
+}
 
-  std::string fallback = normalizeArch(fallbackArch);
-  if (!isSupportedPTOASTargetArch(fallback)) {
-    return "a3";
-  }
-  return fallback;
+static bool isA2A3Arch(llvm::StringRef arch)
+{
+    std::string normalized = normalizeArch(arch);
+    return normalized == "a2" || normalized == "a3";
+}
+
+static bool isSupportedPTOASTargetArch(llvm::StringRef arch)
+{
+    std::string normalized = normalizeArch(arch);
+    return normalized == "a2" || normalized == "a3" || normalized == "a5";
+}
+
+static std::optional<std::string> getModuleTargetArchAttr(ModuleOp module)
+{
+    auto attr = module->getAttrOfType<mlir::StringAttr>("pto.target_arch");
+    if (!attr) {
+        return std::nullopt;
+    }
+    std::string arch = normalizeArch(attr.getValue());
+    if (!isSupportedPTOASTargetArch(arch)) {
+        return std::nullopt;
+    }
+    return arch;
+}
+
+static std::string resolveEffectiveTargetArch(ModuleOp module, llvm::StringRef fallbackArch)
+{
+    if (std::optional<std::string> arch = getModuleTargetArchAttr(module)) {
+        return *arch;
+    }
+
+    std::optional<std::string> childArch;
+    for (ModuleOp child : module.getOps<ModuleOp>()) {
+        std::optional<std::string> arch = getModuleTargetArchAttr(child);
+        if (!arch) {
+            continue;
+        }
+        if (!childArch) {
+            childArch = std::move(arch);
+            continue;
+        }
+        if (*childArch != *arch) {
+            return normalizeArch(fallbackArch);
+        }
+    }
+    if (childArch) {
+        return *childArch;
+    }
+
+    std::string fallback = normalizeArch(fallbackArch);
+    if (!isSupportedPTOASTargetArch(fallback)) {
+        return "a3";
+    }
+    return fallback;
 }
 } // namespace
 
 static LogicalResult applyConfiguredPassManagerCLOptions(
-    PassManager &pm, llvm::StringRef pipelineName,
-    llvm::raw_ostream &diagOS = llvm::errs()) {
-  if (succeeded(mlir::applyPassManagerCLOptions(pm))) {
-    return success();
-  }
-  diagOS << "Error: failed to apply MLIR pass manager command-line options for "
-         << pipelineName << ".\n";
-  return failure();
+    PassManager& pm, llvm::StringRef pipelineName, llvm::raw_ostream& diagOS = llvm::errs())
+{
+    if (succeeded(mlir::applyPassManagerCLOptions(pm))) {
+        return success();
+    }
+    diagOS << "Error: failed to apply MLIR pass manager command-line options for " << pipelineName << ".\n";
+    return failure();
 }
 
 struct EmitCFunctionOrder {
-  SmallVector<emitc::FuncOp> declarations;
-  SmallVector<emitc::FuncOp> definitions;
-  llvm::DenseMap<StringAttr, emitc::FuncOp> definitionsByName;
-  llvm::DenseMap<Operation *, unsigned> indegree;
-  llvm::DenseMap<Operation *, SmallVector<Operation *>> outgoing;
+    SmallVector<emitc::FuncOp> declarations;
+    SmallVector<emitc::FuncOp> definitions;
+    llvm::DenseMap<StringAttr, emitc::FuncOp> definitionsByName;
+    llvm::DenseMap<Operation*, unsigned> indegree;
+    llvm::DenseMap<Operation*, SmallVector<Operation*>> outgoing;
 };
 
-static void collectEmitCFunctions(ModuleOp module, EmitCFunctionOrder &order) {
-  for (auto func : module.getOps<emitc::FuncOp>()) {
-    if (func.isDeclaration()) {
-      order.declarations.push_back(func);
-      continue;
+static void collectEmitCFunctions(ModuleOp module, EmitCFunctionOrder& order)
+{
+    for (auto func : module.getOps<emitc::FuncOp>()) {
+        if (func.isDeclaration()) {
+            order.declarations.push_back(func);
+            continue;
+        }
+        order.definitions.push_back(func);
+        order.definitionsByName[func.getSymNameAttr()] = func;
+        order.indegree[func.getOperation()] = 0;
     }
-    order.definitions.push_back(func);
-    order.definitionsByName[func.getSymNameAttr()] = func;
-    order.indegree[func.getOperation()] = 0;
-  }
 }
 
-static LogicalResult buildEmitCFunctionCallGraph(EmitCFunctionOrder &order) {
-  for (auto caller : order.definitions) {
-    Operation *callerOp = caller.getOperation();
-    llvm::SmallPtrSet<Operation *, kSeenCalleeInlineCapacity> seenCallees;
-    bool hasCycle = false;
-    caller.walk([&callerOp, &order, &seenCallees,
-                 &hasCycle](emitc::CallOp call) {
-      auto calleeAttr = call.getCalleeAttr();
-      if (!calleeAttr) {
-        return;
-      }
-      auto it = order.definitionsByName.find(calleeAttr.getLeafReference());
-      if (it == order.definitionsByName.end()) {
-        return;
-      }
-      Operation *calleeOp = it->second.getOperation();
-      if (calleeOp == callerOp) {
-        hasCycle = true;
-        return;
-      }
-      if (!seenCallees.insert(calleeOp).second) {
-        return;
-      }
-      order.outgoing[calleeOp].push_back(callerOp);
-      ++order.indegree[callerOp];
-    });
-    if (hasCycle) {
-      return caller.emitOpError()
-             << "recursive function calls are not supported for EmitC C++ "
-                "emission";
+static LogicalResult buildEmitCFunctionCallGraph(EmitCFunctionOrder& order)
+{
+    for (auto caller : order.definitions) {
+        Operation* callerOp = caller.getOperation();
+        llvm::SmallPtrSet<Operation*, kSeenCalleeInlineCapacity> seenCallees;
+        bool hasCycle = false;
+        caller.walk([&callerOp, &order, &seenCallees, &hasCycle](emitc::CallOp call) {
+            auto calleeAttr = call.getCalleeAttr();
+            if (!calleeAttr) {
+                return;
+            }
+            auto it = order.definitionsByName.find(calleeAttr.getLeafReference());
+            if (it == order.definitionsByName.end()) {
+                return;
+            }
+            Operation* calleeOp = it->second.getOperation();
+            if (calleeOp == callerOp) {
+                hasCycle = true;
+                return;
+            }
+            if (!seenCallees.insert(calleeOp).second) {
+                return;
+            }
+            order.outgoing[calleeOp].push_back(callerOp);
+            ++order.indegree[callerOp];
+        });
+        if (hasCycle) {
+            return caller.emitOpError() << "recursive function calls are not supported for EmitC C++ "
+                                           "emission";
+        }
     }
-  }
-  return success();
+    return success();
 }
 
 static LogicalResult sortEmitCFunctionDefinitions(
-    ModuleOp module, const EmitCFunctionOrder &order,
-    SmallVectorImpl<emitc::FuncOp> &sortedDefinitions) {
-  llvm::DenseMap<Operation *, unsigned> remaining = order.indegree;
-  SmallVector<Operation *> ready;
-  for (auto func : order.definitions) {
-    if (remaining[func.getOperation()] == 0) {
-      ready.push_back(func.getOperation());
+    ModuleOp module, const EmitCFunctionOrder& order, SmallVectorImpl<emitc::FuncOp>& sortedDefinitions)
+{
+    llvm::DenseMap<Operation*, unsigned> remaining = order.indegree;
+    SmallVector<Operation*> ready;
+    for (auto func : order.definitions) {
+        if (remaining[func.getOperation()] == 0) {
+            ready.push_back(func.getOperation());
+        }
     }
-  }
 
-  while (!ready.empty()) {
-    Operation *next = ready.front();
-    ready.erase(ready.begin());
-    sortedDefinitions.push_back(cast<emitc::FuncOp>(next));
-    auto outgoingIt = order.outgoing.find(next);
-    if (outgoingIt == order.outgoing.end()) {
-      continue;
+    while (!ready.empty()) {
+        Operation* next = ready.front();
+        ready.erase(ready.begin());
+        sortedDefinitions.push_back(cast<emitc::FuncOp>(next));
+        auto outgoingIt = order.outgoing.find(next);
+        if (outgoingIt == order.outgoing.end()) {
+            continue;
+        }
+        for (Operation* user : outgoingIt->second) {
+            unsigned& userIndegree = remaining[user];
+            if (--userIndegree == 0) {
+                ready.push_back(user);
+            }
+        }
     }
-    for (Operation *user : outgoingIt->second) {
-      unsigned &userIndegree = remaining[user];
-      if (--userIndegree == 0) {
-        ready.push_back(user);
-      }
-    }
-  }
 
-  const bool hasSortedAllDefinitions =
-      sortedDefinitions.size() == order.definitions.size();
-  if (hasSortedAllDefinitions) {
-    return success();
-  }
-  return module.emitError()
-         << "cyclic function call graph is not supported for EmitC C++ emission";
+    const bool hasSortedAllDefinitions = sortedDefinitions.size() == order.definitions.size();
+    if (hasSortedAllDefinitions) {
+        return success();
+    }
+    return module.emitError() << "cyclic function call graph is not supported for EmitC C++ emission";
 }
 
-static void moveEmitCFunctionsToOrder(
-    ModuleOp module, ArrayRef<emitc::FuncOp> desiredOrder) {
-  Block &body = module.getBodyRegion().front();
-  Operation *anchor = nullptr;
-  for (Operation &op : body.getOperations()) {
-    if (isa<emitc::FuncOp>(op)) {
-      anchor = &op;
-      break;
+static void moveEmitCFunctionsToOrder(ModuleOp module, ArrayRef<emitc::FuncOp> desiredOrder)
+{
+    Block& body = module.getBodyRegion().front();
+    Operation* anchor = nullptr;
+    for (Operation& op : body.getOperations()) {
+        if (isa<emitc::FuncOp>(op)) {
+            anchor = &op;
+            break;
+        }
     }
-  }
-  if (!anchor) {
-    return;
-  }
+    if (!anchor) {
+        return;
+    }
 
-  auto advanceAnchor = [&anchor]() {
-    while (anchor) {
-      anchor = anchor->getNextNode();
-      if (!anchor || isa<emitc::FuncOp>(anchor)) {
-        break;
-      }
+    auto advanceAnchor = [&anchor]() {
+        while (anchor) {
+            anchor = anchor->getNextNode();
+            if (!anchor || isa<emitc::FuncOp>(anchor)) {
+                break;
+            }
+        }
+    };
+    for (emitc::FuncOp func : desiredOrder) {
+        if (func.getOperation() == anchor) {
+            advanceAnchor();
+            continue;
+        }
+        if (anchor) {
+            func->moveBefore(anchor);
+        } else {
+            func->moveBefore(&body, body.end());
+        }
     }
-  };
-  for (emitc::FuncOp func : desiredOrder) {
-    if (func.getOperation() == anchor) {
-      advanceAnchor();
-      continue;
-    }
-    if (anchor) {
-      func->moveBefore(anchor);
-    } else {
-      func->moveBefore(&body, body.end());
-    }
-  }
 }
 
-static LogicalResult reorderEmitCFunctions(ModuleOp module) {
-  EmitCFunctionOrder order;
-  collectEmitCFunctions(module, order);
-  if (failed(buildEmitCFunctionCallGraph(order))) {
-    return failure();
-  }
-  SmallVector<emitc::FuncOp> sortedDefinitions;
-  if (failed(sortEmitCFunctionDefinitions(module, order, sortedDefinitions))) {
-    return failure();
-  }
-  const bool onlyOneDefinition = order.definitions.size() <= 1;
-  const bool noReorderingNeeded = order.declarations.empty() && onlyOneDefinition;
-  if (noReorderingNeeded) {
-    return success();
-  }
+static LogicalResult reorderEmitCFunctions(ModuleOp module)
+{
+    EmitCFunctionOrder order;
+    collectEmitCFunctions(module, order);
+    if (failed(buildEmitCFunctionCallGraph(order))) {
+        return failure();
+    }
+    SmallVector<emitc::FuncOp> sortedDefinitions;
+    if (failed(sortEmitCFunctionDefinitions(module, order, sortedDefinitions))) {
+        return failure();
+    }
+    const bool onlyOneDefinition = order.definitions.size() <= 1;
+    const bool noReorderingNeeded = order.declarations.empty() && onlyOneDefinition;
+    if (noReorderingNeeded) {
+        return success();
+    }
 
-  SmallVector<emitc::FuncOp> desiredOrder;
-  desiredOrder.append(order.declarations.begin(), order.declarations.end());
-  desiredOrder.append(sortedDefinitions.begin(), sortedDefinitions.end());
-  moveEmitCFunctionsToOrder(module, desiredOrder);
-  return success();
+    SmallVector<emitc::FuncOp> desiredOrder;
+    desiredOrder.append(order.declarations.begin(), order.declarations.end());
+    desiredOrder.append(sortedDefinitions.begin(), sortedDefinitions.end());
+    moveEmitCFunctionsToOrder(module, desiredOrder);
+    return success();
 }
 
 // --------------------------------------------------------------------------
 // Command Line Options
 
 enum class PTOBuildLevel {
-  Level1,
-  Level2,
-  Level3,
+    Level1,
+    Level2,
+    Level3,
 };
 
-static PTOBuildLevel defaultBuildLevel() {
-  return PTOBuildLevel::Level2;
-}
+static PTOBuildLevel defaultBuildLevel() { return PTOBuildLevel::Level2; }
 
-static bool parseBuildLevel(llvm::StringRef levelStr, PTOBuildLevel &out) {
-  std::string s = levelStr.str();
-  for (char &c : s) {
-    c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
-  }
-  if (s == "level1") {
-    out = PTOBuildLevel::Level1;
-    return true;
-  }
-  if (s == "level2") {
-    out = PTOBuildLevel::Level2;
-    return true;
-  }
-  if (s == "level3") {
-    out = PTOBuildLevel::Level3;
-    return true;
-  }
-  return false;
+static bool parseBuildLevel(llvm::StringRef levelStr, PTOBuildLevel& out)
+{
+    std::string s = levelStr.str();
+    for (char& c : s) {
+        c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+    }
+    if (s == "level1") {
+        out = PTOBuildLevel::Level1;
+        return true;
+    }
+    if (s == "level2") {
+        out = PTOBuildLevel::Level2;
+        return true;
+    }
+    if (s == "level3") {
+        out = PTOBuildLevel::Level3;
+        return true;
+    }
+    return false;
 }
 
 struct ReserveBufferMemSpec {
-  uint64_t capacityBytes = 0;
-  uint64_t alignmentBytes = 1;
+    uint64_t capacityBytes = 0;
+    uint64_t alignmentBytes = 1;
 };
 
-static ReserveBufferMemSpec getReserveBufferMemSpec(PTOArch arch,
-                                                    AddressSpace space) {
-  switch (space) {
-  case AddressSpace::VEC:
-    return {arch == PTOArch::A5 ? 253952uLL : 196608uLL, 256};
-  case AddressSpace::MAT:
-    return {524288uLL, 256};
-  case AddressSpace::LEFT:
-  case AddressSpace::RIGHT:
-  case AddressSpace::ACC:
-  case AddressSpace::BIAS:
-  case AddressSpace::SCALING:
-  case AddressSpace::GM:
-  case AddressSpace::Zero:
-    break;
-  }
-  return {};
+static ReserveBufferMemSpec getReserveBufferMemSpec(PTOArch arch, AddressSpace space)
+{
+    switch (space) {
+        case AddressSpace::VEC:
+            return {arch == PTOArch::A5 ? 253952uLL : 196608uLL, 256};
+        case AddressSpace::MAT:
+            return {524288uLL, 256};
+        case AddressSpace::LEFT:
+        case AddressSpace::RIGHT:
+        case AddressSpace::ACC:
+        case AddressSpace::BIAS:
+        case AddressSpace::SCALING:
+        case AddressSpace::GM:
+        case AddressSpace::Zero:
+            break;
+    }
+    return {};
 }
 
-static LogicalResult validateReserveBufferBase(pto::ReserveBufferOp op,
-                                               PTOArch arch) {
-  auto baseAttr = op.getBaseAttr();
-  if (!baseAttr) {
-    return op.emitError("expects explicit 'base'");
-  }
+static LogicalResult validateReserveBufferBase(pto::ReserveBufferOp op, PTOArch arch)
+{
+    auto baseAttr = op.getBaseAttr();
+    if (!baseAttr) {
+        return op.emitError("expects explicit 'base'");
+    }
 
-  int64_t signedBase = baseAttr.getInt();
-  if (signedBase < 0) {
-    return op.emitError("expects 'base' to be non-negative when present");
-  }
+    int64_t signedBase = baseAttr.getInt();
+    if (signedBase < 0) {
+        return op.emitError("expects 'base' to be non-negative when present");
+    }
 
-  ReserveBufferMemSpec spec =
-      getReserveBufferMemSpec(arch, op.getLocation().getAddressSpace());
-  uint64_t base = static_cast<uint64_t>(signedBase);
-  if (base % spec.alignmentBytes != 0) {
-    return op.emitError("expects 'base' to be aligned to ")
-           << spec.alignmentBytes << " bytes for "
-           << stringifyEnum(op.getLocation().getAddressSpace());
-  }
+    ReserveBufferMemSpec spec = getReserveBufferMemSpec(arch, op.getLocation().getAddressSpace());
+    uint64_t base = static_cast<uint64_t>(signedBase);
+    if (base % spec.alignmentBytes != 0) {
+        return op.emitError("expects 'base' to be aligned to ")
+               << spec.alignmentBytes << " bytes for " << stringifyEnum(op.getLocation().getAddressSpace());
+    }
 
-  uint64_t size = static_cast<uint64_t>(op.getSize());
-  if (base > spec.capacityBytes || size > spec.capacityBytes - base) {
-    return op.emitError("reserved range exceeds ")
-           << stringifyEnum(op.getLocation().getAddressSpace())
-           << " capacity: base " << base << " + size " << size
-           << " > " << spec.capacityBytes << " bytes";
-  }
+    uint64_t size = static_cast<uint64_t>(op.getSize());
+    if (base > spec.capacityBytes || size > spec.capacityBytes - base) {
+        return op.emitError("reserved range exceeds ")
+               << stringifyEnum(op.getLocation().getAddressSpace()) << " capacity: base " << base << " + size " << size
+               << " > " << spec.capacityBytes << " bytes";
+    }
 
-  return success();
+    return success();
 }
 
-static bool validateReserveBufferLevelRules(ModuleOp module,
-                                            PTOBuildLevel level) {
-  bool failed = false;
-  PTOArch arch = getTargetArch(module);
-  module.walk([&arch, level, &failed](pto::ReserveBufferOp op) {
-    if (level != PTOBuildLevel::Level3) {
-      if (op.getAutoAlloc()) {
-        if (op.getBaseAttr()) {
-          op.emitError("unexpected 'base' on auto reserve_buffer: "
-                       "level1/level2 assign it in pto-plan-memory");
-          failed = true;
+static bool validateReserveBufferLevelRules(ModuleOp module, PTOBuildLevel level)
+{
+    bool failed = false;
+    PTOArch arch = getTargetArch(module);
+    module.walk([&arch, level, &failed](pto::ReserveBufferOp op) {
+        if (level != PTOBuildLevel::Level3) {
+            if (op.getAutoAlloc()) {
+                if (op.getBaseAttr()) {
+                    op.emitError(
+                        "unexpected 'base' on auto reserve_buffer: "
+                        "level1/level2 assign it in pto-plan-memory");
+                    failed = true;
+                }
+                return;
+            }
+
+            if (op.getBaseAttr()) {
+                (void)validateReserveBufferBase(op, arch);
+            }
+            op.emitError(
+                "pto.reserve_buffer with explicit 'base' (auto = false) is "
+                "not supported when --pto-level=level1 or level2; use "
+                "--pto-level=level3 or set auto = true");
+            failed = true;
+            return;
         }
-        return;
-      }
 
-      if (op.getBaseAttr()) {
-        (void)validateReserveBufferBase(op, arch);
-      }
-      op.emitError("pto.reserve_buffer with explicit 'base' (auto = false) is "
-                   "not supported when --pto-level=level1 or level2; use "
-                   "--pto-level=level3 or set auto = true");
-      failed = true;
-      return;
-    }
+        if (op.getAutoAlloc() || !op.getBaseAttr()) {
+            op.emitError(
+                "pto.reserve_buffer requires 'auto = false' and explicit "
+                "'base' when --pto-level=level3");
+            failed = true;
+            return;
+        }
 
-    if (op.getAutoAlloc() || !op.getBaseAttr()) {
-      op.emitError("pto.reserve_buffer requires 'auto = false' and explicit "
-                   "'base' when --pto-level=level3");
-      failed = true;
-      return;
-    }
-
-    if (mlir::failed(validateReserveBufferBase(op, arch))) {
-      failed = true;
-    }
-  });
-  return !failed;
+        if (mlir::failed(validateReserveBufferBase(op, arch))) {
+            failed = true;
+        }
+    });
+    return !failed;
 }
 
-static constexpr llvm::StringLiteral kAutoSyncTailPolicyBarrierAll =
-    "barrier_all";
-static constexpr llvm::StringLiteral kAutoSyncTailPolicyMte3ToSEvent0 =
-    "setwait_mte3_to_s_event0";
+static constexpr llvm::StringLiteral kAutoSyncTailPolicyBarrierAll = "barrier_all";
+static constexpr llvm::StringLiteral kAutoSyncTailPolicyMte3ToSEvent0 = "setwait_mte3_to_s_event0";
 
-static bool parseAutoSyncTailHint(llvm::StringRef hintStr, std::string &normalized) {
-  std::string s = hintStr.str();
-  for (char &c : s) {
-    c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
-  }
-  if (s == "barrier-all" || s == "barrier_all" || s == "default") {
-    normalized = kAutoSyncTailPolicyBarrierAll.str();
-    return true;
-  }
-  if (s == "mte3-to-s-event0" || s == "mte3_to_s_event0" ||
-      s == "setwait-mte3-to-s-event0" ||
-      s == "setwait_mte3_to_s_event0") {
-    normalized = kAutoSyncTailPolicyMte3ToSEvent0.str();
-    return true;
-  }
-  return false;
+static bool parseAutoSyncTailHint(llvm::StringRef hintStr, std::string& normalized)
+{
+    std::string s = hintStr.str();
+    for (char& c : s) {
+        c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+    }
+    if (s == "barrier-all" || s == "barrier_all" || s == "default") {
+        normalized = kAutoSyncTailPolicyBarrierAll.str();
+        return true;
+    }
+    if (s == "mte3-to-s-event0" || s == "mte3_to_s_event0" || s == "setwait-mte3-to-s-event0" ||
+        s == "setwait_mte3_to_s_event0") {
+        normalized = kAutoSyncTailPolicyMte3ToSEvent0.str();
+        return true;
+    }
+    return false;
 }
 
-static LogicalResult emitSharedPreBackendSeamIR(ModuleOp module,
-                                                llvm::StringRef outputPath) {
-  if (outputPath.empty()) {
+static LogicalResult emitSharedPreBackendSeamIR(ModuleOp module, llvm::StringRef outputPath)
+{
+    if (outputPath.empty()) {
+        return success();
+    }
+
+    if (outputPath == "-") {
+        module->print(llvm::outs());
+        llvm::outs() << "\n";
+        llvm::outs().flush();
+        return success();
+    }
+
+    std::error_code ec;
+    llvm::ToolOutputFile outputFile(outputPath, ec, llvm::sys::fs::OF_None);
+    if (ec) {
+        llvm::errs() << "Error: failed to open seam IR file '" << outputPath << "': " << ec.message() << "\n";
+        return failure();
+    }
+
+    module->print(outputFile.os());
+    outputFile.os() << "\n";
+    outputFile.keep();
     return success();
-  }
-
-  if (outputPath == "-") {
-    module->print(llvm::outs());
-    llvm::outs() << "\n";
-    llvm::outs().flush();
-    return success();
-  }
-
-  std::error_code ec;
-  llvm::ToolOutputFile outputFile(outputPath, ec, llvm::sys::fs::OF_None);
-  if (ec) {
-    llvm::errs() << "Error: failed to open seam IR file '" << outputPath
-                 << "': " << ec.message() << "\n";
-    return failure();
-  }
-
-  module->print(outputFile.os());
-  outputFile.os() << "\n";
-  outputFile.keep();
-  return success();
 }
 
-static void printSharedPreBackendSeamIR(ModuleOp module) {
-  module->print(llvm::errs());
-  llvm::errs() << "\n";
+static void printSharedPreBackendSeamIR(ModuleOp module)
+{
+    module->print(llvm::errs());
+    llvm::errs() << "\n";
 }
 
-static bool hasUnexpandedTileOps(ModuleOp module) {
-  bool found = false;
-  module.walk([&found](Operation *op) {
-    if (found) {
-      return;
-    }
-    if (isa<pto::OpPipeInterface>(op)) {
-      found = true;
-      return;
-    }
+static bool hasUnexpandedTileOps(ModuleOp module)
+{
+    bool found = false;
+    module.walk([&found](Operation* op) {
+        if (found) {
+            return;
+        }
+        if (isa<pto::OpPipeInterface>(op)) {
+            found = true;
+            return;
+        }
 
-    // A pure PTODSL tileop can contain only low-level compute plus a SIMT
-    // launch, so it has no high-level TileOp interface to trigger this path.
-    // It still needs tile-handle materialization, backend-helper inlining, and
-    // tile_buf_addr folding before VPTO emission.
-    if (auto func = dyn_cast<func::FuncOp>(op);
-        func && func->hasAttr("pto.tileop.helper")) {
-      found = true;
-    }
-  });
-  return found;
+        // A pure PTODSL tileop can contain only low-level compute plus a SIMT
+        // launch, so it has no high-level TileOp interface to trigger this path.
+        // It still needs tile-handle materialization, backend-helper inlining, and
+        // tile_buf_addr folding before VPTO emission.
+        if (auto func = dyn_cast<func::FuncOp>(op); func && func->hasAttr("pto.tileop.helper")) {
+            found = true;
+        }
+    });
+    return found;
 }
 
 namespace {
 struct NarrowUnusedMultiResultProvenancePass
-    : public PassWrapper<NarrowUnusedMultiResultProvenancePass,
-                         OperationPass<ModuleOp>> {
-  MLIR_DEFINE_EXPLICIT_INTERNAL_INLINE_TYPE_ID(
-      NarrowUnusedMultiResultProvenancePass)
+    : public PassWrapper<NarrowUnusedMultiResultProvenancePass, OperationPass<ModuleOp>> {
+    MLIR_DEFINE_EXPLICIT_INTERNAL_INLINE_TYPE_ID(NarrowUnusedMultiResultProvenancePass)
 
-  void runOnOperation() override {
-    narrowUnusedMultiResultProvenanceLocs(getOperation());
-  }
+    void runOnOperation() override { narrowUnusedMultiResultProvenanceLocs(getOperation()); }
 };
 } // namespace
 
-static std::unique_ptr<Pass> createNarrowUnusedMultiResultProvenancePass() {
-  return std::make_unique<NarrowUnusedMultiResultProvenancePass>();
+static std::unique_ptr<Pass> createNarrowUnusedMultiResultProvenancePass()
+{
+    return std::make_unique<NarrowUnusedMultiResultProvenancePass>();
 }
 
 namespace {
-static SmallVector<func::FuncOp> collectSharedPipelineFunctions(ModuleOp module) {
-  SmallVector<func::FuncOp> functions;
-  // Object compilation promotes backend children to top-level compile units.
-  // Preserve recursive traversal only for user-visible IR modes, which retain
-  // the authored container shape for debugging.
-  if (emitMlirIR) {
-    module.walk([&functions](func::FuncOp funcOp) { functions.push_back(funcOp); });
-  } else {
-    llvm::append_range(functions, module.getOps<func::FuncOp>());
-  }
-  return functions;
+static SmallVector<func::FuncOp> collectSharedPipelineFunctions(ModuleOp module)
+{
+    SmallVector<func::FuncOp> functions;
+    // Object compilation promotes backend children to top-level compile units.
+    // Preserve recursive traversal only for user-visible IR modes, which retain
+    // the authored container shape for debugging.
+    if (emitMlirIR) {
+        module.walk([&functions](func::FuncOp funcOp) { functions.push_back(funcOp); });
+    } else {
+        llvm::append_range(functions, module.getOps<func::FuncOp>());
+    }
+    return functions;
 }
 
-struct SerialAutoSyncPass
-    : public PassWrapper<SerialAutoSyncPass, OperationPass<ModuleOp>> {
-  MLIR_DEFINE_EXPLICIT_INTERNAL_INLINE_TYPE_ID(SerialAutoSyncPass)
+struct SerialAutoSyncPass : public PassWrapper<SerialAutoSyncPass, OperationPass<ModuleOp>> {
+    MLIR_DEFINE_EXPLICIT_INTERNAL_INLINE_TYPE_ID(SerialAutoSyncPass)
 
-  enum class Mode { InsertSync, Bufid, BarrierAll };
+    enum class Mode { InsertSync, Bufid, BarrierAll };
 
-  SerialAutoSyncPass(Mode mode, bool enableBufidDebug)
-      : mode(mode), enableBufidDebug(enableBufidDebug) {}
+    SerialAutoSyncPass(Mode mode, bool enableBufidDebug) : mode(mode), enableBufidDebug(enableBufidDebug) {}
 
-  void runOnOperation() override {
-    OpPassManager functionPM(func::FuncOp::getOperationName());
-    switch (mode) {
-    case Mode::InsertSync:
-      functionPM.addPass(pto::createPTOInsertSyncPass());
-      break;
-    case Mode::Bufid: {
-      PTOBufidSyncOptions options;
-      options.enableBufidSyncDebug = enableBufidDebug;
-      functionPM.addPass(pto::createPTOBufidSyncPass(options));
-      break;
+    void runOnOperation() override
+    {
+        OpPassManager functionPM(func::FuncOp::getOperationName());
+        switch (mode) {
+            case Mode::InsertSync:
+                functionPM.addPass(pto::createPTOInsertSyncPass());
+                break;
+            case Mode::Bufid: {
+                PTOBufidSyncOptions options;
+                options.enableBufidSyncDebug = enableBufidDebug;
+                functionPM.addPass(pto::createPTOBufidSyncPass(options));
+                break;
+            }
+            case Mode::BarrierAll:
+                functionPM.addPass(pto::createPTOInjectBarrierAllSyncPass());
+                break;
+        }
+
+        for (func::FuncOp funcOp : collectSharedPipelineFunctions(getOperation())) {
+            if (failed(runPipeline(functionPM, funcOp))) {
+                signalPassFailure();
+                return;
+            }
+        }
     }
-    case Mode::BarrierAll:
-      functionPM.addPass(pto::createPTOInjectBarrierAllSyncPass());
-      break;
-    }
-
-    for (func::FuncOp funcOp :
-         collectSharedPipelineFunctions(getOperation())) {
-      if (failed(runPipeline(functionPM, funcOp))) {
-        signalPassFailure();
-        return;
-      }
-    }
-  }
 
 private:
-  Mode mode;
-  bool enableBufidDebug;
+    Mode mode;
+    bool enableBufidDebug;
 };
 } // namespace
 
 namespace {
-struct SerialFrontendPipeLoweringPass
-    : public PassWrapper<SerialFrontendPipeLoweringPass,
-                         OperationPass<ModuleOp>> {
-  MLIR_DEFINE_EXPLICIT_INTERNAL_INLINE_TYPE_ID(
-      SerialFrontendPipeLoweringPass)
+struct SerialFrontendPipeLoweringPass : public PassWrapper<SerialFrontendPipeLoweringPass, OperationPass<ModuleOp>> {
+    MLIR_DEFINE_EXPLICIT_INTERNAL_INLINE_TYPE_ID(SerialFrontendPipeLoweringPass)
 
-  void getDependentDialects(DialectRegistry &registry) const override {
-    registry.insert<func::FuncDialect, pto::PTODialect>();
-  }
-
-  void runOnOperation() override {
-    OpPassManager functionPM(func::FuncOp::getOperationName());
-    functionPM.addPass(pto::createPTOAssignDefaultFrontendPipeIdPass());
-    functionPM.addPass(pto::createPTOLowerFrontendPipeOpsPass());
-
-    // Lower peer-connected frontend pipe operations in a stable order. Cross-
-    // function contracts were checked at module scope before normalization;
-    // function-local verification must not traverse sibling function bodies.
-    for (func::FuncOp funcOp :
-         collectSharedPipelineFunctions(getOperation())) {
-      if (failed(runPipeline(functionPM, funcOp))) {
-        signalPassFailure();
-        return;
-      }
+    void getDependentDialects(DialectRegistry& registry) const override
+    {
+        registry.insert<func::FuncDialect, pto::PTODialect>();
     }
-  }
+
+    void runOnOperation() override
+    {
+        OpPassManager functionPM(func::FuncOp::getOperationName());
+        functionPM.addPass(pto::createPTOAssignDefaultFrontendPipeIdPass());
+        functionPM.addPass(pto::createPTOLowerFrontendPipeOpsPass());
+
+        // Lower peer-connected frontend pipe operations in a stable order. Cross-
+        // function contracts were checked at module scope before normalization;
+        // function-local verification must not traverse sibling function bodies.
+        for (func::FuncOp funcOp : collectSharedPipelineFunctions(getOperation())) {
+            if (failed(runPipeline(functionPM, funcOp))) {
+                signalPassFailure();
+                return;
+            }
+        }
+    }
 };
 } // namespace
 
-static std::unique_ptr<Pass> createSerialFrontendPipeLoweringPass() {
-  return std::make_unique<SerialFrontendPipeLoweringPass>();
+static std::unique_ptr<Pass> createSerialFrontendPipeLoweringPass()
+{
+    return std::make_unique<SerialFrontendPipeLoweringPass>();
 }
 
-static bool shouldDeclareVariablesAtTop(ModuleOp module) {
-  auto hasMultiBlockFunc = [](auto func) { return func.getBlocks().size() > 1; };
-  return llvm::any_of(module.getOps<func::FuncOp>(), hasMultiBlockFunc) ||
-         llvm::any_of(module.getOps<emitc::FuncOp>(), hasMultiBlockFunc);
+static bool shouldDeclareVariablesAtTop(ModuleOp module)
+{
+    auto hasMultiBlockFunc = [](auto func) { return func.getBlocks().size() > 1; };
+    return llvm::any_of(module.getOps<func::FuncOp>(), hasMultiBlockFunc) ||
+           llvm::any_of(module.getOps<emitc::FuncOp>(), hasMultiBlockFunc);
 }
 
-static void appendVMISemanticPipeline(OpPassManager &pm);
+static void appendVMISemanticPipeline(OpPassManager& pm);
 
-static VPTOSchedulerCLIMode
-getEffectiveVPTOSchedulerMode(llvm::StringRef arch) {
-  if (vptoSchedulerMode.getNumOccurrences() == 0) {
-    return arch == "a5" ? VPTOSchedulerCLIMode::On : VPTOSchedulerCLIMode::Off;
-  }
-  return vptoSchedulerMode;
+static VPTOSchedulerCLIMode getEffectiveVPTOSchedulerMode(llvm::StringRef arch)
+{
+    if (vptoSchedulerMode.getNumOccurrences() == 0) {
+        return arch == "a5" ? VPTOSchedulerCLIMode::On : VPTOSchedulerCLIMode::Off;
+    }
+    return vptoSchedulerMode;
 }
 
-static bool getEffectiveVPTOSchedulerRematerialization(
-    llvm::StringRef arch, VPTOSchedulerCLIMode schedulerMode) {
-  if (vptoSchedulerRemat.getNumOccurrences() == 0) {
-    return arch == "a5" && schedulerMode == VPTOSchedulerCLIMode::On;
-  }
-  return vptoSchedulerRemat;
+static bool getEffectiveVPTOSchedulerRematerialization(llvm::StringRef arch, VPTOSchedulerCLIMode schedulerMode)
+{
+    if (vptoSchedulerRemat.getNumOccurrences() == 0) {
+        return arch == "a5" && schedulerMode == VPTOSchedulerCLIMode::On;
+    }
+    return vptoSchedulerRemat;
 }
 
-static void addPersistentFragmentLowering(OpPassManager &kernelModulePM) {
-  // Persistent fragment loops must be fully unrolled before fragment
-  // analysis/materialization; promote them ahead of the unroll pass.
-  kernelModulePM.addNestedPass<func::FuncOp>(
-      pto::createPTOPromotePersistentFragmentLoopsPass());
-  kernelModulePM.addNestedPass<func::FuncOp>(
-      pto::createPTOUnrollLoopsPass());
-  kernelModulePM.addPass(createSCCPPass());
-  kernelModulePM.addPass(createCanonicalizerPass());
-  kernelModulePM.addPass(createCSEPass());
-  kernelModulePM.addNestedPass<func::FuncOp>(
-      pto::createPTOAnalyzeSIMTPersistentFragmentPass());
-  kernelModulePM.addNestedPass<func::FuncOp>(
-      pto::createPTOMaterializeSIMTPersistentFragmentPass());
-  kernelModulePM.addPass(pto::createPTOOutlineSIMTSectionsPass());
+static void addPersistentFragmentLowering(OpPassManager& kernelModulePM)
+{
+    // Persistent fragment loops must be fully unrolled before fragment
+    // analysis/materialization; promote them ahead of the unroll pass.
+    kernelModulePM.addNestedPass<func::FuncOp>(pto::createPTOPromotePersistentFragmentLoopsPass());
+    kernelModulePM.addNestedPass<func::FuncOp>(pto::createPTOUnrollLoopsPass());
+    kernelModulePM.addPass(createSCCPPass());
+    kernelModulePM.addPass(createCanonicalizerPass());
+    kernelModulePM.addPass(createCSEPass());
+    kernelModulePM.addNestedPass<func::FuncOp>(pto::createPTOAnalyzeSIMTPersistentFragmentPass());
+    kernelModulePM.addNestedPass<func::FuncOp>(pto::createPTOMaterializeSIMTPersistentFragmentPass());
+    kernelModulePM.addPass(pto::createPTOOutlineSIMTSectionsPass());
 }
 
-static void prepareVPTOForEmission(PassManager &pm,
-                                   VPTOSchedulerCLIMode schedulerMode,
-                                   bool rematerialize) {
-  auto &kernelModulePM = pm.nest<ModuleOp>();
-  // VPTO LLVM emission lowers pto.barrier to the backend barrier intrinsic.
-  // A5 does not support a standalone PIPE_V barrier; vector barriers are either
-  // unnecessary or must be removed before LLVM emission. Upper-level
-  // programming frameworks may still produce pto.barrier(PIPE_V) from generic
-  // storage-sync constructs, so run sync-to-pipe legalization here and let the
-  // backend checks catch any illegal barrier that still leaks through.
-  kernelModulePM.addNestedPass<func::FuncOp>(
-      pto::createLoweringSyncToPipePass());
-  addPersistentFragmentLowering(kernelModulePM);
-  kernelModulePM.addPass(pto::createVPTOPtrNormalizePass());
-  kernelModulePM.addPass(pto::createVPTOPtrCastCleanupPass());
-  kernelModulePM.addPass(pto::createVPTOOptimizeVcvtPass());
-  kernelModulePM.addPass(pto::createVPTOMaskSimplifyPass());
-  kernelModulePM.addPass(createReconcileUnrealizedCastsPass());
-  kernelModulePM.addNestedPass<func::FuncOp>(
-      createVPTOExpandWrapperOpsPass());
-  kernelModulePM.addNestedPass<func::FuncOp>(
-      pto::createPTOInferVPTOVecScopePass());
-  // Insert after vecscope inference and before scheduling.
-  if (enableVecScopeMemBar) {
-    kernelModulePM.addNestedPass<func::FuncOp>(
-        pto::createPTOInsertVecScopeMemBarPass());
-  }
-  if (enableVecScopeMemBarAll) {
-    kernelModulePM.addNestedPass<func::FuncOp>(
-        pto::createPTOInsertVecScopeMemBarAllPass());
-  }
-  if (enableSoftPostUpdate) {
-    kernelModulePM.addPass(pto::createVPTOSoftPostUpdatePass());
-  }
-  // Hoist loop-invariant guarded address chains out of scf.if regions before
-  // the generic LICM (which only inspects top-level loop-body operations).
-  kernelModulePM.addNestedPass<func::FuncOp>(
-      pto::createVPTOGuardedLICMPass());
-  kernelModulePM.addPass(createLoopInvariantCodeMotionPass());
-  kernelModulePM.addNestedPass<func::FuncOp>(
-      pto::createPTONarrowVPTOLoopCountersPass());
-  kernelModulePM.addPass(createCanonicalizerPass());
-  kernelModulePM.addPass(createCSEPass());
-  // SoftOps are materialized only after all VPTO optimization and layout
-  // decisions.  The materializer creates a temporary func.call; inline it
-  // immediately so the final legality check sees the actual VPTO sequence.
-  kernelModulePM.addPass(pto::createPTOExpandSoftLibPass());
-  kernelModulePM.addPass(pto::createPTOInlineLibCallPass());
-  kernelModulePM.addPass(createCanonicalizerPass());
-  kernelModulePM.addPass(createCSEPass());
-  // Tile and soft-library expansion may introduce generic scalar PTO ops.
-  // Lower them before final VPTO scheduling and legality validation.
-  kernelModulePM.addNestedPass<func::FuncOp>(
-      pto::createPTOLowerGenericOpsPass());
-  auto &expandedChildModulePM = kernelModulePM.nest<ModuleOp>();
-  expandedChildModulePM.addNestedPass<func::FuncOp>(
-      pto::createPTOLowerGenericOpsPass());
-  // Reconstruct the optimized reduction tree before scheduling so the
-  // scheduler sees the final MI instruction set and dependencies.
-  kernelModulePM.addPass(pto::createVPTOCombineReductionsPass());
-  kernelModulePM.addPass(createCSEPass());
-  // Materialize the minimal CTRL accesses before scheduling: a surviving
-  // ctrl_state_guard is region-bearing and would make every guarded raw MAD
-  // a scheduling boundary, splitting cube loop bodies and blocking the
-  // MTE/MAD interleave the scheduler exists to find.
-  kernelModulePM.addNestedPass<func::FuncOp>(
-      pto::createVPTOOptimizeCtrlStatePass());
-  if (schedulerMode != VPTOSchedulerCLIMode::Off) {
-    pto::VPTOSchedulerOptions schedulerOptions;
-    schedulerOptions.mode =
-        schedulerMode == VPTOSchedulerCLIMode::Analyze ? "analyze" : "on";
-    schedulerOptions.trace = vptoSchedulerTrace;
-    schedulerOptions.rematerialize = rematerialize;
-    kernelModulePM.addPass(pto::createVPTOSchedulerPass(schedulerOptions));
-  }
-  kernelModulePM.addPass(pto::createPTOValidateVPTOEmissionIRPass());
+static void prepareVPTOForEmission(PassManager& pm, VPTOSchedulerCLIMode schedulerMode, bool rematerialize)
+{
+    auto& kernelModulePM = pm.nest<ModuleOp>();
+    // VPTO LLVM emission lowers pto.barrier to the backend barrier intrinsic.
+    // A5 does not support a standalone PIPE_V barrier; vector barriers are either
+    // unnecessary or must be removed before LLVM emission. Upper-level
+    // programming frameworks may still produce pto.barrier(PIPE_V) from generic
+    // storage-sync constructs, so run sync-to-pipe legalization here and let the
+    // backend checks catch any illegal barrier that still leaks through.
+    kernelModulePM.addNestedPass<func::FuncOp>(pto::createLoweringSyncToPipePass());
+    addPersistentFragmentLowering(kernelModulePM);
+    kernelModulePM.addPass(pto::createVPTOPtrNormalizePass());
+    kernelModulePM.addPass(pto::createVPTOPtrCastCleanupPass());
+    kernelModulePM.addPass(pto::createVPTOOptimizeVcvtPass());
+    kernelModulePM.addPass(pto::createVPTOMaskSimplifyPass());
+    kernelModulePM.addPass(createReconcileUnrealizedCastsPass());
+    kernelModulePM.addNestedPass<func::FuncOp>(createVPTOExpandWrapperOpsPass());
+    kernelModulePM.addNestedPass<func::FuncOp>(pto::createPTOInferVPTOVecScopePass());
+    // Insert after vecscope inference and before scheduling.
+    if (enableVecScopeMemBar) {
+        kernelModulePM.addNestedPass<func::FuncOp>(pto::createPTOInsertVecScopeMemBarPass());
+    }
+    if (enableVecScopeMemBarAll) {
+        kernelModulePM.addNestedPass<func::FuncOp>(pto::createPTOInsertVecScopeMemBarAllPass());
+    }
+    if (enableSoftPostUpdate) {
+        kernelModulePM.addPass(pto::createVPTOSoftPostUpdatePass());
+    }
+    // Hoist loop-invariant guarded address chains out of scf.if regions before
+    // the generic LICM (which only inspects top-level loop-body operations).
+    kernelModulePM.addNestedPass<func::FuncOp>(pto::createVPTOGuardedLICMPass());
+    kernelModulePM.addPass(createLoopInvariantCodeMotionPass());
+    kernelModulePM.addNestedPass<func::FuncOp>(pto::createPTONarrowVPTOLoopCountersPass());
+    kernelModulePM.addPass(createCanonicalizerPass());
+    kernelModulePM.addPass(createCSEPass());
+    // SoftOps are materialized only after all VPTO optimization and layout
+    // decisions.  The materializer creates a temporary func.call; inline it
+    // immediately so the final legality check sees the actual VPTO sequence.
+    kernelModulePM.addPass(pto::createPTOExpandSoftLibPass());
+    kernelModulePM.addPass(pto::createPTOInlineLibCallPass());
+    kernelModulePM.addPass(createCanonicalizerPass());
+    kernelModulePM.addPass(createCSEPass());
+    // Tile and soft-library expansion may introduce generic scalar PTO ops.
+    // Lower them before final VPTO scheduling and legality validation.
+    kernelModulePM.addNestedPass<func::FuncOp>(pto::createPTOLowerGenericOpsPass());
+    auto& expandedChildModulePM = kernelModulePM.nest<ModuleOp>();
+    expandedChildModulePM.addNestedPass<func::FuncOp>(pto::createPTOLowerGenericOpsPass());
+    // Reconstruct the optimized reduction tree before scheduling so the
+    // scheduler sees the final MI instruction set and dependencies.
+    kernelModulePM.addPass(pto::createVPTOCombineReductionsPass());
+    kernelModulePM.addPass(createCSEPass());
+    // Materialize the minimal CTRL accesses before scheduling: a surviving
+    // ctrl_state_guard is region-bearing and would make every guarded raw MAD
+    // a scheduling boundary, splitting cube loop bodies and blocking the
+    // MTE/MAD interleave the scheduler exists to find.
+    kernelModulePM.addNestedPass<func::FuncOp>(pto::createVPTOOptimizeCtrlStatePass());
+    if (schedulerMode != VPTOSchedulerCLIMode::Off) {
+        pto::VPTOSchedulerOptions schedulerOptions;
+        schedulerOptions.mode = schedulerMode == VPTOSchedulerCLIMode::Analyze ? "analyze" : "on";
+        schedulerOptions.trace = vptoSchedulerTrace;
+        schedulerOptions.rematerialize = rematerialize;
+        kernelModulePM.addPass(pto::createVPTOSchedulerPass(schedulerOptions));
+    }
+    kernelModulePM.addPass(pto::createPTOValidateVPTOEmissionIRPass());
 }
 
-static void appendA5VPTOPostLoweringFusionPipeline(OpPassManager &kernelModulePM) {
-  kernelModulePM.addPass(pto::createPTOLowLevelLoopFusionPass());
-  kernelModulePM.addPass(mlir::createCanonicalizerPass());
-  kernelModulePM.addPass(mlir::createCSEPass());
-  kernelModulePM.addNestedPass<mlir::func::FuncOp>(
-      pto::createPTOFusionPredicateElisionPass());
-  kernelModulePM.addNestedPass<mlir::func::FuncOp>(
-      pto::createPTOFusionLoadStoreElisionPass());
-  if (enableVexpdifFusion) {
-    kernelModulePM.addNestedPass<mlir::func::FuncOp>(
-        pto::createPTOVexpdifFusionPass());
-  }
-  if (enableUnrollAfterLoopFusion) {
-    kernelModulePM.addNestedPass<mlir::func::FuncOp>(
-        pto::createPTOUnrollAfterLoopFusionPass());
+static void appendA5VPTOPostLoweringFusionPipeline(OpPassManager& kernelModulePM)
+{
+    kernelModulePM.addPass(pto::createPTOLowLevelLoopFusionPass());
     kernelModulePM.addPass(mlir::createCanonicalizerPass());
     kernelModulePM.addPass(mlir::createCSEPass());
-    kernelModulePM.addNestedPass<mlir::func::FuncOp>(
-        pto::createPTOFusionLoadStoreElisionPass());
-    // Unrolling and cleanup can expose new vsub + vexp patterns, so run
-    // vexpdif fusion again before flattening the regions.
+    kernelModulePM.addNestedPass<mlir::func::FuncOp>(pto::createPTOFusionPredicateElisionPass());
+    kernelModulePM.addNestedPass<mlir::func::FuncOp>(pto::createPTOFusionLoadStoreElisionPass());
     if (enableVexpdifFusion) {
-      kernelModulePM.addNestedPass<mlir::func::FuncOp>(
-          pto::createPTOVexpdifFusionPass());
+        kernelModulePM.addNestedPass<mlir::func::FuncOp>(pto::createPTOVexpdifFusionPass());
     }
-  }
-  kernelModulePM.addNestedPass<mlir::func::FuncOp>(
-      pto::createPTOFlattenFusionRegionPass());
-  kernelModulePM.addPass(mlir::createCSEPass());
+    if (enableUnrollAfterLoopFusion) {
+        kernelModulePM.addNestedPass<mlir::func::FuncOp>(pto::createPTOUnrollAfterLoopFusionPass());
+        kernelModulePM.addPass(mlir::createCanonicalizerPass());
+        kernelModulePM.addPass(mlir::createCSEPass());
+        kernelModulePM.addNestedPass<mlir::func::FuncOp>(pto::createPTOFusionLoadStoreElisionPass());
+        // Unrolling and cleanup can expose new vsub + vexp patterns, so run
+        // vexpdif fusion again before flattening the regions.
+        if (enableVexpdifFusion) {
+            kernelModulePM.addNestedPass<mlir::func::FuncOp>(pto::createPTOVexpdifFusionPass());
+        }
+    }
+    kernelModulePM.addNestedPass<mlir::func::FuncOp>(pto::createPTOFlattenFusionRegionPass());
+    kernelModulePM.addPass(mlir::createCSEPass());
 }
 
-static void lowerPTOToVPTOBackend(PassManager &pm, ModuleOp module) {
-  auto &kernelModulePM = pm.nest<ModuleOp>();
-  auto moduleArchAttr =
-      module->getAttrOfType<mlir::StringAttr>("pto.target_arch");
-  const bool isA2A3 = moduleArchAttr && isA2A3Arch(moduleArchAttr.getValue());
-  const bool opFusionEnabled = enableOpFusion == llvm::cl::BOU_TRUE;
-  const bool enableA5VPTOPostLoweringFusionLifecycle =
-      opFusionEnabled && moduleArchAttr && moduleArchAttr.getValue() == "a5";
+static void lowerPTOToVPTOBackend(PassManager& pm, ModuleOp module)
+{
+    auto& kernelModulePM = pm.nest<ModuleOp>();
+    auto moduleArchAttr = module->getAttrOfType<mlir::StringAttr>("pto.target_arch");
+    const bool isA2A3 = moduleArchAttr && isA2A3Arch(moduleArchAttr.getValue());
+    const bool opFusionEnabled = enableOpFusion == llvm::cl::BOU_TRUE;
+    const bool enableA5VPTOPostLoweringFusionLifecycle =
+        opFusionEnabled && moduleArchAttr && moduleArchAttr.getValue() == "a5";
 
-  kernelModulePM.addNestedPass<mlir::func::FuncOp>(
-      pto::createLowerPTOTensorDumpPass());
-  kernelModulePM.addNestedPass<mlir::func::FuncOp>(
-      pto::createLowerPTOToUBufOpsPass());
-  if (isA2A3) {
-    kernelModulePM.addNestedPass<mlir::func::FuncOp>(
-        memref::createExpandStridedMetadataPass());
+    kernelModulePM.addNestedPass<mlir::func::FuncOp>(pto::createLowerPTOTensorDumpPass());
+    kernelModulePM.addNestedPass<mlir::func::FuncOp>(pto::createLowerPTOToUBufOpsPass());
+    if (isA2A3) {
+        kernelModulePM.addNestedPass<mlir::func::FuncOp>(memref::createExpandStridedMetadataPass());
+        kernelModulePM.addPass(mlir::createCanonicalizerPass());
+        return;
+    }
+
+    kernelModulePM.addPass(pto::createExpandTileOpPass());
+
+    kernelModulePM.addPass(pto::createPTOInlineLibCallPass());
+    kernelModulePM.addNestedPass<mlir::func::FuncOp>(pto::createFoldTileBufIntrinsicsPass("shape-only"));
+    kernelModulePM.addNestedPass<mlir::func::FuncOp>(pto::createPTOLowerGenericOpsPass());
+    if (enableA5VPTOPostLoweringFusionLifecycle) {
+        appendA5VPTOPostLoweringFusionPipeline(kernelModulePM);
+    }
+    kernelModulePM.addNestedPass<mlir::func::FuncOp>(pto::createFoldTileBufIntrinsicsPass("addr-only"));
+    kernelModulePM.addPass(mlir::createSCCPPass());
     kernelModulePM.addPass(mlir::createCanonicalizerPass());
-    return;
-  }
-
-  kernelModulePM.addPass(pto::createExpandTileOpPass());
-
-  kernelModulePM.addPass(pto::createPTOInlineLibCallPass());
-  kernelModulePM.addNestedPass<mlir::func::FuncOp>(
-      pto::createFoldTileBufIntrinsicsPass("shape-only"));
-  kernelModulePM.addNestedPass<mlir::func::FuncOp>(
-      pto::createPTOLowerGenericOpsPass());
-  if (enableA5VPTOPostLoweringFusionLifecycle) {
-    appendA5VPTOPostLoweringFusionPipeline(kernelModulePM);
-  }
-  kernelModulePM.addNestedPass<mlir::func::FuncOp>(
-      pto::createFoldTileBufIntrinsicsPass("addr-only"));
-  kernelModulePM.addPass(mlir::createSCCPPass());
-  kernelModulePM.addPass(mlir::createCanonicalizerPass());
 }
 
 // The toolchain-detected version, unless --cann-output-version overrides it.
@@ -1026,565 +987,550 @@ static pto::CANNVersion resolveEffectiveCANNVersion(const pto::CANNVersion& dete
     return *parsed;
 }
 
-static pto::VPTOEmissionOptions
-buildVPTOEmissionOptions(const pto::CANNVersion &cannVersion,
-                         llvm::StringRef targetArch) {
-  pto::VPTOEmissionOptions options;
-  options.dumpVPTOIR = false;
-  options.targetTriple = "hiipu64-hisilicon-cce";
-  options.cannVersion = cannVersion;
-  std::string arch = normalizeArch(targetArch);
-  if (isA2A3Arch(arch)) {
-    options.march = "dav-c220-vec";
-  }
-  return options;
+static pto::VPTOEmissionOptions buildVPTOEmissionOptions(
+    const pto::CANNVersion& cannVersion, llvm::StringRef targetArch)
+{
+    pto::VPTOEmissionOptions options;
+    options.dumpVPTOIR = false;
+    options.targetTriple = "hiipu64-hisilicon-cce";
+    options.cannVersion = cannVersion;
+    std::string arch = normalizeArch(targetArch);
+    if (isA2A3Arch(arch)) {
+        options.march = "dav-c220-vec";
+    }
+    return options;
 }
 
 // Moves the wrapper translation units rendered by VPTOBridgeWrapperGen off the
 // module and into the compile result, mapping each unit's core to its device
 // target. A core-independent unit keeps no target and is compiled for every
 // device module present.
-static std::vector<pto::BridgeWrapperTU> takeBridgeWrapperTUs(ModuleOp module) {
-  std::vector<pto::BridgeWrapperTU> wrappers;
-  auto units =
-      module->getAttrOfType<ArrayAttr>(pto::kBridgeWrapperSourceAttrName);
-  if (!units) {
-    return wrappers;
-  }
-  for (Attribute unit : units) {
-    auto fields = cast<DictionaryAttr>(unit);
-    auto source = fields.getAs<StringAttr>("source");
-    auto core = fields.getAs<pto::BridgeCoreKindAttr>("core");
-    auto renderer = fields.getAs<StringAttr>("renderer");
-    pto::BridgeWrapperTU wrapper;
-    wrapper.source = source.getValue().str();
-    wrapper.needsPrintSupport = renderer.getValue() == "print";
-    switch (core.getValue()) {
-    case pto::BridgeCoreKind::Cube:
-      wrapper.core = pto::ObjectEmissionDeviceTarget::Cube;
-      break;
-    case pto::BridgeCoreKind::Vector:
-      wrapper.core = pto::ObjectEmissionDeviceTarget::Vector;
-      break;
-    case pto::BridgeCoreKind::Any:
-      break;
+static std::vector<pto::BridgeWrapperTU> takeBridgeWrapperTUs(ModuleOp module)
+{
+    std::vector<pto::BridgeWrapperTU> wrappers;
+    auto units = module->getAttrOfType<ArrayAttr>(pto::kBridgeWrapperSourceAttrName);
+    if (!units) {
+        return wrappers;
     }
-    wrappers.push_back(std::move(wrapper));
-  }
-  module->removeAttr(pto::kBridgeWrapperSourceAttrName);
-  return wrappers;
+    for (Attribute unit : units) {
+        auto fields = cast<DictionaryAttr>(unit);
+        auto source = fields.getAs<StringAttr>("source");
+        auto core = fields.getAs<pto::BridgeCoreKindAttr>("core");
+        auto renderer = fields.getAs<StringAttr>("renderer");
+        pto::BridgeWrapperTU wrapper;
+        wrapper.source = source.getValue().str();
+        wrapper.needsPrintSupport = renderer.getValue() == "print";
+        switch (core.getValue()) {
+            case pto::BridgeCoreKind::Cube:
+                wrapper.core = pto::ObjectEmissionDeviceTarget::Cube;
+                break;
+            case pto::BridgeCoreKind::Vector:
+                wrapper.core = pto::ObjectEmissionDeviceTarget::Vector;
+                break;
+            case pto::BridgeCoreKind::Any:
+                break;
+        }
+        wrappers.push_back(std::move(wrapper));
+    }
+    module->removeAttr(pto::kBridgeWrapperSourceAttrName);
+    return wrappers;
 }
 
 // Moves the wrapper units off the module and records whether this compilation
 // prints, together with the delivery convention the CLI selected.
-static void takeBridgeArtifacts(ModuleOp module, PTOASCompileResult &result) {
-  // The wrapper units are a compilation artifact, not part of the emitted IR.
-  result.vptoBridgeWrappers = takeBridgeWrapperTUs(module);
-  const bool printsAnywhere =
-      llvm::any_of(result.vptoBridgeWrappers,
-                   [](const pto::BridgeWrapperTU &wrapper) {
-                     return wrapper.needsPrintSupport;
-                   });
-  if (!printsAnywhere) {
-    return;
-  }
-  result.vptoPrintMode = vptoPrintDTData == "explicit"
-                             ? pto::PrintDTDataMode::Explicit
-                             : pto::PrintDTDataMode::Implicit;
-}
-
-static int emitVPTOTextResult(ModuleOp module, PTOASCompileResult &result,
-                              const pto::CANNVersion &cannVersion) {
-  result.kind = PTOASCompileResultKind::Text;
-  if (emitVPTO) {
-    llvm::raw_string_ostream os(result.textOutput);
-    module.print(os);
-    os << "\n";
-    os.flush();
-    return 0;
-  }
-  pto::VPTOEmissionOptions options = buildVPTOEmissionOptions(
-      cannVersion, resolveEffectiveTargetArch(module, ptoTargetArch));
-  if (failed(pto::lowerVPTOModuleToLLVMIRText(module, options,
-                                              result.textOutput,
-                                              llvm::errs()))) {
-    llvm::errs() << "Error: Failed to lower VPTO to LLVM IR.\n";
-    return 1;
-  }
-  return 0;
-}
-
-static int emitVPTOBackendResult(ModuleOp module, PTOASCompileResult &result,
-                                 bool emitHostStub,
-                                 const pto::CANNVersion &cannVersion) {
-  if (emitVPTO || emitVPTOLLVMDialect) {
-    return emitVPTOTextResult(module, result, cannVersion);
-  }
-
-  pto::VPTOEmissionOptions options =
-      buildVPTOEmissionOptions(
-          cannVersion, resolveEffectiveTargetArch(module, ptoTargetArch));
-  takeBridgeArtifacts(module, result);
-
-  std::string stubSource;
-  if (emitHostStub) {
-    if (failed(pto::emitVPTOHostStubSource(module, stubSource, llvm::errs()))) {
-      llvm::errs() << "Error: Failed to emit VPTO host stub source.\n";
-      return 1;
+static void takeBridgeArtifacts(ModuleOp module, PTOASCompileResult& result)
+{
+    // The wrapper units are a compilation artifact, not part of the emitted IR.
+    result.vptoBridgeWrappers = takeBridgeWrapperTUs(module);
+    const bool printsAnywhere = llvm::any_of(
+        result.vptoBridgeWrappers, [](const pto::BridgeWrapperTU& wrapper) { return wrapper.needsPrintSupport; });
+    if (!printsAnywhere) {
+        return;
     }
-  }
-
-  if (failed(
-          pto::lowerVPTOModuleToLLVMModules(module, options,
-                                            result.vptoCubeModule,
-                                            result.vptoVectorModule,
-                                            llvm::errs()))) {
-    llvm::errs() << "Error: Failed to lower VPTO to LLVM modules.\n";
-    return 1;
-  }
-
-  result.vptoStubSource = std::move(stubSource);
-  result.kind = PTOASCompileResultKind::VPTOObject;
-  return 0;
+    result.vptoPrintMode =
+        vptoPrintDTData == "explicit" ? pto::PrintDTDataMode::Explicit : pto::PrintDTDataMode::Implicit;
 }
 
-static LogicalResult runVPTOBackendPipeline(OwningOpRef<ModuleOp> &module,
-                                            bool hasTileOpsToExpand) {
-  PassManager pm(module->getContext());
-  pm.enableVerifier();
-  if (!hasTileOpsToExpand) {
-    pm.addNestedPass<mlir::func::FuncOp>(pto::createPTOCanonicalizeIRPass());
-  }
-  // Range-driven arith rewrites before the module is split into vector/cube
-  // units: hardware SIMT ID queries are still present here, so their
-  // non-negative InferIntRangeInterface ranges let the upstream arith passes
-  // prove signed-vs-unsigned equivalence (e.g. floordivsi/remsi by pow2 on
-  // get_tid_x results).
-  pm.addPass(pto::createPTOArithRangeOptimizePass());
-  pm.addPass(pto::createVPTOSplitCVModulePass());
-  pm.addPass(pto::createVPTONormalizeContainerPass());
-  if (hasTileOpsToExpand) {
-    lowerPTOToVPTOBackend(pm, module.get());
-  }
-  auto &kernelModulePM = pm.nest<ModuleOp>();
-  // Inline legal direct calls before VMI layout assignment so private helper
-  // bodies participate in one caller-local layout decision. The Func
-  // inliner honors `no_inline` on either the callee or call site. Materialize
-  // the implicit no-inline semantics of `pto.simt_entry` first so the rest of
-  // the pipeline can use MLIR's standard Func inliner implementation.
-  kernelModulePM.addPass(std::make_unique<ApplySIMTEntryNoInlinePass>());
-  kernelModulePM.addPass(createInlinerPass());
-  appendVMISemanticPipeline(kernelModulePM);
-  std::string arch = resolveEffectiveTargetArch(*module, ptoTargetArch);
-  VPTOSchedulerCLIMode schedulerMode = getEffectiveVPTOSchedulerMode(arch);
-  bool rematerialize =
-      getEffectiveVPTOSchedulerRematerialization(arch, schedulerMode);
-  prepareVPTOForEmission(pm, schedulerMode, rematerialize);
-  if (failed(applyConfiguredPassManagerCLOptions(
-          pm, "VPTO unified emission pipeline")))
-    return failure();
-  // Record the VMI conversion state once, before any VMI pass runs.  It is the
-  // single source of truth: vmi-layout-assignment and vmi-to-vpto both read it
-  // back from the module (see VMIFastmathState.h), so they cannot disagree about
-  // which lowering the pipeline is allowed to emit.  The state is removed again
-  // after the pipeline so it does not leak into emitted IR.
-  pto::setVMIFastmathState(*module, enableVmiFastmath);
-  if (failed(pm.run(module.get()))) {
-    llvm::errs() << "Error: VPTO emission pipeline failed.\n";
-    return failure();
-  }
-  pto::clearVMIFastmathState(*module);
-  return success();
+static int emitVPTOTextResult(ModuleOp module, PTOASCompileResult& result, const pto::CANNVersion& cannVersion)
+{
+    result.kind = PTOASCompileResultKind::Text;
+    if (emitVPTO) {
+        llvm::raw_string_ostream os(result.textOutput);
+        module.print(os);
+        os << "\n";
+        os.flush();
+        return 0;
+    }
+    pto::VPTOEmissionOptions options =
+        buildVPTOEmissionOptions(cannVersion, resolveEffectiveTargetArch(module, ptoTargetArch));
+    if (failed(pto::lowerVPTOModuleToLLVMIRText(module, options, result.textOutput, llvm::errs()))) {
+        llvm::errs() << "Error: Failed to lower VPTO to LLVM IR.\n";
+        return 1;
+    }
+    return 0;
 }
 
-static void appendVMISemanticPipeline(OpPassManager &pm) {
-  // Materialize unsigned carriers for sign-sensitive VMI ops before any
-  // verifier, layout, or lowering pass sees signless integer element types.
-  pm.addNestedPass<func::FuncOp>(
-      pto::createVMINormalizeSignlessIntToUnsignedPass());
-  // Expand unified VMI ops before layout assignment so grouped vci becomes
-  // the contiguous-only legacy group_iota producer. Layout assignment can
-  // then materialize any consumer-requested non-contiguous use explicitly.
-  pm.addPass(pto::createVMILowerUnifiedToLegacyPass());
-  pm.addPass(createCanonicalizerPass());
-  pm.addPass(pto::createVMILegalizeArithSelectPass());
-  pm.addPass(pto::createPTOValidateVMIIRPass());
-  pm.addPass(createCanonicalizerPass());
-  pm.addPass(createCSEPass());
-  pm.addPass(pto::createVMIPreAssignmentCombinePass());
-  pm.addPass(createCanonicalizerPass());
-  pm.addPass(createCSEPass());
-  pm.addPass(pto::createVMILegalizeArithSelectPass());
-  pm.addPass(pto::createVMIMaskGranularityAssignmentPass());
-  pm.addPass(pto::createVMILayoutRematerializeWeakProducersPass());
-  pto::VMILayoutPlannerOptions layoutOptions;
-  layoutOptions.maxFrontierEntriesPerComponent = vmiLayoutMaxFrontierEntries;
-  layoutOptions.maxTransitionsPerComponent = vmiLayoutMaxTransitions;
-  pm.addPass(pto::createVMILayoutAssignmentPass(layoutOptions));
-  pm.addPass(createCanonicalizerPass());
-  pm.addPass(createCSEPass());
-  // Post-assignment rematerialization is explicit opt-in. Pushing a result
-  // conversion through a producer can introduce multiple operand conversions
-  // and override the solver's costed layout choice.
-  pm.addPass(pto::createVMILayoutFoldPass());
-  pm.addPass(createCanonicalizerPass());
-  pm.addPass(createCSEPass());
-  // Layout conversion placement belongs to the assignment solver. The legacy
-  // sink pass remains available as an explicit opt-in, but must not rewrite
-  // the solver's selected execution/result layouts in the default pipeline.
-  pm.addPass(createCanonicalizerPass());
-  pm.addPass(createCSEPass());
-  pm.addPass(pto::createVMILegalizeArithSelectPass());
-  pm.addPass(pto::createPTOValidateVMILayoutIRPass());
-  // Keep the layout selected by the solver through VMI-to-VPTO.  In
-  // particular, do not force an E2B deinterleaved result after assignment:
-  // that choice would add a d2/d4 -> contiguous materialization outside the
-  // solver's cost graph and could turn a costed BRC decision into E2B plus
-  // VINTLV.  The explicit -vmi-expand-implicit-ensure-layouts test pass remains
-  // available for callers that intentionally request that compatibility
-  // rewrite.
-  pm.addPass(pto::createVMIToVPTOPass());
-  pm.addPass(pto::createVPTOPack4StoreMaskNormalizePass());
+static int emitVPTOBackendResult(
+    ModuleOp module, PTOASCompileResult& result, bool emitHostStub, const pto::CANNVersion& cannVersion)
+{
+    if (emitVPTO || emitVPTOLLVMDialect) {
+        return emitVPTOTextResult(module, result, cannVersion);
+    }
 
-  pm.addPass(pto::createVPTOStatefulStreamFusionPass());
+    pto::VPTOEmissionOptions options =
+        buildVPTOEmissionOptions(cannVersion, resolveEffectiveTargetArch(module, ptoTargetArch));
+    takeBridgeArtifacts(module, result);
+
+    std::string stubSource;
+    if (emitHostStub) {
+        if (failed(pto::emitVPTOHostStubSource(module, stubSource, llvm::errs()))) {
+            llvm::errs() << "Error: Failed to emit VPTO host stub source.\n";
+            return 1;
+        }
+    }
+
+    LogicalResult loweringResult = pto::lowerVPTOModuleToLLVMModules(
+        module, options, result.vptoCubeModule, result.vptoVectorModule, llvm::errs());
+    if (failed(loweringResult)) {
+        llvm::errs() << "Error: Failed to lower VPTO to LLVM modules.\n";
+        return 1;
+    }
+
+    result.vptoStubSource = std::move(stubSource);
+    result.kind = PTOASCompileResultKind::VPTOObject;
+    return 0;
+}
+
+static LogicalResult runVPTOBackendPipeline(OwningOpRef<ModuleOp>& module, bool hasTileOpsToExpand)
+{
+    PassManager pm(module->getContext());
+    pm.enableVerifier();
+    if (!hasTileOpsToExpand) {
+        pm.addNestedPass<mlir::func::FuncOp>(pto::createPTOCanonicalizeIRPass());
+    }
+    // Range-driven arith rewrites before the module is split into vector/cube
+    // units: hardware SIMT ID queries are still present here, so their
+    // non-negative InferIntRangeInterface ranges let the upstream arith passes
+    // prove signed-vs-unsigned equivalence (e.g. floordivsi/remsi by pow2 on
+    // get_tid_x results).
+    pm.addPass(pto::createPTOArithRangeOptimizePass());
+    pm.addPass(pto::createVPTOSplitCVModulePass());
+    pm.addPass(pto::createVPTONormalizeContainerPass());
+    if (hasTileOpsToExpand) {
+        lowerPTOToVPTOBackend(pm, module.get());
+    }
+    auto& kernelModulePM = pm.nest<ModuleOp>();
+    // Inline legal direct calls before VMI layout assignment so private helper
+    // bodies participate in one caller-local layout decision. The Func
+    // inliner honors `no_inline` on either the callee or call site. Materialize
+    // the implicit no-inline semantics of `pto.simt_entry` first so the rest of
+    // the pipeline can use MLIR's standard Func inliner implementation.
+    kernelModulePM.addPass(std::make_unique<ApplySIMTEntryNoInlinePass>());
+    kernelModulePM.addPass(createInlinerPass());
+    appendVMISemanticPipeline(kernelModulePM);
+    std::string arch = resolveEffectiveTargetArch(*module, ptoTargetArch);
+    VPTOSchedulerCLIMode schedulerMode = getEffectiveVPTOSchedulerMode(arch);
+    bool rematerialize = getEffectiveVPTOSchedulerRematerialization(arch, schedulerMode);
+    prepareVPTOForEmission(pm, schedulerMode, rematerialize);
+    if (failed(applyConfiguredPassManagerCLOptions(pm, "VPTO unified emission pipeline"))) {
+        return failure();
+    }
+    // Record the VMI conversion state once, before any VMI pass runs.  It is the
+    // single source of truth: vmi-layout-assignment and vmi-to-vpto both read it
+    // back from the module (see VMIFastmathState.h), so they cannot disagree about
+    // which lowering the pipeline is allowed to emit.  The state is removed again
+    // after the pipeline so it does not leak into emitted IR.
+    pto::setVMIFastmathState(*module, enableVmiFastmath);
+    if (failed(pm.run(module.get()))) {
+        llvm::errs() << "Error: VPTO emission pipeline failed.\n";
+        return failure();
+    }
+    pto::clearVMIFastmathState(*module);
+    return success();
+}
+
+static void appendVMISemanticPipeline(OpPassManager& pm)
+{
+    // Materialize unsigned carriers for sign-sensitive VMI ops before any
+    // verifier, layout, or lowering pass sees signless integer element types.
+    pm.addNestedPass<func::FuncOp>(pto::createVMINormalizeSignlessIntToUnsignedPass());
+    // Expand unified VMI ops before layout assignment so grouped vci becomes
+    // the contiguous-only legacy group_iota producer. Layout assignment can
+    // then materialize any consumer-requested non-contiguous use explicitly.
+    pm.addPass(pto::createVMILowerUnifiedToLegacyPass());
+    pm.addPass(createCanonicalizerPass());
+    pm.addPass(pto::createVMILegalizeArithSelectPass());
+    pm.addPass(pto::createPTOValidateVMIIRPass());
+    pm.addPass(createCanonicalizerPass());
+    pm.addPass(createCSEPass());
+    pm.addPass(pto::createVMIPreAssignmentCombinePass());
+    pm.addPass(createCanonicalizerPass());
+    pm.addPass(createCSEPass());
+    pm.addPass(pto::createVMILegalizeArithSelectPass());
+    pm.addPass(pto::createVMIMaskGranularityAssignmentPass());
+    pm.addPass(pto::createVMILayoutRematerializeWeakProducersPass());
+    pto::VMILayoutPlannerOptions layoutOptions;
+    layoutOptions.maxFrontierEntriesPerComponent = vmiLayoutMaxFrontierEntries;
+    layoutOptions.maxTransitionsPerComponent = vmiLayoutMaxTransitions;
+    pm.addPass(pto::createVMILayoutAssignmentPass(layoutOptions));
+    pm.addPass(createCanonicalizerPass());
+    pm.addPass(createCSEPass());
+    // Post-assignment rematerialization is explicit opt-in. Pushing a result
+    // conversion through a producer can introduce multiple operand conversions
+    // and override the solver's costed layout choice.
+    pm.addPass(pto::createVMILayoutFoldPass());
+    pm.addPass(createCanonicalizerPass());
+    pm.addPass(createCSEPass());
+    // Layout conversion placement belongs to the assignment solver. The legacy
+    // sink pass remains available as an explicit opt-in, but must not rewrite
+    // the solver's selected execution/result layouts in the default pipeline.
+    pm.addPass(createCanonicalizerPass());
+    pm.addPass(createCSEPass());
+    pm.addPass(pto::createVMILegalizeArithSelectPass());
+    pm.addPass(pto::createPTOValidateVMILayoutIRPass());
+    // Keep the layout selected by the solver through VMI-to-VPTO.  In
+    // particular, do not force an E2B deinterleaved result after assignment:
+    // that choice would add a d2/d4 -> contiguous materialization outside the
+    // solver's cost graph and could turn a costed BRC decision into E2B plus
+    // VINTLV.  The explicit -vmi-expand-implicit-ensure-layouts test pass remains
+    // available for callers that intentionally request that compatibility
+    // rewrite.
+    pm.addPass(pto::createVMIToVPTOPass());
+    pm.addPass(pto::createVPTOPack4StoreMaskNormalizePass());
+
+    pm.addPass(pto::createVPTOStatefulStreamFusionPass());
 }
 
 /// Reject statically invalid scf.for steps at the PTOAS input boundary.
 /// LLVM 19 intentionally does not follow SSA values from scf.for verifiers,
 /// so the generic MLIR verifier cannot enforce this semantic constraint.
-static LogicalResult validateSCFForConstantSteps(ModuleOp module) {
-  WalkResult result = module.walk([](scf::ForOp forOp) -> WalkResult {
-    std::optional<int64_t> step = getConstantIntValue(forOp.getStep());
-    if (!step || *step > 0) {
-      return WalkResult::advance();
-    }
+static LogicalResult validateSCFForConstantSteps(ModuleOp module)
+{
+    WalkResult result = module.walk([](scf::ForOp forOp) -> WalkResult {
+        std::optional<int64_t> step = getConstantIntValue(forOp.getStep());
+        if (!step || *step > 0) {
+            return WalkResult::advance();
+        }
 
-    forOp.emitOpError("constant step operand must be positive");
-    return WalkResult::interrupt();
-  });
-  return result.wasInterrupted() ? failure() : success();
+        forOp.emitOpError("constant step operand must be positive");
+        return WalkResult::interrupt();
+    });
+    return result.wasInterrupted() ? failure() : success();
 }
 
 struct CompilePipelineState {
-  std::string arch;
-  PTOBuildLevel level = PTOBuildLevel::Level2;
-  bool isA2A3 = false;
-  bool opFusionEnabled = false;
-  bool enableA5EmitCFusionPath = false;
-  bool enableA5VPTOFusionPath = false;
-  bool hasTileOpsToExpand = false;
-  FunctionBlockArgHintMap functionBlockArgHints;
+    std::string arch;
+    PTOBuildLevel level = PTOBuildLevel::Level2;
+    bool isA2A3 = false;
+    bool opFusionEnabled = false;
+    bool enableA5EmitCFusionPath = false;
+    bool enableA5VPTOFusionPath = false;
+    bool hasTileOpsToExpand = false;
+    FunctionBlockArgHintMap functionBlockArgHints;
 };
 
-static LogicalResult validateCompileBackendFlags(PTOBackend backend,
-                                                 llvm::StringRef arch) {
-  VPTOSchedulerCLIMode schedulerMode = getEffectiveVPTOSchedulerMode(arch);
-  if (backend != PTOBackend::VPTO &&
-      (emitVPTO || emitVPTOLLVMDialect || ptoPrintSeamIR ||
-       !ptoSeamIRFile.empty() || vptoSchedulerRemat)) {
-    llvm::errs() << "Error: VPTO-specific flags require "
-                    "--pto-backend=vpto or pto.backend = \"vpto\".\n";
-    return failure();
-  }
-  if (enableBufidSync && arch != "a5") {
-    llvm::errs() << "Error: --enable-bufid_sync requires --pto-arch=a5.\n";
-    return failure();
-  }
-  if (schedulerMode != VPTOSchedulerCLIMode::Off && arch != "a5") {
-    llvm::errs() << "Error: --vpto-scheduler requires --pto-arch=a5.\n";
-    return failure();
-  }
-  if (vptoSchedulerTrace && schedulerMode != VPTOSchedulerCLIMode::On) {
-    llvm::errs() << "Error: --vpto-scheduler-trace requires "
-                    "--vpto-scheduler=on.\n";
-    return failure();
-  }
-  if (vptoSchedulerRemat && schedulerMode != VPTOSchedulerCLIMode::On) {
-    llvm::errs() << "Error: --vpto-scheduler-remat requires "
-                    "--vpto-scheduler=on.\n";
-    return failure();
-  }
-  return success();
+static LogicalResult validateCompileBackendFlags(PTOBackend backend, llvm::StringRef arch)
+{
+    VPTOSchedulerCLIMode schedulerMode = getEffectiveVPTOSchedulerMode(arch);
+    if (backend != PTOBackend::VPTO &&
+        (emitVPTO || emitVPTOLLVMDialect || ptoPrintSeamIR || !ptoSeamIRFile.empty() || vptoSchedulerRemat)) {
+        llvm::errs() << "Error: VPTO-specific flags require "
+                        "--pto-backend=vpto or pto.backend = \"vpto\".\n";
+        return failure();
+    }
+    if (enableBufidSync && arch != "a5") {
+        llvm::errs() << "Error: --enable-bufid_sync requires --pto-arch=a5.\n";
+        return failure();
+    }
+    if (schedulerMode != VPTOSchedulerCLIMode::Off && arch != "a5") {
+        llvm::errs() << "Error: --vpto-scheduler requires --pto-arch=a5.\n";
+        return failure();
+    }
+    if (vptoSchedulerTrace && schedulerMode != VPTOSchedulerCLIMode::On) {
+        llvm::errs() << "Error: --vpto-scheduler-trace requires "
+                        "--vpto-scheduler=on.\n";
+        return failure();
+    }
+    if (vptoSchedulerRemat && schedulerMode != VPTOSchedulerCLIMode::On) {
+        llvm::errs() << "Error: --vpto-scheduler-remat requires "
+                        "--vpto-scheduler=on.\n";
+        return failure();
+    }
+    return success();
 }
 
 static LogicalResult initializeCompilePipelineState(
-    OwningOpRef<ModuleOp> &module, PTOASContext &context, PTOBackend backend,
-    CompilePipelineState &state) {
-  const bool invalidScfStep = failed(validateSCFForConstantSteps(*module));
-  const bool invalidStructProvenance =
-      failed(pto::validateStructProvenance(*module));
-  if (invalidScfStep || invalidStructProvenance) {
-    return failure();
-  }
-  state.arch = resolveEffectiveTargetArch(*module, context.getArch());
-  state.functionBlockArgHints = collectFunctionBlockArgNameHints(*module);
-  if (failed(validateCompileBackendFlags(backend, state.arch))) {
-    return failure();
-  }
-  state.level = defaultBuildLevel();
-  if (!parseBuildLevel(ptoBuildLevel, state.level)) {
-    llvm::errs() << "Error: invalid --pto-level='" << ptoBuildLevel
-                 << "'. Expected 'level1', 'level2', or 'level3'.\n";
-    return failure();
-  }
-  state.isA2A3 = isA2A3Arch(state.arch);
-  module->getOperation()->setAttr(
-      "pto.target_arch",
-      mlir::StringAttr::get(module->getContext(), state.arch));
-  if (failed(mlir::verify(module.get()))) {
-    llvm::errs() << "Error: input module verification failed.\n";
-    return failure();
-  }
-  state.opFusionEnabled = enableOpFusion == llvm::cl::BOU_TRUE;
-  return success();
-}
-
-static LogicalResult validateFusionConfiguration(const CompilePipelineState &state,
-                                                 PTOBackend backend) {
-  if (state.opFusionEnabled && state.arch != "a5") {
-    llvm::errs() << "Error: --enable-op-fusion=true requires --pto-arch=a5.\n";
-    return failure();
-  }
-  if (state.opFusionEnabled && state.level == PTOBuildLevel::Level1) {
-    llvm::errs() << "Warning: --enable-op-fusion=true is ignored because "
-                    "--pto-level=level2 or level3 is required.\n";
-  }
-  if (enableUnrollAfterLoopFusion &&
-      !(state.opFusionEnabled && state.arch == "a5")) {
-    llvm::errs() << "Error: --enable-unroll-after-loop-fusion requires "
-                    "--pto-arch=a5 and --enable-op-fusion.\n";
-    return failure();
-  }
-  if (enableUnrollAfterLoopFusion && backend != PTOBackend::VPTO) {
-    llvm::errs() << "Error: --enable-unroll-after-loop-fusion requires "
-                    "--pto-backend=vpto; the pass is VPTO-only and is not "
-                    "inserted under other backends.\n";
-    return failure();
-  }
-  if (enableUnrollAfterLoopFusion && !enableVfSimCostmodelOptimization) {
-    llvm::errs() << "Warning: --enable-unroll-after-loop-fusion consumes "
-                    "pto.fusion.row/col_unroll_factor, which is produced by "
-                    "--enable-vfsim-costmodel-optimization.\n";
-  }
-  return success();
-}
-
-static void setFusionPipelineFlags(CompilePipelineState &state,
-                                   PTOBackend backend) {
-  const bool enabled = state.opFusionEnabled && state.arch == "a5" &&
-                       state.level != PTOBuildLevel::Level1;
-  state.enableA5EmitCFusionPath = enabled && backend == PTOBackend::EmitC;
-  state.enableA5VPTOFusionPath = enabled && backend == PTOBackend::VPTO;
-  if (enableVfSimCostmodelOptimization &&
-      !(state.enableA5EmitCFusionPath || state.enableA5VPTOFusionPath)) {
-    llvm::errs() << "Warning: --enable-vfsim-costmodel-optimization is ignored "
-                    "because the A5 tile-fusion pipeline is not enabled; "
-                    "requires --pto-arch=a5, --pto-level=level2 or level3, "
-                    "and op fusion enabled.\n";
-  }
-  if (enableVfSimCostmodelOptimization && state.enableA5EmitCFusionPath) {
-    llvm::errs() << "Warning: --enable-vfsim-costmodel-optimization may "
-                    "annotate costmodel attributes on the EmitC fusion path, "
-                    "but current VfSim unroll attributes are consumed only by "
-                    "the VPTO backend; use --pto-backend=vpto for unroll "
-                    "consumption.\n";
-  }
-  if (enableVfSimCostmodelOptimization && state.enableA5VPTOFusionPath &&
-      !enableUnrollAfterLoopFusion) {
-    llvm::errs() << "Warning: --enable-vfsim-costmodel-optimization may "
-                    "annotate pto.fusion.row/col_unroll_factor, but "
-                    "--enable-unroll-after-loop-fusion is not enabled; unroll "
-                    "attributes will not be consumed by the VPTO backend.\n";
-  }
-}
-
-static LogicalResult validateAutoSyncTailHints(ModuleOp module) {
-  bool invalid = false;
-  module.walk([&invalid, &module](mlir::func::FuncOp func) {
-    auto hintAttr =
-        func->getAttrOfType<mlir::StringAttr>("pto.auto_sync_tail_hint");
-    if (!hintAttr) {
-      return;
+    OwningOpRef<ModuleOp>& module, PTOASContext& context, PTOBackend backend, CompilePipelineState& state)
+{
+    const bool invalidScfStep = failed(validateSCFForConstantSteps(*module));
+    const bool invalidStructProvenance = failed(pto::validateStructProvenance(*module));
+    if (invalidScfStep || invalidStructProvenance) {
+        return failure();
     }
-    std::string normalizedHint;
-    if (!parseAutoSyncTailHint(hintAttr.getValue(), normalizedHint)) {
-      func.emitError("invalid pto.auto_sync_tail_hint '")
-          << hintAttr.getValue()
-          << "'. Expected 'barrier-all' (or 'default') or "
-             "'mte3-to-s-event0'.";
-      invalid = true;
-      return;
+    state.arch = resolveEffectiveTargetArch(*module, context.getArch());
+    state.functionBlockArgHints = collectFunctionBlockArgNameHints(*module);
+    if (failed(validateCompileBackendFlags(backend, state.arch))) {
+        return failure();
     }
-    func->setAttr("pto.auto_sync_tail_hint",
-                  mlir::StringAttr::get(module.getContext(), normalizedHint));
-  });
-  return invalid ? failure() : success();
-}
-
-static bool moduleHasTAssign(ModuleOp module) {
-  bool hasTAssign = false;
-  module.walk([&hasTAssign](pto::TAssignOp) { hasTAssign = true; });
-  return hasTAssign;
-}
-
-static LogicalResult validateTAssignConfiguration(ModuleOp module,
-                                                  PTOBuildLevel level) {
-  const bool hasTAssign = moduleHasTAssign(module);
-  if (hasTAssign && level != PTOBuildLevel::Level3) {
-    llvm::errs() << "Error: pto.tassign is only supported when "
-                    "--pto-level=level3.\n";
-    return failure();
-  }
-  if (hasTAssign && enableInsertSync) {
-    llvm::errs() << "Error: pto.tassign requires --enable-insert-sync to be "
-                    "disabled.\n";
-    return failure();
-  }
-  const int enabledAutoSyncModes = (enableInsertSync ? 1 : 0) + (enableUnifiedSync ? 1 : 0) +
-                                   (enableBufidSync ? 1 : 0) + (enableInjectBarrierAllSync ? 1 : 0);
-  if (enabledAutoSyncModes > 1) {
-    llvm::errs() << "Error: --enable-insert-sync, --enable-bufid_sync, "
-                    "--enable-unified-sync, and --enable-inject-barrier-all-sync are mutually "
-                    "exclusive.\n";
-    return failure();
-  }
-  if (hasTAssign && enableInjectBarrierAllSync) {
-    llvm::errs() << "Error: pto.tassign requires "
-                    "--enable-inject-barrier-all-sync to be disabled.\n";
-    return failure();
-  }
-  if (hasTAssign && enableUnifiedSync) {
-    llvm::errs() << "Error: pto.tassign requires --enable-unified-sync to be disabled.\n";
-    return failure();
-  }
-  if (hasTAssign && enableBufidSync) {
-    llvm::errs() << "Error: pto.tassign requires --enable-bufid_sync to be "
-                    "disabled.\n";
-    return failure();
-  }
-  return success();
-}
-
-static LogicalResult validateAllocationConfiguration(ModuleOp module,
-                                                     PTOBuildLevel level) {
-  bool hasUserPlannedMultiAddrs = false;
-  module.walk([&hasUserPlannedMultiAddrs](pto::AllocMultiTileOp op) {
-    if (op->hasAttr(pto::kPtoMultiBufferAddrsAttrName)) {
-      op.emitError() << "attribute '" << pto::kPtoMultiBufferAddrsAttrName
-                     << "' is reserved for pto-plan-memory";
-      hasUserPlannedMultiAddrs = true;
+    state.level = defaultBuildLevel();
+    if (!parseBuildLevel(ptoBuildLevel, state.level)) {
+        llvm::errs() << "Error: invalid --pto-level='" << ptoBuildLevel
+                     << "'. Expected 'level1', 'level2', or 'level3'.\n";
+        return failure();
     }
-  });
-  if (hasUserPlannedMultiAddrs) {
-    return failure();
-  }
-
-  bool invalidAddress = false;
-  if (level == PTOBuildLevel::Level3) {
-    module.walk([&invalidAddress](pto::AllocTileOp op) {
-      if (!op.getAddr()) {
-        op.emitError("requires 'addr' operand when --pto-level=level3");
-        invalidAddress = true;
-      }
-    });
-    module.walk([&invalidAddress](pto::AllocMultiTileOp op) {
-      if (!op.getAddr()) {
-        op.emitError("pto.alloc_multi_tile requires a base 'addr' operand when "
-                     "--pto-level=level3");
-        invalidAddress = true;
-      }
-    });
-  } else {
-    module.walk([&invalidAddress](pto::AllocTileOp op) {
-      if (op.getAddr()) {
-        op.emitError("unexpected 'addr' operand: only supported when "
-                     "--pto-level=level3");
-        invalidAddress = true;
-      }
-    });
-    module.walk([&invalidAddress](pto::AllocMultiTileOp op) {
-      if (op.getAddr()) {
-        op.emitError("unexpected 'addr' operand on pto.alloc_multi_tile: only "
-                     "supported when --pto-level=level3");
-        invalidAddress = true;
-      }
-    });
-  }
-  return invalidAddress ? failure() : success();
-}
-
-static LogicalResult validateCompileOptions(ModuleOp module,
-                                            PTOBuildLevel level) {
-  return failed(validateAutoSyncTailHints(module)) ||
-                 failed(validateTAssignConfiguration(module, level)) ||
-                 failed(validateAllocationConfiguration(module, level)) ||
-                 !validateReserveBufferLevelRules(module, level)
-             ? failure()
-             : success();
-}
-
-static bool isSelectedTileDescriptor(Value source) {
-  SmallVector<Value> pending{source};
-  llvm::DenseSet<Value> visited;
-  while (!pending.empty()) {
-    Value current = pending.pop_back_val();
-    if (!visited.insert(current).second) {
-      continue;
+    state.isA2A3 = isA2A3Arch(state.arch);
+    module->getOperation()->setAttr("pto.target_arch", mlir::StringAttr::get(module->getContext(), state.arch));
+    if (failed(mlir::verify(module.get()))) {
+        llvm::errs() << "Error: input module verification failed.\n";
+        return failure();
     }
-    if (isa_and_nonnull<scf::IfOp, arith::SelectOp>(current.getDefiningOp())) {
-      return true;
-    }
-    for (const auto &edge : pto::getTileSources(current).edges) {
-      pending.push_back(edge.source);
-    }
-  }
-  return false;
-}
-
-static LogicalResult validateTileIfDescriptorBackend(ModuleOp module,
-                                                     PTOBackend backend) {
-  if (backend != PTOBackend::VPTO) {
+    state.opFusionEnabled = enableOpFusion == llvm::cl::BOU_TRUE;
     return success();
-  }
-  WalkResult result = module.walk([](pto::SetValidShapeOp update) {
-    if (!isSelectedTileDescriptor(update.getSource())) {
-      return WalkResult::advance();
-    }
-    update.emitOpError("native Tile selection descriptor mutation currently "
-                       "requires --pto-backend=emitc");
-    return WalkResult::interrupt();
-  });
-  return failure(result.wasInterrupted());
 }
 
-static LogicalResult runPreBackendNormalization(ModuleOp module,
-                                                PTOBackend backend) {
-  if (failed(validateTileIfDescriptorBackend(module, backend))) {
-    return failure();
-  }
-  // This entry also serves embedded compilation, outside the CLI job driver.
-  if (failed(pto::verifyFrontendPeerContracts(module)))
-    return failure();
-  PassManager preBackendPM(module.getContext());
-  preBackendPM.enableVerifier();
-  if (backend == PTOBackend::EmitC) {
-    preBackendPM.addPass(pto::createPTOMaterializeTileIfResultsPass());
-  }
-  preBackendPM.addPass(pto::createPTOMaterializeTileOpSectionsPass());
-  preBackendPM.addPass(pto::createPTONormalizeUncoveredTileSectionsPass());
-  preBackendPM.addPass(pto::createPTOValidatePhysicalSectionBoundariesPass());
-  // Shared frontend analyses consume standard arith/index producer chains.
-  // Lower execution-domain-independent PTO scalar ops before those analyses.
-  preBackendPM.addNestedPass<func::FuncOp>(
-      pto::createPTOLowerGenericOpsPass());
-  auto &preBackendChildModulePM = preBackendPM.nest<ModuleOp>();
-  preBackendChildModulePM.addNestedPass<func::FuncOp>(
-      pto::createPTOLowerGenericOpsPass());
-  if (failed(preBackendPM.run(module))) {
-    llvm::errs() << "Error: failed to normalize uncovered PTO tile sections.\n";
-    return failure();
-  }
-  return success();
+static LogicalResult validateFusionConfiguration(const CompilePipelineState& state, PTOBackend backend)
+{
+    if (state.opFusionEnabled && state.arch != "a5") {
+        llvm::errs() << "Error: --enable-op-fusion=true requires --pto-arch=a5.\n";
+        return failure();
+    }
+    if (state.opFusionEnabled && state.level == PTOBuildLevel::Level1) {
+        llvm::errs() << "Warning: --enable-op-fusion=true is ignored because "
+                        "--pto-level=level2 or level3 is required.\n";
+    }
+    if (enableUnrollAfterLoopFusion && !(state.opFusionEnabled && state.arch == "a5")) {
+        llvm::errs() << "Error: --enable-unroll-after-loop-fusion requires "
+                        "--pto-arch=a5 and --enable-op-fusion.\n";
+        return failure();
+    }
+    if (enableUnrollAfterLoopFusion && backend != PTOBackend::VPTO) {
+        llvm::errs() << "Error: --enable-unroll-after-loop-fusion requires "
+                        "--pto-backend=vpto; the pass is VPTO-only and is not "
+                        "inserted under other backends.\n";
+        return failure();
+    }
+    if (enableUnrollAfterLoopFusion && !enableVfSimCostmodelOptimization) {
+        llvm::errs() << "Warning: --enable-unroll-after-loop-fusion consumes "
+                        "pto.fusion.row/col_unroll_factor, which is produced by "
+                        "--enable-vfsim-costmodel-optimization.\n";
+    }
+    return success();
+}
+
+static void setFusionPipelineFlags(CompilePipelineState& state, PTOBackend backend)
+{
+    const bool enabled = state.opFusionEnabled && state.arch == "a5" && state.level != PTOBuildLevel::Level1;
+    state.enableA5EmitCFusionPath = enabled && backend == PTOBackend::EmitC;
+    state.enableA5VPTOFusionPath = enabled && backend == PTOBackend::VPTO;
+    if (enableVfSimCostmodelOptimization && !(state.enableA5EmitCFusionPath || state.enableA5VPTOFusionPath)) {
+        llvm::errs() << "Warning: --enable-vfsim-costmodel-optimization is ignored "
+                        "because the A5 tile-fusion pipeline is not enabled; "
+                        "requires --pto-arch=a5, --pto-level=level2 or level3, "
+                        "and op fusion enabled.\n";
+    }
+    if (enableVfSimCostmodelOptimization && state.enableA5EmitCFusionPath) {
+        llvm::errs() << "Warning: --enable-vfsim-costmodel-optimization may "
+                        "annotate costmodel attributes on the EmitC fusion path, "
+                        "but current VfSim unroll attributes are consumed only by "
+                        "the VPTO backend; use --pto-backend=vpto for unroll "
+                        "consumption.\n";
+    }
+    if (enableVfSimCostmodelOptimization && state.enableA5VPTOFusionPath && !enableUnrollAfterLoopFusion) {
+        llvm::errs() << "Warning: --enable-vfsim-costmodel-optimization may "
+                        "annotate pto.fusion.row/col_unroll_factor, but "
+                        "--enable-unroll-after-loop-fusion is not enabled; unroll "
+                        "attributes will not be consumed by the VPTO backend.\n";
+    }
+}
+
+static LogicalResult validateAutoSyncTailHints(ModuleOp module)
+{
+    bool invalid = false;
+    module.walk([&invalid, &module](mlir::func::FuncOp func) {
+        auto hintAttr = func->getAttrOfType<mlir::StringAttr>("pto.auto_sync_tail_hint");
+        if (!hintAttr) {
+            return;
+        }
+        std::string normalizedHint;
+        if (!parseAutoSyncTailHint(hintAttr.getValue(), normalizedHint)) {
+            func.emitError("invalid pto.auto_sync_tail_hint '") << hintAttr.getValue()
+                                                                << "'. Expected 'barrier-all' (or 'default') or "
+                                                                   "'mte3-to-s-event0'.";
+            invalid = true;
+            return;
+        }
+        func->setAttr("pto.auto_sync_tail_hint", mlir::StringAttr::get(module.getContext(), normalizedHint));
+    });
+    return invalid ? failure() : success();
+}
+
+static bool moduleHasTAssign(ModuleOp module)
+{
+    bool hasTAssign = false;
+    module.walk([&hasTAssign](pto::TAssignOp) { hasTAssign = true; });
+    return hasTAssign;
+}
+
+static LogicalResult validateTAssignConfiguration(ModuleOp module, PTOBuildLevel level)
+{
+    const bool hasTAssign = moduleHasTAssign(module);
+    if (hasTAssign && level != PTOBuildLevel::Level3) {
+        llvm::errs() << "Error: pto.tassign is only supported when "
+                        "--pto-level=level3.\n";
+        return failure();
+    }
+    if (hasTAssign && enableInsertSync) {
+        llvm::errs() << "Error: pto.tassign requires --enable-insert-sync to be "
+                        "disabled.\n";
+        return failure();
+    }
+    const int enabledAutoSyncModes = (enableInsertSync ? 1 : 0) + (enableUnifiedSync ? 1 : 0) +
+                                     (enableBufidSync ? 1 : 0) + (enableInjectBarrierAllSync ? 1 : 0);
+    if (enabledAutoSyncModes > 1) {
+        llvm::errs() << "Error: --enable-insert-sync, --enable-bufid_sync, "
+                        "--enable-unified-sync, and --enable-inject-barrier-all-sync are mutually "
+                        "exclusive.\n";
+        return failure();
+    }
+    if (hasTAssign && enableInjectBarrierAllSync) {
+        llvm::errs() << "Error: pto.tassign requires "
+                        "--enable-inject-barrier-all-sync to be disabled.\n";
+        return failure();
+    }
+    if (hasTAssign && enableUnifiedSync) {
+        llvm::errs() << "Error: pto.tassign requires --enable-unified-sync to be disabled.\n";
+        return failure();
+    }
+    if (hasTAssign && enableBufidSync) {
+        llvm::errs() << "Error: pto.tassign requires --enable-bufid_sync to be "
+                        "disabled.\n";
+        return failure();
+    }
+    return success();
+}
+
+static LogicalResult validateAllocationConfiguration(ModuleOp module, PTOBuildLevel level)
+{
+    bool hasUserPlannedMultiAddrs = false;
+    module.walk([&hasUserPlannedMultiAddrs](pto::AllocMultiTileOp op) {
+        if (op->hasAttr(pto::kPtoMultiBufferAddrsAttrName)) {
+            op.emitError() << "attribute '" << pto::kPtoMultiBufferAddrsAttrName << "' is reserved for pto-plan-memory";
+            hasUserPlannedMultiAddrs = true;
+        }
+    });
+    if (hasUserPlannedMultiAddrs) {
+        return failure();
+    }
+
+    bool invalidAddress = false;
+    if (level == PTOBuildLevel::Level3) {
+        module.walk([&invalidAddress](pto::AllocTileOp op) {
+            if (!op.getAddr()) {
+                op.emitError("requires 'addr' operand when --pto-level=level3");
+                invalidAddress = true;
+            }
+        });
+        module.walk([&invalidAddress](pto::AllocMultiTileOp op) {
+            if (!op.getAddr()) {
+                op.emitError(
+                    "pto.alloc_multi_tile requires a base 'addr' operand when "
+                    "--pto-level=level3");
+                invalidAddress = true;
+            }
+        });
+    } else {
+        module.walk([&invalidAddress](pto::AllocTileOp op) {
+            if (op.getAddr()) {
+                op.emitError(
+                    "unexpected 'addr' operand: only supported when "
+                    "--pto-level=level3");
+                invalidAddress = true;
+            }
+        });
+        module.walk([&invalidAddress](pto::AllocMultiTileOp op) {
+            if (op.getAddr()) {
+                op.emitError(
+                    "unexpected 'addr' operand on pto.alloc_multi_tile: only "
+                    "supported when --pto-level=level3");
+                invalidAddress = true;
+            }
+        });
+    }
+    return invalidAddress ? failure() : success();
+}
+
+static LogicalResult validateCompileOptions(ModuleOp module, PTOBuildLevel level)
+{
+    return failed(validateAutoSyncTailHints(module)) || failed(validateTAssignConfiguration(module, level)) ||
+                   failed(validateAllocationConfiguration(module, level)) ||
+                   !validateReserveBufferLevelRules(module, level) ?
+               failure() :
+               success();
+}
+
+static bool isSelectedTileDescriptor(Value source)
+{
+    SmallVector<Value> pending{source};
+    llvm::DenseSet<Value> visited;
+    while (!pending.empty()) {
+        Value current = pending.pop_back_val();
+        if (!visited.insert(current).second) {
+            continue;
+        }
+        if (isa_and_nonnull<scf::IfOp, arith::SelectOp>(current.getDefiningOp())) {
+            return true;
+        }
+        for (const auto& edge : pto::getTileSources(current).edges) {
+            pending.push_back(edge.source);
+        }
+    }
+    return false;
+}
+
+static LogicalResult validateTileIfDescriptorBackend(ModuleOp module, PTOBackend backend)
+{
+    if (backend != PTOBackend::VPTO) {
+        return success();
+    }
+    WalkResult result = module.walk([](pto::SetValidShapeOp update) {
+        if (!isSelectedTileDescriptor(update.getSource())) {
+            return WalkResult::advance();
+        }
+        update.emitOpError(
+            "native Tile selection descriptor mutation currently "
+            "requires --pto-backend=emitc");
+        return WalkResult::interrupt();
+    });
+    return failure(result.wasInterrupted());
+}
+
+static LogicalResult runPreBackendNormalization(ModuleOp module, PTOBackend backend)
+{
+    if (failed(validateTileIfDescriptorBackend(module, backend))) {
+        return failure();
+    }
+    // This entry also serves embedded compilation, outside the CLI job driver.
+    if (failed(pto::verifyFrontendPeerContracts(module))) {
+        return failure();
+    }
+    PassManager preBackendPM(module.getContext());
+    preBackendPM.enableVerifier();
+    if (backend == PTOBackend::EmitC) {
+        preBackendPM.addPass(pto::createPTOMaterializeTileIfResultsPass());
+    }
+    preBackendPM.addPass(pto::createPTOMaterializeTileOpSectionsPass());
+    preBackendPM.addPass(pto::createPTONormalizeUncoveredTileSectionsPass());
+    preBackendPM.addPass(pto::createPTOValidatePhysicalSectionBoundariesPass());
+    // Shared frontend analyses consume standard arith/index producer chains.
+    // Lower execution-domain-independent PTO scalar ops before those analyses.
+    preBackendPM.addNestedPass<func::FuncOp>(pto::createPTOLowerGenericOpsPass());
+    auto& preBackendChildModulePM = preBackendPM.nest<ModuleOp>();
+    preBackendChildModulePM.addNestedPass<func::FuncOp>(pto::createPTOLowerGenericOpsPass());
+    if (failed(preBackendPM.run(module))) {
+        llvm::errs() << "Error: failed to normalize uncovered PTO tile sections.\n";
+        return failure();
+    }
+    return success();
 }
 
 /// Build and run the shared mainline lowering pipeline (everything between the
@@ -1601,55 +1547,51 @@ static LogicalResult runPreBackendNormalization(ModuleOp module,
 /// by the analysis manager and built once by FusionPlan) plus the resulting
 /// pto.fusion.group_id/order metadata; it never consults the domain classes,
 /// so it takes no option here.
-static void appendFusionFrontendPassesForBackend(
-    PassManager &pm, const pto::FusionPlanOptions &fusionPlanOpts) {
-  pm.addNestedPass<mlir::func::FuncOp>(
-      pto::createFusionPlanPass(fusionPlanOpts));
-  pm.addNestedPass<mlir::func::FuncOp>(pto::createOpSchedulingPass());
+static void appendFusionFrontendPassesForBackend(PassManager& pm, const pto::FusionPlanOptions& fusionPlanOpts)
+{
+    pm.addNestedPass<mlir::func::FuncOp>(pto::createFusionPlanPass(fusionPlanOpts));
+    pm.addNestedPass<mlir::func::FuncOp>(pto::createOpSchedulingPass());
 }
 
 static LogicalResult appendFusionFrontendPasses(
-    PassManager &pm, bool isA2A3, bool enableA5EmitCFusionPath,
-    bool enableA5VPTOFusionPath) {
-  if (isA2A3) {
+    PassManager& pm, bool isA2A3, bool enableA5EmitCFusionPath, bool enableA5VPTOFusionPath)
+{
+    if (isA2A3) {
+        return success();
+    }
+    pto::FusionPlanOptions fusionPlanOpts;
+    fusionPlanOpts.enableShapeInference = enableShapeInference;
+    fusionPlanOpts.enableVfSimCostmodelOptimization = enableVfSimCostmodelOptimization;
+    fusionPlanOpts.dumpVfSimUnrollTest = dumpVfSimUnrollTest;
+    if (enableA5EmitCFusionPath) {
+        appendFusionFrontendPassesForBackend(pm, fusionPlanOpts);
+        pm.addNestedPass<mlir::func::FuncOp>(pto::createPTOMarkLastUsePass());
+        return success();
+    }
+    if (enableA5VPTOFusionPath) {
+        appendFusionFrontendPassesForBackend(pm, fusionPlanOpts);
+        pm.addNestedPass<mlir::func::FuncOp>(pto::createPTOFusionRegionGenPass());
+    }
     return success();
-  }
-  pto::FusionPlanOptions fusionPlanOpts;
-  fusionPlanOpts.enableShapeInference = enableShapeInference;
-  fusionPlanOpts.enableVfSimCostmodelOptimization =
-      enableVfSimCostmodelOptimization;
-  fusionPlanOpts.dumpVfSimUnrollTest = dumpVfSimUnrollTest;
-  if (enableA5EmitCFusionPath) {
-    appendFusionFrontendPassesForBackend(pm, fusionPlanOpts);
-    pm.addNestedPass<mlir::func::FuncOp>(pto::createPTOMarkLastUsePass());
-    return success();
-  }
-  if (enableA5VPTOFusionPath) {
-    appendFusionFrontendPassesForBackend(pm, fusionPlanOpts);
-    pm.addNestedPass<mlir::func::FuncOp>(
-        pto::createPTOFusionRegionGenPass());
-  }
-  return success();
 }
 
-static LogicalResult appendPlanMemoryPasses(PassManager &pm,
-                                            PTOBuildLevel effectiveLevel,
-                                            bool enablePlanMemory) {
-  // At level3 every address is supplied by the user, so this mode neither runs
-  // planning nor checks for unplanned alloc_tile: implicit tmp buffers may stay
-  // address-less placeholders and are handled by the backend.
-  if (effectiveLevel == PTOBuildLevel::Level3) {
+static LogicalResult appendPlanMemoryPasses(PassManager& pm, PTOBuildLevel effectiveLevel, bool enablePlanMemory)
+{
+    // At level3 every address is supplied by the user, so this mode neither runs
+    // planning nor checks for unplanned alloc_tile: implicit tmp buffers may stay
+    // address-less placeholders and are handled by the backend.
+    if (effectiveLevel == PTOBuildLevel::Level3) {
+        return success();
+    }
+    pto::PlanMemoryOptions planMemoryOptions;
+    planMemoryOptions.memMode = "local";
+    planMemoryOptions.orderBySize = planMemoryOrderBySize;
+    // Whether addresses are assigned is controlled by --enable-plan-memory
+    // (on by default). When planning is off the pass is still added so that it
+    // verifies no live pto.alloc_tile is left without an address.
+    planMemoryOptions.enabled = enablePlanMemory;
+    pm.addPass(pto::createPlanMemoryModernPass(planMemoryOptions));
     return success();
-  }
-  pto::PlanMemoryOptions planMemoryOptions;
-  planMemoryOptions.memMode = "local";
-  planMemoryOptions.orderBySize = planMemoryOrderBySize;
-  // Whether addresses are assigned is controlled by --enable-plan-memory
-  // (on by default). When planning is off the pass is still added so that it
-  // verifies no live pto.alloc_tile is left without an address.
-  planMemoryOptions.enabled = enablePlanMemory;
-  pm.addPass(pto::createPlanMemoryModernPass(planMemoryOptions));
-  return success();
 }
 
 /// Conditionally add one automatic synchronization mode. Barrier-all is a
@@ -1657,64 +1599,62 @@ static LogicalResult appendPlanMemoryPasses(PassManager &pm,
 /// BufidSync is A5-only get_buf/rls_buf synchronization. Sync
 /// runs BEFORE PTOResolveBufferSelect so it sees per-use `pto.multi_tile_get`
 /// operations and keeps their slot identity for alias and event-id analysis.
-static void appendAutoSyncPasses(PassManager &pm, StringRef arch) {
-  if (enableUnifiedSync) {
-    pm.addNestedPass<func::FuncOp>(pto::createPTOUnifiedSyncPass(arch == "a5" ? 32u : 0u, enableUnifiedSyncDebug,
-                                                                 unifiedSyncForceMechanism, checkAddrReuseWar));
-  } else if (enableInsertSync) {
-    if (emitMlirIR) {
-      pm.addPass(std::make_unique<SerialAutoSyncPass>(
-          SerialAutoSyncPass::Mode::InsertSync, false));
-    } else {
-      pm.addNestedPass<func::FuncOp>(pto::createPTOInsertSyncPass());
+static void appendAutoSyncPasses(PassManager& pm, StringRef arch)
+{
+    if (enableUnifiedSync) {
+        pm.addNestedPass<func::FuncOp>(pto::createPTOUnifiedSyncPass(
+            arch == "a5" ? 32u : 0u, enableUnifiedSyncDebug, unifiedSyncForceMechanism, checkAddrReuseWar));
+    } else if (enableInsertSync) {
+        if (emitMlirIR) {
+            pm.addPass(std::make_unique<SerialAutoSyncPass>(SerialAutoSyncPass::Mode::InsertSync, false));
+        } else {
+            pm.addNestedPass<func::FuncOp>(pto::createPTOInsertSyncPass());
+        }
+    } else if (enableBufidSync) {
+        if (emitMlirIR) {
+            pm.addPass(std::make_unique<SerialAutoSyncPass>(SerialAutoSyncPass::Mode::Bufid, enableBufidSyncDebug));
+        } else {
+            PTOBufidSyncOptions options;
+            options.enableBufidSyncDebug = enableBufidSyncDebug;
+            pm.addNestedPass<func::FuncOp>(pto::createPTOBufidSyncPass(options));
+        }
+    } else if (enableInjectBarrierAllSync) {
+        if (emitMlirIR) {
+            pm.addPass(std::make_unique<SerialAutoSyncPass>(SerialAutoSyncPass::Mode::BarrierAll, false));
+        } else {
+            pm.addNestedPass<func::FuncOp>(pto::createPTOInjectBarrierAllSyncPass());
+        }
     }
-  } else if (enableBufidSync) {
-    if (emitMlirIR) {
-      pm.addPass(std::make_unique<SerialAutoSyncPass>(
-          SerialAutoSyncPass::Mode::Bufid, enableBufidSyncDebug));
-    } else {
-      PTOBufidSyncOptions options;
-      options.enableBufidSyncDebug = enableBufidSyncDebug;
-      pm.addNestedPass<func::FuncOp>(pto::createPTOBufidSyncPass(options));
-    }
-  } else if (enableInjectBarrierAllSync) {
-    if (emitMlirIR) {
-      pm.addPass(std::make_unique<SerialAutoSyncPass>(
-          SerialAutoSyncPass::Mode::BarrierAll, false));
-    } else {
-      pm.addNestedPass<func::FuncOp>(
-          pto::createPTOInjectBarrierAllSyncPass());
-    }
-  }
 }
 
 // Appends read-only synchronization gates and optional reports.
-static void appendSyncOraclePasses(PassManager &pm, const CompilePipelineState &state) {
-  if (checkSyncIds) {
-    pm.addNestedPass<mlir::func::FuncOp>(
-        pto::createPTOCheckSyncIdsPass(state.arch == "a5" ? 32u : 0u, checkSyncIdsInjectFault));
-  }
-  if (checkSyncInterference) {
-    pm.addNestedPass<mlir::func::FuncOp>(pto::createPTOCheckSyncInterferencePass(checkSyncInterferenceInjectFault));
-  }
-  if (checkSyncSelfCoverage) {
-    pm.addNestedPass<mlir::func::FuncOp>(pto::createPTOCheckSyncSelfCoveragePass());
-  }
-  if (dumpSyncExtract) {
-    pm.addNestedPass<mlir::func::FuncOp>(pto::createPTODumpSyncExtractPass());
-  }
-  if (dumpSyncCoverage) {
-    pm.addNestedPass<mlir::func::FuncOp>(pto::createPTODumpSyncCoveragePass());
-  }
-  if (!checkSyncCoverage.empty()) {
-    pm.addNestedPass<mlir::func::FuncOp>(pto::createPTOCheckSyncCoveragePass(checkSyncCoverage));
-  }
-  if (dumpSyncCounts) {
-    pm.addNestedPass<mlir::func::FuncOp>(pto::createPTODumpSyncCountsPass());
-  }
-  if (!checkSyncCountFloor.empty()) {
-    pm.addNestedPass<mlir::func::FuncOp>(pto::createPTOCheckSyncCountFloorPass(checkSyncCountFloor));
-  }
+static void appendSyncOraclePasses(PassManager& pm, const CompilePipelineState& state)
+{
+    if (checkSyncIds) {
+        pm.addNestedPass<mlir::func::FuncOp>(
+            pto::createPTOCheckSyncIdsPass(state.arch == "a5" ? 32u : 0u, checkSyncIdsInjectFault));
+    }
+    if (checkSyncInterference) {
+        pm.addNestedPass<mlir::func::FuncOp>(pto::createPTOCheckSyncInterferencePass(checkSyncInterferenceInjectFault));
+    }
+    if (checkSyncSelfCoverage) {
+        pm.addNestedPass<mlir::func::FuncOp>(pto::createPTOCheckSyncSelfCoveragePass());
+    }
+    if (dumpSyncExtract) {
+        pm.addNestedPass<mlir::func::FuncOp>(pto::createPTODumpSyncExtractPass());
+    }
+    if (dumpSyncCoverage) {
+        pm.addNestedPass<mlir::func::FuncOp>(pto::createPTODumpSyncCoveragePass());
+    }
+    if (!checkSyncCoverage.empty()) {
+        pm.addNestedPass<mlir::func::FuncOp>(pto::createPTOCheckSyncCoveragePass(checkSyncCoverage));
+    }
+    if (dumpSyncCounts) {
+        pm.addNestedPass<mlir::func::FuncOp>(pto::createPTODumpSyncCountsPass());
+    }
+    if (!checkSyncCountFloor.empty()) {
+        pm.addNestedPass<mlir::func::FuncOp>(pto::createPTOCheckSyncCountFloorPass(checkSyncCountFloor));
+    }
 }
 
 // Populates the shared mainline lowering pass sequence (both backends).
@@ -1722,342 +1662,332 @@ static void appendSyncOraclePasses(PassManager &pm, const CompilePipelineState &
 // this, and both do so before the CV split: the split clones the instances
 // each core still references, and the print DTData wiring has to reach both
 // core modules.
-static void appendVPTOBridgePasses(OpPassManager &pm) {
-  pm.addPass(pto::createPTOLowerBridgeOpsPass(vptoBridgePolicy));
-  // DTData wiring precedes instance resolution so the lifecycle calls get
-  // their instances like any other bridge call.
-  pm.addPass(pto::createVPTOPrintDTDataABIPass(vptoPrintDTData));
-  pm.addPass(pto::createVPTOResolveBridgeInstancesPass());
-  pm.addPass(pto::createVPTOBridgeWrapperGenPass());
+static void appendVPTOBridgePasses(OpPassManager& pm)
+{
+    pm.addPass(pto::createPTOLowerBridgeOpsPass(vptoBridgePolicy));
+    // DTData wiring precedes instance resolution so the lifecycle calls get
+    // their instances like any other bridge call.
+    pm.addPass(pto::createVPTOPrintDTDataABIPass(vptoPrintDTData));
+    pm.addPass(pto::createVPTOResolveBridgeInstancesPass());
+    pm.addPass(pto::createVPTOBridgeWrapperGenPass());
 }
 
-static LogicalResult populateMainLoweringPasses(PassManager &pm,
-                                                PTOBackend effectiveBackend,
-                                                const CompilePipelineState &state) {
-  const bool isA2A3 = state.isA2A3;
-  const bool hasTileOpsToExpand = state.hasTileOpsToExpand;
-  const PTOBuildLevel effectiveLevel = state.level;
+static LogicalResult populateMainLoweringPasses(
+    PassManager& pm, PTOBackend effectiveBackend, const CompilePipelineState& state)
+{
+    const bool isA2A3 = state.isA2A3;
+    const bool hasTileOpsToExpand = state.hasTileOpsToExpand;
+    const PTOBuildLevel effectiveLevel = state.level;
 
-  // Rank-2 → rank-5 view canonicalization is currently gated on the VPTO
-  // backend to limit blast radius.  A3/A5 EmitC codegen already pads strides
-  // to rank-5 via InferPTOLayout and buildGlobalTensorShapeAndStride, so it
-  // does not need the canonicalization pass at the IR level.  When VPTO
-  // validation is complete and the pass is proven stable, the gate can be
-  // lifted to make it unconditional for all backends.
-  if (effectiveBackend == PTOBackend::VPTO) {
-    pm.addNestedPass<mlir::func::FuncOp>(pto::createPTOCanonicalizeIRPass());
-  }
-  pm.addPass(createSerialFrontendPipeLoweringPass());
-  pm.addPass(pto::createPTOInferValidatePipeInitPass());
-  pm.addNestedPass<mlir::func::FuncOp>(pto::createLoweringSyncToPipePass());
-  if (!disableInferLayout) {
-    pm.addPass(pto::createInferPTOLayoutPass());
-  }
-  // PTOViewToMemref is generic view lowering required by both backends; keep it
-  // outside the local-memory planning gate so default A2/A3 EmitC still lowers
-  // pto.make_tensor_view before backend legalization.
-  if (!isA2A3) {
-    pm.addNestedPass<mlir::func::FuncOp>(pto::createPTOA5NormalizeTMovPass());
-  }
-  // PTODSL legality discovery happens on tile-native PTO IR before fusion.
-  // Fusion may later filter the ordered `candidates` array; ExpandTileOp
-  // consumes the first candidate that remains.
-  if (!isA2A3 && effectiveBackend == PTOBackend::VPTO && hasTileOpsToExpand) {
-    pm.addPass(pto::createInsertTemplateAttributesPass());
-  }
+    // Rank-2 → rank-5 view canonicalization is currently gated on the VPTO
+    // backend to limit blast radius.  A3/A5 EmitC codegen already pads strides
+    // to rank-5 via InferPTOLayout and buildGlobalTensorShapeAndStride, so it
+    // does not need the canonicalization pass at the IR level.  When VPTO
+    // validation is complete and the pass is proven stable, the gate can be
+    // lifted to make it unconditional for all backends.
+    if (effectiveBackend == PTOBackend::VPTO) {
+        pm.addNestedPass<mlir::func::FuncOp>(pto::createPTOCanonicalizeIRPass());
+    }
+    pm.addPass(createSerialFrontendPipeLoweringPass());
+    pm.addPass(pto::createPTOInferValidatePipeInitPass());
+    pm.addNestedPass<mlir::func::FuncOp>(pto::createLoweringSyncToPipePass());
+    if (!disableInferLayout) {
+        pm.addPass(pto::createInferPTOLayoutPass());
+    }
+    // PTOViewToMemref is generic view lowering required by both backends; keep it
+    // outside the local-memory planning gate so default A2/A3 EmitC still lowers
+    // pto.make_tensor_view before backend legalization.
+    if (!isA2A3) {
+        pm.addNestedPass<mlir::func::FuncOp>(pto::createPTOA5NormalizeTMovPass());
+    }
+    // PTODSL legality discovery happens on tile-native PTO IR before fusion.
+    // Fusion may later filter the ordered `candidates` array; ExpandTileOp
+    // consumes the first candidate that remains.
+    if (!isA2A3 && effectiveBackend == PTOBackend::VPTO && hasTileOpsToExpand) {
+        pm.addPass(pto::createInsertTemplateAttributesPass());
+    }
 
-  if (failed(appendFusionFrontendPasses(pm, isA2A3,
-                                        state.enableA5EmitCFusionPath,
-                                        state.enableA5VPTOFusionPath))) {
-    return failure();
-  }
+    if (failed(appendFusionFrontendPasses(pm, isA2A3, state.enableA5EmitCFusionPath, state.enableA5VPTOFusionPath))) {
+        return failure();
+    }
 
-  pm.addNestedPass<mlir::func::FuncOp>(
-      pto::createPTOMaterializeImplicitTmpPass(
-          effectiveLevel == PTOBuildLevel::Level3,
-          effectiveBackend == PTOBackend::EmitC));
-  pm.addNestedPass<mlir::func::FuncOp>(
-      pto::createPTORematerializeFixpipeVectorQuantPass());
+    pm.addNestedPass<mlir::func::FuncOp>(pto::createPTOMaterializeImplicitTmpPass(
+        effectiveLevel == PTOBuildLevel::Level3, effectiveBackend == PTOBackend::EmitC));
+    pm.addNestedPass<mlir::func::FuncOp>(pto::createPTORematerializeFixpipeVectorQuantPass());
 
-  if (failed(appendPlanMemoryPasses(pm, effectiveLevel, enablePlanMemory))) {
-    return failure();
-  }
-  pm.addPass(pto::createPTOResolveReservedBuffersPass());
-  pm.addNestedPass<mlir::func::FuncOp>(pto::createPTORemoveIdentityTMovPass());
+    if (failed(appendPlanMemoryPasses(pm, effectiveLevel, enablePlanMemory))) {
+        return failure();
+    }
+    pm.addPass(pto::createPTOResolveReservedBuffersPass());
+    pm.addNestedPass<mlir::func::FuncOp>(pto::createPTORemoveIdentityTMovPass());
 
-  appendAutoSyncPasses(pm, state.arch);
+    appendAutoSyncPasses(pm, state.arch);
 
-  // Oracle gates. Read-only apart from diagnostics, and each fails the pipeline on
-  // a violation rather than reporting and continuing.
-  appendSyncOraclePasses(pm, state);
+    // Oracle gates. Read-only apart from diagnostics, and each fails the pipeline on
+    // a violation rather than reporting and continuing.
+    appendSyncOraclePasses(pm, state);
 
-  // Materialize each `pto.multi_tile_get` as an addressed `pto.alloc_tile`;
-  // dynamic selections use an `arith.select` chain over planned addresses.
-  pm.addPass(pto::createPTOResolveBufferSelectPass());
-  if (effectiveBackend == PTOBackend::VPTO) {
-    appendVPTOBridgePasses(pm);
-  }
-  if (effectiveBackend == PTOBackend::EmitC) {
-    pm.addPass(createNarrowUnusedMultiResultProvenancePass());
-  }
-  return success();
+    // Materialize each `pto.multi_tile_get` as an addressed `pto.alloc_tile`;
+    // dynamic selections use an `arith.select` chain over planned addresses.
+    pm.addPass(pto::createPTOResolveBufferSelectPass());
+    if (effectiveBackend == PTOBackend::VPTO) {
+        appendVPTOBridgePasses(pm);
+    }
+    if (effectiveBackend == PTOBackend::EmitC) {
+        pm.addPass(createNarrowUnusedMultiResultProvenancePass());
+    }
+    return success();
 }
 
 // Backend-agnostic cleanup after the shared lowering. --emit-pto-ir stops
 // before this segment: the IR dump reflects the shared lowering only.
-static LogicalResult appendMainLoweringTailPasses(PassManager &pm,
-                                                  PTOBackend effectiveBackend) {
-  pm.addPass(createCSEPass());
-  // PTODSL backend helpers already use the tile-native ABI.
-  pm.addPass(pto::createPTOInlineBackendHelpersPass());
-  if (effectiveBackend == PTOBackend::EmitC) {
-    pm.addPass(createNarrowUnusedMultiResultProvenancePass());
-  }
-  pm.addPass(createCanonicalizerPass());
-  pm.addPass(createCSEPass());
-  return applyConfiguredPassManagerCLOptions(pm, "main PTOAS pipeline");
+static LogicalResult appendMainLoweringTailPasses(PassManager& pm, PTOBackend effectiveBackend)
+{
+    pm.addPass(createCSEPass());
+    // PTODSL backend helpers already use the tile-native ABI.
+    pm.addPass(pto::createPTOInlineBackendHelpersPass());
+    if (effectiveBackend == PTOBackend::EmitC) {
+        pm.addPass(createNarrowUnusedMultiResultProvenancePass());
+    }
+    pm.addPass(createCanonicalizerPass());
+    pm.addPass(createCSEPass());
+    return applyConfiguredPassManagerCLOptions(pm, "main PTOAS pipeline");
 }
 
 // Runs the populated mainline pipeline for the VPTO backend, emits the seam
 // IR dumps, hands off to the VPTO backend pipeline, and produces the result.
 static LogicalResult finishVPTOMainPipeline(
-    OwningOpRef<ModuleOp> &module, PassManager &pm,
-    PTOASCompileResult &result, PTOASContext &context, bool emitVPTOHostStub,
-    bool hasTileOpsToExpand, bool &handled, int &exitCode) {
-  if (failed(pm.run(*module))) {
-    llvm::errs() << "Error: Pass execution failed.\n";
-    return failure();
-  }
+    OwningOpRef<ModuleOp>& module, PassManager& pm, PTOASCompileResult& result, PTOASContext& context,
+    bool emitVPTOHostStub, bool hasTileOpsToExpand, bool& handled, int& exitCode)
+{
+    if (failed(pm.run(*module))) {
+        llvm::errs() << "Error: Pass execution failed.\n";
+        return failure();
+    }
 
-  if (ptoPrintSeamIR) {
-    printSharedPreBackendSeamIR(*module);
-  }
-  if (ptoPrintSeamIR) {
-    module->print(llvm::errs());
-    llvm::errs() << "\n";
-  }
-  if (failed(emitSharedPreBackendSeamIR(*module, ptoSeamIRFile))) {
-    return failure();
-  }
+    if (ptoPrintSeamIR) {
+        printSharedPreBackendSeamIR(*module);
+    }
+    if (ptoPrintSeamIR) {
+        module->print(llvm::errs());
+        llvm::errs() << "\n";
+    }
+    if (failed(emitSharedPreBackendSeamIR(*module, ptoSeamIRFile))) {
+        return failure();
+    }
 
-  if (failed(runVPTOBackendPipeline(module, hasTileOpsToExpand))) {
-    return failure();
-  }
-  handled = true;
-  exitCode = emitVPTOBackendResult(
-      *module, result, emitVPTOHostStub, resolveEffectiveCANNVersion(context.getCANNVersionOrDefault()));
-  return success();
+    if (failed(runVPTOBackendPipeline(module, hasTileOpsToExpand))) {
+        return failure();
+    }
+    handled = true;
+    exitCode = emitVPTOBackendResult(
+        *module, result, emitVPTOHostStub, resolveEffectiveCANNVersion(context.getCANNVersionOrDefault()));
+    return success();
 }
 
 static LogicalResult runMainLoweringPipeline(
-    OwningOpRef<ModuleOp> &module, PTOASContext &context,
-    PTOBackend effectiveBackend, const CompilePipelineState &state,
-    PTOASCompileResult &result, bool emitVPTOHostStub, bool &handled,
-    int &exitCode) {
-  handled = false;
-  exitCode = 0;
-  const bool hasTileOpsToExpand = state.hasTileOpsToExpand;
-
-  // Main PassManager
-  PassManager pm(module->getContext());
-  if (failed(applyPassManagerCLOptions(pm))) {
-    return failure();
-  }
-  if (failed(populateMainLoweringPasses(pm, effectiveBackend, state))) {
-    return failure();
-  }
-
-  // --emit-pto-ir dumps the module after the shared lowering segment only;
-  // the backend tail (CSE / helper inlining) is intentionally not run.
-  if (emitMlirIR) {
-    if (failed(pm.run(*module))) {
-      llvm::errs() << "Error: Pass execution failed.\n";
-      return failure();
-    }
-    result.kind = PTOASCompileResultKind::Text;
-    llvm::raw_string_ostream os(result.textOutput);
-    module->print(os);
-    os.flush();
-    handled = true;
+    OwningOpRef<ModuleOp>& module, PTOASContext& context, PTOBackend effectiveBackend,
+    const CompilePipelineState& state, PTOASCompileResult& result, bool emitVPTOHostStub, bool& handled, int& exitCode)
+{
+    handled = false;
     exitCode = 0;
+    const bool hasTileOpsToExpand = state.hasTileOpsToExpand;
+
+    // Main PassManager
+    PassManager pm(module->getContext());
+    if (failed(applyPassManagerCLOptions(pm))) {
+        return failure();
+    }
+    if (failed(populateMainLoweringPasses(pm, effectiveBackend, state))) {
+        return failure();
+    }
+
+    // --emit-pto-ir dumps the module after the shared lowering segment only;
+    // the backend tail (CSE / helper inlining) is intentionally not run.
+    if (emitMlirIR) {
+        if (failed(pm.run(*module))) {
+            llvm::errs() << "Error: Pass execution failed.\n";
+            return failure();
+        }
+        result.kind = PTOASCompileResultKind::Text;
+        llvm::raw_string_ostream os(result.textOutput);
+        module->print(os);
+        os.flush();
+        handled = true;
+        exitCode = 0;
+        return success();
+    }
+
+    if (failed(appendMainLoweringTailPasses(pm, effectiveBackend))) {
+        return failure();
+    }
+
+    if (effectiveBackend == PTOBackend::VPTO) {
+        return finishVPTOMainPipeline(
+            module, pm, result, context, emitVPTOHostStub, hasTileOpsToExpand, handled, exitCode);
+    }
+
+    if (failed(pm.run(*module))) {
+        llvm::errs() << "Error: Pass execution failed.\n";
+        return failure();
+    }
     return success();
-  }
-
-  if (failed(appendMainLoweringTailPasses(pm, effectiveBackend))) {
-    return failure();
-  }
-
-  if (effectiveBackend == PTOBackend::VPTO) {
-    return finishVPTOMainPipeline(module, pm, result, context,
-                                  emitVPTOHostStub, hasTileOpsToExpand,
-                                  handled, exitCode);
-  }
-
-  if (failed(pm.run(*module))) {
-    llvm::errs() << "Error: Pass execution failed.\n";
-    return failure();
-  }
-  return success();
 }
 
 // VPTO fast path: when no TileOp expansion is needed the shared mainline
 // pipeline can be skipped entirely.
-static int runVPTOSkipMainlinePipeline(OwningOpRef<ModuleOp> &module,
-                                       PTOASContext &context,
-                                       const CompilePipelineState &state,
-                                       PTOASCompileResult &result,
-                                       bool emitVPTOHostStub) {
-  if (ptoPrintSeamIR || !ptoSeamIRFile.empty()) {
-    llvm::errs() << "Error: shared pre-backend seam IR is unavailable when "
-                    "skipping the shared PTO-to-VPTO lowering pipeline.\n";
-    return 1;
-  }
-  // The mainline pipeline is skipped here, so the bridge runs on its own.
-  PassManager bridgePM(module->getContext());
-  bridgePM.enableVerifier();
-  appendVPTOBridgePasses(bridgePM);
-  if (failed(applyConfiguredPassManagerCLOptions(bridgePM,
-                                                 "VPTO bridge pipeline"))) {
-    return 1;
-  }
-  if (failed(bridgePM.run(*module))) {
-    llvm::errs() << "Error: VPTO bridge pipeline failed.\n";
-    return 1;
-  }
-  if (failed(runVPTOBackendPipeline(module, state.hasTileOpsToExpand))) {
-    return 1;
-  }
-  return emitVPTOBackendResult(
-      *module, result, emitVPTOHostStub, resolveEffectiveCANNVersion(context.getCANNVersionOrDefault()));
+static int runVPTOSkipMainlinePipeline(
+    OwningOpRef<ModuleOp>& module, PTOASContext& context, const CompilePipelineState& state, PTOASCompileResult& result,
+    bool emitVPTOHostStub)
+{
+    if (ptoPrintSeamIR || !ptoSeamIRFile.empty()) {
+        llvm::errs() << "Error: shared pre-backend seam IR is unavailable when "
+                        "skipping the shared PTO-to-VPTO lowering pipeline.\n";
+        return 1;
+    }
+    // The mainline pipeline is skipped here, so the bridge runs on its own.
+    PassManager bridgePM(module->getContext());
+    bridgePM.enableVerifier();
+    appendVPTOBridgePasses(bridgePM);
+    if (failed(applyConfiguredPassManagerCLOptions(bridgePM, "VPTO bridge pipeline"))) {
+        return 1;
+    }
+    if (failed(bridgePM.run(*module))) {
+        llvm::errs() << "Error: VPTO bridge pipeline failed.\n";
+        return 1;
+    }
+    if (failed(runVPTOBackendPipeline(module, state.hasTileOpsToExpand))) {
+        return 1;
+    }
+    return emitVPTOBackendResult(
+        *module, result, emitVPTOHostStub, resolveEffectiveCANNVersion(context.getCANNVersionOrDefault()));
 }
 
-static LogicalResult runEmitCPreparationPipeline(OwningOpRef<ModuleOp> &module,
-                                                 llvm::StringRef arch) {
-  PassManager emitcPM(module->getContext());
-  emitcPM.enableVerifier();
-  if (isA2A3Arch(arch)) {
-    emitcPM.addPass(pto::createEmitPTOManualPass(pto::PTOArch::A3));
-  } else {
-    emitcPM.addPass(pto::createEmitPTOManualPass(pto::PTOArch::A5));
-  }
-  emitcPM.addPass(std::make_unique<FormEmitCExpressionsCompatPass>());
-  emitcPM.addPass(mlir::createCSEPass());
-  if (failed(applyConfiguredPassManagerCLOptions(
-          emitcPM, "EmitC backend pipeline"))) {
-    return failure();
-  }
-  if (failed(emitcPM.run(*module))) {
-    llvm::errs() << "Error: Pass execution failed.\n";
-    return failure();
-  }
-  return success();
+static LogicalResult runEmitCPreparationPipeline(OwningOpRef<ModuleOp>& module, llvm::StringRef arch)
+{
+    PassManager emitcPM(module->getContext());
+    emitcPM.enableVerifier();
+    if (isA2A3Arch(arch)) {
+        emitcPM.addPass(pto::createEmitPTOManualPass(pto::PTOArch::A3));
+    } else {
+        emitcPM.addPass(pto::createEmitPTOManualPass(pto::PTOArch::A5));
+    }
+    emitcPM.addPass(std::make_unique<FormEmitCExpressionsCompatPass>());
+    emitcPM.addPass(mlir::createCSEPass());
+    if (failed(applyConfiguredPassManagerCLOptions(emitcPM, "EmitC backend pipeline"))) {
+        return failure();
+    }
+    if (failed(emitcPM.run(*module))) {
+        llvm::errs() << "Error: Pass execution failed.\n";
+        return failure();
+    }
+    return success();
 }
 
 // Post-process the emitted C++ text. Markers, provenance comments, and scalar
 // constant hoisting must run in this fixed order.
-static void runCppPostRewrites(std::string &cppOutput) {
-  rewriteTileGetSetValueMarkers(cppOutput);
-  rewriteAsyncEventMarkers(cppOutput);
-  rewritePtrScalarMarkers(cppOutput);
-  rewriteScalarGMStoreFlushMarkers(cppOutput);
-  rewriteEventIdArrayMarkers(cppOutput);
-  rewriteGlobalTensorMetadataMarkers(cppOutput);
-  pto::rewriteLastUseMarkersInCpp(cppOutput);
-  rewriteAddPtrTraceMarkers(cppOutput, emitAddPtrTrace);
-  rewriteMalformedVerbatimSemicolons(cppOutput);
-  rewriteScalarConstantDecls(cppOutput);
-  rewriteHoistedGlobalTensorDecls(cppOutput);
-  rewriteNameHintMarkers(cppOutput);
+static void runCppPostRewrites(std::string& cppOutput)
+{
+    rewriteTileGetSetValueMarkers(cppOutput);
+    rewriteAsyncEventMarkers(cppOutput);
+    rewritePtrScalarMarkers(cppOutput);
+    rewriteScalarGMStoreFlushMarkers(cppOutput);
+    rewriteEventIdArrayMarkers(cppOutput);
+    rewriteGlobalTensorMetadataMarkers(cppOutput);
+    pto::rewriteLastUseMarkersInCpp(cppOutput);
+    rewriteAddPtrTraceMarkers(cppOutput, emitAddPtrTrace);
+    rewriteMalformedVerbatimSemicolons(cppOutput);
+    rewriteScalarConstantDecls(cppOutput);
+    rewriteHoistedGlobalTensorDecls(cppOutput);
+    rewriteNameHintMarkers(cppOutput);
 }
 
-static int runEmitCTextEmission(OwningOpRef<ModuleOp> &module,
-                                const CompilePipelineState &state,
-                                PTOASCompileResult &result) {
-  if (ptoPrintSeamIR) {
-    printSharedPreBackendSeamIR(*module);
-  }
-  if (failed(emitSharedPreBackendSeamIR(*module, ptoSeamIRFile))) {
-    return 1;
-  }
+static int runEmitCTextEmission(
+    OwningOpRef<ModuleOp>& module, const CompilePipelineState& state, PTOASCompileResult& result)
+{
+    if (ptoPrintSeamIR) {
+        printSharedPreBackendSeamIR(*module);
+    }
+    if (failed(emitSharedPreBackendSeamIR(*module, ptoSeamIRFile))) {
+        return 1;
+    }
 
-  narrowUnusedMultiResultProvenanceLocs(module.get());
-  splitDerivedSingleResultProvenanceLocs(module.get());
+    narrowUnusedMultiResultProvenanceLocs(module.get());
+    splitDerivedSingleResultProvenanceLocs(module.get());
 
-  if (failed(runEmitCPreparationPipeline(module, state.arch))) {
-    return 1;
-  }
+    if (failed(runEmitCPreparationPipeline(module, state.arch))) {
+        return 1;
+    }
 
-  applyFunctionBlockArgNameHintsToEmitC(*module, state.functionBlockArgHints);
-  splitDerivedSingleResultProvenanceLocs(module.get());
-  dropEmptyEmitCExpressions(module.get());
-  materializeControlFlowOperands(module.get());
-  normalizeEmitCIntegerAttrsForCppEmission(module.get());
-  if (failed(reorderEmitCFunctions(module.get()))) {
-    llvm::errs() << "Error: Failed to order emitted functions for C++ emission.\n";
-    return 1;
-  }
-  annotateEmitCProvenanceHints(*module);
+    applyFunctionBlockArgNameHintsToEmitC(*module, state.functionBlockArgHints);
+    splitDerivedSingleResultProvenanceLocs(module.get());
+    dropEmptyEmitCExpressions(module.get());
+    materializeControlFlowOperands(module.get());
+    normalizeEmitCIntegerAttrsForCppEmission(module.get());
+    if (failed(reorderEmitCFunctions(module.get()))) {
+        llvm::errs() << "Error: Failed to order emitted functions for C++ emission.\n";
+        return 1;
+    }
+    annotateEmitCProvenanceHints(*module);
 
-  // Emit C++ to string, then post-process, then hand the text to the caller.
-  std::string cppOutput;
-  llvm::raw_string_ostream cppOS(cppOutput);
-  // CFG-style lowering (e.g. scf.while -> cf.br/cf.cond_br) may introduce
-  // multiple blocks, requiring variables to be declared at the top for valid
-  // C++ emission.
-  const bool declareVariablesAtTop = shouldDeclareVariablesAtTop(*module);
-  if (failed(emitc::translateToCpp(*module, cppOS,
-                                   /*declareVariablesAtTop=*/declareVariablesAtTop))) {
-    llvm::errs() << "Error: Failed to emit C++.\n";
-    return 1;
-  }
-  cppOS.flush();
-  runCppPostRewrites(cppOutput);
+    // Emit C++ to string, then post-process, then hand the text to the caller.
+    std::string cppOutput;
+    llvm::raw_string_ostream cppOS(cppOutput);
+    // CFG-style lowering (e.g. scf.while -> cf.br/cf.cond_br) may introduce
+    // multiple blocks, requiring variables to be declared at the top for valid
+    // C++ emission.
+    const bool declareVariablesAtTop = shouldDeclareVariablesAtTop(*module);
+    if (failed(emitc::translateToCpp(*module, cppOS, declareVariablesAtTop))) {
+        llvm::errs() << "Error: Failed to emit C++.\n";
+        return 1;
+    }
+    cppOS.flush();
+    runCppPostRewrites(cppOutput);
 
-  result.kind = PTOASCompileResultKind::Text;
-  result.textOutput = std::move(cppOutput);
-  return 0;
+    result.kind = PTOASCompileResultKind::Text;
+    result.textOutput = std::move(cppOutput);
+    return 0;
 }
 
 int mlir::pto::compilePTOASModule(
-    OwningOpRef<ModuleOp> &module, PTOASContext &context,
-    PTOBackend effectiveBackend, PTOASCompileResult &result,
-    bool emitVPTOHostStub) {
-  result.reset();
-  CompilePipelineState state;
-  if (failed(initializeCompilePipelineState(module, context, effectiveBackend,
-                                            state)) ||
-      failed(validateFusionConfiguration(state, effectiveBackend))) {
-    return 1;
-  }
-  setFusionPipelineFlags(state, effectiveBackend);
-  if (failed(validateCompileOptions(*module, state.level))) {
-    return 1;
-  }
-  if (failed(runPreBackendNormalization(*module, effectiveBackend))) {
-    return 1;
-  }
-  state.hasTileOpsToExpand = hasUnexpandedTileOps(*module);
+    OwningOpRef<ModuleOp>& module, PTOASContext& context, PTOBackend effectiveBackend, PTOASCompileResult& result,
+    bool emitVPTOHostStub)
+{
+    result.reset();
+    CompilePipelineState state;
+    const bool hasInvalidPipelineState =
+        failed(initializeCompilePipelineState(module, context, effectiveBackend, state)) ||
+        failed(validateFusionConfiguration(state, effectiveBackend));
+    if (hasInvalidPipelineState) {
+        return 1;
+    }
+    setFusionPipelineFlags(state, effectiveBackend);
+    if (failed(validateCompileOptions(*module, state.level))) {
+        return 1;
+    }
+    if (failed(runPreBackendNormalization(*module, effectiveBackend))) {
+        return 1;
+    }
+    state.hasTileOpsToExpand = hasUnexpandedTileOps(*module);
 
-  // The state is assembled and validated once above, so backend branches
-  // cannot observe partially validated option combinations.
-  if (effectiveBackend == PTOBackend::VPTO && !state.hasTileOpsToExpand) {
-    return runVPTOSkipMainlinePipeline(module, context, state, result,
-                                       emitVPTOHostStub);
-  }
+    // The state is assembled and validated once above, so backend branches
+    // cannot observe partially validated option combinations.
+    if (effectiveBackend == PTOBackend::VPTO && !state.hasTileOpsToExpand) {
+        return runVPTOSkipMainlinePipeline(module, context, state, result, emitVPTOHostStub);
+    }
 
-  bool mainPipelineHandled = false;
-  int mainPipelineExitCode = 0;
-  if (failed(runMainLoweringPipeline(module, context, effectiveBackend, state,
-                                     result, emitVPTOHostStub,
-                                     mainPipelineHandled,
-                                     mainPipelineExitCode))) {
-    return 1;
-  }
-  if (mainPipelineHandled) {
-    return mainPipelineExitCode;
-  }
-  if (effectiveBackend == PTOBackend::VPTO) {
-    return 0;
-  }
-  return runEmitCTextEmission(module, state, result);
+    bool mainPipelineHandled = false;
+    int mainPipelineExitCode = 0;
+    LogicalResult mainPipelineResult = runMainLoweringPipeline(
+        module, context, effectiveBackend, state, result, emitVPTOHostStub, mainPipelineHandled, mainPipelineExitCode);
+    if (failed(mainPipelineResult)) {
+        return 1;
+    }
+    if (mainPipelineHandled) {
+        return mainPipelineExitCode;
+    }
+    if (effectiveBackend == PTOBackend::VPTO) {
+        return 0;
+    }
+    return runEmitCTextEmission(module, state, result);
 }

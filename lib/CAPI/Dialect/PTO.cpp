@@ -20,6 +20,7 @@
 //
 //===----------------------------------------------------------------------===//
 
+#include "PTO/Support/CodeConstants.h"
 #include "pto-c/Dialect/PTOCAPI.h"
 
 // unwrap/wrap + MLIR dialect registration C-API support.
@@ -717,13 +718,13 @@ MlirType mlirPTOConvTileBufTypeGetElementType(MlirType type)
     return wrap(mlir::cast<mlir::pto::ConvTileBufType>(unwrap(type)).getElementType());
 }
 
-const int64_t *mlirPTOConvTileBufTypeGetShape(MlirType type,
-                                           intptr_t *numDimsOut) {
-  static thread_local llvm::SmallVector<int64_t, 8> shape;
-  auto dims = mlir::cast<mlir::pto::ConvTileBufType>(unwrap(type)).getShape();
-  shape.assign(dims.begin(), dims.end());
-  *numDimsOut = static_cast<intptr_t>(shape.size());
-  return shape.data();
+const int64_t* mlirPTOConvTileBufTypeGetShape(MlirType type, intptr_t* numDimsOut)
+{
+    static thread_local llvm::SmallVector<int64_t, mlir::pto::kValue8> shape;
+    auto dims = mlir::cast<mlir::pto::ConvTileBufType>(unwrap(type)).getShape();
+    shape.assign(dims.begin(), dims.end());
+    *numDimsOut = static_cast<intptr_t>(shape.size());
+    return shape.data();
 }
 
 MlirAttribute mlirPTOConvTileBufTypeGetLayout(MlirType type) {
@@ -732,7 +733,7 @@ MlirAttribute mlirPTOConvTileBufTypeGetLayout(MlirType type) {
 
 const int64_t* mlirPTOConvTileBufTypeGetValidShape(MlirType type, intptr_t* numDimsOut)
 {
-    static thread_local llvm::SmallVector<int64_t, 8> shape;
+    static thread_local llvm::SmallVector<int64_t, mlir::pto::kValue8> shape;
     auto dims = mlir::cast<mlir::pto::ConvTileBufType>(unwrap(type)).getValidShape();
     if (dims.empty()) {
         *numDimsOut = 0;

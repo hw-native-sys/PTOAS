@@ -14,6 +14,7 @@
 //
 //===----------------------------------------------------------------------===//
 
+#include "PTO/Support/CodeConstants.h"
 #include "PTO/Transforms/InsertSync/UnifiedSyncModel.h"
 #include "PTO/IR/PTO.h"
 #include "PTO/Transforms/InsertSync/SyncEventIdAllocation.h"
@@ -539,7 +540,6 @@ bool touchesPrimedBuffer(const CompoundInstanceElement &cp, const SyncOperation 
 // allows. This is a cycle concern, not correctness: the consumer pipe cannot start
 // until the credit is up, so a head-set parked behind unrelated compute on the
 // setting pipe delays the consumer by that compute.
-//
 // THE BOUND IS THE CARRYING LOOP'S OWN REGION, NOT THE FUNCTION. Head and tail must
 // execute the same number of times. Lifting the head out of an ENCLOSING loop while
 // the tail stays inside would prime once and drain per outer iteration, so the
@@ -874,7 +874,7 @@ public:
 
     unsigned d = h->demand();
     int avoid = recentlyFreed(h);
-    llvm::SmallVector<int, 4> chosenIds = collect(h, avoid);
+    llvm::SmallVector<int, mlir::pto::kValue4> chosenIds = collect(h, avoid);
     if (chosenIds.size() < d) {
       chosenIds = collect(h, -1); // not enough without it; the spread is a preference
     }
@@ -922,8 +922,8 @@ private:
   EventColorResult &result;
   DirKey dir;
   unsigned pool;
-  llvm::SmallVector<unsigned, 8> endOf;
-  llvm::SmallVector<bool, 8> inUse, everUsed;
+  llvm::SmallVector<unsigned, mlir::pto::kValue8> endOf;
+  llvm::SmallVector<bool, mlir::pto::kValue8> inUse, everUsed;
   bool reservedFor(const Hazard *h, unsigned id) const {
     for (const HiddenReservation &r : model.hiddenReservations) {
       if (r.id == static_cast<int>(id) && r.srcPipe == dir.first && r.dstPipe == dir.second &&
@@ -949,7 +949,7 @@ private:
 
   llvm::SmallVector<int, 4> collect(const Hazard *h, int skip) const {
     unsigned d = h->demand();
-    llvm::SmallVector<int, 4> out;
+    llvm::SmallVector<int, mlir::pto::kValue4> out;
     for (unsigned id = 0; id < pool && out.size() < d; ++id) {
       if (!inUse[id] && !reservedFor(h, id) && static_cast<int>(id) != skip) {
         out.push_back(static_cast<int>(id));

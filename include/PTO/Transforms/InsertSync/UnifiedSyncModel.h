@@ -18,6 +18,7 @@
 #ifndef PTO_TRANSFORMS_INSERTSYNC_UNIFIEDSYNCMODEL_H
 #define PTO_TRANSFORMS_INSERTSYNC_UNIFIEDSYNCMODEL_H
 
+#include "PTO/Support/CodeConstants.h"
 #include "PTO/Transforms/InsertSync/SyncCommon.h"
 #include "llvm/ADT/DenseMap.h"
 #include "llvm/ADT/SmallVector.h"
@@ -78,216 +79,221 @@ struct Interval {
 /// it: G1 sees the ordering, G2 sees no id conflict, G4 sees the same op count.
 class Hazard {
 public:
-  using MECHANISM = SyncOperation::MECHANISM;
+    using MECHANISM = SyncOperation::MECHANISM;
 
-  Hazard(unsigned index, SyncOperation *setOp, SyncOperation *waitOp) : index_(index), setOp_(setOp), waitOp_(waitOp) {}
+    Hazard(unsigned index, SyncOperation* setOp, SyncOperation* waitOp) : index_(index), setOp_(setOp), waitOp_(waitOp)
+    {}
 
-  unsigned index() const { return index_; }
-  SyncOperation *setOp() const { return setOp_; }
-  SyncOperation *waitOp() const { return waitOp_; }
+    unsigned index() const { return index_; }
+    SyncOperation* setOp() const { return setOp_; }
+    SyncOperation* waitOp() const { return waitOp_; }
 
-  /// Whether a wait side ever existed -- STRUCTURE, not mechanism.
-  /// `SpillToBarrier` converts a pair without dropping its wait object, so a
-  /// spilled hazard reports `isBarrier() == false` and `mechanism() == BARRIER`.
-  /// Both readings are needed: the colourer skips structurally-lone barriers
-  /// because there is no pair to colour, while codegen and the gates need the
-  /// spilled pair's mechanism. "Is this realised as a barrier" is `mechanism()`.
-  bool isBarrier() const { return waitOp_ == nullptr; }
+    /// Whether a wait side ever existed -- STRUCTURE, not mechanism.
+    /// `SpillToBarrier` converts a pair without dropping its wait object, so a
+    /// spilled hazard reports `isBarrier() == false` and `mechanism() == BARRIER`.
+    /// Both readings are needed: the colourer skips structurally-lone barriers
+    /// because there is no pair to colour, while codegen and the gates need the
+    /// spilled pair's mechanism. "Is this realised as a barrier" is `mechanism()`.
+    bool isBarrier() const { return waitOp_ == nullptr; }
 
-  PipelineType srcPipe() const { return setOp_->GetActualSrcPipe(); }
-  PipelineType dstPipe() const { return setOp_->GetActualDstPipe(); }
+    PipelineType srcPipe() const { return setOp_->GetActualSrcPipe(); }
+    PipelineType dstPipe() const { return setOp_->GetActualDstPipe(); }
 
-  const Interval &interval() const { return interval_; }
-  void setInterval(Interval iv) { interval_ = iv; }
+    const Interval& interval() const { return interval_; }
+    void setInterval(Interval iv) { interval_ = iv; }
 
-  /// How this hazard is realised. Reads the set side; the both-halves invariant
-  /// keeps the wait side in step. Can disagree with `isBarrier()` -- see there.
-  MECHANISM mechanism() const { return setOp_->GetMechanism(); }
+    /// How this hazard is realised. Reads the set side; the both-halves invariant
+    /// keeps the wait side in step. Can disagree with `isBarrier()` -- see there.
+    MECHANISM mechanism() const { return setOp_->GetMechanism(); }
 
-  /// Route to the buffer-ID token protocol, so this hazard must NOT take an event
-  /// id.
-  /// THE `uselessSync` MARKS ARE NOT OPTIONAL. `SyncCodegen` dispatches on the
-  /// SyncOperation TYPE, never on the mechanism, so stamping BUFID alone would
-  /// still emit the set/wait pair, now with no event id. All four ops, because
-  /// `SetEventIds` stamps head/tail too and those are real ops in syncIR's pipe
-  /// lists; a token needs no priming pair, its counter starts free.
-  void RouteToBufid() {
-    SetMechanism(MECHANISM::BUFID);
-    setOp_->uselessSync = true;
-    if (waitOp_) {
-      waitOp_->uselessSync = true;
+    /// Route to the buffer-ID token protocol, so this hazard must NOT take an event
+    /// id.
+    /// THE `uselessSync` MARKS ARE NOT OPTIONAL. `SyncCodegen` dispatches on the
+    /// SyncOperation TYPE, never on the mechanism, so stamping BUFID alone would
+    /// still emit the set/wait pair, now with no event id. All four ops, because
+    /// `SetEventIds` stamps head/tail too and those are real ops in syncIR's pipe
+    /// lists; a token needs no priming pair, its counter starts free.
+    void RouteToBufid()
+    {
+        SetMechanism(MECHANISM::BUFID);
+        setOp_->uselessSync = true;
+        if (waitOp_) {
+            waitOp_->uselessSync = true;
+        }
+        if (headOp_) {
+            headOp_->uselessSync = true;
+        }
+        if (tailOp_) {
+            tailOp_->uselessSync = true;
+        }
     }
-    if (headOp_) {
-      headOp_->uselessSync = true;
+
+    /// Realise as a PIPE_ALL barrier when the colourer cannot serve the hazard. "No
+    /// id" is not a resting state: codegen emits the pair regardless, so an unserved
+    /// hazard would go out carrying id 0 or the unset sentinel.
+    /// THE WAIT SIDE IS THE ONE KEPT. A PIPE_ALL at the wait position sits before the
+    /// consumer; for a backward hazard the in-body wait is at the top of the body, so
+    /// the barrier drains the previous iteration, which is exactly the carried edge.
+    /// At the set side it would sit after the producer and order nothing across the
+    /// back edge. Head and tail are suppressed for the reason given in
+    /// `RouteToBufid`, and a PIPE_ALL needs no priming anyway.
+    void SpillToBarrier() const
+    {
+        if (!waitOp_) {
+            return; // already a barrier; the colourer never reaches these
+        }
+        setOp_->SetPipeAll();
+        waitOp_->SetPipeAll();
+        setOp_->uselessSync = true;
+        if (headOp_) {
+            headOp_->SetPipeAll();
+            headOp_->uselessSync = true;
+        }
+        if (tailOp_) {
+            tailOp_->SetPipeAll();
+            tailOp_->uselessSync = true;
+        }
     }
-    if (tailOp_) {
-      tailOp_->uselessSync = true;
+
+    /// THE ONLY WAY a mechanism may be assigned. Stamps both halves.
+    void SetMechanism(MECHANISM m) const
+    {
+        setOp_->SetMechanism(m);
+        if (waitOp_) {
+            waitOp_->SetMechanism(m);
+        }
     }
-  }
 
-  /// Realise as a PIPE_ALL barrier when the colourer cannot serve the hazard. "No
-  /// id" is not a resting state: codegen emits the pair regardless, so an unserved
-  /// hazard would go out carrying id 0 or the unset sentinel.
-  ///
-  /// THE WAIT SIDE IS THE ONE KEPT. A PIPE_ALL at the wait position sits before the
-  /// consumer; for a backward hazard the in-body wait is at the top of the body, so
-  /// the barrier drains the previous iteration, which is exactly the carried edge.
-  /// At the set side it would sit after the producer and order nothing across the
-  /// back edge. Head and tail are suppressed for the reason given in
-  /// `RouteToBufid`, and a PIPE_ALL needs no priming anyway.
-  void SpillToBarrier() const {
-    if (!waitOp_) {
-      return; // already a barrier; the colourer never reaches these
+    /// How many event ids must be live across this hazard's interval. 1 ordinarily;
+    /// N for a multi-buffered (rotating) pair, where the front end supplies a slot
+    /// SSA via `pto.multi_tile_get %mb[%slot]` and `eventIdNum = N`, and codegen
+    /// emits `set_flag_dyn`/`wait_flag_dyn` selecting `eventIds[slot % N]`. Read
+    /// from the set side; the both-halves invariant keeps the two in step.
+    unsigned demand() const { return std::max(1u, static_cast<unsigned>(setOp_->eventIdNum)); }
+
+    /// Assign ids to every op the hazard owns, from ONE coloring decision: set, wait,
+    /// and for a loop-carried hazard the synthesised head-set and tail-wait too.
+    /// Stamping them together is what makes the head prime and the tail drain the
+    /// same flag the in-body pair uses.
+    /// Arity matters more than identity here: `CreateSetWaitOpForMultiBuffer` asserts
+    /// `eventIds.size() == slotCount` and indexes `eventIds[i]`, so a short list is
+    /// an out-of-bounds read rather than a synchronization mismatch.
+    void SetEventIds(llvm::ArrayRef<int> ids) const
+    {
+        setOp_->eventIds.assign(ids.begin(), ids.end());
+        if (waitOp_) {
+            waitOp_->eventIds.assign(ids.begin(), ids.end());
+        }
+        if (headOp_) {
+            headOp_->eventIds.assign(ids.begin(), ids.end());
+        }
+        if (tailOp_) {
+            tailOp_->eventIds.assign(ids.begin(), ids.end());
+        }
     }
-    setOp_->SetPipeAll();
-    waitOp_->SetPipeAll();
-    setOp_->uselessSync = true;
-    if (headOp_) {
-      headOp_->SetPipeAll();
-      headOp_->uselessSync = true;
+
+    void SetEventId(int id) const
+    {
+        setOp_->eventIds.assign(1, id);
+        if (waitOp_) {
+            waitOp_->eventIds.assign(1, id);
+        }
+        if (headOp_) {
+            headOp_->eventIds.assign(1, id);
+        }
+        if (tailOp_) {
+            tailOp_->eventIds.assign(1, id);
+        }
     }
-    if (tailOp_) {
-      tailOp_->SetPipeAll();
-      tailOp_->uselessSync = true;
+    bool hasEventId() const { return !setOp_->eventIds.empty(); }
+
+    //-- Loop-carried compensation -----------------------------------------------
+    // A loop-carried hazard's in-body pair (wait, then set) deadlocks on iteration 1
+    // with nothing priming the flag. `synthesizeLoopCompensation` adds a head-set
+    // before the carrying loop and a tail-wait after it, on the same id. The hazard
+    // holds raw pointers to them; both null for a forward hazard.
+
+    /// Attach the synthesised head-set / tail-wait. Set once, before coloring.
+    void setCompensation(SyncOperation* head, SyncOperation* tail)
+    {
+        headOp_ = head;
+        tailOp_ = tail;
     }
-  }
+    SyncOperation* headOp() const { return headOp_; }
+    SyncOperation* tailOp() const { return tailOp_; }
+    bool hasCompensation() const { return headOp_ != nullptr; }
 
-  /// THE ONLY WAY a mechanism may be assigned. Stamps both halves.
-  void SetMechanism(MECHANISM m) const {
-    setOp_->SetMechanism(m);
-    if (waitOp_) {
-      waitOp_->SetMechanism(m);
-    }
-  }
+    //-- Buffer-ID cost is reuse-conditioned -------------------------------------
+    //
+    // A token's get/rel counters are bidirectional: ONE token discharges the forward
+    // RAW and the reverse WAR. So a token beats an event only where the buffer really
+    // is reused in both directions; forward-only it adds a reverse edge nobody asked
+    // for. The cost needs the buffer's whole hazard group, not the hazard alone --
+    // hence these two fields.
 
-  /// How many event ids must be live across this hazard's interval. 1 ordinarily;
-  /// N for a multi-buffered (rotating) pair, where the front end supplies a slot
-  /// SSA via `pto.multi_tile_get %mb[%slot]` and `eventIdNum = N`, and codegen
-  /// emits `set_flag_dyn`/`wait_flag_dyn` selecting `eventIds[slot % N]`. Read
-  /// from the set side; the both-halves invariant keeps the two in step.
-  unsigned demand() const { return std::max(1u, static_cast<unsigned>(setOp_->eventIdNum)); }
+    /// Every buffer-id cluster this hazard's memory belongs to. Resolved per
+    /// `BaseMemInfo *`, by pointer identity with a `MemAlias` fallback; empty when
+    /// none of the hazard's tiles is buffer-id-clusterable.
+    llvm::SmallVector<int, mlir::pto::kValue2> bufferClusters;
 
-  /// Assign ids to every op the hazard owns, from ONE coloring decision: set, wait,
-  /// and for a loop-carried hazard the synthesised head-set and tail-wait too.
-  /// Stamping them together is what makes the head prime and the tail drain the
-  /// same flag the in-body pair uses.
-  ///
-  /// Arity matters more than identity here: `CreateSetWaitOpForMultiBuffer` asserts
-  /// `eventIds.size() == slotCount` and indexes `eventIds[i]`, so a short list is
-  /// an out-of-bounds read rather than a mis-sync.
-  void SetEventIds(llvm::ArrayRef<int> ids) const {
-    setOp_->eventIds.assign(ids.begin(), ids.end());
-    if (waitOp_) {
-      waitOp_->eventIds.assign(ids.begin(), ids.end());
-    }
-    if (headOp_) {
-      headOp_->eventIds.assign(ids.begin(), ids.end());
-    }
-    if (tailOp_) {
-      tailOp_->eventIds.assign(ids.begin(), ids.end());
-    }
-  }
+    /// Does a mirror-direction hazard share a cluster with this one?
+    ///
+    /// CLUSTERS, NOT `depRootBuffers`. A root is the root ALLOCATION, so keying on it
+    /// reports two hazards on different tiles as reverse partners merely because they
+    /// share a root. That false positive is the expensive direction: it prices a token
+    /// low and routes a forward-only hazard onto it.
+    bool hasReverseWar = false;
 
-  void SetEventId(int id) const {
-    setOp_->eventIds.assign(1, id);
-    if (waitOp_) {
-      waitOp_->eventIds.assign(1, id);
-    }
-    if (headOp_) {
-      headOp_->eventIds.assign(1, id);
-    }
-    if (tailOp_) {
-      tailOp_->eventIds.assign(1, id);
-    }
-  }
-  bool hasEventId() const { return !setOp_->eventIds.empty(); }
+    /// Can this hazard be realised as a buffer-id token AT ALL? Routing must refuse a
+    /// buffer carrying any hazard for which this is false: suppressing the event ops
+    /// of a hazard no token can express loses the ordering outright.
+    ///
+    /// Four ways a hazard is inexpressible, each because the token names something
+    /// different from what the hazard needs:
+    ///   - SAME-PIPE. A token orders accesses to one buffer; ordering a pipe against
+    ///     itself needs a barrier, which is a different class.
+    ///   - NO CLUSTER. With no aliasing clique there is no token to take.
+    ///   - GM, or endpoints in DIFFERENT scopes. A token brackets a tile buffer;
+    ///     `BufidSyncAnalysis` excludes both shapes for the same reason.
+    ///   - A PIPE THE EMITTER CANNOT ENCODE. `BufidSyncCodegen` maps a pipe to a
+    ///     `SyncOpType` and fails the compilation on the ones it has no name for.
+    bool tokenExpressible = false;
 
-  //-- Loop-carried compensation -----------------------------------------------
-  // A loop-carried hazard's in-body pair (wait, then set) deadlocks on iteration 1
-  // with nothing priming the flag. `synthesizeLoopCompensation` adds a head-set
-  // before the carrying loop and a tail-wait after it, on the same id. The hazard
-  // holds raw pointers to them; both null for a forward hazard.
+    /// Why this hazard's two endpoints sit at one address, when they do.
+    ///
+    /// A hazard whose endpoints are DISTINCT allocations at the same address in the
+    /// same scope is ordered because the addresses coincide: no SSA value flows
+    /// between two distinct allocations, so the ordering is invisible as dataflow.
+    /// Classified by whether those allocations also share a tile type:
+    ///   - `Reuse`     -- same type, one buffer holding successive values;
+    ///   - `AliasView` -- different types over the same bytes, a reshape or
+    ///                    transpose view of live data.
+    ///
+    /// INFORMATIONAL ONLY. No routing, refusal, mechanism choice or emission may read
+    /// this. The type test is a heuristic: two same-typed tiles can be aliased on
+    /// purpose, and the ordering between them is then a real read-after-write through
+    /// memory. A decision taken on a wrong classification would drop a live ordering.
+    enum class AddressSharing {
+        None,      ///< one allocation on both sides, or the addresses differ
+        Reuse,     ///< distinct allocations, one address, SAME tile type
+        AliasView, ///< distinct allocations, one address, DIFFERING tile types
+    };
+    AddressSharing addressSharing = AddressSharing::None;
 
-  /// Attach the synthesised head-set / tail-wait. Set once, before coloring.
-  void setCompensation(SyncOperation *head, SyncOperation *tail) {
-    headOp_ = head;
-    tailOp_ = tail;
-  }
-  SyncOperation *headOp() const { return headOp_; }
-  SyncOperation *tailOp() const { return tailOp_; }
-  bool hasCompensation() const { return headOp_ != nullptr; }
-
-  //-- Buffer-ID cost is reuse-conditioned -------------------------------------
-  //
-  // A token's get/rel counters are bidirectional: ONE token discharges the forward
-  // RAW and the reverse WAR. So a token beats an event only where the buffer really
-  // is reused in both directions; forward-only it adds a reverse edge nobody asked
-  // for. The cost needs the buffer's whole hazard group, not the hazard alone --
-  // hence these two fields.
-
-  /// Every buffer-id cluster this hazard's memory belongs to. Resolved per
-  /// `BaseMemInfo *`, by pointer identity with a `MemAlias` fallback; empty when
-  /// none of the hazard's tiles is buffer-id-clusterable.
-  llvm::SmallVector<int, 2> bufferClusters;
-
-  /// Does a mirror-direction hazard share a cluster with this one?
-  ///
-  /// CLUSTERS, NOT `depRootBuffers`. A root is the root ALLOCATION, so keying on it
-  /// reports two hazards on different tiles as reverse partners merely because they
-  /// share a root. That false positive is the expensive direction: it prices a token
-  /// low and routes a forward-only hazard onto it.
-  bool hasReverseWar = false;
-
-  /// Can this hazard be realised as a buffer-id token AT ALL? Routing must refuse a
-  /// buffer carrying any hazard for which this is false: suppressing the event ops
-  /// of a hazard no token can express loses the ordering outright.
-  ///
-  /// Four ways a hazard is inexpressible, each because the token names something
-  /// different from what the hazard needs:
-  ///   - SAME-PIPE. A token orders accesses to one buffer; ordering a pipe against
-  ///     itself needs a barrier, which is a different class.
-  ///   - NO CLUSTER. With no aliasing clique there is no token to take.
-  ///   - GM, or endpoints in DIFFERENT scopes. A token brackets a tile buffer;
-  ///     `BufidSyncAnalysis` excludes both shapes for the same reason.
-  ///   - A PIPE THE EMITTER CANNOT ENCODE. `BufidSyncCodegen` maps a pipe to a
-  ///     `SyncOpType` and fails the compilation on the ones it has no name for.
-  bool tokenExpressible = false;
-
-  /// Why this hazard's two endpoints sit at one address, when they do.
-  ///
-  /// A hazard whose endpoints are DISTINCT allocations at the same address in the
-  /// same scope is ordered because the addresses coincide: no SSA value flows
-  /// between two distinct allocations, so the ordering is invisible as dataflow.
-  /// Classified by whether those allocations also share a tile type:
-  ///   - `Reuse`     -- same type, one buffer holding successive values;
-  ///   - `AliasView` -- different types over the same bytes, a reshape or
-  ///                    transpose view of live data.
-  ///
-  /// INFORMATIONAL ONLY. No routing, refusal, mechanism choice or emission may read
-  /// this. The type test is a heuristic: two same-typed tiles can be aliased on
-  /// purpose, and the ordering between them is then a real read-after-write through
-  /// memory. A decision taken on a wrong classification would drop a live ordering.
-  enum class AddressSharing {
-    None,      ///< one allocation on both sides, or the addresses differ
-    Reuse,     ///< distinct allocations, one address, SAME tile type
-    AliasView, ///< distinct allocations, one address, DIFFERING tile types
-  };
-  AddressSharing addressSharing = AddressSharing::None;
-
-  /// The shared slot and the two allocations in program order. Meaningful only when
-  /// `addressSharing != None`.
-  uint64_t sharedAddress = 0;
-  pto::AddressSpace sharedScope = pto::AddressSpace::Zero;
-  Operation *sharedAllocFirst = nullptr;
-  Operation *sharedAllocSecond = nullptr;
+    /// The shared slot and the two allocations in program order. Meaningful only when
+    /// `addressSharing != None`.
+    uint64_t sharedAddress = 0;
+    pto::AddressSpace sharedScope = pto::AddressSpace::Zero;
+    Operation* sharedAllocFirst = nullptr;
+    Operation* sharedAllocSecond = nullptr;
 
 private:
-  unsigned index_;
-  SyncOperation *setOp_;            ///< never null
-  SyncOperation *waitOp_;           ///< null for a barrier
-  SyncOperation *headOp_ = nullptr; ///< synthesised head-set; null unless loop-carried
-  SyncOperation *tailOp_ = nullptr; ///< synthesised tail-wait; null unless loop-carried
-  Interval interval_;
+    unsigned index_;
+    SyncOperation* setOp_;            ///< never null
+    SyncOperation* waitOp_;           ///< null for a barrier
+    SyncOperation* headOp_ = nullptr; ///< synthesised head-set; null unless loop-carried
+    SyncOperation* tailOp_ = nullptr; ///< synthesised tail-wait; null unless loop-carried
+    Interval interval_;
 };
 
 //===----------------------------------------------------------------------===//
@@ -336,7 +342,7 @@ struct Alpha {
   /// adds a spurious back edge, so it is priced above an event.
   static Alpha forHazard(const Hazard &h) {
     Alpha a;
-    a.bufid = h.hasReverseWar ? 1 : 2;
+    a.bufid = h.hasReverseWar ? 1 : mlir::pto::kValue2;
     return a;
   }
 };
@@ -529,7 +535,7 @@ unsigned seedHiddenMacroEvents(SyncModel &model, const SyncIRs &syncIR);
 /// this would be colouring with BANDWIDTH, which is NP-hard.
 ///
 /// A hazard takes EITHER all d ids OR none: fewer than d emits a selector chain
-/// indexing past `eventIds`, which is an out-of-bounds read rather than a mis-sync,
+/// indexing past `eventIds`, which is an out-of-bounds read rather than a synchronization mismatch,
 /// so a short pool spills the whole hazard to a barrier. Structurally-lone barriers
 /// are skipped -- they hold no id.
 ///

@@ -197,8 +197,8 @@ private:
                                op.getLoc(), resultType, source, indices, mask)
                                .getResult();
     // VGATHER2_BC zero-fills inactive lanes, matching an all-zero passthru.
-    if (allActive || (resultBits == 32 && isZeroPassthru(op.getPassthru()))) {
-      return gathered;
+    if (allActive || (resultBits == kValue32 && isZeroPassthru(op.getPassthru()))) {
+        return gathered;
     }
     return rewriter
         .create<VselOp>(op.getLoc(), resultType, gathered, passthru, mask)

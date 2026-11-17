@@ -7,6 +7,7 @@
 // See LICENSE in the root of the software repository for the full text of the License.
 
 //===- PTOAttrs.cpp ------------------------------------------------*- C++ -*-===//
+#include "PTO/Support/CodeConstants.h"
 #include "PTO/IR/PTO.h"
 #include "mlir/IR/Builders.h"
 #include "mlir/IR/DialectImplementation.h"
@@ -426,9 +427,9 @@ LogicalResult ConvTileConfigAttr::verify(function_ref<InFlightDiagnostic()> emit
     return emitError() << "pad_list must have exactly 4 elements", failure();
   }
   for (int64_t dim : padList) {
-    if (dim < 0 || dim > 255) {
-      return emitError() << "pad_list entries must be in [0, 255]", failure();
-    }
+      if (dim < 0 || dim > mlir::pto::kValue255) {
+          return emitError() << "pad_list entries must be in [0, 255]", failure();
+      }
   }
 
   auto checkNonNegative = [&emitError](IntegerAttr attr, StringRef name) -> LogicalResult {

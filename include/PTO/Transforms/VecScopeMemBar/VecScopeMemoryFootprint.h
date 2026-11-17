@@ -8,6 +8,7 @@
 
 #ifndef PTO_TRANSFORMS_VECSCOPEMEMBAR_VECSCOPEMEMORYFOOTPRINT_H
 #define PTO_TRANSFORMS_VECSCOPEMEMBAR_VECSCOPEMEMORYFOOTPRINT_H
+#include "PTO/Support/CodeConstants.h"
 #include "PTO/Analysis/PTOMemoryAccessAnalysis.h"
 
 namespace mlir::pto::vecscopemembar {
@@ -17,11 +18,10 @@ struct AccessOccurrence {
     PTOMemoryAccessKind kind = PTOMemoryAccessKind::Load;
     PTOMemoryAccessUnit unit = PTOMemoryAccessUnit::Vector;
     PTOMemoryFootprint footprint;
-    SmallVector<unsigned, 2> loopNest;
-    SmallVector<unsigned, 2> schedulePath;
+    SmallVector<unsigned, mlir::pto::kValue2> loopNest;
+    SmallVector<unsigned, mlir::pto::kValue2> schedulePath;
     unsigned lexicalOrder = 0;
 };
 
-
-}
+} // namespace mlir::pto::vecscopemembar
 #endif

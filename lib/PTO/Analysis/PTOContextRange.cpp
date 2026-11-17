@@ -8,6 +8,7 @@
 
 #include "PTO/Analysis/PTOValueEvolutionAnalysis.h"
 #include "PTO/Analysis/PTOIntegerRange.h"
+#include "PTO/Support/CodeConstants.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/IR/Dominance.h"
 #include <algorithm>
@@ -47,7 +48,7 @@ PTOAnalysisResult<bool> PTOValueEvolutionAnalysis::preservesValueAt(Operation* c
         return PTOAnalysisResult<bool>::unknown(PTOAnalysisUnknownReason::UnsupportedCast);
     }
     unsigned width = ConstantIntRanges::getStorageBitwidth(castOp->getResult(0).getType());
-    if (!width || width > 64) {
+    if (!width || width > kValue64) {
         return PTOAnalysisResult<bool>::unknown(PTOAnalysisUnknownReason::TypeMismatch);
     }
     auto input = getRangeAt(castOp->getOperand(0), context);
@@ -79,8 +80,9 @@ static bool isProvenNoSignedWrap(Value value)
     }
     auto lhs = integer_range::inferPointIntegerRange(operation->getOperand(0));
     auto rhs = integer_range::inferPointIntegerRange(operation->getOperand(1));
-    bool unsupportedRange = !lhs || !rhs || !lhs->smin().isSignedIntN(64) || !lhs->smax().isSignedIntN(64) ||
-                            !rhs->smin().isSignedIntN(64) || !rhs->smax().isSignedIntN(64);
+    bool unsupportedRange = !lhs || !rhs || !lhs->smin().isSignedIntN(kValue64) ||
+                            !lhs->smax().isSignedIntN(kValue64) || !rhs->smin().isSignedIntN(kValue64) ||
+                            !rhs->smax().isSignedIntN(kValue64);
     if (unsupportedRange) {
         return false;
     }
@@ -98,7 +100,7 @@ static bool isProvenNoSignedWrap(Value value)
         hi = *std::max_element(std::begin(products), std::end(products));
     }
     unsigned width = ConstantIntRanges::getStorageBitwidth(value.getType());
-    if (!width || width > 64) {
+    if (!width || width > kValue64) {
         return false;
     }
     __int128 limit = __int128{1} << (width - 1);
@@ -114,7 +116,7 @@ static PTOTypedExprRef expandProvenPointExpression(const PTOTypedExprRef& expres
     if (!expression) {
         return {};
     }
-    if (depth >= 32) {
+    if (depth >= kValue32) {
         return expression->sourceValue ? makePTOOpaqueExpr(expression->sourceValue) : expression;
     }
     if (expression->kind == PTOTypedExpr::Kind::Constant || expression->kind == PTOTypedExpr::Kind::Opaque ||

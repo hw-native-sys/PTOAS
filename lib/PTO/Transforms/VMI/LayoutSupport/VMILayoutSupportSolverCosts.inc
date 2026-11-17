@@ -75,7 +75,8 @@ inline FailureOr<int64_t> getCastIntrinsicRearrangementCost(
         sourceLayout.getNumGroups() != resultLayout.getNumGroups() ||
         sourceLayout.getSlots() != resultLayout.getSlots() || sourceLayout.getLaneStride() != 1 ||
         resultLayout.getLaneStride() != 1 ||
-        (sourceLayout.getSlots() != 2 && sourceLayout.getSlots() != 4 && sourceLayout.getSlots() != 8)) {
+        (sourceLayout.getSlots() != mlir::pto::kValue2 && sourceLayout.getSlots() != mlir::pto::kValue4 &&
+         sourceLayout.getSlots() != mlir::pto::kValue8)) {
         return int64_t(0);
     }
 
@@ -86,8 +87,8 @@ inline FailureOr<int64_t> getCastIntrinsicRearrangementCost(
     }
     int64_t factor = resultBits / sourceBits;
     int64_t levels = 0;
-    while (factor > 1 && factor % 2 == 0) {
-        factor /= 2;
+    while (factor > 1 && factor % mlir::pto::kValue2 == 0) {
+        factor /= mlir::pto::kValue2;
         ++levels;
     }
     if (factor != 1) {

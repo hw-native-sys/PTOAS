@@ -8,6 +8,7 @@
 
 //===- VMIControlFlowSupport.cpp - VMI SCF loop constraints --------------===//
 
+#include "PTO/Support/CodeConstants.h"
 #include "PTO/Transforms/VMIControlFlowSupport.h"
 
 #include "mlir/Dialect/SCF/IR/SCF.h"
@@ -53,7 +54,7 @@ LogicalResult addBranchConstraints(BranchOpInterface branch, EquivalenceCallback
 LogicalResult addRegionExitConstraints(
     RegionBranchOpInterface branch, Region& region, EquivalenceCallback addEquivalent)
 {
-    SmallVector<RegionSuccessor, 4> successors;
+    SmallVector<RegionSuccessor, mlir::pto::kValue4> successors;
     branch.getSuccessorRegions(region, successors);
     for (const RegionSuccessor& successor : successors) {
         for (Block& block : region) {
@@ -74,7 +75,7 @@ LogicalResult addRegionExitConstraints(
 
 LogicalResult addRegionConstraints(RegionBranchOpInterface branch, EquivalenceCallback addEquivalent)
 {
-    SmallVector<RegionSuccessor, 4> successors;
+    SmallVector<RegionSuccessor, mlir::pto::kValue4> successors;
     branch.getSuccessorRegions(RegionBranchPoint::parent(), successors);
     for (const RegionSuccessor& successor : successors) {
         LogicalResult matched = matchControlFlowValues(

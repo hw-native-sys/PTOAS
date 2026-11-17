@@ -7,8 +7,12 @@
 // See LICENSE in the root of the software repository for the full text of the License.
 
 // Physical cost materialization: preserves the action graph selected by the planner.
+#include "PTO/Support/CodeConstants.h"
 #include "VMILayoutCostGraph.h"
 #include "llvm/ADT/TypeSwitch.h"
+
+#include <array>
+
 namespace mlir::pto::layout_cost {
 
 FailureOr<SmallVector<PhysicalValue, mlir::pto::kValue4>> PlanGraphBuilder::addMaskActions(
@@ -43,7 +47,7 @@ FailureOr<SmallVector<PhysicalValue, mlir::pto::kValue4>> PlanGraphBuilder::mate
             return failure();
         }
         current = merged->front();
-        carriers = (carriers + 1) / 2;
+        carriers = (carriers + 1) / mlir::pto::kValue2;
     }
     return SmallVector<PhysicalValue, mlir::pto::kValue4>{current};
 }
@@ -56,7 +60,7 @@ FailureOr<PhysicalValues> PlanGraphBuilder::materializeMaskLaneStrideEndpoint(
     bool resultContiguous = resultLayout.isContiguous() && resultLayout.getLaneStride() == 1;
     if (sourceContiguous && resultLayout.isContiguous()) {
         int64_t stride = resultLayout.getLaneStride();
-        if (stride != 2 && stride != 4) {
+        if (stride != mlir::pto::kValue2 && stride != mlir::pto::kValue4) {
             return failure();
         }
         int64_t levels = stride == 2 ? 1 : 2;
@@ -67,10 +71,11 @@ FailureOr<PhysicalValues> PlanGraphBuilder::materializeMaskLaneStrideEndpoint(
     // dense data materializer when normalizing it to unit stride.
     if (sourceLayout.isContiguous() && resultContiguous) {
         int64_t stride = sourceLayout.getLaneStride();
-        if (stride != 2 && stride != 4) {
+        if (stride != mlir::pto::kValue2 && stride != mlir::pto::kValue4) {
             return failure();
         }
-        return materializeMaskPackTree(input, sourceArity, stride == 2 ? 1 : 2, scope);
+        return materializeMaskPackTree(
+            input, sourceArity, stride == mlir::pto::kValue2 ? 1 : mlir::pto::kValue2, scope);
     }
     return failure();
 }
@@ -82,7 +87,14 @@ FailureOr<PhysicalValues> PlanGraphBuilder::materializeMaskDenseEndpoint(
     bool resultContiguous = resultLayout.isContiguous() && resultLayout.getLaneStride() == 1;
     if (sourceContiguous && resultLayout.isDeinterleaved()) {
         int64_t factor = resultLayout.getFactor();
-        if ((factor != 2 && factor != 4) || resultArity % factor != 0) {
+        if (factor == 0) {
+            return failure();
+        }
+        bool hasSupportedFactor = factor == mlir::pto::kValue2 || factor == mlir::pto::kValue4;
+        if (!hasSupportedFactor) {
+            return failure();
+        }
+        if (resultArity % factor != 0) {
             return failure();
         }
         int64_t actions = factor == 2 ? resultArity / 2 : resultArity;
@@ -90,7 +102,14 @@ FailureOr<PhysicalValues> PlanGraphBuilder::materializeMaskDenseEndpoint(
     }
     if (sourceLayout.isDeinterleaved() && resultContiguous) {
         int64_t factor = sourceLayout.getFactor();
-        if ((factor != 2 && factor != 4) || sourceArity % factor != 0) {
+        if (factor == 0) {
+            return failure();
+        }
+        bool hasSupportedFactor = factor == mlir::pto::kValue2 || factor == mlir::pto::kValue4;
+        if (!hasSupportedFactor) {
+            return failure();
+        }
+        if (sourceArity % factor != 0) {
             return failure();
         }
         int64_t actions = factor == 2 ? (resultArity + 1) / 2 : 2 * ((resultArity + 3) / 4) + (resultArity + 1) / 2;
@@ -172,8 +191,10 @@ FailureOr<SmallVector<PhysicalValue, mlir::pto::kValue4>> PlanGraphBuilder::grou
     }
     int64_t sourceStride = sourceLayout.getLaneStride();
     int64_t resultStride = resultLayout.getLaneStride();
-    if ((sourceStride != 1 && sourceStride != 2 && sourceStride != 4) ||
-        (resultStride != 1 && resultStride != 2 && resultStride != 4)) {
+    const bool hasUnsupportedStride =
+        (sourceStride != 1 && sourceStride != mlir::pto::kValue2 && sourceStride != mlir::pto::kValue4) ||
+        (resultStride != 1 && resultStride != mlir::pto::kValue2 && resultStride != mlir::pto::kValue4);
+    if (hasUnsupportedStride) {
         return failure();
     }
     PhysicalActionKind kind = sourceStride < resultStride ? PhysicalActionKind::Unpack : PhysicalActionKind::Pack;
@@ -183,7 +204,8 @@ FailureOr<SmallVector<PhysicalValue, mlir::pto::kValue4>> PlanGraphBuilder::grou
         int64_t currentStride = sourceStride;
         while (currentStride != resultStride) {
             current = graph.addAction(kind, scope, {current}, "group-slot-stride", 1)[0];
-            currentStride = sourceStride < resultStride ? currentStride * 2 : currentStride / 2;
+            currentStride =
+                sourceStride < resultStride ? currentStride * mlir::pto::kValue2 : currentStride / mlir::pto::kValue2;
         }
         results.push_back(current);
     }
@@ -195,7 +217,7 @@ FailureOr<PhysicalValues> PlanGraphBuilder::materializeDeint4ToDeint2(const Data
     auto source = context.source;
     Region* scope = context.scope;
 
-    if (source.size() % 4 != 0 || context.resultArity != context.sourceArity) {
+    if (source.size() % mlir::pto::kValue4 != 0 || context.resultArity != context.sourceArity) {
         return failure();
     }
     size_t chunks = source.size() / 4;
@@ -223,7 +245,7 @@ FailureOr<PhysicalValues> PlanGraphBuilder::materializeDeint2ToDeint4(const Data
     auto source = context.source;
     Region* scope = context.scope;
 
-    if (source.size() % 4 != 0 || context.resultArity != context.sourceArity) {
+    if (source.size() % mlir::pto::kValue4 != 0 || context.resultArity != context.sourceArity) {
         return failure();
     }
     size_t chunks = source.size() / 4;
@@ -343,10 +365,10 @@ FailureOr<PhysicalValues> PlanGraphBuilder::materializeDataRecipe(const DataMate
     }
     if (sourceLayout.isDeinterleaved() && resultLayout.isDeinterleaved() && sourceLayout.getLaneStride() == 1 &&
         resultLayout.getLaneStride() == 1) {
-        if (sourceLayout.getFactor() == 4 && resultLayout.getFactor() == 2) {
+        if (sourceLayout.getFactor() == mlir::pto::kValue4 && resultLayout.getFactor() == mlir::pto::kValue2) {
             return materializeDeint4ToDeint2(context);
         }
-        if (sourceLayout.getFactor() == 2 && resultLayout.getFactor() == 4) {
+        if (sourceLayout.getFactor() == mlir::pto::kValue2 && resultLayout.getFactor() == mlir::pto::kValue4) {
             return materializeDeint2ToDeint4(context);
         }
     }
@@ -435,9 +457,9 @@ FailureOr<PhysicalValues> PlanGraphBuilder::deint4ToContiguous(
 FailureOr<SmallVector<PhysicalValue, mlir::pto::kValue4>> PlanGraphBuilder::deinterleavedToContiguous(
     ArrayRef<PhysicalValue> source, int64_t factor, size_t resultCount, Region* scope)
 {
-    if (factor == 2 && source.size() % 2 == 0 && resultCount <= source.size()) {
+    if (factor == mlir::pto::kValue2 && source.size() % mlir::pto::kValue2 == 0 && resultCount <= source.size()) {
         SmallVector<PhysicalValue, mlir::pto::kValue4> results;
-        size_t groups = source.size() / 2;
+        size_t groups = source.size() / mlir::pto::kValue2;
         for (size_t group = 0; group < groups && results.size() < resultCount; ++group) {
             auto interleaved = graph.addAction(
                 PhysicalActionKind::Interleave, scope, {source[group], source[groups + group]}, "d2", 2);
@@ -450,7 +472,7 @@ FailureOr<SmallVector<PhysicalValue, mlir::pto::kValue4>> PlanGraphBuilder::dein
         }
         return results;
     }
-    if (factor == 4) {
+    if (factor == mlir::pto::kValue4) {
         return deint4ToContiguous(source, resultCount, scope);
     }
     return failure();
@@ -459,10 +481,12 @@ FailureOr<SmallVector<PhysicalValue, mlir::pto::kValue4>> PlanGraphBuilder::dein
 FailureOr<SmallVector<PhysicalValue, mlir::pto::kValue4>> PlanGraphBuilder::contiguousToDeinterleaved(
     ArrayRef<PhysicalValue> source, int64_t factor, size_t resultCount, Region* scope)
 {
-    if (factor == 2 && resultCount % 2 == 0 && !source.empty() && source.size() <= resultCount) {
+    const bool canMaterializeFactor2 = factor == mlir::pto::kValue2 && resultCount % mlir::pto::kValue2 == 0 &&
+                                       !source.empty() && source.size() <= resultCount;
+    if (canMaterializeFactor2) {
         SmallVector<PhysicalValue, mlir::pto::kValue4> lows;
         SmallVector<PhysicalValue, mlir::pto::kValue4> highs;
-        for (size_t part = 0; part < resultCount; part += 2) {
+        for (size_t part = 0; part < resultCount; part += mlir::pto::kValue2) {
             if (part >= source.size()) {
                 return failure();
             }
@@ -474,13 +498,13 @@ FailureOr<SmallVector<PhysicalValue, mlir::pto::kValue4>> PlanGraphBuilder::cont
         lows.append(highs);
         return lows;
     }
-    if (factor != 4 || resultCount == 0 || resultCount % 4 != 0 || source.empty() || source.size() > resultCount) {
+    const bool hasInvalidFactor4Shape = factor != mlir::pto::kValue4 || resultCount == 0 ||
+                                        resultCount % mlir::pto::kValue4 != 0 || source.empty() ||
+                                        source.size() > resultCount;
+    if (hasInvalidFactor4Shape) {
         return failure();
     }
-    SmallVector<PhysicalValue, mlir::pto::kValue4> part0;
-    SmallVector<PhysicalValue, mlir::pto::kValue4> part1;
-    SmallVector<PhysicalValue, mlir::pto::kValue4> part2;
-    SmallVector<PhysicalValue, mlir::pto::kValue4> part3;
+    std::array<SmallVector<PhysicalValue, mlir::pto::kValue4>, mlir::pto::kValue4> parts;
     size_t groups = resultCount / 4;
     for (size_t group = 0; group < groups; ++group) {
         auto getSource = [&group, &source](size_t offset) {
@@ -494,22 +518,28 @@ FailureOr<SmallVector<PhysicalValue, mlir::pto::kValue4>> PlanGraphBuilder::cont
         auto high = graph.addAction(PhysicalActionKind::Deinterleave, scope, {s2, s3}, "d4-high", 2);
         auto even = graph.addAction(PhysicalActionKind::Deinterleave, scope, {low[0], high[0]}, "d4-even", 2);
         auto odd = graph.addAction(PhysicalActionKind::Deinterleave, scope, {low[1], high[1]}, "d4-odd", 2);
-        part0.push_back(even[0]);
-        part1.push_back(odd[0]);
-        part2.push_back(even[1]);
-        part3.push_back(odd[1]);
+        parts[0].push_back(even[0]);
+        parts[1].push_back(odd[0]);
+        parts[2].push_back(even[1]);
+        parts[3].push_back(odd[1]);
     }
-    part0.append(part1);
-    part0.append(part2);
-    part0.append(part3);
-    return part0;
+    parts[0].append(parts[1]);
+    parts[0].append(parts[2]);
+    parts[0].append(parts[3]);
+    return parts[0];
 }
 
 FailureOr<SmallVector<PhysicalValue, mlir::pto::kValue4>> PlanGraphBuilder::contiguousToLaneStride(
     ArrayRef<PhysicalValue> source, int64_t stride, size_t resultCount, Region* scope)
 {
-    if ((stride != 2 && stride != 4) || source.empty() || resultCount == 0 ||
-        (resultCount + stride - 1) / stride != source.size()) {
+    if (stride == 0) {
+        return failure();
+    }
+    bool hasSupportedStride = stride == mlir::pto::kValue2 || stride == mlir::pto::kValue4;
+    if (!hasSupportedStride || source.empty() || resultCount == 0) {
+        return failure();
+    }
+    if ((resultCount + stride - 1) / stride != source.size()) {
         return failure();
     }
     SmallVector<PhysicalValue, mlir::pto::kValue4> results;
@@ -517,9 +547,11 @@ FailureOr<SmallVector<PhysicalValue, mlir::pto::kValue4>> PlanGraphBuilder::cont
     for (size_t resultIndex = 0; resultIndex < resultCount; ++resultIndex) {
         int64_t part = resultIndex % stride;
         PhysicalValue current = source[resultIndex / stride];
-        int64_t levels = stride == 4 ? 2 : 1;
+        int64_t levels = stride == mlir::pto::kValue4 ? mlir::pto::kValue2 : 1;
         for (int64_t level = 0; level < levels; ++level) {
-            int64_t selector = stride == 4 ? (level == 0 ? part / 2 : part % 2) : part;
+            int64_t selector = stride == mlir::pto::kValue4 ?
+                                   (level == 0 ? part / mlir::pto::kValue2 : part % mlir::pto::kValue2) :
+                                   part;
             current = graph.addAction(
                 PhysicalActionKind::Unpack, scope, {current},
                 (Twine("level:") + Twine(level) + Twine(":selector:") + Twine(selector)).str(), 1)[0];
@@ -532,17 +564,17 @@ FailureOr<SmallVector<PhysicalValue, mlir::pto::kValue4>> PlanGraphBuilder::cont
 FailureOr<SmallVector<PhysicalValue, mlir::pto::kValue4>> PlanGraphBuilder::laneStrideToContiguous(
     ArrayRef<PhysicalValue> source, int64_t stride, Region* scope)
 {
-    if ((stride != 2 && stride != 4) || source.empty()) {
+    if ((stride != mlir::pto::kValue2 && stride != mlir::pto::kValue4) || source.empty()) {
         return failure();
     }
     SmallVector<PhysicalValue, mlir::pto::kValue4> results;
     for (size_t begin = 0; begin < source.size(); begin += stride) {
         SmallVector<PhysicalValue, mlir::pto::kValue4> level(
             source.slice(begin, std::min<size_t>(stride, source.size() - begin)));
-        int64_t levels = stride == 4 ? 2 : 1;
+        int64_t levels = stride == mlir::pto::kValue4 ? mlir::pto::kValue2 : 1;
         for (int64_t depth = 0; depth < levels; ++depth) {
             SmallVector<PhysicalValue, mlir::pto::kValue4> next;
-            for (size_t index = 0; index < level.size(); index += 2) {
+            for (size_t index = 0; index < level.size(); index += mlir::pto::kValue2) {
                 PhysicalValue low = graph.addAction(PhysicalActionKind::Pack, scope, {level[index]}, "lower")[0];
                 if (index + 1 == level.size()) {
                     next.push_back(low);

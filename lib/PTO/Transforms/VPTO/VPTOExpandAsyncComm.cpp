@@ -6,6 +6,7 @@
 // INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
 // See LICENSE in the root of the software repository for the full text of the License.
 
+#include "PTO/Support/CodeConstants.h"
 #include "VPTOExpandAsyncComm.h"
 
 #include "PTO/IR/PTO.h"
@@ -25,12 +26,12 @@ using mlir::pto::expand_async::DmaArch;
 
 static Value getI64Constant(Location loc, RewriterBase& rewriter, uint64_t value)
 {
-    return rewriter.create<arith::ConstantIntOp>(loc, value, 64);
+    return rewriter.create<arith::ConstantIntOp>(loc, value, mlir::pto::kValue64);
 }
 
 static Value getI32Constant(Location loc, RewriterBase& rewriter, int64_t value)
 {
-    return rewriter.create<arith::ConstantIntOp>(loc, value, 32);
+    return rewriter.create<arith::ConstantIntOp>(loc, value, mlir::pto::kValue32);
 }
 
 //===----------------------------------------------------------------------===//
@@ -143,8 +144,9 @@ static Value readSessionFieldI64(
     Type fieldType = rewriter.getIntegerType(width);
     Value raw = rewriter.create<pto::StructGetOp>(
         loc, fieldType, session, rewriter.getDenseI64ArrayAttr({comm_abi::sessionFieldIndex(field)}));
-    if (width == 64)
+    if (width == mlir::pto::kValue64) {
         return raw;
+    }
     return rewriter.create<arith::ExtUIOp>(loc, rewriter.getI64Type(), raw);
 }
 
@@ -250,7 +252,8 @@ private:
         if (auto attr = op.getBlockBytes())
             state.blockBytes = getI64Constant(loc, rewriter, *attr);
         else
-            state.blockBytes = readSessionFieldI64(loc, rewriter, session, comm_abi::SessionField::BlockBytes, 64);
+            state.blockBytes =
+                readSessionFieldI64(loc, rewriter, session, comm_abi::SessionField::BlockBytes, mlir::pto::kValue64);
 
         Type i32Type = rewriter.getI32Type();
         Type i64Type = rewriter.getI64Type();
@@ -348,7 +351,8 @@ private:
         if (auto attr = op.getChannelIdx())
             channelIdx = getI64Constant(loc, rewriter, *attr);
         else
-            channelIdx = readSessionFieldI64(loc, rewriter, session, comm_abi::SessionField::ChannelIdx, 32);
+            channelIdx =
+                readSessionFieldI64(loc, rewriter, session, comm_abi::SessionField::ChannelIdx, mlir::pto::kValue32);
         Value recordIndex = rewriter.create<arith::MulIOp>(loc, channelIdx, channelNum);
         Value recordBytes = getI64Constant(loc, rewriter, static_cast<int64_t>(comm_abi::channel::kRecordBytes));
         Value recordOffset = rewriter.create<arith::MulIOp>(loc, recordIndex, recordBytes);

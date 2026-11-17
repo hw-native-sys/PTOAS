@@ -17,6 +17,7 @@
 //
 //===----------------------------------------------------------------------===//
 
+#include "PTO/Support/CodeConstants.h"
 #include "PTO/Transforms/VecScopeMemBar/VecScopeMemBarAnalysis.h"
 #include "PTO/Analysis/PTOMemoryDependenceAnalysis.h"
 #include "PTO/Analysis/PTOIntegerRange.h"
@@ -52,7 +53,7 @@ static bool definesUBWrite(Operation* defOp)
     if (!iface) {
         return false;
     }
-    SmallVector<SideEffects::EffectInstance<MemoryEffects::Effect>, 4> eff;
+    SmallVector<SideEffects::EffectInstance<MemoryEffects::Effect>, mlir::pto::kValue4> eff;
     iface.getEffects(eff);
     return llvm::any_of(eff, [](const auto& e) {
         return isa<MemoryEffects::Write>(e.getEffect()) && e.getValue() && pto::isUBBackedType(e.getValue().getType());
@@ -144,7 +145,7 @@ static bool reverseReaches(Value sink, Value target, DenseSet<Value>& visited, u
 static bool valueDependsOn(Value sink, Value target)
 {
     DenseSet<Value> visited;
-    return reverseReaches(sink, target, visited, 0, 32);
+    return reverseReaches(sink, target, visited, 0, mlir::pto::kValue32);
 }
 
 // Whether any stored value depends on any loaded value through the value
@@ -198,9 +199,9 @@ static std::optional<MemBarKind> hazardKind(const AccessOccurrence& producer, co
 // Stopping at the scope keeps the invariant that an op directly inside a
 // vecscope with no inner loops has an empty IV set, which the same-iteration
 // overlap model relies on to compare constant addresses directly.
-static SmallVector<Value, 2> collectIVs(Operation* op, const Operation* scope)
+static SmallVector<Value, mlir::pto::kValue2> collectIVs(Operation* op, const Operation* scope)
 {
-    SmallVector<Value, 2> ivs;
+    SmallVector<Value, mlir::pto::kValue2> ivs;
     for (Operation* cur = op->getParentOp(); cur && cur != scope; cur = cur->getParentOp()) {
         if (auto forOp = dyn_cast<scf::ForOp>(cur)) {
             ivs.push_back(forOp.getInductionVar());
@@ -471,7 +472,7 @@ static void enumerateSequentialHazards(
 
 // WAR-ordering graph: edge (u, v) means access u is already ordered before
 // access v by SSA data flow or an existing/scheduled VST_VLD barrier.
-using OrderingEdges = SmallVector<SmallVector<unsigned, 4>, 16>;
+using OrderingEdges = SmallVector<SmallVector<unsigned, mlir::pto::kValue4>, mlir::pto::kValue16>;
 
 static void addOrderingEdge(OrderingEdges& edges, unsigned from, unsigned to)
 {
@@ -483,8 +484,8 @@ static void addOrderingEdge(OrderingEdges& edges, unsigned from, unsigned to)
 // Forward reachability over the ordering graph.
 static bool reachesViaEdges(const OrderingEdges& edges, unsigned from, unsigned to)
 {
-    SmallVector<bool, 16> reachable(edges.size(), false);
-    SmallVector<unsigned, 16> worklist;
+    SmallVector<bool, mlir::pto::kValue16> reachable(edges.size(), false);
+    SmallVector<unsigned, mlir::pto::kValue16> worklist;
     reachable[from] = true;
     worklist.push_back(from);
     while (!worklist.empty()) {
@@ -510,7 +511,7 @@ static void addSSADataEdges(const VecScopeMemBarAnalysisResult& result, Ordering
         if (A[load].kind != PTOMemoryAccessKind::Load) {
             continue;
         }
-        SmallVector<Value, 2> loadedVals = getLoadedValues(A[load].op);
+        SmallVector<Value, mlir::pto::kValue2> loadedVals = getLoadedValues(A[load].op);
         if (loadedVals.empty()) {
             continue;
         }
@@ -518,7 +519,7 @@ static void addSSADataEdges(const VecScopeMemBarAnalysisResult& result, Ordering
             if (A[store].kind != PTOMemoryAccessKind::Store) {
                 continue;
             }
-            SmallVector<Value, 2> storedVals = getStoredValues(A[store].op);
+            SmallVector<Value, mlir::pto::kValue2> storedVals = getStoredValues(A[store].op);
             if (anyStoredValueDependsOnLoaded(storedVals, loadedVals)) {
                 addOrderingEdge(edges, load, store);
             }
@@ -779,7 +780,7 @@ FailureOr<VecScopeMemBarAnalysisResult> vecscopemembar::runVecScopeMemBarAnalysi
     }
     collectExistingBarriers(scope, result);
 
-    SmallVector<std::pair<unsigned, unsigned>, 16> pendingWAR;
+    SmallVector<std::pair<unsigned, unsigned>, mlir::pto::kValue16> pendingWAR;
     enumerateSequentialHazards(result, scope, pendingWAR);
     // Sequential unknowns become hazard cuts before WAR resolution so that a
     // conservative barrier can still discharge a pending WAR chain.

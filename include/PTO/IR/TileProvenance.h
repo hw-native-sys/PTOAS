@@ -9,6 +9,7 @@
 #ifndef PTO_IR_TILEPROVENANCE_H
 #define PTO_IR_TILEPROVENANCE_H
 
+#include "PTO/Support/CodeConstants.h"
 #include "mlir/IR/Value.h"
 #include "llvm/ADT/SmallVector.h"
 
@@ -26,14 +27,14 @@ enum class TileSourceKind { LocalRoot, View, Selection, Loop, Unknown };
 
 struct TileSources {
     TileSourceKind kind = TileSourceKind::Unknown;
-    llvm::SmallVector<TileSourceEdge, 2> edges;
+    llvm::SmallVector<TileSourceEdge, mlir::pto::kValue2> edges;
 };
 
 TileSources getTileSources(Value tile);
 Value getTileViewSource(Value tile);
 
 struct TileOrigins {
-    llvm::SmallVector<Value, 2> roots;
+    llvm::SmallVector<Value, mlir::pto::kValue2> roots;
     bool complete = true;
 };
 

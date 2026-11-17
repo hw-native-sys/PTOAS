@@ -152,17 +152,18 @@ unsigned mlir::pto::getPTOStorageElemByteSize(Type t) {
   return bitWidth == 0 ? 0 : bitWidth / kBitsPerByte;
 }
 
-std::optional<int64_t> mlir::pto::convC0ForElemBytes(int64_t elemBytes) {
-  switch (elemBytes) {
-  case 1:
-    return 32;
-  case 2:
-    return 16;
-  case 4:
-    return 8;
-  case 8:
-    return 4;
-  default:
-    return std::nullopt;
-  }
+std::optional<int64_t> mlir::pto::convC0ForElemBytes(int64_t elemBytes)
+{
+    switch (elemBytes) {
+        case 1:
+            return mlir::pto::kValue32;
+        case mlir::pto::kValue2:
+            return mlir::pto::kValue16;
+        case mlir::pto::kValue4:
+            return mlir::pto::kValue8;
+        case mlir::pto::kValue8:
+            return mlir::pto::kValue4;
+        default:
+            return std::nullopt;
+    }
 }

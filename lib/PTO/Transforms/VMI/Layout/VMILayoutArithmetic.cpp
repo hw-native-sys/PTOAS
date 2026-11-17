@@ -7,6 +7,7 @@
 // See LICENSE in the root of the software repository for the full text of the License.
 
 // Layout relation enumeration: arithmetic.
+#include "PTO/Support/CodeConstants.h"
 #include "VMILayoutRelations.h"
 #include "PTO/Transforms/VMILayoutPropagation.h"
 #include "llvm/ADT/TypeSwitch.h"
@@ -15,7 +16,7 @@ namespace mlir::pto::layout_relations {
 RelationResult VMILayoutRelations::buildReduce()
 {
     auto contiguous = VMILayoutAttr::getContiguous(op->getContext());
-    if (op->getNumOperands() < 2 || op->getNumResults() != 1) {
+    if (op->getNumOperands() < mlir::pto::kValue2 || op->getNumResults() != 1) {
         return failure();
     }
     auto fact = supports.getReduceLayoutFactForLayouts(
@@ -95,8 +96,8 @@ static RelationResult enumerateInterleave(OpT interleave, bool deinterleave, con
     auto preferred =
         deinterleave ? supports.getPreferredVdintlvLayoutFact(lhs) : supports.getPreferredVintlvLayoutFact(lhs);
     appendInterleaveFacts(op, *facts, preferred, supports, relations);
-    return relations.empty() ? FailureOr<SmallVector<VMILayoutOpRelation, 4>>(failure()) :
-                               FailureOr<SmallVector<VMILayoutOpRelation, 4>>(std::move(relations));
+    return relations.empty() ? FailureOr<SmallVector<VMILayoutOpRelation, mlir::pto::kValue4>>(failure()) :
+                               FailureOr<SmallVector<VMILayoutOpRelation, mlir::pto::kValue4>>(std::move(relations));
 }
 
 RelationResult VMILayoutRelations::buildInterleave(VMIVintlvOp interleave)
@@ -112,7 +113,7 @@ RelationResult VMILayoutRelations::buildDeinterleave(VMIVdintlvOp interleave)
 RelationResult VMILayoutRelations::buildChannelSplit(VMIChannelSplitOp split)
 {
     auto source = dyn_cast<VMIVRegType>(split.getSource().getType());
-    if (!source || (split.getNumResults() != 2 && split.getNumResults() != 4)) {
+    if (!source || (split.getNumResults() != mlir::pto::kValue2 && split.getNumResults() != mlir::pto::kValue4)) {
         return failure();
     }
     VMILayoutAttr sourceLayout = VMILayoutAttr::getDeinterleaved(op->getContext(), split.getNumResults());
@@ -136,7 +137,7 @@ RelationResult VMILayoutRelations::buildChannelMerge(VMIChannelMergeOp merge)
 {
     auto result = dyn_cast<VMIVRegType>(merge.getResult().getType());
     unsigned channels = merge.getInputs().size();
-    if (!result || (channels != 2 && channels != 4)) {
+    if (!result || (channels != mlir::pto::kValue2 && channels != mlir::pto::kValue4)) {
         return failure();
     }
     VMILayoutAttr inputLayout = VMILayoutAttr::getContiguous(op->getContext());
@@ -170,7 +171,7 @@ RelationResult VMILayoutRelations::buildShuffle(VMIShuffleOp shuffle)
 
 RelationResult VMILayoutRelations::buildHistogram()
 {
-    if (op->getNumOperands() != 3 || op->getNumResults() != 1) {
+    if (op->getNumOperands() != mlir::pto::kValue3 || op->getNumResults() != 1) {
         return failure();
     }
     auto acc = dyn_cast<VMIVRegType>(op->getOperand(0).getType());
