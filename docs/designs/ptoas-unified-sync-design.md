@@ -367,13 +367,15 @@ test on rotation depth, and the case is unreached only because no rotating kerne
 overflows. If one ever does, this is the question to settle before trusting the
 result.
 
-### 9. The A3 same-pipe barrier population is not reducible in-house
+### 9. Same-pipe barriers depend on the target ordering guarantee
 
 A same-pipe hazard cannot use an event, because an event names two distinct pipes.
-It is therefore resolved by a barrier or by a target guarantee. On A5 the guarantee
-applies to `PIPE_V` (limitation 6). On A3 nothing is dropped, so the barriers are
-emitted, and both allocators emit the same ones -- `CanPrunePipeVBarrier` sits in
-`InsertSyncAnalysis`, which both pipelines run.
+It is therefore resolved by a barrier or by a target guarantee. A5 guarantees
+`PIPE_M` memory ordering. A3 also omits M-to-M dependency barriers except for
+small-output matmul pairs described in the TF32 regions section below.
+A5 additionally guarantees `PIPE_V` ordering (limitation 6). Other A3 same-pipe
+hazards still require synchronization unless proven removable. Both allocators
+share this policy through `InsertSyncAnalysis`, including `CanPrunePipeVBarrier`.
 
 That prune accepts a `PIPE_V -> PIPE_V` pair only when it did not arrive from the
 loop back-edge phase, both endpoints are `PIPE_V`, every dependency pair describes
@@ -382,7 +384,8 @@ is at least `kPipeVPruneMinRepeat` (16). `repeat` is derived from the access sha
 `ceil(validElems / (256 / elementBytes))` -- the number of 256-byte vector-register
 passes the producer takes -- not from any loop trip count.
 
-The population is substantial and dominated by `PIPE_V`. Across the a3 sample kernels
+Before applying the M-pipe ordering guarantee, the measured population was
+substantial and dominated by `PIPE_V`. Across the a3 sample kernels
 that emit any same-pipe barrier -- 49 of them -- there are 267 in total: 208 `PIPE_V`,
 42 `PIPE_M`, 16 `PIPE_MTE3` and one `PIPE_MTE1`. Most `PIPE_V -> PIPE_V` candidates the
 predicate examines are refused rather than pruned, and the refusals divide between not
@@ -523,3 +526,28 @@ in one case a regression and in the other nothing. They do not establish that th
 allocator is cycle-neutral in general, and no claim here depends on it being so: the
 allocator's purpose is to make the mechanism a decision rather than a premise, and on the
 production corpus it declines to route because no kernel exhausts a pool.
+
+## Same-pipe M ordering and TF32 regions
+
+A5 treats M-to-M ordering as an architectural guarantee. A3 omits M-to-M
+barriers except between dependent tile matmuls when the preceding matmul has
+`M / 16 * N / 16 < 10` (left-to-right integer arithmetic). Unknown valid dimensions conservatively require
+synchronization. The exception includes loop-carried dependencies and ordinary,
+accumulating and bias matmuls. Sizes are the actual valid MMAD output dimensions. Explicit user
+barriers and cross-pipe set/wait synchronization remain in place. The coverage
+oracle applies the same architecture exemptions.
+
+The EmitC backend coalesces equal `tf32_mode` tile matmuls into a CTRL region,
+saving the entry value once and restoring it once. Known neutral transfers and
+synchronization may stay inside the region. Structured `scf.for` and `scf.if`
+operations can share the region when every nested operation is compatible;
+this moves invariant setup outside loops, including zero-trip loops. Mode
+changes, ordinary FP32 matmuls, explicit CTRL accesses, unknown calls and
+unsupported control flow terminate a region. No state is propagated across
+function calls or arbitrary CFG edges.
+
+Region boundaries save, set and restore CTRL without adding M-pipe barriers.
+CTRL-to-MMAD ordering relies on the target intrinsic contract, following pto-isa's
+direct setup and reset pattern. Memory-dependency synchronization is handled
+independently by the synchronization passes, and explicit user barriers remain
+in place. TF32 mode remains A5-only.

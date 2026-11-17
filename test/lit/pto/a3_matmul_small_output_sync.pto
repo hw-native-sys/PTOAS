@@ -1,0 +1,102 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+
+// RUN: ptoas --pto-arch=a3 --enable-insert-sync --check-sync-self-coverage %s | FileCheck %s --check-prefix=A3
+// RUN: ptoas --pto-arch=a3 --enable-unified-sync --check-sync-self-coverage %s | FileCheck %s --check-prefix=A3
+// RUN: ptoas --pto-arch=a5 --enable-insert-sync --check-sync-self-coverage %s | FileCheck %s --check-prefix=A5
+
+!a_below = !pto.tile_buf<loc=left, dtype=f32, rows=48, cols=32, v_row=48, v_col=32, blayout=col_major, slayout=row_major, fractal=512, pad=0>
+!b_below = !pto.tile_buf<loc=right, dtype=f32, rows=32, cols=48, v_row=32, v_col=48, blayout=row_major, slayout=col_major, fractal=512, pad=0>
+!c_below = !pto.tile_buf<loc=acc, dtype=f32, rows=48, cols=48, v_row=48, v_col=48, blayout=col_major, slayout=row_major, fractal=1024, pad=0>
+!a_boundary = !pto.tile_buf<loc=left, dtype=f32, rows=80, cols=32, v_row=80, v_col=32, blayout=col_major, slayout=row_major, fractal=512, pad=0>
+!b_boundary = !pto.tile_buf<loc=right, dtype=f32, rows=32, cols=32, v_row=32, v_col=32, blayout=row_major, slayout=col_major, fractal=512, pad=0>
+!c_boundary = !pto.tile_buf<loc=acc, dtype=f32, rows=80, cols=32, v_row=80, v_col=32, blayout=col_major, slayout=row_major, fractal=1024, pad=0>
+!a_above = !pto.tile_buf<loc=left, dtype=f32, rows=96, cols=32, v_row=96, v_col=32, blayout=col_major, slayout=row_major, fractal=512, pad=0>
+!b_above = !pto.tile_buf<loc=right, dtype=f32, rows=32, cols=32, v_row=32, v_col=32, blayout=row_major, slayout=col_major, fractal=512, pad=0>
+!c_above = !pto.tile_buf<loc=acc, dtype=f32, rows=96, cols=32, v_row=96, v_col=32, blayout=col_major, slayout=row_major, fractal=1024, pad=0>
+!a_independent = !pto.tile_buf<loc=left, dtype=f32, rows=32, cols=32, v_row=32, v_col=32, blayout=col_major, slayout=row_major, fractal=512, pad=0>
+!b_independent = !pto.tile_buf<loc=right, dtype=f32, rows=32, cols=32, v_row=32, v_col=32, blayout=row_major, slayout=col_major, fractal=512, pad=0>
+!c_independent = !pto.tile_buf<loc=acc, dtype=f32, rows=32, cols=32, v_row=32, v_col=32, blayout=col_major, slayout=row_major, fractal=1024, pad=0>
+!a_dynamic = !pto.tile_buf<loc=left, dtype=f32, rows=48, cols=32, v_row=?, v_col=32, blayout=col_major, slayout=row_major, fractal=512, pad=0>
+!b_dynamic = !pto.tile_buf<loc=right, dtype=f32, rows=32, cols=48, v_row=32, v_col=?, blayout=row_major, slayout=col_major, fractal=512, pad=0>
+!c_dynamic = !pto.tile_buf<loc=acc, dtype=f32, rows=48, cols=48, v_row=?, v_col=?, blayout=col_major, slayout=row_major, fractal=1024, pad=0>
+!bias = !pto.tile_buf<loc=bias, dtype=f32, rows=1, cols=32, v_row=1, v_col=32, blayout=row_major, slayout=none_box, fractal=512, pad=0>
+
+module {
+  func.func @below(%a: !a_below, %b: !b_below, %c: !c_below) {
+    pto.tmatmul ins(%a, %b : !a_below, !b_below) outs(%c : !c_below)
+    pto.tmatmul.acc ins(%c, %a, %b : !c_below, !a_below, !b_below) outs(%c : !c_below)
+    return
+  }
+  func.func @boundary(%a: !a_boundary, %b: !b_boundary, %c: !c_boundary) {
+    pto.tmatmul ins(%a, %b : !a_boundary, !b_boundary) outs(%c : !c_boundary)
+    pto.tmatmul.acc ins(%c, %a, %b : !c_boundary, !a_boundary, !b_boundary) outs(%c : !c_boundary)
+    return
+  }
+  func.func @above(%a: !a_above, %b: !b_above, %c: !c_above) {
+    pto.tmatmul ins(%a, %b : !a_above, !b_above) outs(%c : !c_above)
+    pto.tmatmul.acc ins(%c, %a, %b : !c_above, !a_above, !b_above) outs(%c : !c_above)
+    return
+  }
+  func.func @independent(%a: !a_independent, %b: !b_independent, %c: !c_independent, %d: !c_independent) {
+    pto.tmatmul ins(%a, %b : !a_independent, !b_independent) outs(%c : !c_independent)
+    pto.tmatmul ins(%a, %b : !a_independent, !b_independent) outs(%d : !c_independent)
+    return
+  }
+  func.func @dynamic(%a: !a_dynamic, %b: !b_dynamic, %c: !c_dynamic) {
+    pto.tmatmul ins(%a, %b : !a_dynamic, !b_dynamic) outs(%c : !c_dynamic)
+    pto.tmatmul.acc ins(%c, %a, %b : !c_dynamic, !a_dynamic, !b_dynamic) outs(%c : !c_dynamic)
+    return
+  }
+  func.func @bias(%a: !a_independent, %b: !b_independent, %c: !c_independent, %bias: !bias) {
+    pto.tmatmul.bias ins(%a, %b, %bias : !a_independent, !b_independent, !bias) outs(%c : !c_independent)
+    pto.tmatmul.acc ins(%c, %a, %b : !c_independent, !a_independent, !b_independent) outs(%c : !c_independent)
+    return
+  }
+}
+
+// A3-LABEL: void below(
+// A3: TMATMUL(
+// A3-NEXT: pipe_barrier(PIPE_M);
+// A3-NEXT: TMATMUL_ACC(
+// A5-LABEL: void below(
+// A5: TMATMUL(
+// A5-NEXT: TMATMUL_ACC(
+// A3-LABEL: void boundary(
+// A3: TMATMUL(
+// A3-NEXT: TMATMUL_ACC(
+// A5-LABEL: void boundary(
+// A5: TMATMUL(
+// A5-NEXT: TMATMUL_ACC(
+// A3-LABEL: void above(
+// A3: TMATMUL(
+// A3-NEXT: TMATMUL_ACC(
+// A5-LABEL: void above(
+// A5: TMATMUL(
+// A5-NEXT: TMATMUL_ACC(
+// A3-LABEL: void independent(
+// A3: TMATMUL(
+// A3-NEXT: TMATMUL(
+// A5-LABEL: void independent(
+// A5: TMATMUL(
+// A5-NEXT: TMATMUL(
+
+// A3-LABEL: void dynamic(
+// A3: TMATMUL(
+// A3-NEXT: pipe_barrier(PIPE_M);
+// A3-NEXT: TMATMUL_ACC(
+// A5-LABEL: void dynamic(
+// A5: TMATMUL(
+// A5-NEXT: TMATMUL_ACC(
+// A3-LABEL: void bias(
+// A3: TMATMUL_BIAS(
+// A3-NEXT: pipe_barrier(PIPE_M);
+// A3-NEXT: TMATMUL_ACC(
+// A5-LABEL: void bias(
+// A5: TMATMUL_BIAS(
+// A5-NEXT: TMATMUL_ACC(

@@ -1932,8 +1932,8 @@ public:
     // deliberately NOT called: it layers InsertSync's policy (the tload->tload WAW
     // exemption, the ACC read/read case) on top of DepBetween, and policy is the
     // thing under audit.
-    // The A5 PIPE_V intra-pipe guarantee. Read through the SAME predicate the
-    // codegen uses (`isTargetArchA5`, PTO/IR/PTO.h) rather than re-deriving it from
+    // Target intra-pipe guarantees. Read through the SAME predicates the
+    // codegen uses (PTO/IR/PTO.h) rather than re-deriving them from
     // the module attribute, so the oracle and the emitter cannot drift apart.
     isA5 = pto::isTargetArchA5(func.getOperation());
 
@@ -2053,32 +2053,21 @@ private:
       ++report.armExcluded;
       return true;
     }
-    // A5 PIPE_V intra-pipe ordering is treated as a TARGET GUARANTEE. No sync is
-    // emitted for such a pair on A5 (`SyncCodegen`, `LoweringSyncToPipe`), so
-    // demanding one would make this gate report every such pair on every A5 kernel.
-    //
-    // NARROW ON PURPOSE -- this is NOT "A5 same-pipe is fine". The uncovered A5
-    // population is overwhelmingly V->V, but a residue is `MTE3->MTE3 waw/carried`
-    // and cross-pipe `MTE3->V war/carried`, which this test does not excuse.
-    // Widening it to "same pipe" would silence them -- re-blinding the gate in the
-    // same edit that fixes it.
-    //
-    // SCOPE. This test asks only whether both endpoints sit on PIPE_V; it does not
-    // distinguish a same-allocation pair from a cross-allocation one. Aliasing views
-    // are expressed as distinct allocations overlapping in memory once addresses are
-    // assigned, so the exemption is broader than a per-allocation test would be.
-    //
-    // It is deliberately not narrowed: the sync pass treats those cross-allocation
-    // pairs identically, excusing all of them and covering none, so narrowing here
-    // would reclassify them from excused to uncovered without changing what is
-    // emitted.
-    if (isA5) {
-      auto srcPipe = anchorPipe(src->elementOp);
-      auto dstPipe = anchorPipe(dst->elementOp);
-      if (srcPipe && dstPipe && *srcPipe == pto::PIPE::PIPE_V && *dstPipe == pto::PIPE::PIPE_V) {
-        ++report.archGuaranteed;
-        return true;
-      }
+    // A3/A5 M->M memory ordering and A5 V->V ordering are target
+    // guarantees, except A3 small-output matmul pairs. This also covers
+    // aliasing allocations and loop-carried hazards.
+    // Neither MTE pipes nor cross-pipe hazards are covered by this exemption.
+    {
+        auto srcPipe = anchorPipe(src->elementOp);
+        auto dstPipe = anchorPipe(dst->elementOp);
+        const bool orderedA3M = isTargetArchA3(src->elementOp) &&
+            !requiresA3MatmulDependencyBarrier(src->elementOp, dst->elementOp);
+        const bool orderedM = (isA5 || orderedA3M) && srcPipe && *srcPipe == pto::PIPE::PIPE_M;
+        const bool orderedV = isA5 && srcPipe && *srcPipe == pto::PIPE::PIPE_V;
+        if (srcPipe && dstPipe && *srcPipe == *dstPipe && (orderedM || orderedV)) {
+            ++report.archGuaranteed;
+            return true;
+        }
     }
     // (a3) PIPE_S->PIPE_S, on every arch.
     //

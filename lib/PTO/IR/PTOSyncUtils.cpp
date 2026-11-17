@@ -53,3 +53,42 @@ PIPE mlir::pto::mapSyncOpTypeToPipe(SyncOpType opType) {
 bool mlir::pto::isConcreteSyncPipe(PIPE pipe) {
   return pipe != PIPE::PIPE_UNASSIGNED && pipe != PIPE::PIPE_ALL;
 }
+
+bool mlir::pto::requiresA3MatmulDependencyBarrier(Operation *src, Operation *dst) {
+    if (!src || !dst || !isa<TMatmulOp, TMatmulAccOp, TMatmulBiasOp>(src) ||
+        !isa<TMatmulOp, TMatmulAccOp, TMatmulBiasOp>(dst)) {
+        return false;
+    }
+    Type lhsType;
+    Type rhsType;
+    if (auto op = dyn_cast<TMatmulOp>(src)) {
+        lhsType = op.getLhs().getType();
+        rhsType = op.getRhs().getType();
+    } else if (auto op = dyn_cast<TMatmulAccOp>(src)) {
+        lhsType = op.getLhs().getType();
+        rhsType = op.getRhs().getType();
+    } else if (auto op = dyn_cast<TMatmulBiasOp>(src)) {
+        lhsType = op.getA().getType();
+        rhsType = op.getB().getType();
+    }
+    auto lhs = dyn_cast<TileBufType>(lhsType);
+    auto rhs = dyn_cast<TileBufType>(rhsType);
+    if (!lhs || !rhs) {
+        return true;
+    }
+    auto lhsValid = lhs.getValidShape();
+    auto rhsValid = rhs.getValidShape();
+    if (lhsValid.size() != 2 || rhsValid.size() != 2) {
+        return true;
+    }
+    int64_t m = lhsValid[0];
+    int64_t n = rhsValid[1];
+    if (m < 0 || n < 0) {
+        return true;
+    }
+    constexpr int64_t fractalBlockSize = 16;
+    constexpr int64_t minOrderedOutputBlocks = 10;
+    // Valid MMAD dimensions are bounded by 4095 by the operation verifier.
+    // Preserve the template's left-to-right integer arithmetic.
+    return m / fractalBlockSize * n / fractalBlockSize < minOrderedOutputBlocks;
+}

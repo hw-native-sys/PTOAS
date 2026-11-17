@@ -15,6 +15,7 @@
 #include "PTO/Transforms/InsertSync/InsertSyncDebug.h"
 #include "PTO/IR/PTO.h"
 #include "PTO/IR/PTOMultiBuffer.h"
+#include "PTO/IR/PTOSyncUtils.h"
 #include "PTO/IR/PTOTypeUtils.h"
 #include "PTO/Support/CodeConstants.h"
 #include "PTO/Transforms/InsertSync/SyncCommon.h"
@@ -371,22 +372,31 @@ void InsertSyncAnalysis::InsertBackForSync(
 bool InsertSyncAnalysis::IsNoNeedToInsertSync(
     const CompoundInstanceElement *nowCompound,
     const CompoundInstanceElement *frontCompound, bool isBackwardDep) const {
-  const PipelineType frontPipe = frontCompound->kPipeValue;
-  const PipelineType nowPipe = nowCompound->kPipeValue;
-  if (frontPipe == nowPipe && frontPipe == PipelineType::PIPE_S) {
-    return true;
-  }
+    const PipelineType frontPipe = frontCompound->kPipeValue;
+    const PipelineType nowPipe = nowCompound->kPipeValue;
+    if (frontPipe == nowPipe && frontPipe == PipelineType::PIPE_S) {
+        return true;
+    }
 
-  if (nowCompound->elementOp == frontCompound->elementOp && !isBackwardDep) {
-    return true;
-  }
+    // A5 orders M-pipe dependencies. A3 small-output matmul pairs still
+    // require memory analysis, including loop-carried dependencies.
+    if (frontPipe == PipelineType::PIPE_M && nowPipe == frontPipe &&
+        (isTargetArchA5(func_) ||
+         (isTargetArchA3(func_) &&
+          !requiresA3MatmulDependencyBarrier(frontCompound->elementOp, nowCompound->elementOp)))) {
+        return true;
+    }
 
-  // Do not short-circuit same-pipe pairs here. If a real memory dependency is
-  // present, MemAnalyze will insert a PIPE_BARRIER to serialize that pipe,
-  // matching the "bar_v/bar_m" style intra-pipe synchronization expected by
-  // higher-level frontends.
+    if (nowCompound->elementOp == frontCompound->elementOp && !isBackwardDep) {
+        return true;
+    }
 
-  return false;
+    // Other same-pipe pairs still need analysis. If a real memory dependency is
+    // present, MemAnalyze will insert a PIPE_BARRIER to serialize that pipe,
+    // matching the intra-pipe synchronization expected by
+    // higher-level frontends.
+
+    return false;
 }
 
 void InsertSyncAnalysis::InsertSeqSync(

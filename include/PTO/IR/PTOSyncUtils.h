@@ -26,6 +26,10 @@ FailureOr<SyncOpType> parseSyncOpTypeLikeAttr(Attribute attr);
 /// Map high-level sync operation type to concrete hardware PIPE.
 PIPE mapSyncOpTypeToPipe(SyncOpType opType);
 
+/// A3 small-output matmul pairs need dependency synchronization. Unknown valid
+/// sizes are conservative; memory aliasing is checked by the caller.
+bool requiresA3MatmulDependencyBarrier(Operation *src, Operation *dst);
+
 /// True if the pipe is a concrete endpoint pipe (not PIPE_ALL/UNASSIGNED).
 bool isConcreteSyncPipe(PIPE pipe);
 

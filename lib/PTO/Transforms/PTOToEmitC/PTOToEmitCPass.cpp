@@ -680,6 +680,8 @@ struct EmitPTOManualPass
 
     emitPreambleHelpers(mop, ctx);
 
+    prepareTileMatmulTf32Regions(mop);
+
     if (failed(preLowerSCF(mop, ctx)))
       return signalPassFailure();
 

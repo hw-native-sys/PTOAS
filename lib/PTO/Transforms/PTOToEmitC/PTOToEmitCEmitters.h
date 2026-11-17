@@ -62,6 +62,9 @@
 namespace mlir {
 namespace pto {
 
+void prepareTileMatmulTf32Regions(ModuleOp module);
+
+
 using namespace mlir;
 using namespace mlir::pto;
 

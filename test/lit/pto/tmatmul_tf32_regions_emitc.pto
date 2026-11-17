@@ -1,0 +1,161 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+
+// RUN: ptoas --pto-arch=a5 --enable-insert-sync --check-sync-self-coverage %s | FileCheck %s --check-prefixes=COMMON,A5
+// RUN: ptoas --pto-arch=a5 %s | FileCheck %s --check-prefix=EXPLICIT
+// RUN: sed 's/ {tf32_mode = #pto<tf32_mode round_[a-z]*>}//g' %s | ptoas --pto-arch=a3 --enable-insert-sync --check-sync-self-coverage | FileCheck %s --check-prefix=A3SYNC
+// RUN: sed 's/ {tf32_mode = #pto<tf32_mode round_[a-z]*>}//g' %s | ptoas --pto-arch=a3 --enable-unified-sync --check-sync-self-coverage | FileCheck %s --check-prefix=A3SYNC
+
+!left = !pto.tile_buf<loc=left, dtype=f32, rows=32, cols=32, v_row=32, v_col=32, blayout=col_major, slayout=row_major, fractal=512, pad=0>
+!right = !pto.tile_buf<loc=right, dtype=f32, rows=32, cols=32, v_row=32, v_col=32, blayout=row_major, slayout=col_major, fractal=512, pad=0>
+!acc = !pto.tile_buf<loc=acc, dtype=f32, rows=32, cols=32, v_row=32, v_col=32, blayout=col_major, slayout=row_major, fractal=1024, pad=0>
+!bias = !pto.tile_buf<loc=bias, dtype=f32, rows=1, cols=32, v_row=1, v_col=32, blayout=row_major, slayout=none_box, fractal=512, pad=0>
+
+module {
+  func.func @chain(%a: !left, %b: !right, %c: !acc) {
+    pto.tmatmul ins(%a, %b : !left, !right) outs(%c : !acc) {tf32_mode = #pto<tf32_mode round_away>}
+    pto.tmatmul.acc ins(%c, %a, %b : !acc, !left, !right) outs(%c : !acc) {tf32_mode = #pto<tf32_mode round_away>}
+    return
+  }
+  func.func @same_m(%a: !left, %b: !right, %c: !acc) {
+    pto.tmatmul ins(%a, %b : !left, !right) outs(%c : !acc)
+    pto.tmatmul.acc ins(%c, %a, %b : !acc, !left, !right) outs(%c : !acc)
+    return
+  }
+  func.func @loop(%a: !left, %b: !right, %c: !acc, %n: index) {
+    %zero = arith.constant 0 : index
+    %one = arith.constant 1 : index
+    scf.for %i = %zero to %n step %one {
+    pto.tmatmul ins(%a, %b : !left, !right) outs(%c : !acc) {tf32_mode = #pto<tf32_mode round_away>}
+    pto.tmatmul.acc ins(%c, %a, %b : !acc, !left, !right) outs(%c : !acc) {tf32_mode = #pto<tf32_mode round_away>}
+    }
+    return
+  }
+  func.func @mode_boundary(%a: !left, %b: !right, %c: !acc) {
+    pto.tmatmul ins(%a, %b : !left, !right) outs(%c : !acc) {tf32_mode = #pto<tf32_mode round_away>}
+    pto.tmatmul.acc ins(%c, %a, %b : !acc, !left, !right) outs(%c : !acc) {tf32_mode = #pto<tf32_mode round_even>}
+    pto.tmatmul ins(%a, %b : !left, !right) outs(%c : !acc)
+    return
+  }
+  func.func @explicit_sync(%a: !left, %b: !right, %c: !acc) {
+    pto.tmatmul ins(%a, %b : !left, !right) outs(%c : !acc) {tf32_mode = #pto<tf32_mode round_away>}
+    pto.barrier #pto.pipe<PIPE_M>
+    pto.set_flag [#pto.pipe<PIPE_M>, #pto.pipe<PIPE_FIX>, #pto.event<EVENT_ID0>]
+    pto.wait_flag [#pto.pipe<PIPE_M>, #pto.pipe<PIPE_FIX>, #pto.event<EVENT_ID0>]
+    pto.tmatmul.acc ins(%c, %a, %b : !acc, !left, !right) outs(%c : !acc) {tf32_mode = #pto<tf32_mode round_away>}
+    return
+  }
+  func.func private @opaque()
+  func.func @call_boundary(%a: !left, %b: !right, %c: !acc) {
+    pto.tmatmul ins(%a, %b : !left, !right) outs(%c : !acc) {tf32_mode = #pto<tf32_mode round_away>}
+    func.call @opaque() : () -> ()
+    pto.tmatmul.acc ins(%c, %a, %b : !acc, !left, !right) outs(%c : !acc) {tf32_mode = #pto<tf32_mode round_away>}
+    return
+  }
+  func.func @conditional(%a: !left, %b: !right, %c: !acc, %cond: i1) {
+    scf.if %cond {
+      pto.tmatmul ins(%a, %b : !left, !right) outs(%c : !acc) {tf32_mode = #pto<tf32_mode round_away>}
+    } else {
+      pto.tmatmul ins(%a, %b : !left, !right) outs(%c : !acc) {tf32_mode = #pto<tf32_mode round_away>}
+    }
+    return
+  }
+
+}
+
+// COMMON-LABEL: void chain(
+// A5-NOT: pipe_barrier(PIPE_M)
+// COMMON: uint64_t [[SAVED:__pto_saved_ctrl_[0-9]+]] = get_ctrl();
+// COMMON: set_ctrl(sbitset1(sbitset1([[SAVED]], 46), 47));
+// COMMON: TMATMUL(
+// A5-NOT: pipe_barrier(PIPE_M)
+// COMMON-NOT: set_ctrl
+// COMMON-NOT: get_ctrl
+// COMMON: TMATMUL_ACC(
+// COMMON-NEXT: set_ctrl([[SAVED]]);
+// COMMON-NOT: get_ctrl
+// A5-NOT: pipe_barrier(PIPE_M)
+// COMMON-LABEL: void same_m(
+// COMMON-NOT: get_ctrl
+// COMMON: TMATMUL(
+// A5-NOT: pipe_barrier(PIPE_M)
+// COMMON: TMATMUL_ACC(
+// COMMON-NOT: get_ctrl
+// COMMON-LABEL: void loop(
+// A5-NOT: pipe_barrier(PIPE_M)
+// COMMON: uint64_t [[LOOP:__pto_saved_ctrl_[0-9]+]] = get_ctrl();
+// COMMON: set_ctrl(sbitset1(sbitset1([[LOOP]], 46), 47));
+// COMMON: for (
+// COMMON-NOT: get_ctrl
+// COMMON-NOT: set_ctrl
+// COMMON: TMATMUL(
+// A5-NOT: pipe_barrier(PIPE_M)
+// COMMON: TMATMUL_ACC(
+// COMMON-NOT: set_ctrl
+// A5-NOT: pipe_barrier(PIPE_M)
+// COMMON: set_ctrl([[LOOP]]);
+// A5-NOT: pipe_barrier(PIPE_M)
+// COMMON-LABEL: void mode_boundary(
+// COMMON: get_ctrl();
+// COMMON: TMATMUL(
+// COMMON: set_ctrl({{__pto_saved_ctrl_[0-9]+}});
+// COMMON: get_ctrl();
+// COMMON: set_ctrl(sbitset0(
+// COMMON: TMATMUL_ACC(
+// COMMON: set_ctrl({{__pto_saved_ctrl_[0-9]+}});
+// COMMON: TMATMUL(
+// COMMON: return;
+
+// COMMON-LABEL: void conditional(
+// COMMON: uint64_t [[COND:__pto_saved_ctrl_[0-9]+]] = get_ctrl();
+// COMMON: if (
+// COMMON-NOT: get_ctrl
+// COMMON-NOT: set_ctrl
+// COMMON: TMATMUL(
+// COMMON: } else {
+// COMMON-NOT: get_ctrl
+// COMMON-NOT: set_ctrl
+// COMMON: TMATMUL(
+// COMMON: set_ctrl([[COND]]);
+
+// COMMON-LABEL: void call_boundary(
+// COMMON: get_ctrl();
+// COMMON: TMATMUL(
+// COMMON: set_ctrl({{__pto_saved_ctrl_[0-9]+}});
+// COMMON: opaque();
+// COMMON: get_ctrl();
+// COMMON: TMATMUL_ACC(
+// COMMON: set_ctrl({{__pto_saved_ctrl_[0-9]+}});
+
+// A3SYNC-LABEL: void same_m(
+// A3SYNC: TMATMUL(
+// A3SYNC-NEXT: pipe_barrier(PIPE_M);
+// A3SYNC-NEXT: TMATMUL_ACC(
+// A3SYNC-LABEL: void loop(
+// A3SYNC: for (
+// A3SYNC: TMATMUL(
+// A3SYNC-NEXT: pipe_barrier(PIPE_M);
+// A3SYNC-NEXT: TMATMUL_ACC(
+// A3SYNC: pipe_barrier(PIPE_M);
+// A3SYNC: return;
+
+// A3SYNC-LABEL: void explicit_sync(
+// A3SYNC: TMATMUL(
+// A3SYNC-NEXT: pipe_barrier(PIPE_M);
+// A3SYNC-NEXT: set_flag(PIPE_M, PIPE_FIX, EVENT_ID0);
+// A3SYNC-NEXT: wait_flag(PIPE_M, PIPE_FIX, EVENT_ID0);
+// A3SYNC-NEXT: TMATMUL_ACC(
+
+// EXPLICIT-LABEL: void explicit_sync(
+// EXPLICIT: get_ctrl();
+// EXPLICIT: TMATMUL(
+// EXPLICIT-NEXT: pipe_barrier(PIPE_M);
+// EXPLICIT-NEXT: set_flag(PIPE_M, PIPE_FIX, EVENT_ID0);
+// EXPLICIT-NEXT: wait_flag(PIPE_M, PIPE_FIX, EVENT_ID0);
+// EXPLICIT-NEXT: TMATMUL_ACC(
+// EXPLICIT-NEXT: set_ctrl({{__pto_saved_ctrl_[0-9]+}});

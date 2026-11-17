@@ -12,6 +12,9 @@
 #include "LoadStoreInternal.h"
 #include "PTO/Support/CodeConstants.h"
 
+#include "mlir/Dialect/SCF/IR/SCF.h"
+#include "mlir/Interfaces/SideEffectInterfaces.h"
+
 #include <string>
 
 using namespace mlir;
@@ -22,29 +25,19 @@ using namespace mlir::pto;
 namespace mlir {
 namespace pto {
 
-// Per-operation HF32 control scope. `tf32_mode` on a tile matmul selects HF32
-// input rounding for that one operation. The hardware keeps both the enable bit
-// and the rounding-mode bit in CTRL (CTRL[46] = HF32 enable, CTRL[47] = rounding
-// mode), so the generated code saves the whole CTRL value, applies the requested
-// bits, issues the matmul and restores the entry state. Restoring the full word
-// (instead of clearing bit 46 only) keeps an HF32 op from leaking its rounding
-// mode into later ordinary FP32 matmuls.
+// TF32 regions are planned before dialect conversion, independently of rewrite
+// order. Only known CTRL-neutral operations and structured single-entry/exit
+// control flow may share a region. Unknown operations are hard boundaries.
+// CTRL-to-MMAD ordering follows the target intrinsic contract, as in pto-isa;
+// region boundaries do not introduce M-pipe memory synchronization.
 
-/// Unique suffix so that sibling scopes never produce identical verbatim text
-/// (keeps the statements distinguishable in generated code and in tests).
-static unsigned getNextTf32CtrlScopeId()
-{
-    static unsigned nextId = 0;
-    return nextId++;
-}
-
-/// Emits `{ uint64_t <saved> = get_ctrl(); set_ctrl(...);` and returns the
+/// Emits `uint64_t <saved> = get_ctrl(); set_ctrl(...);` and returns the
 /// variable name that the matching exit call must restore.
 static std::string emitTf32CtrlScopeEnter(
-    Location loc, pto::Tf32Mode mode, ConversionPatternRewriter &rewriter)
+    Location loc, pto::Tf32Mode mode, unsigned scopeId, OpBuilder &rewriter)
 {
     std::string saved =
-        "__pto_saved_ctrl_" + std::to_string(getNextTf32CtrlScopeId());
+        "__pto_saved_ctrl_" + std::to_string(scopeId);
     std::string enableExpr =
         "sbitset1(" + saved + ", " + std::to_string(kValue46) + ")";
     std::string ctrlExpr =
@@ -52,7 +45,6 @@ static std::string emitTf32CtrlScopeEnter(
             ? "sbitset1(" + enableExpr + ", " + std::to_string(kValue47) + ")"
             : "sbitset0(" + enableExpr + ", " + std::to_string(kValue47) + ")";
 
-    rewriter.create<emitc::VerbatimOp>(loc, "{");
     rewriter.create<emitc::VerbatimOp>(
         loc, "uint64_t " + saved + " = get_ctrl();");
     rewriter.create<emitc::VerbatimOp>(loc, "set_ctrl(" + ctrlExpr + ");");
@@ -61,31 +53,137 @@ static std::string emitTf32CtrlScopeEnter(
 
 /// Closes the scope opened by emitTf32CtrlScopeEnter, restoring CTRL.
 static void emitTf32CtrlScopeExit(
-    Location loc, StringRef saved, ConversionPatternRewriter &rewriter)
+    Location loc, StringRef saved, OpBuilder &rewriter)
 {
     rewriter.create<emitc::VerbatimOp>(loc, "set_ctrl(" + saved.str() + ");");
-    rewriter.create<emitc::VerbatimOp>(loc, "}");
 }
 
-/// Shared body of the tile matmul EmitC lowerings: prepares the acc_phase
-/// template arguments and wraps the emitted call in the per-operation HF32 CTRL
-/// scope when the op asks for one. Keeping the bookkeeping here avoids repeating
-/// it in the tmatmul / tmatmul.acc / tmatmul.bias patterns.
+static bool isTileMatmul(Operation *op)
+{
+    return isa<pto::TMatmulOp, pto::TMatmulAccOp, pto::TMatmulBiasOp>(op);
+}
+
+static bool collectTf32Region(Operation *op, Attribute &mode,
+                              SmallVectorImpl<Operation *> &matmuls);
+
+static bool collectNestedTf32Regions(Operation *op, Attribute &mode,
+                                     SmallVectorImpl<Operation *> &matmuls)
+{
+    for (Region &region : op->getRegions()) {
+        for (Block &block : region) {
+            for (Operation &nested : block) {
+                if (!collectTf32Region(&nested, mode, matmuls)) {
+                    return false;
+                }
+            }
+        }
+    }
+    return true;
+}
+
+// A missing mode is neutral only for operations known not to inspect CTRL.
+// Ordinary FP32 matmul and unknown calls must terminate the current region.
+static bool collectTf32Region(Operation *op, Attribute &mode,
+                              SmallVectorImpl<Operation *> &matmuls)
+{
+    if (isTileMatmul(op)) {
+        Attribute requested = op->getAttr("tf32_mode");
+        if (!requested || (mode && requested != mode)) {
+            return false;
+        }
+        mode = requested;
+        matmuls.push_back(op);
+        return true;
+    }
+    if (isa<scf::ForOp, scf::IfOp>(op)) {
+        return collectNestedTf32Regions(op, mode, matmuls);
+    }
+    StringRef name = op->getName().getStringRef();
+    if (isa<func::CallOp, pto::GetCtrlOp, pto::SetCtrlOp>(op)) {
+        return false;
+    }
+    return op->getNumRegions() == 0 &&
+           (isMemoryEffectFree(op) || isa<scf::YieldOp>(op) ||
+            name == "pto.tload" || name == "pto.tstore" ||
+            name == "pto.tmov" || name == "pto.set_flag" ||
+            name == "pto.wait_flag" || name == "pto.barrier");
+}
+
+static void emitTf32Region(Operation *first, Operation *last, Attribute mode, unsigned scopeId)
+{
+    OpBuilder builder(first);
+    // Keep descriptors visible after CTRL restoration; no C++ brace scope.
+    std::string saved = emitTf32CtrlScopeEnter(
+        first->getLoc(), cast<pto::Tf32ModeAttr>(mode).getValue(), scopeId, builder);
+    builder.setInsertionPointAfter(last);
+    emitTf32CtrlScopeExit(last->getLoc(), saved, builder);
+}
+
+static void prepareTf32Block(Block &block, unsigned &scopeId);
+
+static void prepareNestedTf32Blocks(Operation &op, unsigned &scopeId)
+{
+    for (Region &region : op.getRegions()) {
+        for (Block &nested : region) {
+            prepareTf32Block(nested, scopeId);
+        }
+    }
+}
+
+static void prepareTf32Block(Block &block, unsigned &scopeId)
+{
+    Operation *first = nullptr;
+    Operation *last = nullptr;
+    Attribute mode;
+    auto flush = [&]() {
+        if (first) {
+            emitTf32Region(first, last, mode, scopeId++);
+        }
+        first = last = nullptr;
+        mode = {};
+    };
+    for (Operation &op : llvm::make_early_inc_range(block)) {
+        Attribute nextMode = mode;
+        SmallVector<Operation *> nextMatmuls;
+        if (!collectTf32Region(&op, nextMode, nextMatmuls)) {
+            flush();
+            nextMode = {};
+            nextMatmuls.clear();
+            if (!collectTf32Region(&op, nextMode, nextMatmuls)) {
+                prepareNestedTf32Blocks(op, scopeId);
+                continue;
+            }
+        }
+        if (!nextMatmuls.empty()) {
+            if (!first) {
+                first = &op;
+            }
+            last = &op;
+            mode = nextMode;
+        }
+    }
+    flush();
+}
+
+void prepareTileMatmulTf32Regions(ModuleOp module)
+{
+    unsigned scopeId = 0;
+    module.walk([&](func::FuncOp func) {
+        for (Block &block : func.getBody()) {
+            prepareTf32Block(block, scopeId);
+        }
+    });
+}
+
+// CTRL regions have already been materialized before conversion. Keep the
+// per-op pattern concerned only with the matmul call and accumulation phase.
 template <typename OpT, typename EmitCallFn>
 static LogicalResult lowerTileMatmulEmitC(
     OpT op, ConversionPatternRewriter &rewriter, EmitCallFn emitCall)
 {
     ArrayAttr templateArgs =
         buildAccPhaseTemplateArgs(rewriter, op.getAccPhase());
-    Location loc = op.getLoc();
-    std::string savedCtrl;
-    if (std::optional<pto::Tf32Mode> mode = op.getTf32Mode()) {
-        savedCtrl = emitTf32CtrlScopeEnter(loc, *mode, rewriter);
-    }
     emitCall(templateArgs);
-    if (!savedCtrl.empty()) {
-        emitTf32CtrlScopeExit(loc, savedCtrl, rewriter);
-    }
     return success();
 }
 
@@ -267,7 +365,7 @@ struct PTOTMatmulToTMATMUL : public OpConversionPattern<pto::TMatmulOp> {
     Value rhs = adaptor.getRhs(); // B (Right)
     Value dst = adaptor.getDst(); // C (Acc)
 
-    // 2. acc_phase 与 tf32_mode 的公共处理（模板参数 + CTRL 作用域）
+    // 2. Emit accumulation-phase template arguments; CTRL regions are preplanned.
     return lowerTileMatmulEmitC(op, rewriter, [&](ArrayAttr templateArgs) {
         emitTileCallAndReplace(op.getOperation(), rewriter, "TMATMUL",
             templateArgs, ValueRange{dst, lhs, rhs}, dst);
@@ -331,7 +429,7 @@ struct PTOTMatmulAccToTMATMULACC : public OpConversionPattern<pto::TMatmulAccOp>
     Value rhs   = adaptor.getRhs();   // B (Right)
     Value dst   = adaptor.getDst();   // AccNew
 
-    // 2. acc_phase 与 tf32_mode 的公共处理（模板参数 + CTRL 作用域）
+    // 2. Emit accumulation-phase template arguments; CTRL regions are preplanned.
     return lowerTileMatmulEmitC(op, rewriter, [&](ArrayAttr templateArgs) {
         emitTileCallAndReplace(op.getOperation(), rewriter, "TMATMUL_ACC",
             templateArgs, ValueRange{dst, accIn, lhs, rhs}, dst);

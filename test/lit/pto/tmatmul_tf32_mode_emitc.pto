@@ -6,7 +6,8 @@
 // INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
 // See LICENSE in the root of the software repository for the full text of the License.
 
-// RUN: ptoas --pto-arch=a5 %s 2>&1 | FileCheck %s --check-prefix=A5
+// RUN: ptoas --pto-arch=a5 %s 2>&1 | FileCheck %s --check-prefix=A5 --implicit-check-not='pipe_barrier(PIPE_M)'
+// RUN: ptoas --pto-arch=a5 --enable-insert-sync --check-sync-self-coverage %s | FileCheck %s --check-prefix=A5 --implicit-check-not='pipe_barrier(PIPE_M)'
 
 // Per-operation HF32 selection on FP32 tile matmul: the EmitC backend must wrap
 // the TMATMUL* call in a CTRL scope that enables HF32 (CTRL[46]) with the
@@ -44,6 +45,13 @@ module attributes {pto.target_arch = "a5"} {
     pto.tmatmul.bias ins(%a, %b, %z : !left, !right, !bias) outs(%c : !acc) {tf32_mode = #pto<tf32_mode round_even>}
     return
   }
+  func.func private @tf32_surrounded(%a: !left, %b: !right, %c: !acc) {
+    pto.tmatmul ins(%a, %b : !left, !right) outs(%c : !acc)
+    pto.tmatmul ins(%a, %b : !left, !right) outs(%c : !acc) {tf32_mode = #pto<tf32_mode round_away>}
+    pto.tmatmul.acc ins(%c, %a, %b : !acc, !left, !right) outs(%c : !acc) {tf32_mode = #pto<tf32_mode round_away>}
+    pto.tmatmul ins(%a, %b : !left, !right) outs(%c : !acc)
+    return
+  }
 }
 
 // A5-LABEL: static AICORE void tf32_default(
@@ -64,3 +72,11 @@ module attributes {pto.target_arch = "a5"} {
 // A5:      static AICORE void tf32_bias_round_even(
 // A5:      set_ctrl(sbitset0(sbitset1({{__pto_saved_ctrl_[0-9]+}}, 46), 47));
 // A5:      TMATMUL_BIAS({{.*}});
+// A5-LABEL: static AICORE void tf32_surrounded(
+// A5:      TMATMUL({{.*}});
+// A5-NEXT: uint64_t [[SAVED:__pto_saved_ctrl_[0-9]+]] = get_ctrl();
+// A5-NEXT: set_ctrl(sbitset1(sbitset1([[SAVED]], 46), 47));
+// A5-NEXT: TMATMUL({{.*}});
+// A5-NEXT: TMATMUL_ACC({{.*}});
+// A5-NEXT: set_ctrl([[SAVED]]);
+// A5-NEXT: TMATMUL({{.*}});
