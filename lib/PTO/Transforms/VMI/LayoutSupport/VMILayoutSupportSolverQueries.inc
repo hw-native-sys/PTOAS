@@ -24,7 +24,7 @@
 FailureOr<SmallVector<VMILoadLayoutFact, mlir::pto::kValue4>> VMILayoutSupport::getLoadLayoutFacts(
     VMIVRegType resultType, std::string* reason) const
 {
-    auto fail = [&](const Twine& message) -> FailureOr<SmallVector<VMILoadLayoutFact, 4>> {
+    auto fail = [&reason](const Twine& message) -> FailureOr<SmallVector<VMILoadLayoutFact, 4>> {
         if (reason) {
             *reason = message.str();
         }
@@ -55,7 +55,7 @@ FailureOr<SmallVector<VMILoadLayoutFact, mlir::pto::kValue4>> VMILayoutSupport::
 FailureOr<SmallVector<VMIStoreLayoutFact, mlir::pto::kValue4>> VMILayoutSupport::getStoreLayoutFacts(
     VMIVRegType valueType, std::string* reason) const
 {
-    auto fail = [&](const Twine& message) -> FailureOr<SmallVector<VMIStoreLayoutFact, 4>> {
+    auto fail = [&reason](const Twine& message) -> FailureOr<SmallVector<VMIStoreLayoutFact, 4>> {
         if (reason) {
             *reason = message.str();
         }
@@ -86,7 +86,7 @@ FailureOr<SmallVector<VMIStoreLayoutFact, mlir::pto::kValue4>> VMILayoutSupport:
 FailureOr<SmallVector<VMICastLayoutFact, mlir::pto::kValue4>> VMILayoutSupport::getCastLayoutFacts(
     VMIVRegType sourceType, VMIVRegType resultType, std::string* reason) const
 {
-    auto fail = [&](const Twine& message) -> FailureOr<SmallVector<VMICastLayoutFact, 4>> {
+    auto fail = [&reason](const Twine& message) -> FailureOr<SmallVector<VMICastLayoutFact, 4>> {
         if (reason) {
             *reason = message.str();
         }
@@ -162,7 +162,7 @@ FailureOr<SmallVector<VMICastLayoutFact, mlir::pto::kValue4>> VMILayoutSupport::
 FailureOr<VMICastLayoutFact> VMILayoutSupport::getSameWidthCastLayoutFact(
     VMIVRegType sourceType, VMIVRegType resultType, std::string* reason) const
 {
-    auto fail = [&](const Twine& message) -> FailureOr<VMICastLayoutFact> {
+    auto fail = [&reason](const Twine& message) -> FailureOr<VMICastLayoutFact> {
         if (reason) {
             *reason = message.str();
         }
@@ -189,7 +189,7 @@ FailureOr<VMICastLayoutFact> VMILayoutSupport::getSameWidthCastLayoutFact(
 }
 
 LogicalResult VMILayoutSupport::validateCastOperationRelation(
-    Operation* op, VMILayoutAttr sourceLayout, VMILayoutAttr resultLayout, std::string* reason) const
+    const Operation* op, VMILayoutAttr sourceLayout, VMILayoutAttr resultLayout, std::string* reason) const
 {
     if (!op || !sourceLayout || !resultLayout) {
         if (reason) {
@@ -206,7 +206,7 @@ LogicalResult VMILayoutSupport::validateCastOperationRelation(
 /// rather than borrowing another op family's wording.
 static LogicalResult checkSourceFillsPhysicalChunks(VMIVRegType sourceType, std::string* reason)
 {
-    auto fail = [&](const Twine& message) -> LogicalResult {
+    auto fail = [&reason](const Twine& message) -> LogicalResult {
         if (reason) {
             *reason = message.str();
         }
@@ -225,7 +225,7 @@ static LogicalResult checkSourceFillsPhysicalChunks(VMIVRegType sourceType, std:
 FailureOr<VMIReduceLayoutFact> VMILayoutSupport::getReduceLayoutFactForLayouts(
     VMIVRegType sourceType, VMIMaskType maskType, VMIVRegType resultType, std::string* reason) const
 {
-    auto fail = [&](const Twine& message) -> FailureOr<VMIReduceLayoutFact> {
+    auto fail = [&reason](const Twine& message) -> FailureOr<VMIReduceLayoutFact> {
         if (reason) {
             *reason = message.str();
         }
@@ -256,7 +256,7 @@ FailureOr<VMIReduceLayoutFact> VMILayoutSupport::getReduceLayoutFactForLayouts(
 static FailureOr<SmallVector<VMIInterleaveLayoutFact, mlir::pto::kValue4>> getAllInterleaveLayoutFactsImpl(
     ArrayRef<InterleaveLayoutPattern> patterns, VMIVRegType valueType, std::string* reason)
 {
-    auto fail = [&](const Twine& message) -> FailureOr<SmallVector<VMIInterleaveLayoutFact, 4>> {
+    auto fail = [&reason](const Twine& message) -> FailureOr<SmallVector<VMIInterleaveLayoutFact, 4>> {
         if (reason) {
             *reason = message.str();
         }
@@ -310,8 +310,9 @@ static SmallVector<VMIGroupBroadcastLoadLayoutFact, mlir::pto::kValue4> enumerat
         }
         // Rows that differ only in their block spelling can materialize the same
         // result layout; the fork keeps one fact per layout.
-        bool duplicate = llvm::any_of(
-            facts, [&](const VMIGroupBroadcastLoadLayoutFact& fact) { return fact.resultLayout == resultLayout; });
+        bool duplicate = llvm::any_of(facts, [&resultLayout](const VMIGroupBroadcastLoadLayoutFact& fact) {
+            return fact.resultLayout == resultLayout;
+        });
         if (duplicate) {
             continue;
         }
@@ -325,7 +326,7 @@ static SmallVector<VMIGroupBroadcastLoadLayoutFact, mlir::pto::kValue4> enumerat
 FailureOr<SmallVector<VMIGroupBroadcastLoadLayoutFact, mlir::pto::kValue4>>
 VMILayoutSupport::getGroupBroadcastLoadLayoutFacts(VMIGroupBroadcastLoadOp op, std::string* reason) const
 {
-    auto fail = [&](const Twine& message) -> FailureOr<SmallVector<VMIGroupBroadcastLoadLayoutFact, 4>> {
+    auto fail = [&reason](const Twine& message) -> FailureOr<SmallVector<VMIGroupBroadcastLoadLayoutFact, 4>> {
         if (reason) {
             *reason = message.str();
         }
@@ -366,7 +367,7 @@ VMILayoutSupport::getGroupBroadcastLoadLayoutFacts(VMIGroupBroadcastLoadOp op, s
 FailureOr<SmallVector<VMIGroupIotaLayoutFact, mlir::pto::kValue4>> VMILayoutSupport::getGroupIotaLayoutFacts(
     VMIVRegType resultType, std::string* reason) const
 {
-    auto fail = [&](const Twine& message) -> FailureOr<SmallVector<VMIGroupIotaLayoutFact, 4>> {
+    auto fail = [&reason](const Twine& message) -> FailureOr<SmallVector<VMIGroupIotaLayoutFact, 4>> {
         if (reason) {
             *reason = message.str();
         }
@@ -425,7 +426,7 @@ static bool isScalarBroadcastLoadElementType(Type elementType)
 FailureOr<VMIGroupSlotLayoutFact> VMILayoutSupport::getGroupSlotLoadLayoutFact(
     VMIVRegType resultType, Value sourceGroupStride, int64_t numGroups, std::string* reason) const
 {
-    auto fail = [&](const Twine& message) -> FailureOr<VMIGroupSlotLayoutFact> {
+    auto fail = [&reason](const Twine& message) -> FailureOr<VMIGroupSlotLayoutFact> {
         if (reason) {
             *reason = message.str();
         }

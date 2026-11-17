@@ -206,7 +206,7 @@ static void materializeBarriers(const AnchorPlacements& placements, VecScopeMemB
             bp.anchor = anchor;
             bp.kind = entry.kind;
             bp.resolvedHazards.assign(entry.hazards.begin(), entry.hazards.end());
-            bp.anchorKind = placements.latchAnchors.count({anchor}) ? BarrierAnchorKind::BeforeLoopTerminator :
+            bp.anchorKind = placements.latchAnchors.count({anchor}) != 0 ? BarrierAnchorKind::BeforeLoopTerminator :
                                                                       BarrierAnchorKind::BeforeOperation;
             sortUniqueHazards(bp.resolvedHazards);
             plan.barriers.push_back(std::move(bp));
@@ -221,7 +221,7 @@ static void normalizeBarriers(VecScopeMemBarPlan& plan)
     SmallVector<BarrierPlacement> merged;
     for (const auto& barrier : plan.barriers) {
         unsigned family = static_cast<unsigned>(barrier.kind) / 4;
-        auto existing = llvm::find_if(merged, [&](const BarrierPlacement& other) {
+        auto existing = llvm::find_if(merged, [&barrier, &family](const BarrierPlacement& other) {
             return other.anchor == barrier.anchor && static_cast<unsigned>(other.kind) / 4 == family;
         });
         if (existing != merged.end()) {

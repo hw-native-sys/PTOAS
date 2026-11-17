@@ -271,7 +271,7 @@ verifyTLoadConvTileLayoutPair(TLoadOp op, PTOArch arch,
         "source view and the destination tile");
   }
   using CL = pto::ConvLayout;
-  auto same = [&](CL gm, CL tile) {
+  auto same = [&srcLayout, &dstLayout](CL gm, CL tile) {
     return srcLayout.getValue() == gm && dstLayout.getValue() == tile;
   };
   const bool legal =

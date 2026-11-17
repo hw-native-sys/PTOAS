@@ -97,10 +97,14 @@ inline FailureOr<int64_t> getCastIntrinsicRearrangementCost(
     auto assignedSource = VMIVRegType::get(
         sourceType.getContext(), sourceType.getElementCount(), sourceType.getElementType(), sourceLayout);
     auto sourceArity = getVMIPhysicalArity(assignedSource);
-    if (failed(sourceArity) || *sourceArity <= 0 || *sourceArity > std::numeric_limits<int64_t>::max() / levels) {
+    // `levels` is zero when the source arity needs no halving; the product is
+    // then zero. Overflow detection keeps the guard independent of the
+    // divisor, which removes the division-by-zero path.
+    int64_t cost = 0;
+    if (failed(sourceArity) || *sourceArity <= 0 || llvm::MulOverflow(*sourceArity, levels, cost)) {
         return failure();
     }
-    return *sourceArity * levels;
+    return cost;
 }
 
 /// Rearrangement instructions a mask granularity conversion performs itself:

@@ -388,7 +388,7 @@ LogicalResult ConvTileConfigAttr::verify(function_ref<InFlightDiagnostic()> emit
                                          IntegerAttr dilationW,
                                          IntegerAttr strideH,
                                          IntegerAttr strideW,
-                                         Attribute padValueAttr,
+                                         Attribute padValue,
                                          IntegerAttr channelSize,
                                          IntegerAttr repeatStride,
                                          IntegerAttr repeatTime,
@@ -396,7 +396,7 @@ LogicalResult ConvTileConfigAttr::verify(function_ref<InFlightDiagnostic()> emit
                                          IntegerAttr dstStride,
                                          IntegerAttr dstMposition,
                                          BoolAttr transpose) {
-  auto checkI32 = [&](IntegerAttr attr, StringRef name) -> LogicalResult {
+  auto checkI32 = [&emitError](IntegerAttr attr, StringRef name) -> LogicalResult {
     if (!attr || !attr.getType().isSignlessInteger(kI32BitWidth)) {
       return emitError() << name << " must be an i32 integer attr", failure();
     }
@@ -431,7 +431,7 @@ LogicalResult ConvTileConfigAttr::verify(function_ref<InFlightDiagnostic()> emit
     }
   }
 
-  auto checkNonNegative = [&](IntegerAttr attr, StringRef name) -> LogicalResult {
+  auto checkNonNegative = [&emitError](IntegerAttr attr, StringRef name) -> LogicalResult {
     if (attr.getInt() < 0) {
       return emitError() << name << " must be non-negative", failure();
     }
@@ -461,8 +461,8 @@ LogicalResult ConvTileConfigAttr::verify(function_ref<InFlightDiagnostic()> emit
   // into the runtime (e.g. stride_h = 256 becomes 0).
   constexpr int64_t kU8Max = 255;
   constexpr int64_t kU16Max = 65535;
-  auto checkUpperBound = [&](IntegerAttr attr, int64_t bound,
-                             StringRef name) -> LogicalResult {
+  auto checkUpperBound = [&emitError](IntegerAttr attr, int64_t bound,
+                                      StringRef name) -> LogicalResult {
     if (attr.getInt() > bound) {
       return emitError() << name << " must be in [0, " << bound << "]", failure();
     }
@@ -485,9 +485,9 @@ LogicalResult ConvTileConfigAttr::verify(function_ref<InFlightDiagnostic()> emit
     return failure();
   }
 
-  if (!padValueAttr ||
-      (!llvm::isa<IntegerAttr>(padValueAttr) &&
-       !llvm::isa<FloatAttr>(padValueAttr))) {
+  if (!padValue ||
+      (!llvm::isa<IntegerAttr>(padValue) &&
+       !llvm::isa<FloatAttr>(padValue))) {
     return emitError() << "pad_value must be an integer or float attr", failure();
   }
 
@@ -598,36 +598,36 @@ static LogicalResult parseConvTileConfigField(AsmParser &parser,
 
 } // namespace
 
-Attribute ConvTileConfigAttr::parse(AsmParser &p, Type) {
-  MLIRContext *ctx = p.getContext();
+Attribute ConvTileConfigAttr::parse(AsmParser &odsParser, Type) {
+  MLIRContext *ctx = odsParser.getContext();
   ConvTileConfigFields fields = getDefaultConvTileConfigFields(ctx);
-  auto emitError = [&p]() -> InFlightDiagnostic {
-    return p.emitError(p.getCurrentLocation());
+  auto emitError = [&odsParser]() -> InFlightDiagnostic {
+    return odsParser.emitError(odsParser.getCurrentLocation());
   };
   bool parsedGreater = false;
 
-  auto consumeFieldTerminator = [&]() -> LogicalResult {
-    if (succeeded(p.parseOptionalGreater())) {
+  auto consumeFieldTerminator = [&odsParser, &parsedGreater]() -> LogicalResult {
+    if (succeeded(odsParser.parseOptionalGreater())) {
       parsedGreater = true;
       return success();
     }
-    return p.parseComma();
+    return odsParser.parseComma();
   };
 
-  if (p.parseLess()) {
+  if (odsParser.parseLess()) {
     return {};
   }
 
-  if (succeeded(p.parseOptionalGreater())) {
+  if (succeeded(odsParser.parseOptionalGreater())) {
     return getConvTileConfigAttr(emitError, ctx, fields);
   }
 
   while (!parsedGreater) {
     StringRef key;
-    if (p.parseKeyword(&key) || p.parseEqual()) {
+    if (odsParser.parseKeyword(&key) || odsParser.parseEqual()) {
       return {};
     }
-    if (failed(parseConvTileConfigField(p, key, fields)) ||
+    if (failed(parseConvTileConfigField(odsParser, key, fields)) ||
         failed(consumeFieldTerminator())) {
       return {};
     }
@@ -636,38 +636,38 @@ Attribute ConvTileConfigAttr::parse(AsmParser &p, Type) {
   return getConvTileConfigAttr(emitError, ctx, fields);
 }
 
-void ConvTileConfigAttr::print(AsmPrinter &p) const {
-  p << "<";
-  printConvTileIntField(p, "fmap_h", getFmapH());
-  p << ", ";
-  printConvTileIntField(p, "fmap_w", getFmapW());
-  p << ", pad_list=";
-  printConvTilePadList(p, getPadList());
-  p << ", ";
-  printConvTileIntField(p, "filter_h", getFilterH());
-  p << ", ";
-  printConvTileIntField(p, "filter_w", getFilterW());
-  p << ", ";
-  printConvTileIntField(p, "dilation_h", getDilationH());
-  p << ", ";
-  printConvTileIntField(p, "dilation_w", getDilationW());
-  p << ", ";
-  printConvTileIntField(p, "stride_h", getStrideH());
-  p << ", ";
-  printConvTileIntField(p, "stride_w", getStrideW());
-  p << ", pad_value=" << getPadValue();
-  p << ", ";
-  printConvTileIntField(p, "channel_size", getChannelSize());
-  p << ", ";
-  printConvTileIntField(p, "repeat_stride", getRepeatStride());
-  p << ", ";
-  printConvTileIntField(p, "repeat_time", getRepeatTime());
-  p << ", ";
-  printConvTileIntField(p, "repeat_mode", getRepeatMode());
-  p << ", ";
-  printConvTileIntField(p, "dst_stride", getDstStride());
-  p << ", ";
-  printConvTileIntField(p, "dst_mposition", getDstMposition());
-  p << ", transpose=" << printBoolAttr(getTranspose());
-  p << ">";
+void ConvTileConfigAttr::print(AsmPrinter &odsPrinter) const {
+  odsPrinter << "<";
+  printConvTileIntField(odsPrinter, "fmap_h", getFmapH());
+  odsPrinter << ", ";
+  printConvTileIntField(odsPrinter, "fmap_w", getFmapW());
+  odsPrinter << ", pad_list=";
+  printConvTilePadList(odsPrinter, getPadList());
+  odsPrinter << ", ";
+  printConvTileIntField(odsPrinter, "filter_h", getFilterH());
+  odsPrinter << ", ";
+  printConvTileIntField(odsPrinter, "filter_w", getFilterW());
+  odsPrinter << ", ";
+  printConvTileIntField(odsPrinter, "dilation_h", getDilationH());
+  odsPrinter << ", ";
+  printConvTileIntField(odsPrinter, "dilation_w", getDilationW());
+  odsPrinter << ", ";
+  printConvTileIntField(odsPrinter, "stride_h", getStrideH());
+  odsPrinter << ", ";
+  printConvTileIntField(odsPrinter, "stride_w", getStrideW());
+  odsPrinter << ", pad_value=" << getPadValue();
+  odsPrinter << ", ";
+  printConvTileIntField(odsPrinter, "channel_size", getChannelSize());
+  odsPrinter << ", ";
+  printConvTileIntField(odsPrinter, "repeat_stride", getRepeatStride());
+  odsPrinter << ", ";
+  printConvTileIntField(odsPrinter, "repeat_time", getRepeatTime());
+  odsPrinter << ", ";
+  printConvTileIntField(odsPrinter, "repeat_mode", getRepeatMode());
+  odsPrinter << ", ";
+  printConvTileIntField(odsPrinter, "dst_stride", getDstStride());
+  odsPrinter << ", ";
+  printConvTileIntField(odsPrinter, "dst_mposition", getDstMposition());
+  odsPrinter << ", transpose=" << printBoolAttr(getTranspose());
+  odsPrinter << ">";
 }

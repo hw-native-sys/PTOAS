@@ -152,7 +152,7 @@ llvm::SmallVector<IdViolation> mlir::pto::oracle::checkDeviceIdLegality(llvm::Ar
     auto key = std::make_tuple(static_cast<int>(rec.srcPipeType), static_cast<int>(rec.dstPipeType), rec.eventId);
     auto &slot = tally[key];
     (isSet ? slot.first : slot.second)++;
-    if (!firstOrder.count(key)) {
+    if (firstOrder.count(key) == 0) {
       firstOrder[key] = rec.order;
     }
   }
@@ -379,8 +379,8 @@ void mlir::pto::oracle::printIdViolations(llvm::raw_ostream &os, llvm::StringRef
 // G4: sync-count floor
 //===----------------------------------------------------------------------===//
 
-llvm::StringRef mlir::pto::oracle::countViolationKindName(CountViolationKind k) {
-  switch (k) {
+llvm::StringRef mlir::pto::oracle::countViolationKindName(CountViolationKind kind) {
+  switch (kind) {
   case CountViolationKind::TotalIncreased:
     return "total-sync-count-increased";
   case CountViolationKind::BarrierIncreased:
@@ -419,34 +419,35 @@ SyncCountProfile mlir::pto::oracle::computeSyncCounts(llvm::ArrayRef<IRSyncRecor
   return p;
 }
 
-llvm::SmallVector<CountViolation> mlir::pto::oracle::checkSyncCountFloor(const SyncCountProfile &cand,
-                                                                         const SyncCountProfile &ref) {
+llvm::SmallVector<CountViolation> mlir::pto::oracle::checkSyncCountFloor(const SyncCountProfile &candidate,
+                                                                         const SyncCountProfile &reference) {
   llvm::SmallVector<CountViolation> violations;
 
-  if (cand.total() > ref.total()) {
-    violations.push_back({CountViolationKind::TotalIncreased, cand.total(), ref.total(),
+  if (candidate.total() > reference.total()) {
+    violations.push_back({CountViolationKind::TotalIncreased, candidate.total(), reference.total(),
                           "the new mode emits more sync ops than InsertSync"});
   }
 
   // Load-bearing: one barrier can replace a set/wait pair, lowering the total
   // while strictly worsening the schedule. On vadd the degenerate ties on total.
-  if (cand.barrier > ref.barrier) {
-    violations.push_back({CountViolationKind::BarrierIncreased, cand.barrier, ref.barrier,
+  if (candidate.barrier > reference.barrier) {
+    violations.push_back({CountViolationKind::BarrierIncreased, candidate.barrier, reference.barrier,
                           "a barrier orders every pipe; a set/wait pair orders one direction"});
   }
 
-  if (cand.barrierAll > ref.barrierAll) {
-    violations.push_back({CountViolationKind::BarrierAllIncreased, cand.barrierAll, ref.barrierAll,
+  if (candidate.barrierAll > reference.barrierAll) {
+    violations.push_back({CountViolationKind::BarrierAllIncreased, candidate.barrierAll, reference.barrierAll,
                           "PIPE_ALL barriers fully serialize the core"});
   }
 
   return violations;
 }
 
-void mlir::pto::oracle::printSyncCounts(llvm::raw_ostream &os, llvm::StringRef funcName, const SyncCountProfile &p) {
-  os << "[sync-count] func=" << funcName << " set=" << p.setFlag << " wait=" << p.waitFlag << " get=" << p.getBuf
-     << " rls=" << p.rlsBuf << " barrier=" << p.barrier << " barrier_all=" << p.barrierAll << " total=" << p.total()
-     << "\n";
+void mlir::pto::oracle::printSyncCounts(llvm::raw_ostream &os, llvm::StringRef funcName,
+                                        const SyncCountProfile &profile) {
+  os << "[sync-count] func=" << funcName << " set=" << profile.setFlag << " wait=" << profile.waitFlag
+     << " get=" << profile.getBuf << " rls=" << profile.rlsBuf << " barrier=" << profile.barrier
+     << " barrier_all=" << profile.barrierAll << " total=" << profile.total() << "\n";
 }
 
 llvm::StringMap<SyncCountProfile> mlir::pto::oracle::parseSyncCounts(llvm::StringRef text) {
@@ -498,14 +499,15 @@ llvm::StringMap<SyncCountProfile> mlir::pto::oracle::parseSyncCounts(llvm::Strin
 }
 
 void mlir::pto::oracle::printCountViolations(llvm::raw_ostream &os, llvm::StringRef funcName,
-                                             const SyncCountProfile &cand, const SyncCountProfile &ref,
+                                             const SyncCountProfile &candidate, const SyncCountProfile &reference,
                                              llvm::ArrayRef<CountViolation> violations) {
-  os << "[sync-gate:g4] func=" << funcName << " candidate_total=" << cand.total() << " reference_total=" << ref.total()
-     << " violations=" << violations.size() << (violations.empty() ? " OK" : "") << "\n";
+  os << "[sync-gate:g4] func=" << funcName << " candidate_total=" << candidate.total()
+     << " reference_total=" << reference.total() << " violations=" << violations.size()
+     << (violations.empty() ? " OK" : "") << "\n";
   os << "  candidate: ";
-  printSyncCounts(os, funcName, cand);
+  printSyncCounts(os, funcName, candidate);
   os << "  reference: ";
-  printSyncCounts(os, funcName, ref);
+  printSyncCounts(os, funcName, reference);
   for (const CountViolation &v : violations) {
     os << "  !! kind=" << countViolationKindName(v.kind) << " candidate=" << v.candidate << " reference=" << v.reference
        << " : " << v.detail << "\n";
@@ -516,8 +518,8 @@ void mlir::pto::oracle::printCountViolations(llvm::raw_ostream &os, llvm::String
 // G2: non-interference
 //===----------------------------------------------------------------------===//
 
-llvm::StringRef mlir::pto::oracle::interferenceKindName(InterferenceKind k) {
-  switch (k) {
+llvm::StringRef mlir::pto::oracle::interferenceKindName(InterferenceKind kind) {
+  switch (kind) {
   case InterferenceKind::EventIdNested:
     return "event-id-nested";
   case InterferenceKind::EventIdWaitWithoutSet:
@@ -546,7 +548,9 @@ llvm::StringRef mlir::pto::oracle::interferenceKindName(InterferenceKind k) {
   return "?";
 }
 
-llvm::StringRef mlir::pto::oracle::severityName(Severity s) { return s == Severity::Warning ? "warning" : "error"; }
+llvm::StringRef mlir::pto::oracle::severityName(Severity severity) {
+  return severity == Severity::Warning ? "warning" : "error";
+}
 
 namespace {
 
@@ -950,7 +954,8 @@ bool isAnchor(Operation *op) {
 
 /// A sync op, positioned by how many anchors precede it.
 struct SyncEvent {
-  enum Kind { BarrierAll, BarrierPipe, SetFlag, WaitFlag, GetBuf, RlsBuf, SetFlagDyn, WaitFlagDyn } kind;
+  enum class Kind { BarrierAll, BarrierPipe, SetFlag, WaitFlag, GetBuf, RlsBuf, SetFlagDyn, WaitFlagDyn };
+  Kind kind;
   unsigned slot;
   pto::PIPE srcPipe;
   pto::PIPE dstPipe;
@@ -1012,7 +1017,7 @@ unsigned rotationDepthOf(Value eventId) {
 }
 
 /// Is `op` nested anywhere inside `loop`?
-bool insideLoop(Operation *op, Operation *loop) {
+bool insideLoop(Operation *op, const Operation *loop) {
   for (Operation *p = op->getParentOp(); p; p = p->getParentOp()) {
     if (p == loop) {
       return true;
@@ -1047,7 +1052,7 @@ llvm::SmallPtrSet<Block *, 8> spineBlocks(Operation *loop) {
 /// inside some other region -- an `scf.if` arm, or a nested loop that may run
 /// zero times -- and may be skipped on an iteration. A carried pair whose
 /// producer can be skipped establishes nothing on the iteration that skips it.
-bool executesEachIteration(Operation *op, Operation *loop) { return op->getParentOp() == loop; }
+bool executesEachIteration(Operation *op, const Operation *loop) { return op->getParentOp() == loop; }
 
 } // namespace
 
@@ -1105,7 +1110,7 @@ public:
     // Through emitReport like every other oracle print: nested func passes run in
     // PARALLEL and ptoas does not disable threading, so an unsynchronised write here
     // can interleave with another function's report.
-    if (loopKeyCollisions) {
+    if (loopKeyCollisions != 0) {
       oracle::emitReport([&](llvm::raw_ostream &os) {
         os << "[sync-cov] !! carried-edge-loop-collision func=" << func.getName() << " count=" << loopKeyCollisions
            << " : one anchor pair is carried at two nest levels; the "
@@ -1177,11 +1182,11 @@ private:
 
   bool recordStaticEvent(Operation *op, unsigned slot, unsigned order, Operation *nearest) {
     if (auto setFlag = dyn_cast<pto::SetFlagOp>(op)) {
-      events.push_back({SyncEvent::SetFlag, slot, setFlag.getSrcPipeAttr().getPipe(),
+      events.push_back({SyncEvent::Kind::SetFlag, slot, setFlag.getSrcPipeAttr().getPipe(),
                         setFlag.getDstPipeAttr().getPipe(), int64_t(setFlag.getEventIdAttr().getEvent()), op, order,
                         nearest});
     } else if (auto waitFlag = dyn_cast<pto::WaitFlagOp>(op)) {
-      events.push_back({SyncEvent::WaitFlag, slot, waitFlag.getSrcPipeAttr().getPipe(),
+      events.push_back({SyncEvent::Kind::WaitFlag, slot, waitFlag.getSrcPipeAttr().getPipe(),
                         waitFlag.getDstPipeAttr().getPipe(), int64_t(waitFlag.getEventIdAttr().getEvent()), op, order,
                         nearest});
     } else if (auto getBuf = dyn_cast<pto::GetBufOp>(op)) {
@@ -1191,12 +1196,12 @@ private:
       // which rejects PIPE_ALL and PIPE_UNASSIGNED on these ops.
       pto::PIPE pipe = oracle::bufSyncPipe(getBuf.getOpTypeAttr());
       if (pto::isConcreteSyncPipe(pipe)) {
-        events.push_back({SyncEvent::GetBuf, slot, pipe, pipe, int64_t(getBuf.getBufId()), op, order, nearest});
+        events.push_back({SyncEvent::Kind::GetBuf, slot, pipe, pipe, int64_t(getBuf.getBufId()), op, order, nearest});
       }
     } else if (auto rlsBuf = dyn_cast<pto::RlsBufOp>(op)) {
       pto::PIPE pipe = oracle::bufSyncPipe(rlsBuf.getOpTypeAttr());
       if (pto::isConcreteSyncPipe(pipe)) {
-        events.push_back({SyncEvent::RlsBuf, slot, pipe, pipe, int64_t(rlsBuf.getBufId()), op, order, nearest});
+        events.push_back({SyncEvent::Kind::RlsBuf, slot, pipe, pipe, int64_t(rlsBuf.getBufId()), op, order, nearest});
       }
     } else {
       return false;
@@ -1215,11 +1220,11 @@ private:
       // fell off the end and contributed NO edge. `id` is -1 because there is no
       // static id -- the id is chosen at runtime -- so it cannot collide with a
       // static key.
-      events.push_back({SyncEvent::SetFlagDyn, slot, setDyn.getSrcPipeAttr().getPipe(),
+      events.push_back({SyncEvent::Kind::SetFlagDyn, slot, setDyn.getSrcPipeAttr().getPipe(),
                         setDyn.getDstPipeAttr().getPipe(), -1, op, order, nearest,
                         rotationDepthOf(setDyn.getEventId())});
     } else if (auto waitDyn = dyn_cast<pto::WaitFlagDynOp>(op)) {
-      events.push_back({SyncEvent::WaitFlagDyn, slot, waitDyn.getSrcPipeAttr().getPipe(),
+      events.push_back({SyncEvent::Kind::WaitFlagDyn, slot, waitDyn.getSrcPipeAttr().getPipe(),
                         waitDyn.getDstPipeAttr().getPipe(), -1, op, order, nearest,
                         rotationDepthOf(waitDyn.getEventId())});
     } else if (auto barrier = dyn_cast<pto::BarrierOp>(op)) {
@@ -1227,8 +1232,8 @@ private:
       if (pipe == pto::PIPE::PIPE_ALL) {
         ++profile.barrierAll;
       }
-      events.push_back({pipe == pto::PIPE::PIPE_ALL ? SyncEvent::BarrierAll : SyncEvent::BarrierPipe, slot, pipe, pipe,
-                        -1, op, order, nearest});
+      events.push_back({pipe == pto::PIPE::PIPE_ALL ? SyncEvent::Kind::BarrierAll : SyncEvent::Kind::BarrierPipe, slot,
+                        pipe, pipe, -1, op, order, nearest});
     }
   }
 
@@ -1300,18 +1305,18 @@ private:
     for (size_t e = 0; e < events.size(); ++e) {
       const SyncEvent &ev = events[e];
       switch (ev.kind) {
-      case SyncEvent::BarrierAll:
+      case SyncEvent::Kind::BarrierAll:
         addEdges(ev.slot, ev.srcPipe, ev.slot, ev.dstPipe, /*anyPipe=*/true, ev.op);
         break;
-      case SyncEvent::BarrierPipe:
+      case SyncEvent::Kind::BarrierPipe:
         addEdges(ev.slot, ev.srcPipe, ev.slot, ev.dstPipe, /*anyPipe=*/false, ev.op);
         break;
-      case SyncEvent::SetFlag:
+      case SyncEvent::Kind::SetFlag:
         // Pair with the next matching wait. G2 guarantees the interval discipline
         // that makes "next" the right answer.
         for (size_t w = e + 1; w < events.size(); ++w) {
           const SyncEvent &wait = events[w];
-          if (wait.kind == SyncEvent::WaitFlag && wait.srcPipe == ev.srcPipe && wait.dstPipe == ev.dstPipe &&
+          if (wait.kind == SyncEvent::Kind::WaitFlag && wait.srcPipe == ev.srcPipe && wait.dstPipe == ev.dstPipe &&
               wait.id == ev.id) {
             // The WAIT is the consuming end: the sink is ordered only if the wait ran.
             addEdges(ev.slot, ev.srcPipe, wait.slot, wait.dstPipe, false, wait.op);
@@ -1319,22 +1324,22 @@ private:
           }
         }
         break;
-      case SyncEvent::RlsBuf:
+      case SyncEvent::Kind::RlsBuf:
         // Buffer-token happens-before: get_buf acquires what the previous holder
         // released, so rls precedes get for the same buffer id.
         for (size_t g = e + 1; g < events.size(); ++g) {
           const SyncEvent &get = events[g];
-          if (get.kind == SyncEvent::GetBuf && get.id == ev.id) {
+          if (get.kind == SyncEvent::Kind::GetBuf && get.id == ev.id) {
             // The acquire is the consuming end, as the wait is for a flag pair.
             addEdges(ev.slot, ev.srcPipe, get.slot, get.dstPipe, false, get.op);
           }
         }
         break;
-      case SyncEvent::WaitFlag:
-      case SyncEvent::GetBuf:
+      case SyncEvent::Kind::WaitFlag:
+      case SyncEvent::Kind::GetBuf:
         break;
-      case SyncEvent::SetFlagDyn:
-      case SyncEvent::WaitFlagDyn:
+      case SyncEvent::Kind::SetFlagDyn:
+      case SyncEvent::Kind::WaitFlagDyn:
         // Deliberately NO FORWARD EDGE. A rotating pair orders iteration j-N
         // against iteration j; within ONE iteration it orders nothing, because the
         // set and the wait in the same iteration touch DIFFERENT event ids
@@ -1376,7 +1381,7 @@ private:
 
   bool primeConsumed(const SyncEvent &producer, const SyncEvent &head, Operation *loop, unsigned entry) const {
     for (const SyncEvent &wait : events) {
-      if (wait.kind != SyncEvent::WaitFlag || wait.id != producer.id || wait.srcPipe != producer.srcPipe ||
+      if (wait.kind != SyncEvent::Kind::WaitFlag || wait.id != producer.id || wait.srcPipe != producer.srcPipe ||
           wait.dstPipe != producer.dstPipe) {
         continue;
       }
@@ -1412,7 +1417,7 @@ private:
     unsigned entry = loops[loop].firstOrder;
     llvm::SmallPtrSet<Block *, 8> spine = spineBlocks(loop);
     for (const SyncEvent &head : events) {
-      if (head.kind != SyncEvent::SetFlag || head.id != producer.id || head.srcPipe != producer.srcPipe ||
+      if (head.kind != SyncEvent::Kind::SetFlag || head.id != producer.id || head.srcPipe != producer.srcPipe ||
           head.dstPipe != producer.dstPipe) {
         continue;
       }
@@ -1451,17 +1456,17 @@ private:
         continue;
       }
       switch (ev.kind) {
-      case SyncEvent::SetFlag:
-      case SyncEvent::SetFlagDyn:
+      case SyncEvent::Kind::SetFlag:
+      case SyncEvent::Kind::SetFlagDyn:
         openProducers[flagKey(ev)].push_back(i);
         break;
-      case SyncEvent::RlsBuf:
+      case SyncEvent::Kind::RlsBuf:
         openProducers[bufKey(ev)].push_back(i);
         break;
-      case SyncEvent::WaitFlag:
-      case SyncEvent::WaitFlagDyn:
-      case SyncEvent::GetBuf: {
-        auto key = ev.kind == SyncEvent::GetBuf ? bufKey(ev) : flagKey(ev);
+      case SyncEvent::Kind::WaitFlag:
+      case SyncEvent::Kind::WaitFlagDyn:
+      case SyncEvent::Kind::GetBuf: {
+        auto key = ev.kind == SyncEvent::Kind::GetBuf ? bufKey(ev) : flagKey(ev);
         auto &open = openProducers[key];
         if (!open.empty()) {
           open.erase(open.begin()); // forward pair, consumed in this iteration
@@ -1470,8 +1475,8 @@ private:
         }
         break;
       }
-      case SyncEvent::BarrierAll:
-      case SyncEvent::BarrierPipe:
+      case SyncEvent::Kind::BarrierAll:
+      case SyncEvent::Kind::BarrierPipe:
         break;
       }
     }
@@ -1505,14 +1510,14 @@ private:
       if (ev.loop != loop || !executesEachIteration(ev.op, loop)) {
         continue;
       }
-      if (ev.kind != SyncEvent::BarrierAll && ev.kind != SyncEvent::BarrierPipe) {
+      if (ev.kind != SyncEvent::Kind::BarrierAll && ev.kind != SyncEvent::Kind::BarrierPipe) {
         continue;
       }
       const LoopSpan &span = loops[loop];
       if (!span.hasAnchors()) {
         continue;
       }
-      bool anyPipe = ev.kind == SyncEvent::BarrierAll;
+      bool anyPipe = ev.kind == SyncEvent::Kind::BarrierAll;
       for (unsigned x = span.firstAnchor; x <= span.lastAnchor; ++x) {
         if (!anyPipe && anchorPipes[x] != ev.srcPipe) {
           continue;
@@ -1529,7 +1534,7 @@ private:
           // distance too. It is the strongest carried ordering, so it is
           // recorded at d=1 regardless of any rotation in the loop.
           auto key = std::make_tuple(x, y, 1u);
-          if (!carriedOwner.count(key)) {
+          if (carriedOwner.count(key) == 0) {
             carriedOwner[key] = loop;
           }
         }
@@ -1558,7 +1563,7 @@ private:
         // so the wait at j is satisfied by the latest k < j with k%N == j%N --
         // i.e. k = j - N. The ordering it establishes is at DISTANCE N, not 1.
         // Derived from the emitted selector's modulus, not assumed.
-        bool isDyn = producer.kind == SyncEvent::SetFlagDyn || consumer.kind == SyncEvent::WaitFlagDyn;
+        bool isDyn = producer.kind == SyncEvent::Kind::SetFlagDyn || consumer.kind == SyncEvent::Kind::WaitFlagDyn;
         unsigned distance = 1;
         if (isDyn) {
           unsigned n = std::max(producer.rotation, consumer.rotation);
@@ -1571,7 +1576,7 @@ private:
         // is primed by N static set_flags before the loop -- emitted through the
         // compensation fan-out -- which the static scan below already sees as
         // ordinary primes on the same (src,dst).
-        if (producer.kind == SyncEvent::SetFlag && !isPrimed(producer, loop)) {
+        if (producer.kind == SyncEvent::Kind::SetFlag && !isPrimed(producer, loop)) {
           continue;
         }
         addCarried(producer, consumer, loop, distance);
@@ -1591,8 +1596,8 @@ CoverageProfile mlir::pto::oracle::computeCoverage(func::FuncOp func,
 // G1: coverage superset (differential)
 //===----------------------------------------------------------------------===//
 
-llvm::StringRef mlir::pto::oracle::coverageViolationKindName(CoverageViolationKind k) {
-  switch (k) {
+llvm::StringRef mlir::pto::oracle::coverageViolationKindName(CoverageViolationKind kind) {
+  switch (kind) {
   case CoverageViolationKind::MissingOrdering:
     return "missing-ordering";
   case CoverageViolationKind::MissingBackwardOrdering:
@@ -1607,37 +1612,38 @@ llvm::StringRef mlir::pto::oracle::coverageViolationKindName(CoverageViolationKi
   return "?";
 }
 
-llvm::SmallVector<CoverageViolation> mlir::pto::oracle::checkCoverageSuperset(const CoverageProfile &cand,
-                                                                              const CoverageProfile &ref) {
+llvm::SmallVector<CoverageViolation> mlir::pto::oracle::checkCoverageSuperset(const CoverageProfile &candidate,
+                                                                              const CoverageProfile &reference) {
   llvm::SmallVector<CoverageViolation> violations;
 
   // Checked BEFORE the signature, because a stale profile's signature is guaranteed to
   // differ and reporting that as an anchor mismatch would blame the kernel for a
   // format change.
-  if (ref.signatureVersion != cand.signatureVersion) {
+  if (reference.signatureVersion != candidate.signatureVersion) {
     violations.push_back({CoverageViolationKind::ProfileVersionMismatch, 0, 0,
                           "the reference profile was written with signature version " +
-                              std::to_string(ref.signatureVersion) + " but this build writes version " +
-                              std::to_string(cand.signatureVersion) +
+                              std::to_string(reference.signatureVersion) + " but this build writes version " +
+                              std::to_string(candidate.signatureVersion) +
                               " -- regenerate it with --dump-sync-coverage; the stored digest is not "
                               "comparable with the one computed here"});
     return violations;
   }
 
-  if (cand.anchorCount != ref.anchorCount || cand.anchorSignature != ref.anchorSignature) {
-    violations.push_back({CoverageViolationKind::AnchorMismatch, 0, 0,
-                          "the two runs did not see the same ops: candidate has " + std::to_string(cand.anchorCount) +
-                              " anchor(s), reference has " + std::to_string(ref.anchorCount) +
-                              " -- the coverage comparison would be meaningless"});
+  if (candidate.anchorCount != reference.anchorCount || candidate.anchorSignature != reference.anchorSignature) {
+    violations.push_back(
+        {CoverageViolationKind::AnchorMismatch, 0, 0,
+         "the two runs did not see the same ops: candidate has " + std::to_string(candidate.anchorCount) +
+             " anchor(s), reference has " + std::to_string(reference.anchorCount) +
+             " -- the coverage comparison would be meaningless"});
     return violations;
   }
 
   llvm::DenseSet<std::pair<unsigned, unsigned>> have;
-  for (const auto &edge : cand.edges) {
+  for (const auto &edge : candidate.edges) {
     have.insert(edge);
   }
-  for (const auto &edge : ref.edges) {
-    if (!have.count(edge)) {
+  for (const auto &edge : reference.edges) {
+    if (have.count(edge) == 0) {
       violations.push_back({CoverageViolationKind::MissingOrdering, edge.first, edge.second,
                             "the reference orders this pair; the candidate does not"});
     }
@@ -1649,11 +1655,11 @@ llvm::SmallVector<CoverageViolation> mlir::pto::oracle::checkCoverageSuperset(co
   // would let a candidate that established only the cross-iteration ordering
   // satisfy a reference demanding the same-iteration one.
   std::set<std::tuple<unsigned, unsigned, unsigned>> haveCarried;
-  for (const CarriedEdge &edge : cand.carriedEdges) {
+  for (const CarriedEdge &edge : candidate.carriedEdges) {
     haveCarried.insert({edge.from, edge.to, edge.distance});
   }
-  for (const CarriedEdge &edge : ref.carriedEdges) {
-    if (!haveCarried.count({edge.from, edge.to, edge.distance})) {
+  for (const CarriedEdge &edge : reference.carriedEdges) {
+    if (haveCarried.count({edge.from, edge.to, edge.distance}) == 0) {
       violations.push_back({CoverageViolationKind::MissingBackwardOrdering, edge.from, edge.to,
                             "the reference orders this pair across iterations; the candidate "
                             "does not -- an unprimed loop-carried wait blocks forever",
@@ -1664,29 +1670,31 @@ llvm::SmallVector<CoverageViolation> mlir::pto::oracle::checkCoverageSuperset(co
   return violations;
 }
 
-void mlir::pto::oracle::printCoverage(llvm::raw_ostream &os, llvm::StringRef funcName, const CoverageProfile &p) {
-  os << "[sync-cov] func=" << funcName << " anchors=" << p.anchorCount
-     << " sig=" << llvm::format_hex(p.anchorSignature, 18) << " edge_count=" << p.edges.size() << " edges=";
-  for (size_t i = 0; i < p.edges.size(); ++i) {
-    if (i) {
+void mlir::pto::oracle::printCoverage(llvm::raw_ostream &os, llvm::StringRef funcName,
+                                      const CoverageProfile &profile) {
+  os << "[sync-cov] func=" << funcName << " anchors=" << profile.anchorCount
+     << " sig=" << llvm::format_hex(profile.anchorSignature, 18) << " edge_count=" << profile.edges.size()
+     << " edges=";
+  for (size_t i = 0; i < profile.edges.size(); ++i) {
+    if (i != 0) {
       os << ",";
     }
-    os << p.edges[i].first << "-" << p.edges[i].second;
+    os << profile.edges[i].first << "-" << profile.edges[i].second;
   }
   // Carried-edge fields are APPENDED, never interleaved: every existing pin ends at the
   // forward `edges=` list and FileCheck matches substrings, so a line that grows
   // a suffix still matches. Reordering would break all of them for no reason.
-  os << " bedge_count=" << p.carriedEdges.size() << " bedges=";
-  for (size_t i = 0; i < p.carriedEdges.size(); ++i) {
+  os << " bedge_count=" << profile.carriedEdges.size() << " bedges=";
+  for (size_t i = 0; i < profile.carriedEdges.size(); ++i) {
     if (i) {
       os << ",";
     }
-    os << p.carriedEdges[i].from << "-" << p.carriedEdges[i].to << "@" << p.carriedEdges[i].distance;
+    os << profile.carriedEdges[i].from << "-" << profile.carriedEdges[i].to << "@" << profile.carriedEdges[i].distance;
   }
   os << " barrier_all="
-     << p.barrierAll
+     << profile.barrierAll
      // APPENDED, like the carried-edge fields above and for the same reason.
-     << " sigver=" << p.signatureVersion << "\n";
+     << " sigver=" << profile.signatureVersion << "\n";
 }
 
 namespace {
@@ -1792,13 +1800,13 @@ llvm::StringMap<CoverageProfile> mlir::pto::oracle::parseCoverage(llvm::StringRe
 }
 
 void mlir::pto::oracle::printCoverageViolations(llvm::raw_ostream &os, llvm::StringRef funcName,
-                                                const CoverageProfile &cand, const CoverageProfile &ref,
+                                                const CoverageProfile &candidate, const CoverageProfile &reference,
                                                 llvm::ArrayRef<CoverageViolation> violations) {
-  os << "[sync-gate:g1] func=" << funcName << " candidate_edges=" << cand.edges.size()
-     << " reference_edges=" << ref.edges.size() << " violations=" << violations.size()
-     << (violations.empty() ? " OK" : "") << " candidate_bedges=" << cand.carriedEdges.size()
-     << " reference_bedges=" << ref.carriedEdges.size() << " candidate_barrier_all=" << cand.barrierAll
-     << " reference_barrier_all=" << ref.barrierAll << "\n";
+  os << "[sync-gate:g1] func=" << funcName << " candidate_edges=" << candidate.edges.size()
+     << " reference_edges=" << reference.edges.size() << " violations=" << violations.size()
+     << (violations.empty() ? " OK" : "") << " candidate_bedges=" << candidate.carriedEdges.size()
+     << " reference_bedges=" << reference.carriedEdges.size() << " candidate_barrier_all=" << candidate.barrierAll
+     << " reference_barrier_all=" << reference.barrierAll << "\n";
   // The two barrier counts are reported and nothing is concluded from them. An
   // earlier version added a line reading the difference as coarseness rather than
   // lost coverage, and the deliberate-fault fixtures refused it: an empty allocation
@@ -2490,7 +2498,7 @@ struct PTOCheckSyncInterferencePass
       oracle::emitReport([&](llvm::raw_ostream &os) {
         oracle::printInterferenceViolations(os, func.getSymName(), "syncops", synthetic.size(), synthViolations);
       });
-      if (unsigned errors = oracle::countErrors(synthViolations)) {
+      if (unsigned errors = oracle::countErrors(synthViolations); errors != 0) {
         func.emitError() << "G2 non-interference: " << errors << " illegal sync id use(s)";
         signalPassFailure();
         return;
@@ -2498,7 +2506,7 @@ struct PTOCheckSyncInterferencePass
     }
     // Warnings (a soft rule, such as an id spanning more than two pipes) are
     // reported but do not fail the gate; only errors do.
-    if (unsigned errors = oracle::countErrors(violations)) {
+    if (unsigned errors = oracle::countErrors(violations); errors != 0) {
       func.emitError() << "G2 non-interference: " << errors << " illegal sync id use(s)";
       signalPassFailure();
     }

@@ -154,7 +154,8 @@ struct PTOAllocTileToEmitC
     pto::BLayout blayout = getTileBufBLayoutValue(tileTy.getConfigAttr());
     const bool scalePackedFp4Dim =
         shouldScalePackedFp4TileDimensions(tileTy.getMemorySpace());
-    auto scaleValid = [&](Value value, int dimIdx) -> Value {
+    auto scaleValid = [&scalePackedFp4Dim, &elemTy, &blayout, &rewriter,
+                       &op](Value value, int dimIdx) -> Value {
       if (!scalePackedFp4Dim || !pto::isPTOFloat4PackedType(elemTy)) {
         return value;
       }

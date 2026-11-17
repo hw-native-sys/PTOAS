@@ -420,7 +420,8 @@ struct LayoutSolver {
     }
 
     LogicalResult setNaturalLayout(
-        Value value, VMILayoutAttr layout, Operation* op, DataLayoutSeedPhase phase = DataLayoutSeedPhase::Other)
+        Value value, VMILayoutAttr layout, [[maybe_unused]] Operation* op,
+        DataLayoutSeedPhase phase = DataLayoutSeedPhase::Other)
     {
         unsigned id = addDataValue(value);
         if (id == ~0U || !layout) {
@@ -434,7 +435,8 @@ struct LayoutSolver {
     }
 
     LogicalResult setPreferredLayout(
-        Value value, VMILayoutAttr layout, Operation* op, DataLayoutSeedPhase phase = DataLayoutSeedPhase::Other)
+        Value value, VMILayoutAttr layout, [[maybe_unused]] Operation* op,
+        DataLayoutSeedPhase phase = DataLayoutSeedPhase::Other)
     {
         unsigned id = addDataValue(value);
         if (id == ~0U || !layout) {

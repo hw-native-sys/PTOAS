@@ -29,7 +29,7 @@ namespace {
 
 using OrderGraph = SmallVector<SmallVector<unsigned, 4>, 16>;
 
-static Operation* ancestorInBlock(Operation* op, Block* block)
+static Operation* ancestorInBlock(Operation* op, const Block* block)
 {
     while (op && op->getBlock() != block) {
         op = op->getParentOp();
@@ -92,7 +92,7 @@ static void addBarrierEdges(OrderGraph& edges, ArrayRef<AccessOccurrence> access
 
 // Unlike a general use-def walk, do not traverse region results/iter_args: a
 // load in a branch or a zero-trip loop need not execute to produce that result.
-static bool straightLineDependsOn(Value sink, Value source, Block* block)
+static bool straightLineDependsOn(Value sink, Value source, const Block* block)
 {
     SmallVector<Value, 8> worklist{sink};
     DenseSet<Value> visited;
@@ -163,7 +163,7 @@ static bool hasValueRelay(Operation* load, Operation* store, Block* block)
 
 // A relay inside another loop is usable only when that entire enclosing
 // path executes. Conditions and possibly empty loops never supply witnesses.
-static bool guaranteedRelayInBlock(Operation* op, Block* block)
+static bool guaranteedRelayInBlock(Operation* op, const Block* block)
 {
     bool nested = op->getBlock() != block;
     while (nested) {
@@ -205,7 +205,7 @@ static OrderGraph buildValueEdges(ArrayRef<AccessOccurrence> accesses, Block* cu
 }
 
 static bool reaches(
-    const OrderGraph& edges, ArrayRef<AccessOccurrence> accesses, Block* block, unsigned from, unsigned to,
+    const OrderGraph& edges, ArrayRef<AccessOccurrence> accesses, const Block* block, unsigned from, unsigned to,
     bool reductions)
 {
     SmallVector<bool, 16> visited(edges.size(), false);
@@ -233,7 +233,7 @@ static bool reaches(
     return false;
 }
 
-static bool isOrdinaryCutInBlock(const BarrierPlacement& barrier, Block* block)
+static bool isOrdinaryCutInBlock(const BarrierPlacement& barrier, const Block* block)
 {
     return barrier.anchorKind == BarrierAnchorKind::BeforeOperation && barrier.anchor &&
            barrier.anchor->getBlock() == block;

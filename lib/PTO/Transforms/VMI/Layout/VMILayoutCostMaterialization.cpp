@@ -401,7 +401,7 @@ FailureOr<PhysicalValues> PlanGraphBuilder::deint4ToContiguous(
     size_t groups = (resultCount + 3) / 4;
     size_t base = source.size() / 4;
     size_t remainder = source.size() % 4;
-    auto getSource = [&](size_t part, size_t group) {
+    auto getSource = [&base, &remainder, &source](size_t part, size_t group) {
         size_t count = base + (part < remainder ? 1 : 0);
         size_t offset = part * base + std::min(part, remainder);
         return group < count ? source[offset + group] : source.back();
@@ -483,7 +483,9 @@ FailureOr<SmallVector<PhysicalValue, mlir::pto::kValue4>> PlanGraphBuilder::cont
     SmallVector<PhysicalValue, mlir::pto::kValue4> part3;
     size_t groups = resultCount / 4;
     for (size_t group = 0; group < groups; ++group) {
-        auto getSource = [&](size_t offset) { return source[std::min(4 * group + offset, source.size() - 1)]; };
+        auto getSource = [&group, &source](size_t offset) {
+            return source[std::min(4 * group + offset, source.size() - 1)];
+        };
         PhysicalValue s0 = getSource(0);
         PhysicalValue s1 = getSource(1);
         PhysicalValue s2 = getSource(2);

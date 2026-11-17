@@ -191,7 +191,7 @@ static void rewritePipePops(ArrayRef<TPopOp> pops, OpBuilder &builder,
     if (!entry) {
       continue;
     }
-    if (popAddresses.count(pop.getTile())) {
+    if (popAddresses.count(pop.getTile()) != 0) {
       pop.emitError(
           "VPTO pipe bridge supports at most one TPOP per declared tile; "
           "sequential rebind consumption is not supported yet");
@@ -357,7 +357,7 @@ static void eraseBridgedTiles(ArrayRef<AllocTileOp> allocs,
       hadError = true;
       continue;
     }
-    bool dominatesUsers = llvm::all_of(decl->getUsers(), [&](Operation *user) {
+    bool dominatesUsers = llvm::all_of(decl->getUsers(), [&address, &dominance](Operation *user) {
       return dominance.dominates(address, user);
     });
     if (!dominatesUsers) {
@@ -430,7 +430,7 @@ static void assemblePipeSpec(BridgeObjectCreateOp create, bool &hadError) {
     splitValue = static_cast<int32_t>(split.getInt());
   }
   auto spec = BridgePipeSpecAttr::getChecked(
-      [&] { return create.emitError(); }, create.getContext(),
+      [&create] { return create.emitError(); }, create.getContext(),
       config.getDirMask(), config.getSlotSize(), config.getSlotNum(),
       config.getLocalSlotNum(), config.getFlagBase(), config.getNosplit(),
       splitValue, producer, consumer);

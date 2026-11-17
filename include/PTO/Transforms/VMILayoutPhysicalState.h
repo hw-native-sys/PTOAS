@@ -36,9 +36,10 @@ private:
     std::shared_ptr<Impl> impl;
 
     friend FailureOr<VMILayoutPhysicalState> appendVMILayoutPhysicalRelation(
-        const VMILayoutPhysicalState&, const VMILayoutOpRelation&, const VMILayoutPlan&);
-    friend FailureOr<std::string> getVMILayoutContinuationKey(const VMILayoutPhysicalState&, ArrayRef<Operation*>);
-    friend VMILayoutScopeCost getVMILayoutPhysicalCost(const VMILayoutPhysicalState&);
+        const VMILayoutPhysicalState& state, const VMILayoutOpRelation& relation, const VMILayoutPlan& partialPlan);
+    friend FailureOr<std::string> getVMILayoutContinuationKey(
+        const VMILayoutPhysicalState& state, ArrayRef<Operation*> remainingOps);
+    friend VMILayoutScopeCost getVMILayoutPhysicalCost(const VMILayoutPhysicalState& state);
 };
 
 } // namespace mlir::pto

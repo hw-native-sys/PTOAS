@@ -100,7 +100,7 @@ public:
   // a plan; this port carries no exact-request mode, because the fork's
   // requestExact overloads have no callers, so it is deliberately a no-op and
   // exists only to keep the planner's commit sequence unchanged.
-  void endExactRequests();
+  void endExactRequests() const;
   VMILayoutAttr getRequestedOrCurrentLayout(Value value) const;
   const VMIValueLayoutAssignment *lookup(Value value) const;
 

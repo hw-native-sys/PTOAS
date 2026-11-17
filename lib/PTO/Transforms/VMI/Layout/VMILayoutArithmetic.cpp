@@ -300,7 +300,7 @@ RelationResult VMILayoutRelations::buildProducer()
             rememberLayout(candidate, sourceCandidates);
         }
     }
-    auto appendProducerRelation = [&](VMILayoutAttr resultLayout, VMILayoutAttr sourceLayout) {
+    auto appendProducerRelation = [this, &sourceCarriesLayout](VMILayoutAttr resultLayout, VMILayoutAttr sourceLayout) {
         SmallVector<VMILayoutPortAssignment, mlir::pto::kValue2> ports;
         if (sourceCarriesLayout) {
             ports.push_back(operandPort(0, sourceLayout));

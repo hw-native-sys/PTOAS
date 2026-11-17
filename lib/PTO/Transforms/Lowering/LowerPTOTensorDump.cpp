@@ -148,7 +148,7 @@ static LogicalResult verifyKnownDumpAlignment(pto::TensorDumpOp op,
                                               unsigned elemSize) {
   int64_t byteOffset = 0;
   if (llvm::MulOverflow(elemOffset, static_cast<int64_t>(elemSize),
-                        byteOffset)) {
+                        byteOffset) != 0) {
     return op.emitError("static destination byte offset overflows signed 64 bits");
   }
   if (byteOffset % 4 != 0) {

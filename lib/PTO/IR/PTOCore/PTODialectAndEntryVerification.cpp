@@ -133,7 +133,7 @@ LogicalResult mlir::pto::validatePTOSchedModeAttr(ModuleOp module)
     }
 
     constexpr unsigned kSchedModeBitWidth = 32;
-    WalkResult result = module.walk([&](func::FuncOp func) -> WalkResult {
+    WalkResult result = module.walk([](func::FuncOp func) -> WalkResult {
         Attribute schedMode = func->getAttr(kPTOSchedModeAttrName);
         if (!schedMode) {
             return WalkResult::advance();

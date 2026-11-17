@@ -1081,7 +1081,7 @@ static FailureOr<Value> packL1L0a3dPck1(Operation *anchor, Value strideW, Value 
     return failure();
   }
 
-  auto addHighFilterBit = [&](Value value, uint64_t shift) -> LogicalResult {
+  auto addHighFilterBit = [&anchor, &builder, &result](Value value, uint64_t shift) -> LogicalResult {
     Value i64 = castIntegerLikeTo(anchor, value, builder.getI64Type());
     if (!i64) {
       return failure();

@@ -245,7 +245,7 @@ void mlir::pto::oracle::printSyncOpRecords(llvm::raw_ostream &os, llvm::StringRe
        << " dst=" << pipelineTypeName(static_cast<PipelineType>(rec.dstPipe)) << " irIdx=" << rec.irIndex
        << " event_ids=[";
     for (size_t i = 0; i < rec.eventIds.size(); ++i) {
-      if (i) {
+      if (i != 0) {
         os << ",";
       }
       os << rec.eventIds[i];

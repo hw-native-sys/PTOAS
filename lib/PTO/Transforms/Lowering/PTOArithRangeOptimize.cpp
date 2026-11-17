@@ -126,8 +126,8 @@ static bool hasMixedIntegerFloatResults(scf::IfOp ifOp) {
   bool hasInt = false;
   bool hasFloat = false;
   for (Type type : ifOp.getResultTypes()) {
-    hasInt |= isa<IntegerType, IndexType>(type);
-    hasFloat |= isa<FloatType>(type);
+    hasInt = hasInt || isa<IntegerType, IndexType>(type);
+    hasFloat = hasFloat || isa<FloatType>(type);
   }
   return hasInt && hasFloat;
 }
@@ -153,7 +153,9 @@ static bool insertOperationResults(Operation *op,
                                    DenseSet<Value> &taintedValues) {
   bool changed = false;
   for (Value result : op->getResults()) {
-    changed |= taintedValues.insert(result).second;
+    if (taintedValues.insert(result).second) {
+      changed = true;
+    }
   }
   return changed;
 }
@@ -164,7 +166,9 @@ static bool insertRegionArguments(Operation *op,
   for (Region &region : op->getRegions()) {
     for (Block &block : region.getBlocks()) {
       for (BlockArgument argument : block.getArguments()) {
-        changed |= taintedValues.insert(argument).second;
+        if (taintedValues.insert(argument).second) {
+          changed = true;
+        }
       }
     }
   }
@@ -177,7 +181,9 @@ static bool propagateYieldTaint(scf::YieldOp yieldOp,
   Operation *parentOp = yieldOp->getParentOp();
   for (auto [index, operand] : llvm::enumerate(yieldOp.getOperands())) {
     if (taintedValues.contains(operand) && index < parentOp->getNumResults()) {
-      changed |= taintedValues.insert(parentOp->getResult(index)).second;
+      if (taintedValues.insert(parentOp->getResult(index)).second) {
+        changed = true;
+      }
     }
   }
   return changed;
@@ -187,7 +193,7 @@ static bool taintOperation(Operation *op, DenseSet<Value> &taintedValues,
                            DenseSet<Operation *> &taintedControlOps) {
   bool tainted = taintedControlOps.contains(op) ||
                  isNestedInTaintedControl(op, taintedControlOps) ||
-                 llvm::any_of(op->getOperands(), [&](Value operand) {
+                 llvm::any_of(op->getOperands(), [&taintedValues](Value operand) {
                    return taintedValues.contains(operand);
                  });
   if (!tainted) {
@@ -196,12 +202,20 @@ static bool taintOperation(Operation *op, DenseSet<Value> &taintedValues,
 
   bool changed = false;
   if (auto ifOp = dyn_cast<scf::IfOp>(op)) {
-    changed |= taintedControlOps.insert(ifOp.getOperation()).second;
+    if (taintedControlOps.insert(ifOp.getOperation()).second) {
+      changed = true;
+    }
   }
-  changed |= insertOperationResults(op, taintedValues);
-  changed |= insertRegionArguments(op, taintedValues);
+  if (insertOperationResults(op, taintedValues)) {
+    changed = true;
+  }
+  if (insertRegionArguments(op, taintedValues)) {
+    changed = true;
+  }
   if (auto yieldOp = dyn_cast<scf::YieldOp>(op)) {
-    changed |= propagateYieldTaint(yieldOp, taintedValues);
+    if (propagateYieldTaint(yieldOp, taintedValues)) {
+      changed = true;
+    }
   }
   return changed;
 }
@@ -209,8 +223,10 @@ static bool taintOperation(Operation *op, DenseSet<Value> &taintedValues,
 static bool propagateTaint(func::FuncOp func, DenseSet<Value> &taintedValues,
                            DenseSet<Operation *> &taintedControlOps) {
   bool changed = false;
-  func.walk([&](Operation *op) {
-    changed |= taintOperation(op, taintedValues, taintedControlOps);
+  func.walk([&changed, &taintedValues, &taintedControlOps](Operation *op) {
+    if (taintOperation(op, taintedValues, taintedControlOps)) {
+      changed = true;
+    }
   });
   return changed;
 }
@@ -219,7 +235,7 @@ static DenseSet<Value> collectMixedIfTaintedValues(func::FuncOp func) {
   DenseSet<Value> taintedValues;
   DenseSet<Operation *> taintedControlOps;
 
-  func.walk([&](scf::IfOp ifOp) {
+  func.walk([&taintedControlOps, &taintedValues](scf::IfOp ifOp) {
     if (!hasMixedIntegerFloatResults(ifOp)) {
       return;
     }
@@ -811,16 +827,16 @@ struct PTOArithRangeOptimizePass
     // addresses in otherwise unrelated A3 kernels.
     OpPassManager pm(ModuleOp::getOperationName());
     bool hasA5Function = false;
-    getOperation()->walk([&](func::FuncOp func) {
-      hasA5Function |= pto::getTargetArch(func) == pto::PTOArch::A5;
+    getOperation()->walk([&hasA5Function](func::FuncOp func) {
+      hasA5Function = hasA5Function || pto::getTargetArch(func) == pto::PTOArch::A5;
     });
     if (!hasA5Function) {
       pm.addPass(mlir::arith::createIntRangeOptimizationsPass());
     } else {
-      WalkResult rangeResult = getOperation()->walk([&](func::FuncOp func) {
+      WalkResult rangeResult = getOperation()->walk([this](func::FuncOp func) {
         bool hasMixedIf = false;
-        func.walk([&](scf::IfOp ifOp) {
-          hasMixedIf |= hasMixedIntegerFloatResults(ifOp);
+        func.walk([&hasMixedIf](scf::IfOp ifOp) {
+          hasMixedIf = hasMixedIf || hasMixedIntegerFloatResults(ifOp);
         });
         if (pto::getTargetArch(func) == pto::PTOArch::A5 && hasMixedIf) {
           return failed(runGuardedIntRangeOptimizations(func))

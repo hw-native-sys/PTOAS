@@ -404,7 +404,7 @@ private:
         if (h.isBarrier() || h.bufferClusters.empty()) {
           continue;
         }
-        bool onRouted = llvm::any_of(h.bufferClusters, [&](int c) { return routedLogicIds.contains(c); });
+        bool onRouted = llvm::any_of(h.bufferClusters, [this](int c) { return routedLogicIds.contains(c); });
         if (!onRouted) {
           continue;
         }
@@ -692,7 +692,7 @@ private:
       return;
     }
     auto &build = bufAnalysis.getOp2BufSync()[op];
-    auto present = [&](const llvm::SmallVector<BufSyncOperation> &v, BufSyncType ty) {
+    auto present = [&logicId, &pipe](const llvm::SmallVector<BufSyncOperation> &v, BufSyncType ty) {
       for (const BufSyncOperation &s : v) {
         if (s.type == ty && s.logicId == logicId && s.pipe == pipe) {
           return true;

@@ -62,7 +62,7 @@ static uint64_t packL3dRepeatStatic(uint64_t repeatSourceStride,
 static Value packControlField(PatternRewriter &rewriter, Location loc,
                               Value result, Value value, uint64_t mask,
                               uint64_t shift) {
-  auto constant = [&](uint64_t v) {
+  auto constant = [&rewriter, &loc](uint64_t v) {
     return rewriter.create<arith::ConstantIntOp>(loc, v, kValue64);
   };
   Value field = rewriter.create<arith::AndIOp>(loc, value, constant(mask));
@@ -189,16 +189,16 @@ Derived3dLoadControls deriveDynamic3dControls(PatternRewriter &rewriter,
                                               Location loc, MteL1L0a3dOp op,
                                               uint64_t c0Size) {
   Derived3dLoadControls controls;
-  auto mul = [&](Value a, Value b) {
+  auto mul = [&rewriter, &loc](Value a, Value b) {
     return rewriter.create<arith::MulIOp>(loc, a, b);
   };
-  auto add = [&](Value a, Value b) {
+  auto add = [&rewriter, &loc](Value a, Value b) {
     return rewriter.create<arith::AddIOp>(loc, a, b);
   };
-  auto sub = [&](Value a, Value b) {
+  auto sub = [&rewriter, &loc](Value a, Value b) {
     return rewriter.create<arith::SubIOp>(loc, a, b);
   };
-  auto div = [&](Value a, Value b) {
+  auto div = [&rewriter, &loc](Value a, Value b) {
     // Dynamic values cannot be range-checked here; clamp the divisor to >= 1
     // so the LLVM udiv never sees a zero divisor (poison in LLVM lowering).
     Value safe = rewriter.create<arith::MaxUIOp>(loc, b, constantI64(rewriter, loc, 1));

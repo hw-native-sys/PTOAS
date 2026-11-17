@@ -57,7 +57,7 @@ using DirKey = std::pair<int, int>;
 
 DirKey dirKeyOf(const Hazard &h) { return {static_cast<int>(h.srcPipe()), static_cast<int>(h.dstPipe())}; }
 
-static void joinHazardClusters(Hazard &h, SyncOperation *setOp, const MemInfoToClusters &memInfoToClusters) {
+static void joinHazardClusters(Hazard &h, const SyncOperation *setOp, const MemInfoToClusters &memInfoToClusters) {
   // --- 3. Join the hazard to its buffer-id cluster(s) ---------------------
   // Resolved by the caller via MemAlias -- the relation BufidSyncAnalysis
   // itself uses to decide two tiles are the same memory. See MemInfoToClusters
@@ -79,7 +79,7 @@ static void joinHazardClusters(Hazard &h, SyncOperation *setOp, const MemInfoToC
   llvm::sort(h.bufferClusters); // determinism
 }
 
-static void setHazardFacts(Hazard &h, SyncOperation *setOp, SyncOperation *waitOp, const SyncIRs &syncIR,
+static void setHazardFacts(Hazard &h, const SyncOperation *setOp, const SyncOperation *waitOp, const SyncIRs &syncIR,
                            const MemInfoToClusters &memInfoToClusters) {
   // --- 2. Interval, in SyncIR-index space --------------------------------
   // Forward hazard: the tight [set, wait) range. A barrier is a point.
@@ -721,8 +721,8 @@ static void predictBufferPeak(Buffer &b, const SyncModel &model, const std::map<
       continue;
     }
     DirKey d = dirKeyOf(h);
-    unsigned peak = peakOf.count(d) ? peakOf.at(d) : 0;
-    unsigned pool = poolOf.count(d) ? poolOf.at(d) : 0;
+    unsigned peak = peakOf.count(d) != 0 ? peakOf.at(d) : 0;
+    unsigned pool = poolOf.count(d) != 0 ? poolOf.at(d) : 0;
     if (!any || peak > worstPeak) {
       worstPeak = peak;
       tightestPool = pool;
@@ -1020,7 +1020,7 @@ static void printHazards(llvm::raw_ostream &os, const SyncModel &model) {
        << " pool=" << model.resources.eventPoolSize(h.srcPipe(), h.dstPipe())
        << " mech=" << SyncOperation::MechanismName(h.mechanism()) << " clusters=[";
     for (size_t i = 0; i < h.bufferClusters.size(); ++i) {
-      if (i) {
+      if (i != 0) {
         os << ",";
       }
       os << h.bufferClusters[i];

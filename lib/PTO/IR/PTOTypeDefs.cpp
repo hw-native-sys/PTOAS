@@ -844,7 +844,7 @@ static void printConvTileLayoutField(AsmPrinter &printer, Attribute layoutAttr) 
 
 static LogicalResult checkConvTileShape(AsmParser &parser,
                                         ArrayRef<int64_t> shape) {
-  auto emitError = [&]() -> InFlightDiagnostic {
+  auto emitError = [&parser]() -> InFlightDiagnostic {
     return parser.emitError(parser.getNameLoc());
   };
   if (shape.empty()) {
@@ -873,7 +873,7 @@ static LogicalResult checkConvTileShape(AsmParser &parser,
 // fixed dims -- a smaller capacity silently under-covers the transfer.
 static LogicalResult verifyConvTileBlockedDims(
     function_ref<InFlightDiagnostic()> emitError, ConvLayout layout,
-    ArrayRef<int64_t> shape, Type elementType, IntegerAttr bufferSize) {
+    ArrayRef<int64_t> shape, Type elementType, [[maybe_unused]] IntegerAttr bufferSize) {
   const int64_t elemBytes = pto::getPTOStorageElemByteSize(elementType);
   const std::optional<int64_t> c0Opt = pto::convC0ForElemBytes(elemBytes);
   if (!c0Opt) {
@@ -881,7 +881,7 @@ static LogicalResult verifyConvTileBlockedDims(
                           "size";
   }
   const int64_t c0 = *c0Opt;
-  auto requireTrailing = [&](size_t index, int64_t fixed) {
+  auto requireTrailing = [&shape](size_t index, int64_t fixed) {
     return shape.size() > index && shape[index] == fixed;
   };
   // Every blocked layout moves data in fixed 32-byte blocks regardless of
@@ -962,7 +962,7 @@ static LogicalResult verifyConvTileValidShape(
                               "shape ("
                            << shape.size() << "), got " << validShape.size();
     }
-    auto tailIdxMustMatch = [&](size_t index) {
+    auto tailIdxMustMatch = [&validShape, &shape](size_t index) {
         return index < validShape.size() && validShape[index] == shape[index];
     };
     const size_t last = shape.size() - 1;
@@ -1052,7 +1052,7 @@ resolveConvTileStorageFacets(AsmParser &parser,
 static Type buildConvTileBufType(AsmParser& parser, const ParsedConvTileFields& fields)
 {
     MLIRContext* ctx = parser.getContext();
-    auto emitError = [&]() -> InFlightDiagnostic { return parser.emitError(parser.getNameLoc()); };
+    auto emitError = [&parser]() -> InFlightDiagnostic { return parser.emitError(parser.getNameLoc()); };
 
     IntegerAttr bufferSize = fields.bufferSize;
     auto memorySpace = resolveConvTileStorageFacets(parser, fields, bufferSize);
@@ -1199,85 +1199,85 @@ static LogicalResult parseConvTileBufTypeKeywords(AsmParser& parser, ParsedConvT
 
 } // namespace
 
-Type ConvTileBufType::parse(AsmParser& parser)
+Type ConvTileBufType::parse(AsmParser& odsParser)
 {
-    if (failed(parser.parseLess())) {
+    if (failed(odsParser.parseLess())) {
         return Type();
     }
 
     std::string firstToken;
-    if (failed(parser.parseKeywordOrString(&firstToken))) {
+    if (failed(odsParser.parseKeywordOrString(&firstToken))) {
         return Type();
     }
 
     ParsedConvTileFields fields;
     fields.locStr = firstToken;
 
-    if (failed(parser.parseComma())) {
+    if (failed(odsParser.parseComma())) {
         return Type();
     }
 
     // Static dims only; the trailing x separates the shape from the
     // element type that follows.
-    if (failed(parser.parseDimensionList(fields.shape, false, true))) {
+    if (failed(odsParser.parseDimensionList(fields.shape, false, true))) {
         return Type();
     }
 
-    if (failed(parser.parseType(fields.dtype))) {
+    if (failed(odsParser.parseType(fields.dtype))) {
         return Type();
     }
 
     ParsedConvTileKeywords kw;
-    if (failed(parseConvTileBufTypeKeywords(parser, kw))) {
+    if (failed(parseConvTileBufTypeKeywords(odsParser, kw))) {
         return Type();
     }
 
     if (!kw.layout) {
-        kw.layout = ConvLayoutAttr::get(parser.getContext(), ConvLayout::NC1HWC0);
+        kw.layout = ConvLayoutAttr::get(odsParser.getContext(), ConvLayout::NC1HWC0);
     }
     if (!kw.bufferSize) {
         auto defaultBufferSize = computeConvTileBufferSize(fields.shape);
         if (!defaultBufferSize) {
-            parser.emitError(
-                parser.getCurrentLocation(), "conv_tile shape must have a positive, overflow-free element count");
+            odsParser.emitError(
+                odsParser.getCurrentLocation(), "conv_tile shape must have a positive, overflow-free element count");
             return Type();
         }
-        kw.bufferSize = IntegerAttr::get(parser.getBuilder().getI64Type(), *defaultBufferSize);
+        kw.bufferSize = IntegerAttr::get(odsParser.getBuilder().getI64Type(), *defaultBufferSize);
     }
 
     return buildConvTileBufType(
-        parser, {fields.locStr, fields.shape, fields.dtype, kw.bufferSize, kw.layout, kw.validShape});
+        odsParser, {fields.locStr, fields.shape, fields.dtype, kw.bufferSize, kw.layout, kw.validShape});
 }
 
-void ConvTileBufType::print(AsmPrinter& printer) const
+void ConvTileBufType::print(AsmPrinter& odsPrinter) const
 {
-    printer << "<";
-    printer << stringifyLocFromMemorySpace(getMemorySpace());
-    printer << ", ";
+    odsPrinter << "<";
+    odsPrinter << stringifyLocFromMemorySpace(getMemorySpace());
+    odsPrinter << ", ";
     auto shape = getShape();
     for (auto it = shape.begin(); it != shape.end(); ++it) {
         if (it != shape.begin()) {
-            printer << "x";
+            odsPrinter << "x";
         }
-        printTileBufDim(printer, *it);
+        printTileBufDim(odsPrinter, *it);
     }
-    printer << "x";
-    printer.printType(getElementType());
-    printer << ", buffer_size=";
-    printer.printAttribute(getBufferSize());
-    printer << ", ";
-    printConvTileLayoutField(printer, getLayout());
+    odsPrinter << "x";
+    odsPrinter.printType(getElementType());
+    odsPrinter << ", buffer_size=";
+    odsPrinter.printAttribute(getBufferSize());
+    odsPrinter << ", ";
+    printConvTileLayoutField(odsPrinter, getLayout());
     auto validShape = getValidShape();
     if (!validShape.empty()) {
-        printer << ", valid_shape=";
+        odsPrinter << ", valid_shape=";
         for (auto it = validShape.begin(); it != validShape.end(); ++it) {
             if (it != validShape.begin()) {
-                printer << "x";
+                odsPrinter << "x";
             }
-            printTileBufDim(printer, *it);
+            printTileBufDim(odsPrinter, *it);
         }
     }
-    printer << ">";
+    odsPrinter << ">";
 }
 
 // Invoked by getChecked (CAPI and Python bindings); the parser enforces the

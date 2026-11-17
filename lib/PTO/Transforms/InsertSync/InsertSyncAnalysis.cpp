@@ -964,7 +964,8 @@ static void dropCarriedDisjointDeps(
   const bool isCarriedTraversal =
       syncIR[nowCompound->GetIndex()].get() == nowCompound;
   auto isDroppableCarried =
-      [&](const std::pair<const BaseMemInfo *, const BaseMemInfo *> &pair) {
+      [&isCarriedTraversal, &carryingFor, &nowCompound,
+       &frontCompound](const std::pair<const BaseMemInfo *, const BaseMemInfo *> &pair) {
         // Unlike the self-only GM proof, disjoint UB rows may be accessed by
         // different operations, including mutually exclusive branch writers.
         // The row proof excludes reuse at every positive iteration distance.

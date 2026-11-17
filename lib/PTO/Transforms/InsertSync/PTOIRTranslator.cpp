@@ -425,9 +425,11 @@ static std::optional<BoxedTileLayout> getBoxedI8Layout(pto::TileBufType type) {
 // 一维窗口 [offset, offset + size) 落在 [0, extent) 内且按 2^innerLog2 对齐。
 static bool isAlignedWindow(int64_t offset, int64_t size, int64_t extent,
                             unsigned innerLog2) {
-  const int64_t mask = (int64_t{1} << innerLog2) - 1;
+  const uint64_t mask = (uint64_t{1} << innerLog2) - 1;
   return extent > 0 && offset >= 0 && size > 0 && offset <= extent - size &&
-         (extent & mask) == 0 && (offset & mask) == 0 && (size & mask) == 0;
+         (static_cast<uint64_t>(extent) & mask) == 0 &&
+         (static_cast<uint64_t>(offset) & mask) == 0 &&
+         (static_cast<uint64_t>(size) & mask) == 0;
 }
 
 // 首尾相接的分段合并为一个连续范围，避免等价访问因表示不同而影响
@@ -468,7 +470,8 @@ getBoxedTileRegion(pto::TileBufType type, int64_t rowOffset, int64_t colOffset,
   unsigned colLog2 = layout->innerColsLog2;
   int64_t innerRows = int64_t{1} << rowLog2;
   int64_t innerCols = int64_t{1} << colLog2;
-  int64_t count = nz ? (colSize >> colLog2) : (rowSize >> rowLog2);
+  int64_t count = nz ? static_cast<int64_t>(static_cast<uint64_t>(colSize) >> colLog2)
+                     : static_cast<int64_t>(static_cast<uint64_t>(rowSize) >> rowLog2);
   if (count > kMaxSegments) {
     return std::nullopt;
   }
@@ -477,11 +480,15 @@ getBoxedTileRegion(pto::TileBufType type, int64_t rowOffset, int64_t colOffset,
   region.segmentBytes =
       static_cast<uint64_t>(nz ? rowSize * innerCols : colSize * innerRows);
   region.offsets.reserve(static_cast<size_t>(count));
+  const int64_t colBlocks =
+      static_cast<int64_t>(static_cast<uint64_t>(colOffset) >> colLog2);
+  const int64_t rowBlocks =
+      static_cast<int64_t>(static_cast<uint64_t>(rowOffset) >> rowLog2);
   for (int64_t block = 0; block < count; ++block) {
     int64_t offset =
-        nz ? ((colOffset >> colLog2) + block) * layout->rows * innerCols +
+        nz ? (colBlocks + block) * layout->rows * innerCols +
                  rowOffset * innerCols
-           : ((rowOffset >> rowLog2) + block) * layout->cols * innerRows +
+           : (rowBlocks + block) * layout->cols * innerRows +
                  colOffset * innerRows;
     region.offsets.push_back(static_cast<uint64_t>(offset));
   }

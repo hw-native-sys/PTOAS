@@ -198,7 +198,7 @@ static std::optional<MemBarKind> hazardKind(const AccessOccurrence& producer, co
 // Stopping at the scope keeps the invariant that an op directly inside a
 // vecscope with no inner loops has an empty IV set, which the same-iteration
 // overlap model relies on to compare constant addresses directly.
-static SmallVector<Value, 2> collectIVs(Operation* op, Operation* scope)
+static SmallVector<Value, 2> collectIVs(Operation* op, const Operation* scope)
 {
     SmallVector<Value, 2> ivs;
     for (Operation* cur = op->getParentOp(); cur && cur != scope; cur = cur->getParentOp()) {
@@ -213,7 +213,7 @@ static SmallVector<Value, 2> collectIVs(Operation* op, Operation* scope)
 // Whether any loop enclosing `op` within the vecscope `scope` has non-constant
 // bounds. Loops outside the scope are invisible to the analysis (see
 // `collectIVs`).
-static bool hasDynamicLoopDomain(Operation* op, Operation* scope)
+static bool hasDynamicLoopDomain(Operation* op, const Operation* scope)
 {
     for (Operation* cursor = op->getParentOp(); cursor && cursor != scope; cursor = cursor->getParentOp()) {
         if (auto forOp = dyn_cast<scf::ForOp>(cursor)) {
@@ -380,7 +380,8 @@ static void collectExistingBarriers(Operation* scope, VecScopeMemBarAnalysisResu
         ExistingBarrier b;
         b.op = mb.getOperation();
         b.kind = mb.getKind().getKind();
-        b.phase = mb->getParentOfType<scf::ForOp>() ? ExistingBarrier::LoopLatch : ExistingBarrier::SameIteration;
+        b.phase = mb->getParentOfType<scf::ForOp>() ? ExistingBarrier::Phase::LoopLatch
+                                                    : ExistingBarrier::Phase::SameIteration;
         b.latchLoop = latchLoopOfBarrier(mb, result);
         result.existingBarriers.push_back(b);
     });
@@ -751,7 +752,7 @@ static void enumerateLoopCarriedHazards(VecScopeMemBarAnalysisResult& result, Op
 
 } // namespace
 
-Operation* vecscopemembar::findSameIterationAnchor(Operation* producer, Operation* consumer, Operation* scope)
+Operation* vecscopemembar::findSameIterationAnchor(Operation* producer, Operation* consumer, const Operation* scope)
 {
     for (Operation* p = producer; p && p != scope; p = p->getParentOp()) {
         for (Operation* c = consumer; c && c != scope; c = c->getParentOp()) {

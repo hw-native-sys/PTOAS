@@ -45,7 +45,7 @@ struct PTOInsertVecScopeMemBarPass : pto::impl::PTOInsertVecScopeMemBarBase<PTOI
             }
         });
 
-        auto analyzeAndApply = [&](FailureOr<VecScopeMemBarAnalysisResult> result) {
+        auto analyzeAndApply = [](FailureOr<VecScopeMemBarAnalysisResult> result) {
             if (failed(result)) {
                 return failure();
             }

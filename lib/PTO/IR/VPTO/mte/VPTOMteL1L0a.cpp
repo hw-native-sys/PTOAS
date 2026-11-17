@@ -214,7 +214,7 @@ static bool foldGeometryConstants(MteL1L0a3dOp op, int64_t &fmapH,
                                     int64_t &dilationH, int64_t &dilationW,
                                     int64_t &padTop, int64_t &padBottom,
                                     int64_t &padLeft, int64_t &padRight) {
-  auto fold = [&](Value value, int64_t &out) {
+  auto fold = [](Value value, int64_t &out) {
     llvm::APInt constantValue;
     if (!matchPattern(value, m_ConstantInt(&constantValue))) {
       return false;

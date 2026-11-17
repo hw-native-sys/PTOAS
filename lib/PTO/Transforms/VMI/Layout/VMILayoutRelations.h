@@ -65,8 +65,9 @@ inline bool haveSameInterleaveLayouts(const VMIInterleaveLayoutFact& lhs, const 
 
 inline void appendUniqueRelation(SmallVectorImpl<VMILayoutOpRelation>& relations, VMILayoutOpRelation relation)
 {
-    bool unique = llvm::none_of(
-        relations, [&](const VMILayoutOpRelation& existing) { return haveSamePortTuple(existing, relation); });
+    bool unique = llvm::none_of(relations, [&relation](const VMILayoutOpRelation& existing) {
+        return haveSamePortTuple(existing, relation);
+    });
     if (unique) {
         relations.push_back(std::move(relation));
     }

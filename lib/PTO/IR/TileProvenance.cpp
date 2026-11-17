@@ -140,7 +140,7 @@ pto::TileOrigins pto::getTileOrigins(Value tile, bool followLoops)
             }
         }
     }
-    origins.complete &= !origins.roots.empty();
+    origins.complete = origins.complete && !origins.roots.empty();
     return origins;
 }
 

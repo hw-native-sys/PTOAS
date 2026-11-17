@@ -254,7 +254,7 @@ LogicalResult mlir::pto::TImg2colOp::verify() {
 
   // posM/posK are runtime offsets; only constant ones can be statically
   // range-checked against the uint16 the runtime takes.
-  auto checkPos = [&](Value pos, StringRef name) -> LogicalResult {
+  auto checkPos = [this](Value pos, StringRef name) -> LogicalResult {
     std::optional<int64_t> constant = mlir::getConstantIntValue(pos);
     if (constant && (*constant < 0 ||
                      *constant > std::numeric_limits<uint16_t>::max())) {

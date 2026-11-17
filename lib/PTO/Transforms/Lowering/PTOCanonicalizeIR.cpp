@@ -525,7 +525,7 @@ void PTOCanonicalizeIRPass::normalizeSyncBlockOps(func::FuncOp func, IRRewriter&
     }
     auto mode0 = IntegerAttr::get(IntegerType::get(func.getContext(), 32), 0);
     auto mode2 = IntegerAttr::get(IntegerType::get(func.getContext(), 32), 2);
-    auto normalizeDynamicEventId = [&](Operation *op, Value eventId) -> Value {
+    auto normalizeDynamicEventId = [&rewriter](Operation *op, Value eventId) -> Value {
         if (!eventId || eventId.getType().isIndex()) {
             return eventId;
         }

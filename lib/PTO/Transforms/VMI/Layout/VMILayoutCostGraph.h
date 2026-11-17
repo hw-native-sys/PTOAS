@@ -311,10 +311,10 @@ private:
     PhysicalValues buildDenseDeinterleavedLoad(int64_t arity, int64_t factor, Region* scope);
     PhysicalValues buildBroadcastLoadActions(
         VMIGroupBroadcastLoadOp load, const VMILayoutOpRelation& relation, const BroadcastLoadState& state);
-    LogicalResult buildRelationEndpoints(Operation* op, const VMILayoutOpRelation& relation);
+    LogicalResult buildRelationEndpoints(const Operation* op, const VMILayoutOpRelation& relation);
 
     FailureOr<int64_t> getCompactReductionComputeCount(
-        const VMIGroupReduceLayoutFact& fact, VMIVRegType source, VMIVRegType result, int64_t numGroups);
+        const VMIGroupReduceLayoutFact& fact, VMIVRegType source, VMIVRegType result, int64_t numGroups) const;
 
     FailureOr<int64_t> getGroupReductionComputeCount(Operation* op, const VMILayoutOpRelation& relation);
 

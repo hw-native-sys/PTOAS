@@ -1303,7 +1303,7 @@ LogicalResult VMILayoutPropagator::installPlanned(OpOperand& operand, VMILayoutA
     return addUseConflict(operand, assignment, layout);
 }
 
-void VMILayoutPropagator::endExactRequests() {}
+void VMILayoutPropagator::endExactRequests() const {}
 
 VMILayoutAttr VMILayoutPropagator::getRequestedOrCurrentLayout(Value value) const
 {

@@ -78,7 +78,7 @@ struct ExistingBarrier {
     MemBarKind kind = MemBarKind::VV_ALL;
     SmallVector<unsigned, 2> schedulePath;
     SmallVector<unsigned, 2> enclosingLoops;
-    enum Phase { SameIteration, LoopLatch } phase = SameIteration;
+    enum class Phase { SameIteration, LoopLatch } phase = Phase::SameIteration;
     std::optional<unsigned> latchLoop;
 };
 
@@ -94,7 +94,7 @@ struct VecScopeMemBarAnalysisResult {
 
 FailureOr<VecScopeMemBarAnalysisResult> runVecScopeMemBarAnalysis(Operation* scope);
 
-Operation* findSameIterationAnchor(Operation* producer, Operation* consumer, Operation* scope);
+Operation* findSameIterationAnchor(Operation* producer, Operation* consumer, const Operation* scope);
 
 } // namespace mlir::pto::vecscopemembar
 

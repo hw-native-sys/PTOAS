@@ -267,24 +267,24 @@ static bool isNoneBoxLayout(pto::TileBufType type)
 
 } // namespace
 
-pto::TileBufType mlir::pto::getTileSubviewPhysicalType(SubViewOp op,
-                                                      TileBufType sourceType) {
-  pto::TileBufType resultType = op.getResult().getType();
-  ArrayRef<int64_t> physicalShape = sourceType.getShape();
+pto::TileBufType mlir::pto::getTileSubviewPhysicalType(SubViewOp subview,
+                                                      TileBufType parentType) {
+  pto::TileBufType resultType = subview.getResult().getType();
+  ArrayRef<int64_t> physicalShape = parentType.getShape();
 
   int64_t inheritedRowStride = 0;
   int64_t inheritedColStride = 0;
   int64_t childRowStride = 0;
   int64_t childColStride = 0;
   auto compactChildType = pto::TileBufType::get(
-      op.getContext(), resultType.getShape(), resultType.getElementType(),
+      subview.getContext(), resultType.getShape(), resultType.getElementType(),
       resultType.getMemorySpace(), resultType.getValidShape(),
       resultType.getConfigAttr());
-  bool plainLayout = isNoneBoxLayout(sourceType);
+  bool plainLayout = isNoneBoxLayout(parentType);
   // If the child tile's compact layout keeps the inherited addressing, the
   // addressed handle can use the child physical shape. Otherwise keep the
   // parent shape and express the logical slice via valid.
-  if (getTilePointerStrides(sourceType, inheritedRowStride,
+  if (getTilePointerStrides(parentType, inheritedRowStride,
                             inheritedColStride) &&
       getTilePointerStrides(compactChildType, childRowStride, childColStride) &&
       windowStrideMatches(inheritedRowStride, childRowStride,
@@ -295,7 +295,7 @@ pto::TileBufType mlir::pto::getTileSubviewPhysicalType(SubViewOp op,
   }
 
   return pto::TileBufType::get(
-      op.getContext(), physicalShape, resultType.getElementType(),
+      subview.getContext(), physicalShape, resultType.getElementType(),
       resultType.getMemorySpace(), resultType.getValidShape(),
       resultType.getConfigAttr());
 }
@@ -542,7 +542,7 @@ static LogicalResult resolveTileNativeSubviews(ModuleOp module,
   IRRewriter rewriter(ctx);
   // Resolve branches before their selection and propagate the physical type
   // before any following subview uses it to compute an address.
-  WalkResult result = module.walk<WalkOrder::PostOrder>([&](Operation *op) {
+  WalkResult result = module.walk<WalkOrder::PostOrder>([&rewriter](Operation *op) {
     if (auto subview = dyn_cast<pto::SubViewOp>(op)) {
       resolveTileNativeSubview(subview, rewriter);
     } else if (auto copy = dyn_cast<pto::CopyTileDescriptorOp>(op)) {
@@ -700,12 +700,12 @@ struct PTOResolveBufferSelectPass
 } // namespace
 
 Value mlir::pto::buildTileSubviewAddress(SubViewOp subview, Value base,
-                                        TileBufType sourceType,
+                                        TileBufType parentType,
                                         OpBuilder &builder, Location loc) {
   int64_t rowStride = 0;
   int64_t colStride = 0;
-  if (!base || !sourceType ||
-      !getTilePointerStrides(sourceType, rowStride, colStride) ||
+  if (!base || !parentType ||
+      !getTilePointerStrides(parentType, rowStride, colStride) ||
       subview.getOffsets().size() != mlir::pto::kValue2) {
     return {};
   }
@@ -720,7 +720,7 @@ Value mlir::pto::buildTileSubviewAddress(SubViewOp subview, Value base,
   col = builder.create<arith::MulIOp>(loc, col, colScale);
   Value elements = builder.create<arith::AddIOp>(loc, row, col);
   int64_t elemBytes = static_cast<int64_t>(
-      pto::getPTOStorageElemByteSize(sourceType.getElementType()));
+      pto::getPTOStorageElemByteSize(parentType.getElementType()));
   if (elemBytes == 0) {
     return {};
   }

@@ -135,7 +135,7 @@ public:
   /// At the set side it would sit after the producer and order nothing across the
   /// back edge. Head and tail are suppressed for the reason given in
   /// `RouteToBufid`, and a PIPE_ALL needs no priming anyway.
-  void SpillToBarrier() {
+  void SpillToBarrier() const {
     if (!waitOp_) {
       return; // already a barrier; the colourer never reaches these
     }
@@ -153,7 +153,7 @@ public:
   }
 
   /// THE ONLY WAY a mechanism may be assigned. Stamps both halves.
-  void SetMechanism(MECHANISM m) {
+  void SetMechanism(MECHANISM m) const {
     setOp_->SetMechanism(m);
     if (waitOp_) {
       waitOp_->SetMechanism(m);
@@ -175,7 +175,7 @@ public:
   /// Arity matters more than identity here: `CreateSetWaitOpForMultiBuffer` asserts
   /// `eventIds.size() == slotCount` and indexes `eventIds[i]`, so a short list is
   /// an out-of-bounds read rather than a mis-sync.
-  void SetEventIds(llvm::ArrayRef<int> ids) {
+  void SetEventIds(llvm::ArrayRef<int> ids) const {
     setOp_->eventIds.assign(ids.begin(), ids.end());
     if (waitOp_) {
       waitOp_->eventIds.assign(ids.begin(), ids.end());
@@ -188,7 +188,7 @@ public:
     }
   }
 
-  void SetEventId(int id) {
+  void SetEventId(int id) const {
     setOp_->eventIds.assign(1, id);
     if (waitOp_) {
       waitOp_->eventIds.assign(1, id);

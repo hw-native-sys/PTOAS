@@ -516,7 +516,7 @@ Attribute buildWrapperUnitAttr(MLIRContext *context,
 struct WrapperGen final : impl::VPTOBridgeWrapperGenBase<WrapperGen> {
   MLIR_DEFINE_EXPLICIT_INTERNAL_INLINE_TYPE_ID(WrapperGen)
 
-  LogicalResult collectUnits(ModuleOp module, WrapperUnits &units) {
+  LogicalResult collectUnits(ModuleOp module, WrapperUnits &units) const {
     for (BridgeInstanceOp instance : module.getOps<BridgeInstanceOp>()) {
       const BridgeFunctionDesc *desc = findBridgeFunction(instance.getEntry());
       if (!desc) {

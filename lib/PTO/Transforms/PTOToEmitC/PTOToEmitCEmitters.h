@@ -155,9 +155,9 @@ inline std::string escapeCStringLiteral(StringRef text) {
       quoted += "\\t";
     } else if (character < 32 || character == 127) {
       quoted += '\\';
-      quoted += static_cast<char>('0' + ((character >> 6) & 7));
-      quoted += static_cast<char>('0' + ((character >> 3) & 7));
-      quoted += static_cast<char>('0' + (character & 7));
+      quoted += static_cast<char>(static_cast<int>('0') + ((character >> 6) & 7));
+      quoted += static_cast<char>(static_cast<int>('0') + ((character >> 3) & 7));
+      quoted += static_cast<char>(static_cast<int>('0') + (character & 7));
     } else {
       quoted += character;
     }

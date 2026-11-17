@@ -118,7 +118,7 @@ static FailureOr<Value> buildStaticPackedFp4TransferGlobalTensor(
 static FailureOr<Value> buildRuntimePackedFp4TransferGlobalTensor(
     ConversionPatternRewriter &rewriter, Location loc, Value gmTensor,
     Value data, pto::PartitionTensorViewType partitionType,
-    ArrayRef<int64_t> packDims, bool isColMajor, bool scaleShape,
+    [[maybe_unused]] ArrayRef<int64_t> packDims, bool isColMajor, bool scaleShape,
     StringRef layoutString) {
   int64_t rank = partitionType.getRank();
   SmallVector<int64_t, mlir::pto::kValue5> transferShape(

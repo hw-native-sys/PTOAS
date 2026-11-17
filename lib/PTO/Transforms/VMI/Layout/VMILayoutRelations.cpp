@@ -198,8 +198,8 @@ RelationResult VMILayoutRelations::buildSameLayout()
 
 } // namespace mlir::pto::layout_relations
 mlir::pto::layout_relations::RelationResult mlir::pto::VMILayoutRelationProvider::enumerateRelations(
-    Operation* op, ArrayRef<VMILayoutAttr> layouts, std::string* reason) const
+    Operation* op, ArrayRef<VMILayoutAttr> polymorphicLayouts, std::string* reason) const
 {
-    return layout_relations::VMILayoutRelations(op, layouts, reason).build();
+    return layout_relations::VMILayoutRelations(op, polymorphicLayouts, reason).build();
 }
 namespace mlir::pto::layout_relations {} // namespace mlir::pto::layout_relations

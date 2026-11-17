@@ -106,7 +106,7 @@ static void ringDoorbellViaUb(
     // event id comes from the session so a caller who is already using MTE3
     // events elsewhere can keep this staging off them; a fixed id would collide
     // silently.
-    auto pipe = [&](pto::PIPE p) { return pto::PipeAttr::get(ctx, p); };
+    auto pipe = [&ctx](pto::PIPE p) { return pto::PipeAttr::get(ctx, p); };
     Value eventId = rewriter.create<arith::IndexCastUIOp>(loc, rewriter.getIndexType(), syncId32);
     rewriter.create<pto::SetFlagDynOp>(loc, pipe(pto::PIPE::PIPE_S), pipe(pto::PIPE::PIPE_MTE3), eventId);
     rewriter.create<pto::WaitFlagDynOp>(loc, pipe(pto::PIPE::PIPE_S), pipe(pto::PIPE::PIPE_MTE3), eventId);
@@ -406,7 +406,7 @@ private:
         Type i64Type = rewriter.getI64Type();
         Value zero64 = getI64Constant(loc, rewriter, 0);
         Value falseBit = rewriter.create<arith::ConstantOp>(loc, rewriter.getI1Type(), rewriter.getBoolAttr(false));
-        auto pipe = [&](pto::PIPE p) { return pto::PipeAttr::get(ctx, p); };
+        auto pipe = [&ctx](pto::PIPE p) { return pto::PipeAttr::get(ctx, p); };
         Value iv = rewriter.create<arith::IndexCastUIOp>(loc, i64Type, forOp.getInductionVar());
         Value chunkOffset = rewriter.create<arith::MulIOp>(loc, iv, chunkBytes);
         Value remaining = rewriter.create<arith::SubIOp>(loc, nbytes, chunkOffset);

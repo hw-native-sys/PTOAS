@@ -269,10 +269,10 @@ static bool needsRuntimeValidShape(Value value) {
     if (isSCFTileCarrier(current) || isa_and_nonnull<pto::CopyTileDescriptorOp>(def)) {
       return true;
     }
-    hasSubview |= isa_and_nonnull<pto::SubViewOp>(def);
+    hasSubview = hasSubview || isa_and_nonnull<pto::SubViewOp>(def);
     if (auto alloc = dyn_cast_or_null<pto::AllocTileOp>(def)) {
       auto semantics = alloc->getAttrOfType<StringAttr>("pto.view_semantics");
-      hasSubview |= semantics && semantics.getValue() == "subview";
+      hasSubview = hasSubview || (semantics && semantics.getValue() == "subview");
     }
     for (auto *user : current.getUsers()) {
       auto update = dyn_cast<pto::SetValidShapeOp>(user);

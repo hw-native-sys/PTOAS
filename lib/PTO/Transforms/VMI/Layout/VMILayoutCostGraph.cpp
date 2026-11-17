@@ -92,7 +92,7 @@ FailureOr<SmallVector<PhysicalValue, mlir::pto::kValue4>> PlanGraphBuilder::buil
     if (!definingOp) {
         return buildBlockArgumentValue(value);
     }
-    if (!selectedRelations.count(definingOp)) {
+    if (selectedRelations.count(definingOp) == 0) {
         auto type = dyn_cast<VMIVRegType>(value.getType());
         VMILayoutAttr layout = plan.valueLayouts.lookup(value);
         if (!layout) {
@@ -123,7 +123,8 @@ FailureOr<SmallVector<PhysicalValue, mlir::pto::kValue4>> PlanGraphBuilder::buil
 void PlanGraphBuilder::seedStructuralOperand(OpOperand& operand, VMILayoutAttr targetLayout)
 {
     Operation* definingOp = operand.get().getDefiningOp();
-    bool isStructuralValue = isa<BlockArgument>(operand.get()) || (definingOp && !selectedRelations.count(definingOp));
+    bool isStructuralValue =
+        isa<BlockArgument>(operand.get()) || (definingOp && selectedRelations.count(definingOp) == 0);
     if (isStructuralValue && !plan.valueLayouts.contains(operand.get()) && !layouts.lookup(operand.get())) {
         auto type = dyn_cast<VMIVRegType>(operand.get().getType());
         if (type) {
@@ -200,7 +201,7 @@ FailureOr<SmallVector<PhysicalValue, mlir::pto::kValue4>> PlanGraphBuilder::buil
     return result;
 }
 
-LogicalResult PlanGraphBuilder::buildRelationEndpoints(Operation* op, const VMILayoutOpRelation& relation)
+LogicalResult PlanGraphBuilder::buildRelationEndpoints(const Operation* op, const VMILayoutOpRelation& relation)
 {
     for (const VMILayoutRelationEndpoint& endpoint : relation.endpoints) {
         if (!endpoint.value || !endpoint.layout) {

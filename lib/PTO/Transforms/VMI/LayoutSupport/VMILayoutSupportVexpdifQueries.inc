@@ -103,7 +103,7 @@ inline bool matchesVexpdifPhysicalShape(
 FailureOr<SmallVector<VMIVexpdifLayoutFact, mlir::pto::kValue4>> VMILayoutSupport::getVexpdifLayoutFactsForLayout(
     VMIVexpdifOp op, VMIVexpdifLayoutPort port, VMILayoutAttr layout, std::string* reason) const
 {
-    auto fail = [&](const Twine& message) -> FailureOr<SmallVector<VMIVexpdifLayoutFact, 4>> {
+    auto fail = [&reason](const Twine& message) -> FailureOr<SmallVector<VMIVexpdifLayoutFact, 4>> {
         if (reason) {
             *reason = message.str();
         }
@@ -141,7 +141,7 @@ FailureOr<SmallVector<VMIVexpdifLayoutFact, mlir::pto::kValue4>> VMILayoutSuppor
             continue;
         }
 
-        bool duplicate = llvm::any_of(facts, [&](const VMIVexpdifLayoutFact& existing) {
+        bool duplicate = llvm::any_of(facts, [&fact](const VMIVexpdifLayoutFact& existing) {
             return existing.sourceLayout == fact.sourceLayout && existing.resultLayout == fact.resultLayout;
         });
         if (!duplicate) {
@@ -158,7 +158,7 @@ FailureOr<SmallVector<VMIVexpdifLayoutFact, mlir::pto::kValue4>> VMILayoutSuppor
 FailureOr<VMIVexpdifLayoutFact> VMILayoutSupport::getPreferredVexpdifLayoutFact(
     VMIVexpdifOp op, std::string* reason) const
 {
-    auto fail = [&](const Twine& message) -> FailureOr<VMIVexpdifLayoutFact> {
+    auto fail = [&reason](const Twine& message) -> FailureOr<VMIVexpdifLayoutFact> {
         if (reason) {
             *reason = message.str();
         }

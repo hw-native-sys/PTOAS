@@ -117,7 +117,7 @@ LogicalResult VMILayoutRelationConstraintState::unite(Value lhs, Value rhs)
 
 LogicalResult VMILayoutRelationConstraintState::assign(Value value, VMILayoutAttr layout)
 {
-    if (!value || !layout || !parent.count(value)) {
+    if (!value || !layout || parent.count(value) == 0) {
         return success();
     }
     Value root = find(value);
@@ -150,7 +150,7 @@ LogicalResult VMILayoutRelationConstraintState::accept(const VMILayoutOpRelation
 
 LogicalResult VMILayoutRelationConstraintState::materialize(VMILayoutPlan& plan) const
 {
-    auto findRoot = [&](Value value) {
+    auto findRoot = [this](Value value) {
         Value current = value;
         auto it = parent.find(current);
         while (it != parent.end() && it->second != current) {
@@ -719,7 +719,7 @@ private:
                     for (int candidate = state.domains[consumerIndex].find_first(); candidate >= 0;
                          candidate = state.domains[consumerIndex].find_next(candidate)) {
                         VMILayoutAttr targetLayout = getUseLayout(ops[consumerIndex].relations[candidate], use);
-                        supported |= canMaterialize(result, port.layout, targetLayout);
+                        supported = supported || canMaterialize(result, port.layout, targetLayout);
                     }
                     if (!supported) {
                         return false;
@@ -754,7 +754,7 @@ private:
              candidate = state.domains[producerIndex].find_next(candidate)) {
             VMILayoutAttr sourceLayout =
                 getResultLayout(ops[producerIndex].relations[candidate], cast<OpResult>(source));
-            supported |= canMaterialize(source, sourceLayout, port.layout);
+            supported = supported || canMaterialize(source, sourceLayout, port.layout);
         }
         if (!supported) {
             return false;
@@ -799,7 +799,7 @@ private:
     {
         SmallVector<SmallVector<unsigned, mlir::pto::kValue4>, mlir::pto::kValue16> predecessors(ops.size());
         SmallVector<SmallVector<unsigned, mlir::pto::kValue4>, mlir::pto::kValue16> successors(ops.size());
-        auto addDependency = [&](unsigned producer, unsigned consumer) {
+        auto addDependency = [&predecessors, &successors](unsigned producer, unsigned consumer) {
             if (producer == consumer || llvm::is_contained(successors[producer], consumer)) {
                 return;
             }
@@ -842,7 +842,7 @@ private:
         enum class VisitState { Unvisited, Active, Finished };
         SmallVector<unsigned, mlir::pto::kValue16> order;
         SmallVector<VisitState, mlir::pto::kValue16> states(ops.size(), VisitState::Unvisited);
-        auto visit = [&](unsigned root) {
+        auto visit = [&order, &predecessors, &states](unsigned root) {
             if (states[root] == VisitState::Finished) {
                 return success();
             }
@@ -868,7 +868,7 @@ private:
             }
             return success();
         };
-        auto visitRoots = [&]() -> LogicalResult {
+        auto visitRoots = [this, &successors, &visit]() -> LogicalResult {
             for (unsigned index = 0; index < ops.size(); ++index) {
                 if (successors[index].empty() && failed(visit(index))) {
                     return failure();
@@ -1049,7 +1049,7 @@ private:
         }
         for (const FrontierEntry& entry : frontier) {
             SmallVector<unsigned, mlir::pto::kValue4> candidates;
-            if (memberIndex >= 0 && entry.selectedDecisionGroups.count(groupIndex)) {
+            if (memberIndex >= 0 && entry.selectedDecisionGroups.count(groupIndex) != 0) {
                 unsigned selected = entry.selectedDecisionGroups.lookup(groupIndex);
                 if (selected < options.decisionGroups[groupIndex].memberRelationIndices[memberIndex].size()) {
                     unsigned mapped = options.decisionGroups[groupIndex].memberRelationIndices[memberIndex][selected];
@@ -1083,7 +1083,7 @@ private:
                 ++transitions;
                 const VMILayoutOpRelation& relation = ops[opIndex].relations[relationIndex];
                 FrontierEntry candidate = entry;
-                if (memberIndex >= 0 && !candidate.selectedDecisionGroups.count(groupIndex)) {
+                if (memberIndex >= 0 && candidate.selectedDecisionGroups.count(groupIndex) == 0) {
                     unsigned selected = 0;
                     const auto& memberRelations = options.decisionGroups[groupIndex].memberRelationIndices[memberIndex];
                     while (selected < memberRelations.size() && memberRelations[selected] != relationIndex) {

@@ -125,8 +125,8 @@ StringRef buildSetL3dRptCallee(MLIRContext *context, bool modeB) {
   return StringAttr::get(context, modeB ? "llvm.hivm.SET.L3D.RPT.B" : "llvm.hivm.SET.L3D.RPT").getValue();
 }
 
-FailureOr<StringRef> buildLoadL1L0a3dCallee(MLIRContext *context, Type sourceType) {
-  std::string elem = getL0LoadElementFragment(sourceType);
+FailureOr<StringRef> buildLoadL1L0a3dCallee(MLIRContext *context, Type elementType) {
+  std::string elem = getL0LoadElementFragment(elementType);
   if (elem.empty()) {
     return failure();
   }

@@ -120,7 +120,8 @@ RelationResult VMILayoutRelations::buildMaskedLoad(VMIMaskedLoadOp load)
         return failure();
     }
     SmallVector<VMIMaskedLoadLayoutFact, mlir::pto::kValue4> facts;
-    auto addFact = [&](VMILayoutAttr result, VMILayoutAttr mask, VMILayoutAttr passthru) {
+    auto addFact = [this, &resultType, &passthruType, &maskType, &facts](
+        VMILayoutAttr result, VMILayoutAttr mask, VMILayoutAttr passthru) {
         if (!isLegalLayoutForType(resultType, result) || !isLegalLayoutForType(passthruType, passthru)) {
             return;
         }
@@ -308,7 +309,7 @@ RelationResult VMILayoutRelations::buildGroupStore(VMIGroupStoreOp store)
     if (candidateLayouts.empty()) {
         candidateLayouts.push_back(VMILayoutAttr::getContiguous(op->getContext()));
     }
-    auto appendStoreFactsFor = [&](VMILayoutAttr layout) {
+    auto appendStoreFactsFor = [this, &store, &valueType](VMILayoutAttr layout) {
         auto facts = supports.getGroupStoreLayoutFactsForLayout(store, valueType, layout);
         if (failed(facts)) {
             return;

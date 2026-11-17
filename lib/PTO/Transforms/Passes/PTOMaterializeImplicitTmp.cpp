@@ -1590,7 +1590,7 @@ struct PTOMaterializeImplicitTmpPass
   }
 
 private:
-  LogicalResult materializeOptionalTmpOp(Operation *op, MLIRContext *ctx) {
+  LogicalResult materializeOptionalTmpOp(Operation *op, MLIRContext *ctx) const {
     return llvm::TypeSwitch<Operation *, LogicalResult>(op)
         .Case<pto::TColSumOp>([this, ctx](auto typedOp) {
           return replaceTColSumWithTmp(typedOp, requireExplicitTmp, ctx);

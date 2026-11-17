@@ -77,7 +77,7 @@ static SmallVector<unsigned, kValue4> getDecisionRelationMapping(
 {
     SmallVector<unsigned, mlir::pto::kValue4> mapping;
     for (const std::string& representative : relations) {
-        auto relationIt = llvm::find_if(solverOp.relations, [&](const VMILayoutOpRelation& relation) {
+        auto relationIt = llvm::find_if(solverOp.relations, [&representative](const VMILayoutOpRelation& relation) {
             return getDecisionRelationKey(relation) == representative;
         });
         if (relationIt == solverOp.relations.end()) {
@@ -234,7 +234,7 @@ namespace {
 static SmallVector<VMILayoutAttr, mlir::pto::kValue4> collectPlanLayouts(const VMILayoutPlan& plan)
 {
     SmallVector<VMILayoutAttr, mlir::pto::kValue4> layouts;
-    auto remember = [&](VMILayoutAttr layout) {
+    auto remember = [&layouts](VMILayoutAttr layout) {
         if (layout && !llvm::is_contained(layouts, layout)) {
             layouts.push_back(layout);
         }
@@ -580,7 +580,7 @@ static FailureOr<SmallVector<VMILayoutSolverOp, mlir::pto::kValue8>> buildPlanne
             // type spells a layout out; every other result is decided by the value
             // the function returns.
             auto function = returnOp->getParentOfType<func::FuncOp>();
-            needsRelations |= !function || returnOp.getNumOperands() != function.getNumResults();
+            needsRelations = needsRelations || !function || returnOp.getNumOperands() != function.getNumResults();
             if (!needsRelations) {
                 needsRelations = llvm::any_of(
                     llvm::zip_equal(function.getResultTypes(), returnOp.getOperands()),
@@ -857,7 +857,7 @@ static FailureOr<VMILayoutPlan> solveComponent(ArrayRef<Operation*> component, c
 LogicalResult mlir::pto::commitVMILayoutPlan(const VMILayoutPlan& plan, VMILayoutPropagator& propagator)
 {
     Operation* anchor = plan.selectedRelations.empty() ? nullptr : plan.selectedRelations.begin()->first;
-    auto failCommit = [&](StringRef message) {
+    auto failCommit = [&anchor](StringRef message) {
         if (anchor) {
             anchor->emitError() << kVMIDiagLayoutContractPrefix << message;
         }

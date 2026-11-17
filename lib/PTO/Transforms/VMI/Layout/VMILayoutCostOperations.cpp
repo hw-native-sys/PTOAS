@@ -12,7 +12,7 @@
 namespace mlir::pto::layout_cost {
 
 FailureOr<int64_t> PlanGraphBuilder::getCompactReductionComputeCount(
-    const VMIGroupReduceLayoutFact& fact, VMIVRegType source, VMIVRegType result, int64_t numGroups)
+    const VMIGroupReduceLayoutFact& fact, VMIVRegType source, VMIVRegType result, int64_t numGroups) const
 {
     // Singleton integer groups lower to a neutral vector and a select.
     if (fact.groupSize == 1 && isa<IntegerType>(source.getElementType())) {

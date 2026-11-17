@@ -652,7 +652,8 @@ public:
     /// counterpart; the body is the fork's (fork
     /// VMILayoutSupport.cpp:2042-2063).
     LogicalResult validateCastOperationRelation(
-        Operation* op, VMILayoutAttr sourceLayout, VMILayoutAttr resultLayout, std::string* reason = nullptr) const;
+        const Operation* op, VMILayoutAttr sourceLayout, VMILayoutAttr resultLayout,
+        std::string* reason = nullptr) const;
 
     /// The layout relation of a non-grouped reduce (pto.vmi.reduce_* lowered
     /// through the legacy vcadd / vcmax / vcmin family): the contiguous identity,

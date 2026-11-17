@@ -32,7 +32,7 @@ LogicalResult collectCubeOperands(Operation *op, ArrayRef<Value> tiles,
                                   ArrayRef<StringRef> roles,
                                   SmallVectorImpl<Value> &addresses,
                                   SmallVectorImpl<BridgeTileSpecAttr> &specs) {
-  auto emitError = [&] { return op->emitError(); };
+  auto emitError = [&op] { return op->emitError(); };
   for (auto [index, operand] : llvm::enumerate(tiles)) {
     auto tile = dyn_cast<TileBufType>(operand.getType());
     auto alloc = operand.getDefiningOp<AllocTileOp>();
@@ -90,7 +90,7 @@ struct TMatmulBridgeAdapter {
             return failure();
         }
         auto spec = BridgeCubeSpecAttr::getChecked(
-            [&] { return op.emitError(); }, op.getContext(), specs[0],
+            [&op] { return op.emitError(); }, op.getContext(), specs[0],
             specs[1], specs[2],
             AccPhaseAttr::get(op.getContext(), op.getAccPhase()),
             BridgeTileSpecAttr());
@@ -123,7 +123,7 @@ struct TMatmulAccBridgeAdapter {
             return failure();
         }
         auto spec = BridgeCubeSpecAttr::getChecked(
-            [&] { return op.emitError(); }, op.getContext(), specs[0],
+            [&op] { return op.emitError(); }, op.getContext(), specs[0],
             specs[2], specs[3],
             AccPhaseAttr::get(op.getContext(), op.getAccPhase()), specs[1]);
         if (!spec) {
@@ -473,7 +473,7 @@ LogicalResult lowerPrintFamilyOps(ModuleOp module,
     // Report a print the policy excluded: unlike the other families, print has
     // no non-bridge VPTO lowering to fall back to, so leaving the op alone
     // would fail later with an unrelated translation error.
-    WalkResult unroutable = module.walk([&](Operation *op) {
+    WalkResult unroutable = module.walk([&routesPrint, &routesTPrint](Operation *op) {
       const bool isUnroutedPrint =
           (isa<PrintOp>(op) && !routesPrint) ||
           (isa<TPrintOp>(op) && !routesTPrint);
@@ -506,7 +506,7 @@ LogicalResult lowerPrintFamilyOps(ModuleOp module,
 /// emission as an unlowered op, or silently fall back to a different path.
 LogicalResult verifyRoutedOpsWereLowered(ModuleOp module,
                                          const BridgeRoutePolicy &policy) {
-  WalkResult result = module.walk([&](Operation *op) {
+  WalkResult result = module.walk([&policy](Operation *op) {
     // Only registry members can be routed, so unrelated ops such as
     // arith.constant or func.return are never reported here.
     const BridgeFunctionDesc *desc =

@@ -658,10 +658,10 @@ void emitConvTileConfigInitCall(ConversionPatternRewriter &rewriter,
   SmallVector<Attribute, 24> args;
   args.push_back(IntegerAttr::get(IndexType::get(ctx), 0));
 
-  auto appendI32 = [&](IntegerAttr attr) {
+  auto appendI32 = [&args, &rewriter](IntegerAttr attr) {
     args.push_back(IntegerAttr::get(rewriter.getI32Type(), attr.getInt()));
   };
-  auto appendPad = [&](int64_t value) {
+  auto appendPad = [&args, &rewriter](int64_t value) {
     args.push_back(IntegerAttr::get(rewriter.getI32Type(), value));
   };
 
@@ -1174,18 +1174,18 @@ std::optional<mlir::pto::ConvLayout> getConvLayoutFromViewType(Type type) {
   return std::nullopt;
 }
 
-std::optional<mlir::pto::ConvLayout> resolveConvLayoutForGlobalTensor(Value v) {
-  v = peelUnrealized(v);
-  while (v) {
-    if (auto convLayout = getConvLayoutFromViewType(v.getType())) {
+std::optional<mlir::pto::ConvLayout> resolveConvLayoutForGlobalTensor(Value basePtr) {
+  basePtr = peelUnrealized(basePtr);
+  while (basePtr) {
+    if (auto convLayout = getConvLayoutFromViewType(basePtr.getType())) {
       return convLayout;
     }
-    Operation *def = v.getDefiningOp();
+    Operation *def = basePtr.getDefiningOp();
     if (!def) {
       break;
     }
     if (auto partition = dyn_cast<pto::PartitionViewOp>(def)) {
-      v = peelUnrealized(partition.getSource());
+      basePtr = peelUnrealized(partition.getSource());
       continue;
     }
     break;

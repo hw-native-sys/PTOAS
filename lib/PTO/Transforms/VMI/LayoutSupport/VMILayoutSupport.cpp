@@ -2051,7 +2051,8 @@ static std::optional<int64_t> getPhysicalVectorBytes(VRegType type)
 {
     unsigned elementBits = pto::getPTOStorageElemBitWidth(type.getElementType());
     int64_t totalBits;
-    if (elementBits == 0 || llvm::MulOverflow(type.getElementCount(), static_cast<int64_t>(elementBits), totalBits) ||
+    if (elementBits == 0 ||
+        llvm::MulOverflow(type.getElementCount(), static_cast<int64_t>(elementBits), totalBits) != 0 ||
         totalBits <= 0 || totalBits % kVMIBitsPerByte != 0) {
         return std::nullopt;
     }

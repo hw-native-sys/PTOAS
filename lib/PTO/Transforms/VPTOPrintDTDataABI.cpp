@@ -72,7 +72,7 @@ struct PrintDTDataABI final : impl::VPTOPrintDTDataABIBase<PrintDTDataABI> {
   explicit PrintDTDataABI(const VPTOPrintDTDataABIOptions &options)
       : impl::VPTOPrintDTDataABIBase<PrintDTDataABI>(options) {}
 
-  LogicalResult wireFunction(func::FuncOp func, bool explicitMode) {
+  LogicalResult wireFunction(func::FuncOp func, bool explicitMode) const {
     MLIRContext *context = func.getContext();
     auto tunnelType = LLVM::LLVMPointerType::get(context, 1);
     const unsigned hiddenIndex = func.getNumArguments();

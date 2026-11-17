@@ -118,13 +118,13 @@ static bool isScaleAddrScalarType(Type type) {
   return isa<IntegerType, IndexType, FloatType>(type);
 }
 
-static bool isSameBlockTileAllocation(Value value, Block *block) {
+static bool isSameBlockTileAllocation(Value value, const Block *block) {
   auto alloc = value.getDefiningOp<pto::AllocTileOp>();
   return alloc && alloc->getBlock() == block;
 }
 
 static bool preservesScaleAddrBinding(Operation *op, Value dst) {
-  if (op->getNumRegions() || op->getNumSuccessors()) {
+  if (op->getNumRegions() != 0 || op->getNumSuccessors() != 0) {
     return false;
   }
   if (auto binding = dyn_cast<pto::TGetScaleAddrOp>(op)) {
@@ -182,7 +182,7 @@ static bool hasEstablishedScaleAddrBinding(pto::TGetScaleAddrOp op,
 }
 
 static bool canHoistScaleAddrDependency(Operation *op) {
-  if (op->getNumRegions() || op->getNumSuccessors()) {
+  if (op->getNumRegions() != 0 || op->getNumSuccessors() != 0) {
     return false;
   }
   // alloc_tile creates a logical handle, not a data transfer. Its address and

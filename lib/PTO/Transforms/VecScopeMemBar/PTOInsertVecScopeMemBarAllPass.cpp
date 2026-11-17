@@ -35,7 +35,7 @@ namespace {
 // family-wide barriers before each UB access: SV_ALL/VV_ALL for vector
 // accesses and VS_ALL for scalar accesses. The scalar pipeline already orders
 // scalar-to-scalar accesses, so no SS_ALL is needed.
-static bool isNearestScope(Operation* op, Operation* scope)
+static bool isNearestScope(Operation* op, const Operation* scope)
 {
     for (Operation* parent = op->getParentOp(); parent; parent = parent->getParentOp()) {
         if (isa<pto::VecScopeOp, pto::StrictVecScopeOp>(parent)) {

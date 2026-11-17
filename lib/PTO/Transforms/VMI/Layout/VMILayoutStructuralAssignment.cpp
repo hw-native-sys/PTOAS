@@ -43,7 +43,7 @@ private:
             if (failed(structuralValues) || !isStructural) {
                 return;
             }
-            auto seed = [&](Value value) {
+            auto seed = [this, &structuralValues](Value value) {
                 if (!value || !isa<VMIVRegType, VMIMaskType>(value.getType()) ||
                     propagator->getRequestedOrCurrentLayout(value)) {
                     return;
@@ -174,7 +174,7 @@ private:
         return structuralLoops;
     }
 
-    LogicalResult seedBlockArguments(Block& block)
+    LogicalResult seedBlockArguments(Block& block) const
     {
         for (BlockArgument arg : block.getArguments()) {
             if (!isa<VMIVRegType, VMIMaskType>(arg.getType()) || getVMIExplicitLayout(arg.getType()) ||

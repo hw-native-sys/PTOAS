@@ -103,7 +103,7 @@ struct LowerBridgeCalls final
   // create inside a loop does not grow the stack; the void init stays in place.
   LogicalResult lowerCreate(BridgeObjectCreateOp create, StringAttr initSymbol,
                             func::FuncOp function,
-                            DenseMap<Value, Value> &storageByHandle) {
+                            DenseMap<Value, Value> &storageByHandle) const {
     const BridgeFunctionDesc *desc = findBridgeFunction(create.getEntry());
     const bool validContract = desc && desc->createsObject &&
                                desc->storageSize != 0 && desc->storageAlign != 0;
@@ -133,7 +133,7 @@ struct LowerBridgeCalls final
   }
 
   LogicalResult lowerCall(BridgeCallOp call, StringAttr symbol,
-                          const DenseMap<Value, Value> &storageByHandle) {
+                          const DenseMap<Value, Value> &storageByHandle) const {
     const BridgeFunctionDesc *desc = findBridgeFunction(call.getEntry());
     if (!desc) {
       return call.emitError("bridge call has no registered entry");
@@ -222,11 +222,15 @@ struct LowerBridgeCalls final
     });
     bool hadError = false;
     for (BridgeObjectCreateOp create : creates) {
-      hadError |= failed(lowerCreate(create, symbols.lookup(create), function,
-                                     storageByHandle));
+      if (failed(lowerCreate(create, symbols.lookup(create), function,
+                             storageByHandle))) {
+        hadError = true;
+      }
     }
     for (BridgeCallOp call : calls) {
-      hadError |= failed(lowerCall(call, symbols.lookup(call), storageByHandle));
+      if (failed(lowerCall(call, symbols.lookup(call), storageByHandle))) {
+        hadError = true;
+      }
     }
     if (hadError) {
       return failure();

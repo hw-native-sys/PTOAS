@@ -86,7 +86,7 @@ struct PTOTImg2colToEmitC : public OpConversionPattern<pto::TImg2colOp> {
     // uint16_t constant the old attribute form emitted; absent means 0.
     // Either way a non-constant operand passes through as a cast so a loop
     // induction variable can drive the in-loop Split-K pattern.
-    auto materializePos = [&](Value operand) -> Value {
+    auto materializePos = [&rewriter, &loc, &u16Ty, &ctx](Value operand) -> Value {
       if (!operand) {
         return makeEmitCIntConstant(rewriter, loc, u16Ty, 0);
       }

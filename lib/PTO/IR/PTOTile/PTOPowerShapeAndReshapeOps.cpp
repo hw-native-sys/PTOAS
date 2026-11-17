@@ -232,7 +232,7 @@ static LogicalResult verifyMxScaleTReshape(TReshapeOp op, TileBufType srcTb,
   auto verifyA2A3 = [&op]() -> LogicalResult {
     return op.emitOpError("expects E8M0 scale treshape to target A5");
   };
-  auto verifyA5 = [&]() -> LogicalResult {
+  auto verifyA5 = [&op, &srcTb, &dstTb]() -> LogicalResult {
     return verifyMxScaleTReshapeA5(op, srcTb, dstTb);
   };
   return dispatchVerifierByArch(op.getOperation(), verifyA2A3, verifyA5);
