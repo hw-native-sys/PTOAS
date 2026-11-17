@@ -1,0 +1,15 @@
+[Unit]
+Description=Daily 00:00 PTOAS A5 board validation
+Documentation=https://gitcode.com/cann/pto-as/blob/master/docs/ci/a5-nightly-board.md
+
+[Timer]
+# 00:00 Asia/Shanghai. The host timezone is CST (UTC+8); systemd reads the
+# local clock, so this is the same wall-clock slot as the GitCode pipeline's
+# "0 16 * * *" UTC schedule. Do not enable both schedulers at once.
+OnCalendar=*-*-* 00:00:00
+Persistent=true
+RandomizedDelaySec=0
+Unit=ptoas-a5-nightly.service
+
+[Install]
+WantedBy=timers.target

@@ -105,7 +105,7 @@ class BoardResultReportTest(unittest.TestCase):
                 for card in detail_payloads
             )
             for testcase in summary.failed_cases:
-                self.assertIn(f"`{testcase}`", detail_content)
+                self.assertIn(f"**{testcase}**", detail_content)
 
     def test_missing_results_are_reported_as_failure(self) -> None:
         summary = REPORT.load_results(pathlib.Path("/path/that/does/not/exist"))

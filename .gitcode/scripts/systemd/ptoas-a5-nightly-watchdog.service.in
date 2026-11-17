@@ -1,0 +1,18 @@
+[Unit]
+Description=PTOAS A5 nightly board result watchdog
+Documentation=https://gitcode.com/cann/pto-as/blob/master/docs/ci/a5-nightly-board.md
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+# Shared CI settings: A5_FEISHU_WEBHOOK_URL, A5_FEISHU_SECRET, ...
+EnvironmentFile=-/etc/ptoas-a5-ci.env
+Type=oneshot
+User=root
+WorkingDirectory=@REPO_DIR@
+ExecStart=/bin/bash @REPO_DIR@/.gitcode/scripts/a5_nightly_cron.sh --repo-dir @REPO_DIR@ --ci-root @CI_ROOT@ --check-last-run 7 --max-success-age-hours 24
+# Set the webhook here (or in the .service drop-in) to get the alert off-host.
+#Environment=A5_FEISHU_WEBHOOK_URL=https://open.feishu.cn/open-apis/bot/v2/hook/<id>
+Nice=10
+StandardOutput=append:@CI_ROOT@/logs/nightly-watchdog.log
+StandardError=append:@CI_ROOT@/logs/nightly-watchdog.log

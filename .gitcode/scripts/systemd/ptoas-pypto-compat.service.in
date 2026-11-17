@@ -1,0 +1,26 @@
+[Unit]
+Description=PTOAS x PyPTO compatibility nightly
+Documentation=https://gitcode.com/cann/pto-as/blob/master/docs/ci/pypto-compat.md
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+# Shared CI settings: A5_FEISHU_WEBHOOK_URL, A5_FEISHU_SECRET, ...
+EnvironmentFile=-/etc/ptoas-a5-ci.env
+Type=oneshot
+User=root
+WorkingDirectory=@REPO_DIR@
+ExecStart=/bin/bash @REPO_DIR@/.gitcode/scripts/pypto_compat.sh --stage all
+# PyPTO's checkout, its Python 3.10 environment and the ptoas installs under
+# test live outside the ptoas repository.
+Environment=PTOAS_PYPTO_ROOT=@PYPTO_ROOT@
+# The A5 board sweep owns card 2 for most of the night. Start late and wait the
+# sweep out instead of contending for the device or the build tree.
+Environment=PTOAS_WAIT_FOR_UNITS=ptoas-a5-nightly.service
+Environment=PTOAS_A5_DEVICE_ID=2
+Nice=15
+IOSchedulingClass=idle
+# Simulator stages are serial and the slowest run so far is ~2h; keep headroom.
+TimeoutStartSec=14h
+StandardOutput=append:@PYPTO_ROOT@/logs/nightly.log
+StandardError=append:@PYPTO_ROOT@/logs/nightly.log

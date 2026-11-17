@@ -1,0 +1,155 @@
+# Copyright (c) 2026 Huawei Technologies Co., Ltd.
+# This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+# CANN Open Software License Agreement Version 2.0 (the "License").
+# Please refer to the License for details. You may not use this file except in compliance with the License.
+# THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+# INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+# See LICENSE in the root of the software repository for the full text of the License.
+
+name: A5 Nightly Board
+
+# A5 (Ascend950) board validation, migrated off the retired 52 board host.
+#
+# Trigger policy:
+#   * manual workflow_dispatch only for now: this repository has no runner with
+#     the `ptoas-a5` label yet, so an armed schedule would queue every night.
+#   * the production nightly is the host systemd timer (`a5_nightly_cron.sh`),
+#     which runs the same driver against the same CI root.
+#   * re-add `schedule: 0 16 * * *` (UTC; 00:00 Asia/Shanghai) once a GitCode
+#     runner carrying `ptoas-a5` is registered.
+#   * never triggered by pull-request comments or pull requests.
+on:
+  workflow_dispatch:
+    inputs:
+      device:
+        description: "Physical A5 NPU id (2 = card reserved for PTOAS CI; 'auto' = any healthy idle card)"
+        type: string
+        default: "2"
+      skip_cases:
+        description: "Extra comma/space separated testcase names to skip"
+        type: string
+        default: ""
+      run_only_cases:
+        description: "Comma/space separated testcase names to run (empty = all A5 cases)"
+        type: string
+        default: ""
+      pto_isa_commit:
+        description: "pto-isa ref to pin; empty tracks the newest pto-isa master (PTO_ISA_TRACK_LATEST=0 uses the repository pin)"
+        type: string
+        default: ""
+      allow_daytime:
+        description: "Manual runs only: allow starting between 06:00 and 22:00 local time (true/false)"
+        type: string
+        default: "false"
+
+env:
+  # Persistent root on the board host: LLVM cache, builds, logs, payloads.
+  # It must live on a large filesystem; the runner work directory does not.
+  # The driver reuses ${PTOAS_CI_ROOT}/venv/bin/python3 when present.
+  PTOAS_CI_ROOT: /data/ptoas-ci
+  # Step `if` expressions cannot read vars.* in GitCode; mirror the variable
+  # into env and test env.* instead.
+  A5_BOARD_OBS_UPLOAD: ${{ vars.A5_BOARD_OBS_UPLOAD }}
+
+jobs:
+  a5-board:
+    name: A5 nightly board validation
+    # GitCode selects the board slot by label: npu=<devices>, smoke=<slot>.
+    # The A5 slot is smoke=501 and the board has four devices, so npu=4.
+    runs-on: ['self-hosted', 'npu=4', 'smoke=501']
+    timeout-minutes: 600
+
+    steps:
+      - name: Checkout
+        identifier: process_checkout
+        uses: checkout
+        with:
+          ref: ${{ atomgit.sha }}
+          token: ${{ secrets.GIT_TOKEN }}
+
+      - name: Show board environment
+        run: |
+          set -euo pipefail
+          echo "local time: $(date +'%F %T %Z')"
+          echo "utc time:   $(date -u +'%F %T UTC')"
+          uname -a
+          nproc
+          mkdir -p "${PTOAS_CI_ROOT}/logs" "${PTOAS_CI_ROOT}/locks" "${PTOAS_CI_ROOT}/state"
+          df -h "${PTOAS_CI_ROOT}"
+          npu-smi info | head -40 || true
+          cat /usr/local/Ascend/driver/version.info 2>/dev/null | head -8 || true
+          # Fail fast on an incomplete deployment instead of after a long build.
+          command -v npu-smi >/dev/null || { echo "ERROR: npu-smi is missing" >&2; exit 1; }
+          compgen -G "/dev/davinci[0-9]*" >/dev/null || { echo "ERROR: no /dev/davinciN device node" >&2; exit 1; }
+          test -f "${PTOAS_CI_ROOT}/.git-credentials" || {
+            echo "ERROR: ${PTOAS_CI_ROOT}/.git-credentials is missing; create it as documented and chmod 600 it." >&2
+            exit 1
+          }
+          stat -c '%A %U:%G %n' "${PTOAS_CI_ROOT}/.git-credentials"
+
+      - name: Run A5 board validation
+        timeout-minutes: 450
+        env:
+          A5_FEISHU_WEBHOOK_URL: ${{ secrets.A5_FEISHU_WEBHOOK_URL }}
+          A5_FEISHU_SECRET: ${{ secrets.A5_FEISHU_SECRET }}
+          # Never inherit the shared host's global credential helper: 238 is
+          # multi-tenant and root's ~/.git-credentials may answer with another
+          # tenant's token (the 2026-10-27 auth failure).
+          PTOAS_GIT_CREDENTIALS_FILE: /data/ptoas-ci/.git-credentials
+          PTOAS_CI_RUN_URL: https://gitcode.com/cann/pto-as/actions/runs/${{ atomgit.workflow_run_id }}
+          PTOAS_CI_COMMIT_SHA: ${{ atomgit.sha }}
+          # A scheduled run has no inputs: the shell falls back to the repo
+          # variable, then to card 2. Keep expressions simple; GitCode does
+          # not document the || operator used by GitHub.
+          INPUT_DEVICE: ${{ inputs.device }}
+          PTOAS_A5_DEVICE_ID: ${{ vars.PTOAS_A5_DEVICE_ID }}
+          INPUT_SKIP_CASES: ${{ inputs.skip_cases }}
+          INPUT_RUN_ONLY_CASES: ${{ inputs.run_only_cases }}
+          INPUT_PTO_ISA_COMMIT: ${{ inputs.pto_isa_commit }}
+          INPUT_ALLOW_DAYTIME: ${{ inputs.allow_daytime }}
+        run: |
+          set -euo pipefail
+          workspace="${{ steps.process_checkout.outputs.path }}"
+          [[ -n "${workspace}" ]] || workspace="${PWD}"
+          args=(--workspace "${workspace}" --ci-root "${PTOAS_CI_ROOT}")
+          # Only the full sweep is a "nightly" result; a subset run is triage
+          # and must not overwrite the watchdog state.
+          if [[ -z "${INPUT_RUN_ONLY_CASES:-}" ]]; then
+            args+=(--scope nightly)
+          else
+            args+=(--scope manual)
+          fi
+          if [[ "${INPUT_ALLOW_DAYTIME:-false}" != "true" ]]; then
+            args+=(--night-window)
+          fi
+          device="${INPUT_DEVICE:-${PTOAS_A5_DEVICE_ID:-2}}"
+          if [[ -n "${device}" ]]; then
+            args+=(--device "${device}")
+          fi
+          if [[ -n "${INPUT_SKIP_CASES:-}" ]]; then
+            args+=(--skip-cases "${INPUT_SKIP_CASES}")
+          fi
+          if [[ -n "${INPUT_RUN_ONLY_CASES:-}" ]]; then
+            args+=(--run-only "${INPUT_RUN_ONLY_CASES}")
+          fi
+          if [[ -n "${INPUT_PTO_ISA_COMMIT:-}" ]]; then
+            args+=(--pto-isa-commit "${INPUT_PTO_ISA_COMMIT}")
+          fi
+          bash "${workspace}/.gitcode/scripts/a5_board_nightly.sh" "${args[@]}"
+
+      - name: Upload board logs
+        if: ${{ always() && env.A5_BOARD_OBS_UPLOAD == 'true' }}
+        uses: obs-upload
+        with:
+          endpoint: "https://obs.cn-north-4.myhuaweicloud.com"
+          bucket: "ascend-ci"
+          access-key: ${{ secrets.AK }}
+          secret-key: ${{ secrets.SK }}
+          artifact-path: |
+            ${{ env.PTOAS_CI_ROOT }}/work/latest-artifacts/remote_npu_validation_results.tsv
+            ${{ env.PTOAS_CI_ROOT }}/work/latest-artifacts/board-validation.log
+            ${{ env.PTOAS_CI_ROOT }}/work/latest-artifacts/sample-build.log
+            ${{ env.PTOAS_CI_ROOT }}/work/latest-artifacts/summary.md
+            ${{ env.PTOAS_CI_ROOT }}/work/latest-artifacts/nightly.log
+            ${{ env.PTOAS_CI_ROOT }}/work/latest-artifacts/not-generated.tsv
+          object-prefix: pto-as/a5-nightly-board/${{ atomgit.workflow_run_id }}/

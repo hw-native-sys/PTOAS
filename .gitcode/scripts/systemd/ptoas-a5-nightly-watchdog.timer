@@ -1,0 +1,15 @@
+[Unit]
+Description=Daily 08:00 check that the PTOAS A5 nightly finished
+Documentation=https://gitcode.com/cann/pto-as/blob/master/docs/ci/a5-nightly-board.md
+
+[Timer]
+# Fires at 08:00, after the 00:00 nightly should have finished (04:00-05:00) and
+# the 04:30 end guard has reported. It reports "missing", "failed", "still
+# running", or "stale" and alerts when a Feishu webhook is configured.
+OnCalendar=*-*-* 08:00:00
+Persistent=false
+RandomizedDelaySec=0
+Unit=ptoas-a5-nightly-watchdog.service
+
+[Install]
+WantedBy=timers.target

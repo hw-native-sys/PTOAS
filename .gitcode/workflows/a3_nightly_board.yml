@@ -1,0 +1,130 @@
+# Copyright (c) 2026 Huawei Technologies Co., Ltd.
+# This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+# CANN Open Software License Agreement Version 2.0 (the "License").
+# Please refer to the License for details. You may not use this file except in compliance with the License.
+# THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+# INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+# See LICENSE in the root of the software repository for the full text of the License.
+
+name: A3 Nightly Board
+
+# A3 full board validation on the GitCode runner pool.
+#
+# This is the A3 counterpart of the A5 nightly: it runs the whole board
+# manifest (PTOAS_BOARD_ST_PART=0), not the two-case pre-smoke subset. The
+# driver is the existing `pre_smoke.sh`, which builds, generates the payload,
+# and then runs `run_remote_npu_validation.sh` against the full manifest.
+#
+# The runner is selected by label: the engineering group assigns the A3 board
+# slot as `smoke=301`. The sweep is serial on one card, so `npu=1` is enough;
+# raising it to 2 or 4 only helps after the manifest is sharded across cards.
+on:
+  schedule:
+    # 01:00 Asia/Shanghai, offset from the A5 nightly (00:00) so the two board
+    # sweeps do not compete for the same runner queue.
+    - cron: "0 17 * * *"
+  workflow_dispatch:
+    inputs:
+      device:
+        description: "Physical A3 NPU id ('auto' = take a card from the queue)"
+        type: string
+        default: "auto"
+      run_only_cases:
+        description: "Comma/space separated testcase names to run (empty = all A3 cases)"
+        type: string
+        default: ""
+
+env:
+  # The driver derives every artifact from WORKSPACE; keep the checkout and the
+  # generated payload on one large filesystem.
+  SOC_VERSION: Ascend910
+  ASCEND_3RD_LIB_PATH: /home/opensource
+  A3_BOARD_OBS_UPLOAD: ${{ vars.A3_BOARD_OBS_UPLOAD }}
+
+jobs:
+  a3-board:
+    name: A3 nightly board validation
+    runs-on: ['self-hosted', 'npu=1', 'smoke=301']
+    timeout-minutes: 600
+
+    steps:
+      - name: Checkout
+        identifier: process_checkout
+        uses: checkout
+        with:
+          ref: ${{ atomgit.sha }}
+          token: ${{ secrets.GIT_TOKEN }}
+
+      - name: Show board environment
+        run: |
+          set -euo pipefail
+          echo "local time: $(date +'%F %T %Z')"
+          echo "utc time:   $(date -u +'%F %T UTC')"
+          uname -a
+          nproc
+          free -g || true
+          # The full build and payload land in the checkout workspace; fail
+          # before a multi-hour build instead of after the disk fills.
+          workspace="${{ steps.process_checkout.outputs.path }}"
+          [[ -n "${workspace}" ]] || workspace="${PWD}"
+          free_kb="$(df -Pk "${workspace}" | awk 'NR==2{print $4}')"
+          if (( ${free_kb:-0} < 31457280 )); then
+            echo "ERROR: ${workspace} has less than 30 GiB free; the full build and payload will not fit" >&2
+            exit 1
+          fi
+          npu-smi info | head -40 || true
+          # Fail fast on an incomplete deployment instead of after a long build.
+          command -v npu-smi >/dev/null || { echo "ERROR: npu-smi is missing" >&2; exit 1; }
+          compgen -G "/dev/davinci[0-9]*" >/dev/null || { echo "ERROR: no /dev/davinciN device node" >&2; exit 1; }
+          for command in bash cmake git make python3 tar task-submit; do
+            command -v "${command}" >/dev/null || { echo "ERROR: required command is missing: ${command}" >&2; exit 1; }
+          done
+
+      - name: Run A3 board validation
+        timeout-minutes: 540
+        env:
+          # The board driver skips the full sweep when this is unset/1; 0 makes
+          # run_remote_npu_validation.sh enumerate and run the whole manifest.
+          PTOAS_BOARD_ST_PART: "0"
+          PTOAS_BOARD_RUN_ONLY: ${{ inputs.run_only_cases }}
+          INPUT_DEVICE: ${{ inputs.device }}
+        run: |
+          set -euo pipefail
+          workspace="${{ steps.process_checkout.outputs.path }}"
+          [[ -n "${workspace}" ]] || workspace="${PWD}"
+          export WORKSPACE="${workspace}"
+          export DEVICE_ID="${INPUT_DEVICE:-auto}"
+          # The driver applies its own fixed skip list (mix_kernel, the two
+          # vadd_validshape cases and print); an extra skip input is deliberately
+          # not exposed until the driver accepts one.
+          export RUN_ONLY_CASES="${PTOAS_BOARD_RUN_ONLY:-}"
+
+          # The driver writes ./run_test.log relative to its cwd; pin cwd to the
+          # checkout so the log and the payload both land under WORKSPACE.
+          cd "${workspace}"
+          log_dir="${workspace}/build/a3-nightly"
+          mkdir -p "${log_dir}"
+          bash "${workspace}/.gitcode/scripts/pre_smoke.sh" 2>&1 | tee "${log_dir}/a3-nightly.log"
+
+          if ! grep -q "DEVICE_ID=" "${workspace}/run_test.log"; then
+            echo "ERROR: board validation never started; refusing to report success" >&2
+            exit 1
+          fi
+          if ! grep -q "MATCHED=" "${workspace}/run_test.log"; then
+            echo "ERROR: board validation produced no case summary; refusing to report success" >&2
+            exit 1
+          fi
+
+      - name: Upload board logs
+        if: ${{ always() && env.A3_BOARD_OBS_UPLOAD == 'true' }}
+        uses: obs-upload
+        with:
+          endpoint: "https://obs.cn-north-4.myhuaweicloud.com"
+          bucket: "ascend-ci"
+          access-key: ${{ secrets.AK }}
+          secret-key: ${{ secrets.SK }}
+          artifact-path: |
+            ${{ steps.process_checkout.outputs.path }}/run_test.log
+            ${{ steps.process_checkout.outputs.path }}/build/a3-nightly/a3-nightly.log
+            ${{ steps.process_checkout.outputs.path }}/build/ptoas-samples/expected_npu_validation_cases.txt
+          object-prefix: pto-as/a3-nightly-board/${{ atomgit.workflow_run_id }}/

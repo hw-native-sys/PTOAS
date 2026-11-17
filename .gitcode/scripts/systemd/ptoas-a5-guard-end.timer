@@ -1,0 +1,14 @@
+[Unit]
+Description=PTOAS A5 nightly guard (end) at 04:30
+Documentation=https://gitcode.com/cann/pto-as/blob/master/docs/ci/a5-nightly-board.md
+
+[Timer]
+# end checkpoint. Times are local (CST, UTC+8); the nightly itself starts
+# at 00:00 and needs roughly four hours on a dedicated card.
+OnCalendar=*-*-* 04:30:00
+Persistent=false
+RandomizedDelaySec=0
+Unit=ptoas-a5-guard@end.service
+
+[Install]
+WantedBy=timers.target

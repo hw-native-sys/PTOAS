@@ -1,0 +1,336 @@
+# Copyright (c) 2026 Huawei Technologies Co., Ltd.
+# This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+# CANN Open Software License Agreement Version 2.0 (the "License").
+# Please refer to the License for details. You may not use this file except in compliance with the License.
+# THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+# INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+# See LICENSE in the root of the software repository for the full text of the License.
+
+name: A3 PyPTO Smoke
+
+# Minimal validation for the A3 (a2a3) half of the PyPTO compatibility nightly.
+# It does not replace the nightly; it answers two questions on a newly
+# registered self-hosted runner:
+#
+#   stage=probe  what this machine has and what is missing -- the report names
+#                each missing piece so it can be requested instead of guessed
+#   stage=full   install the pto-as release under test plus pypto and run one
+#                pypto case on a TaskQueue card
+#
+# Cards are taken through task-submit only. The machine is shared and the queue
+# arbitrates the cards, so a device id is never pinned unless the caller passes
+# one explicitly.
+#
+# GitCode notes: step-level `if` cannot read vars.* reliably and the `||`
+# operator is not documented, so the stage switch is a shell guard and every
+# input is mirrored into env first. There is no runner.temp contract here, so
+# the work root lives under $HOME and is created per run; roots older than a
+# day are pruned so repeated full runs cannot fill the shared disk.
+
+on:
+  workflow_dispatch:
+    inputs:
+      stage:
+        description: "probe = environment report only; full = install pto-as + pypto and run one case"
+        type: string
+        default: "probe"
+      ptoas_version:
+        description: "pto-as release under test; must be a published GitHub release (drafts are not downloadable)"
+        type: string
+        default: "0.74"
+      pypto_ref:
+        description: "pypto branch or tag to test"
+        type: string
+        default: "main"
+      test_file:
+        description: "pypto test file to run (one file, one card)"
+        type: string
+        default: "tests/st/runtime/ops/test_tri.py"
+      device:
+        description: "task-submit device (auto = take a card from the queue)"
+        type: string
+        default: "auto"
+      task_max_time:
+        description: "task-submit --max-time in seconds"
+        type: string
+        default: "1800"
+
+jobs:
+  smoke:
+    name: A3 PyPTO smoke
+    # GitCode selects the board slot by label: npu=<devices>, smoke=<slot>.
+    # The engineering group assigns the A3 slot as smoke=301; a probe or a
+    # single-case run needs only one card, so npu=1.
+    runs-on: ['self-hosted', 'npu=1', 'smoke=301']
+    timeout-minutes: 120
+
+    steps:
+      - name: Checkout
+        identifier: process_checkout
+        uses: checkout
+        with:
+          ref: ${{ atomgit.sha }}
+          token: ${{ secrets.GIT_TOKEN }}
+
+      - name: Probe runner environment
+        env:
+          INPUT_STAGE: ${{ inputs.stage }}
+        run: |
+          set -uo pipefail
+
+          # A full run leaves a venv and a pypto build under $HOME. Drop roots
+          # older than a day before creating this run's root; the current one
+          # is new, so it is never in the deleted set.
+          find "${HOME}/ptoas-a3-smoke" -mindepth 1 -maxdepth 1 -type d -mtime +0 \
+            -exec rm -rf -- {} + 2>/dev/null || true
+
+          smoke_root="${HOME}/ptoas-a3-smoke/$(date +%Y%m%d-%H%M%S)"
+          mkdir -p "${smoke_root}"
+          echo "SMOKE_ROOT=${smoke_root}"
+          # Keep the pointer inside the per-run workspace. A file in $HOME is
+          # shared by every job on the runner and lets concurrent runs (or a
+          # second ptoas-a3 runner) read each other's directories.
+          echo "${smoke_root}" > "${PWD}/.a3-pypto-smoke-root"
+
+          findings="${smoke_root}/probe.env"
+          : > "${findings}"
+
+          # report <key> <yes|no> <detail>
+          report() {
+            printf '%s=%s\n' "$1" "$2" >> "${findings}"
+            printf '%-22s %-5s %s\n' "$1" "$2" "$3"
+          }
+          have() { command -v "$1" >/dev/null 2>&1; }
+
+          echo "================ A3 PyPTO runner probe ================"
+          echo "host: $(hostname)  user: $(id -un)  kernel: $(uname -r)  stage: ${INPUT_STAGE:-probe}"
+          echo
+
+          report arch "$([[ "$(uname -m)" == "aarch64" ]] && echo yes || echo no)" "$(uname -m)"
+          report task_submit "$(have task-submit && echo yes || echo no)" "card queue client"
+
+          for tool in bash git curl tar make cmake ninja gcc g++ unzip; do
+            key="tool_$(printf '%s' "${tool}" | tr '+' 'p')"
+            report "${key}" "$(have "${tool}" && echo yes || echo no)" "$(have "${tool}" && command -v "${tool}" || echo 'not on PATH')"
+          done
+
+          for py in python3 /usr/bin/python3.10 python3.11 python3.12; do
+            key="py_$(basename "${py}")"
+            if have "${py}"; then
+              report "${key}" yes "$("${py}" -V 2>&1) at $(command -v "${py}")"
+            else
+              report "${key}" no "not found"
+            fi
+          done
+
+          # The pypto runtime and the released pto-as wheels are cp310, so
+          # /usr/bin/python3.10 is a hard requirement for stage=full.
+          for mod in torch numpy; do
+            if have /usr/bin/python3.10 && /usr/bin/python3.10 -c "import ${mod}" >/dev/null 2>&1; then
+              report "py310_${mod}" yes "$(/usr/bin/python3.10 -c "import ${mod};print(${mod}.__version__)" 2>/dev/null || echo present)"
+            else
+              report "py310_${mod}" no "not importable from /usr/bin/python3.10"
+            fi
+          done
+
+          cann_root=/usr/local/Ascend/ascend-toolkit/latest
+          report cann_env "$([[ -f "${cann_root}/set_env.sh" ]] && echo yes || echo no)" "${cann_root}/set_env.sh"
+
+          if have npu-smi; then
+            report npu_smi yes "$(npu-smi info 2>/dev/null | grep -c Ascend || echo 0) device row(s)"
+          else
+            report npu_smi no "not on PATH (task-submit may still hand out cards)"
+          fi
+
+          for url in https://gitcode.com https://github.com https://pypi.org https://api.github.com; do
+            code="$(curl -sS -o /dev/null -m 15 -w '%{http_code}' "${url}" 2>/dev/null || echo 000)"
+            key="net_$(printf '%s' "${url}" | sed 's|https://||;s|\.|_|g')"
+            report "${key}" "$([[ "${code}" == "200" || "${code}" == "404" ]] && echo yes || echo no)" "HTTP ${code}"
+          done
+
+          free_kb="$(df -Pk "${HOME}" | awk 'NR==2{print $4}')"
+          report disk "$([[ "${free_kb:-0}" -gt 5242880 ]] && echo yes || echo no)" \
+            "$(df -Ph "${HOME}" | awk 'NR==2{print $4" free of "$2}')"
+          report cpus "$(echo yes)" "$(nproc) CPUs, $(free -g 2>/dev/null | awk '/^Mem:/{print $2" GiB RAM"}')"
+
+          echo
+          # probe exists to report what is missing, so only a wrong
+          # architecture is fatal here; task-submit and the toolchains are
+          # reported and checked again before stage=full does any work.
+          if ! grep -qx 'arch=yes' "${findings}"; then
+            echo "ERROR: this runner is not aarch64; the A3 flow cannot use it" >&2
+            exit 1
+          fi
+
+      - name: Install pto-as and pypto, run one case
+        env:
+          INPUT_STAGE: ${{ inputs.stage }}
+          INPUT_PTOAS_VERSION: ${{ inputs.ptoas_version }}
+          INPUT_PYPTO_REF: ${{ inputs.pypto_ref }}
+          INPUT_TEST_FILE: ${{ inputs.test_file }}
+          INPUT_DEVICE: ${{ inputs.device }}
+          INPUT_TASK_MAX_TIME: ${{ inputs.task_max_time }}
+        run: |
+          set -euo pipefail
+          smoke_root="$(cat "${PWD}/.a3-pypto-smoke-root")"
+          findings="${smoke_root}/probe.env"
+          venv="${smoke_root}/venv"
+          src="${smoke_root}/pypto"
+          report_dir="${smoke_root}/report"
+          cann_root=/usr/local/Ascend/ascend-toolkit/latest
+          mkdir -p "${report_dir}"
+
+          if [[ "${INPUT_STAGE:-probe}" != "full" ]]; then
+            echo "stage=${INPUT_STAGE:-probe}: stopping after the environment report"
+            exit 0
+          fi
+
+          missing=()
+          for key in task_submit py_python3.10 py310_torch py310_numpy cann_env tool_gcc tool_gpp tool_cmake tool_ninja; do
+            grep -qx "${key}=yes" "${findings}" || missing+=("${key}")
+          done
+          if (( ${#missing[@]} )); then
+            echo "ERROR: stage=full cannot run; the runner is missing: ${missing[*]}" >&2
+            exit 1
+          fi
+
+          # ---- pto-as release under test -------------------------------------
+          arch="$(uname -m)"
+          wheel="ptoas-${INPUT_PTOAS_VERSION}-cp310-cp310-manylinux_2_34_${arch}.whl"
+          url="https://github.com/hw-native-sys/PTOAS/releases/download/v${INPUT_PTOAS_VERSION}/${wheel}"
+          dest="${smoke_root}/${wheel}"
+          echo "release: fetching ${wheel}"
+          curl -fL --retry 3 --retry-delay 5 --connect-timeout 20 -m 900 -o "${dest}" "${url}" \
+            || { echo "ERROR: cannot download ${url} (is v${INPUT_PTOAS_VERSION} published?)" >&2; exit 1; }
+
+          curl -sS -m 40 "https://api.github.com/repos/hw-native-sys/PTOAS/releases/tags/v${INPUT_PTOAS_VERSION}" \
+            -o "${smoke_root}/release.json" 2>/dev/null || true
+          want="$(/usr/bin/python3.10 -c 'import json,sys;d=json.load(open(sys.argv[2]));print(next((a["digest"].split(":",1)[1] for a in d.get("assets",[]) if a.get("name")==sys.argv[1] and a.get("digest")),""))' "${wheel}" "${smoke_root}/release.json" 2>/dev/null || true)"
+          if [[ -n "${want}" ]]; then
+            echo "${want}  ${dest}" | sha256sum -c -
+          else
+            echo "release: upstream digest unavailable; recording $(sha256sum "${dest}" | cut -d' ' -f1)"
+          fi
+
+          /usr/bin/python3.10 -m venv --system-site-packages "${venv}"
+          "${venv}/bin/pip" install -q --no-deps --force-reinstall "${dest}"
+          "${venv}/bin/ptoas" --version
+
+          # ---- pypto checkout ------------------------------------------------
+          # pypto's runtime lives in the `simpler` submodule, and that build
+          # also needs the two 3rdparty submodules; a plain clone leaves all
+          # three empty and `pip install runtime` fails.
+          git clone --depth 1 --branch "${INPUT_PYPTO_REF}" --recurse-submodules \
+            https://github.com/hw-native-sys/pypto.git "${src}"
+          [[ -d "${src}/tests/st" ]] || { echo "ERROR: pypto checkout has no tests/st" >&2; exit 1; }
+          # Bytecode from another host bakes that host's paths into every
+          # traceback and @pl.jit lookup ("cannot retrieve source code").
+          find "${src}" -type d -name __pycache__ -prune -exec rm -rf {} + 2>/dev/null || true
+          git -C "${src}" log -1 --format='pypto %H %ci %s'
+
+          # ---- install pypto and its runtime ---------------------------------
+          install_tree() {
+            local tree="$1"
+            (
+              # shellcheck disable=SC1091
+              source "${cann_root}/set_env.sh" >/dev/null 2>&1 || true
+              export ASCEND_HOME_PATH="${cann_root}"
+              # System compiler on purpose; inherited conda/CFLAGS break the
+              # aarch64 cross-compile.
+              export CC=/usr/bin/gcc CXX=/usr/bin/g++
+              unset CFLAGS CXXFLAGS CPPFLAGS LDFLAGS || true
+              cd "${tree}"
+              "${venv}/bin/pip" install -q --no-build-isolation --no-deps --force-reinstall .
+            )
+          }
+          install_tree "${src}"
+          install_tree "${src}/runtime"
+
+          assets="$("${venv}/bin/python" -c 'import os,simpler_setup;print(os.path.join(os.path.dirname(simpler_setup.__file__),"_assets","build"))' 2>/dev/null || true)"
+          seed="${src}/runtime/build/pto-isa"
+          if [[ -n "${assets}" && -d "${seed}" && -n "$(ls -A "${seed}" 2>/dev/null)" ]]; then
+            rm -rf "${assets}/pto-isa"
+            cp -a "${seed}" "${assets}/pto-isa" && echo "pto-isa: seeded from ${seed}"
+          fi
+
+          # ---- one case on a queued card -------------------------------------
+          inner="${smoke_root}/task-inner.sh"
+          cat > "${inner}" <<EOF
+          #!/usr/bin/env bash
+          set -euo pipefail
+          source "${cann_root}/set_env.sh" >/dev/null 2>&1 || true
+          export ASCEND_HOME_PATH="${cann_root}"
+          export PTOAS_ROOT="${venv}"
+          export PYTHONPATH="${src}\${PYTHONPATH:+:\${PYTHONPATH}}"
+          if [[ -z "\${TASK_DEVICE:-}" ]]; then
+            echo "no card assigned (TASK_DEVICE unset)" >&2
+            exit 42
+          fi
+          echo "device: \${TASK_DEVICE}"
+          cd "${src}"
+          exec "${venv}/bin/python" -m pytest "${INPUT_TEST_FILE}" -q \
+            --platform=a2a3 --device="\${TASK_DEVICE}" \
+            --junitxml="${report_dir}/junit.xml"
+          EOF
+          chmod +x "${inner}"
+
+          set +e
+          submit_output="$(task-submit --device "${INPUT_DEVICE}" \
+            --max-time "${INPUT_TASK_MAX_TIME}" "bash ${inner}" 2>&1)"
+          submit_rc=$?
+          set -e
+          printf '%s\n' "${submit_output}" | tee "${report_dir}/submit.log"
+          (( submit_rc == 0 )) || { echo "ERROR: task-submit failed (exit ${submit_rc})" >&2; exit "${submit_rc}"; }
+
+          task_id="$(printf '%s\n' "${submit_output}" | awk '
+            match($0, /task_[0-9]{8}_[0-9]{6}_[0-9]+/) { id = substr($0, RSTART, RLENGTH) }
+            END { print id }')"
+          [[ -n "${task_id}" ]] || { echo "ERROR: task-submit returned no task id" >&2; exit 1; }
+
+          cancel_task() { task-submit --kill "${task_id}" >/dev/null 2>&1 || true; }
+          trap cancel_task INT TERM
+          set +e
+          task-submit --timeout 0 --wait "${task_id}" 2>&1 | tee -a "${report_dir}/submit.log"
+          wait_rc="${PIPESTATUS[0]}"
+          set -e
+          trap - INT TERM
+
+          set +e
+          status_output="$(task-submit --status "${task_id}" 2>&1)"
+          status_rc=$?
+          set -e
+          printf '%s\n' "${status_output}" | tee -a "${report_dir}/submit.log"
+          (( status_rc == 0 )) || { echo "ERROR: task-submit --status failed (exit ${status_rc})" >&2; exit "${status_rc}"; }
+          if [[ "${status_output}" =~ exit=([0-9]+) ]]; then
+            task_rc="${BASH_REMATCH[1]}"
+          else
+            echo "ERROR: TaskQueue status has no exit code" >&2
+            exit 1
+          fi
+          (( wait_rc == task_rc )) || { echo "ERROR: wait rc=${wait_rc}, recorded rc=${task_rc}" >&2; exit 1; }
+
+          if [[ -f "${report_dir}/junit.xml" ]]; then
+            "${venv}/bin/python" - "${report_dir}/junit.xml" <<'PY'
+          import sys
+          import xml.etree.ElementTree as ET
+
+          root = ET.parse(sys.argv[1]).getroot()
+          ok = fail = skip = 0
+          for tc in root.iter("testcase"):
+              bad = tc.find("failure") is not None or tc.find("error") is not None
+              if bad:
+                  fail += 1
+                  print("FAIL", tc.get("classname", ""), tc.get("name", ""))
+              elif tc.find("skipped") is not None:
+                  skip += 1
+              else:
+                  ok += 1
+          print("junit: OK={} FAIL={} SKIP={}".format(ok, fail, skip))
+          PY
+          else
+            echo "ERROR: no junit report was produced; the case did not run to completion" >&2
+            exit 1
+          fi
+
+          echo "artifacts: ${report_dir}"
+          exit "${task_rc}"

@@ -1,0 +1,15 @@
+[Unit]
+Description=Daily 05:00 PTOAS x PyPTO-Lib A5 board run
+Documentation=https://gitcode.com/cann/pto-as/blob/master/docs/ci/pypto-lib-a5.md
+
+[Timer]
+# 05:00 Asia/Shanghai: after the 00:00 A5 board sweep and the 04:00 PyPTO
+# compatibility run. The service still waits both units out, so a slow night
+# delays this run instead of colliding with it for card 2.
+OnCalendar=*-*-* 05:00:00
+Persistent=true
+RandomizedDelaySec=0
+Unit=ptoas-pypto-lib-a5.service
+
+[Install]
+WantedBy=timers.target

@@ -251,7 +251,7 @@ workflow 在持久化 self-hosted runner 上执行。
 ```bash
 gh workflow run ci.yml \
   --repo hw-native-sys/PTOAS \
-  --ref main \
+  --ref master \
   -f stage=run \
   -f run_mode=npu \
   -f soc_version=Ascend910 \

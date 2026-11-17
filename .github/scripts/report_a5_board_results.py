@@ -11,15 +11,18 @@
 from __future__ import annotations
 
 import argparse
+import base64
 import csv
+import hashlib
+import hmac
 import json
 import os
 import re
 import sys
-import urllib.error
+import time
 import urllib.request
 from collections import Counter
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 
 
@@ -30,6 +33,11 @@ class BoardSummary:
     failed_cases: tuple[str, ...]
     failure_details: tuple[tuple[str, str], ...] = ()
     log_errors: tuple[str, ...] = ()
+    # Board results that were collected but did not validate anything. They are
+    # reported explicitly: a silent filter looks like a smaller suite instead of
+    # a known gap, which is exactly what a CIE role must not do.
+    skips: tuple[tuple[str, str], ...] = ()
+    not_generated: tuple[tuple[str, str], ...] = ()
 
     @property
     def total(self) -> int:
@@ -137,6 +145,7 @@ def load_results(path: Path, log_path: Path | None = None) -> BoardSummary:
     counts: Counter[str] = Counter()
     failed_cases: list[str] = []
     failed_info: dict[str, str] = {}
+    skips: list[tuple[str, str]] = []
     with path.open(encoding="utf-8", errors="replace", newline="") as stream:
         reader = csv.DictReader(stream, delimiter="\t")
         for row in reader:
@@ -146,6 +155,8 @@ def load_results(path: Path, log_path: Path | None = None) -> BoardSummary:
             if status == "FAIL":
                 failed_cases.append(testcase)
                 failed_info[testcase] = (row.get("info") or "exit status unavailable").strip()
+            elif status == "SKIP":
+                skips.append((testcase, (row.get("info") or "").strip()))
     log_details = load_log_failure_details(log_path)
     failure_details = tuple(
         (
@@ -158,7 +169,54 @@ def load_results(path: Path, log_path: Path | None = None) -> BoardSummary:
         )
         for testcase in failed_cases
     )
-    return BoardSummary(True, counts, tuple(failed_cases), failure_details)
+    return BoardSummary(
+        True, counts, tuple(failed_cases), failure_details, (), tuple(skips)
+    )
+
+
+def load_not_generated(path: Path | None) -> tuple[tuple[str, str], ...]:
+    """Read the driver's deliberate generation exclusions (``case<TAB>reason``)."""
+    if path is None or not path.is_file():
+        return ()
+    rows: list[tuple[str, str]] = []
+    with path.open(encoding="utf-8", errors="replace") as stream:
+        for line in stream:
+            line = line.rstrip("\n")
+            if not line or line.startswith("#"):
+                continue
+            case, _, reason = line.partition("\t")
+            if case.strip():
+                rows.append((case.strip(), reason.strip() or "excluded before generation"))
+    return tuple(rows)
+
+
+def skip_groups(
+    summary: BoardSummary, *, limit: int | None = None
+) -> list[tuple[str, int]]:
+    counts = Counter(reason or "no reason recorded" for _, reason in summary.skips)
+    groups = counts.most_common(limit)
+    if limit is not None and len(counts) > limit:
+        rest = sum(count for _, count in counts.most_common()[limit:])
+        groups.append((f"other reasons ({len(counts) - limit} kinds)", rest))
+    return groups
+
+
+def render_not_validated(summary: BoardSummary) -> list[str]:
+    """Markdown block listing everything that was not actually validated."""
+    if not summary.skips and not summary.not_generated:
+        return []
+    lines = ["", "### Not validated", ""]
+    if summary.skips:
+        lines.append(f"SKIP ({len(summary.skips)}), grouped by the reason the runner recorded:")
+        lines.append("")
+        lines.extend(f"- `{count}` {reason}" for reason, count in skip_groups(summary, limit=20))
+        lines.append("")
+    if summary.not_generated:
+        lines.append(f"Not generated ({len(summary.not_generated)}), so absent from the manifest:")
+        lines.append("")
+        lines.extend(f"- `{case}` — {reason}" for case, reason in summary.not_generated)
+        lines.append("")
+    return lines
 
 
 def render_failure_details(summary: BoardSummary, *, max_chars: int | None = None) -> str:
@@ -178,12 +236,38 @@ def render_failure_details(summary: BoardSummary, *, max_chars: int | None = Non
     return "\n\n".join(blocks)
 
 
+def render_failure_details_inline(
+    summary: BoardSummary, *, max_chars: int | None = None
+) -> str:
+    """Card variant: one inline-code line per error.
+
+    The bot card client renders fenced blocks literally, so a card built with
+    ``` fences shows the fence markers text; inline code is rendered reliably.
+    """
+    if not summary.failure_details:
+        return ""
+    blocks: list[str] = []
+    used = 0
+    for testcase, detail in summary.failure_details:
+        lines = [f"**{testcase}**"]
+        lines.extend(f"`{line}`" for line in detail.splitlines() if line.strip())
+        block = "\n".join(lines)
+        if max_chars is not None and blocks and used + len(block) + 1 > max_chars:
+            remaining = len(summary.failure_details) - len(blocks)
+            blocks.append(f"... and {remaining} more; open the run log for the full output")
+            break
+        blocks.append(block)
+        used += len(block) + 1
+    return "\n\n".join(blocks)
+
+
 def render_markdown(
     summary: BoardSummary,
     *,
     conclusion: str,
     run_url: str,
     sha: str,
+    run_id: str = "",
 ) -> str:
     succeeded = conclusion == "success" and summary.passed
     lines = [
@@ -191,10 +275,17 @@ def render_markdown(
         "",
         f"- Status: **{'PASS' if succeeded else 'FAIL'}**",
         f"- Commit: `{sha[:12] or 'unknown'}`",
+        *([f"- Run ID: `{run_id}`"] if run_id else []),
         f"- Results: OK `{summary.counts.get('OK', 0)}` / "
         f"FAIL `{summary.counts.get('FAIL', 0)}` / "
         f"SKIP `{summary.counts.get('SKIP', 0)}` / TOTAL `{summary.total}`",
     ]
+    if summary.not_generated:
+        lines.append(
+            f"- A5 case inventory: `{summary.total}` generated"
+            f" + `{len(summary.not_generated)}` not generated"
+            f" = `{summary.total + len(summary.not_generated)}`"
+        )
     if run_url:
         lines.append(f"- Run: {run_url}")
     if not summary.results_found:
@@ -210,7 +301,83 @@ def render_markdown(
         details = render_failure_details(summary)
         if details:
             lines.extend(["", "### Concrete errors", "", details])
+    if summary.results_found:
+        lines.extend(render_not_validated(summary))
     return "\n".join(lines) + "\n"
+
+
+def _feishu_summary_lines(
+    summary: BoardSummary,
+    *,
+    conclusion: str,
+    sha: str,
+    run_id: str,
+) -> tuple[list[str], bool]:
+    succeeded = conclusion == "success" and summary.passed
+    status = "PASS" if succeeded else "FAIL"
+    lines = [
+        f"**Status**: {status}",
+        f"**Commit**: `{sha[:12] or 'unknown'}`",
+        *([f"**Run**: `{run_id}`"] if run_id else []),
+        f"**Results**: OK `{summary.counts.get('OK', 0)}` / "
+        f"FAIL `{summary.counts.get('FAIL', 0)}` / "
+        f"SKIP `{summary.counts.get('SKIP', 0)}` / TOTAL `{summary.total}`",
+    ]
+    if not summary.results_found:
+        lines.append("**Error**: result TSV was not produced")
+        if summary.log_errors:
+            lines.append(
+                "**Concrete errors**:\n```text\n"
+                + "\n".join(summary.log_errors)
+                + "\n```"
+            )
+    return lines, succeeded
+
+
+def _append_feishu_validation_gaps(
+    lines: list[str], summary: BoardSummary
+) -> None:
+    if summary.failed_cases:
+        failed = ", ".join(summary.failed_cases[:20])
+        if len(summary.failed_cases) > 20:
+            failed += f", ... (+{len(summary.failed_cases) - 20})"
+        lines.append(f"**Failed cases**: {failed}")
+        details = render_failure_details_inline(summary, max_chars=7600)
+        if details:
+            lines.append(f"**Concrete errors**:\n{details}")
+    # Everything the run did not validate must stay visible: hiding skipped
+    # or ungenerated cases turns a gap into a silently smaller suite.
+    if summary.not_generated:
+        lines.append(
+            f"**A5 用例口径**: 生成 `{summary.total}` + 未生成 "
+            f"`{len(summary.not_generated)}` = "
+            f"`{summary.total + len(summary.not_generated)}`"
+        )
+    if summary.skips:
+        groups = " · ".join(
+            f"{reason} `{count}`" for reason, count in skip_groups(summary, limit=5)
+        )
+        lines.append(f"**未验证(SKIP {len(summary.skips)})**: {groups}")
+    for case, reason in summary.not_generated[:5]:
+        lines.append(f"**未生成**: `{case}` — {reason}")
+    if len(summary.not_generated) > 5:
+        lines.append(f"**未生成**: ... 另有 {len(summary.not_generated) - 5} 例")
+
+
+def _action_element(run_url: str, *, label: str) -> dict[str, object] | None:
+    if not run_url:
+        return None
+    return {
+        "tag": "action",
+        "actions": [
+            {
+                "tag": "button",
+                "text": {"tag": "plain_text", "content": label},
+                "url": run_url,
+                "type": "primary",
+            }
+        ],
+    }
 
 
 def build_feishu_payload(
@@ -219,49 +386,23 @@ def build_feishu_payload(
     conclusion: str,
     run_url: str,
     sha: str,
+    run_id: str = "",
 ) -> dict[str, object]:
-    succeeded = conclusion == "success" and summary.passed
-    status = "PASS" if succeeded else "FAIL"
-    detail_lines = [
-        f"**Status**: {status}",
-        f"**Commit**: `{sha[:12] or 'unknown'}`",
-        f"**Results**: OK `{summary.counts.get('OK', 0)}` / "
-        f"FAIL `{summary.counts.get('FAIL', 0)}` / "
-        f"SKIP `{summary.counts.get('SKIP', 0)}` / TOTAL `{summary.total}`",
-    ]
-    if not summary.results_found:
-        detail_lines.append("**Error**: result TSV was not produced")
-        if summary.log_errors:
-            detail_lines.append("**Concrete errors**:\n```text\n" + "\n".join(summary.log_errors) + "\n```")
-    elif summary.failed_cases:
-        failed = ", ".join(summary.failed_cases[:20])
-        if len(summary.failed_cases) > 20:
-            failed += f", ... (+{len(summary.failed_cases) - 20})"
-        detail_lines.append(f"**Failed cases**: {failed}")
-        details = render_failure_details(summary, max_chars=7600)
-        if details:
-            detail_lines.append(f"**Concrete errors**:\n{details}")
-
+    detail_lines, succeeded = _feishu_summary_lines(
+        summary, conclusion=conclusion, sha=sha, run_id=run_id
+    )
+    if summary.results_found:
+        _append_feishu_validation_gaps(detail_lines, summary)
     elements: list[dict[str, object]] = [
         {
             "tag": "div",
             "text": {"tag": "lark_md", "content": "\n".join(detail_lines)},
         }
     ]
-    if run_url:
-        elements.append(
-            {
-                "tag": "action",
-                "actions": [
-                    {
-                        "tag": "button",
-                        "text": {"tag": "plain_text", "content": "Open GitHub run"},
-                        "url": run_url,
-                        "type": "primary",
-                    }
-                ],
-            }
-        )
+    action = _action_element(run_url, label="Open GitHub run")
+    if action is not None:
+        elements.append(action)
+    status = "PASS" if succeeded else "FAIL"
     return {
         "msg_type": "interactive",
         "card": {
@@ -277,19 +418,14 @@ def build_feishu_payload(
     }
 
 
-def build_feishu_detail_payloads(
-    summary: BoardSummary,
-    *,
-    run_url: str,
-) -> list[dict[str, object]]:
-    """Build bounded cards so every failed case gets its own concrete excerpt."""
-    if not summary.failure_details:
-        return []
+def _group_failure_details(
+    details: tuple[tuple[str, str], ...],
+) -> list[list[tuple[str, str]]]:
     # Keep each card comfortably below Feishu's interactive-card text limit.
     groups: list[list[tuple[str, str]]] = []
     current: list[tuple[str, str]] = []
     current_chars = 0
-    for testcase, detail in summary.failure_details:
+    for testcase, detail in details:
         block_chars = len(testcase) + len(detail) + 40
         if current and current_chars + block_chars > 7000:
             groups.append(current)
@@ -299,47 +435,69 @@ def build_feishu_detail_payloads(
         current_chars += block_chars
     if current:
         groups.append(current)
+    return groups
 
-    cards: list[dict[str, object]] = []
-    total = len(groups)
-    for index, group in enumerate(groups, start=1):
-        blocks = "\n\n".join(
-            f"### `{testcase}`\n```text\n{detail}\n```" for testcase, detail in group
+
+def _render_detail_blocks(group: list[tuple[str, str]]) -> str:
+    return "\n\n".join(
+        "**{case}**\n{lines}".format(
+            case=testcase,
+            lines="\n".join(
+                f"`{line}`" for line in detail.splitlines() if line.strip()
+            ),
         )
-        elements: list[dict[str, object]] = [
-            {"tag": "div", "text": {"tag": "lark_md", "content": blocks}}
-        ]
-        if run_url:
-            elements.append(
-                {
-                    "tag": "action",
-                    "actions": [
-                        {
-                            "tag": "button",
-                            "text": {"tag": "plain_text", "content": "打开 GitHub 运行"},
-                            "url": run_url,
-                            "type": "primary",
-                        }
-                    ],
-                }
-            )
-        cards.append(
-            {
-                "msg_type": "interactive",
-                "card": {
-                    "config": {"wide_screen_mode": True},
-                    "header": {
-                        "template": "red",
-                        "title": {
-                            "tag": "plain_text",
-                            "content": f"PTOAS A5 夜间看护失败详情 {index}/{total}",
-                        },
-                    },
-                    "elements": elements,
+        for testcase, detail in group
+    )
+
+
+def _detail_card(
+    *,
+    index: int,
+    total: int,
+    blocks: str,
+    run_url: str,
+) -> dict[str, object]:
+    elements: list[dict[str, object]] = [
+        {"tag": "div", "text": {"tag": "lark_md", "content": blocks}}
+    ]
+    action = _action_element(run_url, label="打开 GitHub 运行")
+    if action is not None:
+        elements.append(action)
+    return {
+        "msg_type": "interactive",
+        "card": {
+            "config": {"wide_screen_mode": True},
+            "header": {
+                "template": "red",
+                "title": {
+                    "tag": "plain_text",
+                    "content": f"PTOAS A5 夜间看护失败详情 {index}/{total}",
                 },
-            }
+            },
+            "elements": elements,
+        },
+    }
+
+
+def build_feishu_detail_payloads(
+    summary: BoardSummary,
+    *,
+    run_url: str,
+) -> list[dict[str, object]]:
+    """Build bounded cards so every failed case gets its own concrete excerpt."""
+    if not summary.failure_details:
+        return []
+    groups = _group_failure_details(summary.failure_details)
+    total = len(groups)
+    return [
+        _detail_card(
+            index=index,
+            total=total,
+            blocks=_render_detail_blocks(group),
+            run_url=run_url,
         )
-    return cards
+        for index, group in enumerate(groups, start=1)
+    ]
 
 
 def append_file(path_text: str, content: str) -> None:
@@ -349,8 +507,27 @@ def append_file(path_text: str, content: str) -> None:
         stream.write(content)
 
 
+def sign_feishu_payload(payload: dict[str, object]) -> dict[str, object]:
+    """Add Feishu bot timestamp/sign when A5_FEISHU_SECRET is configured.
+
+    Bots created with "签名校验" reject unsigned requests; the signature is
+    base64(HMAC-SHA256(key="<timestamp>\\n<secret>", msg="")).
+    """
+
+    secret = os.environ.get("A5_FEISHU_SECRET", "").strip()
+    if not secret:
+        return payload
+    timestamp = str(int(time.time()))
+    string_to_sign = "{}\n{}".format(timestamp, secret).encode("utf-8")
+    digest = hmac.new(string_to_sign, digestmod=hashlib.sha256).digest()
+    signed = dict(payload)
+    signed["timestamp"] = timestamp
+    signed["sign"] = base64.b64encode(digest).decode("ascii")
+    return signed
+
+
 def send_feishu(webhook_url: str, payload: dict[str, object]) -> None:
-    body = json.dumps(payload, ensure_ascii=False).encode("utf-8")
+    body = json.dumps(sign_feishu_payload(payload), ensure_ascii=False).encode("utf-8")
     request = urllib.request.Request(
         webhook_url,
         data=body,
@@ -368,6 +545,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--results", type=Path, required=True)
     parser.add_argument("--conclusion", default="failure")
     parser.add_argument("--run-url", default="")
+    parser.add_argument("--run-id", default="")
     parser.add_argument("--sha", default="")
     parser.add_argument(
         "--log",
@@ -375,16 +553,42 @@ def parse_args() -> argparse.Namespace:
         default=None,
         help="Optional board-validation.log used to include concrete failure lines.",
     )
+    parser.add_argument(
+        "--not-generated",
+        type=Path,
+        default=None,
+        help=(
+            "Optional TSV of cases deliberately excluded before generation "
+            "(case<TAB>reason); they are reported as not validated."
+        ),
+    )
+    parser.add_argument(
+        "--notify-status",
+        type=Path,
+        default=None,
+        help=(
+            "Optional file that receives ok/failed/skipped after the Feishu "
+            "delivery attempt, so the caller can distinguish 'card sent' from "
+            "'card rendered but delivery failed'."
+        ),
+    )
     return parser.parse_args()
 
 
-def main() -> int:
-    args = parse_args()
+def _load_summary(args: argparse.Namespace) -> BoardSummary:
     summary = load_results(args.results, args.log)
+    not_generated = load_not_generated(args.not_generated)
+    if not_generated:
+        summary = replace(summary, not_generated=not_generated)
+    return summary
+
+
+def _emit_summary(summary: BoardSummary, args: argparse.Namespace) -> None:
     markdown = render_markdown(
         summary,
         conclusion=args.conclusion,
         run_url=args.run_url,
+        run_id=args.run_id,
         sha=args.sha,
     )
     print(markdown, end="")
@@ -402,24 +606,50 @@ def main() -> int:
         + "\n",
     )
 
+
+def _notify(summary: BoardSummary, args: argparse.Namespace) -> str:
     webhook_url = os.environ.get("A5_FEISHU_WEBHOOK_URL", "").strip()
-    if webhook_url:
-        payload = build_feishu_payload(
-            summary,
-            conclusion=args.conclusion,
-            run_url=args.run_url,
-            sha=args.sha,
+    if not webhook_url:
+        return "skipped"
+    payload = build_feishu_payload(
+        summary,
+        conclusion=args.conclusion,
+        run_url=args.run_url,
+        run_id=args.run_id,
+        sha=args.sha,
+    )
+    payloads = [payload] + build_feishu_detail_payloads(summary, run_url=args.run_url)
+    notify_failures = 0
+    for index, card_payload in enumerate(payloads, start=1):
+        try:
+            send_feishu(webhook_url, card_payload)
+        except (OSError, ValueError) as exc:
+            notify_failures += 1
+            print(
+                "WARNING: failed to send Feishu notification "
+                f"part {index}/{len(payloads)} ({type(exc).__name__})",
+                file=sys.stderr,
+            )
+    return "failed" if notify_failures else "ok"
+
+
+def _write_notify_status(path: Path | None, status: str) -> None:
+    if path is None:
+        return
+    try:
+        path.write_text(status + "\n", encoding="utf-8")
+    except OSError as exc:
+        print(
+            f"WARNING: cannot write notify status to {path} ({exc})",
+            file=sys.stderr,
         )
-        payloads = [payload] + build_feishu_detail_payloads(summary, run_url=args.run_url)
-        for index, card_payload in enumerate(payloads, start=1):
-            try:
-                send_feishu(webhook_url, card_payload)
-            except (OSError, ValueError, urllib.error.URLError) as exc:
-                print(
-                    "WARNING: failed to send Feishu notification "
-                    f"part {index}/{len(payloads)} ({type(exc).__name__})",
-                    file=sys.stderr,
-                )
+
+
+def main() -> int:
+    args = parse_args()
+    summary = _load_summary(args)
+    _emit_summary(summary, args)
+    _write_notify_status(args.notify_status, _notify(summary, args))
     return 0 if args.conclusion == "success" and summary.passed else 1
 
 

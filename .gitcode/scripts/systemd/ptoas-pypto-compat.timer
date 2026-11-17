@@ -1,0 +1,14 @@
+[Unit]
+Description=Daily 04:00 PTOAS x PyPTO compatibility run
+Documentation=https://gitcode.com/cann/pto-as/blob/master/docs/ci/pypto-compat.md
+
+[Timer]
+# 04:00 Asia/Shanghai: late enough that the 00:00 A5 board sweep is usually
+# done, and the service itself waits out a slow sweep before touching card 2.
+OnCalendar=*-*-* 04:00:00
+Persistent=true
+RandomizedDelaySec=0
+Unit=ptoas-pypto-compat.service
+
+[Install]
+WantedBy=timers.target

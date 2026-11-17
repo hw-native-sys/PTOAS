@@ -1,0 +1,28 @@
+[Unit]
+Description=PTOAS x PyPTO-Lib A5 board nightly
+Documentation=https://gitcode.com/cann/pto-as/blob/master/docs/ci/pypto-lib-a5.md
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+# Shared CI settings: A5_FEISHU_WEBHOOK_URL, A5_FEISHU_SECRET, ...
+EnvironmentFile=-/etc/ptoas-a5-ci.env
+Type=oneshot
+User=root
+WorkingDirectory=@REPO_DIR@
+ExecStart=/bin/bash @REPO_DIR@/.gitcode/scripts/pypto_compat.sh --stage lib
+# pypto-lib lives beside PyPTO's checkout, inside the compatibility root, so the
+# two share the Python 3.10 environment and the ptoas installs under test.
+Environment=PTOAS_PYPTO_ROOT=@PYPTO_ROOT@
+# Card 2 is the device reserved for pto-as CI. Both earlier units may still hold
+# it (the A5 sweep up to 04:30, the PyPTO compatibility run from 04:00), so wait
+# them out rather than contending for the device.
+Environment="PTOAS_WAIT_FOR_UNITS=ptoas-a5-nightly.service ptoas-pypto-compat.service"
+Environment=PTOAS_A5_DEVICE_ID=2
+Nice=15
+IOSchedulingClass=idle
+# 43 entries at ~10-120 s each plus one build-free checkout fetch; 6 h is ample
+# headroom for a contended card without letting a hang hold the unit forever.
+TimeoutStartSec=6h
+StandardOutput=append:@PYPTO_ROOT@/logs/nightly-lib.log
+StandardError=append:@PYPTO_ROOT@/logs/nightly-lib.log

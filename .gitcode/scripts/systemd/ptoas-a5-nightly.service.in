@@ -1,0 +1,30 @@
+[Unit]
+Description=PTOAS A5 nightly board validation
+Documentation=https://gitcode.com/cann/pto-as/blob/master/docs/ci/a5-nightly-board.md
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+# Shared CI settings: A5_FEISHU_WEBHOOK_URL, A5_FEISHU_SECRET, ...
+EnvironmentFile=-/etc/ptoas-a5-ci.env
+Type=oneshot
+User=root
+WorkingDirectory=@REPO_DIR@
+ExecStart=/bin/bash @REPO_DIR@/.gitcode/scripts/a5_nightly_cron.sh --repo-dir @REPO_DIR@ --ci-root @CI_ROOT@
+# Card 2 is the device reserved for PTOAS CI on this host. "auto" would pick
+# whatever looks idle, which on a shared host means contending with other
+# tenants and paying their device-init latency.
+Environment=PTOAS_A5_DEVICE_ID=2
+# Root on this host carries several tenants' gitcode tokens in
+# ~/.git-credentials; authenticate from a CI-owned file instead.
+Environment=PTOAS_GIT_CREDENTIALS_FILE=@CI_ROOT@/.git-credentials
+# Optional: Feishu webhook for the result card and for failure alerts, including
+# failures that happen before the board stage.
+#Environment=A5_FEISHU_WEBHOOK_URL=https://open.feishu.cn/open-apis/bot/v2/hook/<id>
+Nice=10
+IOSchedulingClass=best-effort
+IOSchedulingPriority=6
+# A full A5 sweep takes 5h+ on a dedicated card; keep headroom for a slow night.
+TimeoutStartSec=10h
+StandardOutput=append:@CI_ROOT@/logs/nightly-cron.log
+StandardError=append:@CI_ROOT@/logs/nightly-cron.log

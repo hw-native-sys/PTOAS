@@ -1,0 +1,22 @@
+[Unit]
+Description=PTOAS A5 nightly guard (%i)
+Documentation=https://gitcode.com/cann/pto-as/blob/master/docs/ci/a5-nightly-board.md
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+# Shared CI settings: A5_FEISHU_WEBHOOK_URL, A5_FEISHU_SECRET, ...
+EnvironmentFile=-/etc/ptoas-a5-ci.env
+Type=oneshot
+User=root
+WorkingDirectory=@REPO_DIR@
+ExecStart=/bin/bash @REPO_DIR@/.gitcode/scripts/a5_nightly_guard.sh --stage %i --ci-root @CI_ROOT@
+# The end stage may wait for the run to finish; keep it well inside the night.
+TimeoutStartSec=4h
+Nice=10
+IOSchedulingClass=best-effort
+IOSchedulingPriority=6
+# Optional: Feishu webhook for guard alerts.
+#Environment=A5_FEISHU_WEBHOOK_URL=https://open.feishu.cn/open-apis/bot/v2/hook/<id>
+StandardOutput=append:@CI_ROOT@/logs/nightly-guard.log
+StandardError=append:@CI_ROOT@/logs/nightly-guard.log
