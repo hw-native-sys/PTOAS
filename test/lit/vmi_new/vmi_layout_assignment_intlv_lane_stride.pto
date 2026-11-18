@@ -159,17 +159,30 @@ module {
 // LOWER-SAME: %[[VAL_2:[a-zA-Z0-9_.$-]+]]: !pto.ptr<f16, ub>,
 // LOWER-SAME: %[[VAL_3:[a-zA-Z0-9_.$-]+]]: !pto.ptr<f16, ub>,
 // LOWER-SAME: %[[VAL_4:[a-zA-Z0-9_.$-]+]]: index) {
-// LOWER-NEXT: %[[VAL_5:[a-zA-Z0-9_.$-]+]] = arith.constant 64 : i32
-// LOWER-NEXT: %[[VAL_6:[a-zA-Z0-9_.$-]+]] = arith.constant 16 : index
+// LOWER-DAG: %[[VAL_5:[a-zA-Z0-9_.$-]+]] = arith.constant 64 : i32
+// LOWER-DAG: %[[VAL_6:[a-zA-Z0-9_.$-]+]] = arith.constant 16 : index
 // LOWER-NEXT: %[[VAL_7:[a-zA-Z0-9_.$-]+]] = arith.muli %[[VAL_4]], %[[VAL_6]] : index
 // LOWER-NEXT: %[[VAL_8:[a-zA-Z0-9_.$-]+]] = pto.vlds %[[VAL_0]]{{\[}}%[[VAL_7]]] : !pto.ptr<f16, ub>, index -> !pto.vreg<128xf16>
 // LOWER-NEXT: %[[VAL_9:[a-zA-Z0-9_.$-]+]] = pto.vlds %[[VAL_1]]{{\[}}%[[VAL_7]]] : !pto.ptr<f16, ub>, index -> !pto.vreg<128xf16>
 // LOWER-NEXT: %[[VAL_10:[a-zA-Z0-9_.$-]+]], %[[VAL_11:[a-zA-Z0-9_.$-]+]] = pto.vdintlv %[[VAL_8]], %[[VAL_9]] : !pto.vreg<128xf16>, !pto.vreg<128xf16> -> !pto.vreg<128xf16>, !pto.vreg<128xf16>
-// LOWER-NEXT: %[[VAL_12:[a-zA-Z0-9_.$-]+]], %[[VAL_13:[a-zA-Z0-9_.$-]+]] = pto.vintlv %[[VAL_10]], %[[VAL_11]] : !pto.vreg<128xf16>, !pto.vreg<128xf16> -> !pto.vreg<128xf16>, !pto.vreg<128xf16>
+// LOWER: %[[EVEN_BITS:.*]] = pto.vbitcast %[[VAL_10]] : !pto.vreg<128xf16> -> !pto.vreg<128xi16>
+// LOWER: %[[ODD_BITS:.*]] = pto.vbitcast %[[VAL_11]] : !pto.vreg<128xf16> -> !pto.vreg<128xi16>
+// LOWER: %[[EVEN_REPACK:.*]] = pto.vselr %[[EVEN_BITS]], %[[DEINT_INDEX:.*]]
+// LOWER-NEXT: %[[ODD_REPACK:.*]] = pto.vselr %[[ODD_BITS]], %[[DEINT_INDEX]]
+// LOWER-NEXT: %[[EVEN:.*]] = pto.vbitcast %[[EVEN_REPACK]] : !pto.vreg<128xi16> -> !pto.vreg<128xf16>
+// LOWER-NEXT: %[[ODD:.*]] = pto.vbitcast %[[ODD_REPACK]] : !pto.vreg<128xi16> -> !pto.vreg<128xf16>
+// LOWER-NEXT: %[[VAL_12:[a-zA-Z0-9_.$-]+]], %[[VAL_13:[a-zA-Z0-9_.$-]+]] = pto.vintlv %[[EVEN]], %[[ODD]] : !pto.vreg<128xf16>, !pto.vreg<128xf16> -> !pto.vreg<128xf16>, !pto.vreg<128xf16>
+// LOWER-NEXT: %[[LOW_BITS:.*]] = pto.vbitcast %[[VAL_12]] : !pto.vreg<128xf16> -> !pto.vreg<128xi16>
+// LOWER-NEXT: %[[HIGH_BITS:.*]] = pto.vbitcast %[[VAL_13]] : !pto.vreg<128xf16> -> !pto.vreg<128xi16>
+// LOWER: %[[HIGH_FROM_LOW:.*]] = pto.vselr %[[LOW_BITS]], %[[INT_INDEX:.*]]
+// LOWER-NEXT: %[[HIGH_FROM_HIGH:.*]] = pto.vselr %[[HIGH_BITS]], %[[INT_INDEX]]
+// LOWER-NEXT: %[[HIGH_REPACK:.*]] = pto.vsel %[[HIGH_FROM_LOW]], %[[HIGH_FROM_HIGH]], %{{.*}}
+// LOWER-NEXT: %[[LOW:.*]] = pto.vbitcast %[[LOW_BITS]] : !pto.vreg<128xi16> -> !pto.vreg<128xf16>
+// LOWER-NEXT: %[[HIGH:.*]] = pto.vbitcast %[[HIGH_REPACK]] : !pto.vreg<128xi16> -> !pto.vreg<128xf16>
 // LOWER-NEXT: %[[VAL_14:[a-zA-Z0-9_.$-]+]], %[[VAL_15:[a-zA-Z0-9_.$-]+]] = pto.plt_b16 %[[VAL_5]] : i32 -> !pto.mask<b16>, i32
-// LOWER-NEXT: pto.vsts %[[VAL_12]], %[[VAL_2]]{{\[}}%[[VAL_7]]], %[[VAL_14]] : !pto.vreg<128xf16>, !pto.ptr<f16, ub>, index, !pto.mask<b16>
+// LOWER-NEXT: pto.vsts %[[LOW]], %[[VAL_2]]{{\[}}%[[VAL_7]]], %[[VAL_14]] : !pto.vreg<128xf16>, !pto.ptr<f16, ub>, index, !pto.mask<b16>
 // LOWER-NEXT: %[[VAL_16:[a-zA-Z0-9_.$-]+]], %[[VAL_17:[a-zA-Z0-9_.$-]+]] = pto.plt_b16 %[[VAL_5]] : i32 -> !pto.mask<b16>, i32
-// LOWER-NEXT: pto.vsts %[[VAL_13]], %[[VAL_3]]{{\[}}%[[VAL_7]]], %[[VAL_16]] : !pto.vreg<128xf16>, !pto.ptr<f16, ub>, index, !pto.mask<b16>
+// LOWER-NEXT: pto.vsts %[[HIGH]], %[[VAL_3]]{{\[}}%[[VAL_7]]], %[[VAL_16]] : !pto.vreg<128xf16>, !pto.ptr<f16, ub>, index, !pto.mask<b16>
 // LOWER-NEXT: return
 // LOWER-NEXT: }
 // LOWER-LABEL: func.func @f8_ls2(
@@ -178,10 +191,10 @@ module {
 // LOWER-SAME: %[[VAL_2:[a-zA-Z0-9_.$-]+]]: !pto.ptr<f8E4M3FN, ub>,
 // LOWER-SAME: %[[VAL_3:[a-zA-Z0-9_.$-]+]]: !pto.ptr<f8E4M3FN, ub>,
 // LOWER-SAME: %[[VAL_4:[a-zA-Z0-9_.$-]+]]: index) {
-// LOWER-NEXT: %[[VAL_5:[a-zA-Z0-9_.$-]+]] = arith.constant 128 : i32
-// LOWER-NEXT: %[[VAL_6:[a-zA-Z0-9_.$-]+]] = arith.constant 1 : i16
-// LOWER-NEXT: %[[VAL_7:[a-zA-Z0-9_.$-]+]] = arith.constant 0 : i16
-// LOWER-NEXT: %[[VAL_8:[a-zA-Z0-9_.$-]+]] = arith.constant 32 : index
+// LOWER-DAG: %[[VAL_5:[a-zA-Z0-9_.$-]+]] = arith.constant 128 : i32
+// LOWER-DAG: %[[VAL_6:[a-zA-Z0-9_.$-]+]] = arith.constant 1 : i16
+// LOWER-DAG: %[[VAL_7:[a-zA-Z0-9_.$-]+]] = arith.constant 0 : i16
+// LOWER-DAG: %[[VAL_8:[a-zA-Z0-9_.$-]+]] = arith.constant 32 : index
 // LOWER-NEXT: %[[VAL_9:[a-zA-Z0-9_.$-]+]] = arith.muli %[[VAL_4]], %[[VAL_8]] : index
 // LOWER-NEXT: %[[VAL_10:[a-zA-Z0-9_.$-]+]] = pto.pset_b8 "PAT_VL128" : !pto.mask<b8>
 // LOWER-NEXT: %[[VAL_11:[a-zA-Z0-9_.$-]+]] = pto.addptr %[[VAL_0]], %[[VAL_9]] : <f8E4M3FN, ub>, index -> <f8E4M3FN, ub>
@@ -190,11 +203,24 @@ module {
 // LOWER-NEXT: %[[VAL_14:[a-zA-Z0-9_.$-]+]] = pto.addptr %[[VAL_1]], %[[VAL_9]] : <f8E4M3FN, ub>, index -> <f8E4M3FN, ub>
 // LOWER-NEXT: %[[VAL_15:[a-zA-Z0-9_.$-]+]] = pto.vsldb %[[VAL_14]], %[[VAL_6]], %[[VAL_7]], %[[VAL_13]] : !pto.ptr<f8E4M3FN, ub>, i16, i16, !pto.mask<b8> -> !pto.vreg<256xf8E4M3FN>
 // LOWER-NEXT: %[[VAL_16:[a-zA-Z0-9_.$-]+]], %[[VAL_17:[a-zA-Z0-9_.$-]+]] = pto.vdintlv %[[VAL_12]], %[[VAL_15]] : !pto.vreg<256xf8E4M3FN>, !pto.vreg<256xf8E4M3FN> -> !pto.vreg<256xf8E4M3FN>, !pto.vreg<256xf8E4M3FN>
-// LOWER-NEXT: %[[VAL_18:[a-zA-Z0-9_.$-]+]], %[[VAL_19:[a-zA-Z0-9_.$-]+]] = pto.vintlv %[[VAL_16]], %[[VAL_17]] : !pto.vreg<256xf8E4M3FN>, !pto.vreg<256xf8E4M3FN> -> !pto.vreg<256xf8E4M3FN>, !pto.vreg<256xf8E4M3FN>
+// LOWER: %[[EVEN_BITS:.*]] = pto.vbitcast %[[VAL_16]] : !pto.vreg<256xf8E4M3FN> -> !pto.vreg<256xi8>
+// LOWER: %[[ODD_BITS:.*]] = pto.vbitcast %[[VAL_17]] : !pto.vreg<256xf8E4M3FN> -> !pto.vreg<256xi8>
+// LOWER: %[[EVEN_REPACK:.*]] = pto.vselr %[[EVEN_BITS]], %[[DEINT_INDEX:.*]]
+// LOWER-NEXT: %[[ODD_REPACK:.*]] = pto.vselr %[[ODD_BITS]], %[[DEINT_INDEX]]
+// LOWER-NEXT: %[[EVEN:.*]] = pto.vbitcast %[[EVEN_REPACK]] : !pto.vreg<256xi8> -> !pto.vreg<256xf8E4M3FN>
+// LOWER-NEXT: %[[ODD:.*]] = pto.vbitcast %[[ODD_REPACK]] : !pto.vreg<256xi8> -> !pto.vreg<256xf8E4M3FN>
+// LOWER-NEXT: %[[VAL_18:[a-zA-Z0-9_.$-]+]], %[[VAL_19:[a-zA-Z0-9_.$-]+]] = pto.vintlv %[[EVEN]], %[[ODD]] : !pto.vreg<256xf8E4M3FN>, !pto.vreg<256xf8E4M3FN> -> !pto.vreg<256xf8E4M3FN>, !pto.vreg<256xf8E4M3FN>
+// LOWER-NEXT: %[[LOW_BITS:.*]] = pto.vbitcast %[[VAL_18]] : !pto.vreg<256xf8E4M3FN> -> !pto.vreg<256xi8>
+// LOWER-NEXT: %[[HIGH_BITS:.*]] = pto.vbitcast %[[VAL_19]] : !pto.vreg<256xf8E4M3FN> -> !pto.vreg<256xi8>
+// LOWER: %[[HIGH_FROM_LOW:.*]] = pto.vselr %[[LOW_BITS]], %[[INT_INDEX:.*]]
+// LOWER-NEXT: %[[HIGH_FROM_HIGH:.*]] = pto.vselr %[[HIGH_BITS]], %[[INT_INDEX]]
+// LOWER-NEXT: %[[HIGH_REPACK:.*]] = pto.vsel %[[HIGH_FROM_LOW]], %[[HIGH_FROM_HIGH]], %{{.*}}
+// LOWER-NEXT: %[[LOW:.*]] = pto.vbitcast %[[LOW_BITS]] : !pto.vreg<256xi8> -> !pto.vreg<256xf8E4M3FN>
+// LOWER-NEXT: %[[HIGH:.*]] = pto.vbitcast %[[HIGH_REPACK]] : !pto.vreg<256xi8> -> !pto.vreg<256xf8E4M3FN>
 // LOWER-NEXT: %[[VAL_20:[a-zA-Z0-9_.$-]+]], %[[VAL_21:[a-zA-Z0-9_.$-]+]] = pto.plt_b8 %[[VAL_5]] : i32 -> !pto.mask<b8>, i32
-// LOWER-NEXT: pto.vsts %[[VAL_18]], %[[VAL_2]]{{\[}}%[[VAL_9]]], %[[VAL_20]] : !pto.vreg<256xf8E4M3FN>, !pto.ptr<f8E4M3FN, ub>, index, !pto.mask<b8>
+// LOWER-NEXT: pto.vsts %[[LOW]], %[[VAL_2]]{{\[}}%[[VAL_9]]], %[[VAL_20]] : !pto.vreg<256xf8E4M3FN>, !pto.ptr<f8E4M3FN, ub>, index, !pto.mask<b8>
 // LOWER-NEXT: %[[VAL_22:[a-zA-Z0-9_.$-]+]], %[[VAL_23:[a-zA-Z0-9_.$-]+]] = pto.plt_b8 %[[VAL_5]] : i32 -> !pto.mask<b8>, i32
-// LOWER-NEXT: pto.vsts %[[VAL_19]], %[[VAL_3]]{{\[}}%[[VAL_9]]], %[[VAL_22]] : !pto.vreg<256xf8E4M3FN>, !pto.ptr<f8E4M3FN, ub>, index, !pto.mask<b8>
+// LOWER-NEXT: pto.vsts %[[HIGH]], %[[VAL_3]]{{\[}}%[[VAL_9]]], %[[VAL_22]] : !pto.vreg<256xf8E4M3FN>, !pto.ptr<f8E4M3FN, ub>, index, !pto.mask<b8>
 // LOWER-NEXT: return
 // LOWER-NEXT: }
 // LOWER-LABEL: func.func @ui8_ls4(
@@ -203,10 +229,10 @@ module {
 // LOWER-SAME: %[[VAL_2:[a-zA-Z0-9_.$-]+]]: !pto.ptr<ui8, ub>,
 // LOWER-SAME: %[[VAL_3:[a-zA-Z0-9_.$-]+]]: !pto.ptr<ui8, ub>,
 // LOWER-SAME: %[[VAL_4:[a-zA-Z0-9_.$-]+]]: index) {
-// LOWER-NEXT: %[[VAL_5:[a-zA-Z0-9_.$-]+]] = arith.constant 64 : i32
-// LOWER-NEXT: %[[VAL_6:[a-zA-Z0-9_.$-]+]] = arith.constant 1 : i16
-// LOWER-NEXT: %[[VAL_7:[a-zA-Z0-9_.$-]+]] = arith.constant 0 : i16
-// LOWER-NEXT: %[[VAL_8:[a-zA-Z0-9_.$-]+]] = arith.constant 32 : index
+// LOWER-DAG: %[[VAL_5:[a-zA-Z0-9_.$-]+]] = arith.constant 64 : i32
+// LOWER-DAG: %[[VAL_6:[a-zA-Z0-9_.$-]+]] = arith.constant 1 : i16
+// LOWER-DAG: %[[VAL_7:[a-zA-Z0-9_.$-]+]] = arith.constant 0 : i16
+// LOWER-DAG: %[[VAL_8:[a-zA-Z0-9_.$-]+]] = arith.constant 32 : index
 // LOWER-NEXT: %[[VAL_9:[a-zA-Z0-9_.$-]+]] = arith.muli %[[VAL_4]], %[[VAL_8]] : index
 // LOWER-NEXT: %[[VAL_10:[a-zA-Z0-9_.$-]+]] = pto.pset_b8 "PAT_VL64" : !pto.mask<b8>
 // LOWER-NEXT: %[[VAL_11:[a-zA-Z0-9_.$-]+]] = pto.addptr %[[VAL_0]], %[[VAL_9]] : <ui8, ub>, index -> <ui8, ub>
@@ -215,10 +241,23 @@ module {
 // LOWER-NEXT: %[[VAL_14:[a-zA-Z0-9_.$-]+]] = pto.addptr %[[VAL_1]], %[[VAL_9]] : <ui8, ub>, index -> <ui8, ub>
 // LOWER-NEXT: %[[VAL_15:[a-zA-Z0-9_.$-]+]] = pto.vsldb %[[VAL_14]], %[[VAL_6]], %[[VAL_7]], %[[VAL_13]] : !pto.ptr<ui8, ub>, i16, i16, !pto.mask<b8> -> !pto.vreg<256xui8>
 // LOWER-NEXT: %[[VAL_16:[a-zA-Z0-9_.$-]+]], %[[VAL_17:[a-zA-Z0-9_.$-]+]] = pto.vdintlv %[[VAL_12]], %[[VAL_15]] : !pto.vreg<256xui8>, !pto.vreg<256xui8> -> !pto.vreg<256xui8>, !pto.vreg<256xui8>
-// LOWER-NEXT: %[[VAL_18:[a-zA-Z0-9_.$-]+]], %[[VAL_19:[a-zA-Z0-9_.$-]+]] = pto.vintlv %[[VAL_16]], %[[VAL_17]] : !pto.vreg<256xui8>, !pto.vreg<256xui8> -> !pto.vreg<256xui8>, !pto.vreg<256xui8>
+// LOWER: %[[EVEN_BITS:.*]] = pto.vbitcast %[[VAL_16]] : !pto.vreg<256xui8> -> !pto.vreg<256xi8>
+// LOWER: %[[ODD_BITS:.*]] = pto.vbitcast %[[VAL_17]] : !pto.vreg<256xui8> -> !pto.vreg<256xi8>
+// LOWER: %[[EVEN_REPACK:.*]] = pto.vselr %[[EVEN_BITS]], %[[DEINT_INDEX:.*]]
+// LOWER-NEXT: %[[ODD_REPACK:.*]] = pto.vselr %[[ODD_BITS]], %[[DEINT_INDEX]]
+// LOWER-NEXT: %[[EVEN:.*]] = pto.vbitcast %[[EVEN_REPACK]] : !pto.vreg<256xi8> -> !pto.vreg<256xui8>
+// LOWER-NEXT: %[[ODD:.*]] = pto.vbitcast %[[ODD_REPACK]] : !pto.vreg<256xi8> -> !pto.vreg<256xui8>
+// LOWER-NEXT: %[[VAL_18:[a-zA-Z0-9_.$-]+]], %[[VAL_19:[a-zA-Z0-9_.$-]+]] = pto.vintlv %[[EVEN]], %[[ODD]] : !pto.vreg<256xui8>, !pto.vreg<256xui8> -> !pto.vreg<256xui8>, !pto.vreg<256xui8>
+// LOWER-NEXT: %[[LOW_BITS:.*]] = pto.vbitcast %[[VAL_18]] : !pto.vreg<256xui8> -> !pto.vreg<256xi8>
+// LOWER-NEXT: %[[HIGH_BITS:.*]] = pto.vbitcast %[[VAL_19]] : !pto.vreg<256xui8> -> !pto.vreg<256xi8>
+// LOWER: %[[HIGH_FROM_LOW:.*]] = pto.vselr %[[LOW_BITS]], %[[INT_INDEX:.*]]
+// LOWER-NEXT: %[[HIGH_FROM_HIGH:.*]] = pto.vselr %[[HIGH_BITS]], %[[INT_INDEX]]
+// LOWER-NEXT: %[[HIGH_REPACK:.*]] = pto.vsel %[[HIGH_FROM_LOW]], %[[HIGH_FROM_HIGH]], %{{.*}}
+// LOWER-NEXT: %[[LOW:.*]] = pto.vbitcast %[[LOW_BITS]] : !pto.vreg<256xi8> -> !pto.vreg<256xui8>
+// LOWER-NEXT: %[[HIGH:.*]] = pto.vbitcast %[[HIGH_REPACK]] : !pto.vreg<256xi8> -> !pto.vreg<256xui8>
 // LOWER-NEXT: %[[VAL_20:[a-zA-Z0-9_.$-]+]], %[[VAL_21:[a-zA-Z0-9_.$-]+]] = pto.plt_b8 %[[VAL_5]] : i32 -> !pto.mask<b8>, i32
-// LOWER-NEXT: pto.vsts %[[VAL_18]], %[[VAL_2]]{{\[}}%[[VAL_9]]], %[[VAL_20]] : !pto.vreg<256xui8>, !pto.ptr<ui8, ub>, index, !pto.mask<b8>
+// LOWER-NEXT: pto.vsts %[[LOW]], %[[VAL_2]]{{\[}}%[[VAL_9]]], %[[VAL_20]] : !pto.vreg<256xui8>, !pto.ptr<ui8, ub>, index, !pto.mask<b8>
 // LOWER-NEXT: %[[VAL_22:[a-zA-Z0-9_.$-]+]], %[[VAL_23:[a-zA-Z0-9_.$-]+]] = pto.plt_b8 %[[VAL_5]] : i32 -> !pto.mask<b8>, i32
-// LOWER-NEXT: pto.vsts %[[VAL_19]], %[[VAL_3]]{{\[}}%[[VAL_9]]], %[[VAL_22]] : !pto.vreg<256xui8>, !pto.ptr<ui8, ub>, index, !pto.mask<b8>
+// LOWER-NEXT: pto.vsts %[[HIGH]], %[[VAL_3]]{{\[}}%[[VAL_9]]], %[[VAL_22]] : !pto.vreg<256xui8>, !pto.ptr<ui8, ub>, index, !pto.mask<b8>
 // LOWER-NEXT: return
 // LOWER-NEXT: }

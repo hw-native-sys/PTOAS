@@ -1,0 +1,36 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+
+// RUN: pto-test-opt %s -vmi-mask-granularity-assignment -vmi-layout-assignment -vmi-to-vpto | FileCheck %s
+
+module {
+  func.func @vintlv_short(%a: !pto.vmi.vreg<8xf32>, %b: !pto.vmi.vreg<8xf32>)
+      -> (!pto.vmi.vreg<8xf32>, !pto.vmi.vreg<8xf32>) {
+    %c8 = arith.constant 8 : index
+    %mask = pto.vmi.create_mask %c8 : index -> !pto.vmi.mask<8xpred>
+    %lo, %hi = pto.vmi.vintlv %a, %b, %mask
+        : !pto.vmi.vreg<8xf32>, !pto.vmi.vreg<8xf32>, !pto.vmi.mask<8xpred>
+        -> !pto.vmi.vreg<8xf32>, !pto.vmi.vreg<8xf32>
+    return %lo, %hi : !pto.vmi.vreg<8xf32>, !pto.vmi.vreg<8xf32>
+  }
+  func.func @vdintlv_short(%a: !pto.vmi.vreg<8xf32>, %b: !pto.vmi.vreg<8xf32>)
+      -> (!pto.vmi.vreg<8xf32>, !pto.vmi.vreg<8xf32>) {
+    %c8 = arith.constant 8 : index
+    %mask = pto.vmi.create_mask %c8 : index -> !pto.vmi.mask<8xpred>
+    %lo, %hi = pto.vmi.vdintlv %a, %b, %mask
+        : !pto.vmi.vreg<8xf32>, !pto.vmi.vreg<8xf32>, !pto.vmi.mask<8xpred>
+        -> !pto.vmi.vreg<8xf32>, !pto.vmi.vreg<8xf32>
+    return %lo, %hi : !pto.vmi.vreg<8xf32>, !pto.vmi.vreg<8xf32>
+  }
+}
+// CHECK-LABEL: func.func @vintlv_short
+// CHECK: pto.vintlv
+// CHECK-COUNT-2: pto.vselr
+// CHECK-LABEL: func.func @vdintlv_short
+// CHECK: pto.vdintlv
+// CHECK-COUNT-2: pto.vselr

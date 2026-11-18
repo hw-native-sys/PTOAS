@@ -25,7 +25,9 @@ NBYTES_F32 = VL * 4
 NBYTES_BF16 = VL * 2
 
 
-def _build_kernel(name, op_name, dtype, nbytes, active):
+def _build_kernel(name, op_name, dtype, nbytes, active, vl=VL):
+    ub_stride = max(32, nbytes)
+
     @pto.jit(
         name=name,
         kernel_kind="vector",
@@ -40,16 +42,16 @@ def _build_kernel(name, op_name, dtype, nbytes, active):
         high_ptr: pto.ptr(dtype, "gm"),
     ):
         lhs_ub = pto.castptr(pto.i64(0), pto.ptr(dtype, "ub"))
-        rhs_ub = pto.castptr(pto.i64(nbytes), pto.ptr(dtype, "ub"))
-        low_ub = pto.castptr(pto.i64(2 * nbytes), pto.ptr(dtype, "ub"))
-        high_ub = pto.castptr(pto.i64(3 * nbytes), pto.ptr(dtype, "ub"))
+        rhs_ub = pto.castptr(pto.i64(ub_stride), pto.ptr(dtype, "ub"))
+        low_ub = pto.castptr(pto.i64(2 * ub_stride), pto.ptr(dtype, "ub"))
+        high_ub = pto.castptr(pto.i64(3 * ub_stride), pto.ptr(dtype, "ub"))
         pto.mte_gm_ub(lhs_ptr, lhs_ub, 0, nbytes, nburst=(1, 0, 0))
         pto.mte_gm_ub(rhs_ptr, rhs_ub, 0, nbytes, nburst=(1, 0, 0))
         pto.set_flag("MTE2", "V", event_id=0)
         pto.wait_flag("MTE2", "V", event_id=0)
-        lhs = pto.vmi.vload(lhs_ub, pto.const(0, dtype=pto.index), size=VL)
-        rhs = pto.vmi.vload(rhs_ub, pto.const(0, dtype=pto.index), size=VL)
-        mask = pto.vmi.create_mask(active, size=VL)
+        lhs = pto.vmi.vload(lhs_ub, pto.const(0, dtype=pto.index), size=vl)
+        rhs = pto.vmi.vload(rhs_ub, pto.const(0, dtype=pto.index), size=vl)
+        mask = pto.vmi.create_mask(active, size=vl)
         if op_name == "vintlv":
             low, high = pto.vmi.vintlv(lhs, rhs, mask, pmode="zero")
         else:
@@ -150,5 +152,45 @@ for op_name in ("vintlv", "vdintlv"):
             "check": check,
         }
     )
+
+
+# Short vectors must split at the logical midpoint, even within one carrier.
+def _short_case(op_name, dtype_name, dtype, numpy_dtype, active):
+    def make_case():
+        lhs = np.arange(1, 9, dtype=numpy_dtype).reshape(1, 8)
+        rhs = np.arange(11, 19, dtype=numpy_dtype).reshape(1, 8)
+        if op_name == "vintlv":
+            expected = ([1, 11, 2, 12, 3, 13, 4, 14], [5, 15, 6, 16, 7, 17, 8, 18])
+        else:
+            expected = ([1, 3, 5, 7, 11, 13, 15, 17], [2, 4, 6, 8, 12, 14, 16, 18])
+        outputs = tuple(np.array(x, dtype=numpy_dtype) for x in expected)
+        for output in outputs:
+            output[active:] = 0
+        return [lhs, rhs, np.zeros_like(lhs), np.zeros_like(rhs)], outputs
+
+    def check(inputs, expected):
+        for output, golden in zip(inputs[2:], expected):
+            np.testing.assert_array_equal(output.cpu().numpy().reshape(-1), golden)
+
+    name = f"{op_name}_{dtype_name}_vl8_a{active}"
+    return {
+        "name": name,
+        "kernel": _build_kernel(
+            name, op_name, dtype, 8 * np.dtype(numpy_dtype).itemsize, active, vl=8
+        ),
+        "grid": 1,
+        "make_case": make_case,
+        "check": check,
+    }
+
+
+for op_name in ("vintlv", "vdintlv"):
+    for dtype_name, dtype, numpy_dtype in (
+        ("i8", pto.i8, np.int8), ("i16", pto.i16, np.int16),
+        ("i32", pto.i32, np.int32), ("f16", pto.f16, np.float16),
+        ("bf16_bits", pto.bf16, np.uint16), ("f32", pto.f32, np.float32),
+    ):
+        for active in (0, 4, 8):
+            CASES.append(_short_case(op_name, dtype_name, dtype, numpy_dtype, active))
 
 auto_main(globals())

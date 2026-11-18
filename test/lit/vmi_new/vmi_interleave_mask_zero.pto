@@ -123,8 +123,7 @@ module {
     return %even, %odd : !pto.vmi.vreg<128xf32>, !pto.vmi.vreg<128xf32>
   }
 
-  // Small-VL mask zeroing is covered here.  The separate small-VL data
-  // placement failure tracked by #1659 is not changed by this pattern.
+  // Small-VL results are repacked before the output mask is applied.
   func.func @vintlv_partial_mask_f32x8(
       %a: !pto.vmi.vreg<8xf32>, %b: !pto.vmi.vreg<8xf32>)
       -> (!pto.vmi.vreg<8xf32>, !pto.vmi.vreg<8xf32>) {

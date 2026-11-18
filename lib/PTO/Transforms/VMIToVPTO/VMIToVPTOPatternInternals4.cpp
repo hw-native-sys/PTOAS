@@ -737,6 +737,8 @@ public:
   }
 };
 
+#include "VMIToVPTOInterleaveInternals.cpp"
+
 template <typename SourceOp, typename TargetOp>
 struct OneToNVMIInterleaveOpPattern : OneToNOpConversionPattern<SourceOp> {
   using OneToNOpConversionPattern<SourceOp>::OneToNOpConversionPattern;
@@ -1180,6 +1182,10 @@ private:
         rhsParts.front());
     SmallVector<Value, kPairResultCount> results = {interleave.getLow(),
                                                    interleave.getHigh()};
+    if (failed(ShortInterleaveRepacker<SourceOp>().repackShortResults(
+        op, results, rewriter))) {
+      return failure();
+    }
     if (failed(zeroInactiveResults(op, results, lowTypes, highTypes,
                                    maskParts, fact, rewriter))) {
       return failure();
