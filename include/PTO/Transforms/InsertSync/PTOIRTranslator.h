@@ -16,6 +16,7 @@
  
 #include "PTO/IR/PTO.h"
 #include "PTO/Transforms/InsertSync/SyncCommon.h"
+#include "PTO/Transforms/InsertSync/SyncMacroModel.h"
 #include "PTO/Transforms/InsertSync/MemoryDependentAnalyzer.h"
 #include "mlir/Dialect/Func/IR/FuncOps.h"
 #include "mlir/Dialect/SCF/IR/SCF.h"
@@ -115,8 +116,9 @@ private:
   void UpdatePTOOpInfoWithPipeline(Operation *op, PipelineType pipe,
                                    bool skipIfNoMemInfo = false);
   void UpdateMacroOpInfo(Operation *op);
-  void MakeMacroCompound(Operation *op, PipelineType pipe, ValueRange defValues,
-                         ValueRange useValues, int macroPhaseId);
+    void MakeMacroCompound(
+        Operation* op, PipelineType pipe, ValueRange defValues, ValueRange useValues,
+        ArrayRef<SyncMacroRange> defRanges, ArrayRef<SyncMacroRange> useRanges, int macroPhaseId);
   bool UpdateHelperCallInfo(func::CallOp callOp);
 
   // --- 辅助函数 ---
@@ -124,14 +126,18 @@ private:
   // 获取 PTO Op 对应的硬件流水线类型
   PipelineType getOpPipeline(Operation *op) const;
 
+  // 把宏模型声明的锚定字节范围解析为指令专属 BaseMemInfo：锚点的每条
+  // 候选基址平移 offsetBytes，allocateSize 置为范围大小。sizeBytes 为 0
+  // 或平移溢出时不产生有限区间，而是退回零尺寸的"未知范围"编码，让
+  // MemAlias 保守判定可能别名（见 SyncMacroRange）。
+    void AppendMacroRangeInfos(ArrayRef<SyncMacroRange> ranges, SmallVector<const BaseMemInfo*>& vec);
+
   // 根据 Values 填充 Def/Use 列表。`accessOp` 是发起访问的指令：GMWindow 只描述
   // 视图的选框，只有按框密集寻址的搬运算（tload/tstore/tprefetch/comm DMA 家族）
   // 的访问范围才必然落在框内；索引寻址的 gather/scatter 等不遵循视图 stride，
   // 必须清除窗口，否则会把真实重叠误判为不相交（见 test 中 issue1624 的
   // mgather/mscatter 回归用例）。
-  void UpdateDefUseVec(
-      ValueRange values, SmallVector<const BaseMemInfo *> &vec,
-      Operation *accessOp = nullptr);
+    void UpdateDefUseVec(ValueRange values, SmallVector<const BaseMemInfo*>& vec, Operation* accessOp = nullptr);
   // 为 MAT->LEFT/RIGHT 的 TEXTRACT 记录源 Tile 实际读取的物理窗口；
   // 无法证明时返回 false，由调用方回退为整个源 Tile。
   bool UpdateTExtractReadRegion(Operation *op, Value source,

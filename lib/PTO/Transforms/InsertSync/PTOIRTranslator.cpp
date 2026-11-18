@@ -108,18 +108,25 @@ static pto::AddressSpace getTileAddressSpace(pto::TileBufType type) {
   return pto::AddressSpace::MAT;
 }
 
-static void
-appendUniqueMemInfo(SmallVectorImpl<std::unique_ptr<BaseMemInfo>> &infos,
-                    std::unique_ptr<BaseMemInfo> candidate) {
-  if (!candidate) {
-    return;
-  }
-  if (llvm::any_of(infos, [&](const std::unique_ptr<BaseMemInfo> &info) {
-        return info && *info == *candidate;
-      })) {
-    return;
-  }
-  infos.emplace_back(std::move(candidate));
+static void appendUniqueMemInfo(
+    SmallVectorImpl<std::unique_ptr<BaseMemInfo>>& infos, std::unique_ptr<BaseMemInfo> candidate)
+{
+    if (!candidate) {
+        return;
+    }
+    for (auto& info : infos) {
+        if (info && *info == *candidate) {
+            // impreciseBase 不参与 operator==：其余字段相同的精确/不精确记录
+            // 视为同一条以便去重，但不能因此吞掉保守性 —— 合流时 OR 保留标记。
+            // 否则 select 等多来源合流（精确臂先入、动态臂后入）会丢失包络
+            // 语义，宏派生范围再次被错误缩窄。
+            if (candidate->impreciseBase) {
+                info->impreciseBase = true;
+            }
+            return;
+        }
+    }
+    infos.emplace_back(std::move(candidate));
 }
 
 } // namespace
@@ -1170,24 +1177,69 @@ void PTOIRTranslator::UpdatePTOOpInfoWithPipeline(Operation *op,
   index++;
 }
 
-void PTOIRTranslator::MakeMacroCompound(Operation *op, PipelineType pipe,
-                                        ValueRange defValues,
-                                        ValueRange useValues,
-                                        int macroPhaseId) {
-  SmallVector<const BaseMemInfo *> defVec;
-  SmallVector<const BaseMemInfo *> useVec;
-  UpdateDefUseVec(defValues, defVec, op);
-  UpdateDefUseVec(useValues, useVec, op);
+void PTOIRTranslator::AppendMacroRangeInfos(ArrayRef<SyncMacroRange> ranges, SmallVector<const BaseMemInfo*>& vec)
+{
+    for (const SyncMacroRange& range : ranges) {
+        if (!range.anchor || !buffer2MemInfoMap_.contains(range.anchor)) {
+            continue;
+        }
+        const bool modelKnown = range.sizeBytes != 0;
+        for (auto& memInfo : buffer2MemInfoMap_[range.anchor]) {
+            auto copy = memInfo->clone();
+            copy->gmWindow = std::nullopt;
+            // 派生 scratch 已超出锚点自身视图描述符覆盖的字节，锚点的
+            // 行/槽位不相交证明（areDisjointSubviewSlots 等）对派生范围不成立：
+            // 改挂根分配以禁用这些证明，保留按区间的保守判定。
+            if (memInfo->rootBuffer) {
+                copy->baseBuffer = memInfo->rootBuffer;
+            }
+            // 只有当锚点记录精确落在视图起点（单一基址、非包络、解析精确）
+            // 且布局已知时才收窄为有限区间。动态偏移视图的记录是父缓冲区
+            // 包络（基址并非视图实际起点，嵌套静态 subview 也会继承该标记），
+            // 多段 boxed 记录无法界定线性派生的连续区域：这些情形连同布局
+            // 未知一起退回零尺寸"未知范围"，由 MemAlias 保守判定可能别名。
+            bool narrowed = false;
+            if (modelKnown && !copy->impreciseBase && !copy->aliasesUnknownRange && copy->baseAddresses.size() == 1) {
+                uint64_t shifted = 0;
+                if (!__builtin_add_overflow(copy->baseAddresses.front(), range.offsetBytes, &shifted)) {
+                    copy->baseAddresses.clear();
+                    copy->baseAddresses.push_back(shifted);
+                    copy->allocateSize = range.sizeBytes;
+                    narrowed = true;
+                }
+            }
+            if (!narrowed) {
+                if (!copy->baseAddresses.empty()) {
+                    uint64_t first = copy->baseAddresses.front();
+                    copy->baseAddresses.clear();
+                    copy->baseAddresses.push_back(first);
+                }
+                copy->allocateSize = 0;
+            }
+            vec.push_back(copy.get());
+            opAccessMemInfos_.push_back(std::move(copy));
+        }
+    }
+}
 
-  auto compoundElement = std::make_unique<CompoundInstanceElement>(
-      index, std::move(defVec), std::move(useVec), pipe, op->getName());
-  compoundElement->elementOp = op;
-  compoundElement->macroOpInstanceId = macroPhaseId;
-  compoundElement->compoundCoreType =
-      pipe == PipelineType::PIPE_M ? pto::TCoreType::CUBE
-                                   : pto::TCoreType::VECTOR;
-  syncIR_.emplace_back(std::move(compoundElement));
-  index++;
+void PTOIRTranslator::MakeMacroCompound(
+    Operation* op, PipelineType pipe, ValueRange defValues, ValueRange useValues, ArrayRef<SyncMacroRange> defRanges,
+    ArrayRef<SyncMacroRange> useRanges, int macroPhaseId)
+{
+    SmallVector<const BaseMemInfo*> defVec;
+    SmallVector<const BaseMemInfo*> useVec;
+    UpdateDefUseVec(defValues, defVec, op);
+    UpdateDefUseVec(useValues, useVec, op);
+    AppendMacroRangeInfos(defRanges, defVec);
+    AppendMacroRangeInfos(useRanges, useVec);
+
+    auto compoundElement =
+        std::make_unique<CompoundInstanceElement>(index, std::move(defVec), std::move(useVec), pipe, op->getName());
+    compoundElement->elementOp = op;
+    compoundElement->macroOpInstanceId = macroPhaseId;
+    compoundElement->compoundCoreType = pipe == PipelineType::PIPE_M ? pto::TCoreType::CUBE : pto::TCoreType::VECTOR;
+    syncIR_.emplace_back(std::move(compoundElement));
+    index++;
 }
 
 void PTOIRTranslator::UpdateMacroOpInfo(Operation *op) {
@@ -1196,8 +1248,9 @@ void PTOIRTranslator::UpdateMacroOpInfo(Operation *op) {
     return;
   }
   for (const auto &phase : model->phases) {
-    MakeMacroCompound(op, phase.pipe, ValueRange(phase.defValues),
-                      ValueRange(phase.useValues), phase.phaseId);
+      MakeMacroCompound(
+          op, phase.pipe, ValueRange(phase.defValues), ValueRange(phase.useValues), phase.defRanges, phase.useRanges,
+          phase.phaseId);
   }
 }
 
@@ -1453,7 +1506,16 @@ void PTOIRTranslator::UpdateAliasBufferInfo(Value result, Value source) {
 
 void PTOIRTranslator::UpdateConservativeAliasBufferInfo(Value result,
                                                         Value source) {
-  UpdateAliasBufferInfo(result, source);
+    // 记录退化为父缓冲区的保守包络：基址是父缓冲区起点而非视图实际起点。
+    // 标记挂在记录上并随 clone 传播（含静态 subview 的
+    // appendOffsetAliasMemInfos 路径），宏派生范围不得据此生成有限区间。
+    UpdateAliasBufferInfo(result, source);
+    auto it = buffer2MemInfoMap_.find(result);
+    if (it != buffer2MemInfoMap_.end()) {
+        for (auto& info : it->second) {
+            info->impreciseBase = true;
+        }
+    }
 }
 
 // Same aliasing as UpdateAliasBufferInfo, plus the strided extent the view

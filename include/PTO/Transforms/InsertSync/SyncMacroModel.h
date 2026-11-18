@@ -23,11 +23,29 @@ namespace pto {
 
 class MGatherOp;
 
+/// A byte range a macro's internal lowering touches but no IR operand
+/// describes. The range is anchored on an operand value's resolved memory
+/// footprint: every base address of the anchor's BaseMemInfo records is
+/// shifted by `offsetBytes`. `sizeBytes == 0` means "unknown extent" and keeps
+/// the downstream alias analysis conservative (MemAlias treats a zero
+/// allocateSize as may-alias with anything in the same scope).
+struct SyncMacroRange {
+    Value anchor;
+    uint64_t offsetBytes{0};
+    uint64_t sizeBytes{0};
+};
+
 struct SyncMacroPhase {
-  unsigned phaseId{0};
-  PipelineType pipe{PipelineType::PIPE_UNASSIGNED};
-  SmallVector<Value> defValues;
-  SmallVector<Value> useValues;
+    unsigned phaseId{0};
+    PipelineType pipe{PipelineType::PIPE_UNASSIGNED};
+    SmallVector<Value> defValues;
+    SmallVector<Value> useValues;
+    // Implicit derived accesses (e.g. a library call's internally computed
+    // scratch) resolved relative to an anchor operand. defRanges/useRanges are
+    // additive to defValues/useValues. Zero inline capacity keeps
+    // SyncMacroPhase below SmallVector's default-inlined-elements size cap.
+    SmallVector<SyncMacroRange, 0> defRanges;
+    SmallVector<SyncMacroRange, 0> useRanges;
 };
 
 struct SyncMacroHiddenEvent {

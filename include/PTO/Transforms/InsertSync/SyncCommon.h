@@ -136,95 +136,112 @@ struct GMWindow {
 /// Meminfo of the target buffer
 /// 用于追踪 Buffer 的别名和根节点
 struct BaseMemInfo {
-  BaseMemInfo(
-      Value baseBuffer, Value rootBuffer, pto::AddressSpace scope,
-      SmallVector<uint64_t> baseAddresses, uint64_t allocateSize,
-      bool hasKnownPhysicalAddresses = false,
-      bool aliasesUnknownRange = false)
-      : baseBuffer(baseBuffer), rootBuffer(rootBuffer), scope(scope),
-        baseAddresses(std::move(baseAddresses)), allocateSize(allocateSize),
-        hasKnownPhysicalAddresses(hasKnownPhysicalAddresses),
-        aliasesUnknownRange(aliasesUnknownRange) {}
- 
-  /// baseBuffer: 当前操作直接使用的 Buffer (可能是 View 或 Alias)
-  Value baseBuffer;
-  /// rootBuffer: 最底层的分配源头 (alloc_tile 或 Kernel Argument)
-  Value rootBuffer;
-  
-  pto::AddressSpace scope;
-  SmallVector<uint64_t> baseAddresses; // 用于 Offset 分析
-  uint64_t allocateSize;
-  // PlanMemory materializes static local allocations as physical addresses.
-  // This distinguishes their physical addresses from root-relative offsets.
-  bool hasKnownPhysicalAddresses;
-  // An explicit dynamic local allocation address or an integer-to-pointer cast
-  // can refer to an unknown physical range. This object and its views may alias
-  // other roots in the same address space; shared-root offsets remain usable.
-  bool aliasesUnknownRange;
-  // Strided GM extent relative to rootBuffer, when the view chain that produced
-  // this object was fully static. Only ever used to prove two accesses on the
-  // SAME root cannot touch a common byte; absent means "no proof available" and
-  // leaves the baseAddresses/allocateSize behaviour untouched. Never set on a
-  // value that crosses a loop boundary, where the modelled offsets would
-  // describe the first iteration only.
-  std::optional<GMWindow> gmWindow;
- 
-  bool areVectorEqual(const SmallVector<uint64_t>& vec1,
-                      const SmallVector<uint64_t>& vec2) const {
-    if (vec1.size() != vec2.size()) {
-      return false;
-    }
-    for (size_t i = 0; i < vec1.size(); ++i) {
-      if (vec1[i] != vec2[i]) {
-        return false;
-      }
-    }
-    return true;
-  }
- 
-  bool operator==(const BaseMemInfo &other) const {
-    if (!areVectorEqual(baseAddresses, other.baseAddresses)) {
-      return false;
-    }
-    if (rootBuffer != other.rootBuffer) {
-      return false;
-    }
-    if (scope != other.scope) {
-      return false;
-    }
-    if (hasKnownPhysicalAddresses != other.hasKnownPhysicalAddresses) {
-      return false;
-    }
-    if (aliasesUnknownRange != other.aliasesUnknownRange) {
-      return false;
-    }
-    // allocateSize 和 baseBuffer 的严格相等性在某些别名分析中可能太强了，
-    // 但为了保持原有逻辑，先保留。重点是 rootBuffer 必须一致。
-    if (allocateSize != other.allocateSize) {
-      return false;
-    }
-    if (baseBuffer != other.baseBuffer) {
-      return false;
-    }
-    if (gmWindow != other.gmWindow) {
-      return false;
-    }
-    return true;
-  }
+    BaseMemInfo(
+        Value baseBuffer, Value rootBuffer, pto::AddressSpace scope, SmallVector<uint64_t> baseAddresses,
+        uint64_t allocateSize, bool hasKnownPhysicalAddresses = false, bool aliasesUnknownRange = false)
+        : baseBuffer(baseBuffer),
+          rootBuffer(rootBuffer),
+          scope(scope),
+          baseAddresses(std::move(baseAddresses)),
+          allocateSize(allocateSize),
+          hasKnownPhysicalAddresses(hasKnownPhysicalAddresses),
+          aliasesUnknownRange(aliasesUnknownRange)
+    {}
 
-  std::unique_ptr<BaseMemInfo> clone() const {
-    return clone(baseBuffer);
-  }
+    /// baseBuffer: 当前操作直接使用的 Buffer (可能是 View 或 Alias)
+    Value baseBuffer;
+    /// rootBuffer: 最底层的分配源头 (alloc_tile 或 Kernel Argument)
+    Value rootBuffer;
 
-  std::unique_ptr<BaseMemInfo> clone(Value cloneBaseBuffer) const {
-    auto cloned = std::make_unique<BaseMemInfo>(
-        cloneBaseBuffer, rootBuffer, scope, baseAddresses, allocateSize,
-        hasKnownPhysicalAddresses, aliasesUnknownRange);
-    cloned->gmWindow = gmWindow;
-    return cloned;
-  }
+    pto::AddressSpace scope;
+    SmallVector<uint64_t> baseAddresses; // 用于 Offset 分析
+    uint64_t allocateSize;
+    // PlanMemory materializes static local allocations as physical addresses.
+    // This distinguishes their physical addresses from root-relative offsets.
+    bool hasKnownPhysicalAddresses;
+    // An explicit dynamic local allocation address or an integer-to-pointer cast
+    // can refer to an unknown physical range. This object and its views may alias
+    // other roots in the same address space; shared-root offsets remain usable.
+    bool aliasesUnknownRange;
+    // The record's base address is a conservative envelope start (e.g. a subview
+    // whose offsets could not be resolved cloned the parent buffer's record),
+    // not the value's actual placement. Set on the conservative-alias path and
+    // carried by every clone, so downstream consumers that narrow records into
+    // byte ranges (macro-derived scratch) cannot mistake the envelope for an
+    // exact base -- regardless of which alias-construction path produced the
+    // value. Value-level alias checks are unchanged: the envelope interval
+    // itself stays usable there.
+    //
+    // Indented one level deeper than the struct's legacy members to satisfy the
+    // repo G.FMT.02 4-space rule for changed lines.
+    bool impreciseBase = false;
+    // Strided GM extent relative to rootBuffer, when the view chain that produced
+    // this object was fully static. Only ever used to prove two accesses on the
+    // SAME root cannot touch a common byte; absent means "no proof available" and
+    // leaves the baseAddresses/allocateSize behaviour untouched. Never set on a
+    // value that crosses a loop boundary, where the modelled offsets would
+    // describe the first iteration only.
+    // (Reindented to the repo 4-space rule together with the neighboring
+    // changed member above.)
+    std::optional<GMWindow> gmWindow;
+
+    bool areVectorEqual(const SmallVector<uint64_t>& vec1, const SmallVector<uint64_t>& vec2) const
+    {
+        if (vec1.size() != vec2.size()) {
+            return false;
+        }
+        for (size_t i = 0; i < vec1.size(); ++i) {
+            if (vec1[i] != vec2[i]) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    bool operator==(const BaseMemInfo& other) const
+    {
+        if (!areVectorEqual(baseAddresses, other.baseAddresses)) {
+            return false;
+        }
+        if (rootBuffer != other.rootBuffer) {
+            return false;
+        }
+        if (scope != other.scope) {
+            return false;
+        }
+        if (hasKnownPhysicalAddresses != other.hasKnownPhysicalAddresses) {
+            return false;
+        }
+        if (aliasesUnknownRange != other.aliasesUnknownRange) {
+            return false;
+        }
+        // allocateSize 和 baseBuffer 的严格相等性在某些别名分析中可能太强了，
+        // 但为了保持原有逻辑，先保留。重点是 rootBuffer 必须一致。
+        if (allocateSize != other.allocateSize) {
+            return false;
+        }
+        if (baseBuffer != other.baseBuffer) {
+            return false;
+        }
+        if (gmWindow != other.gmWindow) {
+            return false;
+        }
+        return true;
+    }
+
+    std::unique_ptr<BaseMemInfo> clone() const { return clone(baseBuffer); }
+
+    std::unique_ptr<BaseMemInfo> clone(Value cloneBaseBuffer) const
+    {
+        auto cloned = std::make_unique<BaseMemInfo>(
+            cloneBaseBuffer, rootBuffer, scope, baseAddresses, allocateSize, hasKnownPhysicalAddresses,
+            aliasesUnknownRange);
+        cloned->gmWindow = gmWindow;
+        cloned->impreciseBase = impreciseBase;
+        return cloned;
+    }
 };
- 
+
 using DepBaseMemInfoPairVec =
     SmallVector<std::pair<const BaseMemInfo *, const BaseMemInfo *>>;
 

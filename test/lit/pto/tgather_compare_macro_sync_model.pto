@@ -13,7 +13,7 @@ module {
 }
 
 // CHECK-LABEL: After Sync Motion
-// CHECK:      COMPOUND pto.tgather [PIPE_V]
-// CHECK-NEXT: COMPOUND pto.tgather [PIPE_S]
+// CHECK:      COMPOUND pto.tgather [PIPE_S]
+// CHECK-NEXT: COMPOUND pto.tgather [PIPE_V]
 // CHECK-NEXT: COMPOUND pto.tgather [PIPE_V]
 // CHECK-NEXT: COMPOUND pto.tgather [PIPE_S]

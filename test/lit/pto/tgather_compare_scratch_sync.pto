@@ -1,0 +1,757 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software: you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You should not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+
+// A2/A3 compare-form TGATHER derives two operand-less scratch regions from
+// the tmp pointer (pto-isa TGather_cmp): the S-pipe index table at
+// [tmpEnd, tmpEnd + srcRows*srcCols*4) and the S-pipe typed-K threshold copy
+// area right after it. InsertSync must order external accesses against those
+// real bytes (issue #1758), must not invent orderings for bytes the
+// implementation never touches, must keep runtime-offset (envelope-anchored)
+// tmp views and adjacent-row subview consumers covered, and must not let a
+// subview-slot disjointness proof drop a derived-range dependency. Every
+// scenario runs under both automatic sync modes.
+//
+// Layout used by the 8x128 cases (tmp = first 256B of an 8192B scratch at
+// 4096): bitmap [4096,4352), index [4352,8448), cvt (actual access)
+// [8448,8480), reserved conversion padding [8480,8704), free backing
+// [8704,12288).
+
+// RUN: split-file %s %t
+// RUN: ptoas --pto-arch=a3 --pto-level=level3 --enable-insert-sync %t/index_overlap.pto -o - 2>&1 | FileCheck %s --check-prefix=IDX
+// RUN: ptoas --pto-arch=a3 --pto-level=level3 --enable-unified-sync  %t/index_overlap.pto -o - 2>&1 | FileCheck %s --check-prefix=UIDX
+// RUN: ptoas --pto-arch=a3 --pto-level=level3 --enable-insert-sync %t/cvt_overlap.pto -o - 2>&1 | FileCheck %s --check-prefix=CVT
+// RUN: ptoas --pto-arch=a3 --pto-level=level3 --enable-unified-sync  %t/cvt_overlap.pto -o - 2>&1 | FileCheck %s --check-prefix=UCVT
+// RUN: ptoas --pto-arch=a3 --pto-level=level3 --enable-insert-sync %t/bitmap_overlap.pto -o - 2>&1 | FileCheck %s --check-prefix=BMP
+// RUN: ptoas --pto-arch=a3 --pto-level=level3 --enable-unified-sync  %t/bitmap_overlap.pto -o - 2>&1 | FileCheck %s --check-prefix=UBMP
+// RUN: ptoas --pto-arch=a3 --pto-level=level3 --enable-insert-sync %t/padding_negative.pto -o - 2>&1 | FileCheck %s --check-prefix=PAD
+// RUN: ptoas --pto-arch=a3 --pto-level=level3 --enable-unified-sync  %t/padding_negative.pto -o - 2>&1 | FileCheck %s --check-prefix=UPAD
+// RUN: ptoas --pto-arch=a3 --pto-level=level3 --enable-insert-sync %t/backing_negative.pto -o - 2>&1 | FileCheck %s --check-prefix=NEG
+// RUN: ptoas --pto-arch=a3 --pto-level=level3 --enable-unified-sync  %t/backing_negative.pto -o - 2>&1 | FileCheck %s --check-prefix=UNEG
+// RUN: ptoas --pto-arch=a3 --pto-level=level3 --enable-insert-sync %t/dyn_offset_anchor.pto -o - 2>&1 | FileCheck %s --check-prefix=DYN
+// RUN: ptoas --pto-arch=a3 --pto-level=level3 --enable-unified-sync  %t/dyn_offset_anchor.pto -o - 2>&1 | FileCheck %s --check-prefix=UDYN
+// RUN: ptoas --pto-arch=a3 --pto-level=level3 --enable-insert-sync %t/adjacent_row.pto -o - 2>&1 | FileCheck %s --check-prefix=ROW
+// RUN: ptoas --pto-arch=a3 --pto-level=level3 --enable-unified-sync  %t/adjacent_row.pto -o - 2>&1 | FileCheck %s --check-prefix=UROW
+// RUN: ptoas --pto-arch=a3 --pto-level=level3 --enable-insert-sync %t/nested_subview.pto -o - 2>&1 | FileCheck %s --check-prefix=NEST
+// RUN: ptoas --pto-arch=a3 --pto-level=level3 --enable-unified-sync  %t/nested_subview.pto -o - 2>&1 | FileCheck %s --check-prefix=UNEST
+// RUN: ptoas --pto-arch=a3 --pto-level=level3 --enable-insert-sync %t/select_merge.pto -o - 2>&1 | FileCheck %s --check-prefix=SEL
+// RUN: ptoas --pto-arch=a3 --pto-level=level3 --enable-unified-sync  %t/select_merge.pto -o - 2>&1 | FileCheck %s --check-prefix=USEL
+// RUN: ptoas --pto-arch=a3 --pto-level=level3 --enable-insert-sync %t/stride_subview.pto -o - 2>&1 | FileCheck %s --check-prefix=STR
+// RUN: ptoas --pto-arch=a3 --pto-level=level3 --enable-unified-sync  %t/stride_subview.pto -o - 2>&1 | FileCheck %s --check-prefix=USTR
+// RUN: ptoas --pto-arch=a3 --pto-level=level3 --enable-insert-sync %t/row_col_subview.pto -o - 2>&1 | FileCheck %s --check-prefix=RC
+// RUN: ptoas --pto-arch=a3 --pto-level=level3 --enable-unified-sync  %t/row_col_subview.pto -o - 2>&1 | FileCheck %s --check-prefix=URC
+// RUN: ptoas --pto-arch=a3 --pto-level=level3 --enable-insert-sync %t/compact_tmp.pto -o - 2>&1 | FileCheck %s --check-prefix=CMP
+// RUN: ptoas --pto-arch=a3 --pto-level=level3 --enable-unified-sync  %t/compact_tmp.pto -o - 2>&1 | FileCheck %s --check-prefix=UCMP
+// RUN: ptoas --pto-arch=a3 --pto-level=level3 --enable-insert-sync %t/k_load.pto -o - 2>&1 | FileCheck %s --check-prefix=KLOAD
+// RUN: ptoas --pto-arch=a3 --pto-level=level3 --enable-unified-sync  %t/k_load.pto -o - 2>&1 | FileCheck %s --check-prefix=UKLOAD
+// RUN: ptoas --pto-arch=a3 --pto-level=level3 --enable-insert-sync %t/tail_war.pto -o - 2>&1 | FileCheck %s --check-prefix=WAR
+// RUN: ptoas --pto-arch=a3 --pto-level=level3 --enable-unified-sync  %t/tail_war.pto -o - 2>&1 | FileCheck %s --check-prefix=UWAR
+
+//--- index_overlap.pto
+module attributes {pto.target_arch = "a2a3"} {
+  func.func @gather_compare(%input: !pto.ptr<f32>) attributes {pto.kernel_kind = #pto.kernel_kind<vector>} {
+    %c0 = arith.constant 0 : index
+    %c1 = arith.constant 1 : index
+    %c256 = arith.constant 256 : index
+    %c8 = arith.constant 8 : index
+    %src_addr = arith.constant 0 : i64
+    %scratch_addr = arith.constant 4096 : i64
+    %indices_addr = arith.constant 16384 : i64
+    %counts_addr = arith.constant 20480 : i64
+    %later_addr = arith.constant 4352 : i64
+    %threshold = arith.constant 1.0 : f32
+    %src = pto.alloc_tile addr = %src_addr : !pto.tile_buf<vec, 8x128xf32>
+    %indices = pto.alloc_tile addr = %indices_addr : !pto.tile_buf<vec, 8x128xi32>
+    %counts = pto.alloc_tile addr = %counts_addr : !pto.tile_buf<vec, 1x8xi32>
+    %scratch = pto.alloc_tile addr = %scratch_addr : !pto.tile_buf<vec, 1x8192xui8>
+    %prefix = pto.subview %scratch[%c0, %c0] sizes [1, 256] valid [%c1, %c256] : !pto.tile_buf<vec, 1x8192xui8> -> !pto.tile_buf<vec, 1x256xui8>
+    %mask = pto.treshape %prefix : !pto.tile_buf<vec, 1x256xui8> -> !pto.tile_buf<vec, 8x32xui8>
+    %later = pto.alloc_tile addr = %later_addr : !pto.tile_buf<vec, 1x8xf32>
+    pto.tgather ins(%src, %threshold, %mask : !pto.tile_buf<vec, 8x128xf32>, f32, !pto.tile_buf<vec, 8x32xui8>) outs(%indices, %counts : !pto.tile_buf<vec, 8x128xi32>, !pto.tile_buf<vec, 1x8xi32>) {cmpMode = #pto<cmp gt>, offset = 7 : i32}
+    %input_view = pto.make_tensor_view %input, shape = [%c1, %c8], strides = [%c8, %c1] : !pto.tensor_view<?x?xf32>
+    %input_partition = pto.partition_view %input_view, offsets = [%c0, %c0], sizes = [%c1, %c8] : !pto.tensor_view<?x?xf32> -> !pto.partition_tensor_view<1x8xf32>
+    pto.tload ins(%input_partition : !pto.partition_tensor_view<1x8xf32>) outs(%later : !pto.tile_buf<vec, 1x8xf32>)
+    pto.tprint ins(%later : !pto.tile_buf<vec, 1x8xf32>)
+    return
+  }
+}
+
+// The S index-fill write (WAW) and the V reduce read (WAR) both precede the load.
+// IDX-LABEL: AICORE void gather_compare(
+// IDX: TGATHER<
+// IDX-NOT: TLOAD(
+// IDX: set_flag(PIPE_S, PIPE_MTE2,
+// IDX-NOT: TLOAD(
+// IDX: set_flag(PIPE_V, PIPE_MTE2,
+// IDX-NOT: TLOAD(
+// IDX: wait_flag(PIPE_V, PIPE_MTE2,
+// IDX-NOT: TLOAD(
+// IDX: wait_flag(PIPE_S, PIPE_MTE2,
+// IDX-NEXT: TLOAD(
+
+// The S index-fill write (WAW) and the V reduce read (WAR) both precede the load.
+// UIDX-LABEL: AICORE void gather_compare(
+// UIDX: TGATHER<
+// UIDX-NOT: TLOAD(
+// UIDX: set_flag(PIPE_S, PIPE_MTE2,
+// UIDX-NOT: TLOAD(
+// UIDX: set_flag(PIPE_V, PIPE_MTE2,
+// UIDX-NOT: TLOAD(
+// UIDX: wait_flag(PIPE_V, PIPE_MTE2,
+// UIDX-NOT: TLOAD(
+// UIDX: wait_flag(PIPE_S, PIPE_MTE2,
+// UIDX-NEXT: TLOAD(
+//--- cvt_overlap.pto
+module attributes {pto.target_arch = "a2a3"} {
+  func.func @gather_compare(%input: !pto.ptr<f32>) attributes {pto.kernel_kind = #pto.kernel_kind<vector>} {
+    %c0 = arith.constant 0 : index
+    %c1 = arith.constant 1 : index
+    %c256 = arith.constant 256 : index
+    %c8 = arith.constant 8 : index
+    %src_addr = arith.constant 0 : i64
+    %scratch_addr = arith.constant 4096 : i64
+    %indices_addr = arith.constant 16384 : i64
+    %counts_addr = arith.constant 20480 : i64
+    %later_addr = arith.constant 8448 : i64
+    %threshold = arith.constant 1.0 : f32
+    %src = pto.alloc_tile addr = %src_addr : !pto.tile_buf<vec, 8x128xf32>
+    %indices = pto.alloc_tile addr = %indices_addr : !pto.tile_buf<vec, 8x128xi32>
+    %counts = pto.alloc_tile addr = %counts_addr : !pto.tile_buf<vec, 1x8xi32>
+    %scratch = pto.alloc_tile addr = %scratch_addr : !pto.tile_buf<vec, 1x8192xui8>
+    %prefix = pto.subview %scratch[%c0, %c0] sizes [1, 256] valid [%c1, %c256] : !pto.tile_buf<vec, 1x8192xui8> -> !pto.tile_buf<vec, 1x256xui8>
+    %mask = pto.treshape %prefix : !pto.tile_buf<vec, 1x256xui8> -> !pto.tile_buf<vec, 8x32xui8>
+    %later = pto.alloc_tile addr = %later_addr : !pto.tile_buf<vec, 1x8xf32>
+    pto.tgather ins(%src, %threshold, %mask : !pto.tile_buf<vec, 8x128xf32>, f32, !pto.tile_buf<vec, 8x32xui8>) outs(%indices, %counts : !pto.tile_buf<vec, 8x128xi32>, !pto.tile_buf<vec, 1x8xi32>) {cmpMode = #pto<cmp gt>, offset = 7 : i32}
+    %input_view = pto.make_tensor_view %input, shape = [%c1, %c8], strides = [%c8, %c1] : !pto.tensor_view<?x?xf32>
+    %input_partition = pto.partition_view %input_view, offsets = [%c0, %c0], sizes = [%c1, %c8] : !pto.tensor_view<?x?xf32> -> !pto.partition_tensor_view<1x8xf32>
+    pto.tload ins(%input_partition : !pto.partition_tensor_view<1x8xf32>) outs(%later : !pto.tile_buf<vec, 1x8xf32>)
+    pto.tprint ins(%later : !pto.tile_buf<vec, 1x8xf32>)
+    return
+  }
+}
+
+// CVT-LABEL: AICORE void gather_compare(
+// CVT: TGATHER<
+// CVT-NOT: set_flag(PIPE_V, PIPE_MTE2,
+// CVT: set_flag(PIPE_S, PIPE_MTE2,
+// CVT-NOT: TLOAD(
+// CVT: wait_flag(PIPE_S, PIPE_MTE2,
+// CVT-NEXT: TLOAD(
+
+// UCVT-LABEL: AICORE void gather_compare(
+// UCVT: TGATHER<
+// UCVT-NOT: set_flag(PIPE_V, PIPE_MTE2,
+// UCVT: set_flag(PIPE_S, PIPE_MTE2,
+// UCVT-NOT: TLOAD(
+// UCVT: wait_flag(PIPE_S, PIPE_MTE2,
+// UCVT-NEXT: TLOAD(
+//--- bitmap_overlap.pto
+module attributes {pto.target_arch = "a2a3"} {
+  func.func @gather_compare(%input: !pto.ptr<f32>) attributes {pto.kernel_kind = #pto.kernel_kind<vector>} {
+    %c0 = arith.constant 0 : index
+    %c1 = arith.constant 1 : index
+    %c256 = arith.constant 256 : index
+    %c8 = arith.constant 8 : index
+    %src_addr = arith.constant 0 : i64
+    %scratch_addr = arith.constant 4096 : i64
+    %indices_addr = arith.constant 16384 : i64
+    %counts_addr = arith.constant 20480 : i64
+    %later_addr = arith.constant 4096 : i64
+    %threshold = arith.constant 1.0 : f32
+    %src = pto.alloc_tile addr = %src_addr : !pto.tile_buf<vec, 8x128xf32>
+    %indices = pto.alloc_tile addr = %indices_addr : !pto.tile_buf<vec, 8x128xi32>
+    %counts = pto.alloc_tile addr = %counts_addr : !pto.tile_buf<vec, 1x8xi32>
+    %scratch = pto.alloc_tile addr = %scratch_addr : !pto.tile_buf<vec, 1x8192xui8>
+    %prefix = pto.subview %scratch[%c0, %c0] sizes [1, 256] valid [%c1, %c256] : !pto.tile_buf<vec, 1x8192xui8> -> !pto.tile_buf<vec, 1x256xui8>
+    %mask = pto.treshape %prefix : !pto.tile_buf<vec, 1x256xui8> -> !pto.tile_buf<vec, 8x32xui8>
+    %later = pto.alloc_tile addr = %later_addr : !pto.tile_buf<vec, 1x8xf32>
+    pto.tgather ins(%src, %threshold, %mask : !pto.tile_buf<vec, 8x128xf32>, f32, !pto.tile_buf<vec, 8x32xui8>) outs(%indices, %counts : !pto.tile_buf<vec, 8x128xi32>, !pto.tile_buf<vec, 1x8xi32>) {cmpMode = #pto<cmp gt>, offset = 7 : i32}
+    %input_view = pto.make_tensor_view %input, shape = [%c1, %c8], strides = [%c8, %c1] : !pto.tensor_view<?x?xf32>
+    %input_partition = pto.partition_view %input_view, offsets = [%c0, %c0], sizes = [%c1, %c8] : !pto.tensor_view<?x?xf32> -> !pto.partition_tensor_view<1x8xf32>
+    pto.tload ins(%input_partition : !pto.partition_tensor_view<1x8xf32>) outs(%later : !pto.tile_buf<vec, 1x8xf32>)
+    pto.tprint ins(%later : !pto.tile_buf<vec, 1x8xf32>)
+    return
+  }
+}
+
+// BMP-LABEL: AICORE void gather_compare(
+// BMP: TGATHER<
+// BMP-NOT: set_flag(PIPE_S, PIPE_MTE2,
+// BMP: set_flag(PIPE_V, PIPE_MTE2,
+// BMP-NOT: TLOAD(
+// BMP: wait_flag(PIPE_V, PIPE_MTE2,
+// BMP-NEXT: TLOAD(
+
+// UBMP-LABEL: AICORE void gather_compare(
+// UBMP: TGATHER<
+// UBMP-NOT: set_flag(PIPE_S, PIPE_MTE2,
+// UBMP: set_flag(PIPE_V, PIPE_MTE2,
+// UBMP-NOT: TLOAD(
+// UBMP: wait_flag(PIPE_V, PIPE_MTE2,
+// UBMP-NEXT: TLOAD(
+//--- padding_negative.pto
+module attributes {pto.target_arch = "a2a3"} {
+  func.func @gather_compare(%input: !pto.ptr<f32>) attributes {pto.kernel_kind = #pto.kernel_kind<vector>} {
+    %c0 = arith.constant 0 : index
+    %c1 = arith.constant 1 : index
+    %c256 = arith.constant 256 : index
+    %c8 = arith.constant 8 : index
+    %src_addr = arith.constant 0 : i64
+    %scratch_addr = arith.constant 4096 : i64
+    %indices_addr = arith.constant 16384 : i64
+    %counts_addr = arith.constant 20480 : i64
+    %later_addr = arith.constant 8480 : i64
+    %threshold = arith.constant 1.0 : f32
+    %src = pto.alloc_tile addr = %src_addr : !pto.tile_buf<vec, 8x128xf32>
+    %indices = pto.alloc_tile addr = %indices_addr : !pto.tile_buf<vec, 8x128xi32>
+    %counts = pto.alloc_tile addr = %counts_addr : !pto.tile_buf<vec, 1x8xi32>
+    %scratch = pto.alloc_tile addr = %scratch_addr : !pto.tile_buf<vec, 1x8192xui8>
+    %prefix = pto.subview %scratch[%c0, %c0] sizes [1, 256] valid [%c1, %c256] : !pto.tile_buf<vec, 1x8192xui8> -> !pto.tile_buf<vec, 1x256xui8>
+    %mask = pto.treshape %prefix : !pto.tile_buf<vec, 1x256xui8> -> !pto.tile_buf<vec, 8x32xui8>
+    %later = pto.alloc_tile addr = %later_addr : !pto.tile_buf<vec, 1x8xf32>
+    pto.tgather ins(%src, %threshold, %mask : !pto.tile_buf<vec, 8x128xf32>, f32, !pto.tile_buf<vec, 8x32xui8>) outs(%indices, %counts : !pto.tile_buf<vec, 8x128xi32>, !pto.tile_buf<vec, 1x8xi32>) {cmpMode = #pto<cmp gt>, offset = 7 : i32}
+    %input_view = pto.make_tensor_view %input, shape = [%c1, %c8], strides = [%c8, %c1] : !pto.tensor_view<?x?xf32>
+    %input_partition = pto.partition_view %input_view, offsets = [%c0, %c0], sizes = [%c1, %c8] : !pto.tensor_view<?x?xf32> -> !pto.partition_tensor_view<1x8xf32>
+    pto.tload ins(%input_partition : !pto.partition_tensor_view<1x8xf32>) outs(%later : !pto.tile_buf<vec, 1x8xf32>)
+    pto.tprint ins(%later : !pto.tile_buf<vec, 1x8xf32>)
+    return
+  }
+}
+
+// PAD-LABEL: AICORE void gather_compare(
+// PAD-NOT: set_flag(PIPE_S, PIPE_MTE2,
+// PAD-NOT: set_flag(PIPE_V, PIPE_MTE2,
+// PAD: TLOAD(
+
+// UPAD-LABEL: AICORE void gather_compare(
+// UPAD-NOT: set_flag(PIPE_S, PIPE_MTE2,
+// UPAD-NOT: set_flag(PIPE_V, PIPE_MTE2,
+// UPAD: TLOAD(
+//--- backing_negative.pto
+module attributes {pto.target_arch = "a2a3"} {
+  func.func @gather_compare(%input: !pto.ptr<f32>) attributes {pto.kernel_kind = #pto.kernel_kind<vector>} {
+    %c0 = arith.constant 0 : index
+    %c1 = arith.constant 1 : index
+    %c256 = arith.constant 256 : index
+    %c8 = arith.constant 8 : index
+    %src_addr = arith.constant 0 : i64
+    %scratch_addr = arith.constant 4096 : i64
+    %indices_addr = arith.constant 16384 : i64
+    %counts_addr = arith.constant 20480 : i64
+    %later_addr = arith.constant 9216 : i64
+    %threshold = arith.constant 1.0 : f32
+    %src = pto.alloc_tile addr = %src_addr : !pto.tile_buf<vec, 8x128xf32>
+    %indices = pto.alloc_tile addr = %indices_addr : !pto.tile_buf<vec, 8x128xi32>
+    %counts = pto.alloc_tile addr = %counts_addr : !pto.tile_buf<vec, 1x8xi32>
+    %scratch = pto.alloc_tile addr = %scratch_addr : !pto.tile_buf<vec, 1x8192xui8>
+    %prefix = pto.subview %scratch[%c0, %c0] sizes [1, 256] valid [%c1, %c256] : !pto.tile_buf<vec, 1x8192xui8> -> !pto.tile_buf<vec, 1x256xui8>
+    %mask = pto.treshape %prefix : !pto.tile_buf<vec, 1x256xui8> -> !pto.tile_buf<vec, 8x32xui8>
+    %later = pto.alloc_tile addr = %later_addr : !pto.tile_buf<vec, 1x8xf32>
+    pto.tgather ins(%src, %threshold, %mask : !pto.tile_buf<vec, 8x128xf32>, f32, !pto.tile_buf<vec, 8x32xui8>) outs(%indices, %counts : !pto.tile_buf<vec, 8x128xi32>, !pto.tile_buf<vec, 1x8xi32>) {cmpMode = #pto<cmp gt>, offset = 7 : i32}
+    %input_view = pto.make_tensor_view %input, shape = [%c1, %c8], strides = [%c8, %c1] : !pto.tensor_view<?x?xf32>
+    %input_partition = pto.partition_view %input_view, offsets = [%c0, %c0], sizes = [%c1, %c8] : !pto.tensor_view<?x?xf32> -> !pto.partition_tensor_view<1x8xf32>
+    pto.tload ins(%input_partition : !pto.partition_tensor_view<1x8xf32>) outs(%later : !pto.tile_buf<vec, 1x8xf32>)
+    pto.tprint ins(%later : !pto.tile_buf<vec, 1x8xf32>)
+    return
+  }
+}
+
+// NEG-LABEL: AICORE void gather_compare(
+// NEG-NOT: set_flag(PIPE_S, PIPE_MTE2,
+// NEG-NOT: set_flag(PIPE_V, PIPE_MTE2,
+// NEG: TLOAD(
+
+// UNEG-LABEL: AICORE void gather_compare(
+// UNEG-NOT: set_flag(PIPE_S, PIPE_MTE2,
+// UNEG-NOT: set_flag(PIPE_V, PIPE_MTE2,
+// UNEG: TLOAD(
+//--- dyn_offset_anchor.pto
+module attributes {pto.target_arch = "a2a3"} {
+  func.func @gather_compare(%input: !pto.ptr<f32>, %dyn : index) attributes {pto.kernel_kind = #pto.kernel_kind<vector>} {
+    %c0 = arith.constant 0 : index
+    %c1 = arith.constant 1 : index
+    %c256 = arith.constant 256 : index
+    %c8 = arith.constant 8 : index
+    %src_addr = arith.constant 0 : i64
+    %scratch_addr = arith.constant 4096 : i64
+    %indices_addr = arith.constant 16384 : i64
+    %counts_addr = arith.constant 20480 : i64
+    %later_addr = arith.constant 5120 : i64
+    %threshold = arith.constant 1.0 : f32
+    %src = pto.alloc_tile addr = %src_addr : !pto.tile_buf<vec, 8x128xf32>
+    %indices = pto.alloc_tile addr = %indices_addr : !pto.tile_buf<vec, 8x128xi32>
+    %counts = pto.alloc_tile addr = %counts_addr : !pto.tile_buf<vec, 1x8xi32>
+    %scratch = pto.alloc_tile addr = %scratch_addr : !pto.tile_buf<vec, 1x8192xui8>
+    %prefix = pto.subview %scratch[%c0, %dyn] sizes [1, 256] valid [%c1, %c256] : !pto.tile_buf<vec, 1x8192xui8> -> !pto.tile_buf<vec, 1x256xui8>
+    %mask = pto.treshape %prefix : !pto.tile_buf<vec, 1x256xui8> -> !pto.tile_buf<vec, 8x32xui8>
+    %later = pto.alloc_tile addr = %later_addr : !pto.tile_buf<vec, 1x8xf32>
+    pto.tgather ins(%src, %threshold, %mask : !pto.tile_buf<vec, 8x128xf32>, f32, !pto.tile_buf<vec, 8x32xui8>) outs(%indices, %counts : !pto.tile_buf<vec, 8x128xi32>, !pto.tile_buf<vec, 1x8xi32>) {cmpMode = #pto<cmp gt>, offset = 7 : i32}
+    %input_view = pto.make_tensor_view %input, shape = [%c1, %c8], strides = [%c8, %c1] : !pto.tensor_view<?x?xf32>
+    %input_partition = pto.partition_view %input_view, offsets = [%c0, %c0], sizes = [%c1, %c8] : !pto.tensor_view<?x?xf32> -> !pto.partition_tensor_view<1x8xf32>
+    pto.tload ins(%input_partition : !pto.partition_tensor_view<1x8xf32>) outs(%later : !pto.tile_buf<vec, 1x8xf32>)
+    return
+  }
+}
+
+// The anchor is a runtime-offset subview: its record is the whole backing
+// envelope, so the load inside the backing must be ordered against every
+// phase (S defs and V accesses alike).
+// DYN-LABEL: AICORE void gather_compare(
+// DYN: TGATHER<
+// DYN-NOT: TLOAD(
+// DYN: set_flag(PIPE_S, PIPE_MTE2,
+// DYN-NOT: TLOAD(
+// DYN: set_flag(PIPE_V, PIPE_MTE2,
+// DYN-NOT: TLOAD(
+// DYN: wait_flag(PIPE_V, PIPE_MTE2,
+// DYN-NOT: TLOAD(
+// DYN: wait_flag(PIPE_S, PIPE_MTE2,
+// DYN-NEXT: TLOAD(
+
+// The anchor is a runtime-offset subview: its record is the whole backing
+// envelope, so the load inside the backing must be ordered against every
+// phase (S defs and V accesses alike).
+// UDYN-LABEL: AICORE void gather_compare(
+// UDYN: TGATHER<
+// UDYN-NOT: TLOAD(
+// UDYN: set_flag(PIPE_S, PIPE_MTE2,
+// UDYN-NOT: TLOAD(
+// UDYN: set_flag(PIPE_V, PIPE_MTE2,
+// UDYN-NOT: TLOAD(
+// UDYN: wait_flag(PIPE_V, PIPE_MTE2,
+// UDYN-NOT: TLOAD(
+// UDYN: wait_flag(PIPE_S, PIPE_MTE2,
+// UDYN-NEXT: TLOAD(
+//--- adjacent_row.pto
+// Single-row mask/consumer subviews so areDisjointSubviewSlots actually
+// applies; the derived index table must still be ordered against row 1.
+module attributes {pto.target_arch = "a2a3"} {
+  func.func @gather_compare(%input: !pto.ptr<ui8>) attributes {pto.kernel_kind = #pto.kernel_kind<vector>} {
+    %c0 = arith.constant 0 : index
+    %c1 = arith.constant 1 : index
+    %c32 = arith.constant 32 : index
+    %c64 = arith.constant 64 : index
+    %src_addr = arith.constant 0 : i64
+    %backing_addr = arith.constant 4096 : i64
+    %indices_addr = arith.constant 16384 : i64
+    %counts_addr = arith.constant 20480 : i64
+    %threshold = arith.constant 1.0 : f32
+    %src = pto.alloc_tile addr = %src_addr : !pto.tile_buf<vec, 1x64xf32>
+    %indices = pto.alloc_tile addr = %indices_addr : !pto.tile_buf<vec, 1x64xi32>
+    %counts = pto.alloc_tile addr = %counts_addr : !pto.tile_buf<loc=vec, dtype=i32, rows=1, cols=8, v_row=1, v_col=1, blayout=row_major, slayout=none_box, fractal=512, pad=0>
+    %backing = pto.alloc_tile addr = %backing_addr : !pto.tile_buf<vec, 16x32xui8>
+    %mask = pto.subview %backing[%c0, %c0] sizes [1, 32] valid [%c1, %c32] : !pto.tile_buf<vec, 16x32xui8> -> !pto.tile_buf<vec, 1x32xui8>
+    %row1 = pto.subview %backing[%c1, %c0] sizes [1, 32] valid [%c1, %c32] : !pto.tile_buf<vec, 16x32xui8> -> !pto.tile_buf<vec, 1x32xui8>
+    pto.tgather ins(%src, %threshold, %mask : !pto.tile_buf<vec, 1x64xf32>, f32, !pto.tile_buf<vec, 1x32xui8>) outs(%indices, %counts : !pto.tile_buf<vec, 1x64xi32>, !pto.tile_buf<loc=vec, dtype=i32, rows=1, cols=8, v_row=1, v_col=1, blayout=row_major, slayout=none_box, fractal=512, pad=0>) {cmpMode = #pto<cmp gt>, offset = 0 : i32}
+    %input_view = pto.make_tensor_view %input, shape = [%c1, %c32], strides = [%c32, %c1] : !pto.tensor_view<?x?xui8>
+    %input_partition = pto.partition_view %input_view, offsets = [%c0, %c0], sizes = [%c1, %c32] : !pto.tensor_view<?x?xui8> -> !pto.partition_tensor_view<1x32xui8>
+    pto.tload ins(%input_partition : !pto.partition_tensor_view<1x32xui8>) outs(%row1 : !pto.tile_buf<vec, 1x32xui8>)
+    return
+  }
+}
+
+// Single-row mask (row 0) vs single-row consumer (row 1) of one 16x32
+// backing: areDisjointSubviewSlots applies to exactly this shape, so the
+// derived index table [4128, 4384) must stay ordered against row 1.
+// ROW-LABEL: AICORE void gather_compare(
+// ROW: TGATHER<
+// ROW-NOT: TLOAD(
+// ROW: set_flag(PIPE_S, PIPE_MTE2,
+// ROW-NOT: TLOAD(
+// ROW: set_flag(PIPE_V, PIPE_MTE2,
+// ROW-NOT: TLOAD(
+// ROW: wait_flag(PIPE_V, PIPE_MTE2,
+// ROW-NOT: TLOAD(
+// ROW: wait_flag(PIPE_S, PIPE_MTE2,
+// ROW-NEXT: TLOAD(
+
+// Single-row mask (row 0) vs single-row consumer (row 1) of one 16x32
+// backing: areDisjointSubviewSlots applies to exactly this shape, so the
+// derived index table [4128, 4384) must stay ordered against row 1.
+// UROW-LABEL: AICORE void gather_compare(
+// UROW: TGATHER<
+// UROW-NOT: TLOAD(
+// UROW: set_flag(PIPE_S, PIPE_MTE2,
+// UROW-NOT: TLOAD(
+// UROW: set_flag(PIPE_V, PIPE_MTE2,
+// UROW-NOT: TLOAD(
+// UROW: wait_flag(PIPE_V, PIPE_MTE2,
+// UROW-NOT: TLOAD(
+// UROW: wait_flag(PIPE_S, PIPE_MTE2,
+// UROW-NEXT: TLOAD(
+//--- nested_subview.pto
+// A static subview taken from a runtime-offset (envelope) window must stay
+// imprecise: the derived regions cannot be narrowed to a finite interval at
+// the envelope base. With the runtime offset at 1024 the real index table is
+// [5376, 9472) while the wrongly-narrowed model would claim [4352, 8448), so
+// a load at 9216 is only ordered when the imprecise mark survives.
+module attributes {pto.target_arch = "a2a3"} {
+  func.func @gather_compare(%input: !pto.ptr<f32>, %dyn : index) attributes {pto.kernel_kind = #pto.kernel_kind<vector>} {
+    %c0 = arith.constant 0 : index
+    %c1 = arith.constant 1 : index
+    %c256 = arith.constant 256 : index
+    %c512 = arith.constant 512 : index
+    %c8 = arith.constant 8 : index
+    %src_addr = arith.constant 0 : i64
+    %scratch_addr = arith.constant 4096 : i64
+    %indices_addr = arith.constant 16384 : i64
+    %counts_addr = arith.constant 20480 : i64
+    %later_addr = arith.constant 9216 : i64
+    %threshold = arith.constant 1.0 : f32
+    %src = pto.alloc_tile addr = %src_addr : !pto.tile_buf<vec, 8x128xf32>
+    %indices = pto.alloc_tile addr = %indices_addr : !pto.tile_buf<vec, 8x128xi32>
+    %counts = pto.alloc_tile addr = %counts_addr : !pto.tile_buf<vec, 1x8xi32>
+    %scratch = pto.alloc_tile addr = %scratch_addr : !pto.tile_buf<vec, 1x8192xui8>
+    %win = pto.subview %scratch[%c0, %dyn] sizes [1, 512] valid [%c1, %c512] : !pto.tile_buf<vec, 1x8192xui8> -> !pto.tile_buf<vec, 1x512xui8>
+    %prefix = pto.subview %win[%c0, %c0] sizes [1, 256] valid [%c1, %c256] : !pto.tile_buf<vec, 1x512xui8> -> !pto.tile_buf<vec, 1x256xui8>
+    %mask = pto.treshape %prefix : !pto.tile_buf<vec, 1x256xui8> -> !pto.tile_buf<vec, 8x32xui8>
+    %later = pto.alloc_tile addr = %later_addr : !pto.tile_buf<vec, 1x8xf32>
+    pto.tgather ins(%src, %threshold, %mask : !pto.tile_buf<vec, 8x128xf32>, f32, !pto.tile_buf<vec, 8x32xui8>) outs(%indices, %counts : !pto.tile_buf<vec, 8x128xi32>, !pto.tile_buf<vec, 1x8xi32>) {cmpMode = #pto<cmp gt>, offset = 7 : i32}
+    %input_view = pto.make_tensor_view %input, shape = [%c1, %c8], strides = [%c8, %c1] : !pto.tensor_view<?x?xf32>
+    %input_partition = pto.partition_view %input_view, offsets = [%c0, %c0], sizes = [%c1, %c8] : !pto.tensor_view<?x?xf32> -> !pto.partition_tensor_view<1x8xf32>
+    pto.tload ins(%input_partition : !pto.partition_tensor_view<1x8xf32>) outs(%later : !pto.tile_buf<vec, 1x8xf32>)
+    return
+  }
+}
+
+// A static subview of a runtime-offset window inherits the envelope mark;
+// derived ranges stay unknown-extent and the in-backing load is ordered.
+// NEST-LABEL: AICORE void gather_compare(
+// NEST: TGATHER<
+// NEST-NOT: TLOAD(
+// NEST: set_flag(PIPE_S, PIPE_MTE2,
+// NEST-NOT: TLOAD(
+// NEST: set_flag(PIPE_V, PIPE_MTE2,
+// NEST-NOT: TLOAD(
+// NEST: wait_flag(PIPE_V, PIPE_MTE2,
+// NEST-NOT: TLOAD(
+// NEST: wait_flag(PIPE_S, PIPE_MTE2,
+// NEST-NEXT: TLOAD(
+
+// A static subview of a runtime-offset window inherits the envelope mark;
+// derived ranges stay unknown-extent and the in-backing load is ordered.
+// UNEST-LABEL: AICORE void gather_compare(
+// UNEST: TGATHER<
+// UNEST-NOT: TLOAD(
+// UNEST: set_flag(PIPE_S, PIPE_MTE2,
+// UNEST-NOT: TLOAD(
+// UNEST: set_flag(PIPE_V, PIPE_MTE2,
+// UNEST-NOT: TLOAD(
+// UNEST: wait_flag(PIPE_V, PIPE_MTE2,
+// UNEST-NOT: TLOAD(
+// UNEST: wait_flag(PIPE_S, PIPE_MTE2,
+// UNEST-NEXT: TLOAD(
+//--- select_merge.pto
+// arith.select merges a precise static head with a runtime-offset head that
+// carry numerically identical records; dedup must OR the imprecise mark
+// instead of dropping the conservative arm (precise arm is the select true
+// value, processed first). Load at 9216 must stay ordered.
+module attributes {pto.target_arch = "a2a3"} {
+  func.func @gather_compare(%input: !pto.ptr<f32>, %dyn : index, %cond : i1) attributes {pto.kernel_kind = #pto.kernel_kind<vector>} {
+    %c0 = arith.constant 0 : index
+    %c1 = arith.constant 1 : index
+    %c256 = arith.constant 256 : index
+    %c512 = arith.constant 512 : index
+    %c8 = arith.constant 8 : index
+    %src_addr = arith.constant 0 : i64
+    %scratch_addr = arith.constant 4096 : i64
+    %indices_addr = arith.constant 16384 : i64
+    %counts_addr = arith.constant 20480 : i64
+    %later_addr = arith.constant 9216 : i64
+    %threshold = arith.constant 1.0 : f32
+    %src = pto.alloc_tile addr = %src_addr : !pto.tile_buf<vec, 8x128xf32>
+    %indices = pto.alloc_tile addr = %indices_addr : !pto.tile_buf<vec, 8x128xi32>
+    %counts = pto.alloc_tile addr = %counts_addr : !pto.tile_buf<vec, 1x8xi32>
+    %scratch = pto.alloc_tile addr = %scratch_addr : !pto.tile_buf<vec, 1x8192xui8>
+    %win = pto.subview %scratch[%c0, %dyn] sizes [1, 512] valid [%c1, %c512] : !pto.tile_buf<vec, 1x8192xui8> -> !pto.tile_buf<vec, 1x512xui8>
+    %headDyn = pto.subview %win[%c0, %c0] sizes [1, 256] valid [%c1, %c256] : !pto.tile_buf<vec, 1x512xui8> -> !pto.tile_buf<vec, 1x256xui8>
+    %headStat = pto.subview %scratch[%c0, %c0] sizes [1, 256] valid [%c1, %c256] : !pto.tile_buf<vec, 1x8192xui8> -> !pto.tile_buf<vec, 1x256xui8>
+    %head = arith.select %cond, %headStat, %headDyn : !pto.tile_buf<vec, 1x256xui8>
+    %mask = pto.treshape %head : !pto.tile_buf<vec, 1x256xui8> -> !pto.tile_buf<vec, 8x32xui8>
+    %later = pto.alloc_tile addr = %later_addr : !pto.tile_buf<vec, 1x8xf32>
+    pto.tgather ins(%src, %threshold, %mask : !pto.tile_buf<vec, 8x128xf32>, f32, !pto.tile_buf<vec, 8x32xui8>) outs(%indices, %counts : !pto.tile_buf<vec, 8x128xi32>, !pto.tile_buf<vec, 1x8xi32>) {cmpMode = #pto<cmp gt>, offset = 7 : i32}
+    %input_view = pto.make_tensor_view %input, shape = [%c1, %c8], strides = [%c8, %c1] : !pto.tensor_view<?x?xf32>
+    %input_partition = pto.partition_view %input_view, offsets = [%c0, %c0], sizes = [%c1, %c8] : !pto.tensor_view<?x?xf32> -> !pto.partition_tensor_view<1x8xf32>
+    pto.tload ins(%input_partition : !pto.partition_tensor_view<1x8xf32>) outs(%later : !pto.tile_buf<vec, 1x8xf32>)
+    return
+  }
+}
+
+// The select merges a precise arm and a dynamically-offset arm whose records
+// are numerically identical: dedup must keep the imprecise mark.
+// SEL-LABEL: AICORE void gather_compare(
+// SEL: TGATHER<
+// SEL-NOT: TLOAD(
+// SEL: set_flag(PIPE_S, PIPE_MTE2,
+// SEL-NOT: TLOAD(
+// SEL: set_flag(PIPE_V, PIPE_MTE2,
+// SEL-NOT: TLOAD(
+// SEL: wait_flag(PIPE_V, PIPE_MTE2,
+// SEL-NOT: TLOAD(
+// SEL: wait_flag(PIPE_S, PIPE_MTE2,
+// SEL-NEXT: TLOAD(
+
+// The select merges a precise arm and a dynamically-offset arm whose records
+// are numerically identical: dedup must keep the imprecise mark.
+// USEL-LABEL: AICORE void gather_compare(
+// USEL: TGATHER<
+// USEL-NOT: TLOAD(
+// USEL: set_flag(PIPE_S, PIPE_MTE2,
+// USEL-NOT: TLOAD(
+// USEL: set_flag(PIPE_V, PIPE_MTE2,
+// USEL-NOT: TLOAD(
+// USEL: wait_flag(PIPE_V, PIPE_MTE2,
+// USEL-NOT: TLOAD(
+// USEL: wait_flag(PIPE_S, PIPE_MTE2,
+// USEL-NEXT: TLOAD(
+//--- stride_subview.pto
+// pto-isa addresses the derived index rows at the src tile's emitted physical
+// shape: an 8x128 subview of an 8x256 backing emits 8x256, so the index table
+// spans [16640, 24832) -- not the logical 4KiB. The 12288B backing covers the
+// full derived footprint (256 bitmap + 8192 index + 32 cvt) and the outputs
+// sit past its end. A load at 20768 is only ordered with the physical shape.
+module attributes {pto.target_arch = "a2a3"} {
+  func.func @gather_compare(%input: !pto.ptr<f32>) attributes {pto.kernel_kind = #pto.kernel_kind<vector>} {
+    %c0 = arith.constant 0 : index
+    %c1 = arith.constant 1 : index
+    %c8 = arith.constant 8 : index
+    %c128 = arith.constant 128 : index
+    %c256 = arith.constant 256 : index
+    %src_addr = arith.constant 0 : i64
+    %scratch_addr = arith.constant 16384 : i64
+    %indices_addr = arith.constant 28672 : i64
+    %counts_addr = arith.constant 32768 : i64
+    %later_addr = arith.constant 20768 : i64
+    %threshold = arith.constant 1.0 : f32
+    %srcRoot = pto.alloc_tile addr = %src_addr : !pto.tile_buf<vec, 8x256xf32>
+    %src = pto.subview %srcRoot[%c0, %c0] sizes [8, 128] valid [%c8, %c128] : !pto.tile_buf<vec, 8x256xf32> -> !pto.tile_buf<vec, 8x128xf32>
+    %indices = pto.alloc_tile addr = %indices_addr : !pto.tile_buf<vec, 8x128xi32>
+    %counts = pto.alloc_tile addr = %counts_addr : !pto.tile_buf<vec, 1x8xi32>
+    %scratch = pto.alloc_tile addr = %scratch_addr : !pto.tile_buf<vec, 1x12288xui8>
+    %prefix = pto.subview %scratch[%c0, %c0] sizes [1, 256] valid [%c1, %c256] : !pto.tile_buf<vec, 1x12288xui8> -> !pto.tile_buf<vec, 1x256xui8>
+    %mask = pto.treshape %prefix : !pto.tile_buf<vec, 1x256xui8> -> !pto.tile_buf<vec, 8x32xui8>
+    %later = pto.alloc_tile addr = %later_addr : !pto.tile_buf<vec, 1x8xf32>
+    pto.tgather ins(%src, %threshold, %mask : !pto.tile_buf<vec, 8x128xf32>, f32, !pto.tile_buf<vec, 8x32xui8>) outs(%indices, %counts : !pto.tile_buf<vec, 8x128xi32>, !pto.tile_buf<vec, 1x8xi32>) {cmpMode = #pto<cmp gt>, offset = 7 : i32}
+    %input_view = pto.make_tensor_view %input, shape = [%c1, %c8], strides = [%c8, %c1] : !pto.tensor_view<?x?xf32>
+    %input_partition = pto.partition_view %input_view, offsets = [%c0, %c0], sizes = [%c1, %c8] : !pto.tensor_view<?x?xf32> -> !pto.partition_tensor_view<1x8xf32>
+    pto.tload ins(%input_partition : !pto.partition_tensor_view<1x8xf32>) outs(%later : !pto.tile_buf<vec, 1x8xf32>)
+    return
+  }
+}
+
+// STR-LABEL: AICORE void gather_compare(
+// STR: TGATHER<
+// STR-NOT: TLOAD(
+// STR: set_flag(PIPE_S, PIPE_MTE2,
+// STR-NOT: TLOAD(
+// STR: set_flag(PIPE_V, PIPE_MTE2,
+// STR-NOT: TLOAD(
+// STR: wait_flag(PIPE_V, PIPE_MTE2,
+// STR-NOT: TLOAD(
+// STR: wait_flag(PIPE_S, PIPE_MTE2,
+// STR-NEXT: TLOAD(
+
+// USTR-LABEL: AICORE void gather_compare(
+// USTR: TGATHER<
+// USTR-NOT: TLOAD(
+// USTR: set_flag(PIPE_S, PIPE_MTE2,
+// USTR-NOT: TLOAD(
+// USTR: set_flag(PIPE_V, PIPE_MTE2,
+// USTR-NOT: TLOAD(
+// USTR: wait_flag(PIPE_V, PIPE_MTE2,
+// USTR-NOT: TLOAD(
+// USTR: wait_flag(PIPE_S, PIPE_MTE2,
+// USTR-NEXT: TLOAD(
+//--- row_col_subview.pto
+// A subview shrinking both dims (8x256 -> 4x128) still emits the parent's
+// physical 8x256: the index table spans 8KiB while an IR-shape model would
+// count only 4 rows. The load at 20768 lies past the 4-row extent.
+module attributes {pto.target_arch = "a2a3"} {
+  func.func @gather_compare(%input: !pto.ptr<f32>) attributes {pto.kernel_kind = #pto.kernel_kind<vector>} {
+    %c0 = arith.constant 0 : index
+    %c1 = arith.constant 1 : index
+    %c4 = arith.constant 4 : index
+    %c8 = arith.constant 8 : index
+    %c128 = arith.constant 128 : index
+    %c256 = arith.constant 256 : index
+    %src_addr = arith.constant 0 : i64
+    %scratch_addr = arith.constant 16384 : i64
+    %indices_addr = arith.constant 28672 : i64
+    %counts_addr = arith.constant 32768 : i64
+    %later_addr = arith.constant 20768 : i64
+    %threshold = arith.constant 1.0 : f32
+    %srcRoot = pto.alloc_tile addr = %src_addr : !pto.tile_buf<vec, 8x256xf32>
+    %src = pto.subview %srcRoot[%c0, %c0] sizes [4, 128] valid [%c4, %c128] : !pto.tile_buf<vec, 8x256xf32> -> !pto.tile_buf<vec, 4x128xf32>
+    %indices = pto.alloc_tile addr = %indices_addr : !pto.tile_buf<vec, 8x128xi32>
+    %counts = pto.alloc_tile addr = %counts_addr : !pto.tile_buf<vec, 1x8xi32>
+    %scratch = pto.alloc_tile addr = %scratch_addr : !pto.tile_buf<vec, 1x12288xui8>
+    %prefix = pto.subview %scratch[%c0, %c0] sizes [1, 256] valid [%c1, %c256] : !pto.tile_buf<vec, 1x12288xui8> -> !pto.tile_buf<vec, 1x256xui8>
+    %mask = pto.treshape %prefix : !pto.tile_buf<vec, 1x256xui8> -> !pto.tile_buf<vec, 8x32xui8>
+    %later = pto.alloc_tile addr = %later_addr : !pto.tile_buf<vec, 1x8xf32>
+    pto.tgather ins(%src, %threshold, %mask : !pto.tile_buf<vec, 4x128xf32>, f32, !pto.tile_buf<vec, 8x32xui8>) outs(%indices, %counts : !pto.tile_buf<vec, 8x128xi32>, !pto.tile_buf<vec, 1x8xi32>) {cmpMode = #pto<cmp gt>, offset = 7 : i32}
+    %input_view = pto.make_tensor_view %input, shape = [%c1, %c8], strides = [%c8, %c1] : !pto.tensor_view<?x?xf32>
+    %input_partition = pto.partition_view %input_view, offsets = [%c0, %c0], sizes = [%c1, %c8] : !pto.tensor_view<?x?xf32> -> !pto.partition_tensor_view<1x8xf32>
+    pto.tload ins(%input_partition : !pto.partition_tensor_view<1x8xf32>) outs(%later : !pto.tile_buf<vec, 1x8xf32>)
+    return
+  }
+}
+
+// RC-LABEL: AICORE void gather_compare(
+// RC: TGATHER<
+// RC-NOT: TLOAD(
+// RC: set_flag(PIPE_S, PIPE_MTE2,
+// RC-NOT: TLOAD(
+// RC: set_flag(PIPE_V, PIPE_MTE2,
+// RC-NOT: TLOAD(
+// RC: wait_flag(PIPE_V, PIPE_MTE2,
+// RC-NOT: TLOAD(
+// RC: wait_flag(PIPE_S, PIPE_MTE2,
+// RC-NEXT: TLOAD(
+
+// URC-LABEL: AICORE void gather_compare(
+// URC: TGATHER<
+// URC-NOT: TLOAD(
+// URC: set_flag(PIPE_S, PIPE_MTE2,
+// URC-NOT: TLOAD(
+// URC: set_flag(PIPE_V, PIPE_MTE2,
+// URC-NOT: TLOAD(
+// URC: wait_flag(PIPE_V, PIPE_MTE2,
+// URC-NOT: TLOAD(
+// URC: wait_flag(PIPE_S, PIPE_MTE2,
+// URC-NEXT: TLOAD(
+//--- compact_tmp.pto
+// A single-row tmp subview (1x8192 -> 1x32) compacts to its own cols: the
+// index table starts at tmp+32, not after the whole parent row. A preceding
+// TSTORE reading [4160, 4192) overlaps the real index region [4128, 4640) and
+// must be fenced against the S-pipe index fill with MTE3 -> S.
+module attributes {pto.target_arch = "a2a3"} {
+  func.func @gather_compare(%output: !pto.ptr<f32>) attributes {pto.kernel_kind = #pto.kernel_kind<vector>} {
+    %c0 = arith.constant 0 : index
+    %c1 = arith.constant 1 : index
+    %c8 = arith.constant 8 : index
+    %c32 = arith.constant 32 : index
+    %c128 = arith.constant 128 : index
+    %src_addr = arith.constant 0 : i64
+    %scratch_addr = arith.constant 4096 : i64
+    %indices_addr = arith.constant 16384 : i64
+    %counts_addr = arith.constant 20480 : i64
+    %tail_addr = arith.constant 4160 : i64
+    %threshold = arith.constant 1.0 : f32
+    %src = pto.alloc_tile addr = %src_addr : !pto.tile_buf<vec, 1x128xf32>
+    %indices = pto.alloc_tile addr = %indices_addr : !pto.tile_buf<vec, 1x128xi32>
+    %counts = pto.alloc_tile addr = %counts_addr : !pto.tile_buf<loc=vec, dtype=i32, rows=1, cols=8, v_row=1, v_col=1, blayout=row_major, slayout=none_box, fractal=512, pad=0>
+    %scratch = pto.alloc_tile addr = %scratch_addr : !pto.tile_buf<vec, 1x8192xui8>
+    %tmp = pto.subview %scratch[%c0, %c0] sizes [1, 32] valid [%c1, %c32] : !pto.tile_buf<vec, 1x8192xui8> -> !pto.tile_buf<vec, 1x32xui8>
+    %tail = pto.alloc_tile addr = %tail_addr : !pto.tile_buf<vec, 1x8xf32>
+    %out_view = pto.make_tensor_view %output, shape = [%c1, %c8], strides = [%c8, %c1] : !pto.tensor_view<?x?xf32>
+    %out_partition = pto.partition_view %out_view, offsets = [%c0, %c0], sizes = [%c1, %c8] : !pto.tensor_view<?x?xf32> -> !pto.partition_tensor_view<1x8xf32>
+    pto.tstore ins(%tail : !pto.tile_buf<vec, 1x8xf32>) outs(%out_partition : !pto.partition_tensor_view<1x8xf32>)
+    pto.tgather ins(%src, %threshold, %tmp : !pto.tile_buf<vec, 1x128xf32>, f32, !pto.tile_buf<vec, 1x32xui8>) outs(%indices, %counts : !pto.tile_buf<vec, 1x128xi32>, !pto.tile_buf<loc=vec, dtype=i32, rows=1, cols=8, v_row=1, v_col=1, blayout=row_major, slayout=none_box, fractal=512, pad=0>) {cmpMode = #pto<cmp gt>, offset = 0 : i32}
+    return
+  }
+}
+
+// CMP-LABEL: AICORE void gather_compare(
+// CMP: TSTORE(
+// CMP-NOT: TGATHER<
+// CMP: set_flag(PIPE_MTE3, PIPE_S,
+// CMP-NOT: TGATHER<
+// CMP: wait_flag(PIPE_MTE3, PIPE_S,
+// CMP: TGATHER<
+
+// UCMP-LABEL: AICORE void gather_compare(
+// UCMP: TSTORE(
+// UCMP-NOT: TGATHER<
+// UCMP: set_flag(PIPE_MTE3, PIPE_S,
+// UCMP-NOT: TGATHER<
+// UCMP: wait_flag(PIPE_MTE3, PIPE_S,
+// UCMP: TGATHER<
+//--- k_load.pto
+module attributes {pto.target_arch = "a2a3"} {
+  func.func @gather_compare(%input: !pto.ptr<f32>) attributes {pto.kernel_kind = #pto.kernel_kind<vector>} {
+    %c0 = arith.constant 0 : index
+    %c1 = arith.constant 1 : index
+    %c256 = arith.constant 256 : index
+    %c8 = arith.constant 8 : index
+    %src_addr = arith.constant 0 : i64
+    %scratch_addr = arith.constant 4096 : i64
+    %indices_addr = arith.constant 16384 : i64
+    %counts_addr = arith.constant 20480 : i64
+    %k_addr = arith.constant 24576 : i64
+    %src = pto.alloc_tile addr = %src_addr : !pto.tile_buf<vec, 8x128xf32>
+    %indices = pto.alloc_tile addr = %indices_addr : !pto.tile_buf<vec, 8x128xi32>
+    %counts = pto.alloc_tile addr = %counts_addr : !pto.tile_buf<vec, 1x8xi32>
+    %scratch = pto.alloc_tile addr = %scratch_addr : !pto.tile_buf<vec, 1x8192xui8>
+    %prefix = pto.subview %scratch[%c0, %c0] sizes [1, 256] valid [%c1, %c256] : !pto.tile_buf<vec, 1x8192xui8> -> !pto.tile_buf<vec, 1x256xui8>
+    %mask = pto.treshape %prefix : !pto.tile_buf<vec, 1x256xui8> -> !pto.tile_buf<vec, 8x32xui8>
+    %k = pto.alloc_tile addr = %k_addr : !pto.tile_buf<vec, 1x8xf32>
+    %k_view = pto.make_tensor_view %input, shape = [%c1, %c8], strides = [%c8, %c1] : !pto.tensor_view<?x?xf32>
+    %k_partition = pto.partition_view %k_view, offsets = [%c0, %c0], sizes = [%c1, %c8] : !pto.tensor_view<?x?xf32> -> !pto.partition_tensor_view<1x8xf32>
+    pto.tload ins(%k_partition : !pto.partition_tensor_view<1x8xf32>) outs(%k : !pto.tile_buf<vec, 1x8xf32>)
+    pto.tgather ins(%src, %k, %mask : !pto.tile_buf<vec, 8x128xf32>, !pto.tile_buf<vec, 1x8xf32>, !pto.tile_buf<vec, 8x32xui8>) outs(%indices, %counts : !pto.tile_buf<vec, 8x128xi32>, !pto.tile_buf<vec, 1x8xi32>) {cmpMode = #pto<cmp gt>, offset = 7 : i32}
+    return
+  }
+}
+
+// KLOAD-LABEL: AICORE void gather_compare(
+// KLOAD: TLOAD(
+// KLOAD-NOT: TGATHER<
+// KLOAD: set_flag(PIPE_MTE2, PIPE_S,
+// KLOAD-NOT: TGATHER<
+// KLOAD: wait_flag(PIPE_MTE2, PIPE_S,
+// KLOAD: TGATHER<
+
+// UKLOAD-LABEL: AICORE void gather_compare(
+// UKLOAD: TLOAD(
+// UKLOAD-NOT: TGATHER<
+// UKLOAD: set_flag(PIPE_MTE2, PIPE_S,
+// UKLOAD-NOT: TGATHER<
+// UKLOAD: wait_flag(PIPE_MTE2, PIPE_S,
+// UKLOAD: TGATHER<
+//--- tail_war.pto
+module attributes {pto.target_arch = "a2a3"} {
+  func.func @gather_compare(%output: !pto.ptr<f32>) attributes {pto.kernel_kind = #pto.kernel_kind<vector>} {
+    %c0 = arith.constant 0 : index
+    %c1 = arith.constant 1 : index
+    %c256 = arith.constant 256 : index
+    %c8 = arith.constant 8 : index
+    %src_addr = arith.constant 0 : i64
+    %scratch_addr = arith.constant 4096 : i64
+    %indices_addr = arith.constant 16384 : i64
+    %counts_addr = arith.constant 20480 : i64
+    %tail_addr = arith.constant 4352 : i64
+    %threshold = arith.constant 1.0 : f32
+    %src = pto.alloc_tile addr = %src_addr : !pto.tile_buf<vec, 8x128xf32>
+    %indices = pto.alloc_tile addr = %indices_addr : !pto.tile_buf<vec, 8x128xi32>
+    %counts = pto.alloc_tile addr = %counts_addr : !pto.tile_buf<vec, 1x8xi32>
+    %scratch = pto.alloc_tile addr = %scratch_addr : !pto.tile_buf<vec, 1x8192xui8>
+    %prefix = pto.subview %scratch[%c0, %c0] sizes [1, 256] valid [%c1, %c256] : !pto.tile_buf<vec, 1x8192xui8> -> !pto.tile_buf<vec, 1x256xui8>
+    %mask = pto.treshape %prefix : !pto.tile_buf<vec, 1x256xui8> -> !pto.tile_buf<vec, 8x32xui8>
+    %tail = pto.alloc_tile addr = %tail_addr : !pto.tile_buf<vec, 1x8xf32>
+    %out_view = pto.make_tensor_view %output, shape = [%c1, %c8], strides = [%c8, %c1] : !pto.tensor_view<?x?xf32>
+    %out_partition = pto.partition_view %out_view, offsets = [%c0, %c0], sizes = [%c1, %c8] : !pto.tensor_view<?x?xf32> -> !pto.partition_tensor_view<1x8xf32>
+    pto.tstore ins(%tail : !pto.tile_buf<vec, 1x8xf32>) outs(%out_partition : !pto.partition_tensor_view<1x8xf32>)
+    pto.tgather ins(%src, %threshold, %mask : !pto.tile_buf<vec, 8x128xf32>, f32, !pto.tile_buf<vec, 8x32xui8>) outs(%indices, %counts : !pto.tile_buf<vec, 8x128xi32>, !pto.tile_buf<vec, 1x8xi32>) {cmpMode = #pto<cmp gt>, offset = 7 : i32}
+    return
+  }
+}
+
+// WAR-LABEL: AICORE void gather_compare(
+// WAR: TSTORE(
+// WAR-NOT: TGATHER<
+// WAR: set_flag(PIPE_MTE3, PIPE_S,
+// WAR-NOT: TGATHER<
+// WAR: wait_flag(PIPE_MTE3, PIPE_S,
+// WAR: TGATHER<
+
+// UWAR-LABEL: AICORE void gather_compare(
+// UWAR: TSTORE(
+// UWAR-NOT: TGATHER<
+// UWAR: set_flag(PIPE_MTE3, PIPE_S,
+// UWAR-NOT: TGATHER<
+// UWAR: wait_flag(PIPE_MTE3, PIPE_S,
+// UWAR: TGATHER<

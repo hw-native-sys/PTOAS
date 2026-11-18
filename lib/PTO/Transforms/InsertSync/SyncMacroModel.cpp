@@ -9,6 +9,8 @@
 #include "PTO/Transforms/InsertSync/SyncMacroModel.h"
 #include "PTO/Support/CodeConstants.h"
 #include "PTO/IR/PTO.h"
+#include "PTO/IR/PTOTypeUtils.h"
+#include "../Support/TileSubviewAddress.h"
 #include "mlir/IR/Matchers.h"
 
 using namespace mlir;
@@ -27,12 +29,18 @@ SmallVector<unsigned> getSequentialEventIds(unsigned count) {
   return eventIds;
 }
 
-void addPhase(SyncMacroModel &model, PipelineType pipe, ValueRange defValues,
-              ValueRange useValues) {
-  model.phases.push_back(SyncMacroPhase{
-      static_cast<unsigned>(model.phases.size()), pipe,
-      SmallVector<Value>(defValues.begin(), defValues.end()),
-      SmallVector<Value>(useValues.begin(), useValues.end())});
+SyncMacroPhase& addPhase(SyncMacroModel& model, PipelineType pipe, ValueRange defValues, ValueRange useValues)
+{
+    // 逐字段赋值而非聚合初始化：SyncMacroPhase 的字段会随模型演进增减，
+    // 聚合初始化在 -Wmissing-field-initializers（CI 开 -Werror）下会因缺
+    // 尾部字段初始化器而报错。
+    SyncMacroPhase phase;
+    phase.phaseId = static_cast<unsigned>(model.phases.size());
+    phase.pipe = pipe;
+    phase.defValues.append(defValues.begin(), defValues.end());
+    phase.useValues.append(useValues.begin(), useValues.end());
+    model.phases.push_back(std::move(phase));
+    return model.phases.back();
 }
 
 void addHiddenEvent(SyncMacroModel &model, PipelineType srcPipe,
@@ -187,30 +195,177 @@ std::optional<SyncMacroModel> getTScatterSyncMacroModel(pto::TScatterOp op) {
   return model;
 }
 
-std::optional<SyncMacroModel> getTGatherSyncMacroModel(pto::TGatherOp op) {
-  if (!op.hasCompareForm() || getTargetArch(op.getOperation()) == PTOArch::A5) {
-    return std::nullopt;
-  }
+// Byte layout of the A2/A3 compare-form TGATHER scratch as the pinned pto-isa
+// implementation derives it from the tmp tile pointer (TGather_cmp in
+// include/pto/npu/a2a3/TGather.hpp). Every Rows/Cols in those formulas is the
+// EMITTED tile shape (see getEmittedPhysicalType): an 8x128 subview of an
+// 8x256 backing emits Rows=8/Cols=256, so the index table spans 8KiB, while a
+// single-row 1x32 window compacts to 1x32 and the index starts at tmp+32:
+//   bitmap : [tmpBase, + tmpPhysRows*tmpPhysCols) -- one byte per element
+//   index  : [bitmapEnd, + srcPhysRows*srcPhysCols*sizeof(dstElem)) --
+//            filled linearly on S, read row-wise by the V reduce
+//   cvt    : [indexEnd, + srcPhysRows*sizeof(srcElem)) -- typed-K thresholds
+//            copied per row on S; PTOAS only emits typed K tiles (K dtype ==
+//            src dtype), so the vconv legacy paths are unreachable.
+// An emitted shape that cannot be proven (dynamic shapes, non-row-major,
+// other producers such as tassign/select/multi-buffer slots) degrades the
+// affected regions to unknown-extent instead of guessing a finite extent.
+struct TGatherCmpScratchLayout {
+    uint64_t bitmapBytes{0};
+    bool bitmapKnown{false};
+    uint64_t indexOffset{0};
+    uint64_t indexBytes{0};
+    bool indexKnown{false};
+    uint64_t cvtOffset{0};
+    uint64_t cvtBytes{0};
+    bool cvtKnown{false};
+};
 
-  Value tmp = op.getTmp();
-  Value cdst = op.getCdst();
-  if (!tmp || !cdst) {
-    return std::nullopt;
-  }
+static bool hasStaticRank2Shape(ArrayRef<int64_t> shape)
+{
+    return shape.size() == kTensorRank &&
+           !llvm::any_of(shape, [](int64_t dim) { return dim <= 0 || dim == ShapedType::kDynamic; });
+}
 
-  SyncMacroModel model;
-  // A2/A3 compare TGATHER lowers to TCMPS on PIPE_V, an index generation loop
-  // on PIPE_S, a V reduce over the generated indexes, and a scalar writeback of
-  // the reserved count into cdst.
-  addPhase(model, PipelineType::PIPE_V, ValueRange{tmp},
-           ValueRange{op.getSrc()});
-  addPhase(model, PipelineType::PIPE_S, ValueRange{tmp}, ValueRange{});
-  addPhase(model, PipelineType::PIPE_V, ValueRange{op.getDst()},
-           ValueRange{tmp});
-  addPhase(model, PipelineType::PIPE_S, ValueRange{cdst}, ValueRange{});
-  addHiddenEvent(model, PipelineType::PIPE_S, PipelineType::PIPE_V,
-                 ArrayRef<unsigned>{0});
-  return model;
+static bool isStaticRowMajorTile(Type ty)
+{
+    auto tile = dyn_cast<pto::TileBufType>(ty);
+    return tile && hasStaticRank2Shape(tile.getShape()) &&
+           tile.getBLayoutValueI32() == static_cast<int32_t>(pto::BLayout::RowMajor);
+}
+
+// The EMITTED (physical) tile type of a tgather operand, mirroring the
+// lowering's resolveTileHandle(Address) derivation so the sync model counts
+// exactly the rows/cols the emitted C++ Tile carries:
+//   - alloc_tile emits its own type;
+//   - a subview keeps its compact child shape only when the child's
+//     addressing matches the inherited strides (getTileSubviewPhysicalType;
+//     e.g. a single-row window compacts, an 8x128 window out of an 8x256
+//     backing stays 8x256 with the slice in valid);
+//   - a treshape repacks and emits its own result type over the source's
+//     address.
+// Returns a null type when the chain cannot be proven (other producers such
+// as tassign/select/multi-buffer slots, dynamic or non-row-major shapes):
+// callers must treat the affected regions as unknown-extent.
+static pto::TileBufType getEmittedPhysicalType(Value tile)
+{
+    Operation* def = tile.getDefiningOp();
+    if (!def || !isa<pto::TileBufType>(tile.getType())) {
+        return pto::TileBufType();
+    }
+    if (isa<pto::AllocTileOp, pto::TReshapeOp>(def)) {
+        return cast<pto::TileBufType>(tile.getType());
+    }
+    if (auto sub = dyn_cast<pto::SubViewOp>(def)) {
+        pto::TileBufType parent = getEmittedPhysicalType(sub.getSource());
+        if (!parent) {
+            return pto::TileBufType();
+        }
+        return pto::getTileSubviewPhysicalType(sub, parent);
+    }
+    return pto::TileBufType();
+}
+
+static bool checkedMul(uint64_t a, uint64_t b, uint64_t& result) { return __builtin_mul_overflow(a, b, &result); }
+
+static bool checkedAdd(uint64_t a, uint64_t b, uint64_t& result) { return __builtin_add_overflow(a, b, &result); }
+
+static TGatherCmpScratchLayout computeTGatherCmpScratchLayout(pto::TGatherOp op)
+{
+    TGatherCmpScratchLayout layout;
+
+    auto dstType = dyn_cast<pto::TileBufType>(op.getDst().getType());
+    pto::TileBufType tmpPhys = getEmittedPhysicalType(op.getTmp());
+    pto::TileBufType srcPhys = getEmittedPhysicalType(op.getSrc());
+    if (!dstType || !tmpPhys || !srcPhys || !isStaticRowMajorTile(tmpPhys) || !isStaticRowMajorTile(srcPhys)) {
+        return layout;
+    }
+    uint64_t srcElem = getPTOStorageElemByteSize(srcPhys.getElementType());
+    uint64_t dstElem = getPTOStorageElemByteSize(dstType.getElementType());
+    if (srcElem == 0 || dstElem == 0) {
+        return layout;
+    }
+
+    // Offsets and spans use the EMITTED tile shapes (see getEmittedPhysicalType):
+    // every Rows/Cols the pto-isa formulas see -- including the linear
+    // indexTmpAddr/cvtTmpAddr offsets -- is the emitted physical shape.
+    ArrayRef<int64_t> tmpShape = tmpPhys.getShape();
+    ArrayRef<int64_t> srcShape = srcPhys.getShape();
+    const uint64_t tmpRows = static_cast<uint64_t>(tmpShape[0]);
+    const uint64_t tmpCols = static_cast<uint64_t>(tmpShape[1]);
+    const uint64_t srcRows = static_cast<uint64_t>(srcShape[0]);
+    const uint64_t srcCols = static_cast<uint64_t>(srcShape[1]);
+
+    uint64_t bitmapBytes = 0;
+    uint64_t indexBytes = 0;
+    if (!checkedMul(tmpRows, tmpCols, bitmapBytes) && !checkedMul(srcRows, srcCols, indexBytes) &&
+        !checkedMul(indexBytes, dstElem, indexBytes) && !checkedMul(srcRows, srcElem, layout.cvtBytes) &&
+        !checkedAdd(bitmapBytes, indexBytes, layout.cvtOffset)) {
+        layout.bitmapBytes = bitmapBytes;
+        layout.bitmapKnown = true;
+        layout.indexOffset = bitmapBytes;
+        layout.indexBytes = indexBytes;
+        layout.indexKnown = true;
+        layout.cvtKnown = true;
+    }
+    return layout;
+}
+
+std::optional<SyncMacroModel> getTGatherSyncMacroModel(pto::TGatherOp op)
+{
+    if (!op.hasCompareForm() || getTargetArch(op.getOperation()) == PTOArch::A5) {
+        return std::nullopt;
+    }
+
+    Value tmp = op.getTmp();
+    Value cdst = op.getCdst();
+    if (!tmp || !cdst) {
+        return std::nullopt;
+    }
+
+    TGatherCmpScratchLayout scratch = computeTGatherCmpScratchLayout(op);
+    // A region whose extent cannot be derived degrades to {tmp, 0, 0}: an
+    // unknown-size range anchored at the tmp view base, which MemAlias treats
+    // as may-alias with everything in the scope instead of guessing a finite
+    // interval.
+    auto anchored = [&tmp](bool known, uint64_t offset, uint64_t size) {
+        return known ? SyncMacroRange{tmp, offset, size} : SyncMacroRange{tmp, 0, 0};
+    };
+
+    SyncMacroModel model;
+    // A2/A3 compare TGATHER (pto-isa TGather_cmp) executes, in order:
+    //   S: the index-fill loop writes the trailing index table, and the typed-K
+    //      thresholds are copied per row into the trailing conversion area;
+    //      RunTcmps later reads those copied thresholds back on the scalar pipe.
+    //   V: TCMPS writes the bitmap (the first tmpRows*tmpCols bytes of tmp)
+    //      comparing src against the per-row threshold.
+    //   V: vreducev2 reads the bitmap and the index table, writing dst.
+    //   S: the reserved-count writeback stores into cdst.
+    // The trailing regions have no IR operands, so their accesses ride on
+    // anchored byte ranges instead of operand values.
+    SyncMacroPhase& prep = addPhase(model, PipelineType::PIPE_S, ValueRange{}, ValueRange{});
+    prep.defRanges.push_back(anchored(scratch.indexKnown, scratch.indexOffset, scratch.indexBytes));
+    prep.defRanges.push_back(anchored(scratch.cvtKnown, scratch.cvtOffset, scratch.cvtBytes));
+    prep.useRanges.push_back(anchored(scratch.cvtKnown, scratch.cvtOffset, scratch.cvtBytes));
+    if (op.getKValue() && isa<pto::TileBufType>(op.getKValue().getType())) {
+        prep.useValues.push_back(op.getKValue());
+    }
+
+    SyncMacroPhase& cmps = addPhase(model, PipelineType::PIPE_V, ValueRange{}, ValueRange{op.getSrc()});
+    cmps.defRanges.push_back(anchored(scratch.bitmapKnown, 0, scratch.bitmapBytes));
+
+    SyncMacroPhase& reduce = addPhase(model, PipelineType::PIPE_V, ValueRange{op.getDst()}, ValueRange{});
+    reduce.useRanges.push_back(anchored(scratch.bitmapKnown, 0, scratch.bitmapBytes));
+    reduce.useRanges.push_back(anchored(scratch.indexKnown, scratch.indexOffset, scratch.indexBytes));
+
+    addPhase(model, PipelineType::PIPE_S, ValueRange{cdst}, ValueRange{});
+
+    // pto-isa pairs the pipes bidirectionally through the fixed EVENT_ID0
+    // (PtoSetWaitFlag<PIPE_S, PIPE_V> in FillIndexAndConvertK and
+    // PtoSetWaitFlag<PIPE_V, PIPE_S> in RunTcmps), so reserve both directions.
+    addHiddenEvent(model, PipelineType::PIPE_S, PipelineType::PIPE_V, ArrayRef<unsigned>{0});
+    addHiddenEvent(model, PipelineType::PIPE_V, PipelineType::PIPE_S, ArrayRef<unsigned>{0});
+    return model;
 }
 
 // Resolve the PTO address space of an MGatherOp tile operand type.
