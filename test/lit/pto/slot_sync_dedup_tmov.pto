@@ -1,0 +1,77 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+
+// RUN: %python %S/Inputs/check_slot_sync_dedup_pipeline.py --compiler ptoas --input %s --work-dir %t --kind tmov
+// Full-size TMOV readers exercise opcode-independent event-channel dedup.
+// Each branch reads each Mat root twice. This intentionally repeats the chunk
+// product and is a protocol fixture, not a numerical equivalent of #1727.
+!tile0 = !pto.tile_buf<loc=mat, dtype=bf16, rows=16, cols=96, v_row=?, v_col=?, blayout=col_major, slayout=row_major, fractal=512, pad=0>
+!tile1 = !pto.tile_buf<loc=mat, dtype=bf16, rows=96, cols=128, v_row=?, v_col=?, blayout=col_major, slayout=row_major, fractal=512, pad=0>
+!tile2 = !pto.tile_buf<loc=acc, dtype=f32, rows=16, cols=128, v_row=?, v_col=?, blayout=col_major, slayout=row_major, fractal=1024, pad=0>
+!tile3 = !pto.tile_buf<loc=left, dtype=bf16, rows=16, cols=96, v_row=?, v_col=?, blayout=row_major, slayout=row_major, fractal=512, pad=0>
+!tile4 = !pto.tile_buf<loc=right, dtype=bf16, rows=96, cols=128, v_row=?, v_col=?, blayout=row_major, slayout=col_major, fractal=512, pad=0>
+
+module attributes {pto.target_arch = "a2a3"} {
+  func.func @outer_pipe_matmul(%v0: !pto.ptr<bf16>, %v1: !pto.ptr<bf16>, %v2: !pto.ptr<f32>) attributes {pto.kernel_kind = #pto.kernel_kind<cube>} {
+  %v3 = arith.constant 16 : index
+  %v4 = arith.constant 96 : index
+  %v5 = arith.constant 128 : index
+  %v6 = arith.constant 3072 : index
+  %v7 = arith.constant 1 : index
+  %v8 = arith.constant 0 : index
+  %v9 = arith.constant 32 : index
+  %v10 = arith.constant 2 : index
+  %v11 = arith.constant 96 : index
+  %v12 = pto.make_tensor_view %v0, shape = [%v3, %v6], strides = [%v6, %v7] {layout = #pto.layout<nd>} : !pto.tensor_view<?x?xbf16>
+  %v13 = pto.make_tensor_view %v1, shape = [%v6, %v5], strides = [%v5, %v7] {layout = #pto.layout<nd>} : !pto.tensor_view<?x?xbf16>
+  %v14 = pto.make_tensor_view %v2, shape = [%v3, %v5], strides = [%v5, %v7] {layout = #pto.layout<nd>} : !pto.tensor_view<?x?xf32>
+  %v15 = pto.alloc_multi_tile valid_row = %v3 valid_col = %v4 : !pto.multi_tile_buf<!tile0, count=2>
+  %v16 = pto.alloc_multi_tile valid_row = %v4 valid_col = %v5 : !pto.multi_tile_buf<!tile1, count=2>
+  %v17 = pto.alloc_tile valid_row = %v3 valid_col = %v5 : !tile2
+  scf.for %v18 = %v8 to %v9 step %v7 {
+    %6 = arith.muli %v18, %v4 : index
+    %7 = arith.remsi %v18, %v10 : index
+    %v19 = pto.multi_tile_get %v15[%7] : !pto.multi_tile_buf<!tile0, count=2> -> !tile0
+    %8 = arith.maxsi %6, %v8 : index
+    %v20 = pto.partition_view %v12, offsets = [%v8, %8], sizes = [%v3, %v4] : !pto.tensor_view<?x?xbf16> -> !pto.partition_tensor_view<16x96xbf16>
+    pto.tload ins(%v20 : !pto.partition_tensor_view<16x96xbf16>) outs(%v19 : !tile0)
+    %9 = arith.remsi %v18, %v10 : index
+    %v21 = pto.multi_tile_get %v16[%9] : !pto.multi_tile_buf<!tile1, count=2> -> !tile1
+    %10 = arith.maxsi %6, %v8 : index
+    %v22 = pto.partition_view %v13, offsets = [%10, %v8], sizes = [%v4, %v5] : !pto.tensor_view<?x?xbf16> -> !pto.partition_tensor_view<96x128xbf16>
+    pto.tload ins(%v22 : !pto.partition_tensor_view<96x128xbf16>) outs(%v21 : !tile1)
+    %11 = arith.cmpi eq, %v18, %v8 : index
+    scf.if %11 {
+      %v23 = pto.alloc_tile valid_row = %v3 valid_col = %v11 : !tile3
+      pto.tmov ins(%v19 : !tile0) outs(%v23 : !tile3)
+      %v24 = pto.alloc_tile valid_row = %v11 valid_col = %v5 : !tile4
+      pto.tmov ins(%v21 : !tile1) outs(%v24 : !tile4)
+      %0 = pto.alloc_tile valid_row = %v3 valid_col = %v11 : !tile3
+      pto.tmov ins(%v19 : !tile0) outs(%0 : !tile3)
+      %1 = pto.alloc_tile valid_row = %v11 valid_col = %v5 : !tile4
+      pto.tmov ins(%v21 : !tile1) outs(%1 : !tile4)
+      pto.tmatmul ins(%v23, %v24 : !tile3, !tile4) outs(%v17 : !tile2)
+      pto.tmatmul.acc ins(%v17, %0, %1 : !tile2, !tile3, !tile4) outs(%v17 : !tile2)
+    } else {
+      %2 = pto.alloc_tile valid_row = %v3 valid_col = %v11 : !tile3
+      pto.tmov ins(%v19 : !tile0) outs(%2 : !tile3)
+      %3 = pto.alloc_tile valid_row = %v11 valid_col = %v5 : !tile4
+      pto.tmov ins(%v21 : !tile1) outs(%3 : !tile4)
+      %4 = pto.alloc_tile valid_row = %v3 valid_col = %v11 : !tile3
+      pto.tmov ins(%v19 : !tile0) outs(%4 : !tile3)
+      %5 = pto.alloc_tile valid_row = %v11 valid_col = %v5 : !tile4
+      pto.tmov ins(%v21 : !tile1) outs(%5 : !tile4)
+      pto.tmatmul.acc ins(%v17, %2, %3 : !tile2, !tile3, !tile4) outs(%v17 : !tile2)
+      pto.tmatmul.acc ins(%v17, %4, %5 : !tile2, !tile3, !tile4) outs(%v17 : !tile2)
+    }
+  }
+  %v25 = pto.partition_view %v14, offsets = [%v8, %v8], sizes = [%v3, %v5] : !pto.tensor_view<?x?xf32> -> !pto.partition_tensor_view<16x128xf32>
+  pto.tstore ins(%v17 : !tile2) outs(%v25 : !pto.partition_tensor_view<16x128xf32>)
+  return
+  }
+}

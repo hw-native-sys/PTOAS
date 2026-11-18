@@ -138,6 +138,7 @@ extern llvm::cl::opt<std::string> checkSyncInterferenceInjectFault;
 extern llvm::cl::opt<bool> checkSyncInterference;
 extern llvm::cl::opt<bool> checkSyncSelfCoverage;
 extern llvm::cl::opt<bool> enableInsertSync;
+extern llvm::cl::opt<bool> deduplicateSlotEvents;
 extern llvm::cl::opt<bool> enableVmiFastmath;
 extern llvm::cl::opt<unsigned> vmiLayoutMaxFrontierEntries;
 extern llvm::cl::opt<unsigned> vmiLayoutMaxTransitions;

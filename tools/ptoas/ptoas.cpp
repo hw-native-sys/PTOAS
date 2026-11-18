@@ -257,6 +257,11 @@ llvm::cl::opt<bool> enableInsertSync("enable-insert-sync",
                                             llvm::cl::desc("Enable automatic synchronization insertion pass"),
                                             llvm::cl::init(false));
 
+llvm::cl::opt<bool> deduplicateSlotEvents(
+    "pto-deduplicate-slot-events",
+    llvm::cl::desc("Deduplicate identical slot event protocols without changing their lifetime"),
+    llvm::cl::init(true));
+
 llvm::cl::opt<bool> enableVmiFastmath(
     "vmi-fastmath",
     llvm::cl::desc("Select the VMI conversion state for the whole pipeline: it "

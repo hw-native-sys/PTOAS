@@ -742,14 +742,16 @@ struct SerialAutoSyncPass : public PassWrapper<SerialAutoSyncPass, OperationPass
 
     enum class Mode { InsertSync, Bufid, BarrierAll };
 
-    SerialAutoSyncPass(Mode mode, bool enableBufidDebug) : mode(mode), enableBufidDebug(enableBufidDebug) {}
+    SerialAutoSyncPass(Mode mode, bool enableBufidDebug, bool deduplicateSlots = true)
+        : mode(mode), enableBufidDebug(enableBufidDebug), deduplicateSlots(deduplicateSlots)
+    {}
 
     void runOnOperation() override
     {
         OpPassManager functionPM(func::FuncOp::getOperationName());
         switch (mode) {
             case Mode::InsertSync:
-                functionPM.addPass(pto::createPTOInsertSyncPass());
+                functionPM.addPass(pto::createPTOInsertSyncPass(deduplicateSlots));
                 break;
             case Mode::Bufid: {
                 PTOBufidSyncOptions options;
@@ -773,6 +775,7 @@ struct SerialAutoSyncPass : public PassWrapper<SerialAutoSyncPass, OperationPass
 private:
     Mode mode;
     bool enableBufidDebug;
+    bool deduplicateSlots;
 };
 } // namespace
 
@@ -1606,9 +1609,10 @@ static void appendAutoSyncPasses(PassManager& pm, StringRef arch)
             arch == "a5" ? 32u : 0u, enableUnifiedSyncDebug, unifiedSyncForceMechanism, checkAddrReuseWar));
     } else if (enableInsertSync) {
         if (emitMlirIR) {
-            pm.addPass(std::make_unique<SerialAutoSyncPass>(SerialAutoSyncPass::Mode::InsertSync, false));
+            pm.addPass(std::make_unique<SerialAutoSyncPass>(
+                SerialAutoSyncPass::Mode::InsertSync, false, deduplicateSlotEvents));
         } else {
-            pm.addNestedPass<func::FuncOp>(pto::createPTOInsertSyncPass());
+            pm.addNestedPass<func::FuncOp>(pto::createPTOInsertSyncPass(deduplicateSlotEvents));
         }
     } else if (enableBufidSync) {
         if (emitMlirIR) {

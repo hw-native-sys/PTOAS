@@ -171,6 +171,7 @@ add_mlir_dialect_library(PTOTransforms
   VPTO/PTOInferVPTOVecScope.cpp
 
   InsertSync/PTOInsertSync.cpp
+  InsertSync/DeduplicateSlotSync.cpp
   Passes/PTOInjectBarrierAllSync.cpp
   InsertSync/InsertSyncDebug.cpp
   Passes/PTOMaterializeImplicitTmp.cpp

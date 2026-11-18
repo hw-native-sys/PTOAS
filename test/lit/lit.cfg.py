@@ -1,4 +1,3 @@
-# coding=utf-8
 # Copyright (c) 2026 Huawei Technologies Co., Ltd.
 # This program is free software, you can redistribute it and/or modify it under the terms and conditions of
 # CANN Open Software License Agreement Version 2.0 (the "License").
@@ -80,6 +79,7 @@ tools = [
     'pto-uf-token-model-test',
     'pto-vpto-scheduler-tracker-test',
     'pto-bisheng-scheduler-test',
+    'pto-slot-sync-dedup-test',
 ]
 
 llvm_config.add_tool_substitutions(tools, tool_dirs)

@@ -1,0 +1,63 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+
+// RUN: %python %S/Inputs/check_slot_sync_dedup_prefetch.py --compiler ptoas --input %s --work-dir %t
+// %ahead is preloaded and read one iteration before its slot is overwritten.
+// Its unmasked release pair has different SET/WAIT selectors. Deduplicating
+// the unrelated %same families frees IDs for that pair, replacing its safe
+// PIPE_ALL fallback with an unsafe entrance SET for the already occupied slot.
+// Guard the entire function before retiring any family, across either root.
+!mat = !pto.tile_buf<loc=mat, dtype=bf16, rows=16, cols=192, v_row=?, v_col=?, blayout=col_major, slayout=row_major, fractal=512, pad=0>
+!left = !pto.tile_buf<loc=left, dtype=bf16, rows=16, cols=96, v_row=?, v_col=?, blayout=row_major, slayout=row_major, fractal=512, pad=0>
+!ring = !pto.multi_tile_buf<!mat, count=2>
+!view = !pto.tensor_view<?x?xbf16>
+!part = !pto.partition_tensor_view<16x192xbf16>
+
+module attributes {pto.target_arch = "a2a3"} {
+  func.func @shifted_prefetch(%src: !pto.ptr<bf16>) attributes {pto.kernel_kind = #pto.kernel_kind<cube>} {
+    %c0 = arith.constant 0 : index
+    %c1 = arith.constant 1 : index
+    %c2 = arith.constant 2 : index
+    %trips = arith.constant 2 : index
+    %m = arith.constant 16 : index
+    %k = arith.constant 192 : index
+    %half = arith.constant 96 : index
+    %total = arith.constant 576 : index
+    %view = pto.make_tensor_view %src, shape = [%m, %total], strides = [%total, %c1] {layout = #pto.layout<nd>} : !view
+    %initial = pto.partition_view %view, offsets = [%c0, %c0], sizes = [%m, %k] : !view -> !part
+    %same = pto.alloc_multi_tile valid_row = %m valid_col = %k : !ring
+    %ahead = pto.alloc_multi_tile valid_row = %m valid_col = %k : !ring
+    %left = pto.alloc_tile valid_row = %m valid_col = %half : !left
+    %first_buffer = pto.multi_tile_get %ahead[%c0] : !ring -> !mat
+    pto.tload ins(%initial : !part) outs(%first_buffer : !mat)
+
+    scf.for %i = %c0 to %trips step %c1 {
+      %slot = arith.remsi %i, %c2 : index
+      %next = arith.addi %i, %c1 : index
+      %next_slot = arith.remui %next, %c2 : index
+      %offset = arith.muli %next, %k : index
+      %tile = pto.multi_tile_get %same[%slot] : !ring -> !mat
+      pto.tload ins(%initial : !part) outs(%tile : !mat)
+      %read = pto.multi_tile_get %ahead[%slot] : !ring -> !mat
+      %write = pto.multi_tile_get %ahead[%next_slot] : !ring -> !mat
+      %part = pto.partition_view %view, offsets = [%c0, %offset], sizes = [%m, %k] : !view -> !part
+      pto.tload ins(%part : !part) outs(%write : !mat)
+
+      %first = arith.cmpi eq, %i, %c0 : index
+      scf.if %first {
+        pto.textract ins(%tile, %c0, %c0 : !mat, index, index) outs(%left : !left)
+        pto.textract ins(%tile, %c0, %half : !mat, index, index) outs(%left : !left)
+      } else {
+        pto.textract ins(%tile, %c0, %half : !mat, index, index) outs(%left : !left)
+        pto.textract ins(%tile, %c0, %c0 : !mat, index, index) outs(%left : !left)
+      }
+      pto.textract ins(%read, %c0, %c0 : !mat, index, index) outs(%left : !left)
+    }
+    return
+  }
+}

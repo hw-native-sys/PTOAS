@@ -88,3 +88,19 @@ add_llvm_executable(pto-uf-token-model-test
 
 target_link_libraries(pto-uf-token-model-test PRIVATE PTOTransforms PTOIR MLIRIR MLIRSupport)
 add_dependencies(pto-uf-token-model-test PTOOpsIncGen PTOPassesIncGen)
+
+add_llvm_executable(pto-slot-sync-dedup-test
+  pto-slot-sync-dedup-test.cpp
+  PARTIAL_SOURCES_INTENDED
+)
+
+target_link_libraries(pto-slot-sync-dedup-test PRIVATE
+  PTOIR
+  PTOTransforms
+  MLIRFuncDialect
+  MLIRIR
+  MLIRParser
+  MLIRSupport
+)
+
+add_dependencies(pto-slot-sync-dedup-test PTOOpsIncGen PTOPassesIncGen)

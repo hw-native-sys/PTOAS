@@ -30,6 +30,7 @@ set(PTOIR_TEST_DEPENDS
   pto-uf-token-model-test
   pto-vpto-scheduler-tracker-test
   pto-bisheng-scheduler-test
+  pto-slot-sync-dedup-test
 )
 
 # Installed LLVM packages do not export the build-tree targets for these test

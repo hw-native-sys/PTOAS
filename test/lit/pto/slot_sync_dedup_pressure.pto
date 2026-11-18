@@ -1,0 +1,127 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+
+// RUN: ptoas --pto-arch=a3 --pto-level=level2 --enable-insert-sync --pto-insert-sync-debug=3 --check-sync-ids --check-sync-interference --mlir-print-ir-after=pto-insert-sync %s -o %t.cpp 2> %t.log
+// RUN: %python %S/Inputs/check_slot_sync_dedup_pressure.py %t.log
+//
+// Five exact duplicate-protocol classes still need ten lanes after dedup.
+// The eight-ID pool must keep safe allocator fallback and balanced boundaries.
+// The fixture was derived from MR403's resource-pressure variant; this test
+// retains existing lifetime policy and does not create masked FREE families.
+
+
+// Issue #1727: init/acc branches each read two K subtiles from two independent
+// Mat slot rings. Branch-local WAR families must coalesce to one FREE family
+// per root: 2 roots * 2 slots = 4 MTE1->MTE2 event IDs. Other dependencies and
+// the completion barrier remain required. The oracle checks allocated flags
+// and command ordering, not specific SSA names or a particular ID numbering.
+//
+// The zero-trip form is only a synchronization test; its uninitialized
+// accumulator does not define a numerical output. For <=3 trips every possible
+// branch sequence is replayed; longer loops replay actual and representative
+// uniform/alternating paths. Mutant checks ensure that balanced but early FREE
+// signals, missing load-ready flags, duplicate primes and omitted drains fail.
+
+!tile0 = !pto.tile_buf<loc=mat, dtype=bf16, rows=16, cols=192, v_row=?, v_col=?, blayout=col_major, slayout=row_major, fractal=512, pad=0>
+!tile1 = !pto.tile_buf<loc=mat, dtype=bf16, rows=192, cols=128, v_row=?, v_col=?, blayout=col_major, slayout=row_major, fractal=512, pad=0>
+!tile2 = !pto.tile_buf<loc=acc, dtype=f32, rows=16, cols=128, v_row=?, v_col=?, blayout=col_major, slayout=row_major, fractal=1024, pad=0>
+!tile3 = !pto.tile_buf<loc=left, dtype=bf16, rows=16, cols=96, v_row=?, v_col=?, blayout=row_major, slayout=row_major, fractal=512, pad=0>
+!tile4 = !pto.tile_buf<loc=right, dtype=bf16, rows=96, cols=128, v_row=?, v_col=?, blayout=row_major, slayout=col_major, fractal=512, pad=0>
+
+module attributes {pto.target_arch = "a2a3"} {
+  func.func @outer_pipe_matmul(%v0: !pto.ptr<bf16>, %v1: !pto.ptr<bf16>, %v2: !pto.ptr<f32>) attributes {pto.kernel_kind = #pto.kernel_kind<cube>} {
+  %v3 = arith.constant 16 : index
+  %v4 = arith.constant 192 : index
+  %v5 = arith.constant 128 : index
+  %v6 = arith.constant 576 : index
+  %v7 = arith.constant 1 : index
+  %v8 = arith.constant 0 : index
+  %v9 = arith.constant 3 : index
+  %v10 = arith.constant 2 : index
+  %v11 = arith.constant 96 : index
+  %v12 = pto.make_tensor_view %v0, shape = [%v3, %v6], strides = [%v6, %v7] {layout = #pto.layout<nd>} : !pto.tensor_view<?x?xbf16>
+  %v13 = pto.make_tensor_view %v1, shape = [%v6, %v5], strides = [%v5, %v7] {layout = #pto.layout<nd>} : !pto.tensor_view<?x?xbf16>
+  %v14 = pto.make_tensor_view %v2, shape = [%v3, %v5], strides = [%v5, %v7] {layout = #pto.layout<nd>} : !pto.tensor_view<?x?xf32>
+  %v15 = pto.alloc_multi_tile valid_row = %v3 valid_col = %v4 : !pto.multi_tile_buf<!tile0, count=2>
+  %v16 = pto.alloc_multi_tile valid_row = %v4 valid_col = %v5 : !pto.multi_tile_buf<!tile1, count=2>
+  %v17 = pto.alloc_tile valid_row = %v3 valid_col = %v5 : !tile2
+  %pressure_ring_0 = pto.alloc_multi_tile valid_row = %v3 valid_col = %v4 : !pto.multi_tile_buf<!tile0, count=2>
+  %pressure_ring_1 = pto.alloc_multi_tile valid_row = %v3 valid_col = %v4 : !pto.multi_tile_buf<!tile0, count=2>
+  %pressure_ring_2 = pto.alloc_multi_tile valid_row = %v3 valid_col = %v4 : !pto.multi_tile_buf<!tile0, count=2>
+  scf.for %v18 = %v8 to %v9 step %v7 {
+    %6 = arith.muli %v18, %v4 : index
+    %7 = arith.remsi %v18, %v10 : index
+    %v19 = pto.multi_tile_get %v15[%7] : !pto.multi_tile_buf<!tile0, count=2> -> !tile0
+    %8 = arith.maxsi %6, %v8 : index
+    %v20 = pto.partition_view %v12, offsets = [%v8, %8], sizes = [%v3, %v4] : !pto.tensor_view<?x?xbf16> -> !pto.partition_tensor_view<16x192xbf16>
+    pto.tload ins(%v20 : !pto.partition_tensor_view<16x192xbf16>) outs(%v19 : !tile0)
+    %pressure_tile_0 = pto.multi_tile_get %pressure_ring_0[%7] : !pto.multi_tile_buf<!tile0, count=2> -> !tile0
+    pto.tload ins(%v20 : !pto.partition_tensor_view<16x192xbf16>) outs(%pressure_tile_0 : !tile0)
+    %pressure_tile_1 = pto.multi_tile_get %pressure_ring_1[%7] : !pto.multi_tile_buf<!tile0, count=2> -> !tile0
+    pto.tload ins(%v20 : !pto.partition_tensor_view<16x192xbf16>) outs(%pressure_tile_1 : !tile0)
+    %pressure_tile_2 = pto.multi_tile_get %pressure_ring_2[%7] : !pto.multi_tile_buf<!tile0, count=2> -> !tile0
+    pto.tload ins(%v20 : !pto.partition_tensor_view<16x192xbf16>) outs(%pressure_tile_2 : !tile0)
+    %9 = arith.remsi %v18, %v10 : index
+    %v21 = pto.multi_tile_get %v16[%9] : !pto.multi_tile_buf<!tile1, count=2> -> !tile1
+    %10 = arith.maxsi %6, %v8 : index
+    %v22 = pto.partition_view %v13, offsets = [%10, %v8], sizes = [%v4, %v5] : !pto.tensor_view<?x?xbf16> -> !pto.partition_tensor_view<192x128xbf16>
+    pto.tload ins(%v22 : !pto.partition_tensor_view<192x128xbf16>) outs(%v21 : !tile1)
+    %11 = arith.cmpi eq, %v18, %v8 : index
+    scf.if %11 {
+      %pressure_then_0_0 = pto.alloc_tile valid_row = %v3 valid_col = %v11 : !tile3
+      pto.textract ins(%pressure_tile_0, %v8, %v8 : !tile0, index, index) outs(%pressure_then_0_0 : !tile3)
+      %pressure_then_0_1 = pto.alloc_tile valid_row = %v3 valid_col = %v11 : !tile3
+      pto.textract ins(%pressure_tile_0, %v8, %v11 : !tile0, index, index) outs(%pressure_then_0_1 : !tile3)
+      %pressure_then_1_0 = pto.alloc_tile valid_row = %v3 valid_col = %v11 : !tile3
+      pto.textract ins(%pressure_tile_1, %v8, %v8 : !tile0, index, index) outs(%pressure_then_1_0 : !tile3)
+      %pressure_then_1_1 = pto.alloc_tile valid_row = %v3 valid_col = %v11 : !tile3
+      pto.textract ins(%pressure_tile_1, %v8, %v11 : !tile0, index, index) outs(%pressure_then_1_1 : !tile3)
+      %pressure_then_2_0 = pto.alloc_tile valid_row = %v3 valid_col = %v11 : !tile3
+      pto.textract ins(%pressure_tile_2, %v8, %v8 : !tile0, index, index) outs(%pressure_then_2_0 : !tile3)
+      %pressure_then_2_1 = pto.alloc_tile valid_row = %v3 valid_col = %v11 : !tile3
+      pto.textract ins(%pressure_tile_2, %v8, %v11 : !tile0, index, index) outs(%pressure_then_2_1 : !tile3)
+      %v23 = pto.alloc_tile valid_row = %v3 valid_col = %v11 : !tile3
+      pto.textract ins(%v19, %v8, %v8 : !tile0, index, index) outs(%v23 : !tile3)
+      %v24 = pto.alloc_tile valid_row = %v11 valid_col = %v5 : !tile4
+      pto.textract ins(%v21, %v8, %v8 : !tile1, index, index) outs(%v24 : !tile4)
+      %0 = pto.alloc_tile valid_row = %v3 valid_col = %v11 : !tile3
+      pto.textract ins(%v19, %v8, %v11 : !tile0, index, index) outs(%0 : !tile3)
+      %1 = pto.alloc_tile valid_row = %v11 valid_col = %v5 : !tile4
+      pto.textract ins(%v21, %v11, %v8 : !tile1, index, index) outs(%1 : !tile4)
+      pto.tmatmul ins(%v23, %v24 : !tile3, !tile4) outs(%v17 : !tile2)
+      pto.tmatmul.acc ins(%v17, %0, %1 : !tile2, !tile3, !tile4) outs(%v17 : !tile2)
+    } else {
+      %pressure_else_0_0 = pto.alloc_tile valid_row = %v3 valid_col = %v11 : !tile3
+      pto.textract ins(%pressure_tile_0, %v8, %v8 : !tile0, index, index) outs(%pressure_else_0_0 : !tile3)
+      %pressure_else_0_1 = pto.alloc_tile valid_row = %v3 valid_col = %v11 : !tile3
+      pto.textract ins(%pressure_tile_0, %v8, %v11 : !tile0, index, index) outs(%pressure_else_0_1 : !tile3)
+      %pressure_else_1_0 = pto.alloc_tile valid_row = %v3 valid_col = %v11 : !tile3
+      pto.textract ins(%pressure_tile_1, %v8, %v8 : !tile0, index, index) outs(%pressure_else_1_0 : !tile3)
+      %pressure_else_1_1 = pto.alloc_tile valid_row = %v3 valid_col = %v11 : !tile3
+      pto.textract ins(%pressure_tile_1, %v8, %v11 : !tile0, index, index) outs(%pressure_else_1_1 : !tile3)
+      %pressure_else_2_0 = pto.alloc_tile valid_row = %v3 valid_col = %v11 : !tile3
+      pto.textract ins(%pressure_tile_2, %v8, %v8 : !tile0, index, index) outs(%pressure_else_2_0 : !tile3)
+      %pressure_else_2_1 = pto.alloc_tile valid_row = %v3 valid_col = %v11 : !tile3
+      pto.textract ins(%pressure_tile_2, %v8, %v11 : !tile0, index, index) outs(%pressure_else_2_1 : !tile3)
+      %2 = pto.alloc_tile valid_row = %v3 valid_col = %v11 : !tile3
+      pto.textract ins(%v19, %v8, %v8 : !tile0, index, index) outs(%2 : !tile3)
+      %3 = pto.alloc_tile valid_row = %v11 valid_col = %v5 : !tile4
+      pto.textract ins(%v21, %v8, %v8 : !tile1, index, index) outs(%3 : !tile4)
+      %4 = pto.alloc_tile valid_row = %v3 valid_col = %v11 : !tile3
+      pto.textract ins(%v19, %v8, %v11 : !tile0, index, index) outs(%4 : !tile3)
+      %5 = pto.alloc_tile valid_row = %v11 valid_col = %v5 : !tile4
+      pto.textract ins(%v21, %v11, %v8 : !tile1, index, index) outs(%5 : !tile4)
+      pto.tmatmul.acc ins(%v17, %2, %3 : !tile2, !tile3, !tile4) outs(%v17 : !tile2)
+      pto.tmatmul.acc ins(%v17, %4, %5 : !tile2, !tile3, !tile4) outs(%v17 : !tile2)
+    }
+  }
+  %v25 = pto.partition_view %v14, offsets = [%v8, %v8], sizes = [%v3, %v5] : !pto.tensor_view<?x?xf32> -> !pto.partition_tensor_view<16x128xf32>
+  pto.tstore ins(%v17 : !tile2) outs(%v25 : !pto.partition_tensor_view<16x128xf32>)
+  return
+  }
+}

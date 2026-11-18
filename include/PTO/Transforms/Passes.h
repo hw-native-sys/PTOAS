@@ -62,7 +62,7 @@ LogicalResult lowerPipeFamilyOps(mlir::func::FuncOp func,
 std::unique_ptr<Pass> createPTOVerifyTFreePass();
 
 // Creates a pass for ...
-std::unique_ptr<Pass> createPTOInsertSyncPass();
+std::unique_ptr<Pass> createPTOInsertSyncPass(bool deduplicateSlotEvents = true);
 std::unique_ptr<Pass> createPTOInjectBarrierAllSyncPass();
 std::unique_ptr<Pass>
 createPTOBufidSyncPass(const PTOBufidSyncOptions &options = {});

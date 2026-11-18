@@ -34,6 +34,11 @@ def PTOInsertSync : Pass<"pto-insert-sync", "func::FuncOp"> {
   // Declare the constructor function name
   let constructor = "mlir::pto::createPTOInsertSyncPass()";
 
+  let options = [
+    Option<"deduplicateSlotEvents", "deduplicate-slot-events", "bool", "true",
+           "Deduplicate identical slot event protocols without changing their lifetime">
+  ];
+
   let dependentDialects = [
     "mlir::pto::PTODialect",
     "mlir::memref::MemRefDialect",
