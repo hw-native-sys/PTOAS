@@ -26,7 +26,7 @@ pto.tsel ins(%mask, %src0, %src1, %tmp :
 
 | Parameter | Type | Description |
 |-----------|------|-------------|
-| `mask` | `pto.tile_buf` | Packed predicate-mask carrier. |
+| `mask` | `pto.tile_buf` | VEC (UB) tile buffer of 8-bit integers carrying packed predicate bits. |
 | `src0` | `pto.tile_buf` | Value selected when the predicate bit is true. |
 | `src1` | `pto.tile_buf` | Value selected when the predicate bit is false. |
 | `tmp` | `pto.tile_buf` | Scratch tile for A2/A3 interface compatibility. |
@@ -35,14 +35,15 @@ pto.tsel ins(%mask, %src0, %src1, %tmp :
 **Constraints:**
 
 - `src0`, `src1`, and `dst` must have the same shape and valid region.
-- The `tsel` template specializes the mask carrier as an `i8` tile with packed predicate bytes.
+- The IR verifier accepts `i8`, `si8`, or `ui8` mask elements. Each mask byte holds eight selection bits.
+- The A5 TileLib template specializes on the `i8` mask element type.
 
 **Example:**
 
 ```mlir
 pto.tsel ins(%mask, %a, %b, %tmp :
-             !pto.tile_buf<vec, 16x16xi8>, !pto.tile_buf<vec, 16x16xf16>,
-             !pto.tile_buf<vec, 16x16xf16>, !pto.tile_buf<vec, 16x16xf16>)
+             !pto.tile_buf<vec, 16x32xi8, valid=16x2>, !pto.tile_buf<vec, 16x16xf16>,
+             !pto.tile_buf<vec, 16x16xf16>, !pto.tile_buf<vec, 1x8xi32>)
          outs(%dst : !pto.tile_buf<vec, 16x16xf16>)
 ```
 

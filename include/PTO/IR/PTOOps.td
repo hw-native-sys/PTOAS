@@ -6745,10 +6745,11 @@ def TSelOp: PTO_TOp<"tsel", [
   let summary = "TSEL: Select between two tiles using a mask tile (per-element selection).";
   let description = [{
     DPS form (pto-isa TSEL requires tmp): ins(%mask, %src0, %src1, %tmp) outs(%dst)
+    The mask is a VEC tile buffer of 8-bit integers carrying packed predicate bits.
   }];
 
   let arguments = (ins
-    PTODpsType:$mask,
+    TileBufType:$mask,
     PTODpsType:$src0,
     PTODpsType:$src1,
     Optional<PTODpsType>:$tmp,
@@ -6816,6 +6817,8 @@ def TPartSelOp: PTO_TOp<"tpartsel", [
 
     dst[i,j] = mask[i,j] ? src0[i,j] : src1[i,j]
 
+    The mask is a VEC tile buffer of 8-bit integers carrying packed predicate bits.
+
     Unlike pto.tsel, dst/src0/src1 may use different physical tile types
     (backing width / row stride / offset). They must share the element type,
     use row-major layout, and cover the destination valid region. The selection
@@ -6824,7 +6827,7 @@ def TPartSelOp: PTO_TOp<"tpartsel", [
   }];
 
   let arguments = (ins
-    PTODpsType:$mask,
+    TileBufType:$mask,
     PTODpsType:$src0,
     PTODpsType:$src1,
     Optional<PTODpsType>:$tmp,

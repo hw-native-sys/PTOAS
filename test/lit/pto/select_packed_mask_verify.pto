@@ -1,0 +1,74 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+
+// RUN: pto-test-opt --split-input-file --verify-diagnostics %s
+
+!mask = !pto.tile_buf<vec, 2x16xi16, valid=2x8>
+!data = !pto.tile_buf<vec, 2x128xf32>
+
+module attributes {pto.target_arch = "a3"} {
+  func.func @wide_tsel_mask(%mask: !mask, %a: !data, %b: !data, %dst: !data) {
+    // expected-error@+1 {{'pto.tsel' op expects mask to use 8-bit integers for packed predicate bits}}
+    pto.tsel ins(%mask, %a, %b : !mask, !data, !data) outs(%dst : !data)
+    return
+  }
+}
+
+// -----
+
+!mask = !pto.tile_buf<vec, 2x16xi16, valid=2x8>
+!data = !pto.tile_buf<vec, 2x128xf32>
+!wide_view = !pto.tile_buf<vec, 2x256xf32, valid=2x128>
+
+module attributes {pto.target_arch = "a5"} {
+  func.func @wide_tpartsel_mask(%mask: !mask, %a: !wide_view, %b: !data, %dst: !data) {
+    // expected-error@+1 {{'pto.tpartsel' op expects mask to use 8-bit integers for packed predicate bits}}
+    pto.tpartsel ins(%mask, %a, %b : !mask, !wide_view, !data) outs(%dst : !data)
+    return
+  }
+}
+
+// -----
+
+!data = !pto.tile_buf<vec, 2x128xf32>
+
+func.func @tensor_mask(%mask: tensor<2x32xi8>, %a: !data, %b: !data, %dst: !data) {
+  // expected-error@+1 {{'pto.tsel' op operand #0 must be}}
+  pto.tsel ins(%mask, %a, %b : tensor<2x32xi8>, !data, !data) outs(%dst : !data)
+  return
+}
+
+// -----
+
+!mask = !pto.tile_buf<mat, 2x32xi8, valid=2x16>
+!data = !pto.tile_buf<vec, 2x128xf32>
+
+func.func @non_vec_mask(%mask: !mask, %a: !data, %b: !data, %dst: !data) {
+  // expected-error@+1 {{'pto.tpartsel' op expects mask to be in the vec address space}}
+  pto.tpartsel ins(%mask, %a, %b : !mask, !data, !data) outs(%dst : !data)
+  return
+}
+
+// -----
+
+!unsigned_mask = !pto.tile_buf<vec, 2x32xui8, valid=2x16>
+!signed_mask = !pto.tile_buf<vec, 2x32xsi8, valid=2x16>
+!scalar_select_mask = !pto.tile_buf<vec, 2x16xi16, valid=2x8>
+!data = !pto.tile_buf<vec, 2x128xf32>
+!wide_view = !pto.tile_buf<vec, 2x256xf32, valid=2x128>
+
+module attributes {pto.target_arch = "a5"} {
+  func.func @valid_masks(%mask_u: !unsigned_mask, %mask_s: !signed_mask,
+                         %mask_i16: !scalar_select_mask, %wide: !wide_view,
+                         %a: !data, %b: !data, %dst: !data, %scalar: f32) {
+    pto.tsel ins(%mask_u, %a, %b : !unsigned_mask, !data, !data) outs(%dst : !data)
+    pto.tpartsel ins(%mask_s, %wide, %b : !signed_mask, !wide_view, !data) outs(%dst : !data)
+    pto.tsels ins(%mask_i16, %a, %scalar : !scalar_select_mask, !data, f32) outs(%dst : !data)
+    return
+  }
+}

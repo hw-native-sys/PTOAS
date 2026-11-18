@@ -6862,7 +6862,7 @@ For each element (i, j):
 
 | Name | Type | Description |
 |------|------|-------------|
-| `mask` | `pto.tile_buf` | Predicate mask |
+| `mask` | `pto.tile_buf` | Packed predicate bits stored as 8-bit integers in VEC (UB) |
 | `src0` | `pto.tile_buf` | Value when mask is true |
 | `src1` | `pto.tile_buf` | Value when mask is false |
 | `tmp` | `pto.tile_buf` | Placeholder / workspace operand kept by the current DPS form |
@@ -6879,6 +6879,7 @@ pto.tsel ins(<mask>, <src0>, <src1>, <tmp> : <mask_type>, <type0>, <type1>, <tmp
 
 **Constraints & Verification:**
 
+- `mask` must have `loc=vec` and an 8-bit integer element type (`i8`, `si8`, or `ui8`). Each mask byte holds eight selection bits.
 - `src0`, `src1`, and `dst` must have the same element type.
 - `src0`, `src1`, and `dst` must use row-major layout (`blayout=row_major`).
 - **Implementation checks (A2/A3)**:
@@ -6896,8 +6897,8 @@ pto.tsel ins(<mask>, <src0>, <src1>, <tmp> : <mask_type>, <type0>, <type1>, <tmp
 **Basic Example:**
 
 ```mlir
-pto.tsel ins(%mask, %a, %b, %tmp : !pto.tile_buf<loc=vec, dtype=i8, rows=16, cols=16,
-             v_row=16, v_col=16, blayout=row_major, slayout=none_box,
+pto.tsel ins(%mask, %a, %b, %tmp : !pto.tile_buf<loc=vec, dtype=i8, rows=16, cols=32,
+             v_row=16, v_col=2, blayout=row_major, slayout=none_box,
              fractal=512, pad=0>,
              !pto.tile_buf<loc=vec, dtype=f16, rows=16, cols=16,
              v_row=16, v_col=16, blayout=row_major, slayout=none_box,
@@ -6905,13 +6906,34 @@ pto.tsel ins(%mask, %a, %b, %tmp : !pto.tile_buf<loc=vec, dtype=i8, rows=16, col
              !pto.tile_buf<loc=vec, dtype=f16, rows=16, cols=16,
              v_row=16, v_col=16, blayout=row_major, slayout=none_box,
              fractal=512, pad=0>,
-             !pto.tile_buf<loc=vec, dtype=f16, rows=1, cols=8,
+             !pto.tile_buf<loc=vec, dtype=i32, rows=1, cols=8,
              v_row=1, v_col=8, blayout=row_major, slayout=none_box,
              fractal=512, pad=0>)
          outs(%dst : !pto.tile_buf<loc=vec, dtype=f16, rows=16, cols=16,
              v_row=16, v_col=16, blayout=row_major, slayout=none_box,
              fractal=512, pad=0>)
 ```
+
+---
+
+#### `pto.tpartsel`
+
+**Summary:** Selects between two source tile views over the destination valid region. The source and destination tiles may have different physical widths and row strides.
+
+**Assembly Format:**
+
+```mlir
+pto.tpartsel ins(<mask>, <src0>, <src1>, <tmp> : <mask_type>, <type0>, <type1>, <tmp_type>)
+             outs(<dst> : <dst_type>)
+```
+
+**Semantics:** For each position in the destination valid region, write `src0[i, j]` when the corresponding packed predicate bit is set and `src1[i, j]` otherwise.
+
+**Constraints & Verification:**
+
+- `mask` is a `loc=vec` tile buffer of 8-bit integers (`i8`, `si8`, or `ui8`). Its packed predicate bits must cover the destination valid region.
+- `src0`, `src1`, and `dst` are row-major tile buffers with the same element type. Each source view must cover the destination valid region.
+- Supported data types and the `tmp` workspace requirements follow [`pto.tsel`](#ptotsel).
 
 ---
 

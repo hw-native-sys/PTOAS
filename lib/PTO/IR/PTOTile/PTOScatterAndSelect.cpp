@@ -105,7 +105,19 @@ mlir::LogicalResult mlir::pto::TScatterOp::verify() {
 }
 
 
+static LogicalResult verifySelectPackedMask(Operation *op, Type maskType)
+{
+  if (failed(verifyTileBufInVec(op, maskType, "mask")))
+    return failure();
+  if (!getElemTy(maskType).isInteger(mlir::pto::kValue8))
+    return op->emitOpError("expects mask to use 8-bit integers for packed predicate bits");
+  return success();
+}
+
 static FailureOr<Type> verifyTSelCommon(TSelOp op) {
+  if (failed(verifySelectPackedMask(op, op.getMask().getType())))
+    return failure();
+
   Type t0 = op.getSrc0().getType();
   Type t1 = op.getSrc1().getType();
   Type td = op.getDst().getType();
@@ -292,6 +304,9 @@ mlir::LogicalResult mlir::pto::TSelSOp::verify() {
 
 static FailureOr<Type> verifyTPartSelCommon(TPartSelOp op)
 {
+    if (failed(verifySelectPackedMask(op, op.getMask().getType())))
+        return failure();
+
     Type t0 = op.getSrc0().getType();
     Type t1 = op.getSrc1().getType();
     Type td = op.getDst().getType();
