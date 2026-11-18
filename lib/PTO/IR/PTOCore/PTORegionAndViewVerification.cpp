@@ -353,6 +353,37 @@ static LogicalResult verifyNZPartition(mlir::pto::PartitionViewOp op, const Part
     return success();
 }
 
+static LogicalResult verifyPackedMxPartition(PartitionViewOp op, PartitionTensorViewType resultType,
+                                             const PartitionSourceInfo& source)
+{
+    if (!source.layout) {
+        return success();
+    }
+    Layout layout = source.layout.getLayout();
+    if (layout != Layout::MX_A_ZZ && layout != Layout::MX_B_NN) {
+        return success();
+    }
+    bool hasRankTwoResult = resultType.getRank() == 2;
+    if (source.rank != 2 || !hasRankTwoResult) {
+        return op.emitOpError("packed MX partitions require rank-2 views");
+    }
+    unsigned outerDim = layout == Layout::MX_A_ZZ ? 0 : 1;
+    unsigned groupDim = 1 - outerDim;
+    auto outerOffset = getConstIndexValue(op.getOffsets()[outerDim]);
+    auto groupOffset = getConstIndexValue(op.getOffsets()[groupDim]);
+    auto groupSize = getConstIndexValue(op.getSizes()[groupDim]).value_or(resultType.getDimSize(groupDim));
+    bool isOuterAligned = !outerOffset || *outerOffset % pto::kValue16 == 0;
+    bool isGroupAligned = !groupOffset || *groupOffset % pto::kValue2 == 0;
+    if (!isOuterAligned || !isGroupAligned) {
+        return op.emitOpError("packed MX partition offsets must align to a 16-lane block and a scale-group pair");
+    }
+    bool isStaticGroupSize = !ShapedType::isDynamic(groupSize);
+    if (isStaticGroupSize && groupSize % pto::kValue2 != 0) {
+        return op.emitOpError("packed MX partition size must contain whole scale-group pairs");
+    }
+    return success();
+}
+
 LogicalResult mlir::pto::PartitionViewOp::verify()
 {
     auto resultType = dyn_cast<mlir::pto::PartitionTensorViewType>(getResult().getType());
@@ -365,6 +396,9 @@ LogicalResult mlir::pto::PartitionViewOp::verify()
     }
     if (failed(verifyPartitionSignature(*this, resultType, *source)) ||
         failed(verifyPartitionBounds(*this, resultType, *source))) {
+        return failure();
+    }
+    if (failed(verifyPackedMxPartition(*this, resultType, *source))) {
         return failure();
     }
     return verifyNZPartition(*this, *source);

@@ -829,6 +829,10 @@ This op captures both static and dynamic shapes. It represents a logical slice w
 - An NZ partition may shrink or dynamically offset/size only `d1` and `d2`
 - NZ `d0`, `d3`, and `d4` must be statically proven complete; slicing inside
   `d3`/`d4` is rejected instead of falling back to ND
+- For packed MX layouts, the M offset (`mx_a_zz`) or N offset
+  (`mx_b_nn`) must be a multiple of 16. The scale-group offset and size
+  must be multiples of 2. These constraints also apply to dynamic values.
+  The slice retains the physical strides of the packed source.
 
 **Notes:**
 

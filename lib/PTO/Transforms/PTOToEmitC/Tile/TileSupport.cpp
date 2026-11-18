@@ -363,7 +363,7 @@ static Value createRuntimeGlobalTensor(
 
 static FailureOr<Value> buildRuntimeMxGlobalTensor(
     ConversionPatternRewriter& rewriter, Location loc, Value ptr, Type elemTy, ArrayRef<int64_t> staticShape,
-    ValueRange runtimeShape, ValueRange runtimeStrides, StringRef layoutEnum)
+    ValueRange runtimeShape, ValueRange runtimeStrides, StringRef layoutEnum, bool hasPackedMxBackingStrides)
 {
     if (staticShape.size() != mlir::pto::kValue2) {
         return failure();
@@ -380,7 +380,9 @@ static FailureOr<Value> buildRuntimeMxGlobalTensor(
     bool hasExplicitMxStride = layoutEnum.ends_with("MX_A_ND") || layoutEnum.ends_with("MX_A_DN") ||
                                layoutEnum.ends_with("MX_B_ND") || layoutEnum.ends_with("MX_B_DN");
     if (!hasExplicitMxStride) {
-        strideValues.assign(logicalShape.begin(), logicalShape.end());
+        // Packed partitions retain physical strides from the backing tensor.
+        ValueRange strideArgs = hasPackedMxBackingStrides ? runtimeStrides : ValueRange(logicalShape);
+        strideValues.assign(strideArgs.begin(), strideArgs.end());
         return createRuntimeGlobalTensor(
             rewriter, loc, ptr, elemTy, staticShape, layoutEnum, shapeType, strideType, logicalShape, strideValues);
     }
@@ -411,17 +413,21 @@ static FailureOr<Value> buildRuntimeMxGlobalTensor(
 
 FailureOr<Value> buildRuntimeGlobalTensor(
     ConversionPatternRewriter& rewriter, Location loc, Value ptr, Type elemTy, ArrayRef<int64_t> staticShape,
-    ValueRange runtimeShape, ValueRange runtimeStrides, StringRef layoutEnum)
+    ValueRange runtimeShape, ValueRange runtimeStrides, StringRef layoutEnum, bool hasPackedMxBackingStrides)
 {
+    size_t strideRank = hasPackedMxBackingStrides ? kValue5 : staticShape.size();
+    bool hasPackedMxLayout = layoutEnum == "pto::Layout::MX_A_ZZ" || layoutEnum == "pto::Layout::MX_B_NN";
+    bool hasInvalidBackingStrides = hasPackedMxBackingStrides && !hasPackedMxLayout;
     const bool hasInvalidRank = staticShape.size() > mlir::pto::kValue5 || runtimeShape.size() != staticShape.size() ||
-                                runtimeStrides.size() != staticShape.size();
-    if (hasInvalidRank) {
+                                runtimeStrides.size() != strideRank;
+    if (hasInvalidRank || hasInvalidBackingStrides) {
         return failure();
     }
 
     if (layoutEnum.starts_with("pto::Layout::MX_")) {
         return buildRuntimeMxGlobalTensor(
-            rewriter, loc, ptr, elemTy, staticShape, runtimeShape, runtimeStrides, layoutEnum);
+            rewriter, loc, ptr, elemTy, staticShape, runtimeShape, runtimeStrides,
+            layoutEnum, hasPackedMxBackingStrides);
     }
 
     SmallVector<int64_t, mlir::pto::kValue5> shape5D(mlir::pto::kValue5, 1);

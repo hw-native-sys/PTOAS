@@ -1,0 +1,123 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+
+// RUN: ptoas --pto-arch=a5 --pto-level=level3 %s -o - | FileCheck %s
+
+module attributes {pto.target_arch = "a5"} {
+  func.func @mx_a_partition(%src: !pto.ptr<!pto.f8E8M0>) attributes {pto.kernel_kind = #pto.kernel_kind<cube>} {
+    %c0 = arith.constant 0 : index
+    %c1 = arith.constant 1 : index
+    %c2 = arith.constant 2 : index
+    %c4 = arith.constant 4 : index
+    %c16 = arith.constant 16 : index
+    %addr = arith.constant 0 : i64
+    %view = pto.make_tensor_view %src, shape = [%c16, %c4], strides = [%c4, %c1] {layout = #pto.layout<mx_a_zz>} : !pto.tensor_view<?x?x!pto.f8E8M0>
+    %part = pto.partition_view %view, offsets = [%c0, %c2], sizes = [%c16, %c2] : !pto.tensor_view<?x?x!pto.f8E8M0> -> !pto.partition_tensor_view<16x2x!pto.f8E8M0>
+    %tile = pto.alloc_tile addr = %addr valid_row = %c16 valid_col = %c2 : !pto.tile_buf<loc=mat, dtype=!pto.f8E8M0, rows=16, cols=2, v_row=?, v_col=?, blayout=row_major, slayout=row_major, fractal=32, pad=0>
+    pto.tload ins(%part : !pto.partition_tensor_view<16x2x!pto.f8E8M0>) outs(%tile : !pto.tile_buf<loc=mat, dtype=!pto.f8E8M0, rows=16, cols=2, v_row=?, v_col=?, blayout=row_major, slayout=row_major, fractal=32, pad=0>) {layout = #pto.layout<mx_a_zz>}
+    return
+  }
+  func.func @mx_b_partition(%src: !pto.ptr<!pto.f8E8M0>) attributes {pto.kernel_kind = #pto.kernel_kind<cube>} {
+    %c0 = arith.constant 0 : index
+    %c1 = arith.constant 1 : index
+    %c2 = arith.constant 2 : index
+    %c4 = arith.constant 4 : index
+    %c16 = arith.constant 16 : index
+    %c32 = arith.constant 32 : index
+    %addr = arith.constant 0 : i64
+    %view = pto.make_tensor_view %src, shape = [%c4, %c32], strides = [%c32, %c1] {layout = #pto.layout<mx_b_nn>} : !pto.tensor_view<?x?x!pto.f8E8M0>
+    %part = pto.partition_view %view, offsets = [%c0, %c16], sizes = [%c2, %c16] : !pto.tensor_view<?x?x!pto.f8E8M0> -> !pto.partition_tensor_view<2x16x!pto.f8E8M0>
+    %tile = pto.alloc_tile addr = %addr valid_row = %c2 valid_col = %c16 : !pto.tile_buf<loc=mat, dtype=!pto.f8E8M0, rows=2, cols=16, v_row=?, v_col=?, blayout=col_major, slayout=col_major, fractal=32, pad=0>
+    pto.tload ins(%part : !pto.partition_tensor_view<2x16x!pto.f8E8M0>) outs(%tile : !pto.tile_buf<loc=mat, dtype=!pto.f8E8M0, rows=2, cols=16, v_row=?, v_col=?, blayout=col_major, slayout=col_major, fractal=32, pad=0>) {layout = #pto.layout<mx_b_nn>}
+    return
+  }
+  func.func @mx_b_partition_stride(%src: !pto.ptr<!pto.f8E8M0>) attributes {pto.kernel_kind = #pto.kernel_kind<cube>} {
+    %c0 = arith.constant 0 : index
+    %c1 = arith.constant 1 : index
+    %c2 = arith.constant 2 : index
+    %c4 = arith.constant 4 : index
+    %c16 = arith.constant 16 : index
+    %c32 = arith.constant 32 : index
+    %addr = arith.constant 0 : i64
+    %view = pto.make_tensor_view %src, shape = [%c4, %c32], strides = [%c32, %c1] {layout = #pto.layout<mx_b_nn>} : !pto.tensor_view<?x?x!pto.f8E8M0>
+    %part = pto.partition_view %view, offsets = [%c0, %c0], sizes = [%c2, %c32] : !pto.tensor_view<?x?x!pto.f8E8M0> -> !pto.partition_tensor_view<2x32x!pto.f8E8M0>
+    %tile = pto.alloc_tile addr = %addr valid_row = %c2 valid_col = %c32 : !pto.tile_buf<loc=mat, dtype=!pto.f8E8M0, rows=2, cols=32, v_row=?, v_col=?, blayout=col_major, slayout=col_major, fractal=32, pad=0>
+    pto.tload ins(%part : !pto.partition_tensor_view<2x32x!pto.f8E8M0>) outs(%tile : !pto.tile_buf<loc=mat, dtype=!pto.f8E8M0, rows=2, cols=32, v_row=?, v_col=?, blayout=col_major, slayout=col_major, fractal=32, pad=0>) {layout = #pto.layout<mx_b_nn>}
+    return
+  }
+  func.func @mx_b_nested_dynamic(%src: !pto.ptr<!pto.f8E8M0>, %groups: index,
+                                %group_start: index, %column_start: index, %count: index)
+      attributes {pto.kernel_kind = #pto.kernel_kind<cube>} {
+    %c0 = arith.constant 0 : index
+    %c1 = arith.constant 1 : index
+    %c4 = arith.constant 4 : index
+    %c32 = arith.constant 32 : index
+    %c64 = arith.constant 64 : index
+    %addr = arith.constant 0 : i64
+    %view = pto.make_tensor_view %src, shape = [%groups, %c64], strides = [%c64, %c1]
+      {layout = #pto.layout<mx_b_nn>} : !pto.tensor_view<?x?x!pto.f8E8M0>
+    %parent = pto.partition_view %view, offsets = [%c0, %c0], sizes = [%c4, %c64]
+      : !pto.tensor_view<?x?x!pto.f8E8M0> -> !pto.partition_tensor_view<4x64x!pto.f8E8M0>
+    %part = pto.partition_view %parent, offsets = [%group_start, %column_start], sizes = [%count, %c32]
+      : !pto.partition_tensor_view<4x64x!pto.f8E8M0> -> !pto.partition_tensor_view<?x32x!pto.f8E8M0>
+    %tile = pto.alloc_tile addr = %addr valid_row = %count valid_col = %c32
+      : !pto.tile_buf<mat, 4x32x!pto.f8E8M0, valid=?x?, blayout=col_major, slayout=col_major, fractal=32>
+    pto.tload ins(%part : !pto.partition_tensor_view<?x32x!pto.f8E8M0>)
+      outs(%tile : !pto.tile_buf<mat, 4x32x!pto.f8E8M0, valid=?x?, blayout=col_major, slayout=col_major, fractal=32>)
+      {layout = #pto.layout<mx_b_nn>}
+    return
+  }
+}
+
+// A group offset of two must advance one complete, 32-byte scale fractal.
+// CHECK-LABEL: mx_a_partition(
+// CHECK: int64_t [[A_PAIR:v[0-9]+]] = 2;
+// CHECK: [[A_DATA:v[0-9]+]] = PTOAS__GLOBAL_TENSOR_DATA({{.*}});
+// CHECK: int64_t [[A_WIDTH:v[0-9]+]] = 16;
+// CHECK: TileShape2D<float8_e8m0_t, 16, 2, pto::Layout::MX_A_ZZ> [[A_TILE:v[0-9]+]] =
+// CHECK: BaseShape2D<float8_e8m0_t, 16, 4, pto::Layout::MX_A_ZZ> [[A_BASE:v[0-9]+]] =
+// CHECK: GlobalTensor{{.*}}([[A_DATA]] + [[A_PAIR]] * [[A_WIDTH]], [[A_TILE]], [[A_BASE]]);
+
+// N offset 16 advances one N block, using the four-group backing stride (64 bytes).
+// CHECK-LABEL: mx_b_partition(
+// CHECK: int64_t [[B_COLUMN:v[0-9]+]] = 16;
+// CHECK: int64_t [[B_ONE:v[0-9]+]] = 1;
+// CHECK: [[B_STRIDE:v[0-9]+]] = ({{v[0-9]+}}).GetStride(static_cast<int>([[B_ONE]]));
+// CHECK: [[B_DATA:v[0-9]+]] = PTOAS__GLOBAL_TENSOR_DATA({{.*}});
+// CHECK: int64_t [[B_WIDTH:v[0-9]+]] = 16;
+// CHECK: TileShape2D<float8_e8m0_t, 2, 16, pto::Layout::MX_B_NN> [[B_TILE:v[0-9]+]] =
+// CHECK: BaseShape2D<float8_e8m0_t, 4, 32, pto::Layout::MX_B_NN> [[B_BASE:v[0-9]+]] =
+// CHECK: GlobalTensor{{.*}}([[B_DATA]] + ([[B_COLUMN]] / [[B_WIDTH]]) * [[B_STRIDE]], [[B_TILE]], [[B_BASE]]);
+
+// Narrowing the scale groups at zero offset must keep the N-block stride.
+// CHECK-LABEL: mx_b_partition_stride(
+// CHECK: [[ZERO_PTR:v[0-9]+]] = PTOAS__GLOBAL_TENSOR_DATA({{.*}});
+// CHECK: TileShape2D<float8_e8m0_t, 2, 32, pto::Layout::MX_B_NN> [[ZERO_TILE:v[0-9]+]] =
+// CHECK: BaseShape2D<float8_e8m0_t, 4, 32, pto::Layout::MX_B_NN> [[ZERO_BASE:v[0-9]+]] =
+// CHECK: GlobalTensor{{.*}}([[ZERO_PTR]], [[ZERO_TILE]], [[ZERO_BASE]]);
+
+// The nested dynamic partition uses the parent descriptor for both addressing and stride.
+// CHECK-LABEL: mx_b_nested_dynamic(
+// CHECK-SAME: int64_t {{v[0-9]+}}, int64_t [[GROUP_START:v[0-9]+]], int64_t [[COL_START:v[0-9]+]], int64_t
+// CHECK: GlobalTensor{{.*}} [[PARENT:v[0-9]+]] = GlobalTensor{{.*}};
+// CHECK: int64_t [[PARENT_DIM:v[0-9]+]] = 1;
+// CHECK: [[PARENT_STRIDE:v[0-9]+]] = ([[PARENT]]).GetStride(static_cast<int>([[PARENT_DIM]]));
+// CHECK: BaseShape2D<float8_e8m0_t, -1, -1, pto::Layout::MX_B_NN> [[PARENT_BASE:v[0-9]+]] =
+// CHECK-SAME: ({{v[0-9]+}}, [[PARENT_STRIDE]], {{.*}});
+// CHECK: GlobalTensor{{.*}} [[PARENT_PART:v[0-9]+]] = GlobalTensor{{.*}}({{v[0-9]+}}, {{v[0-9]+}}, [[PARENT_BASE]]);
+// CHECK: int64_t [[CHILD_DIM:v[0-9]+]] = 1;
+// CHECK: [[CHILD_STRIDE:v[0-9]+]] = ([[PARENT_PART]]).GetStride(static_cast<int>([[CHILD_DIM]]));
+// CHECK: [[CHILD_DATA:v[0-9]+]] = PTOAS__GLOBAL_TENSOR_DATA([[PARENT_PART]]);
+// CHECK: int64_t [[DYN_BLOCK:v[0-9]+]] = 16;
+// CHECK: int64_t [[DYN_WIDTH:v[0-9]+]] = 16;
+// CHECK: BaseShape2D<float8_e8m0_t, -1, -1, pto::Layout::MX_B_NN> [[CHILD_BASE:v[0-9]+]] =
+// CHECK-SAME: ({{v[0-9]+}}, [[CHILD_STRIDE]], {{.*}});
+// CHECK: GlobalTensor{{.*}} [[CHILD:v[0-9]+]] = GlobalTensor{{.*}}([[CHILD_DATA]] +
+// CHECK-SAME: (((int64_t) [[COL_START]] / [[DYN_BLOCK]]) * [[CHILD_STRIDE]] + (int64_t) [[GROUP_START]] * [[DYN_WIDTH]])
+// CHECK-SAME: , {{v[0-9]+}}, [[CHILD_BASE]]);
+// CHECK: TLOAD({{.*}}, [[CHILD]]);

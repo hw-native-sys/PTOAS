@@ -258,6 +258,9 @@ def PartitionViewOp : PTO_Op<"partition_view", [AttrSizedOperandSegments,
   let description = [{
     Captures a specific calculation region from a large view.
     It carries offsets (where to read) and sizes (how much to read).
+    Packed MX views retain the source's physical strides. Their offsets must
+    begin on a 16-lane block and a scale-group pair, and their scale-group
+    size must be even.
     
     IR Example:
       %1 = pto.partition_view %0, offsets=[...], sizes=[...] 

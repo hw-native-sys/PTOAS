@@ -1,0 +1,42 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+
+// RUN: pto-test-opt --split-input-file --verify-diagnostics %s
+
+module attributes {pto.target_arch = "a5"} {
+  func.func @inside_a_fractal(%src: !pto.ptr<!pto.f8E8M0>) {
+    %c0 = arith.constant 0 : index
+    %c1 = arith.constant 1 : index
+    %c2 = arith.constant 2 : index
+    %c4 = arith.constant 4 : index
+    %c16 = arith.constant 16 : index
+    %view = pto.make_tensor_view %src, shape = [%c16, %c4], strides = [%c4, %c1]
+      {layout = #pto.layout<mx_a_zz>} : !pto.tensor_view<?x?x!pto.f8E8M0>
+    // expected-error @+1 {{packed MX partition offsets must align to a 16-lane block and a scale-group pair}}
+    %part = pto.partition_view %view, offsets = [%c1, %c0], sizes = [%c2, %c2]
+      : !pto.tensor_view<?x?x!pto.f8E8M0> -> !pto.partition_tensor_view<2x2x!pto.f8E8M0>
+    return
+  }
+}
+
+// -----
+
+module attributes {pto.target_arch = "a5"} {
+  func.func @odd_b_group_count(%src: !pto.ptr<!pto.f8E8M0>) {
+    %c0 = arith.constant 0 : index
+    %c1 = arith.constant 1 : index
+    %c4 = arith.constant 4 : index
+    %c16 = arith.constant 16 : index
+    %view = pto.make_tensor_view %src, shape = [%c4, %c16], strides = [%c16, %c1]
+      {layout = #pto.layout<mx_b_nn>} : !pto.tensor_view<?x?x!pto.f8E8M0>
+    // expected-error @+1 {{packed MX partition size must contain whole scale-group pairs}}
+    %part = pto.partition_view %view, offsets = [%c0, %c0], sizes = [%c1, %c16]
+      : !pto.tensor_view<?x?x!pto.f8E8M0> -> !pto.partition_tensor_view<1x16x!pto.f8E8M0>
+    return
+  }
+}

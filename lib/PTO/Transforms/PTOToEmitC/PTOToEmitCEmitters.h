@@ -262,7 +262,10 @@ InterCoreSyncCallDesc buildInterCoreSyncWaitCall( ConversionPatternRewriter &rew
 InterCoreSyncCallDesc buildInterCoreSyncWaitCallDyn( ConversionPatternRewriter &rewriter, Location loc, PTOArch targetArch, pto::PipeAttr pipeAttr, Value eventIdVal) ;
 std::optional<std::string> buildLastUseMarkerCallee(Operation *op, StringRef callee, ArrayRef<unsigned> tileSlotOrder = {}) ;
 SmallVector<int64_t> buildRowMajorStrides(ArrayRef<int64_t> shape) ;
-FailureOr<Value> buildRuntimeGlobalTensor( ConversionPatternRewriter &rewriter, Location loc, Value ptr, Type elemTy, ArrayRef<int64_t> staticShape, ValueRange runtimeShape, ValueRange runtimeStrides, StringRef layoutEnum = "pto::Layout::ND") ;
+FailureOr<Value> buildRuntimeGlobalTensor(
+    ConversionPatternRewriter &rewriter, Location loc, Value ptr, Type elemTy,
+    ArrayRef<int64_t> staticShape, ValueRange runtimeShape, ValueRange runtimeStrides,
+    StringRef layoutEnum = "pto::Layout::ND", bool hasPackedMxBackingStrides = false);
 FailureOr<Value> buildSyncAllGlobalTensorFromPointer( ConversionPatternRewriter &rewriter, Location loc, Value ptr, Type elemTy) ;
 std::string buildTPipeToken(int32_t flagBase, llvm::StringRef dirTok, int32_t slotSize, int32_t slotNum, int32_t localSlotNum, bool nosplit) ;
 FailureOr<std::string> buildTPipeTokenFromInitOp(Operation *op, PTOArch targetArch) ;

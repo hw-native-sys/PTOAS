@@ -22,6 +22,124 @@ using namespace mlir::pto;
 namespace mlir {
 namespace pto {
 
+static constexpr int64_t kMxFractalWidth = 16;
+static constexpr int64_t kMxGroupsPerFractal = 2;
+static constexpr int64_t kMxOuterStrideDim = 1;
+
+static bool isPackedMxLayout(std::optional<Layout> layout)
+{
+    return layout == Layout::MX_A_ZZ || layout == Layout::MX_B_NN;
+}
+
+static SmallVector<int64_t, 2> getStaticMxBackingShape(Value source)
+{
+    while (auto partition = source.getDefiningOp<PartitionViewOp>()) {
+        source = partition.getSource();
+    }
+    auto root = source.getDefiningOp<MakeTensorViewOp>();
+    if (!root) {
+        return {};
+    }
+    SmallVector<int64_t, 2> shape;
+    for (Value dim : root.getShape()) {
+        auto extent = getStaticIndexLikeValue(dim);
+        if (!extent) {
+            return {};
+        }
+        shape.push_back(*extent);
+    }
+    return shape;
+}
+
+static Value getMxPhysicalStride(ConversionPatternRewriter &rewriter, Location loc, Value source, int64_t dim)
+{
+    // MX shapes are already five-dimensional in the ISA descriptor.
+    constexpr bool isStride = true;
+    return getRuntimeGlobalTensorMetadata(rewriter, loc, source, makeViewIndexConstant(rewriter, loc, dim),
+                                          kPartitionStrideDimCount, isStride);
+}
+
+static Value offsetPackedMxPointer(ConversionPatternRewriter &rewriter, PartitionViewOp op,
+                                   ValueRange offsets, unsigned outerDim, Value outerStride, Value data)
+{
+    Location loc = op.getLoc();
+    Value offset;
+    if (outerStride) {
+        Value width = makeViewIndexConstant(rewriter, loc, kMxFractalWidth);
+        Value outer = castViewIndexToEmitC(rewriter, loc, offsets[outerDim]);
+        Type indexType = width.getType();
+        Value block = rewriter.create<emitc::DivOp>(loc, indexType, outer, width);
+        offset = rewriter.create<emitc::MulOp>(loc, indexType, block, outerStride);
+    }
+    // At an aligned origin, each pair of groups advances one 32-byte SFractal.
+    unsigned groupDim = 1 - outerDim;
+    bool hasGroupOffset = getStaticIndexLikeValue(op.getOffsets()[groupDim]) != 0;
+    if (hasGroupOffset) {
+        Value width = makeViewIndexConstant(rewriter, loc, kMxFractalWidth);
+        Value group = castViewIndexToEmitC(rewriter, loc, offsets[groupDim]);
+        Value groupOffset = rewriter.create<emitc::MulOp>(loc, width.getType(), group, width);
+        offset = offset ? rewriter.create<emitc::AddOp>(loc, width.getType(), offset, groupOffset).getResult()
+                        : groupOffset;
+    }
+    if (!offset) {
+        return data;
+    }
+    return rewriter.create<emitc::AddOp>(loc, data.getType(), data, offset);
+}
+
+static std::optional<SpecialGlobalTensorTypeSpec>
+getStaticMxPartitionSpec(PartitionViewOp op, PartitionTensorViewType resultType, Layout layout)
+{
+    auto shape = resultType.getShape();
+    bool hasStaticSizes = partitionViewHasStaticResultShape(op);
+    bool hasStaticShape = !llvm::is_contained(shape, ShapedType::kDynamic);
+    if (!hasStaticSizes || !hasStaticShape) {
+        return std::nullopt;
+    }
+    Type elemType = resultType.getElementType();
+    auto tileSpec = getSpecialGlobalTensorTypeSpecForLayout(layout, shape, elemType);
+    auto baseSpec = getSpecialGlobalTensorTypeSpecForLayout(layout, getStaticMxBackingShape(op.getSource()), elemType);
+    if (!tileSpec || !baseSpec) {
+        return std::nullopt;
+    }
+    tileSpec->strideTypeExpr = baseSpec->strideTypeExpr;
+    return tileSpec;
+}
+
+static FailureOr<Value> buildPackedMxPartition(ConversionPatternRewriter &rewriter, PartitionViewOp op,
+                                               PartitionViewOpAdaptor adaptor, PartitionTensorViewType resultType,
+                                               Value source, Layout layout)
+{
+    bool hasRankTwoResult = resultType.getRank() == 2;
+    bool hasRankTwoOperands = adaptor.getOffsets().size() == 2 && adaptor.getSizes().size() == 2;
+    if (!hasRankTwoResult || !hasRankTwoOperands) {
+        return failure();
+    }
+    Location loc = op.getLoc();
+    Type elemType = resultType.getElementType();
+    unsigned outerDim = layout == Layout::MX_A_ZZ ? 0 : 1;
+    auto staticSpec = getStaticMxPartitionSpec(op, resultType, layout);
+    bool hasOuterOffset = getStaticIndexLikeValue(op.getOffsets()[outerDim]) != 0;
+    Value outerStride;
+    if (hasOuterOffset || !staticSpec) {
+        outerStride = getMxPhysicalStride(rewriter, loc, source, kMxOuterStrideDim);
+    }
+    Value data = materializeGlobalTensorDataPointer(rewriter, loc, source, op.getSource().getType());
+    Value ptr = offsetPackedMxPointer(rewriter, op, adaptor.getOffsets(), outerDim,
+                                      hasOuterOffset ? outerStride : Value{}, data);
+    auto shape = resultType.getShape();
+    if (staticSpec) {
+        return buildGlobalTensorViewFromPointer(rewriter, loc, ptr, elemType, shape, {}, *staticSpec);
+    }
+    SmallVector<Value, kPartitionStrideDimCount> strides{
+        getMxPhysicalStride(rewriter, loc, source, 0), outerStride,
+        makeViewIndexConstant(rewriter, loc, kMxFractalWidth * kMxGroupsPerFractal),
+        makeViewIndexConstant(rewriter, loc, kMxGroupsPerFractal), makeViewIndexConstant(rewriter, loc, 1)};
+    constexpr bool hasPackedMxBackingStrides = true;
+    return buildRuntimeGlobalTensor(rewriter, loc, ptr, elemType, shape, adaptor.getSizes(), strides,
+                                    layoutToEmitCString(layout), hasPackedMxBackingStrides);
+}
+
 struct PTOPartitionViewToEmitC
     : public OpConversionPattern<mlir::pto::PartitionViewOp> {
   using OpConversionPattern<mlir::pto::PartitionViewOp>::OpConversionPattern;
@@ -49,6 +167,16 @@ struct PTOPartitionViewToEmitC
     }
 
     Value source = peelGlobalTensorConversionBridge(adaptor.getSource());
+
+    auto layout = resolveLayoutForGlobalTensor(op, op.getSource());
+    if (layout && isPackedMxLayout(layout)) {
+        auto result = buildPackedMxPartition(rewriter, op, adaptor, resultType, source, *layout);
+        if (failed(result)) {
+            return rewriter.notifyMatchFailure(op, "failed to lower packed MX partition");
+        }
+        rewriter.replaceOp(op, *result);
+        return success();
+    }
 
     auto sourceStrides =
         gatherRuntimeSourceStrides(op, rewriter, source, sourceRank);
@@ -189,6 +317,10 @@ struct PTOPartitionViewStaticToEmitC
     if (!partitionViewHasStaticResultShape(op)) {
       return rewriter.notifyMatchFailure(
           op, "globaltensor partition_view requires static result shape");
+    }
+
+    if (isPackedMxLayout(resolveLayoutForGlobalTensor(op, op.getSource()))) {
+        return rewriter.notifyMatchFailure(op, "packed MX partitions use physical source strides");
     }
 
     auto inputs = resolveStaticPartitionInputs(op, adaptor, rewriter, srcRank);
