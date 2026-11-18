@@ -163,6 +163,13 @@ void VMILayoutRelations::appendAnnotatedCastFacts(const CastRelationState& state
         if (fact.resultLayout != annotatedResult) {
             continue;
         }
+        // The pair the IR states is still only a *candidate*: a state-qualified
+        // relation must not be offered just because the input IR was written
+        // that way.  Scope the check to group-slot sources so the dense
+        // contiguous diagnostics stay untouched.
+        if (fact.sourceLayout.isGroupSlots() && !isAdmissibleCastFact(fact)) {
+            continue;
+        }
         // The pair goes in first - it is the one the IR states - but the
         // other rows stay candidates: they are what the tables enumerate,
         // and a relation set that hid them would make the solver's own view

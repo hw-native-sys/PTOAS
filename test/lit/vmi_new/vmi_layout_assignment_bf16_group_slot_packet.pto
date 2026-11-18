@@ -1,0 +1,92 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software; you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+
+// Issue #1656: a matching dense group-slot BF16 narrowing result is only real
+// in the NaN-relaxed fastmath state.  Outside it the per-part vcvt writes the
+// converted lanes at lane_stride = 2, so layout assignment must keep that
+// honest sparse result and materialize one vpack for a dense consumer; the
+// vdintlv fast path is what actually produces a dense group-slot value.
+//
+// R/SAT never takes the fast path, so it stays sparse in both states.  Z/NOSAT
+// is dense only with fastmath enabled.
+// RUN: pto-test-opt %s -vmi-set-fastmath=vmi-fastmath=false -vmi-lower-unified-to-legacy -vmi-mask-granularity-assignment -vmi-layout-assignment | FileCheck %s --check-prefix=ASSIGN-STRICT
+// RUN: pto-test-opt %s -vmi-set-fastmath=vmi-fastmath=true -vmi-lower-unified-to-legacy -vmi-mask-granularity-assignment -vmi-layout-assignment | FileCheck %s --check-prefix=ASSIGN-FAST
+// RUN: pto-test-opt %s -vmi-set-fastmath=vmi-fastmath=false -vmi-lower-unified-to-legacy -vmi-mask-granularity-assignment -vmi-layout-assignment -vmi-to-vpto | FileCheck %s --check-prefix=STRICT --implicit-check-not=pto.vmi.
+// RUN: pto-test-opt %s -vmi-set-fastmath=vmi-fastmath=true -vmi-lower-unified-to-legacy -vmi-mask-granularity-assignment -vmi-layout-assignment -vmi-to-vpto | FileCheck %s --check-prefix=FAST --implicit-check-not=pto.vmi.
+
+module {
+  func.func @bf16_group_slot_narrow_rsat(
+      %source: !pto.vmi.vreg<128xf32>, %mask: !pto.vmi.mask<128xpred>,
+      %dst: !pto.ptr<bf16, ub>, %off: index) {
+    %c1 = arith.constant 1 : index
+    %sum = pto.vmi.vcadd %source, %mask {group = 8, reassoc}
+        : !pto.vmi.vreg<128xf32>, !pto.vmi.mask<128xpred>
+        -> !pto.vmi.vreg<8xf32>
+    %narrow = pto.vmi.truncf %sum {rounding = "R", saturate = "SAT"}
+        : !pto.vmi.vreg<8xf32> -> !pto.vmi.vreg<8xbf16>
+    pto.vmi.vstore %narrow, %dst[%off], %c1 {group = 8}
+        : !pto.vmi.vreg<8xbf16>, !pto.ptr<bf16, ub>
+    return
+  }
+
+  func.func @bf16_group_slot_narrow_znosat(
+      %source: !pto.vmi.vreg<128xf32>, %mask: !pto.vmi.mask<128xpred>,
+      %dst: !pto.ptr<bf16, ub>, %off: index) {
+    %c1 = arith.constant 1 : index
+    %sum = pto.vmi.vcadd %source, %mask {group = 8, reassoc}
+        : !pto.vmi.vreg<128xf32>, !pto.vmi.mask<128xpred>
+        -> !pto.vmi.vreg<8xf32>
+    %narrow = pto.vmi.truncf %sum {rounding = "Z", saturate = "NOSAT"}
+        : !pto.vmi.vreg<8xf32> -> !pto.vmi.vreg<8xbf16>
+    pto.vmi.vstore %narrow, %dst[%off], %c1 {group = 8}
+        : !pto.vmi.vreg<8xbf16>, !pto.ptr<bf16, ub>
+    return
+  }
+}
+
+// Without fastmath both casts keep the lane_stride = 2 result the per-part
+// vcvt really produces, and one ensure_layout packs it for the group store.
+// ASSIGN-STRICT-LABEL: func.func @bf16_group_slot_narrow_rsat(
+// ASSIGN-STRICT: pto.vmi.group_reduce_addf {{.*}} -> !pto.vmi.vreg<8xf32, #pto.vmi.layout<num_groups = 8, slots = 8>>
+// ASSIGN-STRICT-NEXT: %[[RSAT:[a-zA-Z0-9_.$-]+]] = pto.vmi.truncf {{.*}} -> !pto.vmi.vreg<8xbf16, #pto.vmi.layout<num_groups = 8, slots = 8, lane_stride = 2>>
+// ASSIGN-STRICT-NEXT: %[[RSAT_PACKED:[a-zA-Z0-9_.$-]+]] = pto.vmi.ensure_layout %[[RSAT]] : !pto.vmi.vreg<8xbf16, #pto.vmi.layout<num_groups = 8, slots = 8, lane_stride = 2>> -> !pto.vmi.vreg<8xbf16, #pto.vmi.layout<num_groups = 8, slots = 8>>
+// ASSIGN-STRICT-NEXT: pto.vmi.group_store %[[RSAT_PACKED]]
+// ASSIGN-STRICT-LABEL: func.func @bf16_group_slot_narrow_znosat(
+// ASSIGN-STRICT: pto.vmi.group_reduce_addf {{.*}} -> !pto.vmi.vreg<8xf32, #pto.vmi.layout<num_groups = 8, slots = 8>>
+// ASSIGN-STRICT-NEXT: %[[ZNOSAT:[a-zA-Z0-9_.$-]+]] = pto.vmi.truncf {{.*}} -> !pto.vmi.vreg<8xbf16, #pto.vmi.layout<num_groups = 8, slots = 8, lane_stride = 2>>
+// ASSIGN-STRICT-NEXT: %[[ZNOSAT_PACKED:[a-zA-Z0-9_.$-]+]] = pto.vmi.ensure_layout %[[ZNOSAT]] : !pto.vmi.vreg<8xbf16, #pto.vmi.layout<num_groups = 8, slots = 8, lane_stride = 2>> -> !pto.vmi.vreg<8xbf16, #pto.vmi.layout<num_groups = 8, slots = 8>>
+// ASSIGN-STRICT-NEXT: pto.vmi.group_store %[[ZNOSAT_PACKED]]
+
+// Fastmath only changes the Z/NOSAT relation: R/SAT still stays sparse, while
+// Z/NOSAT is dense and needs no packing.
+// ASSIGN-FAST-LABEL: func.func @bf16_group_slot_narrow_rsat(
+// ASSIGN-FAST: pto.vmi.truncf {{.*}} -> !pto.vmi.vreg<8xbf16, #pto.vmi.layout<num_groups = 8, slots = 8, lane_stride = 2>>
+// ASSIGN-FAST: pto.vmi.ensure_layout
+// ASSIGN-FAST-LABEL: func.func @bf16_group_slot_narrow_znosat(
+// ASSIGN-FAST: %[[ZNOSAT_FAST:[a-zA-Z0-9_.$-]+]] = pto.vmi.truncf {{.*}} -> !pto.vmi.vreg<8xbf16, #pto.vmi.layout<num_groups = 8, slots = 8>>
+// ASSIGN-FAST-NOT: pto.vmi.ensure_layout
+// ASSIGN-FAST: pto.vmi.group_store %[[ZNOSAT_FAST]]
+
+// STRICT-LABEL: func.func @bf16_group_slot_narrow_rsat(
+// STRICT: pto.vcvt {{.*}} {part = "EVEN", rnd = "R", sat = "SAT"}
+// STRICT: pto.vpack
+// STRICT: pto.vstus
+// STRICT-LABEL: func.func @bf16_group_slot_narrow_znosat(
+// STRICT: pto.vcvt {{.*}} {part = "EVEN", rnd = "Z", sat = "NOSAT"}
+// STRICT: pto.vpack
+// STRICT: pto.vstus
+
+// FAST-LABEL: func.func @bf16_group_slot_narrow_rsat(
+// FAST: pto.vcvt {{.*}} {part = "EVEN", rnd = "R", sat = "SAT"}
+// FAST: pto.vpack
+// FAST-LABEL: func.func @bf16_group_slot_narrow_znosat(
+// FAST: pto.vdup
+// FAST: pto.vbitcast
+// FAST: pto.vdintlv
+// FAST-NOT: pto.vcvt
+// FAST: pto.vstus

@@ -85,18 +85,6 @@ module {
         -> !pto.vreg<128xbf16>
     return %part : !pto.vreg<128xbf16>
   }
-
-  func.func @group_reduce_result_8_slots8_stride1(
-      %source: !pto.vmi.vreg<8xf32, #pto.vmi.layout<num_groups = 8, slots = 8>>)
-      -> !pto.vreg<128xbf16> {
-    %narrow = pto.vmi.vcvt %source {rounding = "Z", saturate = "NOSAT"}
-        : !pto.vmi.vreg<8xf32, #pto.vmi.layout<num_groups = 8, slots = 8>>
-        -> !pto.vmi.vreg<8xbf16, #pto.vmi.layout<num_groups = 8, slots = 8>>
-    %part = "pto.vmi.unpack"(%narrow)
-        : (!pto.vmi.vreg<8xbf16, #pto.vmi.layout<num_groups = 8, slots = 8>>)
-        -> !pto.vreg<128xbf16>
-    return %part : !pto.vreg<128xbf16>
-  }
 }
 
 // CHECK-LABEL: func.func @group_reduce_result_2_slots1
@@ -136,13 +124,6 @@ module {
 // CHECK: return
 
 // CHECK-LABEL: func.func @group_reduce_result_8_slots8_stride2
-// CHECK: pto.vdup
-// CHECK: pto.vbitcast
-// CHECK-COUNT-1: pto.vdintlv
-// CHECK-NOT: pto.vcvt
-// CHECK: return
-
-// CHECK-LABEL: func.func @group_reduce_result_8_slots8_stride1
 // CHECK: pto.vdup
 // CHECK: pto.vbitcast
 // CHECK-COUNT-1: pto.vdintlv

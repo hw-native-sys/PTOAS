@@ -1,0 +1,43 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under
+// the terms and conditions of CANN Open Software License Agreement Version 2.0
+// (the "License"). Please refer to the License for details. You may not use
+// this file except in compliance with the License. THIS SOFTWARE IS PROVIDED ON
+// AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY OR FITNESS
+// FOR A PARTICULAR PURPOSE. See LICENSE in the root of the software repository
+// for the full text of the License.
+
+// A hand-written dense slots=8 group-slot BF16 narrowing pair is still only
+// real in the NaN-relaxed fastmath state (issue #1656).  Outside it the dense
+// result would be filled at lane_stride 2 with no pack, which is exactly the
+// half-filled value the issue reported; the lowering must refuse it instead of
+// silently writing half the lanes.
+// RUN: not pto-test-opt %s -vmi-set-fastmath=vmi-fastmath=false -vmi-lower-unified-to-legacy -vmi-to-vpto 2>&1 | FileCheck %s --check-prefix=STRICT
+// RUN: pto-test-opt %s -vmi-set-fastmath=vmi-fastmath=true -vmi-lower-unified-to-legacy -vmi-to-vpto | FileCheck %s --check-prefix=FAST
+
+module {
+  func.func @group_reduce_result_8_slots8_dense(
+      %source: !pto.vmi.vreg<8xf32, #pto.vmi.layout<num_groups = 8, slots = 8>>)
+      -> !pto.vreg<128xbf16> {
+    %narrow = pto.vmi.vcvt %source {rounding = "Z", saturate = "NOSAT"}
+        : !pto.vmi.vreg<8xf32, #pto.vmi.layout<num_groups = 8, slots = 8>>
+        -> !pto.vmi.vreg<8xbf16, #pto.vmi.layout<num_groups = 8, slots = 8>>
+    %part = "pto.vmi.unpack"(%narrow)
+        : (!pto.vmi.vreg<8xbf16, #pto.vmi.layout<num_groups = 8, slots = 8>>)
+        -> !pto.vreg<128xbf16>
+    return %part : !pto.vreg<128xbf16>
+  }
+}
+
+// STRICT: dense same-layout BF16 narrowing relation
+// STRICT-SAME: NaN-relaxed fastmath
+
+// The zero-paired vdintlv path is the only lowering that actually fills the
+// dense slot packet.
+// FAST-LABEL: func.func @group_reduce_result_8_slots8_dense(
+// FAST: pto.vdup
+// FAST: pto.vbitcast
+// FAST: pto.vdintlv
+// FAST-NOT: pto.vcvt
+// FAST: return

@@ -40,13 +40,22 @@ bool isDenseBF16NarrowingSameLayoutPair(VMIVRegType sourceType,
 {
     if (!isDenseBF16NarrowingCast(sourceType, resultType) || !sourceLayout ||
         !resultLayout || sourceLayout != resultLayout ||
-        (!sourceLayout.isContiguous() && !sourceLayout.isDeinterleaved())) {
+        (!sourceLayout.isContiguous() && !sourceLayout.isDeinterleaved() &&
+         !sourceLayout.isGroupSlots())) {
         return false;
     }
-    // A group-slot layout is dense in its own way, but its narrowing is realized
-    // by the dedicated group-slot lowering and is not the state-qualified dense
-    // relation.
-    return !sourceLayout.isGroupSlots();
+    // A group-slot layout is dense in its own way. The compact slots=1 form
+    // converts one group row-locally, so its dense result is honest in every
+    // state. A packet form (slots=8) is different: its narrowing is realized by
+    // the dedicated group-slot lowering, which only produces the dense result in
+    // the NaN-relaxed fastmath state; every other state writes the converted
+    // lanes at lane_stride 2 (same as the dense rows). The relation is therefore
+    // state-qualified for packet group slots too - leaving it ungated let the
+    // solver pick a dense result the strict lowering cannot produce (#1656).
+    // The lane_stride=2 packet is the honest sparse form, not this relation.
+    return !sourceLayout.isGroupSlots() ||
+           (sourceLayout.getLaneStride() == 1 &&
+            sourceLayout.getSlots() == mlir::pto::kValue8);
 }
 
 bool requiresBF16NaNRelaxedLowering(VMIVRegType sourceType,
