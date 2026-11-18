@@ -544,7 +544,6 @@ bool touchesPrimedBuffer(const CompoundInstanceElement &cp, const SyncOperation 
 // execute the same number of times. Lifting the head out of an ENCLOSING loop while
 // the tail stays inside would prime once and drain per outer iteration, so the
 // second outer iteration finds no credit and the in-body wait never completes.
-//
 // Nothing that touches the primed buffers may be crossed, on any pipe: the credit
 // permits the consumer to overwrite them, which must not be granted while a
 // region-local reader or writer is still ahead of it.

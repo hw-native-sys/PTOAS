@@ -313,7 +313,6 @@ struct ResourceModel {
   /// -- id 0 in MTE2->V is a different flag from id 0 in V->MTE3 -- so this is a
   /// pool per direction, not a shared pool of 8. Some directions (V<->S) reserve
   /// their top id, so it is not always 8.
-  ///
   /// Reads the same `SyncEventIdAllocation::GetReservedEventIdNum` the G3 gate
   /// reads, so allocator and gate cannot disagree about the bound.
   unsigned eventPoolSize(PipelineType src, PipelineType dst) const;

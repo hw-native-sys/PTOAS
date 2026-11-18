@@ -836,7 +836,6 @@ struct LoopSpan {
 };
 
 /// Recover the rotation depth N from a `set_flag_dyn` / `wait_flag_dyn` id operand.
-///
 /// Codegen builds the id as `eventIds[slot % N]`: an `arith.remui <slot>, N`
 /// feeding a chain of `arith.select`s over N constants
 /// (`CreateSetWaitOpForMultiBuffer`). N is the modulus, so walking back from the

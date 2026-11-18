@@ -131,7 +131,6 @@ llvm::SmallVector<IdViolation> checkDeviceIdLegality(llvm::ArrayRef<SyncOpRecord
 // same thing on both paths: the span runs from the macro's first phase to its last,
 // padded one SyncIR index each side, and the pad is what stops a hazard that ends
 // exactly where the call begins from being read as disjoint.
-//
 // WHY THIS GATE EXISTS BEFORE THE FIX. While macro ops are refused there is no way
 // to check a reservation by running it -- the kernel never reaches allocation. So
 // the detector is built first and shown to fire on the CURRENT wrong id; only then

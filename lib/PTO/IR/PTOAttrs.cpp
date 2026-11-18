@@ -438,7 +438,6 @@ LogicalResult ConvTileConfigAttr::verify(function_ref<InFlightDiagnostic()> emit
     }
     return success();
   };
-
   if (failed(checkNonNegative(fmapH, "fmap_h")) ||
       failed(checkNonNegative(fmapW, "fmap_w")) ||
       failed(checkNonNegative(filterH, "filter_h")) ||

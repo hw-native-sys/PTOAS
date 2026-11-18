@@ -90,7 +90,6 @@ static llvm::SmallVector<std::string, mlir::pto::kValue8> mergedBishengArgs;
 // -x, -mllvm or -- inserted here consumes the next token of the fixed tail, and
 // bisheng then reports its own error against the composed command line. PTOAS
 // does not second-guess that.
-//
 // Keep the call sites in sync: a new device compile that does not call this is a
 // silent feature hole.
 void appendBishengExtraArgs(llvm::SmallVectorImpl<std::string> &args) {

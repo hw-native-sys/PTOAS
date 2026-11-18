@@ -971,7 +971,7 @@ static LogicalResult verifyConvTileValidShape(
         tailOk = tailIdxMustMatch(last);
     } else if ((layout == ConvLayout::FRACTAL_Z || layout == ConvLayout::FRACTAL_Z_3D) &&
             shape.size() == mlir::pto::kValue4) {
-        tailOk = tailIdxMustMatch(mlir::pto::kValue2) && tailIdxMustMatch(3);
+        tailOk = tailIdxMustMatch(mlir::pto::kValue2) && tailIdxMustMatch(mlir::pto::kValue3);
     } else if (layout == ConvLayout::FRACTAL_Z && shape.size() == mlir::pto::kValue5) {
         tailOk = tailIdxMustMatch(mlir::pto::kValue4);
     }

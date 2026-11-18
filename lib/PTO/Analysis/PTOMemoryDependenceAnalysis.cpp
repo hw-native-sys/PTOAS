@@ -8,6 +8,7 @@
 
 #include "PTO/Analysis/PTOMemoryDependenceAnalysis.h"
 #include "PTO/Analysis/PTOIntegerRange.h"
+#include "PTO/Support/CodeConstants.h"
 #include "mlir/Analysis/Presburger/IntegerRelation.h"
 #include "mlir/Analysis/Presburger/PresburgerSpace.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
@@ -803,8 +804,8 @@ struct CarriedPairModel {
     unsigned numDims = 0;
     SmallVector<PTOLoopDomain> boundsP;
     SmallVector<PTOLoopDomain> boundsC;
-    SmallVector<int64_t, 2> coeffP;
-    SmallVector<int64_t, 2> coeffC;
+    SmallVector<int64_t, mlir::pto::kValue2> coeffP;
+    SmallVector<int64_t, mlir::pto::kValue2> coeffC;
     int64_t constP = 0;
     int64_t constC = 0;
     int64_t sizeP = 0;

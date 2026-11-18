@@ -549,7 +549,6 @@ void InsertSyncAnalysis::InsertSync(
 /// be disjoint while the outer loop restarts and revisits the same addresses. Proving
 /// disjointness against the innermost enclosing loop therefore answers the inner
 /// question and applies the result to whichever edge is under analysis.
-///
 /// `forEndIndex` indexes `syncIR_`, and its element is the loop's LOOP_END marker.
 /// `UpdateForOpInfo` records the op on both markers, so the loop is recovered exactly
 /// rather than inferred. Note the index refers to `syncIR_` even while a back edge is
@@ -1231,7 +1230,6 @@ static bool isUFAccStoreToMatmul(const CompoundInstanceElement *store,
 // `frontCompound` is the publication `nowCompound` observes. Two Final matmuls
 // publish the same token, and a store that follows both can pass its check on
 // the first publication while the second producer is still writing.
-//
 // The structural proof lives in UFTokenModel: it bounds both the backward and
 // forward walks to the region the pair actually shares, and wraps the backward
 // walk around a loop body instead of walking out of the loop.

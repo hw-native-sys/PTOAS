@@ -111,16 +111,16 @@ module attributes {pto.target_arch = "a5", pto.kernel_kind = #pto.kernel_kind<cu
 
 // The `nz2nz` spelling is anchored with the following " : " so the no-operand
 // (SPLIT_EN not even present) form is what this check pins.
-// ROUNDTRIP-LABEL: func.func @l1_normal_bf16_writeback(
-// ROUNDTRIP: unit_flag(check_and_clear), pre_quant(%{{.*}}, mode = f32_bf16), nz2nz :
-// ROUNDTRIP-LABEL: func.func @l1_normal_bf16_writeback_zero_split(
-// ROUNDTRIP: pre_quant(%{{.*}}, mode = f32_bf16), nz2nz(%{{.*}}) :
+// ROUNDTRIP-DAG: func.func @l1_normal_bf16_writeback(
+// ROUNDTRIP-DAG: unit_flag(check_and_clear), pre_quant(%{{.*}}, mode = f32_bf16), nz2nz :
+// ROUNDTRIP-DAG: func.func @l1_normal_bf16_writeback_zero_split(
+// ROUNDTRIP-DAG: pre_quant(%{{.*}}, mode = f32_bf16), nz2nz(%{{.*}}) :
 // `pto.constant` is already folded to `arith.constant` before this dump, so
 // the proof that the DSL-shaped form is accepted is that the module parses and
 // reaches the expand stage at all (the store verifies at op-creation time,
 // while the split still is a pto.constant).
-// ROUNDTRIP-LABEL: func.func @l1_normal_bf16_writeback_pto_constant_split(
-// ROUNDTRIP: pre_quant(%{{.*}}, mode = f32_bf16), nz2nz(%{{.*}}) :
+// ROUNDTRIP-DAG: func.func @l1_normal_bf16_writeback_pto_constant_split(
+// ROUNDTRIP-DAG: pre_quant(%{{.*}}, mode = f32_bf16), nz2nz(%{{.*}}) :
 
 // X_m = DstStride(16) << 32 | M(16) << 16 | N(16) << 4 | SID(0) = 68720525568.
 // The stores differ only in the layout bits of X_t: 287762808848

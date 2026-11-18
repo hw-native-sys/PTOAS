@@ -238,10 +238,10 @@ static LogicalResult verifyL1L0a3dCapacity(
 {
     const int64_t elementBytes = getPTOStorageElemByteSize(getBufferElementType(op.getSource().getType()));
     if (fmapW > 0 && fmapH > 0 && channelSize > 0 &&
-        fmapW * fmapH * channelSize * elementBytes > mlir::pto::kValue512 * 1024) {
+        fmapW * fmapH * channelSize * elementBytes > mlir::pto::kValue512 * mlir::pto::kValue1024) {
         return op.emitOpError() << "source feature map exceeds the L1 capacity: "
                                 << fmapW * fmapH * channelSize * elementBytes << " bytes > "
-                                << mlir::pto::kValue512 * 1024;
+                                << mlir::pto::kValue512 * mlir::pto::kValue1024;
     }
     if (filterW * filterH >= mlir::pto::kValue65536) {
         return op.emitOpError() << "filter footprint must be < 2^16 elements, got " << filterW * filterH;

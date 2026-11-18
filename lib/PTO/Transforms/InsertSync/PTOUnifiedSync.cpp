@@ -118,7 +118,6 @@ static bool forceMechanismOnFirstHazard(SyncOperations &ops, llvm::StringRef mod
 
 /// Detailed listing for `--check-addr-reuse-war`: every hazard the model classified
 /// as sitting on a shared address, naming the two allocations that share it.
-///
 /// Reads `Hazard::addressSharing` and re-derives nothing. Reports only; never fails
 /// the pass -- sharing an address can be a deliberate footprint choice, and this
 /// cannot see the constraints the address map was built under.

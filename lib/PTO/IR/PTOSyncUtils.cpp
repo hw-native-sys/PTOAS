@@ -10,6 +10,7 @@
 //===----------------------------------------------------------------------===//
 
 #include "PTO/IR/PTOSyncUtils.h"
+#include "PTO/Support/CodeConstants.h"
 
 using namespace mlir;
 using namespace mlir::pto;
@@ -78,7 +79,9 @@ bool mlir::pto::requiresA3MatmulDependencyBarrier(Operation *src, Operation *dst
     }
     auto lhsValid = lhs.getValidShape();
     auto rhsValid = rhs.getValidShape();
-    if (lhsValid.size() != 2 || rhsValid.size() != 2) {
+    bool hasInvalidLhsRank = lhsValid.size() != mlir::pto::kValue2;
+    bool hasInvalidRhsRank = rhsValid.size() != mlir::pto::kValue2;
+    if (hasInvalidLhsRank || hasInvalidRhsRank) {
         return true;
     }
     int64_t m = lhsValid[0];
