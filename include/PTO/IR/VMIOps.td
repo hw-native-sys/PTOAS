@@ -629,6 +629,29 @@ def VMIChannelMergeOp : VMI_Op<"channel_merge"> {
   let hasVerifier = 1;
 }
 
+def VMIDeinterleaveExtfOp : VMI_Op<"deinterleave_extf", [Pure]> {
+  let summary =
+    "Packed widening conversion: F32 extensions of the even and odd lanes of a "
+    "2N-lane BF16 source";
+  let description = [{
+    Splits a 2N-lane BF16 source into the F32 extensions of its even and odd
+    lanes: even[i] = f32(source[2*i]) and odd[i] = f32(source[2*i+1]).
+
+    This is the packed form of the widening conversion. It is equivalent to
+    bitcasting the source to a packed BF16 pair carrier, unzipping each element
+    into its low and high halves, and extending both halves with pto.vmi.vcvt.
+    It neither reads nor moves memory, so layout assignment still selects the
+    physical form: a native packed part conversion (pto.vmi.vcvt with
+    part = "EVEN"/"ODD"), or separated channel widening, with the same logical
+    lane semantics. Like the widening conversion it may canonicalize NaNs; NaN
+    payload bits are not promised.
+  }];
+  let arguments = (ins VMI_VRegTypeConstraint:$source);
+  let results = (outs VMI_VRegTypeConstraint:$even, VMI_VRegTypeConstraint:$odd);
+  let hasVerifier = 1;
+  let assemblyFormat = "$source attr-dict `:` type($source) `->` type($even) `,` type($odd)";
+}
+
 def VMIVUnzipOp : VMI_Op<"vunzip", [Pure]> {
   let summary = "VMI split every element into its low and high half-width halves";
   let description = [{

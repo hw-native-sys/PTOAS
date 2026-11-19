@@ -9,6 +9,7 @@
 #pragma once
 
 // Shared helpers for VMI passes that inspect constant index operands.
+#include "PTO/IR/PTO.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/IR/BuiltinAttributes.h"
 #include "mlir/IR/Value.h"
@@ -18,16 +19,25 @@
 namespace mlir {
 namespace pto {
 
-inline std::optional<int64_t> getConstantIndexValue(Value value) {
-  if (auto constant = value.getDefiningOp<arith::ConstantIndexOp>()) {
-    return constant.value();
-  }
-  if (auto constant = value.getDefiningOp<arith::ConstantOp>()) {
-    if (auto integerAttr = dyn_cast<IntegerAttr>(constant.getValue())) {
-      return integerAttr.getInt();
+inline std::optional<int64_t> getConstantIndexValue(Value value)
+{
+    if (auto constant = value.getDefiningOp<arith::ConstantIndexOp>()) {
+        return constant.value();
     }
-  }
-  return std::nullopt;
+    if (auto constant = value.getDefiningOp<arith::ConstantOp>()) {
+        if (auto integerAttr = dyn_cast<IntegerAttr>(constant.getValue())) {
+            return integerAttr.getInt();
+        }
+    }
+    // Frontend-generated PTO IR spells constants with `pto.constant`, so accept
+    // that carrier as well; otherwise every adjacency/all-active-mask proof in the
+    // VMI combines silently fails on kernels that come out of the DSL.
+    if (auto constant = value.getDefiningOp<ConstantOp>()) {
+        if (auto integerAttr = dyn_cast<IntegerAttr>(constant.getValue())) {
+            return integerAttr.getInt();
+        }
+    }
+    return std::nullopt;
 }
 
 } // namespace pto

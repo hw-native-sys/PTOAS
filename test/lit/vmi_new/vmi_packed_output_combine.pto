@@ -1,0 +1,240 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+
+// RUN: pto-test-opt %s -vmi-pre-assignment-combine | FileCheck %s
+// RUN: pto-test-opt %s -vmi-pre-assignment-combine -vmi-mask-granularity-assignment -vmi-layout-assignment -vmi-to-vpto | FileCheck %s --check-prefix=LOWER
+
+module {
+  func.func @pack128(%a: !pto.vmi.vreg<64xf32>, %b: !pto.vmi.vreg<64xf32>, %dst: !pto.ptr<bf16, ub>, %other: !pto.ptr<bf16, ub>) {
+    %zero = arith.constant 0 : index
+    %next = arith.constant 64 : index
+    %active = arith.constant 64 : index
+    %mask = pto.vmi.create_mask %active : index -> !pto.vmi.mask<64xpred>
+    %lo, %hi = pto.vmi.vintlv %a, %b, %mask : !pto.vmi.vreg<64xf32>, !pto.vmi.vreg<64xf32>, !pto.vmi.mask<64xpred> -> !pto.vmi.vreg<64xf32>, !pto.vmi.vreg<64xf32>
+    %x = pto.vmi.truncf %lo {rounding = "R", saturate = "SAT"} : !pto.vmi.vreg<64xf32> -> !pto.vmi.vreg<64xbf16>
+    %y = pto.vmi.truncf %hi {rounding = "R", saturate = "SAT"} : !pto.vmi.vreg<64xf32> -> !pto.vmi.vreg<64xbf16>
+    pto.vmi.store %x, %dst[%zero] : !pto.vmi.vreg<64xbf16>, !pto.ptr<bf16, ub>
+    pto.vmi.store %y, %dst[%next] : !pto.vmi.vreg<64xbf16>, !pto.ptr<bf16, ub>
+    return
+  }
+  func.func @pack256(%a: !pto.vmi.vreg<128xf32>, %b: !pto.vmi.vreg<128xf32>, %dst: !pto.ptr<bf16, ub>, %other: !pto.ptr<bf16, ub>) {
+    %zero = arith.constant 0 : index
+    %next = arith.constant 128 : index
+    %active = arith.constant 128 : index
+    %mask = pto.vmi.create_mask %active : index -> !pto.vmi.mask<128xpred>
+    %lo, %hi = pto.vmi.vintlv %a, %b, %mask : !pto.vmi.vreg<128xf32>, !pto.vmi.vreg<128xf32>, !pto.vmi.mask<128xpred> -> !pto.vmi.vreg<128xf32>, !pto.vmi.vreg<128xf32>
+    %x = pto.vmi.truncf %lo {rounding = "R", saturate = "SAT"} : !pto.vmi.vreg<128xf32> -> !pto.vmi.vreg<128xbf16>
+    %y = pto.vmi.truncf %hi {rounding = "R", saturate = "SAT"} : !pto.vmi.vreg<128xf32> -> !pto.vmi.vreg<128xbf16>
+    pto.vmi.store %x, %dst[%zero] : !pto.vmi.vreg<128xbf16>, !pto.ptr<bf16, ub>
+    pto.vmi.store %y, %dst[%next] : !pto.vmi.vreg<128xbf16>, !pto.ptr<bf16, ub>
+    return
+  }
+  func.func @partial_mask(%a: !pto.vmi.vreg<64xf32>, %b: !pto.vmi.vreg<64xf32>, %dst: !pto.ptr<bf16, ub>, %other: !pto.ptr<bf16, ub>) {
+    %zero = arith.constant 0 : index
+    %next = arith.constant 64 : index
+    %active = arith.constant 63 : index
+    %mask = pto.vmi.create_mask %active : index -> !pto.vmi.mask<64xpred>
+    %lo, %hi = pto.vmi.vintlv %a, %b, %mask : !pto.vmi.vreg<64xf32>, !pto.vmi.vreg<64xf32>, !pto.vmi.mask<64xpred> -> !pto.vmi.vreg<64xf32>, !pto.vmi.vreg<64xf32>
+    %x = pto.vmi.truncf %lo {rounding = "R", saturate = "SAT"} : !pto.vmi.vreg<64xf32> -> !pto.vmi.vreg<64xbf16>
+    %y = pto.vmi.truncf %hi {rounding = "R", saturate = "SAT"} : !pto.vmi.vreg<64xf32> -> !pto.vmi.vreg<64xbf16>
+    pto.vmi.store %x, %dst[%zero] : !pto.vmi.vreg<64xbf16>, !pto.ptr<bf16, ub>
+    pto.vmi.store %y, %dst[%next] : !pto.vmi.vreg<64xbf16>, !pto.ptr<bf16, ub>
+    return
+  }
+  func.func @gap(%a: !pto.vmi.vreg<64xf32>, %b: !pto.vmi.vreg<64xf32>, %dst: !pto.ptr<bf16, ub>, %other: !pto.ptr<bf16, ub>) {
+    %zero = arith.constant 0 : index
+    %next = arith.constant 65 : index
+    %active = arith.constant 64 : index
+    %mask = pto.vmi.create_mask %active : index -> !pto.vmi.mask<64xpred>
+    %lo, %hi = pto.vmi.vintlv %a, %b, %mask : !pto.vmi.vreg<64xf32>, !pto.vmi.vreg<64xf32>, !pto.vmi.mask<64xpred> -> !pto.vmi.vreg<64xf32>, !pto.vmi.vreg<64xf32>
+    %x = pto.vmi.truncf %lo {rounding = "R", saturate = "SAT"} : !pto.vmi.vreg<64xf32> -> !pto.vmi.vreg<64xbf16>
+    %y = pto.vmi.truncf %hi {rounding = "R", saturate = "SAT"} : !pto.vmi.vreg<64xf32> -> !pto.vmi.vreg<64xbf16>
+    pto.vmi.store %x, %dst[%zero] : !pto.vmi.vreg<64xbf16>, !pto.ptr<bf16, ub>
+    pto.vmi.store %y, %dst[%next] : !pto.vmi.vreg<64xbf16>, !pto.ptr<bf16, ub>
+    return
+  }
+  func.func @memory_between(%a: !pto.vmi.vreg<64xf32>, %b: !pto.vmi.vreg<64xf32>, %dst: !pto.ptr<bf16, ub>, %other: !pto.ptr<bf16, ub>) {
+    %zero = arith.constant 0 : index
+    %next = arith.constant 64 : index
+    %active = arith.constant 64 : index
+    %mask = pto.vmi.create_mask %active : index -> !pto.vmi.mask<64xpred>
+    %lo, %hi = pto.vmi.vintlv %a, %b, %mask : !pto.vmi.vreg<64xf32>, !pto.vmi.vreg<64xf32>, !pto.vmi.mask<64xpred> -> !pto.vmi.vreg<64xf32>, !pto.vmi.vreg<64xf32>
+    %x = pto.vmi.truncf %lo {rounding = "R", saturate = "SAT"} : !pto.vmi.vreg<64xf32> -> !pto.vmi.vreg<64xbf16>
+    %y = pto.vmi.truncf %hi {rounding = "R", saturate = "SAT"} : !pto.vmi.vreg<64xf32> -> !pto.vmi.vreg<64xbf16>
+    pto.vmi.store %x, %dst[%zero] : !pto.vmi.vreg<64xbf16>, !pto.ptr<bf16, ub>
+    %read = pto.vmi.load %dst[%zero] : !pto.ptr<bf16, ub> -> !pto.vmi.vreg<64xbf16>
+    pto.vmi.store %read, %other[%zero] : !pto.vmi.vreg<64xbf16>, !pto.ptr<bf16, ub>
+    pto.vmi.store %y, %dst[%next] : !pto.vmi.vreg<64xbf16>, !pto.ptr<bf16, ub>
+    return
+  }
+  func.func @extra_user(%a: !pto.vmi.vreg<64xf32>, %b: !pto.vmi.vreg<64xf32>, %dst: !pto.ptr<bf16, ub>, %other: !pto.ptr<f32, ub>) {
+    %zero = arith.constant 0 : index
+    %next = arith.constant 64 : index
+    %active = arith.constant 64 : index
+    %mask = pto.vmi.create_mask %active : index -> !pto.vmi.mask<64xpred>
+    %lo, %hi = pto.vmi.vintlv %a, %b, %mask : !pto.vmi.vreg<64xf32>, !pto.vmi.vreg<64xf32>, !pto.vmi.mask<64xpred> -> !pto.vmi.vreg<64xf32>, !pto.vmi.vreg<64xf32>
+    pto.vmi.store %lo, %other[%zero] : !pto.vmi.vreg<64xf32>, !pto.ptr<f32, ub>
+    %x = pto.vmi.truncf %lo {rounding = "R", saturate = "SAT"} : !pto.vmi.vreg<64xf32> -> !pto.vmi.vreg<64xbf16>
+    %y = pto.vmi.truncf %hi {rounding = "R", saturate = "SAT"} : !pto.vmi.vreg<64xf32> -> !pto.vmi.vreg<64xbf16>
+    pto.vmi.store %x, %dst[%zero] : !pto.vmi.vreg<64xbf16>, !pto.ptr<bf16, ub>
+    pto.vmi.store %y, %dst[%next] : !pto.vmi.vreg<64xbf16>, !pto.ptr<bf16, ub>
+    return
+  }
+  func.func @different_rounding(%a: !pto.vmi.vreg<64xf32>, %b: !pto.vmi.vreg<64xf32>, %dst: !pto.ptr<bf16, ub>, %other: !pto.ptr<bf16, ub>) {
+    %zero = arith.constant 0 : index
+    %next = arith.constant 64 : index
+    %active = arith.constant 64 : index
+    %mask = pto.vmi.create_mask %active : index -> !pto.vmi.mask<64xpred>
+    %lo, %hi = pto.vmi.vintlv %a, %b, %mask : !pto.vmi.vreg<64xf32>, !pto.vmi.vreg<64xf32>, !pto.vmi.mask<64xpred> -> !pto.vmi.vreg<64xf32>, !pto.vmi.vreg<64xf32>
+    %x = pto.vmi.truncf %lo {rounding = "R", saturate = "SAT"} : !pto.vmi.vreg<64xf32> -> !pto.vmi.vreg<64xbf16>
+    %y = pto.vmi.truncf %hi {rounding = "Z", saturate = "SAT"} : !pto.vmi.vreg<64xf32> -> !pto.vmi.vreg<64xbf16>
+    pto.vmi.store %x, %dst[%zero] : !pto.vmi.vreg<64xbf16>, !pto.ptr<bf16, ub>
+    pto.vmi.store %y, %dst[%next] : !pto.vmi.vreg<64xbf16>, !pto.ptr<bf16, ub>
+    return
+  }
+  func.func @dynamic_bounded(%a: !pto.vmi.vreg<64xf32>, %b: !pto.vmi.vreg<64xf32>, %dst: !pto.ptr<bf16, ub>) {
+    %zero = arith.constant 0 : index
+    %end = arith.constant 16 : index
+    %step = arith.constant 1 : index
+    %active = arith.constant 64 : index
+    %delta = arith.constant 64 : i32
+    %mask = pto.vmi.create_mask %active : index -> !pto.vmi.mask<64xpred>
+    scf.for %i = %zero to %end step %step {
+      %index = arith.index_cast %i : index to i32
+      %next = arith.addi %index, %delta : i32
+      %off0 = arith.index_cast %index : i32 to index
+      %off1 = arith.index_cast %next : i32 to index
+      %ptr0 = pto.addptr %dst, %off0 : <bf16, ub>, index -> <bf16, ub>
+      %ptr1 = pto.addptr %dst, %off1 : <bf16, ub>, index -> <bf16, ub>
+      %lo, %hi = pto.vmi.vintlv %a, %b, %mask : !pto.vmi.vreg<64xf32>, !pto.vmi.vreg<64xf32>, !pto.vmi.mask<64xpred> -> !pto.vmi.vreg<64xf32>, !pto.vmi.vreg<64xf32>
+      %x = pto.vmi.truncf %lo {saturate = "SAT"} : !pto.vmi.vreg<64xf32> -> !pto.vmi.vreg<64xbf16>
+      %y = pto.vmi.truncf %hi {saturate = "SAT"} : !pto.vmi.vreg<64xf32> -> !pto.vmi.vreg<64xbf16>
+      pto.vmi.store %x, %ptr0[%zero] : !pto.vmi.vreg<64xbf16>, !pto.ptr<bf16, ub>
+      pto.vmi.store %y, %ptr1[%zero] : !pto.vmi.vreg<64xbf16>, !pto.ptr<bf16, ub>
+    }
+    return
+  }
+  func.func @dynamic_unbounded(%a: !pto.vmi.vreg<64xf32>, %b: !pto.vmi.vreg<64xf32>, %dst: !pto.ptr<bf16, ub>, %unknown: i32) {
+    %zero = arith.constant 0 : index
+    %end = arith.constant 16 : index
+    %step = arith.constant 1 : index
+    %active = arith.constant 64 : index
+    %delta = arith.constant 64 : i32
+    %mask = pto.vmi.create_mask %active : index -> !pto.vmi.mask<64xpred>
+    scf.for %i = %zero to %end step %step {
+      %index = arith.index_cast %i : index to i32
+      %next = arith.addi %unknown, %delta : i32
+      %off0 = arith.index_cast %unknown : i32 to index
+      %off1 = arith.index_cast %next : i32 to index
+      %ptr0 = pto.addptr %dst, %off0 : <bf16, ub>, index -> <bf16, ub>
+      %ptr1 = pto.addptr %dst, %off1 : <bf16, ub>, index -> <bf16, ub>
+      %lo, %hi = pto.vmi.vintlv %a, %b, %mask : !pto.vmi.vreg<64xf32>, !pto.vmi.vreg<64xf32>, !pto.vmi.mask<64xpred> -> !pto.vmi.vreg<64xf32>, !pto.vmi.vreg<64xf32>
+      %x = pto.vmi.truncf %lo {saturate = "SAT"} : !pto.vmi.vreg<64xf32> -> !pto.vmi.vreg<64xbf16>
+      %y = pto.vmi.truncf %hi {saturate = "SAT"} : !pto.vmi.vreg<64xf32> -> !pto.vmi.vreg<64xbf16>
+      pto.vmi.store %x, %ptr0[%zero] : !pto.vmi.vreg<64xbf16>, !pto.ptr<bf16, ub>
+      pto.vmi.store %y, %ptr1[%zero] : !pto.vmi.vreg<64xbf16>, !pto.ptr<bf16, ub>
+    }
+    return
+  }
+  func.func @dynamic_wrap(%a: !pto.vmi.vreg<64xf32>, %b: !pto.vmi.vreg<64xf32>, %dst: !pto.ptr<bf16, ub>) {
+    %zero = arith.constant 0 : index
+    %end = arith.constant 16 : index
+    %step = arith.constant 1 : index
+    %active = arith.constant 64 : index
+    %delta = arith.constant 2147483647 : i32
+    %mask = pto.vmi.create_mask %active : index -> !pto.vmi.mask<64xpred>
+    scf.for %i = %zero to %end step %step {
+      %index = arith.index_cast %i : index to i32
+      %next = arith.addi %index, %delta : i32
+      %off0 = arith.index_cast %index : i32 to index
+      %off1 = arith.index_cast %next : i32 to index
+      %ptr0 = pto.addptr %dst, %off0 : <bf16, ub>, index -> <bf16, ub>
+      %ptr1 = pto.addptr %dst, %off1 : <bf16, ub>, index -> <bf16, ub>
+      %lo, %hi = pto.vmi.vintlv %a, %b, %mask : !pto.vmi.vreg<64xf32>, !pto.vmi.vreg<64xf32>, !pto.vmi.mask<64xpred> -> !pto.vmi.vreg<64xf32>, !pto.vmi.vreg<64xf32>
+      %x = pto.vmi.truncf %lo {saturate = "SAT"} : !pto.vmi.vreg<64xf32> -> !pto.vmi.vreg<64xbf16>
+      %y = pto.vmi.truncf %hi {saturate = "SAT"} : !pto.vmi.vreg<64xf32> -> !pto.vmi.vreg<64xbf16>
+      pto.vmi.store %x, %ptr0[%zero] : !pto.vmi.vreg<64xbf16>, !pto.ptr<bf16, ub>
+      pto.vmi.store %y, %ptr1[%zero] : !pto.vmi.vreg<64xbf16>, !pto.ptr<bf16, ub>
+    }
+    return
+  }
+  func.func @explicit_layout(%a: !pto.vmi.vreg<64xf32, #pto.vmi.layout<contiguous>>, %b: !pto.vmi.vreg<64xf32, #pto.vmi.layout<contiguous>>, %dst: !pto.ptr<bf16, ub>, %other: !pto.ptr<bf16, ub>) {
+    %zero = arith.constant 0 : index
+    %next = arith.constant 64 : index
+    %active = arith.constant 64 : index
+    %mask = pto.vmi.create_mask %active : index -> !pto.vmi.mask<64xb32, #pto.vmi.layout<contiguous>>
+    %lo, %hi = pto.vmi.vintlv %a, %b, %mask : !pto.vmi.vreg<64xf32, #pto.vmi.layout<contiguous>>, !pto.vmi.vreg<64xf32, #pto.vmi.layout<contiguous>>, !pto.vmi.mask<64xb32, #pto.vmi.layout<contiguous>> -> !pto.vmi.vreg<64xf32, #pto.vmi.layout<contiguous>>, !pto.vmi.vreg<64xf32, #pto.vmi.layout<contiguous>>
+    %x = pto.vmi.truncf %lo {rounding = "Z", saturate = "NOSAT"} : !pto.vmi.vreg<64xf32, #pto.vmi.layout<contiguous>> -> !pto.vmi.vreg<64xbf16, #pto.vmi.layout<contiguous>>
+    %y = pto.vmi.truncf %hi {rounding = "Z", saturate = "NOSAT"} : !pto.vmi.vreg<64xf32, #pto.vmi.layout<contiguous>> -> !pto.vmi.vreg<64xbf16, #pto.vmi.layout<contiguous>>
+    pto.vmi.store %x, %dst[%zero] : !pto.vmi.vreg<64xbf16, #pto.vmi.layout<contiguous>>, !pto.ptr<bf16, ub>
+    pto.vmi.store %y, %dst[%next] : !pto.vmi.vreg<64xbf16, #pto.vmi.layout<contiguous>>, !pto.ptr<bf16, ub>
+    return
+  }
+}
+
+// CHECK-LABEL: func.func @pack128
+// CHECK: pto.vmi.channel_merge
+// CHECK: pto.vmi.truncf {{.*}} : !pto.vmi.vreg<128xf32> -> !pto.vmi.vreg<128xbf16>
+// CHECK: pto.vmi.store
+// CHECK-NOT: pto.vmi.store
+// CHECK: return
+// CHECK-LABEL: func.func @pack256
+// CHECK: pto.vmi.channel_merge
+// CHECK: pto.vmi.truncf {{.*}} : !pto.vmi.vreg<256xf32> -> !pto.vmi.vreg<256xbf16>
+// CHECK: pto.vmi.store
+// CHECK-NOT: pto.vmi.store
+// CHECK: return
+// CHECK-LABEL: func.func @partial_mask
+// CHECK-NOT: pto.vmi.channel_merge
+// CHECK: pto.vmi.vintlv
+// CHECK: return
+// CHECK-LABEL: func.func @gap
+// CHECK-NOT: pto.vmi.channel_merge
+// CHECK: pto.vmi.vintlv
+// CHECK: return
+// CHECK-LABEL: func.func @memory_between
+// CHECK-NOT: pto.vmi.channel_merge
+// CHECK: pto.vmi.vintlv
+// CHECK: return
+// CHECK-LABEL: func.func @extra_user
+// CHECK-NOT: pto.vmi.channel_merge
+// CHECK: pto.vmi.vintlv
+// CHECK: return
+// CHECK-LABEL: func.func @different_rounding
+// CHECK-NOT: pto.vmi.channel_merge
+// CHECK: pto.vmi.vintlv
+// CHECK: return
+// CHECK-LABEL: func.func @dynamic_bounded
+// CHECK: pto.vmi.channel_merge
+// CHECK-NOT: pto.vmi.vintlv
+// CHECK: return
+// CHECK-LABEL: func.func @dynamic_unbounded
+// CHECK-NOT: pto.vmi.channel_merge
+// CHECK: pto.vmi.vintlv
+// CHECK: return
+// CHECK-LABEL: func.func @dynamic_wrap
+// CHECK-NOT: pto.vmi.channel_merge
+// CHECK: pto.vmi.vintlv
+// CHECK: return
+// CHECK-LABEL: func.func @explicit_layout
+// CHECK-NOT: pto.vmi.channel_merge
+// CHECK: pto.vmi.vintlv
+// CHECK: return
+// LOWER-LABEL: func.func @pack128
+// LOWER-NOT: pto.vintlv
+// LOWER: pto.vcvt {{.*}}part = "EVEN"
+// LOWER: pto.vcvt {{.*}}part = "ODD"
+// LOWER: pto.vor
+// LOWER: pto.vsts
+// LOWER-NOT: pto.vsts
+// LOWER: return
+// LOWER-LABEL: func.func @pack256
+// LOWER-NOT: pto.vintlv
+// LOWER: pto.vcvt
+// LOWER: pto.vsts
+// LOWER: return

@@ -1,0 +1,57 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+
+// RUN: pto-test-opt %s -pto-validate-vmi-layout-ir -vmi-to-vpto | FileCheck %s
+// RUN: pto-test-opt %s -vmi-layout-assignment -pto-validate-vmi-layout-ir -vmi-to-vpto | FileCheck %s --check-prefix=PLAN
+
+module {
+  func.func @split128_c(%src: !pto.vmi.vreg<128xbf16, #pto.vmi.layout<contiguous>>) -> (!pto.vmi.vreg<64xf32, #pto.vmi.layout<contiguous>>, !pto.vmi.vreg<64xf32, #pto.vmi.layout<contiguous>>) {
+    %a, %b = pto.vmi.deinterleave_extf %src : !pto.vmi.vreg<128xbf16, #pto.vmi.layout<contiguous>> -> !pto.vmi.vreg<64xf32, #pto.vmi.layout<contiguous>>, !pto.vmi.vreg<64xf32, #pto.vmi.layout<contiguous>>
+    return %a, %b : !pto.vmi.vreg<64xf32, #pto.vmi.layout<contiguous>>, !pto.vmi.vreg<64xf32, #pto.vmi.layout<contiguous>>
+  }
+  func.func @split128_d2(%src: !pto.vmi.vreg<128xbf16, #pto.vmi.layout<deinterleaved = 2>>) -> (!pto.vmi.vreg<64xf32, #pto.vmi.layout<contiguous>>, !pto.vmi.vreg<64xf32, #pto.vmi.layout<contiguous>>) {
+    %a, %b = pto.vmi.deinterleave_extf %src : !pto.vmi.vreg<128xbf16, #pto.vmi.layout<deinterleaved = 2>> -> !pto.vmi.vreg<64xf32, #pto.vmi.layout<contiguous>>, !pto.vmi.vreg<64xf32, #pto.vmi.layout<contiguous>>
+    return %a, %b : !pto.vmi.vreg<64xf32, #pto.vmi.layout<contiguous>>, !pto.vmi.vreg<64xf32, #pto.vmi.layout<contiguous>>
+  }
+  func.func @split256_c(%src: !pto.vmi.vreg<256xbf16, #pto.vmi.layout<contiguous>>) -> (!pto.vmi.vreg<128xf32, #pto.vmi.layout<contiguous>>, !pto.vmi.vreg<128xf32, #pto.vmi.layout<contiguous>>) {
+    %a, %b = pto.vmi.deinterleave_extf %src : !pto.vmi.vreg<256xbf16, #pto.vmi.layout<contiguous>> -> !pto.vmi.vreg<128xf32, #pto.vmi.layout<contiguous>>, !pto.vmi.vreg<128xf32, #pto.vmi.layout<contiguous>>
+    return %a, %b : !pto.vmi.vreg<128xf32, #pto.vmi.layout<contiguous>>, !pto.vmi.vreg<128xf32, #pto.vmi.layout<contiguous>>
+  }
+  func.func @split256_d2(%src: !pto.vmi.vreg<256xbf16, #pto.vmi.layout<deinterleaved = 2>>) -> (!pto.vmi.vreg<128xf32, #pto.vmi.layout<contiguous>>, !pto.vmi.vreg<128xf32, #pto.vmi.layout<contiguous>>) {
+    %a, %b = pto.vmi.deinterleave_extf %src : !pto.vmi.vreg<256xbf16, #pto.vmi.layout<deinterleaved = 2>> -> !pto.vmi.vreg<128xf32, #pto.vmi.layout<contiguous>>, !pto.vmi.vreg<128xf32, #pto.vmi.layout<contiguous>>
+    return %a, %b : !pto.vmi.vreg<128xf32, #pto.vmi.layout<contiguous>>, !pto.vmi.vreg<128xf32, #pto.vmi.layout<contiguous>>
+  }
+}
+
+// CHECK-LABEL: func.func @split128_c
+// CHECK: pto.vcvt {{.*}} {part = "EVEN"}
+// CHECK: pto.vcvt {{.*}} {part = "ODD"}
+// CHECK-LABEL: func.func @split128_d2
+// CHECK-NOT: pto.vcvt
+// CHECK-COUNT-2: pto.vintlv
+// CHECK-LABEL: func.func @split256_c
+// CHECK-COUNT-2: pto.vcvt {{.*}} {part = "EVEN"}
+// CHECK-COUNT-2: pto.vcvt {{.*}} {part = "ODD"}
+// CHECK-LABEL: func.func @split256_d2
+// CHECK-NOT: pto.vcvt
+// CHECK-COUNT-2: pto.vintlv
+
+// The solver may convert an explicit d2 input to C when conversion + native
+// casts tie with separated widening. Verify that choice is lowerable as well.
+// PLAN-LABEL: func.func @split128_c
+// PLAN: pto.vcvt {{.*}} {part = "EVEN"}
+// PLAN: pto.vcvt {{.*}} {part = "ODD"}
+// PLAN-LABEL: func.func @split128_d2
+// PLAN: pto.vintlv
+// PLAN: pto.vcvt {{.*}} {part = "EVEN"}
+// PLAN: pto.vcvt {{.*}} {part = "ODD"}
+// PLAN-LABEL: func.func @split256_c
+// PLAN-COUNT-2: pto.vcvt {{.*}} {part = "EVEN"}
+// PLAN-COUNT-2: pto.vcvt {{.*}} {part = "ODD"}
+// PLAN-LABEL: func.func @split256_d2
+// PLAN-COUNT-2: pto.vintlv

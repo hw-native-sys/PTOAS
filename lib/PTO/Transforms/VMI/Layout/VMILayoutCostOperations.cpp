@@ -113,6 +113,7 @@ LogicalResult PlanGraphBuilder::buildRelation(const VMILayoutOpRelation& relatio
             [&](auto) { return buildReduce(relation); })
         .Case<VMIVintlvOp, VMIVdintlvOp>([&](auto) { return buildInterleave(relation); })
         .Case<VMIChannelSplitOp>([&](auto) { return buildChannelSplit(relation); })
+        .Case<VMIDeinterleaveExtfOp>([&](auto) { return buildDeinterleaveExtf(relation); })
         .Case<VMIChannelMergeOp>([&](auto) { return buildChannelMerge(relation); })
         .Case<VMIMaskedLoadOp>([&](auto) { return buildMaskedLoad(relation); })
         .Case<VMIGroupLoadOp, VMIGroupSlotLoadOp>([&](auto) { return buildGroupLoad(relation); })
@@ -663,6 +664,52 @@ LogicalResult PlanGraphBuilder::buildInterleave(const VMILayoutOpRelation& relat
     values[op->getResult(1)] = std::move(high);
     layouts[op->getResult(0)] = relation.ports[3].layout;
     layouts[op->getResult(1)] = relation.ports[4].layout;
+    return success();
+}
+
+LogicalResult PlanGraphBuilder::buildDeinterleaveExtf(const VMILayoutOpRelation& relation)
+{
+    Operation* op = relation.op;
+    bool invalidPorts = relation.ports.size() != 3;
+    if (invalidPorts) {
+        return failure();
+    }
+    auto facts = VMILayoutSupport().getDeinterleaveExtfLayoutFacts(cast<VMIDeinterleaveExtfOp>(op));
+    bool supported = llvm::any_of(facts, [&](const auto& fact) {
+        return fact.sourceLayout == relation.ports[0].layout &&
+            fact.resultLayout == relation.ports[1].layout && fact.resultLayout == relation.ports[2].layout;
+    });
+    if (!supported) {
+        return failure();
+    }
+    auto source = buildOperand(op->getOpOperand(0), relation.ports[0].layout);
+    auto arity = getArity(cast<VMIVRegType>(op->getResult(0).getType()), relation.ports[1].layout);
+    bool packed = relation.ports[0].layout.isContiguous();
+    bool invalidArity = failed(source) || failed(arity) || *arity <= 0 || *arity > 2 ||
+        source->size() != static_cast<size_t>(packed ? *arity : 2);
+    if (invalidArity) {
+        return failure();
+    }
+    Region* scope = getDynamicScope(op);
+    PhysicalValue zero;
+    if (!packed) {
+        zero = graph.addAction(PhysicalActionKind::Compute, scope, {}, "deinterleave_extf:zero")[0];
+    }
+    for (unsigned channel = 0; channel < 2; ++channel) {
+        PhysicalValues result;
+        if (packed) {
+            for (PhysicalValue input : *source) {
+                result.push_back(graph.addAction(PhysicalActionKind::Compute, scope, {input},
+                                                 channel == 0 ? "deinterleave_extf:EVEN" : "deinterleave_extf:ODD")[0]);
+            }
+        } else {
+            auto widened = graph.addAction(PhysicalActionKind::Interleave, scope, {zero, (*source)[channel]},
+                                           "deinterleave_extf:intlv", 2);
+            result.append(widened.begin(), widened.begin() + *arity);
+        }
+        values[op->getResult(channel)] = std::move(result);
+        layouts[op->getResult(channel)] = relation.ports[channel + 1].layout;
+    }
     return success();
 }
 

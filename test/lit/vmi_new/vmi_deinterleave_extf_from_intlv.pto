@@ -1,0 +1,215 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+
+// RUN: pto-test-opt %s -vmi-lower-unified-to-legacy -vmi-pre-assignment-combine | FileCheck %s --check-prefix=COMBINE
+// RUN: pto-test-opt %s -vmi-lower-unified-to-legacy -vmi-pre-assignment-combine -vmi-mask-granularity-assignment -vmi-layout-assignment -vmi-to-vpto | FileCheck %s --check-prefix=LOWER
+
+module {
+  // Two adjacent BF16 loads, their F32 extensions and the deinterleave are one
+  // packed widening conversion over the 2N-lane span the loads cover.
+  // COMBINE-LABEL: func.func @adjacent(
+  // COMBINE: %[[WIDE:.*]] = pto.vmi.load %{{.*}}[%{{.*}}] : !pto.ptr<bf16, ub> -> !pto.vmi.vreg<128xbf16>
+  // COMBINE-NEXT: %[[EVEN:.*]], %[[ODD:.*]] = pto.vmi.deinterleave_extf %[[WIDE]]
+  // COMBINE-NOT: pto.vmi.vdintlv
+  // COMBINE-NOT: pto.vmi.extf
+  func.func @adjacent(%src: !pto.ptr<bf16, ub>) -> (!pto.vmi.vreg<64xf32>, !pto.vmi.vreg<64xf32>) {
+    %c0 = arith.constant 0 : index
+    %c64 = arith.constant 64 : index
+    %mask = pto.vmi.create_mask %c64 : index -> !pto.vmi.mask<64xpred>
+    %first = pto.vmi.vload %src[%c0] : !pto.ptr<bf16, ub> -> !pto.vmi.vreg<64xbf16>
+    %second = pto.vmi.vload %src[%c64] : !pto.ptr<bf16, ub> -> !pto.vmi.vreg<64xbf16>
+    %even = pto.vmi.vcvt %first : !pto.vmi.vreg<64xbf16> -> !pto.vmi.vreg<64xf32>
+    %odd = pto.vmi.vcvt %second : !pto.vmi.vreg<64xbf16> -> !pto.vmi.vreg<64xf32>
+    %low, %high = pto.vmi.vdintlv %even, %odd, %mask
+        : !pto.vmi.vreg<64xf32>, !pto.vmi.vreg<64xf32>, !pto.vmi.mask<64xpred>
+       -> !pto.vmi.vreg<64xf32>, !pto.vmi.vreg<64xf32>
+    return %low, %high : !pto.vmi.vreg<64xf32>, !pto.vmi.vreg<64xf32>
+  }
+
+  // A gap between the two loads keeps the original deinterleave.
+  // COMBINE-LABEL: func.func @gap(
+  // COMBINE: pto.vmi.load
+  // COMBINE: pto.vmi.load
+  // COMBINE: pto.vmi.vdintlv
+  func.func @gap(%src: !pto.ptr<bf16, ub>) -> (!pto.vmi.vreg<64xf32>, !pto.vmi.vreg<64xf32>) {
+    %c0 = arith.constant 0 : index
+    %c64 = arith.constant 64 : index
+    %c128 = arith.constant 128 : index
+    %mask = pto.vmi.create_mask %c64 : index -> !pto.vmi.mask<64xpred>
+    %first = pto.vmi.vload %src[%c0] : !pto.ptr<bf16, ub> -> !pto.vmi.vreg<64xbf16>
+    %second = pto.vmi.vload %src[%c128] : !pto.ptr<bf16, ub> -> !pto.vmi.vreg<64xbf16>
+    %even = pto.vmi.vcvt %first : !pto.vmi.vreg<64xbf16> -> !pto.vmi.vreg<64xf32>
+    %odd = pto.vmi.vcvt %second : !pto.vmi.vreg<64xbf16> -> !pto.vmi.vreg<64xf32>
+    %low, %high = pto.vmi.vdintlv %even, %odd, %mask
+        : !pto.vmi.vreg<64xf32>, !pto.vmi.vreg<64xf32>, !pto.vmi.mask<64xpred>
+       -> !pto.vmi.vreg<64xf32>, !pto.vmi.vreg<64xf32>
+    return %low, %high : !pto.vmi.vreg<64xf32>, !pto.vmi.vreg<64xf32>
+  }
+  // A predicated extension cannot be folded: the fused conversion carries no
+  // mask, so the inactive lanes would stop being zeroed.
+  // COMBINE-LABEL: func.func @masked_extension(
+  // COMBINE: pto.vmi.load
+  // COMBINE: pto.vmi.load
+  // COMBINE: pto.vmi.extf %{{.*}}, %{{.*}}
+  // COMBINE: pto.vmi.vdintlv
+  // COMBINE-NOT: pto.vmi.deinterleave_extf
+  func.func @masked_extension(%src: !pto.ptr<bf16, ub>) -> (!pto.vmi.vreg<64xf32>, !pto.vmi.vreg<64xf32>) {
+    %c0 = arith.constant 0 : index
+    %c64 = arith.constant 64 : index
+    %c32 = arith.constant 32 : index
+    %mask = pto.vmi.create_mask %c64 : index -> !pto.vmi.mask<64xpred>
+    %half = pto.vmi.create_mask %c32 : index -> !pto.vmi.mask<64xpred>
+    %first = pto.vmi.vload %src[%c0] : !pto.ptr<bf16, ub> -> !pto.vmi.vreg<64xbf16>
+    %second = pto.vmi.vload %src[%c64] : !pto.ptr<bf16, ub> -> !pto.vmi.vreg<64xbf16>
+    %even = pto.vmi.vcvt %first, %half {pmode = "zero"} : !pto.vmi.vreg<64xbf16>, !pto.vmi.mask<64xpred> -> !pto.vmi.vreg<64xf32>
+    %odd = pto.vmi.vcvt %second, %half {pmode = "zero"} : !pto.vmi.vreg<64xbf16>, !pto.vmi.mask<64xpred> -> !pto.vmi.vreg<64xf32>
+    %low, %high = pto.vmi.vdintlv %even, %odd, %mask
+        : !pto.vmi.vreg<64xf32>, !pto.vmi.vreg<64xf32>, !pto.vmi.mask<64xpred>
+       -> !pto.vmi.vreg<64xf32>, !pto.vmi.vreg<64xf32>
+    return %low, %high : !pto.vmi.vreg<64xf32>, !pto.vmi.vreg<64xf32>
+  }
+
+  // A write between the second load and the deinterleave must not move the wide
+  // read after it.
+  // COMBINE-LABEL: func.func @store_between(
+  // COMBINE: %[[WIDE:.*]] = pto.vmi.load %{{.*}}[%{{.*}}] : !pto.ptr<bf16, ub> -> !pto.vmi.vreg<128xbf16>
+  // COMBINE-NEXT: pto.vmi.store
+  // COMBINE-NEXT: %{{.*}}, %{{.*}} = pto.vmi.deinterleave_extf %[[WIDE]]
+  func.func @store_between(%src: !pto.ptr<bf16, ub>, %value: !pto.vmi.vreg<64xbf16>)
+      -> (!pto.vmi.vreg<64xf32>, !pto.vmi.vreg<64xf32>) {
+    %c0 = arith.constant 0 : index
+    %c64 = arith.constant 64 : index
+    %mask = pto.vmi.create_mask %c64 : index -> !pto.vmi.mask<64xpred>
+    %first = pto.vmi.vload %src[%c0] : !pto.ptr<bf16, ub> -> !pto.vmi.vreg<64xbf16>
+    %second = pto.vmi.vload %src[%c64] : !pto.ptr<bf16, ub> -> !pto.vmi.vreg<64xbf16>
+    pto.vmi.vstore %value, %src[%c0] : !pto.vmi.vreg<64xbf16>, !pto.ptr<bf16, ub>
+    %even = pto.vmi.vcvt %first : !pto.vmi.vreg<64xbf16> -> !pto.vmi.vreg<64xf32>
+    %odd = pto.vmi.vcvt %second : !pto.vmi.vreg<64xbf16> -> !pto.vmi.vreg<64xf32>
+    %low, %high = pto.vmi.vdintlv %even, %odd, %mask
+        : !pto.vmi.vreg<64xf32>, !pto.vmi.vreg<64xf32>, !pto.vmi.mask<64xpred>
+       -> !pto.vmi.vreg<64xf32>, !pto.vmi.vreg<64xf32>
+    return %low, %high : !pto.vmi.vreg<64xf32>, !pto.vmi.vreg<64xf32>
+  }
+  // The DSL emits `pto.constant`, not `arith.constant`; the adjacency and
+  // all-active-mask proofs must look through that carrier too.
+  // COMBINE-LABEL: func.func @dsl_constants(
+  // COMBINE: %[[WIDE:.*]] = pto.vmi.load %{{.*}}[%{{.*}}] : !pto.ptr<bf16, ub> -> !pto.vmi.vreg<128xbf16>
+  // COMBINE-NEXT: %{{.*}}, %{{.*}} = pto.vmi.deinterleave_extf %[[WIDE]]
+  // COMBINE-NOT: pto.vmi.vdintlv
+  func.func @dsl_constants(%src: !pto.ptr<bf16, ub>) -> (!pto.vmi.vreg<64xf32>, !pto.vmi.vreg<64xf32>) {
+    %c0 = pto.constant 0 : index
+    %c64 = pto.constant 64 : index
+    %mask = pto.vmi.create_mask %c64 : index -> !pto.vmi.mask<64xpred>
+    %first = pto.vmi.vload %src[%c0] : !pto.ptr<bf16, ub> -> !pto.vmi.vreg<64xbf16>
+    %second = pto.vmi.vload %src[%c64] : !pto.ptr<bf16, ub> -> !pto.vmi.vreg<64xbf16>
+    %even = pto.vmi.vcvt %first : !pto.vmi.vreg<64xbf16> -> !pto.vmi.vreg<64xf32>
+    %odd = pto.vmi.vcvt %second : !pto.vmi.vreg<64xbf16> -> !pto.vmi.vreg<64xf32>
+    %low, %high = pto.vmi.vdintlv %even, %odd, %mask
+        : !pto.vmi.vreg<64xf32>, !pto.vmi.vreg<64xf32>, !pto.vmi.mask<64xpred>
+       -> !pto.vmi.vreg<64xf32>, !pto.vmi.vreg<64xf32>
+    return %low, %high : !pto.vmi.vreg<64xf32>, !pto.vmi.vreg<64xf32>
+  }
+  // Kernel offsets are `index_cast` of runtime `i32` arithmetic, so adjacency has
+  // to be proven against the shared base value, not against literal constants.
+  // COMBINE-LABEL: func.func @dynamic_offsets(
+  // COMBINE: %[[WIDE:.*]] = pto.vmi.load %{{.*}}[%{{.*}}] : !pto.ptr<bf16, ub> -> !pto.vmi.vreg<128xbf16>
+  // COMBINE-NEXT: %{{.*}}, %{{.*}} = pto.vmi.deinterleave_extf %[[WIDE]]
+  // COMBINE-NOT: pto.vmi.vdintlv
+  func.func @dynamic_offsets(%src: !pto.ptr<bf16, ub>, %row: i32)
+      -> (!pto.vmi.vreg<64xf32>, !pto.vmi.vreg<64xf32>) {
+    %c64 = pto.constant 64 : i32
+    %c128 = pto.constant 128 : i32
+    %c64i = pto.constant 64 : index
+    %mask = pto.vmi.create_mask %c64i : index -> !pto.vmi.mask<64xpred>
+    %base32 = pto.muli %row, %c128 : i32
+    %base = pto.index_cast %base32 signed : i32 -> index
+    %second32 = pto.addi %base32, %c64 : i32
+    %second = pto.index_cast %second32 signed : i32 -> index
+    %first = pto.vmi.vload %src[%base] : !pto.ptr<bf16, ub> -> !pto.vmi.vreg<64xbf16>
+    %next = pto.vmi.vload %src[%second] : !pto.ptr<bf16, ub> -> !pto.vmi.vreg<64xbf16>
+    %even = pto.vmi.vcvt %first : !pto.vmi.vreg<64xbf16> -> !pto.vmi.vreg<64xf32>
+    %odd = pto.vmi.vcvt %next : !pto.vmi.vreg<64xbf16> -> !pto.vmi.vreg<64xf32>
+    %low, %high = pto.vmi.vdintlv %even, %odd, %mask
+        : !pto.vmi.vreg<64xf32>, !pto.vmi.vreg<64xf32>, !pto.vmi.mask<64xpred>
+       -> !pto.vmi.vreg<64xf32>, !pto.vmi.vreg<64xf32>
+    return %low, %high : !pto.vmi.vreg<64xf32>, !pto.vmi.vreg<64xf32>
+  }
+  // A partially active deinterleave mask cannot be dropped.
+  // COMBINE-LABEL: func.func @half_active_mask(
+  // COMBINE: pto.vmi.create_mask %{{.*}} : index -> !pto.vmi.mask<64xpred>
+  // COMBINE: pto.vmi.vdintlv
+  // COMBINE-NOT: pto.vmi.deinterleave_extf
+  // COMBINE-NOT: pto.vmi.deinterleave_load
+  func.func @half_active_mask(%src: !pto.ptr<bf16, ub>) -> (!pto.vmi.vreg<64xf32>, !pto.vmi.vreg<64xf32>) {
+    %c0 = arith.constant 0 : index
+    %c32 = arith.constant 32 : index
+    %c64 = arith.constant 64 : index
+    %mask = pto.vmi.create_mask %c32 : index -> !pto.vmi.mask<64xpred>
+    %first = pto.vmi.vload %src[%c0] : !pto.ptr<bf16, ub> -> !pto.vmi.vreg<64xbf16>
+    %second = pto.vmi.vload %src[%c64] : !pto.ptr<bf16, ub> -> !pto.vmi.vreg<64xbf16>
+    %even = pto.vmi.vcvt %first : !pto.vmi.vreg<64xbf16> -> !pto.vmi.vreg<64xf32>
+    %odd = pto.vmi.vcvt %second : !pto.vmi.vreg<64xbf16> -> !pto.vmi.vreg<64xf32>
+    %low, %high = pto.vmi.vdintlv %even, %odd, %mask
+        : !pto.vmi.vreg<64xf32>, !pto.vmi.vreg<64xf32>, !pto.vmi.mask<64xpred>
+       -> !pto.vmi.vreg<64xf32>, !pto.vmi.vreg<64xf32>
+    return %low, %high : !pto.vmi.vreg<64xf32>, !pto.vmi.vreg<64xf32>
+  }
+
+  // Reads that only cover part of a physical chunk keep the plain deinterleave.
+  // COMBINE-LABEL: func.func @partial_chunk(
+  // COMBINE: pto.vmi.vdintlv
+  // COMBINE-NOT: pto.vmi.deinterleave_extf
+  // COMBINE-NOT: pto.vmi.deinterleave_load
+  func.func @partial_chunk(%src: !pto.ptr<bf16, ub>) -> (!pto.vmi.vreg<8xf32>, !pto.vmi.vreg<8xf32>) {
+    %c0 = arith.constant 0 : index
+    %c8 = arith.constant 8 : index
+    %mask = pto.vmi.create_mask %c8 : index -> !pto.vmi.mask<8xpred>
+    %first = pto.vmi.vload %src[%c0] : !pto.ptr<bf16, ub> -> !pto.vmi.vreg<8xbf16>
+    %second = pto.vmi.vload %src[%c8] : !pto.ptr<bf16, ub> -> !pto.vmi.vreg<8xbf16>
+    %even = pto.vmi.vcvt %first : !pto.vmi.vreg<8xbf16> -> !pto.vmi.vreg<8xf32>
+    %odd = pto.vmi.vcvt %second : !pto.vmi.vreg<8xbf16> -> !pto.vmi.vreg<8xf32>
+    %low, %high = pto.vmi.vdintlv %even, %odd, %mask
+        : !pto.vmi.vreg<8xf32>, !pto.vmi.vreg<8xf32>, !pto.vmi.mask<8xpred>
+       -> !pto.vmi.vreg<8xf32>, !pto.vmi.vreg<8xf32>
+    return %low, %high : !pto.vmi.vreg<8xf32>, !pto.vmi.vreg<8xf32>
+  }
+
+  // Signed and unsigned index casts describe different index values.
+  // COMBINE-LABEL: func.func @mixed_cast_signedness(
+  // COMBINE: pto.vmi.vdintlv
+  // COMBINE-NOT: pto.vmi.deinterleave_extf
+  func.func @mixed_cast_signedness(%src: !pto.ptr<bf16, ub>, %row: i32)
+      -> (!pto.vmi.vreg<64xf32>, !pto.vmi.vreg<64xf32>) {
+    %c64 = pto.constant 64 : i32
+    %c128 = pto.constant 128 : i32
+    %c64i = pto.constant 64 : index
+    %mask = pto.vmi.create_mask %c64i : index -> !pto.vmi.mask<64xpred>
+    %base32 = pto.muli %row, %c128 : i32
+    %base = pto.index_cast %base32 signed : i32 -> index
+    %second32 = pto.addi %base32, %c64 : i32
+    %second = pto.index_cast %second32 unsigned : i32 -> index
+    %first = pto.vmi.vload %src[%base] : !pto.ptr<bf16, ub> -> !pto.vmi.vreg<64xbf16>
+    %next = pto.vmi.vload %src[%second] : !pto.ptr<bf16, ub> -> !pto.vmi.vreg<64xbf16>
+    %even = pto.vmi.vcvt %first : !pto.vmi.vreg<64xbf16> -> !pto.vmi.vreg<64xf32>
+    %odd = pto.vmi.vcvt %next : !pto.vmi.vreg<64xbf16> -> !pto.vmi.vreg<64xf32>
+    %low, %high = pto.vmi.vdintlv %even, %odd, %mask
+        : !pto.vmi.vreg<64xf32>, !pto.vmi.vreg<64xf32>, !pto.vmi.mask<64xpred>
+       -> !pto.vmi.vreg<64xf32>, !pto.vmi.vreg<64xf32>
+    return %low, %high : !pto.vmi.vreg<64xf32>, !pto.vmi.vreg<64xf32>
+  }
+}
+
+// LOWER-LABEL: func.func @adjacent(
+// LOWER: %[[WIDE:.*]] = pto.vlds %{{.*}} : !pto.ptr<bf16, ub>, index -> !pto.vreg<128xbf16>
+// LOWER-NEXT: %{{.*}} = pto.pset_b16 "PAT_ALL"
+// LOWER-NEXT: %[[EVEN:.*]] = pto.vcvt %[[WIDE]], %{{.*}} {part = "EVEN"}
+// LOWER-NEXT: %[[ODD:.*]] = pto.vcvt %[[WIDE]], %{{.*}} {part = "ODD"}
+// LOWER-NOT: pto.vdintlv
+// LOWER-NOT: pto.vdup
+// LOWER-LABEL: func.func @gap(
+// LOWER: pto.vdintlv

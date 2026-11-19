@@ -10,52 +10,65 @@
 #define VMILAYOUTSUPPORTCASTTABLES_INC
 
 struct PreferredCastLayoutPattern {
-  ElementBitsPattern sourceBits;
-  ElementBitsPattern resultBits;
-  int64_t elementCount = 0; // 0 means the default row for this bit-width pair.
-  LayoutPattern sourceLayout;
-  LayoutPattern resultLayout;
-  CastTypeClass typeClass = CastTypeClass::Any;
-  bool numGroupsFromElementCount = false;
+    ElementBitsPattern sourceBits;
+    ElementBitsPattern resultBits;
+    int64_t elementCount = 0; // 0 means the default row for this bit-width pair.
+    LayoutPattern sourceLayout;
+    LayoutPattern resultLayout;
+    CastTypeClass typeClass = CastTypeClass::Any;
+    bool numGroupsFromElementCount = false;
+};
+
+struct DeinterleaveExtfLayoutPattern {
+    ElementCountPattern sourceCounts;
+    LayoutPattern sourceLayout;
+    LayoutPattern resultLayout;
+};
+
+// Packed BF16 input can be converted by EVEN/ODD VCVTs. A source already
+// separated into two channels instead widens each channel by zero interleave.
+static constexpr DeinterleaveExtfLayoutPattern kDeinterleaveExtfLayoutPatterns[] = {
+    {N<128, 256>(), c(), c()},
+    {N<128, 256>(), d(2), c()},
 };
 
 struct HighPriorityCastLayoutPattern {
-  ElementBitsPattern sourceBits;
-  ElementBitsPattern resultBits;
-  PhysicalChunkCountPattern sourceChunks;
-  PhysicalChunkCountPattern resultChunks;
-  LayoutPattern sourceLayout;
-  LayoutPattern resultLayout;
-  CastTypeClass typeClass = CastTypeClass::Any;
-  ElementCountPattern elementCounts = anyN();
-  bool numGroupsFromElementCount = false;
+    ElementBitsPattern sourceBits;
+    ElementBitsPattern resultBits;
+    PhysicalChunkCountPattern sourceChunks;
+    PhysicalChunkCountPattern resultChunks;
+    LayoutPattern sourceLayout;
+    LayoutPattern resultLayout;
+    CastTypeClass typeClass = CastTypeClass::Any;
+    ElementCountPattern elementCounts = anyN();
+    bool numGroupsFromElementCount = false;
 };
 
 struct LegalCastLayoutPattern {
-  ElementBitsPattern sourceBits;
-  ElementBitsPattern resultBits;
-  LayoutPattern sourceLayout;
-  LayoutPattern resultLayout;
-  CastTypeClass typeClass = CastTypeClass::Any;
-  ElementCountPattern elementCounts = anyN();
+    ElementBitsPattern sourceBits;
+    ElementBitsPattern resultBits;
+    LayoutPattern sourceLayout;
+    LayoutPattern resultLayout;
+    CastTypeClass typeClass = CastTypeClass::Any;
+    ElementCountPattern elementCounts = anyN();
 };
 
 struct LegalMaskGranularityCastLayoutPattern {
-  MaskGranularityPattern sourceGranularity;
-  MaskGranularityPattern resultGranularity;
-  LayoutPattern sourceLayout;
-  LayoutPattern resultLayout;
+    MaskGranularityPattern sourceGranularity;
+    MaskGranularityPattern resultGranularity;
+    LayoutPattern sourceLayout;
+    LayoutPattern resultLayout;
 };
 
 struct InterleaveLayoutPattern {
-  ElementBitsPattern elementBits;
-  PhysicalChunkCountPattern chunks;
-  int64_t maxPhysicalParts = 0;
-  LayoutPattern lhsLayout;
-  LayoutPattern rhsLayout;
-  LayoutPattern maskLayout;
-  LayoutPattern lowLayout;
-  LayoutPattern highLayout;
+    ElementBitsPattern elementBits;
+    PhysicalChunkCountPattern chunks;
+    int64_t maxPhysicalParts = 0;
+    LayoutPattern lhsLayout;
+    LayoutPattern rhsLayout;
+    LayoutPattern maskLayout;
+    LayoutPattern lowLayout;
+    LayoutPattern highLayout;
 };
 
 static constexpr PreferredCastLayoutPattern kPreferredCastLayoutPatterns[] = {
@@ -88,8 +101,7 @@ static constexpr PreferredCastLayoutPattern kPreferredCastLayoutPatterns[] = {
     // fp4 pair-cast row: f4E2M1x2 (8-bit storage) -> bf16x2 (32-bit pair) at
     // 128 elements, lowered as UNPK4 + a single P0 vcvt. Dense FP8/HiF8 uses
     // the DenseFP8ToF32 rows above and independently prefers ls(4) -> c.
-    {bits<8>(), bits<32>(), 128, ls(4), c(),
-     CastTypeClass::F4E2M1x2ToBF16x2},
+    {bits<8>(), bits<32>(), 128, ls(4), c(), CastTypeClass::F4E2M1x2ToBF16x2},
     {bits<32>(), bits<16>(), 64, c(), ls(2)},
     {bits<32>(), bits<8>(), 64, c(), ls(4)},
     {bits<32>(), bits<8>(), 128, d(2), ls(2)},
@@ -103,44 +115,36 @@ static constexpr PreferredCastLayoutPattern kPreferredCastLayoutPatterns[] = {
     {bits<32>(), bits<8>(), 0, d(4), c()},
 };
 
-static constexpr PreferredCastLayoutPattern
-    kPreferredLaneStrideNarrowCastLayoutPatterns[] = {
-        {bits<16>(), bits<8>(), 0, c(), ls(2)},
-        {bits<32>(), bits<16>(), 64, c(), c(), CastTypeClass::BF16F32},
-        {bits<32>(), bits<16>(), 128, c(), c(), CastTypeClass::BF16F32},
-        {bits<32>(), bits<16>(), 256, c(), c(), CastTypeClass::BF16F32},
-        {bits<32>(), bits<16>(), 0, c(), ls(2)},
-        {bits<32>(), bits<8>(), 0, c(), ls(4)},
+static constexpr PreferredCastLayoutPattern kPreferredLaneStrideNarrowCastLayoutPatterns[] = {
+    {bits<16>(), bits<8>(), 0, c(), ls(2)},
+    {bits<32>(), bits<16>(), 64, c(), c(), CastTypeClass::BF16F32},
+    {bits<32>(), bits<16>(), 128, c(), c(), CastTypeClass::BF16F32},
+    {bits<32>(), bits<16>(), 256, c(), c(), CastTypeClass::BF16F32},
+    {bits<32>(), bits<16>(), 0, c(), ls(2)},
+    {bits<32>(), bits<8>(), 0, c(), ls(4)},
 };
 
-static constexpr HighPriorityCastLayoutPattern
-    kHighPriorityCastLayoutPatterns[] = {
-        // BF16/F32 use equal layouts for the supported dense one-chunk case
-        // and for short group-slot reduction results.
-        {bits<16>(), bits<32>(), chunk<1>(), chunk<1>(), c(), c(),
-         CastTypeClass::BF16F32, N<64>()},
-        {bits<32>(), bits<16>(), chunk<1>(), chunk<1>(), c(), c(),
-         CastTypeClass::BF16F32, N<64>()},
-        {bits<16>(), bits<32>(), chunk<1>(), chunk<1>(), gs(8), gs(8),
-         CastTypeClass::BF16F32, N<2, 4, 8>(), true},
-        {bits<32>(), bits<16>(), chunk<1>(), chunk<1>(), gs(8), gs(8),
-         CastTypeClass::BF16F32, N<2, 4, 8>(), true},
-        // One-chunk widening relations.
-        {bits<8>(), bits<16>(), chunk<1>(), chunk<1>(), ls(2), c()},
-        {bits<16>(), bits<32>(), chunk<1>(), chunk<1>(), ls(2), c()},
-        {bits<8>(), bits<32>(), chunk<1>(), chunk<1>(), ls(4), c()},
+static constexpr HighPriorityCastLayoutPattern kHighPriorityCastLayoutPatterns[] = {
+    // BF16/F32 use equal layouts for the supported dense one-chunk case
+    // and for short group-slot reduction results.
+    {bits<16>(), bits<32>(), chunk<1>(), chunk<1>(), c(), c(), CastTypeClass::BF16F32, N<64>()},
+    {bits<32>(), bits<16>(), chunk<1>(), chunk<1>(), c(), c(), CastTypeClass::BF16F32, N<64>()},
+    {bits<16>(), bits<32>(), chunk<1>(), chunk<1>(), gs(8), gs(8), CastTypeClass::BF16F32, N<2, 4, 8>(), true},
+    {bits<32>(), bits<16>(), chunk<1>(), chunk<1>(), gs(8), gs(8), CastTypeClass::BF16F32, N<2, 4, 8>(), true},
+    // One-chunk widening relations.
+    {bits<8>(), bits<16>(), chunk<1>(), chunk<1>(), ls(2), c()},
+    {bits<16>(), bits<32>(), chunk<1>(), chunk<1>(), ls(2), c()},
+    {bits<8>(), bits<32>(), chunk<1>(), chunk<1>(), ls(4), c()},
 
-        // One-chunk narrowing relations.
-        {bits<16>(), bits<8>(), chunk<1>(), chunk<1>(), c(), ls(2)},
-        {bits<32>(), bits<16>(), chunk<1>(), chunk<1>(), c(), ls(2)},
-        {bits<32>(), bits<8>(), chunk<1>(), chunk<1>(), c(), ls(4)},
+    // One-chunk narrowing relations.
+    {bits<16>(), bits<8>(), chunk<1>(), chunk<1>(), c(), ls(2)},
+    {bits<32>(), bits<16>(), chunk<1>(), chunk<1>(), c(), ls(2)},
+    {bits<32>(), bits<8>(), chunk<1>(), chunk<1>(), c(), ls(4)},
 };
 
 static constexpr LegalCastLayoutPattern kBaseLegalCastLayoutPatterns[] = {
-    {bits<16>(), bits<32>(), gs(8), gs(8), CastTypeClass::BF16F32,
-     N<2, 4, 8>()},
-    {bits<32>(), bits<16>(), gs(8), gs(8), CastTypeClass::BF16F32,
-     N<2, 4, 8>()},
+    {bits<16>(), bits<32>(), gs(8), gs(8), CastTypeClass::BF16F32, N<2, 4, 8>()},
+    {bits<32>(), bits<16>(), gs(8), gs(8), CastTypeClass::BF16F32, N<2, 4, 8>()},
     // Same-width fp-to-fp (bf16 -> f16): dense contiguous 1:1.
     {bits<16>(), bits<16>(), c(), c(), CastTypeClass::Float},
 
@@ -213,8 +217,8 @@ static constexpr LegalCastLayoutPattern kBaseLegalCastLayoutPatterns[] = {
 // physical lane-map check in isBF16SameLayoutCastPair.
 static constexpr auto makeLegalCastLayoutPatterns()
 {
-    constexpr LayoutPattern regularLayouts[] = {
-        c(), ls(2), ls(4), d(2), dls(2, 2), dls(2, 4), d(4), dls(4, 2), dls(4, 4)};
+    constexpr LayoutPattern regularLayouts[] = {c(),       ls(2), ls(4),     d(2),     dls(2, 2),
+                                                dls(2, 4), d(4),  dls(4, 2), dls(4, 4)};
     constexpr size_t baseCount = sizeof(kBaseLegalCastLayoutPatterns) / sizeof(LegalCastLayoutPattern);
     constexpr size_t layoutCount = sizeof(regularLayouts) / sizeof(LayoutPattern);
     std::array<LegalCastLayoutPattern, baseCount + kValue2 * layoutCount> patterns{};
@@ -223,67 +227,64 @@ static constexpr auto makeLegalCastLayoutPatterns()
         patterns[index++] = pattern;
     }
     for (LayoutPattern layout : regularLayouts) {
-        patterns[index++] = {bits<16>(), bits<32>(), layout, layout, CastTypeClass::BF16F32,
-                             N<1, 2, 4, 8, 64, 128, 256>()};
-        patterns[index++] = {bits<32>(), bits<16>(), layout, layout, CastTypeClass::BF16F32,
-                             N<1, 2, 4, 8, 64, 128, 256>()};
+        patterns[index++] = {
+            bits<16>(), bits<32>(), layout, layout, CastTypeClass::BF16F32, N<1, 2, 4, 8, 64, 128, 256>()};
+        patterns[index++] = {
+            bits<32>(), bits<16>(), layout, layout, CastTypeClass::BF16F32, N<1, 2, 4, 8, 64, 128, 256>()};
     }
     return patterns;
 }
 
 static constexpr auto kLegalCastLayoutPatterns = makeLegalCastLayoutPatterns();
 
-static constexpr LegalMaskGranularityCastLayoutPattern
-    kLegalMaskGranularityCastLayoutPatterns[] = {
-        // Same-width fp-to-fp (bf16 -> f16): dense contiguous 1:1.
-        {mb16(), mb16(), c(), c()},
+static constexpr LegalMaskGranularityCastLayoutPattern kLegalMaskGranularityCastLayoutPatterns[] = {
+    // Same-width fp-to-fp (bf16 -> f16): dense contiguous 1:1.
+    {mb16(), mb16(), c(), c()},
 
-        // 2x widening.
-        {mb8(), mb16(), c(), d(2)},
-        {mb8(), mb16(), ls(2), c()},
-        {mb8(), mb16(), d(2), d(4)},
-        {mb16(), mb32(), c(), d(2)},
-        {mb16(), mb32(), ls(2), c()},
-        {mb16(), mb32(), d(2), d(4)},
+    // 2x widening.
+    {mb8(), mb16(), c(), d(2)},
+    {mb8(), mb16(), ls(2), c()},
+    {mb8(), mb16(), d(2), d(4)},
+    {mb16(), mb32(), c(), d(2)},
+    {mb16(), mb32(), ls(2), c()},
+    {mb16(), mb32(), d(2), d(4)},
 
-        // 2x narrowing.
-        {mb16(), mb8(), d(2), c()},
-        {mb16(), mb8(), c(), ls(2)},
-        {mb16(), mb8(), d(4), d(2)},
-        {mb32(), mb16(), c(), c()},
-        {mb32(), mb16(), d(2), c()},
-        {mb32(), mb16(), c(), ls(2)},
-        {mb32(), mb16(), d(4), d(2)},
+    // 2x narrowing.
+    {mb16(), mb8(), d(2), c()},
+    {mb16(), mb8(), c(), ls(2)},
+    {mb16(), mb8(), d(4), d(2)},
+    {mb32(), mb16(), c(), c()},
+    {mb32(), mb16(), d(2), c()},
+    {mb32(), mb16(), c(), ls(2)},
+    {mb32(), mb16(), d(4), d(2)},
 
-        // 4x widening/narrowing.
-        {mb8(), mb32(), c(), d(4)},
-        {mb8(), mb32(), ls(2), d(2)},
-        {mb8(), mb32(), ls(4), c()},
-        {mb32(), mb8(), d(4), c()},
-        {mb32(), mb8(), c(), ls(4)},
-        {mb32(), mb8(), d(2), ls(2)},
+    // 4x widening/narrowing.
+    {mb8(), mb32(), c(), d(4)},
+    {mb8(), mb32(), ls(2), d(2)},
+    {mb8(), mb32(), ls(4), c()},
+    {mb32(), mb8(), d(4), c()},
+    {mb32(), mb8(), c(), ls(4)},
+    {mb32(), mb8(), d(2), ls(2)},
 
-        // Group-slot casts keep the row-local group layout.
-        {mb8(), mb16(), gs(1), gs(1)},
-        {mb8(), mb16(), gs(8, 2), gs(8)},
-        {mb16(), mb32(), gs(1), gs(1)},
-        {mb16(), mb32(), gs(8, 2), gs(8)},
-        {mb8(), mb32(), gs(1), gs(1)},
-        {mb8(), mb32(), gs(8, 4), gs(8)},
-        {mb16(), mb8(), gs(1), gs(1)},
-        {mb16(), mb8(), gs(8), gs(8, 2)},
-        {mb16(), mb8(), gs(8, 2), gs(8, 4)},
-        {mb32(), mb16(), gs(1), gs(1)},
-        {mb32(), mb16(), gs(8), gs(8, 2)},
-        {mb32(), mb8(), gs(1), gs(1)},
-        {mb32(), mb8(), gs(8), gs(8, 4)},
+    // Group-slot casts keep the row-local group layout.
+    {mb8(), mb16(), gs(1), gs(1)},
+    {mb8(), mb16(), gs(8, 2), gs(8)},
+    {mb16(), mb32(), gs(1), gs(1)},
+    {mb16(), mb32(), gs(8, 2), gs(8)},
+    {mb8(), mb32(), gs(1), gs(1)},
+    {mb8(), mb32(), gs(8, 4), gs(8)},
+    {mb16(), mb8(), gs(1), gs(1)},
+    {mb16(), mb8(), gs(8), gs(8, 2)},
+    {mb16(), mb8(), gs(8, 2), gs(8, 4)},
+    {mb32(), mb16(), gs(1), gs(1)},
+    {mb32(), mb16(), gs(8), gs(8, 2)},
+    {mb32(), mb8(), gs(1), gs(1)},
+    {mb32(), mb8(), gs(8), gs(8, 4)},
 };
 
 static constexpr InterleaveLayoutPattern kVdintlvLayoutPatterns[] = {
-    {bits<8, 16, 32, 64>(), chunk<2, 4>(), 0, d(2), d(2), d(2), c(),
-     c()},
-    {bits<8, 16, 32, 64>(), chunk<4>(), 0, d(4), d(4), d(4), d(2),
-     d(2)},
+    {bits<8, 16, 32, 64>(), chunk<2, 4>(), 0, d(2), d(2), d(2), c(), c()},
+    {bits<8, 16, 32, 64>(), chunk<4>(), 0, d(4), d(4), d(4), d(2), d(2)},
     {bits<8, 16, 32, 64>(), chunk<1>(), 0, c(), c(), c(), c(), c()},
 
     // A dense lane-stride layout is a dense vector of wider carrier slots.
@@ -296,10 +297,8 @@ static constexpr InterleaveLayoutPattern kVdintlvLayoutPatterns[] = {
 };
 
 static constexpr InterleaveLayoutPattern kVintlvLayoutPatterns[] = {
-    {bits<8, 16, 32, 64>(), chunk<2, 4>(), 0, c(), c(), c(), d(2),
-     d(2)},
-    {bits<8, 16, 32, 64>(), chunk<4>(), 0, d(2), d(2), d(2), d(4),
-     d(4)},
+    {bits<8, 16, 32, 64>(), chunk<2, 4>(), 0, c(), c(), c(), d(2), d(2)},
+    {bits<8, 16, 32, 64>(), chunk<4>(), 0, d(2), d(2), d(2), d(4), d(4)},
     {bits<8, 16, 32, 64>(), chunk<1>(), 0, c(), c(), c(), c(), c()},
     {bits<8, 16>(), chunk<1>(), 1, ls(2), ls(2), ls(2), ls(2), ls(2)},
     {bits<8>(), chunk<1>(), 1, ls(4), ls(4), ls(4), ls(4), ls(4)},

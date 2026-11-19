@@ -1,0 +1,27 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+
+// RUN: pto-test-opt %s -split-input-file -verify-diagnostics
+
+module {
+  func.func @wrong_type(%src: !pto.vmi.vreg<128xf16>) {
+    // expected-error@+1 {{requires BF16 source and F32 results}}
+    %a, %b = pto.vmi.deinterleave_extf %src : !pto.vmi.vreg<128xf16> -> !pto.vmi.vreg<64xf32>, !pto.vmi.vreg<64xf32>
+    return
+  }
+}
+
+// -----
+
+module {
+  func.func @wrong_count(%src: !pto.vmi.vreg<128xbf16>) {
+    // expected-error@+1 {{requires two results with half the source lane count}}
+    %a, %b = pto.vmi.deinterleave_extf %src : !pto.vmi.vreg<128xbf16> -> !pto.vmi.vreg<128xf32>, !pto.vmi.vreg<64xf32>
+    return
+  }
+}

@@ -43,849 +43,799 @@ namespace {
 
 bool isVMIType(Type type) { return isa<VMIVRegType, VMIMaskType>(type); }
 
-bool containsVMIType(Type type) {
-  return type.walk([](Type nestedType) {
-    return isVMIType(nestedType) ? WalkResult::interrupt()
-                                 : WalkResult::advance();
-  }).wasInterrupted();
+bool containsVMIType(Type type)
+{
+    return type
+        .walk([](Type nestedType) { return isVMIType(nestedType) ? WalkResult::interrupt() : WalkResult::advance(); })
+        .wasInterrupted();
 }
 
-bool containsVMIType(Attribute attr) {
-  if (!attr) {
+bool containsVMIType(Attribute attr)
+{
+    if (!attr) {
+        return false;
+    }
+
+    if (auto typeAttr = dyn_cast<TypeAttr>(attr)) {
+        if (containsVMIType(typeAttr.getValue())) {
+            return true;
+        }
+    }
+
+    if (auto typedAttr = dyn_cast<TypedAttr>(attr)) {
+        if (containsVMIType(typedAttr.getType())) {
+            return true;
+        }
+    }
+
+    if (auto arrayAttr = dyn_cast<ArrayAttr>(attr)) {
+        return llvm::any_of(arrayAttr, [](Attribute element) { return containsVMIType(element); });
+    }
+
+    if (auto dictAttr = dyn_cast<DictionaryAttr>(attr)) {
+        return llvm::any_of(dictAttr, [](NamedAttribute namedAttr) { return containsVMIType(namedAttr.getValue()); });
+    }
+
     return false;
-  }
+}
 
-  if (auto typeAttr = dyn_cast<TypeAttr>(attr)) {
-    if (containsVMIType(typeAttr.getValue())) {
-      return true;
+bool isSurfaceVMIType(Type type)
+{
+    if (auto vregType = dyn_cast<VMIVRegType>(type)) {
+        return !vregType.getLayout();
     }
-  }
-
-  if (auto typedAttr = dyn_cast<TypedAttr>(attr)) {
-    if (containsVMIType(typedAttr.getType())) {
-      return true;
+    if (auto maskType = dyn_cast<VMIMaskType>(type)) {
+        return maskType.isPred() && !maskType.getLayout();
     }
-  }
-
-  if (auto arrayAttr = dyn_cast<ArrayAttr>(attr)) {
-    return llvm::any_of(arrayAttr, [](Attribute element) {
-      return containsVMIType(element);
-    });
-  }
-
-  if (auto dictAttr = dyn_cast<DictionaryAttr>(attr)) {
-    return llvm::any_of(dictAttr, [](NamedAttribute namedAttr) {
-      return containsVMIType(namedAttr.getValue());
-    });
-  }
-
-  return false;
+    return false;
 }
 
-bool isSurfaceVMIType(Type type) {
-  if (auto vregType = dyn_cast<VMIVRegType>(type)) {
-    return !vregType.getLayout();
-  }
-  if (auto maskType = dyn_cast<VMIMaskType>(type)) {
-    return maskType.isPred() && !maskType.getLayout();
-  }
-  return false;
+bool isLayoutAssignedVMIType(Type type)
+{
+    if (auto vregType = dyn_cast<VMIVRegType>(type)) {
+        return static_cast<bool>(vregType.getLayoutAttr());
+    }
+    if (auto maskType = dyn_cast<VMIMaskType>(type)) {
+        return maskType.getLayoutAttr() && VMIMaskType::isConcreteGranularity(maskType.getGranularity());
+    }
+    return false;
 }
 
-bool isLayoutAssignedVMIType(Type type) {
-  if (auto vregType = dyn_cast<VMIVRegType>(type)) {
-    return static_cast<bool>(vregType.getLayoutAttr());
-  }
-  if (auto maskType = dyn_cast<VMIMaskType>(type)) {
-    return maskType.getLayoutAttr() &&
-           VMIMaskType::isConcreteGranularity(maskType.getGranularity());
-  }
-  return false;
+bool isVMIHelperOp(Operation* op)
+{
+    StringRef name = op->getName().getStringRef();
+    return name == "pto.vmi.ensure_layout" || name == "pto.vmi.ensure_mask_layout" ||
+           name == "pto.vmi.ensure_mask_granularity" || name == "pto.vmi.pack" || name == "pto.vmi.unpack";
 }
 
-bool isVMIHelperOp(Operation *op) {
-  StringRef name = op->getName().getStringRef();
-  return name == "pto.vmi.ensure_layout" ||
-         name == "pto.vmi.ensure_mask_layout" ||
-         name == "pto.vmi.ensure_mask_granularity" || name == "pto.vmi.pack" ||
-         name == "pto.vmi.unpack";
+bool isVMILayoutHelperOp(Operation* op)
+{
+    StringRef name = op->getName().getStringRef();
+    return name == "pto.vmi.ensure_layout" || name == "pto.vmi.ensure_mask_layout" ||
+           name == "pto.vmi.ensure_mask_granularity";
 }
 
-bool isVMILayoutHelperOp(Operation *op) {
-  StringRef name = op->getName().getStringRef();
-  return name == "pto.vmi.ensure_layout" ||
-         name == "pto.vmi.ensure_mask_layout" ||
-         name == "pto.vmi.ensure_mask_granularity";
+bool isVMISemanticOp(Operation* op)
+{
+    StringRef name = op->getName().getStringRef();
+    return (name.starts_with("pto.vmi.") && !isVMIHelperOp(op)) || isVMIUnspecifiedValue(op);
 }
 
-bool isVMISemanticOp(Operation *op) {
-  StringRef name = op->getName().getStringRef();
-  return (name.starts_with("pto.vmi.") && !isVMIHelperOp(op)) ||
-         isVMIUnspecifiedValue(op);
+bool isStructuralOp(Operation* op)
+{
+    StringRef name = op->getName().getStringRef();
+    return name == "builtin.module" || name.starts_with("func.") || name.starts_with("scf.") || name.starts_with("cf.");
 }
 
-bool isStructuralOp(Operation *op) {
-  StringRef name = op->getName().getStringRef();
-  return name == "builtin.module" || name.starts_with("func.") ||
-         name.starts_with("scf.") || name.starts_with("cf.");
-}
-
-bool hasVMIType(Operation *op) {
-  if (llvm::any_of(op->getOperandTypes(), isVMIType) ||
-      llvm::any_of(op->getResultTypes(), isVMIType)) {
-    return true;
-  }
-  for (Region &region : op->getRegions()) {
-    for (Block &block : region) {
-      if (llvm::any_of(block.getArgumentTypes(), isVMIType)) {
+bool hasVMIType(Operation* op)
+{
+    if (llvm::any_of(op->getOperandTypes(), isVMIType) || llvm::any_of(op->getResultTypes(), isVMIType)) {
         return true;
-      }
     }
-  }
-  return false;
-}
-
-void mirrorDiagnostic(llvm::raw_ostream *diagOS, Twine message) {
-  if (diagOS) {
-    *diagOS << message << "\n";
-  }
-}
-
-LogicalResult emitInvariant(Operation *op, llvm::raw_ostream *diagOS,
-                            Twine message) {
-  InFlightDiagnostic diag = op->emitError()
-                            << kVMIDiagPassInvariantPrefix << message;
-  (void)diag;
-  mirrorDiagnostic(diagOS, Twine(kVMIDiagPassInvariantPrefix) + message);
-  return failure();
-}
-
-LogicalResult emitLayoutContract(Operation *op, llvm::raw_ostream *diagOS,
-                                 Twine message) {
-  InFlightDiagnostic diag = op->emitError()
-                            << kVMIDiagLayoutContractPrefix << message;
-  (void)diag;
-  mirrorDiagnostic(diagOS, Twine(kVMIDiagLayoutContractPrefix) + message);
-  return failure();
-}
-
-LogicalResult emitLayoutSupportContract(Operation *op,
-                                        llvm::raw_ostream *diagOS,
-                                        Twine message, StringRef reason) {
-  std::string text;
-  llvm::raw_string_ostream os(text);
-  os << message << ": " << reason;
-
-  bool printedAny = false;
-  auto printValueType = [&os, &printedAny](StringRef kind, int64_t index,
-                                            Type type) {
-    if (!isVMIType(type)) {
-      return;
+    for (Region& region : op->getRegions()) {
+        for (Block& block : region) {
+            if (llvm::any_of(block.getArgumentTypes(), isVMIType)) {
+                return true;
+            }
+        }
     }
-    if (!printedAny) {
-      os << "; VMI types:";
-      printedAny = true;
+    return false;
+}
+
+void mirrorDiagnostic(llvm::raw_ostream* diagOS, Twine message)
+{
+    if (diagOS) {
+        *diagOS << message << "\n";
     }
-    os << " " << kind << "#" << index << "=" << type;
-  };
+}
 
-  for (auto [index, operand] : llvm::enumerate(op->getOperands())) {
-    printValueType("operand", static_cast<int64_t>(index), operand.getType());
-  }
-  for (auto [index, result] : llvm::enumerate(op->getResults())) {
-    printValueType("result", static_cast<int64_t>(index), result.getType());
-  }
+LogicalResult emitInvariant(Operation* op, llvm::raw_ostream* diagOS, Twine message)
+{
+    InFlightDiagnostic diag = op->emitError() << kVMIDiagPassInvariantPrefix << message;
+    (void)diag;
+    mirrorDiagnostic(diagOS, Twine(kVMIDiagPassInvariantPrefix) + message);
+    return failure();
+}
 
-  os.flush();
-  return emitLayoutContract(op, diagOS, text);
+LogicalResult emitLayoutContract(Operation* op, llvm::raw_ostream* diagOS, Twine message)
+{
+    InFlightDiagnostic diag = op->emitError() << kVMIDiagLayoutContractPrefix << message;
+    (void)diag;
+    mirrorDiagnostic(diagOS, Twine(kVMIDiagLayoutContractPrefix) + message);
+    return failure();
+}
+
+LogicalResult emitLayoutSupportContract(Operation* op, llvm::raw_ostream* diagOS, Twine message, StringRef reason)
+{
+    std::string text;
+    llvm::raw_string_ostream os(text);
+    os << message << ": " << reason;
+
+    bool printedAny = false;
+    auto printValueType = [&os, &printedAny](StringRef kind, int64_t index, Type type) {
+        if (!isVMIType(type)) {
+            return;
+        }
+        if (!printedAny) {
+            os << "; VMI types:";
+            printedAny = true;
+        }
+        os << " " << kind << "#" << index << "=" << type;
+    };
+
+    for (auto [index, operand] : llvm::enumerate(op->getOperands())) {
+        printValueType("operand", static_cast<int64_t>(index), operand.getType());
+    }
+    for (auto [index, result] : llvm::enumerate(op->getResults())) {
+        printValueType("result", static_cast<int64_t>(index), result.getType());
+    }
+
+    os.flush();
+    return emitLayoutContract(op, diagOS, text);
 }
 
 static LogicalResult emitHelperMaterializationFallback(
-    Operation *helper, StringRef helperName, StringRef reason,
-    llvm::raw_ostream *diagOS) {
-  return emitLayoutContract(
-      helper, diagOS,
-      Twine(helperName) +
-          " has no registered materialization support: " + reason);
+    Operation* helper, StringRef helperName, StringRef reason, llvm::raw_ostream* diagOS)
+{
+    return emitLayoutContract(
+        helper, diagOS, Twine(helperName) + " has no registered materialization support: " + reason);
 }
 
 static LogicalResult emitHelperMaterializationDiagnostic(
-    Operation *helper, Type sourceType, Type resultType, StringRef helperName,
-    StringRef reason, llvm::raw_ostream *diagOS) {
-  OpOperand &use = *helper->getResult(0).use_begin();
-  Operation *requester = use.getOwner();
-  std::string message;
-  llvm::raw_string_ostream os(message);
-  os << requester->getName() << " operand #" << use.getOperandNumber()
-     << " has type " << sourceType << " but requires " << resultType << "; "
-     << helperName << " has no registered materialization support: " << reason;
-  os.flush();
+    Operation* helper, Type sourceType, Type resultType, StringRef helperName, StringRef reason,
+    llvm::raw_ostream* diagOS)
+{
+    OpOperand& use = *helper->getResult(0).use_begin();
+    Operation* requester = use.getOwner();
+    std::string message;
+    llvm::raw_string_ostream os(message);
+    os << requester->getName() << " operand #" << use.getOperandNumber() << " has type " << sourceType
+       << " but requires " << resultType << "; " << helperName
+       << " has no registered materialization support: " << reason;
+    os.flush();
 
-  InFlightDiagnostic diag = requester->emitError()
-                            << kVMIDiagLayoutContractPrefix << message;
-  diag.attachNote(helper->getLoc())
-      << "failed helper conversion " << sourceType << " -> " << resultType
-      << " (" << reason << ")";
-  mirrorDiagnostic(diagOS, Twine(kVMIDiagLayoutContractPrefix) + message);
-  return failure();
+    InFlightDiagnostic diag = requester->emitError() << kVMIDiagLayoutContractPrefix << message;
+    diag.attachNote(helper->getLoc()) << "failed helper conversion " << sourceType << " -> " << resultType << " ("
+                                      << reason << ")";
+    mirrorDiagnostic(diagOS, Twine(kVMIDiagLayoutContractPrefix) + message);
+    return failure();
 }
 
-LogicalResult
-emitHelperMaterializationContract(Operation *helper, Type sourceType,
-                                  Type resultType, StringRef helperName,
-                                  StringRef reason, llvm::raw_ostream *diagOS) {
-  const bool invalidMaterialization =
-      helper->getNumResults() != 1 || !helper->getResult(0).hasOneUse();
-  if (invalidMaterialization) {
-    return emitHelperMaterializationFallback(helper, helperName, reason,
-                                             diagOS);
-  }
+LogicalResult emitHelperMaterializationContract(
+    Operation* helper, Type sourceType, Type resultType, StringRef helperName, StringRef reason,
+    llvm::raw_ostream* diagOS)
+{
+    const bool invalidMaterialization = helper->getNumResults() != 1 || !helper->getResult(0).hasOneUse();
+    if (invalidMaterialization) {
+        return emitHelperMaterializationFallback(helper, helperName, reason, diagOS);
+    }
 
-  return emitHelperMaterializationDiagnostic(helper, sourceType, resultType,
-                                             helperName, reason, diagOS);
+    return emitHelperMaterializationDiagnostic(helper, sourceType, resultType, helperName, reason, diagOS);
 }
 
-LogicalResult verifyBoundaryType(Operation *owner, Type type,
-                                 llvm::raw_ostream *diagOS) {
-  if (isVMIType(type) && !isSurfaceVMIType(type)) {
-    return emitInvariant(
-        owner, diagOS,
-        "VMI producer boundary requires surface !pto.vmi.vreg or "
-        "!pto.vmi.mask<Nxpred> type");
-  }
+LogicalResult verifyBoundaryType(Operation* owner, Type type, llvm::raw_ostream* diagOS)
+{
+    if (isVMIType(type) && !isSurfaceVMIType(type)) {
+        return emitInvariant(
+            owner, diagOS,
+            "VMI producer boundary requires surface !pto.vmi.vreg or "
+            "!pto.vmi.mask<Nxpred> type");
+    }
 
-  return success();
+    return success();
 }
 
 LogicalResult verifyTypeTree(
-    Operation *owner, Type type, llvm::raw_ostream *diagOS,
-    LogicalResult (*verifyType)(Operation *, Type, llvm::raw_ostream *)) {
-  WalkResult result = type.walk([owner, diagOS, verifyType](Type nestedType) {
-    return failed(verifyType(owner, nestedType, diagOS))
-               ? WalkResult::interrupt()
-               : WalkResult::advance();
-  });
-  return failure(result.wasInterrupted());
+    Operation* owner, Type type, llvm::raw_ostream* diagOS,
+    LogicalResult (*verifyType)(Operation*, Type, llvm::raw_ostream*))
+{
+    WalkResult result = type.walk([owner, diagOS, verifyType](Type nestedType) {
+        return failed(verifyType(owner, nestedType, diagOS)) ? WalkResult::interrupt() : WalkResult::advance();
+    });
+    return failure(result.wasInterrupted());
 }
 
-LogicalResult verifyBoundaryTypeTree(Operation *owner, Type type,
-                                     llvm::raw_ostream *diagOS) {
-  return verifyTypeTree(owner, type, diagOS, verifyBoundaryType);
+LogicalResult verifyBoundaryTypeTree(Operation* owner, Type type, llvm::raw_ostream* diagOS)
+{
+    return verifyTypeTree(owner, type, diagOS, verifyBoundaryType);
 }
 
-LogicalResult verifyLayoutAssignedType(Operation *owner, Type type,
-                                       llvm::raw_ostream *diagOS) {
-  if (isVMIType(type) && !isLayoutAssignedVMIType(type)) {
-    return emitInvariant(
-        owner, diagOS,
-        "layout-assigned VMI IR requires !pto.vmi.vreg with layout and "
-        "!pto.vmi.mask with b8/b16/b32 granularity plus layout");
-  }
+LogicalResult verifyLayoutAssignedType(Operation* owner, Type type, llvm::raw_ostream* diagOS)
+{
+    if (isVMIType(type) && !isLayoutAssignedVMIType(type)) {
+        return emitInvariant(
+            owner, diagOS,
+            "layout-assigned VMI IR requires !pto.vmi.vreg with layout and "
+            "!pto.vmi.mask with b8/b16/b32 granularity plus layout");
+    }
 
-  return success();
+    return success();
 }
 
-LogicalResult verifyLayoutAssignedTypeTree(Operation *owner, Type type,
-                                           llvm::raw_ostream *diagOS) {
-  return verifyTypeTree(owner, type, diagOS, verifyLayoutAssignedType);
+LogicalResult verifyLayoutAssignedTypeTree(Operation* owner, Type type, llvm::raw_ostream* diagOS)
+{
+    return verifyTypeTree(owner, type, diagOS, verifyLayoutAssignedType);
 }
 
 template <typename TypeVerifier>
-LogicalResult verifyAttributeTypes(Operation *owner, Attribute attr,
-                                   llvm::raw_ostream *diagOS,
-                                   TypeVerifier verifyType) {
-  if (!attr) {
+LogicalResult verifyAttributeTypes(Operation* owner, Attribute attr, llvm::raw_ostream* diagOS, TypeVerifier verifyType)
+{
+    if (!attr) {
+        return success();
+    }
+
+    if (auto typeAttr = dyn_cast<TypeAttr>(attr)) {
+        if (failed(verifyType(owner, typeAttr.getValue(), diagOS))) {
+            return failure();
+        }
+    }
+
+    if (auto typedAttr = dyn_cast<TypedAttr>(attr)) {
+        if (failed(verifyType(owner, typedAttr.getType(), diagOS))) {
+            return failure();
+        }
+    }
+
+    if (auto arrayAttr = dyn_cast<ArrayAttr>(attr)) {
+        for (Attribute element : arrayAttr) {
+            if (failed(verifyAttributeTypes(owner, element, diagOS, verifyType))) {
+                return failure();
+            }
+        }
+    }
+
+    if (auto dictAttr = dyn_cast<DictionaryAttr>(attr)) {
+        for (NamedAttribute namedAttr : dictAttr) {
+            if (failed(verifyAttributeTypes(owner, namedAttr.getValue(), diagOS, verifyType))) {
+                return failure();
+            }
+        }
+    }
+
     return success();
-  }
-
-  if (auto typeAttr = dyn_cast<TypeAttr>(attr)) {
-    if (failed(verifyType(owner, typeAttr.getValue(), diagOS))) {
-      return failure();
-    }
-  }
-
-  if (auto typedAttr = dyn_cast<TypedAttr>(attr)) {
-    if (failed(verifyType(owner, typedAttr.getType(), diagOS))) {
-      return failure();
-    }
-  }
-
-  if (auto arrayAttr = dyn_cast<ArrayAttr>(attr)) {
-    for (Attribute element : arrayAttr) {
-      if (failed(verifyAttributeTypes(owner, element, diagOS, verifyType))) {
-        return failure();
-      }
-    }
-  }
-
-  if (auto dictAttr = dyn_cast<DictionaryAttr>(attr)) {
-    for (NamedAttribute namedAttr : dictAttr) {
-      if (failed(verifyAttributeTypes(owner, namedAttr.getValue(), diagOS,
-                                      verifyType))) {
-        return failure();
-      }
-    }
-  }
-
-  return success();
 }
 
-bool isFunctionTypeAttr(Operation *op, NamedAttribute attr) {
-  return isa<func::FuncOp>(op) && attr.getName() == "function_type";
+bool isFunctionTypeAttr(Operation* op, NamedAttribute attr)
+{
+    return isa<func::FuncOp>(op) && attr.getName() == "function_type";
 }
 
-LogicalResult verifyNoHiddenVMIAttributeType(Operation *op, NamedAttribute attr,
-                                             llvm::raw_ostream *diagOS) {
-  if (isFunctionTypeAttr(op, attr)) {
+LogicalResult verifyNoHiddenVMIAttributeType(Operation* op, NamedAttribute attr, llvm::raw_ostream* diagOS)
+{
+    if (isFunctionTypeAttr(op, attr)) {
+        return success();
+    }
+    if (containsVMIType(attr.getValue())) {
+        return emitInvariant(op, diagOS, "VMI type appears in a non-signature attribute");
+    }
     return success();
-  }
-  if (containsVMIType(attr.getValue())) {
-    return emitInvariant(op, diagOS,
-                         "VMI type appears in a non-signature attribute");
-  }
-  return success();
 }
 
 /// Verify the region argument types and the attributes of \p op with the given
 /// per-type tree verifier.
 static LogicalResult verifyRegionAndAttributeTypeTrees(
-    Operation *op, llvm::raw_ostream *diagOS,
-    LogicalResult (*verifyTypeTree)(Operation *, Type, llvm::raw_ostream *)) {
-  for (Region &region : op->getRegions()) {
-    for (Block &block : region) {
-      for (Type type : block.getArgumentTypes()) {
-        if (failed(verifyTypeTree(op, type, diagOS))) {
-          return failure();
+    Operation* op, llvm::raw_ostream* diagOS, LogicalResult (*verifyTypeTree)(Operation*, Type, llvm::raw_ostream*))
+{
+    for (Region& region : op->getRegions()) {
+        for (Block& block : region) {
+            for (Type type : block.getArgumentTypes()) {
+                if (failed(verifyTypeTree(op, type, diagOS))) {
+                    return failure();
+                }
+            }
         }
-      }
     }
-  }
-  for (NamedAttribute attr : op->getAttrs()) {
-    if (failed(verifyNoHiddenVMIAttributeType(op, attr, diagOS))) {
-      return failure();
+    for (NamedAttribute attr : op->getAttrs()) {
+        if (failed(verifyNoHiddenVMIAttributeType(op, attr, diagOS))) {
+            return failure();
+        }
+        if (failed(verifyAttributeTypes(op, attr.getValue(), diagOS, verifyTypeTree))) {
+            return failure();
+        }
     }
-    if (failed(verifyAttributeTypes(op, attr.getValue(), diagOS,
-                                    verifyTypeTree))) {
-      return failure();
-    }
-  }
-  return success();
+    return success();
 }
 
-LogicalResult verifyOperationTypes(Operation *op, llvm::raw_ostream *diagOS) {
-  if (auto funcOp = dyn_cast<func::FuncOp>(op)) {
-    FunctionType functionType = funcOp.getFunctionType();
-    for (Type type : functionType.getInputs()) {
-      if (failed(verifyBoundaryTypeTree(op, type, diagOS))) {
+LogicalResult verifyOperationTypes(Operation* op, llvm::raw_ostream* diagOS)
+{
+    if (auto funcOp = dyn_cast<func::FuncOp>(op)) {
+        FunctionType functionType = funcOp.getFunctionType();
+        for (Type type : functionType.getInputs()) {
+            if (failed(verifyBoundaryTypeTree(op, type, diagOS))) {
+                return failure();
+            }
+        }
+        for (Type type : functionType.getResults()) {
+            if (failed(verifyBoundaryTypeTree(op, type, diagOS))) {
+                return failure();
+            }
+        }
+    }
+
+    for (Type type : op->getOperandTypes()) {
+        if (failed(verifyBoundaryTypeTree(op, type, diagOS))) {
+            return failure();
+        }
+    }
+    for (Type type : op->getResultTypes()) {
+        if (failed(verifyBoundaryTypeTree(op, type, diagOS))) {
+            return failure();
+        }
+    }
+    return verifyRegionAndAttributeTypeTrees(op, diagOS, verifyBoundaryTypeTree);
+}
+
+LogicalResult verifyLayoutAssignedOperationTypes(Operation* op, llvm::raw_ostream* diagOS)
+{
+    if (auto funcOp = dyn_cast<func::FuncOp>(op)) {
+        FunctionType functionType = funcOp.getFunctionType();
+        for (Type type : functionType.getInputs()) {
+            if (failed(verifyLayoutAssignedTypeTree(op, type, diagOS))) {
+                return failure();
+            }
+        }
+        for (Type type : functionType.getResults()) {
+            if (failed(verifyLayoutAssignedTypeTree(op, type, diagOS))) {
+                return failure();
+            }
+        }
+    }
+
+    for (Type type : op->getOperandTypes()) {
+        if (failed(verifyLayoutAssignedTypeTree(op, type, diagOS))) {
+            return failure();
+        }
+    }
+    for (Type type : op->getResultTypes()) {
+        if (failed(verifyLayoutAssignedTypeTree(op, type, diagOS))) {
+            return failure();
+        }
+    }
+    return verifyRegionAndAttributeTypeTrees(op, diagOS, verifyLayoutAssignedTypeTree);
+}
+
+LogicalResult verifyLayoutHelperSupport(Operation* op, llvm::raw_ostream* diagOS);
+
+LogicalResult verifyLayoutSemanticSupport(Operation* op, llvm::raw_ostream* diagOS);
+
+LogicalResult verifyOperationBoundary(Operation* op, llvm::raw_ostream* diagOS)
+{
+    if (failed(verifyOperationTypes(op, diagOS))) {
         return failure();
-      }
     }
-    for (Type type : functionType.getResults()) {
-      if (failed(verifyBoundaryTypeTree(op, type, diagOS))) {
+
+    if (!hasVMIType(op)) {
+        return success();
+    }
+
+    if (isVMIHelperOp(op)) {
+        return emitInvariant(op, diagOS, "VMI helper op appears before layout assignment or VMI-to-VPTO");
+    }
+
+    if (isVMISemanticOp(op) || isStructuralOp(op)) {
+        std::string reason;
+        if (failed(VMILayoutSupport().getGroupOperationShapeSupport(op, &reason))) {
+            InFlightDiagnostic diag = op->emitError() << kVMIDiagUnsupportedPrefix << op->getName() << ": " << reason;
+            (void)diag;
+            mirrorDiagnostic(diagOS, Twine(kVMIDiagUnsupportedPrefix) + reason);
+            return failure();
+        }
+        return success();
+    }
+
+    return emitInvariant(op, diagOS, "VMI typed value is used by a non-VMI semantic op");
+}
+
+LogicalResult verifyLayoutAssignedOperation(Operation* op, llvm::raw_ostream* diagOS, bool verifyHelperSupports = true)
+{
+    if (failed(verifyLayoutAssignedOperationTypes(op, diagOS))) {
         return failure();
-      }
     }
-  }
 
-  for (Type type : op->getOperandTypes()) {
-    if (failed(verifyBoundaryTypeTree(op, type, diagOS))) {
-      return failure();
+    if (!hasVMIType(op)) {
+        return success();
     }
-  }
-  for (Type type : op->getResultTypes()) {
-    if (failed(verifyBoundaryTypeTree(op, type, diagOS))) {
-      return failure();
+
+    if (isVMIHelperOp(op)) {
+        if (isVMILayoutHelperOp(op)) {
+            return verifyHelperSupports ? verifyLayoutHelperSupport(op, diagOS) : success();
+        }
+        return emitInvariant(op, diagOS, "VMI pack/unpack helper appears before VMI-to-VPTO physicalization");
     }
-  }
-  return verifyRegionAndAttributeTypeTrees(op, diagOS, verifyBoundaryTypeTree);
+
+    if (isVMISemanticOp(op)) {
+        return verifyLayoutSemanticSupport(op, diagOS);
+    }
+    if (isStructuralOp(op)) {
+        return success();
+    }
+
+    return emitInvariant(op, diagOS, "VMI typed value is used by a non-VMI semantic op");
 }
 
-LogicalResult verifyLayoutAssignedOperationTypes(Operation *op,
-                                                 llvm::raw_ostream *diagOS) {
-  if (auto funcOp = dyn_cast<func::FuncOp>(op)) {
-    FunctionType functionType = funcOp.getFunctionType();
-    for (Type type : functionType.getInputs()) {
-      if (failed(verifyLayoutAssignedTypeTree(op, type, diagOS))) {
-        return failure();
-      }
+LogicalResult verifyLayoutHelperSupport(Operation* op, llvm::raw_ostream* diagOS)
+{
+    VMILayoutSupport supports;
+
+    if (auto ensure = dyn_cast<VMIEnsureLayoutOp>(op)) {
+        auto sourceType = cast<VMIVRegType>(ensure.getSource().getType());
+        auto resultType = cast<VMIVRegType>(ensure.getResult().getType());
+        std::string reason;
+        if (failed(supports.getEnsureLayoutFact(sourceType, resultType, &reason))) {
+            return emitHelperMaterializationContract(
+                op, sourceType, resultType, "pto.vmi.ensure_layout", reason, diagOS);
+        }
+        return success();
     }
-    for (Type type : functionType.getResults()) {
-      if (failed(verifyLayoutAssignedTypeTree(op, type, diagOS))) {
-        return failure();
-      }
+
+    if (auto ensure = dyn_cast<VMIEnsureMaskLayoutOp>(op)) {
+        auto sourceType = cast<VMIMaskType>(ensure.getSource().getType());
+        auto resultType = cast<VMIMaskType>(ensure.getResult().getType());
+        std::string reason;
+        if (failed(supports.getEnsureMaskLayoutFact(sourceType, resultType, &reason))) {
+            return emitHelperMaterializationContract(
+                op, sourceType, resultType, "pto.vmi.ensure_mask_layout", reason, diagOS);
+        }
+        return success();
     }
-  }
 
-  for (Type type : op->getOperandTypes()) {
-    if (failed(verifyLayoutAssignedTypeTree(op, type, diagOS))) {
-      return failure();
-    }
-  }
-  for (Type type : op->getResultTypes()) {
-    if (failed(verifyLayoutAssignedTypeTree(op, type, diagOS))) {
-      return failure();
-    }
-  }
-  return verifyRegionAndAttributeTypeTrees(op, diagOS,
-                                           verifyLayoutAssignedTypeTree);
-}
-
-LogicalResult verifyLayoutHelperSupport(Operation *op,
-                                        llvm::raw_ostream *diagOS);
-
-LogicalResult verifyLayoutSemanticSupport(Operation *op,
-                                          llvm::raw_ostream *diagOS);
-
-LogicalResult verifyOperationBoundary(Operation *op,
-                                      llvm::raw_ostream *diagOS) {
-  if (failed(verifyOperationTypes(op, diagOS))) {
-    return failure();
-  }
-
-  if (!hasVMIType(op)) {
     return success();
-  }
-
-  if (isVMIHelperOp(op)) {
-    return emitInvariant(
-        op, diagOS,
-        "VMI helper op appears before layout assignment or VMI-to-VPTO");
-  }
-
-  if (isVMISemanticOp(op) || isStructuralOp(op)) {
-    std::string reason;
-    if (failed(VMILayoutSupport().getGroupOperationShapeSupport(op, &reason))) {
-      InFlightDiagnostic diag = op->emitError()
-          << kVMIDiagUnsupportedPrefix << op->getName() << ": " << reason;
-      (void)diag;
-      mirrorDiagnostic(diagOS, Twine(kVMIDiagUnsupportedPrefix) + reason);
-      return failure();
-    }
-    return success();
-  }
-
-  return emitInvariant(op, diagOS,
-                       "VMI typed value is used by a non-VMI semantic op");
-}
-
-LogicalResult verifyLayoutAssignedOperation(Operation *op,
-                                            llvm::raw_ostream *diagOS,
-                                            bool verifyHelperSupports = true) {
-  if (failed(verifyLayoutAssignedOperationTypes(op, diagOS))) {
-    return failure();
-  }
-
-  if (!hasVMIType(op)) {
-    return success();
-  }
-
-  if (isVMIHelperOp(op)) {
-    if (isVMILayoutHelperOp(op)) {
-      return verifyHelperSupports ? verifyLayoutHelperSupport(op, diagOS)
-                                  : success();
-    }
-    return emitInvariant(
-        op, diagOS,
-        "VMI pack/unpack helper appears before VMI-to-VPTO physicalization");
-  }
-
-  if (isVMISemanticOp(op)) {
-    return verifyLayoutSemanticSupport(op, diagOS);
-  }
-  if (isStructuralOp(op)) {
-    return success();
-  }
-
-  return emitInvariant(op, diagOS,
-                       "VMI typed value is used by a non-VMI semantic op");
-}
-
-LogicalResult verifyLayoutHelperSupport(Operation *op,
-                                        llvm::raw_ostream *diagOS) {
-  VMILayoutSupport supports;
-
-  if (auto ensure = dyn_cast<VMIEnsureLayoutOp>(op)) {
-    auto sourceType = cast<VMIVRegType>(ensure.getSource().getType());
-    auto resultType = cast<VMIVRegType>(ensure.getResult().getType());
-    std::string reason;
-    if (failed(supports.getEnsureLayoutFact(sourceType, resultType, &reason))) {
-      return emitHelperMaterializationContract(
-          op, sourceType, resultType, "pto.vmi.ensure_layout", reason, diagOS);
-    }
-    return success();
-  }
-
-  if (auto ensure = dyn_cast<VMIEnsureMaskLayoutOp>(op)) {
-    auto sourceType = cast<VMIMaskType>(ensure.getSource().getType());
-    auto resultType = cast<VMIMaskType>(ensure.getResult().getType());
-    std::string reason;
-    if (failed(
-            supports.getEnsureMaskLayoutFact(sourceType, resultType, &reason))) {
-      return emitHelperMaterializationContract(op, sourceType, resultType,
-                                               "pto.vmi.ensure_mask_layout",
-                                               reason, diagOS);
-    }
-    return success();
-  }
-
-  return success();
 }
 
 template <typename OpT, typename SupportFn>
 static LogicalResult verifyGroupSlotsLayoutSupport(
-    Operation *op, OpT groupOp, VMILayoutAttr layout,
-    llvm::raw_ostream *diagOS, StringRef message, SupportFn supports) {
-  if (!layout || !layout.isGroupSlots()) {
+    Operation* op, OpT groupOp, VMILayoutAttr layout, llvm::raw_ostream* diagOS, StringRef message, SupportFn supports)
+{
+    if (!layout || !layout.isGroupSlots()) {
+        return success();
+    }
+    std::string reason;
+    if (failed(supports(groupOp, &reason))) {
+        return emitLayoutSupportContract(op, diagOS, message, reason);
+    }
     return success();
-  }
-  std::string reason;
-  if (failed(supports(groupOp, &reason))) {
-    return emitLayoutSupportContract(op, diagOS, message, reason);
-  }
-  return success();
 }
 
 static LogicalResult verifyVMIStoreSemanticSupport(
-    VMIStoreOp store, llvm::raw_ostream *diagOS, VMILayoutSupport &supports) {
-  auto valueType = cast<VMIVRegType>(store.getValue().getType());
-  VMILayoutAttr layout = valueType.getLayoutAttr();
-  if (!layout || layout.isContiguous()) {
+    VMIStoreOp store, llvm::raw_ostream* diagOS, VMILayoutSupport& supports)
+{
+    auto valueType = cast<VMIVRegType>(store.getValue().getType());
+    VMILayoutAttr layout = valueType.getLayoutAttr();
+    if (!layout || layout.isContiguous()) {
+        return success();
+    }
+    std::string reason;
+    if (failed(supports.getStoreLayoutFact(valueType, &reason))) {
+        return emitLayoutSupportContract(
+            store, diagOS, "pto.vmi.store has no registered contiguous-memory layout support", reason);
+    }
     return success();
-  }
-  std::string reason;
-  if (failed(supports.getStoreLayoutFact(valueType, &reason))) {
-    return emitLayoutSupportContract(
-        store, diagOS,
-        "pto.vmi.store has no registered contiguous-memory layout support",
-        reason);
-  }
-  return success();
 }
 
 static LogicalResult verifyVMIGroupLoadSemanticSupport(
-    VMIGroupLoadOp load, llvm::raw_ostream *diagOS, VMILayoutSupport &supports) {
-  auto resultType = cast<VMIVRegType>(load.getResult().getType());
-  VMILayoutAttr layout = resultType.getLayoutAttr();
-  if (!layout) {
+    VMIGroupLoadOp load, llvm::raw_ostream* diagOS, VMILayoutSupport& supports)
+{
+    auto resultType = cast<VMIVRegType>(load.getResult().getType());
+    VMILayoutAttr layout = resultType.getLayoutAttr();
+    if (!layout) {
+        return success();
+    }
+    std::string reason;
+    if (failed(supports.getGroupLoadLayoutFact(load, &reason))) {
+        return emitLayoutSupportContract(load, diagOS, "pto.vmi.group_load has no registered layout support", reason);
+    }
     return success();
-  }
-  std::string reason;
-  if (failed(supports.getGroupLoadLayoutFact(load, &reason))) {
-    return emitLayoutSupportContract(
-        load, diagOS, "pto.vmi.group_load has no registered layout support",
-        reason);
-  }
-  return success();
 }
 
 static LogicalResult verifyVMIGroupSlotLoadSemanticSupport(
-    VMIGroupSlotLoadOp load, llvm::raw_ostream *diagOS,
-    VMILayoutSupport &supports) {
-  auto resultType = cast<VMIVRegType>(load.getResult().getType());
-  std::string reason;
-  if (failed(supports.getGroupSlotLoadLayoutFact(
-          resultType, load.getNumGroupsAttr().getInt(), &reason))) {
-    return emitLayoutSupportContract(
-        load, diagOS, "pto.vmi.group_slot_load has no registered layout support",
-        reason);
-  }
-  return success();
+    VMIGroupSlotLoadOp load, llvm::raw_ostream* diagOS, VMILayoutSupport& supports)
+{
+    auto resultType = cast<VMIVRegType>(load.getResult().getType());
+    std::string reason;
+    if (failed(supports.getGroupSlotLoadLayoutFact(resultType, load.getNumGroupsAttr().getInt(), &reason))) {
+        return emitLayoutSupportContract(
+            load, diagOS, "pto.vmi.group_slot_load has no registered layout support", reason);
+    }
+    return success();
 }
 
 static LogicalResult verifyVMIGroupBroadcastLoadSemanticSupport(
-    VMIGroupBroadcastLoadOp load, llvm::raw_ostream *diagOS,
-    VMILayoutSupport &supports) {
-  std::string reason;
-  if (failed(supports.getGroupBroadcastLoadSupport(load, &reason))) {
-    return emitLayoutSupportContract(
-        load, diagOS,
-        "pto.vmi.group_broadcast_load has no registered layout support",
-        reason);
-  }
-  return success();
+    VMIGroupBroadcastLoadOp load, llvm::raw_ostream* diagOS, VMILayoutSupport& supports)
+{
+    std::string reason;
+    if (failed(supports.getGroupBroadcastLoadSupport(load, &reason))) {
+        return emitLayoutSupportContract(
+            load, diagOS, "pto.vmi.group_broadcast_load has no registered layout support", reason);
+    }
+    return success();
 }
 
 static LogicalResult verifyVMIGroupMemorySemanticSupport(
-    Operation *op, llvm::raw_ostream *diagOS, VMILayoutSupport &supports) {
-  if (auto store = dyn_cast<VMIStoreOp>(op)) {
-    return verifyVMIStoreSemanticSupport(store, diagOS, supports);
-  }
-  if (auto load = dyn_cast<VMIGroupLoadOp>(op)) {
-    return verifyVMIGroupLoadSemanticSupport(load, diagOS, supports);
-  }
-  if (auto load = dyn_cast<VMIGroupSlotLoadOp>(op)) {
-    return verifyVMIGroupSlotLoadSemanticSupport(load, diagOS, supports);
-  }
-  if (auto load = dyn_cast<VMIGroupBroadcastLoadOp>(op)) {
-    return verifyVMIGroupBroadcastLoadSemanticSupport(load, diagOS, supports);
-  }
-  if (auto store = dyn_cast<VMIGroupStoreOp>(op)) {
-    auto valueType = cast<VMIVRegType>(store.getValue().getType());
-    return verifyGroupSlotsLayoutSupport(
-        op, store, valueType.getLayoutAttr(), diagOS,
-        "pto.vmi.group_store has no registered group_slots layout support",
-        [&supports, valueType](VMIGroupStoreOp groupStore, std::string *reason) {
-          return supports.getGroupStoreLayoutFact(
-              valueType, groupStore.getNumGroupsAttr().getInt(), reason);
-        });
-  }
-  return success();
+    Operation* op, llvm::raw_ostream* diagOS, VMILayoutSupport& supports)
+{
+    if (auto store = dyn_cast<VMIStoreOp>(op)) {
+        return verifyVMIStoreSemanticSupport(store, diagOS, supports);
+    }
+    if (auto load = dyn_cast<VMIGroupLoadOp>(op)) {
+        return verifyVMIGroupLoadSemanticSupport(load, diagOS, supports);
+    }
+    if (auto load = dyn_cast<VMIGroupSlotLoadOp>(op)) {
+        return verifyVMIGroupSlotLoadSemanticSupport(load, diagOS, supports);
+    }
+    if (auto load = dyn_cast<VMIGroupBroadcastLoadOp>(op)) {
+        return verifyVMIGroupBroadcastLoadSemanticSupport(load, diagOS, supports);
+    }
+    if (auto store = dyn_cast<VMIGroupStoreOp>(op)) {
+        auto valueType = cast<VMIVRegType>(store.getValue().getType());
+        return verifyGroupSlotsLayoutSupport(
+            op, store, valueType.getLayoutAttr(), diagOS,
+            "pto.vmi.group_store has no registered group_slots layout support",
+            [&supports, valueType](VMIGroupStoreOp groupStore, std::string* reason) {
+                return supports.getGroupStoreLayoutFact(valueType, groupStore.getNumGroupsAttr().getInt(), reason);
+            });
+    }
+    return success();
 }
 
 template <typename ReduceOpT, typename SupportFn>
 static LogicalResult verifyVMIGroupReduceSemanticSupport(
-    ReduceOpT reduce, llvm::raw_ostream *diagOS, StringRef message,
-    SupportFn supports) {
-  auto resultType = cast<VMIVRegType>(reduce.getResult().getType());
-  return verifyGroupSlotsLayoutSupport(reduce, reduce, resultType.getLayoutAttr(),
-                                       diagOS, message, supports);
+    ReduceOpT reduce, llvm::raw_ostream* diagOS, StringRef message, SupportFn supports)
+{
+    auto resultType = cast<VMIVRegType>(reduce.getResult().getType());
+    return verifyGroupSlotsLayoutSupport(reduce, reduce, resultType.getLayoutAttr(), diagOS, message, supports);
 }
 
 static LogicalResult verifyVMIGroupReductionSemanticSupport(
-    Operation *op, llvm::raw_ostream *diagOS, VMILayoutSupport &supports) {
-  if (auto reduce = dyn_cast<VMIGroupReduceAddFOp>(op)) {
-    return verifyVMIGroupReduceSemanticSupport(
-        reduce, diagOS,
-        "pto.vmi.group_reduce_addf has no registered group_slots layout support",
-        [&supports](VMIGroupReduceAddFOp groupReduce, std::string *reason) {
-          return supports.getGroupReduceAddFSupport(groupReduce, reason);
-        });
-  }
-  if (auto reduce = dyn_cast<VMIGroupReduceMaxFOp>(op)) {
-    return verifyVMIGroupReduceSemanticSupport(
-        reduce, diagOS,
-        "pto.vmi.group_reduce_maxf has no registered group_slots layout support",
-        [&supports](VMIGroupReduceMaxFOp groupReduce, std::string *reason) {
-          return supports.getGroupReduceMaxFSupport(groupReduce, reason);
-        });
-  }
-  if (auto reduce = dyn_cast<VMIGroupReduceMinFOp>(op)) {
-    return verifyVMIGroupReduceSemanticSupport(
-        reduce, diagOS,
-        "pto.vmi.group_reduce_minf has no registered group_slots layout support",
-        [&supports](VMIGroupReduceMinFOp groupReduce, std::string *reason) {
-          return supports.getGroupReduceMinFSupport(groupReduce, reason);
-        });
-  }
-  if (auto reduce = dyn_cast<VMIGroupReduceAddIOp>(op)) {
-    return verifyVMIGroupReduceSemanticSupport(
-        reduce, diagOS,
-        "pto.vmi.group_reduce_addi has no registered group_slots layout support",
-        [&supports](VMIGroupReduceAddIOp groupReduce, std::string *reason) {
-          return supports.getGroupReduceAddISupport(groupReduce, reason);
-        });
-  }
-  if (auto reduce = dyn_cast<VMIGroupReduceMaxIOp>(op)) {
-    return verifyVMIGroupReduceSemanticSupport(
-        reduce, diagOS,
-        "pto.vmi.group_reduce_maxi has no registered group_slots layout support",
-        [&supports](VMIGroupReduceMaxIOp groupReduce, std::string *reason) {
-          return supports.getGroupReduceMaxISupport(groupReduce, reason);
-        });
-  }
-  if (auto reduce = dyn_cast<VMIGroupReduceMinIOp>(op)) {
-    return verifyVMIGroupReduceSemanticSupport(
-        reduce, diagOS,
-        "pto.vmi.group_reduce_mini has no registered group_slots layout support",
-        [&supports](VMIGroupReduceMinIOp groupReduce, std::string *reason) {
-          return supports.getGroupReduceMinISupport(groupReduce, reason);
-        });
-  }
-  return success();
+    Operation* op, llvm::raw_ostream* diagOS, VMILayoutSupport& supports)
+{
+    if (auto reduce = dyn_cast<VMIGroupReduceAddFOp>(op)) {
+        return verifyVMIGroupReduceSemanticSupport(
+            reduce, diagOS, "pto.vmi.group_reduce_addf has no registered group_slots layout support",
+            [&supports](VMIGroupReduceAddFOp groupReduce, std::string* reason) {
+                return supports.getGroupReduceAddFSupport(groupReduce, reason);
+            });
+    }
+    if (auto reduce = dyn_cast<VMIGroupReduceMaxFOp>(op)) {
+        return verifyVMIGroupReduceSemanticSupport(
+            reduce, diagOS, "pto.vmi.group_reduce_maxf has no registered group_slots layout support",
+            [&supports](VMIGroupReduceMaxFOp groupReduce, std::string* reason) {
+                return supports.getGroupReduceMaxFSupport(groupReduce, reason);
+            });
+    }
+    if (auto reduce = dyn_cast<VMIGroupReduceMinFOp>(op)) {
+        return verifyVMIGroupReduceSemanticSupport(
+            reduce, diagOS, "pto.vmi.group_reduce_minf has no registered group_slots layout support",
+            [&supports](VMIGroupReduceMinFOp groupReduce, std::string* reason) {
+                return supports.getGroupReduceMinFSupport(groupReduce, reason);
+            });
+    }
+    if (auto reduce = dyn_cast<VMIGroupReduceAddIOp>(op)) {
+        return verifyVMIGroupReduceSemanticSupport(
+            reduce, diagOS, "pto.vmi.group_reduce_addi has no registered group_slots layout support",
+            [&supports](VMIGroupReduceAddIOp groupReduce, std::string* reason) {
+                return supports.getGroupReduceAddISupport(groupReduce, reason);
+            });
+    }
+    if (auto reduce = dyn_cast<VMIGroupReduceMaxIOp>(op)) {
+        return verifyVMIGroupReduceSemanticSupport(
+            reduce, diagOS, "pto.vmi.group_reduce_maxi has no registered group_slots layout support",
+            [&supports](VMIGroupReduceMaxIOp groupReduce, std::string* reason) {
+                return supports.getGroupReduceMaxISupport(groupReduce, reason);
+            });
+    }
+    if (auto reduce = dyn_cast<VMIGroupReduceMinIOp>(op)) {
+        return verifyVMIGroupReduceSemanticSupport(
+            reduce, diagOS, "pto.vmi.group_reduce_mini has no registered group_slots layout support",
+            [&supports](VMIGroupReduceMinIOp groupReduce, std::string* reason) {
+                return supports.getGroupReduceMinISupport(groupReduce, reason);
+            });
+    }
+    return success();
 }
 
 static LogicalResult verifyVMIGroupBroadcastSemanticSupport(
-    VMIGroupBroadcastOp broadcast, llvm::raw_ostream *diagOS,
-    VMILayoutSupport &supports) {
-  auto sourceType = cast<VMIVRegType>(broadcast.getSource().getType());
-  VMILayoutAttr layout = sourceType.getLayoutAttr();
-  if (!layout || !layout.isGroupSlots() || layout.getSlots() <= 0) {
+    VMIGroupBroadcastOp broadcast, llvm::raw_ostream* diagOS, VMILayoutSupport& supports)
+{
+    auto sourceType = cast<VMIVRegType>(broadcast.getSource().getType());
+    VMILayoutAttr layout = sourceType.getLayoutAttr();
+    if (!layout || !layout.isGroupSlots() || layout.getSlots() <= 0) {
+        return success();
+    }
+    std::string reason;
+    if (failed(supports.getGroupBroadcastSupport(broadcast, &reason))) {
+        return emitLayoutSupportContract(
+            broadcast, diagOS, "pto.vmi.group_broadcast has no registered layout support", reason);
+    }
     return success();
-  }
-  std::string reason;
-  if (failed(supports.getGroupBroadcastSupport(broadcast, &reason))) {
-    return emitLayoutSupportContract(
-        broadcast, diagOS,
-        "pto.vmi.group_broadcast has no registered layout support", reason);
-  }
-  return success();
 }
 
-static LogicalResult verifyVMIGroupSemanticSupport(
-    Operation *op, llvm::raw_ostream *diagOS, VMILayoutSupport &supports) {
-  if (isa<VMIStoreOp, VMIGroupLoadOp, VMIGroupSlotLoadOp,
-          VMIGroupBroadcastLoadOp, VMIGroupStoreOp>(op)) {
-    return verifyVMIGroupMemorySemanticSupport(op, diagOS, supports);
-  }
-  if (isa<VMIGroupReduceAddFOp, VMIGroupReduceMaxFOp, VMIGroupReduceMinFOp,
-          VMIGroupReduceAddIOp, VMIGroupReduceMaxIOp, VMIGroupReduceMinIOp>(op)) {
-    return verifyVMIGroupReductionSemanticSupport(op, diagOS, supports);
-  }
-  if (auto broadcast = dyn_cast<VMIGroupBroadcastOp>(op)) {
-    return verifyVMIGroupBroadcastSemanticSupport(broadcast, diagOS, supports);
-  }
-  return success();
+static LogicalResult verifyVMIGroupSemanticSupport(Operation* op, llvm::raw_ostream* diagOS, VMILayoutSupport& supports)
+{
+    if (isa<VMIStoreOp, VMIGroupLoadOp, VMIGroupSlotLoadOp, VMIGroupBroadcastLoadOp, VMIGroupStoreOp>(op)) {
+        return verifyVMIGroupMemorySemanticSupport(op, diagOS, supports);
+    }
+    if (isa<VMIGroupReduceAddFOp, VMIGroupReduceMaxFOp, VMIGroupReduceMinFOp, VMIGroupReduceAddIOp,
+            VMIGroupReduceMaxIOp, VMIGroupReduceMinIOp>(op)) {
+        return verifyVMIGroupReductionSemanticSupport(op, diagOS, supports);
+    }
+    if (auto broadcast = dyn_cast<VMIGroupBroadcastOp>(op)) {
+        return verifyVMIGroupBroadcastSemanticSupport(broadcast, diagOS, supports);
+    }
+    return success();
 }
 
 static LogicalResult verifyVMIHistogramSemanticSupport(
-    Operation *op, llvm::raw_ostream *diagOS, VMILayoutSupport &supports);
+    Operation* op, llvm::raw_ostream* diagOS, VMILayoutSupport& supports);
 static LogicalResult verifyVMIVUnzipSemanticSupport(
-    Operation *op, llvm::raw_ostream *diagOS, VMILayoutSupport &supports);
+    Operation* op, llvm::raw_ostream* diagOS, VMILayoutSupport& supports);
 
 static LogicalResult verifyVMIScalarSemanticSupport(
-    Operation *op, llvm::raw_ostream *diagOS, VMILayoutSupport &supports) {
-  if (isa<VMIVdhistOp, VMIVchistOp>(op)) {
-    return verifyVMIHistogramSemanticSupport(op, diagOS, supports);
-  }
-
-  if (auto truncf = dyn_cast<VMITruncFOp>(op)) {
-    std::string reason;
-    // Grade against the pipeline state recorded on the module, like every other
-    // VMI pass: a standalone -pto-validate-vmi-ir run must accept exactly the IR
-    // the rest of the compiler accepts.
-    if (failed(supports.getTruncFSupport(
-        truncf, &reason, getVMIFastmathState(op)))) {
-      return emitLayoutSupportContract(
-          op, diagOS, "pto.vmi.truncf has no registered layout support",
-          reason);
+    Operation* op, llvm::raw_ostream* diagOS, VMILayoutSupport& supports)
+{
+    if (isa<VMIVdhistOp, VMIVchistOp>(op)) {
+        return verifyVMIHistogramSemanticSupport(op, diagOS, supports);
     }
-    return success();
-  }
 
-  if (auto extf = dyn_cast<VMIExtFOp>(op)) {
-    std::string reason;
-    if (failed(supports.getExtFSupport(extf, &reason))) {
-      return emitLayoutSupportContract(
-          op, diagOS, "pto.vmi.extf has no registered layout support", reason);
+    if (auto truncf = dyn_cast<VMITruncFOp>(op)) {
+        std::string reason;
+        // Grade against the pipeline state recorded on the module, like every other
+        // VMI pass: a standalone -pto-validate-vmi-ir run must accept exactly the IR
+        // the rest of the compiler accepts.
+        if (failed(supports.getTruncFSupport(truncf, &reason, getVMIFastmathState(op)))) {
+            return emitLayoutSupportContract(op, diagOS, "pto.vmi.truncf has no registered layout support", reason);
+        }
+        return success();
     }
-    return success();
-  }
 
-  if (auto bitcast = dyn_cast<VMIBitcastOp>(op)) {
-    std::string reason;
-    if (failed(supports.getBitcastSupport(bitcast, &reason))) {
-      return emitLayoutSupportContract(
-          op, diagOS, "pto.vmi.bitcast has no registered layout support",
-          reason);
+    if (auto extf = dyn_cast<VMIExtFOp>(op)) {
+        std::string reason;
+        if (failed(supports.getExtFSupport(extf, &reason))) {
+            return emitLayoutSupportContract(op, diagOS, "pto.vmi.extf has no registered layout support", reason);
+        }
+        return success();
     }
+
+    if (auto bitcast = dyn_cast<VMIBitcastOp>(op)) {
+        std::string reason;
+        if (failed(supports.getBitcastSupport(bitcast, &reason))) {
+            return emitLayoutSupportContract(op, diagOS, "pto.vmi.bitcast has no registered layout support", reason);
+        }
+        return success();
+    }
+
+    if (isa<VMIVUnzipOp, VMIVZipOp>(op)) {
+        return verifyVMIVUnzipSemanticSupport(op, diagOS, supports);
+    }
+
     return success();
-  }
-
-  if (isa<VMIVUnzipOp, VMIVZipOp>(op)) {
-    return verifyVMIVUnzipSemanticSupport(op, diagOS, supports);
-  }
-
-  return success();
 }
 
 static LogicalResult verifyVMIHistogramSemanticSupport(
-    Operation *op, llvm::raw_ostream *diagOS, VMILayoutSupport &supports) {
-  std::string reason;
-  if (auto hist = dyn_cast<VMIVdhistOp>(op)) {
-    if (failed(supports.getVdhistSupport(hist, &reason))) {
-      return emitLayoutSupportContract(
-          op, diagOS, "pto.vmi.vdhist has no registered histogram support",
-          reason);
+    Operation* op, llvm::raw_ostream* diagOS, VMILayoutSupport& supports)
+{
+    std::string reason;
+    if (auto hist = dyn_cast<VMIVdhistOp>(op)) {
+        if (failed(supports.getVdhistSupport(hist, &reason))) {
+            return emitLayoutSupportContract(op, diagOS, "pto.vmi.vdhist has no registered histogram support", reason);
+        }
+        return success();
+    }
+    auto hist = cast<VMIVchistOp>(op);
+    if (failed(supports.getVchistSupport(hist, &reason))) {
+        return emitLayoutSupportContract(op, diagOS, "pto.vmi.vchist has no registered histogram support", reason);
     }
     return success();
-  }
-  auto hist = cast<VMIVchistOp>(op);
-  if (failed(supports.getVchistSupport(hist, &reason))) {
-    return emitLayoutSupportContract(
-        op, diagOS, "pto.vmi.vchist has no registered histogram support",
-        reason);
-  }
-  return success();
 }
 
 static LogicalResult verifyVMIVUnzipSemanticSupport(
-    Operation *op, llvm::raw_ostream *diagOS, VMILayoutSupport &supports) {
-  std::string reason;
-  if (auto unzip = dyn_cast<VMIVUnzipOp>(op)) {
-    if (failed(supports.getVUnzipSupport(unzip, &reason))) {
-      return emitLayoutSupportContract(
-          op, diagOS, "pto.vmi.vunzip has no registered layout support",
-          reason);
+    Operation* op, llvm::raw_ostream* diagOS, VMILayoutSupport& supports)
+{
+    std::string reason;
+    if (auto unzip = dyn_cast<VMIVUnzipOp>(op)) {
+        if (failed(supports.getVUnzipSupport(unzip, &reason))) {
+            return emitLayoutSupportContract(op, diagOS, "pto.vmi.vunzip has no registered layout support", reason);
+        }
+        return success();
+    }
+    auto zip = cast<VMIVZipOp>(op);
+    if (failed(supports.getVZipSupport(zip, &reason))) {
+        return emitLayoutSupportContract(op, diagOS, "pto.vmi.vzip has no registered layout support", reason);
     }
     return success();
-  }
-  auto zip = cast<VMIVZipOp>(op);
-  if (failed(supports.getVZipSupport(zip, &reason))) {
-    return emitLayoutSupportContract(
-        op, diagOS, "pto.vmi.vzip has no registered layout support", reason);
-  }
-  return success();
 }
 
-LogicalResult verifyLayoutSemanticSupport(Operation *op,
-                                          llvm::raw_ostream *diagOS) {
-  VMILayoutSupport supports;
-  if (isa<VMIStoreOp, VMIGroupLoadOp, VMIGroupSlotLoadOp,
-          VMIGroupBroadcastLoadOp, VMIGroupStoreOp, VMIGroupReduceAddFOp,
-          VMIGroupReduceMaxFOp, VMIGroupReduceMinFOp, VMIGroupReduceAddIOp,
-          VMIGroupReduceMaxIOp, VMIGroupReduceMinIOp, VMIGroupBroadcastOp>(
-          op)) {
-    return verifyVMIGroupSemanticSupport(op, diagOS, supports);
-  }
-  if (isa<VMIVdhistOp, VMIVchistOp, VMITruncFOp, VMIExtFOp, VMIBitcastOp,
-          VMIVUnzipOp, VMIVZipOp>(op)) {
-    return verifyVMIScalarSemanticSupport(op, diagOS, supports);
-  }
-  return success();
-}
-
-struct PTOValidateVMIIRPass
-    : public mlir::pto::impl::PTOValidateVMIIRBase<PTOValidateVMIIRPass> {
-  MLIR_DEFINE_EXPLICIT_INTERNAL_INLINE_TYPE_ID(PTOValidateVMIIRPass)
-
-  void runOnOperation() override {
-    if (failed(validateVMIProducerBoundaryIR(getOperation(), &llvm::errs()))) {
-      signalPassFailure();
+LogicalResult verifyLayoutSemanticSupport(Operation* op, llvm::raw_ostream* diagOS)
+{
+    VMILayoutSupport supports;
+    if (auto split = dyn_cast<VMIDeinterleaveExtfOp>(op)) {
+        std::string reason;
+        if (failed(supports.getDeinterleaveExtfSupport(split, &reason))) {
+            return emitLayoutSupportContract(
+                op, diagOS, "pto.vmi.deinterleave_extf has no registered layout support", reason);
+        }
+        return success();
     }
-  }
+    if (isa<VMIStoreOp, VMIGroupLoadOp, VMIGroupSlotLoadOp, VMIGroupBroadcastLoadOp, VMIGroupStoreOp,
+            VMIGroupReduceAddFOp, VMIGroupReduceMaxFOp, VMIGroupReduceMinFOp, VMIGroupReduceAddIOp,
+            VMIGroupReduceMaxIOp, VMIGroupReduceMinIOp, VMIGroupBroadcastOp>(op)) {
+        return verifyVMIGroupSemanticSupport(op, diagOS, supports);
+    }
+    if (isa<VMIVdhistOp, VMIVchistOp, VMITruncFOp, VMIExtFOp, VMIBitcastOp, VMIVUnzipOp, VMIVZipOp>(op)) {
+        return verifyVMIScalarSemanticSupport(op, diagOS, supports);
+    }
+    return success();
+}
+
+struct PTOValidateVMIIRPass : public mlir::pto::impl::PTOValidateVMIIRBase<PTOValidateVMIIRPass> {
+    MLIR_DEFINE_EXPLICIT_INTERNAL_INLINE_TYPE_ID(PTOValidateVMIIRPass)
+
+    void runOnOperation() override
+    {
+        if (failed(validateVMIProducerBoundaryIR(getOperation(), &llvm::errs()))) {
+            signalPassFailure();
+        }
+    }
 };
 
-struct PTOValidateVMILayoutIRPass
-    : public mlir::pto::impl::PTOValidateVMILayoutIRBase<
-          PTOValidateVMILayoutIRPass> {
-  MLIR_DEFINE_EXPLICIT_INTERNAL_INLINE_TYPE_ID(PTOValidateVMILayoutIRPass)
+struct PTOValidateVMILayoutIRPass : public mlir::pto::impl::PTOValidateVMILayoutIRBase<PTOValidateVMILayoutIRPass> {
+    MLIR_DEFINE_EXPLICIT_INTERNAL_INLINE_TYPE_ID(PTOValidateVMILayoutIRPass)
 
-  void runOnOperation() override {
-    if (failed(validateVMILayoutAssignedIR(getOperation(), &llvm::errs()))) {
-      signalPassFailure();
+    void runOnOperation() override
+    {
+        if (failed(validateVMILayoutAssignedIR(getOperation(), &llvm::errs()))) {
+            signalPassFailure();
+        }
     }
-  }
 };
 
 } // namespace
 
-LogicalResult
-mlir::pto::validateVMIProducerBoundaryIR(ModuleOp module,
-                                         llvm::raw_ostream *diagOS) {
-  WalkResult result = module.walk([diagOS](Operation *op) {
-    if (failed(verifyOperationBoundary(op, diagOS))) {
-      return WalkResult::interrupt();
-    }
-    return WalkResult::advance();
-  });
-  return failure(result.wasInterrupted());
+LogicalResult mlir::pto::validateVMIProducerBoundaryIR(ModuleOp module, llvm::raw_ostream* diagOS)
+{
+    WalkResult result = module.walk([diagOS](Operation* op) {
+        if (failed(verifyOperationBoundary(op, diagOS))) {
+            return WalkResult::interrupt();
+        }
+        return WalkResult::advance();
+    });
+    return failure(result.wasInterrupted());
 }
 
 LogicalResult mlir::pto::validateVMILayoutAssignedIR(
-    ModuleOp module, llvm::raw_ostream *diagOS, bool verifyHelperSupports) {
-  WalkResult result = module.walk([diagOS, verifyHelperSupports](Operation *op) {
-    if (failed(verifyLayoutAssignedOperation(op, diagOS, verifyHelperSupports))) {
-      return WalkResult::interrupt();
-    }
-    return WalkResult::advance();
-  });
-  return failure(result.wasInterrupted());
+    ModuleOp module, llvm::raw_ostream* diagOS, bool verifyHelperSupports)
+{
+    WalkResult result = module.walk([diagOS, verifyHelperSupports](Operation* op) {
+        if (failed(verifyLayoutAssignedOperation(op, diagOS, verifyHelperSupports))) {
+            return WalkResult::interrupt();
+        }
+        return WalkResult::advance();
+    });
+    return failure(result.wasInterrupted());
 }
 
-std::unique_ptr<Pass> mlir::pto::createPTOValidateVMIIRPass() {
-  return std::make_unique<PTOValidateVMIIRPass>();
-}
+std::unique_ptr<Pass> mlir::pto::createPTOValidateVMIIRPass() { return std::make_unique<PTOValidateVMIIRPass>(); }
 
-std::unique_ptr<Pass> mlir::pto::createPTOValidateVMILayoutIRPass() {
-  return std::make_unique<PTOValidateVMILayoutIRPass>();
+std::unique_ptr<Pass> mlir::pto::createPTOValidateVMILayoutIRPass()
+{
+    return std::make_unique<PTOValidateVMILayoutIRPass>();
 }

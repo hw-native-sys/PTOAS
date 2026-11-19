@@ -659,6 +659,7 @@ static void populateVMIReductionAndConversionPatterns(
       OneToNVMIReduceMinMaxOpPattern<VMIReduceMaxIOp, VcmaxOp, VmaxOp>,
       OneToNVMIReduceMinMaxOpPattern<VMIReduceMinIOp, VcminOp, VminOp>,
       OneToNVMIExtFOpPattern,
+      OneToNVMIDeinterleaveExtfOpPattern,
       OneToNVMIVUnzipOpPattern, OneToNVMIVZipOpPattern,
       OneToNVMIExtIOpPattern<VMIExtSIOp>, OneToNVMIExtIOpPattern<VMIExtUIOp>,
       OneToNVMITruncIOpPattern, OneToNVMIFPToSIOpPattern,

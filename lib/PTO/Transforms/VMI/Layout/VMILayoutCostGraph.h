@@ -362,6 +362,7 @@ private:
     LogicalResult buildInterleave(const VMILayoutOpRelation& relation);
 
     LogicalResult buildChannelSplit(const VMILayoutOpRelation& relation);
+    LogicalResult buildDeinterleaveExtf(const VMILayoutOpRelation& relation);
 
     LogicalResult buildChannelMerge(const VMILayoutOpRelation& relation);
 

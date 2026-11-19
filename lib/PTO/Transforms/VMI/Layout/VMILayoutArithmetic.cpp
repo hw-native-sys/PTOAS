@@ -110,6 +110,20 @@ RelationResult VMILayoutRelations::buildDeinterleave(VMIVdintlvOp interleave)
     return enumerateInterleave(interleave, true, supports);
 }
 
+RelationResult VMILayoutRelations::buildDeinterleaveExtf(VMIDeinterleaveExtfOp split)
+{
+    for (const auto& fact : supports.getDeinterleaveExtfLayoutFacts(split)) {
+        appendReachableUniqueRelation(
+            relations,
+            VMILayoutOpRelation{op,
+                                {operandPort(0, fact.sourceLayout), resultPort(0, fact.resultLayout),
+                                 resultPort(1, fact.resultLayout)},
+                                true},
+            supports);
+    }
+    return relations.empty() ? RelationResult(failure()) : RelationResult(relations);
+}
+
 RelationResult VMILayoutRelations::buildChannelSplit(VMIChannelSplitOp split)
 {
     auto source = dyn_cast<VMIVRegType>(split.getSource().getType());

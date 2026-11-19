@@ -1,0 +1,58 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+
+// RUN: pto-test-opt %s -vmi-lower-unified-to-legacy -vmi-pre-assignment-combine | FileCheck %s --check-prefix=COMBINE
+
+module {
+  // A predicated narrowing on one side cannot be merged: the fused store narrows
+  // a 2N-lane value with a single predicate, so the asymmetric predicate would be
+  // silently dropped.
+  // COMBINE-LABEL: func.func @asymmetric_mask(
+  // COMBINE: pto.vmi.truncf %{{.*}} {
+  // COMBINE-NEXT: pto.vmi.truncf %{{.*}}, %{{.*}} {
+  // COMBINE-NOT: pto.vmi.channel_merge
+  func.func @asymmetric_mask(%dst: !pto.ptr<bf16, ub>, %first: !pto.vmi.vreg<64xf32>,
+                             %second: !pto.vmi.vreg<64xf32>) {
+    %c0 = arith.constant 0 : index
+    %c64 = arith.constant 64 : index
+    %c32 = arith.constant 32 : index
+    %full = pto.vmi.create_mask %c64 : index -> !pto.vmi.mask<64xpred>
+    %half = pto.vmi.create_mask %c32 : index -> !pto.vmi.mask<64xpred>
+    %lo, %hi = pto.vmi.vintlv %first, %second, %full
+        : !pto.vmi.vreg<64xf32>, !pto.vmi.vreg<64xf32>, !pto.vmi.mask<64xpred>
+       -> !pto.vmi.vreg<64xf32>, !pto.vmi.vreg<64xf32>
+    %blo = pto.vmi.vcvt %lo {rounding = "R", saturate = "SAT"} : !pto.vmi.vreg<64xf32> -> !pto.vmi.vreg<64xbf16>
+    %bhi = pto.vmi.vcvt %hi, %half {rounding = "R", saturate = "SAT"} : !pto.vmi.vreg<64xf32>, !pto.vmi.mask<64xpred> -> !pto.vmi.vreg<64xbf16>
+    pto.vmi.vstore %blo, %dst[%c0] : !pto.vmi.vreg<64xbf16>, !pto.ptr<bf16, ub>
+    pto.vmi.vstore %bhi, %dst[%c64] : !pto.vmi.vreg<64xbf16>, !pto.ptr<bf16, ub>
+    return
+  }
+
+  // Two identical predicates still describe 64 lanes each; widening them to the
+  // merged 128-lane value is not supported, so keep the separate stores.
+  // COMBINE-LABEL: func.func @symmetric_mask(
+  // COMBINE: pto.vmi.truncf %{{.*}}, %{{.*}} {
+  // COMBINE: pto.vmi.truncf %{{.*}}, %{{.*}} {
+  // COMBINE-NOT: pto.vmi.channel_merge
+  func.func @symmetric_mask(%dst: !pto.ptr<bf16, ub>, %first: !pto.vmi.vreg<64xf32>,
+                            %second: !pto.vmi.vreg<64xf32>) {
+    %c0 = arith.constant 0 : index
+    %c64 = arith.constant 64 : index
+    %c32 = arith.constant 32 : index
+    %full = pto.vmi.create_mask %c64 : index -> !pto.vmi.mask<64xpred>
+    %half = pto.vmi.create_mask %c32 : index -> !pto.vmi.mask<64xpred>
+    %lo, %hi = pto.vmi.vintlv %first, %second, %full
+        : !pto.vmi.vreg<64xf32>, !pto.vmi.vreg<64xf32>, !pto.vmi.mask<64xpred>
+       -> !pto.vmi.vreg<64xf32>, !pto.vmi.vreg<64xf32>
+    %blo = pto.vmi.vcvt %lo, %half {rounding = "R", saturate = "SAT"} : !pto.vmi.vreg<64xf32>, !pto.vmi.mask<64xpred> -> !pto.vmi.vreg<64xbf16>
+    %bhi = pto.vmi.vcvt %hi, %half {rounding = "R", saturate = "SAT"} : !pto.vmi.vreg<64xf32>, !pto.vmi.mask<64xpred> -> !pto.vmi.vreg<64xbf16>
+    pto.vmi.vstore %blo, %dst[%c0] : !pto.vmi.vreg<64xbf16>, !pto.ptr<bf16, ub>
+    pto.vmi.vstore %bhi, %dst[%c64] : !pto.vmi.vreg<64xbf16>, !pto.ptr<bf16, ub>
+    return
+  }
+}

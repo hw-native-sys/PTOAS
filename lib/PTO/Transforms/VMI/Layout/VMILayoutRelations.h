@@ -348,6 +348,7 @@ private:
     RelationResult buildInterleave(VMIVintlvOp interleave);
     RelationResult buildDeinterleave(VMIVdintlvOp interleave);
     RelationResult buildChannelSplit(VMIChannelSplitOp split);
+    RelationResult buildDeinterleaveExtf(VMIDeinterleaveExtfOp split);
     RelationResult buildChannelMerge(VMIChannelMergeOp merge);
     RelationResult buildShuffle(VMIShuffleOp shuffle);
     RelationResult buildMaskedLoad(VMIMaskedLoadOp load);

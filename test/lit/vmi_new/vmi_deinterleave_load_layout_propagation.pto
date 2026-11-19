@@ -6,8 +6,8 @@
 // INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
 // See LICENSE in the root of the software repository for the full text of the License.
 
-// RUN: pto-test-opt %s -vmi-lower-unified-to-legacy -vmi-mask-granularity-assignment -vmi-layout-assignment | FileCheck %s --check-prefix=ASSIGN
-// RUN: pto-test-opt %s -vmi-lower-unified-to-legacy -vmi-mask-granularity-assignment -vmi-layout-assignment -vmi-to-vpto | FileCheck %s --check-prefix=LOWER
+// RUN: pto-test-opt %s -vmi-lower-unified-to-legacy -vmi-pre-assignment-combine -vmi-mask-granularity-assignment -vmi-layout-assignment | FileCheck %s --check-prefix=ASSIGN
+// RUN: pto-test-opt %s -vmi-lower-unified-to-legacy -vmi-pre-assignment-combine -vmi-mask-granularity-assignment -vmi-layout-assignment -vmi-to-vpto | FileCheck %s --check-prefix=LOWER
 
 module {
   func.func @vmi_deinterleave_load_compare_histogram(
@@ -83,7 +83,7 @@ module {
 // ASSIGN-NEXT: %[[VAL_7:[a-zA-Z0-9_.$-]+]] = arith.muli %[[VAL_1]], %[[VAL_5]] : index
 // ASSIGN-NEXT: %[[VAL_8:[a-zA-Z0-9_.$-]+]] = arith.addi %[[VAL_7]], %[[VAL_6]] : index
 // ASSIGN-NEXT: %[[VAL_9:[a-zA-Z0-9_.$-]+]], %[[VAL_10:[a-zA-Z0-9_.$-]+]] = pto.vmi.deinterleave_load %[[VAL_0]]{{\[}}%[[VAL_7]]] : !pto.ptr<ui32, ub> -> !pto.vmi.vreg<256xui32, #pto.vmi.layout<contiguous>>, !pto.vmi.vreg<256xui32, #pto.vmi.layout<contiguous>>
-// ASSIGN-NEXT: %[[VAL_11:[a-zA-Z0-9_.$-]+]] = pto.vmi.broadcast %[[VAL_4]] : ui32 -> !pto.vmi.vreg<256xui32, #pto.vmi.layout<contiguous>>
+// ASSIGN: %[[VAL_11:[a-zA-Z0-9_.$-]+]] = pto.vmi.broadcast %[[VAL_4]] : ui32 -> !pto.vmi.vreg<256xui32, #pto.vmi.layout<contiguous>>
 // ASSIGN-NEXT: %[[VAL_12:[a-zA-Z0-9_.$-]+]] = pto.vmi.cmpi "ult", %[[VAL_9]], %[[VAL_11]] : !pto.vmi.vreg<256xui32, #pto.vmi.layout<contiguous>>, !pto.vmi.vreg<256xui32, #pto.vmi.layout<contiguous>> -> !pto.vmi.mask<256xb32, #pto.vmi.layout<contiguous>>
 // ASSIGN-NEXT: %[[VAL_13:[a-zA-Z0-9_.$-]+]] = pto.vmi.mask_and %[[VAL_12]], %[[VAL_3]] : !pto.vmi.mask<256xb32, #pto.vmi.layout<contiguous>>, !pto.vmi.mask<256xb32, #pto.vmi.layout<contiguous>> -> !pto.vmi.mask<256xb32, #pto.vmi.layout<contiguous>>
 // ASSIGN-NEXT: %[[VAL_14:[a-zA-Z0-9_.$-]+]] = pto.vmi.ensure_layout %[[VAL_9]] : !pto.vmi.vreg<256xui32, #pto.vmi.layout<contiguous>> -> !pto.vmi.vreg<256xui32, #pto.vmi.layout<deinterleaved = 2>>
@@ -102,6 +102,6 @@ module {
 // ASSIGN-NEXT: %[[VAL_4:[a-zA-Z0-9_.$-]+]] = arith.muli %[[VAL_1]], %[[VAL_2]] : index
 // ASSIGN-NEXT: %[[VAL_5:[a-zA-Z0-9_.$-]+]] = arith.addi %[[VAL_4]], %[[VAL_3]] : index
 // ASSIGN-NEXT: %[[VAL_6:[a-zA-Z0-9_.$-]+]], %[[VAL_7:[a-zA-Z0-9_.$-]+]] = pto.vmi.deinterleave_load %[[VAL_0]]{{\[}}%[[VAL_4]]] : !pto.ptr<ui32, ub> -> !pto.vmi.vreg<256xui32, #pto.vmi.layout<contiguous>>, !pto.vmi.vreg<256xui32, #pto.vmi.layout<contiguous>>
-// ASSIGN-NEXT: %[[VAL_8:[a-zA-Z0-9_.$-]+]] = pto.vmi.trunci %[[VAL_7]] {saturate = "SAT"} : !pto.vmi.vreg<256xui32, #pto.vmi.layout<contiguous>> -> !pto.vmi.vreg<256xui8, #pto.vmi.layout<contiguous, lane_stride = 4>>
+// ASSIGN: %[[VAL_8:[a-zA-Z0-9_.$-]+]] = pto.vmi.trunci %[[VAL_7]] {saturate = "SAT"} : !pto.vmi.vreg<256xui32, #pto.vmi.layout<contiguous>> -> !pto.vmi.vreg<256xui8, #pto.vmi.layout<contiguous, lane_stride = 4>>
 // ASSIGN-NEXT: return %[[VAL_8]] : !pto.vmi.vreg<256xui8, #pto.vmi.layout<contiguous, lane_stride = 4>>
 // ASSIGN-NEXT: }

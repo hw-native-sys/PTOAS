@@ -77,7 +77,6 @@
 #include "llvm/ADT/StringExtras.h"
 #include "llvm/Support/ErrorHandling.h"
 
-#include <limits>
 
 namespace mlir {
 namespace pto {
@@ -692,143 +691,6 @@ static LogicalResult lowerVStore(VMIvStoreOp op, OpBuilder &builder) {
   return success();
 }
 
-static bool areMemoryEffectsFreeBetween(Operation *first, Operation *second) {
-  Block *firstBlock = first ? first->getBlock() : nullptr;
-  Block *secondBlock = second ? second->getBlock() : nullptr;
-  if (!first || !second || firstBlock != secondBlock) {
-    return false;
-  }
-  for (Operation *op = first->getNextNode(); op && op != second;
-       op = op->getNextNode()) {
-    if (!isMemoryEffectFree(op)) {
-      return false;
-    }
-  }
-  return first->isBeforeInBlock(second);
-}
-
-static bool isOffsetPlusElements(Value base, Value candidate,
-                                 int64_t elementCount) {
-  if (auto baseValue = getConstantIndexValue(base)) {
-    if (auto candidateValue = getConstantIndexValue(candidate)) {
-      return *baseValue <= std::numeric_limits<int64_t>::max() - elementCount &&
-             *candidateValue == *baseValue + elementCount;
-    }
-  }
-  auto add = candidate.getDefiningOp<arith::AddIOp>();
-  if (!add) {
-    return false;
-  }
-  auto lhsOffset = getConstantIndexValue(add.getLhs());
-  auto rhsOffset = getConstantIndexValue(add.getRhs());
-  return (add.getLhs() == base && rhsOffset == elementCount) ||
-         (add.getRhs() == base && lhsOffset == elementCount);
-}
-
-static bool isContiguousVMIStore(VMIvStoreOp store) {
-  return !store.getStride() && !store.getBlockStride() && !store.getGroup() &&
-         store.getMask().empty();
-}
-
-static bool combineDeinterleaveLoads(VMIVdintlvOp deinterleave) {
-  if (!isAllActiveSeed(deinterleave.getMask())) {
-    return false;
-  }
-  auto firstLoad = deinterleave.getLhs().getDefiningOp<VMIvLoadOp>();
-  auto secondLoad = deinterleave.getRhs().getDefiningOp<VMIvLoadOp>();
-  if (!firstLoad || !secondLoad || firstLoad == secondLoad ||
-      firstLoad.getSource() != secondLoad.getSource() ||
-      firstLoad.getGroup() || secondLoad.getGroup() || firstLoad.getStride() ||
-      secondLoad.getStride() || firstLoad.getBlockStride() ||
-      secondLoad.getBlockStride() || !firstLoad.getResult().hasOneUse() ||
-      !secondLoad.getResult().hasOneUse() ||
-      *firstLoad.getResult().user_begin() != deinterleave.getOperation() ||
-      *secondLoad.getResult().user_begin() != deinterleave.getOperation()) {
-    return false;
-  }
-
-  auto firstType = cast<VMIVRegType>(firstLoad.getResult().getType());
-  int64_t laneCount = firstType.getElementCount();
-  if (laneCount <= 0 ||
-      !isOffsetPlusElements(firstLoad.getOffset(), secondLoad.getOffset(),
-                            laneCount) ||
-      !areMemoryEffectsFreeBetween(firstLoad, secondLoad)) {
-    return false;
-  }
-
-  OpBuilder builder(firstLoad);
-  auto fusedLoad = builder.create<VMIDeinterleaveLoadOp>(
-      deinterleave.getLoc(), deinterleave.getLow().getType(),
-      deinterleave.getHigh().getType(), firstLoad.getSource(),
-      firstLoad.getOffset());
-  deinterleave.getLow().replaceAllUsesWith(fusedLoad.getLow());
-  deinterleave.getHigh().replaceAllUsesWith(fusedLoad.getHigh());
-  deinterleave.erase();
-  firstLoad.erase();
-  secondLoad.erase();
-  return true;
-}
-
-static bool combineInterleaveStores(VMIVintlvOp interleave) {
-  bool hasAllActiveMask = isAllActiveSeed(interleave.getMask());
-  bool lowHasOneUse = interleave.getLow().hasOneUse();
-  bool highHasOneUse = interleave.getHigh().hasOneUse();
-  if (!hasAllActiveMask || !lowHasOneUse || !highHasOneUse) {
-    return false;
-  }
-  auto firstStore = dyn_cast<VMIvStoreOp>(*interleave.getLow().user_begin());
-  auto secondStore = dyn_cast<VMIvStoreOp>(*interleave.getHigh().user_begin());
-  if (!firstStore || !secondStore || firstStore == secondStore ||
-      firstStore.getValue() != interleave.getLow() ||
-      secondStore.getValue() != interleave.getHigh() ||
-      !isContiguousVMIStore(firstStore) ||
-      !isContiguousVMIStore(secondStore) ||
-      firstStore.getDestination() != secondStore.getDestination()) {
-    return false;
-  }
-
-  auto valueType = cast<VMIVRegType>(interleave.getLhs().getType());
-  int64_t laneCount = valueType.getElementCount();
-  if (laneCount <= 0 ||
-      !isOffsetPlusElements(firstStore.getOffset(), secondStore.getOffset(),
-                            laneCount) ||
-      !areMemoryEffectsFreeBetween(firstStore, secondStore)) {
-    return false;
-  }
-
-  OpBuilder builder(firstStore);
-  builder.create<VMIInterleaveStoreOp>(
-      interleave.getLoc(), interleave.getLhs(), interleave.getRhs(),
-      firstStore.getDestination(), firstStore.getOffset());
-  firstStore.erase();
-  secondStore.erase();
-  interleave.erase();
-  return true;
-}
-
-static void combineInterleavedMemoryOps(ModuleOp module) {
-  SmallVector<VMIVdintlvOp, mlir::pto::kValue8> deinterleaves;
-  SmallVector<VMIVintlvOp, mlir::pto::kValue8> interleaves;
-  module.walk([&](Operation *op) {
-    if (auto deinterleave = dyn_cast<VMIVdintlvOp>(op)) {
-      deinterleaves.push_back(deinterleave);
-    } else if (auto interleave = dyn_cast<VMIVintlvOp>(op)) {
-      interleaves.push_back(interleave);
-    }
-  });
-
-  for (VMIVdintlvOp op : deinterleaves) {
-    if (op->getBlock()) {
-      (void)combineDeinterleaveLoads(op);
-    }
-  }
-  for (VMIVintlvOp op : interleaves) {
-    if (op->getBlock()) {
-      (void)combineInterleaveStores(op);
-    }
-  }
-}
-
 // Category C4 helpers: pset / pge
 //===----------------------------------------------------------------------===//
 
@@ -1175,7 +1037,6 @@ static SmallVector<NamedAttribute, mlir::pto::kValue4> getDiscardableAttributes(
 
 void VMILowerUnifiedToLegacyPass::runOnOperation() {
   ModuleOp module = getOperation();
-  combineInterleavedMemoryOps(module);
   SmallVector<Operation *, mlir::pto::kValue128> worklist;
 
   // Collect all unified VMI ops (walk encounters them in IR order).

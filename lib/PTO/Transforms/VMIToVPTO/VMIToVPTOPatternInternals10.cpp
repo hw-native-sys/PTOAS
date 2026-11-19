@@ -21,6 +21,76 @@ static bool isBF16ReduceResultElementCount(int64_t elementCount)
            elementCount == mlir::pto::kValue8;
 }
 
+struct OneToNVMIDeinterleaveExtfOpPattern : OneToNOpConversionPattern<VMIDeinterleaveExtfOp> {
+    using OneToNOpConversionPattern<VMIDeinterleaveExtfOp>::OneToNOpConversionPattern;
+
+private:
+    static FailureOr<SmallVector<Value>> lowerPacked(
+        VMIDeinterleaveExtfOp op, ValueRange source, ArrayRef<Type> types, OneToNPatternRewriter& rewriter)
+    {
+        auto sourceType = cast<VRegType>(source.front().getType());
+        auto mask = createAllTrueMaskForVReg(op.getLoc(), sourceType, rewriter);
+        if (failed(mask)) {
+            return failure();
+        }
+        SmallVector<Value> results;
+        for (StringRef part : {StringRef("EVEN"), StringRef("ODD")}) {
+            for (auto [input, type] : llvm::zip_equal(source, types)) {
+                results.push_back(
+                    rewriter
+                        .create<VcvtOp>(op.getLoc(), type, input, *mask, nullptr, nullptr, rewriter.getStringAttr(part))
+                        .getResult());
+            }
+        }
+        return results;
+    }
+
+    static FailureOr<SmallVector<Value>> lowerSeparated(
+        VMIDeinterleaveExtfOp op, ValueRange source, ArrayRef<Type> types, OneToNPatternRewriter& rewriter)
+    {
+        auto sourceType = cast<VRegType>(source.front().getType());
+        auto zero = createZeroVector(op.getLoc(), sourceType, rewriter);
+        if (failed(zero)) {
+            return failure();
+        }
+        SmallVector<Value> results;
+        for (Value input : source) {
+            auto pair = rewriter.create<VintlvOp>(op.getLoc(), TypeRange{sourceType, sourceType}, *zero, input);
+            for (auto [index, type] : llvm::enumerate(types)) {
+                auto widened = bitcastVReg(op.getLoc(), pair.getResult(index), cast<VRegType>(type), rewriter);
+                if (failed(widened)) {
+                    return failure();
+                }
+                results.push_back(*widened);
+            }
+        }
+        return results;
+    }
+
+public:
+    LogicalResult matchAndRewrite(
+        VMIDeinterleaveExtfOp op, OpAdaptor adaptor, OneToNPatternRewriter& rewriter) const override
+    {
+        if (failed(VMILayoutSupport().getDeinterleaveExtfSupport(op))) {
+            return rewriter.notifyMatchFailure(op, "unsupported deinterleave_extf layout");
+        }
+        auto types = getConvertedResultTypes(op, 0, *this->getTypeConverter());
+        ValueRange source = adaptor.getSource();
+        bool packed = cast<VMIVRegType>(op.getSource().getType()).getLayoutAttr().isContiguous();
+        bool invalidTypes = failed(types) || types->empty() || types->size() > kSplitWidePartsPerHalf;
+        bool invalidArity = invalidTypes || source.empty() || source.size() != (packed ? types->size() : 2);
+        if (invalidArity) {
+            return rewriter.notifyMatchFailure(op, "unsupported deinterleave_extf physical arity");
+        }
+        auto results =
+            packed ? lowerPacked(op, source, *types, rewriter) : lowerSeparated(op, source, *types, rewriter);
+        if (failed(results)) {
+            return failure();
+        }
+        return replacePhysicalResults(rewriter, op, *results, *this->getTypeConverter());
+    }
+};
+
 //===----------------------------------------------------------------------===//
 // Masked conversions (issue #1671)
 // The logical VMI conversion predicate ZEROES every inactive lane

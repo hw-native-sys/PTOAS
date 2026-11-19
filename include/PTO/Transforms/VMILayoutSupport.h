@@ -76,6 +76,11 @@ struct VMILoadLayoutFact {
   VMILayoutAttr resultLayout;
 };
 
+struct VMIDeinterleaveExtfLayoutFact {
+    VMILayoutAttr sourceLayout;
+    VMILayoutAttr resultLayout;
+};
+
 /// A pto.vmi.group_iota result.  The contiguous vci instruction is the physical
 /// producer, so the only layout the op itself can produce is contiguous;
 /// non-contiguous consumers are expressed by an explicit ensure_layout edge.
@@ -565,6 +570,10 @@ public:
     LogicalResult getExtFSupport(VMIExtFOp op, std::string* reason = nullptr) const;
 
     LogicalResult getVUnzipSupport(VMIVUnzipOp op, std::string* reason = nullptr) const;
+
+    SmallVector<VMIDeinterleaveExtfLayoutFact> getDeinterleaveExtfLayoutFacts(VMIDeinterleaveExtfOp op) const;
+
+    LogicalResult getDeinterleaveExtfSupport(VMIDeinterleaveExtfOp op, std::string* reason = nullptr) const;
 
     LogicalResult getVZipSupport(VMIVZipOp op, std::string* reason = nullptr) const;
 
