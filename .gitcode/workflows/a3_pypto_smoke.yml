@@ -6,7 +6,18 @@
 # INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
 # See LICENSE in the root of the software repository for the full text of the License.
 
-name: A3 PyPTO Smoke
+name: PostSmoke_A3
+
+# A full probe runs for about an hour on the board. Serialise the runs so a
+# burst of PR comments cannot starve the other pipelines: one runs, the rest
+# queue (the same policy as pto_as_action.yml).
+concurrency:
+  max: 1
+  exceed-action: QUEUE
+  enable: true
+  preemption:
+    enable: true
+    events: [mr_id]
 
 # Minimal validation for the A3 (a2a3) half of the PyPTO compatibility nightly.
 # It does not replace the nightly; it answers two questions on a newly
@@ -54,14 +65,21 @@ on:
         description: "task-submit --max-time in seconds"
         type: string
         default: "1800"
+  # Trigger the probe from a PR comment: `/a3-probe`. GitCode matches the
+  # comment body against these regexes, the same way `compile` starts the PR
+  # pipeline in pto_as_action.yml, so no workflow-dispatch permission is needed.
+  pull_request_comment:
+    types: [created]
+    branches: [ '**' ]
+    comments: [ '^(?:\/)?a3-probe' ]
 
 jobs:
   smoke:
     name: A3 PyPTO smoke
     # GitCode selects the board slot by label: npu=<devices>, smoke=<slot>.
-    # The engineering group assigns the A3 slot as smoke=301; a probe or a
-    # single-case run needs only one card, so npu=1.
-    runs-on: ['self-hosted', 'npu=1', 'smoke=301']
+    # The engineering group assigns the A3 slot as smoke=301. Match the A5
+    # slot's npu=4; npu=1 found no runner (labels are AND-matched).
+    runs-on: ['self-hosted', 'npu=4', 'smoke=301']
     timeout-minutes: 120
 
     steps:

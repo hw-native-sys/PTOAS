@@ -16,13 +16,14 @@ name: A3 Nightly Board
 # and then runs `run_remote_npu_validation.sh` against the full manifest.
 #
 # The runner is selected by label: the engineering group assigns the A3 board
-# slot as `smoke=301`. The sweep is serial on one card, so `npu=1` is enough;
-# raising it to 2 or 4 only helps after the manifest is sharded across cards.
+# slot as `smoke=301`. Match the A5 slot's `npu=4`: `npu=1` found no runner, and
+# the labels are AND-matched, so every requested label must exist on the host.
 on:
   schedule:
-    # 01:00 Asia/Shanghai, offset from the A5 nightly (00:00) so the two board
-    # sweeps do not compete for the same runner queue.
-    - cron: "0 17 * * *"
+    # GitCode evaluates cron in UTC+8, not UTC. This is 01:00 Asia/Shanghai,
+    # offset from the A5 nightly (00:00) so the two board sweeps do not compete
+    # for the same runner queue.
+    - cron: "0 1 * * *"
   workflow_dispatch:
     inputs:
       device:
@@ -44,7 +45,7 @@ env:
 jobs:
   a3-board:
     name: A3 nightly board validation
-    runs-on: ['self-hosted', 'npu=1', 'smoke=301']
+    runs-on: ['self-hosted', 'npu=4', 'smoke=301']
     timeout-minutes: 600
 
     steps:
