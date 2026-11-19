@@ -1,0 +1,195 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+
+// Scalar memory fusion requires a cross-stage dependence proof.
+// RUN: pto-test-opt --pto-low-level-loop-fusion %s | FileCheck %s
+
+module {
+  func.func @pointwise() {
+    %c0 = arith.constant 0 : index
+    %c1 = arith.constant 1 : index
+    %c4 = arith.constant 4 : index
+    %value = arith.constant 7 : i32
+    %slot = memref.alloca() : memref<8xi32>
+    pto.fusion_region {
+      scf.for %i = %c0 to %c4 step %c1 {
+        memref.store %value, %slot[%i] : memref<8xi32>
+      }
+      scf.for %j = %c0 to %c4 step %c1 {
+        %r = memref.load %slot[%j] : memref<8xi32>
+        %use = arith.addi %r, %r : i32
+        memref.store %use, %slot[%j] : memref<8xi32>
+      }
+      pto.yield(%c0) : (index) -> ()
+    } : index
+    return
+  }
+
+  func.func @pointwise_offset() {
+    %c0 = arith.constant 0 : index
+    %c1 = arith.constant 1 : index
+    %c4 = arith.constant 4 : index
+    %value = arith.constant 7 : i32
+    %slot = memref.alloca() : memref<8xi32>
+    pto.fusion_region {
+      scf.for %i = %c0 to %c4 step %c1 {
+        %a = arith.addi %c1, %i : index
+        memref.store %value, %slot[%a] : memref<8xi32>
+      }
+      scf.for %j = %c0 to %c4 step %c1 {
+        %b = arith.subi %j, %c0 : index
+        %b1 = arith.addi %b, %c1 : index
+        %r = memref.load %slot[%b1] : memref<8xi32>
+        %use = arith.addi %r, %r : i32
+        memref.store %use, %slot[%b1] : memref<8xi32>
+      }
+      pto.yield(%c0) : (index) -> ()
+    } : index
+    return
+  }
+
+  func.func @disjoint_allocations() {
+    %c0 = arith.constant 0 : index
+    %c1 = arith.constant 1 : index
+    %c4 = arith.constant 4 : index
+    %value = arith.constant 7 : i32
+    %a = memref.alloca() : memref<8xi32>
+    %b = memref.alloca() : memref<8xi32>
+    memref.store %value, %b[%c0] : memref<8xi32>
+    pto.fusion_region {
+      scf.for %i = %c0 to %c4 step %c1 {
+        memref.store %value, %a[%c0] : memref<8xi32>
+      }
+      scf.for %j = %c0 to %c4 step %c1 {
+        %r = memref.load %b[%c0] : memref<8xi32>
+        %use = arith.addi %r, %r : i32
+        memref.store %use, %b[%c0] : memref<8xi32>
+      }
+      pto.yield(%c0) : (index) -> ()
+    } : index
+    return
+  }
+
+  func.func @nested_pointwise(%slot: memref<4x4xi32>) {
+    %c0 = arith.constant 0 : index
+    %c1 = arith.constant 1 : index
+    %c4 = arith.constant 4 : index
+    %v = arith.constant 7 : i32
+    pto.fusion_region {
+      scf.for %i = %c0 to %c4 step %c1 {
+        scf.for %k = %c0 to %c4 step %c1 {
+          memref.store %v, %slot[%i, %k] : memref<4x4xi32>
+        }
+      }
+      scf.for %j = %c0 to %c4 step %c1 {
+        scf.for %l = %c0 to %c4 step %c1 {
+          %r = memref.load %slot[%j, %l] : memref<4x4xi32>
+          memref.store %r, %slot[%j, %l] : memref<4x4xi32>
+        }
+      }
+      pto.yield(%c0) : (index) -> ()
+    } : index
+    return
+  }
+
+  func.func @read_only(%slot: memref<128xi32>) {
+    %c0 = arith.constant 0 : index
+    %c1 = arith.constant 1 : index
+    %c4 = arith.constant 4 : index
+    %value = arith.constant 7 : i32
+    pto.fusion_region {
+      scf.for %i = %c0 to %c4 step %c1 {
+        %a = memref.load %slot[%c0] : memref<128xi32>
+      }
+      scf.for %j = %c0 to %c4 step %c1 {
+
+        %r = memref.load %slot[%c0] : memref<128xi32>
+      }
+      pto.yield(%c0) : (index) -> ()
+    } : index
+    return
+  }
+
+  func.func @dynamic_pointwise(%slot: memref<?xi32>, %n: index, %step: index) {
+    %c0 = arith.constant 0 : index
+    %c1 = arith.constant 1 : index
+    %c4 = arith.constant 4 : index
+    %value = arith.constant 7 : i32
+    pto.fusion_region {
+      scf.for %i = %c0 to %n step %step {
+        memref.store %value, %slot[%i] : memref<?xi32>
+      }
+      scf.for %j = %c0 to %n step %step {
+        %r = memref.load %slot[%j] : memref<?xi32>
+        %use = arith.addi %r, %r : i32
+        memref.store %use, %slot[%j] : memref<?xi32>
+      }
+      pto.yield(%c0) : (index) -> ()
+    } : index
+    return
+  }
+}
+
+// CHECK-LABEL: func.func @pointwise
+// CHECK: pto.fusion_region {
+// CHECK: scf.for
+// CHECK: memref.store
+// CHECK-NOT: scf.for
+// CHECK-NOT: }
+// CHECK: memref.load
+// CHECK: arith.addi
+// CHECK: memref.store
+// CHECK-NOT: scf.for
+// CHECK: pto.yield
+
+// CHECK-LABEL: func.func @pointwise_offset
+// CHECK: pto.fusion_region {
+// CHECK: scf.for
+// CHECK: memref.store
+// CHECK-NOT: scf.for
+// CHECK-NOT: }
+// CHECK: memref.load
+// CHECK: memref.store
+// CHECK-NOT: scf.for
+// CHECK: pto.yield
+
+// CHECK-LABEL: func.func @disjoint_allocations
+// CHECK: pto.fusion_region {
+// CHECK: scf.for
+// CHECK: memref.store
+// CHECK-NOT: scf.for
+// CHECK-NOT: }
+// CHECK: memref.load
+// CHECK: arith.addi
+// CHECK: memref.store
+// CHECK-NOT: scf.for
+// CHECK: pto.yield
+
+// CHECK-LABEL: func.func @nested_pointwise
+// CHECK: scf.for
+// CHECK: scf.for
+// CHECK: memref.store
+// CHECK-NEXT: {{.*}}memref.load
+// CHECK-NEXT: memref.store
+// CHECK-NOT: scf.for
+// CHECK: pto.yield
+
+// CHECK-LABEL: func.func @read_only
+// CHECK: scf.for
+// CHECK: memref.load
+// CHECK-NEXT: {{.*}}memref.load
+// CHECK-NOT: scf.for
+// CHECK: pto.yield
+
+// CHECK-LABEL: func.func @dynamic_pointwise
+// CHECK: scf.for
+// CHECK: memref.store
+// CHECK-NEXT: {{.*}}memref.load
+// CHECK: memref.store
+// CHECK-NOT: scf.for
+// CHECK: pto.yield

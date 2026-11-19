@@ -1,0 +1,101 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+
+// Unknown effects are outside the planned VPTO loop-fusion contract.
+// Pure leaf operations must remain eligible for fusion.
+// RUN: pto-test-opt --pto-low-level-loop-fusion %s | FileCheck %s
+
+module {
+  func.func private @effect(index)
+  func.func @unknown_effects() {
+    %c0 = arith.constant 0 : index
+    %c1 = arith.constant 1 : index
+    %c4 = arith.constant 4 : index
+    %region = pto.fusion_region {
+      scf.for %i = %c0 to %c4 step %c1 {
+        func.call @effect(%i) : (index) -> ()
+      }
+      scf.for %j = %c0 to %c4 step %c1 {
+        func.call @effect(%j) : (index) -> ()
+      }
+      pto.yield(%c0) : (index) -> ()
+    } : index
+    return
+  }
+  func.func @pure_leafs() {
+    %c0 = arith.constant 0 : index
+    %c1 = arith.constant 1 : index
+    %c4 = arith.constant 4 : index
+    %region = pto.fusion_region {
+      scf.for %i = %c0 to %c4 step %c1 {
+        %unused = arith.addi %i, %c1 : index
+      }
+      scf.for %j = %c0 to %c4 step %c1 {
+        %unused = arith.muli %j, %c4 : index
+      }
+      pto.yield(%c0) : (index) -> ()
+    } : index
+    return
+  }
+  func.func @supported_runs_around_barrier() {
+    %c0 = arith.constant 0 : index
+    %c1 = arith.constant 1 : index
+    %c4 = arith.constant 4 : index
+    %region = pto.fusion_region {
+      scf.for %i = %c0 to %c4 step %c1 {
+        %unused = arith.addi %i, %c1 : index
+      }
+      scf.for %j = %c0 to %c4 step %c1 {
+        %unused = arith.muli %j, %c4 : index
+      }
+      scf.for %k = %c0 to %c4 step %c1 {
+        func.call @effect(%k) : (index) -> ()
+      }
+      scf.for %i = %c0 to %c4 step %c1 {
+        %unused = arith.subi %i, %c1 : index
+      }
+      scf.for %j = %c0 to %c4 step %c1 {
+        %unused = arith.addi %j, %c4 : index
+      }
+      pto.yield(%c0) : (index) -> ()
+    } : index
+    return
+  }
+}
+
+// CHECK-LABEL: func.func @unknown_effects
+// CHECK: pto.fusion_region {
+// CHECK: scf.for
+// CHECK: call @effect
+// CHECK: }
+// CHECK-NEXT: scf.for
+// CHECK: call @effect
+// CHECK: pto.yield
+
+// CHECK-LABEL: func.func @pure_leafs
+// CHECK: pto.fusion_region {
+// CHECK: scf.for
+// CHECK: arith.addi
+// CHECK-NEXT: {{.*}}arith.muli
+// CHECK-NOT: scf.for
+// CHECK: pto.yield
+
+// CHECK-LABEL: func.func @supported_runs_around_barrier
+// CHECK: pto.fusion_region {
+// CHECK: scf.for
+// CHECK-NEXT: {{.*}}arith.addi
+// CHECK-NEXT: {{.*}}arith.muli
+// CHECK-NEXT: }
+// CHECK-NEXT: scf.for
+// CHECK-NEXT: call @effect
+// CHECK-NEXT: }
+// CHECK-NEXT: scf.for
+// CHECK-NEXT: {{.*}}arith.subi
+// CHECK-NEXT: {{.*}}arith.addi
+// CHECK-NEXT: }
+// CHECK-NEXT: pto.yield

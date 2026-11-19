@@ -566,6 +566,10 @@ pipeline/input，不在 `RegionGen` 中静默修复。
   - 仅尝试融合彼此相邻、loop header 等价、且中间 prelude/setup 可安全重排的 stage。
 - **合法性条件**：
   - `sameForHeader(lhs, rhs)`：下界、上界、步长和 loop attrs 必须完全等价。
+  - 本 pass 以已完成 TileOp fusion 规划的 VPTO post-lowering loop nest 为输入。叶子体接受无区域且无内存副作用的 op、`pto.vlds/vsts`，以及经过跨 stage 依赖检查的标量 `memref.load/store`；未知叶子副作用阻止融合。
+  - 含标量访问的融合须进一步确认各层循环上下界及步长为同一循环外 SSA 值或同值常量，避免仅凭动态表达式的结构判等。
+  - 标量访问对至少一方写内存时，须证明存储不别名，或双方均为叶子访问同一循环外定义的 identity-layout memref、各维下标具有一致的 `iv + 常量` 映射且覆盖所有循环层级；只读访问对无需此限制。
+  - 标量访问与其他内存操作的重排也须证明无冲突，检查覆盖 leaf、prelude 和 epilogue。Prelude/epilogue 还须通过下述既有重排检查。
   - Prelude/setup 必须是 side-effect-free 或可分析的内存 prelude。
   - 跨 stage 移动 prelude 时，不能与前一 stage 的内存根产生潜在 alias 冲突。
 - **现实边界**：

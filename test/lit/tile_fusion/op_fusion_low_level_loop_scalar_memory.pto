@@ -1,0 +1,48 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+
+// Issue #1721: interleaving these scalar memory effects changes 48 to 6.
+// Cross-iteration scalar dependences must keep the stages sequential.
+// RUN: pto-test-opt --pto-low-level-loop-fusion %s | FileCheck %s
+
+// Flat 2 stages, same memref[0]: stage0 writes each iter; stage1 reads each iter.
+// Sequential: stage0 leaves 3, then stage1 doubles four times to 48.
+// Interleaved: each store overwrites the previous doubling, leaving 6.
+module {
+  func.func @flat_leaf_order_bug() {
+    %c0 = arith.constant 0 : index
+    %c1 = arith.constant 1 : index
+    %c4 = arith.constant 4 : index
+    %slot = memref.alloca() : memref<1xi32>
+    %c0_i32 = arith.constant 0 : i32
+    memref.store %c0_i32, %slot[%c0] : memref<1xi32>
+    pto.fusion_region {
+      scf.for %i = %c0 to %c4 step %c1 {
+        %wi = arith.index_cast %i : index to i32
+        memref.store %wi, %slot[%c0] : memref<1xi32>
+      }
+      scf.for %j = %c0 to %c4 step %c1 {
+        %r = memref.load %slot[%c0] : memref<1xi32>
+        %use = arith.addi %r, %r : i32
+        memref.store %use, %slot[%c0] : memref<1xi32>
+      }
+      pto.yield(%c0) : (index) -> ()
+    } : index
+    return
+  }
+}
+
+// CHECK-LABEL: func.func @flat_leaf_order_bug
+// CHECK: pto.fusion_region {
+// CHECK: scf.for
+// CHECK: memref.store
+// CHECK: }
+// CHECK-NEXT: scf.for
+// CHECK: memref.load
+// CHECK: memref.store
+// CHECK: pto.yield

@@ -1,0 +1,226 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+
+// Scalar memory fusion requires a cross-stage dependence proof.
+// RUN: pto-test-opt --pto-low-level-loop-fusion %s | FileCheck %s
+
+module {
+  func.func @mixed_vpto(%slot: memref<128xi32>) {
+    %c0 = arith.constant 0 : index
+    %c1 = arith.constant 1 : index
+    %c4 = arith.constant 4 : index
+    %value = arith.constant 7 : i32
+    pto.fusion_region {
+      scf.for %i = %c0 to %c4 step %c1 {
+        memref.store %value, %slot[%i] : memref<128xi32>
+      }
+      scf.for %j = %c0 to %c4 step %c1 {
+
+        %r = pto.vlds %slot[%j] : memref<128xi32>, index -> !pto.vreg<64xi32>
+      }
+      pto.yield(%c0) : (index) -> ()
+    } : index
+    return
+  }
+
+  func.func @prelude_unknown_alias(%a: memref<4xi32>, %b: memref<4xi32>) {
+    %c0 = arith.constant 0 : index
+    %c1 = arith.constant 1 : index
+    %c4 = arith.constant 4 : index
+    %v = arith.constant 7 : i32
+    pto.fusion_region {
+      scf.for %i = %c0 to %c4 step %c1 {
+        memref.store %v, %a[%c0] : memref<4xi32>
+        scf.for %k = %c0 to %c4 step %c1 {
+          %unused = arith.addi %k, %c1 : index
+        }
+
+      }
+      scf.for %j = %c0 to %c4 step %c1 {
+        %r = memref.load %b[%c0] : memref<4xi32>
+        scf.for %l = %c0 to %c4 step %c1 {
+          %unused = arith.muli %l, %c1 : index
+        }
+      }
+      pto.yield(%c0) : (index) -> ()
+    } : index
+    return
+  }
+
+  func.func @epilogue_unknown_alias(%a: memref<4xi32>, %b: memref<4xi32>) {
+    %c0 = arith.constant 0 : index
+    %c1 = arith.constant 1 : index
+    %c4 = arith.constant 4 : index
+    %v = arith.constant 7 : i32
+    pto.fusion_region {
+      scf.for %i = %c0 to %c4 step %c1 {
+
+        scf.for %k = %c0 to %c4 step %c1 {
+          %unused = arith.addi %k, %c1 : index
+        }
+        memref.store %v, %a[%c0] : memref<4xi32>
+      }
+      scf.for %j = %c0 to %c4 step %c1 {
+        %r = memref.load %b[%c0] : memref<4xi32>
+        scf.for %l = %c0 to %c4 step %c1 {
+          %unused = arith.muli %l, %c1 : index
+        }
+      }
+      pto.yield(%c0) : (index) -> ()
+    } : index
+    return
+  }
+
+  func.func @distinct_dynamic_domains(%slot: memref<?xi32>, %other: memref<?xi32>) {
+    %c0 = arith.constant 0 : index
+    %c1 = arith.constant 1 : index
+    %c4 = arith.constant 4 : index
+    %value = arith.constant 7 : i32
+    %n = memref.dim %slot, %c0 : memref<?xi32>
+    %m = memref.dim %other, %c0 : memref<?xi32>
+    pto.fusion_region {
+      scf.for %i = %c0 to %n step %c1 {
+        memref.store %value, %slot[%i] : memref<?xi32>
+      }
+      scf.for %j = %c0 to %m step %c1 {
+        %r = memref.load %slot[%j] : memref<?xi32>
+        %use = arith.addi %r, %r : i32
+        memref.store %use, %slot[%j] : memref<?xi32>
+      }
+      pto.yield(%c0) : (index) -> ()
+    } : index
+    return
+  }
+
+  func.func @prelude_same_slot(%slot: memref<1xi32>) {
+    %c0 = arith.constant 0 : index
+    %c1 = arith.constant 1 : index
+    %c4 = arith.constant 4 : index
+    %v = arith.constant 7 : i32
+    %a = memref.alloca() : memref<4x4xi32>
+    %b = memref.alloca() : memref<4x4xi32>
+    pto.fusion_region {
+      scf.for %i = %c0 to %c4 step %c1 {
+        %iv = arith.index_cast %i : index to i32
+        memref.store %iv, %slot[%c0] : memref<1xi32>
+        scf.for %k = %c0 to %c4 step %c1 {
+          memref.store %v, %a[%i, %k] : memref<4x4xi32>
+        }
+      }
+      scf.for %j = %c0 to %c4 step %c1 {
+        %r = memref.load %slot[%c0] : memref<1xi32>
+        %twice = arith.addi %r, %r : i32
+        memref.store %twice, %slot[%c0] : memref<1xi32>
+        scf.for %l = %c0 to %c4 step %c1 {
+          memref.store %v, %b[%j, %l] : memref<4x4xi32>
+        }
+      }
+      pto.yield(%c0) : (index) -> ()
+    } : index
+    return
+  }
+
+  func.func @mixed_vpto_store(%slot: memref<128xi32>, %v: !pto.vreg<64xi32>, %mask: !pto.mask<b32>) {
+    %c0 = arith.constant 0 : index
+    %c1 = arith.constant 1 : index
+    %c4 = arith.constant 4 : index
+    pto.fusion_region {
+      scf.for %i = %c0 to %c4 step %c1 {
+        %r = memref.load %slot[%i] : memref<128xi32>
+      }
+      scf.for %j = %c0 to %c4 step %c1 {
+        pto.vsts %v, %slot[%j], %mask : !pto.vreg<64xi32>, memref<128xi32>, index, !pto.mask<b32>
+      }
+      pto.yield(%c0) : (index) -> ()
+    } : index
+    return
+  }
+
+  func.func @carried_base(%a: memref<8xi32>, %b: memref<8xi32>) {
+    %c0 = arith.constant 0 : index
+    %c1 = arith.constant 1 : index
+    %c4 = arith.constant 4 : index
+    %v = arith.constant 7 : i32
+    pto.fusion_region {
+      scf.for %i = %c0 to %c4 step %c1 iter_args(%base = %a) -> memref<8xi32> {
+        memref.store %v, %base[%i] : memref<8xi32>
+        scf.yield %b : memref<8xi32>
+      }
+      scf.for %j = %c0 to %c4 step %c1 {
+        %r = memref.load %a[%j] : memref<8xi32>
+      }
+      pto.yield(%c0) : (index) -> ()
+    } : index
+    return
+  }
+}
+
+// CHECK-LABEL: func.func @mixed_vpto
+// CHECK: scf.for
+// CHECK: memref.store
+// CHECK: }
+// CHECK-NEXT: scf.for
+// CHECK: pto.vlds
+// CHECK: pto.yield
+
+// CHECK-LABEL: func.func @prelude_unknown_alias
+// CHECK: scf.for
+// CHECK: arith.addi
+// CHECK: }
+// CHECK-NEXT: }
+// CHECK-NEXT: scf.for
+// CHECK: memref.load
+// CHECK: arith.muli
+// CHECK: pto.yield
+
+// CHECK-LABEL: func.func @epilogue_unknown_alias
+// CHECK: scf.for
+// CHECK: arith.addi
+// CHECK: }
+// CHECK-NEXT: memref.store
+// CHECK-NEXT: }
+// CHECK-NEXT: scf.for
+// CHECK: memref.load
+// CHECK: arith.muli
+// CHECK: pto.yield
+
+// CHECK-LABEL: func.func @distinct_dynamic_domains
+// CHECK: scf.for
+// CHECK: memref.store
+// CHECK: }
+// CHECK-NEXT: scf.for
+// CHECK: memref.load
+// CHECK: pto.yield
+
+// CHECK-LABEL: func.func @prelude_same_slot
+// CHECK: scf.for
+// CHECK: arith.index_cast
+// CHECK: scf.for
+// CHECK: memref.store
+// CHECK: }
+// CHECK-NEXT: }
+// CHECK-NEXT: scf.for
+// CHECK: memref.load
+// CHECK: pto.yield
+
+// CHECK-LABEL: func.func @mixed_vpto_store
+// CHECK: scf.for
+// CHECK: memref.load
+// CHECK-NEXT: }
+// CHECK-NEXT: scf.for
+// CHECK: pto.vsts
+// CHECK: pto.yield
+
+// CHECK-LABEL: func.func @carried_base
+// CHECK: scf.for
+// CHECK: memref.store
+// CHECK: scf.yield
+// CHECK-NEXT: }
+// CHECK-NEXT: scf.for
+// CHECK: memref.load
+// CHECK: pto.yield

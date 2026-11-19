@@ -1,0 +1,332 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+
+// Scalar memory fusion requires a cross-stage dependence proof.
+// RUN: pto-test-opt --pto-low-level-loop-fusion %s | FileCheck %s
+
+module {
+  func.func @shifted(%slot: memref<8xi32>) {
+    %c0 = arith.constant 0 : index
+    %c1 = arith.constant 1 : index
+    %c4 = arith.constant 4 : index
+    %value = arith.constant 7 : i32
+    pto.fusion_region {
+      scf.for %i = %c0 to %c4 step %c1 {
+        memref.store %value, %slot[%i] : memref<8xi32>
+      }
+      scf.for %j = %c0 to %c4 step %c1 {
+        %next = arith.addi %j, %c1 : index
+        %r = memref.load %slot[%next] : memref<8xi32>
+        %use = arith.addi %r, %r : i32
+        memref.store %use, %slot[%next] : memref<8xi32>
+      }
+      pto.yield(%c0) : (index) -> ()
+    } : index
+    return
+  }
+
+  func.func @fixed_address() {
+    %c0 = arith.constant 0 : index
+    %c1 = arith.constant 1 : index
+    %c4 = arith.constant 4 : index
+    %value = arith.constant 7 : i32
+    %slot = memref.alloca() : memref<8xi32>
+    pto.fusion_region {
+      scf.for %i = %c0 to %c4 step %c1 {
+        memref.store %value, %slot[%c0] : memref<8xi32>
+      }
+      scf.for %j = %c0 to %c4 step %c1 {
+        %r = memref.load %slot[%c0] : memref<8xi32>
+        %use = arith.addi %r, %r : i32
+        memref.store %use, %slot[%c0] : memref<8xi32>
+      }
+      pto.yield(%c0) : (index) -> ()
+    } : index
+    return
+  }
+
+  func.func @unknown_alias(%a: memref<8xi32>, %b: memref<8xi32>) {
+    %c0 = arith.constant 0 : index
+    %c1 = arith.constant 1 : index
+    %c4 = arith.constant 4 : index
+    %value = arith.constant 7 : i32
+    pto.fusion_region {
+      scf.for %i = %c0 to %c4 step %c1 {
+        memref.store %value, %a[%i] : memref<8xi32>
+      }
+      scf.for %j = %c0 to %c4 step %c1 {
+        %r = memref.load %b[%j] : memref<8xi32>
+        %use = arith.addi %r, %r : i32
+        memref.store %use, %b[%j] : memref<8xi32>
+      }
+      pto.yield(%c0) : (index) -> ()
+    } : index
+    return
+  }
+
+  func.func @offset_view(%slot: memref<8xi32>) {
+    %c0 = arith.constant 0 : index
+    %c1 = arith.constant 1 : index
+    %c4 = arith.constant 4 : index
+    %value = arith.constant 7 : i32
+    %view = memref.subview %slot[1] [7] [1] : memref<8xi32> to memref<7xi32, strided<[1], offset: 1>>
+    pto.fusion_region {
+      scf.for %i = %c0 to %c4 step %c1 {
+        memref.store %value, %slot[%i] : memref<8xi32>
+      }
+      scf.for %j = %c0 to %c4 step %c1 {
+        %r = memref.load %view[%j] : memref<7xi32, strided<[1], offset: 1>>
+        %use = arith.addi %r, %r : i32
+        memref.store %use, %view[%j] : memref<7xi32, strided<[1], offset: 1>>
+      }
+      pto.yield(%c0) : (index) -> ()
+    } : index
+    return
+  }
+
+  func.func @nonidentity_layout(%slot: memref<8xi32, strided<[2]>>) {
+    %c0 = arith.constant 0 : index
+    %c1 = arith.constant 1 : index
+    %c4 = arith.constant 4 : index
+    %value = arith.constant 7 : i32
+    pto.fusion_region {
+      scf.for %i = %c0 to %c4 step %c1 {
+        memref.store %value, %slot[%i] : memref<8xi32, strided<[2]>>
+      }
+      scf.for %j = %c0 to %c4 step %c1 {
+        %r = memref.load %slot[%j] : memref<8xi32, strided<[2]>>
+        %use = arith.addi %r, %r : i32
+        memref.store %use, %slot[%j] : memref<8xi32, strided<[2]>>
+      }
+      pto.yield(%c0) : (index) -> ()
+    } : index
+    return
+  }
+
+  func.func @nested_repeated_row(%slot: memref<4x4xi32>) {
+    %c0 = arith.constant 0 : index
+    %c1 = arith.constant 1 : index
+    %c4 = arith.constant 4 : index
+    %v = arith.constant 7 : i32
+    pto.fusion_region {
+      scf.for %i = %c0 to %c4 step %c1 {
+        scf.for %k = %c0 to %c4 step %c1 {
+          memref.store %v, %slot[%c0, %k] : memref<4x4xi32>
+        }
+      }
+      scf.for %j = %c0 to %c4 step %c1 {
+        scf.for %l = %c0 to %c4 step %c1 {
+          %r = memref.load %slot[%c0, %l] : memref<4x4xi32>
+          memref.store %r, %slot[%c0, %l] : memref<4x4xi32>
+        }
+      }
+      pto.yield(%c0) : (index) -> ()
+    } : index
+    return
+  }
+
+  func.func @nonlinear_index(%slot: memref<128xi32>) {
+    %c0 = arith.constant 0 : index
+    %c1 = arith.constant 1 : index
+    %c4 = arith.constant 4 : index
+    %value = arith.constant 7 : i32
+    pto.fusion_region {
+      scf.for %i = %c0 to %c4 step %c1 {
+        memref.store %value, %slot[%i] : memref<128xi32>
+      }
+      scf.for %j = %c0 to %c4 step %c1 {
+        %idx = arith.remui %j, %c1 : index
+        %r = memref.load %slot[%idx] : memref<128xi32>
+        memref.store %r, %slot[%idx] : memref<128xi32>
+      }
+      pto.yield(%c0) : (index) -> ()
+    } : index
+    return
+  }
+
+  func.func @write_after_read(%slot: memref<128xi32>) {
+    %c0 = arith.constant 0 : index
+    %c1 = arith.constant 1 : index
+    %c4 = arith.constant 4 : index
+    %value = arith.constant 7 : i32
+    pto.fusion_region {
+      scf.for %i = %c0 to %c4 step %c1 {
+        %a = memref.load %slot[%i] : memref<128xi32>
+      }
+      scf.for %j = %c0 to %c4 step %c1 {
+        %next = arith.addi %j, %c1 : index
+        memref.store %value, %slot[%next] : memref<128xi32>
+      }
+      pto.yield(%c0) : (index) -> ()
+    } : index
+    return
+  }
+
+  func.func @write_after_write(%slot: memref<128xi32>) {
+    %c0 = arith.constant 0 : index
+    %c1 = arith.constant 1 : index
+    %c4 = arith.constant 4 : index
+    %value = arith.constant 7 : i32
+    pto.fusion_region {
+      scf.for %i = %c0 to %c4 step %c1 {
+        memref.store %value, %slot[%i] : memref<128xi32>
+      }
+      scf.for %j = %c0 to %c4 step %c1 {
+        %next = arith.addi %j, %c1 : index
+        memref.store %value, %slot[%next] : memref<128xi32>
+      }
+      pto.yield(%c0) : (index) -> ()
+    } : index
+    return
+  }
+
+  func.func @offset_analysis_overflow(%slot: memref<?xi32>) {
+    %c0 = arith.constant 0 : index
+    %c1 = arith.constant 1 : index
+    %c4 = arith.constant 4 : index
+    %big = arith.constant 9223372036854775807 : index
+    %v = arith.constant 7 : i32
+    pto.fusion_region {
+      scf.for %i = %c0 to %c4 step %c1 {
+        memref.store %v, %slot[%i] : memref<?xi32>
+      }
+      scf.for %j = %c0 to %c4 step %c1 {
+        %a = arith.subi %j, %big : index
+        %b = arith.subi %a, %c1 : index
+        %c = arith.addi %b, %big : index
+        %idx = arith.addi %c, %c1 : index
+        %r = memref.load %slot[%idx] : memref<?xi32>
+      }
+      pto.yield(%c0) : (index) -> ()
+    } : index
+    return
+  }
+  func.func @offset_analysis_sub_overflow(%slot: memref<?xi32>) {
+    %c0 = arith.constant 0 : index
+    %c1 = arith.constant 1 : index
+    %c4 = arith.constant 4 : index
+    %c2 = arith.constant 2 : index
+    %big = arith.constant 9223372036854775807 : index
+    %v = arith.constant 7 : i32
+    pto.fusion_region {
+      scf.for %i = %c0 to %c4 step %c1 {
+        memref.store %v, %slot[%i] : memref<?xi32>
+      }
+      scf.for %j = %c0 to %c4 step %c1 {
+        %a = arith.addi %j, %big : index
+        %b = arith.addi %a, %c2 : index
+        %c = arith.subi %b, %big : index
+        %idx = arith.subi %c, %c2 : index
+        %r = memref.load %slot[%idx] : memref<?xi32>
+      }
+      pto.yield(%c0) : (index) -> ()
+    } : index
+    return
+  }
+}
+
+// CHECK-LABEL: func.func @shifted
+// CHECK: pto.fusion_region {
+// CHECK: scf.for
+// CHECK: memref.store
+// CHECK: }
+// CHECK-NEXT: scf.for
+// CHECK: memref.load
+// CHECK: memref.store
+// CHECK: pto.yield
+
+// CHECK-LABEL: func.func @fixed_address
+// CHECK: pto.fusion_region {
+// CHECK: scf.for
+// CHECK: memref.store
+// CHECK: }
+// CHECK-NEXT: scf.for
+// CHECK: memref.load
+// CHECK: memref.store
+// CHECK: pto.yield
+
+// CHECK-LABEL: func.func @unknown_alias
+// CHECK: pto.fusion_region {
+// CHECK: scf.for
+// CHECK: memref.store
+// CHECK: }
+// CHECK-NEXT: scf.for
+// CHECK: memref.load
+// CHECK: memref.store
+// CHECK: pto.yield
+
+// CHECK-LABEL: func.func @offset_view
+// CHECK: pto.fusion_region {
+// CHECK: scf.for
+// CHECK: memref.store
+// CHECK: }
+// CHECK-NEXT: scf.for
+// CHECK: memref.load
+// CHECK: memref.store
+// CHECK: pto.yield
+
+// CHECK-LABEL: func.func @nonidentity_layout
+// CHECK: pto.fusion_region {
+// CHECK: scf.for
+// CHECK: memref.store
+// CHECK: }
+// CHECK-NEXT: scf.for
+// CHECK: memref.load
+// CHECK: memref.store
+// CHECK: pto.yield
+
+// CHECK-LABEL: func.func @nested_repeated_row
+// CHECK: scf.for
+// CHECK: scf.for
+// CHECK: memref.store
+// CHECK: }
+// CHECK: }
+// CHECK-NEXT: scf.for
+// CHECK: scf.for
+// CHECK: memref.load
+// CHECK: pto.yield
+
+// CHECK-LABEL: func.func @nonlinear_index
+// CHECK: scf.for
+// CHECK: memref.store
+// CHECK: }
+// CHECK-NEXT: scf.for
+// CHECK: memref.load
+// CHECK: pto.yield
+
+// CHECK-LABEL: func.func @write_after_read
+// CHECK: scf.for
+// CHECK: memref.load
+// CHECK: }
+// CHECK-NEXT: scf.for
+// CHECK: memref.store
+// CHECK: pto.yield
+
+// CHECK-LABEL: func.func @write_after_write
+// CHECK: scf.for
+// CHECK: memref.store
+// CHECK: }
+// CHECK-NEXT: scf.for
+// CHECK: memref.store
+// CHECK: pto.yield
+
+// CHECK-LABEL: func.func @offset_analysis_overflow
+// CHECK: scf.for
+// CHECK: memref.store
+// CHECK: }
+// CHECK-NEXT: scf.for
+// CHECK: memref.load
+// CHECK: pto.yield
+
+// CHECK-LABEL: func.func @offset_analysis_sub_overflow
+// CHECK: scf.for
+// CHECK: memref.store
+// CHECK: }
+// CHECK-NEXT: scf.for
+// CHECK: memref.load
+// CHECK: pto.yield

@@ -10,6 +10,7 @@
 #include "PTO/IR/PTO.h"
 #include "PTO/Transforms/Passes.h"
 
+#include "mlir/Analysis/AliasAnalysis.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/Func/IR/FuncOps.h"
 #include "mlir/Dialect/MemRef/IR/MemRef.h"
@@ -22,8 +23,10 @@
 #include "mlir/Pass/Pass.h"
 
 #include "llvm/ADT/STLExtras.h"
+#include "llvm/Support/MathExtras.h"
 
 #include <cstdlib>
+#include <optional>
 
 namespace mlir {
 namespace pto {
@@ -76,7 +79,14 @@ static bool isSupportedPreludeOp(Operation *op) {
   return isPureNoRegionOp(op) || isMovableMemoryPreludeOp(op);
 }
 
-static bool isSupportedLeafOp(Operation *op) { return op->getNumRegions() == 0; }
+static bool isSupportedLeafOp(Operation* op)
+{
+    // Scalar accesses require a separate cross-stage dependence proof.
+    if (isa<pto::VldsOp, pto::VstsOp, memref::LoadOp, memref::StoreOp>(op)) {
+        return true;
+    }
+    return isPureNoRegionOp(op);
+}
 
 static bool isInterstageSetupOp(Operation *op) {
   if (isPureNoRegionOp(op)) {
@@ -668,6 +678,248 @@ static bool sameLoopNestShape(const StageInfo &lhs, const StageInfo &rhs) {
   });
 }
 
+struct ScalarAccess {
+    Value base;
+    ValueRange indices;
+    bool writes = false;
+};
+
+static std::optional<ScalarAccess> getScalarAccess(Operation* op)
+{
+    if (auto load = dyn_cast<memref::LoadOp>(op)) {
+        return ScalarAccess{load.getMemRef(), load.getIndices(), false};
+    }
+    if (auto store = dyn_cast<memref::StoreOp>(op)) {
+        return ScalarAccess{store.getMemRef(), store.getIndices(), true};
+    }
+    return std::nullopt;
+}
+
+// Recognize iv + constant (including commuted additions and subtractions).
+// Wrapping index addition is bijective; reject overflow in the analysis itself.
+static bool matchIterationIndex(Value index, Value iv, int64_t& offset)
+{
+    offset = 0;
+    while (index != iv) {
+        Value next;
+        arith::ConstantIndexOp constant;
+        bool subtract = false;
+        if (auto add = index.getDefiningOp<arith::AddIOp>()) {
+            constant = add.getRhs().getDefiningOp<arith::ConstantIndexOp>();
+            next = add.getLhs();
+            if (!constant) {
+                constant = add.getLhs().getDefiningOp<arith::ConstantIndexOp>();
+                next = add.getRhs();
+            }
+        } else if (auto sub = index.getDefiningOp<arith::SubIOp>()) {
+            constant = sub.getRhs().getDefiningOp<arith::ConstantIndexOp>();
+            next = sub.getLhs();
+            subtract = true;
+        }
+        if (!constant) {
+            return false;
+        }
+        int64_t updated = 0;
+        bool overflow = subtract ? llvm::SubOverflow(offset, constant.value(), updated) :
+                                   llvm::AddOverflow(offset, constant.value(), updated);
+        if (overflow) {
+            return false;
+        }
+        offset = updated;
+        index = next;
+    }
+    return true;
+}
+
+static bool sameInvariantIndex(Value lhs, Value rhs, const StageInfo& lhsStage, const StageInfo& rhsStage)
+{
+    bool outsideLoops =
+        lhsStage.getOuterLoop().isDefinedOutsideOfLoop(lhs) && rhsStage.getOuterLoop().isDefinedOutsideOfLoop(rhs);
+    if (!outsideLoops) {
+        return false;
+    }
+    if (lhs == rhs) {
+        return true;
+    }
+    auto lhsConstant = lhs.getDefiningOp<arith::ConstantIndexOp>();
+    auto rhsConstant = rhs.getDefiningOp<arith::ConstantIndexOp>();
+    return lhsConstant && rhsConstant && lhsConstant.value() == rhsConstant.value();
+}
+
+static bool havePointwiseIndices(
+    const ScalarAccess& lhs, const StageInfo& lhsStage, const ScalarAccess& rhs, const StageInfo& rhsStage)
+{
+    auto type = cast<MemRefType>(lhs.base.getType());
+    if (lhs.base != rhs.base || !type.getLayout().isIdentity()) {
+        return false;
+    }
+    SmallVector<bool> coveredLevels(lhsStage.getDepth(), false);
+    for (auto [lhsIndex, rhsIndex] : llvm::zip(lhs.indices, rhs.indices)) {
+        if (sameInvariantIndex(lhsIndex, rhsIndex, lhsStage, rhsStage)) {
+            continue;
+        }
+        bool matched = false;
+        for (unsigned level = 0; level < lhsStage.getDepth(); ++level) {
+            scf::ForOp lhsLoop = lhsStage.levels[level].loop;
+            scf::ForOp rhsLoop = rhsStage.levels[level].loop;
+            int64_t lhsOffset = 0;
+            int64_t rhsOffset = 0;
+            bool lhsMatches = matchIterationIndex(lhsIndex, lhsLoop.getInductionVar(), lhsOffset);
+            bool rhsMatches = matchIterationIndex(rhsIndex, rhsLoop.getInductionVar(), rhsOffset);
+            if (lhsMatches && rhsMatches && lhsOffset == rhsOffset) {
+                coveredLevels[level] = true;
+                matched = true;
+                break;
+            }
+        }
+        if (!matched) {
+            return false;
+        }
+    }
+    // Every loop coordinate must be recoverable from the accessed element.
+    return llvm::all_of(coveredLevels, [](bool covered) { return covered; });
+}
+
+static bool canCrossOtherEffects(
+    const ScalarAccess& access, Operation* other, const StageInfo& otherStage, AliasAnalysis& aliases)
+{
+    auto interface = dyn_cast<MemoryEffectOpInterface>(other);
+    if (!interface) {
+        return false;
+    }
+    SmallVector<MemoryEffects::EffectInstance> effects;
+    interface.getEffects(effects);
+    for (const auto& effect : effects) {
+        if (!isa<MemoryEffects::Read, MemoryEffects::Write>(effect.getEffect())) {
+            return false;
+        }
+        if (!access.writes && isa<MemoryEffects::Read>(effect.getEffect())) {
+            continue;
+        }
+        Value base = effect.getValue();
+        if (!base || !otherStage.getOuterLoop().isDefinedOutsideOfLoop(base)) {
+            return false;
+        }
+        if (!aliases.alias(access.base, base).isNo()) {
+            return false;
+        }
+    }
+    return true;
+}
+
+static bool isScalarReorderLegal(
+    const ScalarAccess& access, const StageInfo& stage, Operation* other, const StageInfo& otherStage, bool isLeaf,
+    AliasAnalysis& aliases)
+{
+    if (isMemoryEffectFree(other)) {
+        return true;
+    }
+    auto otherAccess = getScalarAccess(other);
+    if (!otherAccess) {
+        return stage.getOuterLoop().isDefinedOutsideOfLoop(access.base) &&
+               canCrossOtherEffects(access, other, otherStage, aliases);
+    }
+    if (!access.writes && !otherAccess->writes) {
+        return true;
+    }
+    // Distinct SSA values alone do not imply disjoint storage. Bases created
+    // inside a loop may also denote different storage on different iterations.
+    bool outsideLoops = stage.getOuterLoop().isDefinedOutsideOfLoop(access.base) &&
+                        otherStage.getOuterLoop().isDefinedOutsideOfLoop(otherAccess->base);
+    if (!outsideLoops) {
+        return false;
+    }
+    if (aliases.alias(access.base, otherAccess->base).isNo()) {
+        return true;
+    }
+    return isLeaf && havePointwiseIndices(access, stage, *otherAccess, otherStage);
+}
+
+static bool canReorderScalarAcrossStage(
+    const ScalarAccess& access, const StageInfo& stage, bool accessIsLeaf, const StageInfo& otherStage,
+    AliasAnalysis& aliases)
+{
+    for (Operation* other : otherStage.leafOps) {
+        if (!isScalarReorderLegal(access, stage, other, otherStage, accessIsLeaf, aliases)) {
+            return false;
+        }
+    }
+    for (const LoopLevelInfo& level : otherStage.levels) {
+        for (Operation* other : llvm::concat<Operation* const>(level.preludeOps, level.epilogueOps)) {
+            if (!isScalarReorderLegal(access, stage, other, otherStage, false, aliases)) {
+                return false;
+            }
+        }
+    }
+    return true;
+}
+
+static SmallVector<std::pair<Operation*, bool>> collectStageMemoryCandidates(const StageInfo& stage)
+{
+    SmallVector<std::pair<Operation*, bool>> candidates;
+    for (Operation* op : stage.leafOps) {
+        candidates.emplace_back(op, true);
+    }
+    for (const LoopLevelInfo& level : stage.levels) {
+        for (Operation* op : llvm::concat<Operation* const>(level.preludeOps, level.epilogueOps)) {
+            candidates.emplace_back(op, false);
+        }
+    }
+    return candidates;
+}
+
+static bool sameScalarLoopDomain(const StageInfo& lhs, const StageInfo& rhs)
+{
+    for (auto [lhsLevel, rhsLevel] : llvm::zip(lhs.levels, rhs.levels)) {
+        scf::ForOp lhsLoop = lhsLevel.loop;
+        scf::ForOp rhsLoop = rhsLevel.loop;
+        SmallVector<Value> lhsHeader{lhsLoop.getLowerBound(), lhsLoop.getUpperBound(), lhsLoop.getStep()};
+        SmallVector<Value> rhsHeader{rhsLoop.getLowerBound(), rhsLoop.getUpperBound(), rhsLoop.getStep()};
+        for (auto [lhsValue, rhsValue] : llvm::zip(lhsHeader, rhsHeader)) {
+            if (!sameInvariantIndex(lhsValue, rhsValue, lhs, rhs)) {
+                return false;
+            }
+        }
+    }
+    return true;
+}
+
+static bool areStageScalarMemoryReordersLegal(
+    const StageInfo& stage, ArrayRef<StageInfo> stages, AliasAnalysis& aliases)
+{
+    for (auto [op, isLeaf] : collectStageMemoryCandidates(stage)) {
+        auto access = getScalarAccess(op);
+        if (!access) {
+            continue;
+        }
+        for (const StageInfo& otherStage : stages) {
+            if (&stage == &otherStage) {
+                continue;
+            }
+            bool legalDomain = sameScalarLoopDomain(stage, otherStage);
+            bool legalAccesses = canReorderScalarAcrossStage(*access, stage, isLeaf, otherStage, aliases);
+            if (!legalDomain || !legalAccesses) {
+                return false;
+            }
+        }
+    }
+    return true;
+}
+
+static bool areScalarMemoryReordersLegal(ArrayRef<StageInfo> stages, llvm::raw_ostream* debugOS)
+{
+    AliasAnalysis aliases(stages.front().getOuterLoop()->getParentOp());
+    for (const StageInfo& stage : stages) {
+        if (!areStageScalarMemoryReordersLegal(stage, stages, aliases)) {
+            if (debugOS) {
+                *debugOS << "[op-fusion] reject stage prefix: scalar memory dependence is not proven safe\n";
+            }
+            return false;
+        }
+    }
+    return true;
+}
+
 static void cloneOpAndMapResults(OpBuilder &builder, Operation *op,
                                  IRMapping &mapping) {
   Operation *cloned = builder.clone(*op, mapping);
@@ -813,6 +1065,9 @@ static bool isLegalStagePrefix(
         }
     }
 
+    if (!areScalarMemoryReordersLegal(candidateStages, debugOS)) {
+        return false;
+    }
     if (!arePreludeReordersLegal(candidateStages, debugOS)) {
         return false;
     }
