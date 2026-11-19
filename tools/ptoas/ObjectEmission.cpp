@@ -843,6 +843,12 @@ buildDeviceCompileArgs(llvm::StringRef targetCPU, llvm::StringRef bishengPath,
         "-mllvm",
         "-cce-dyn-kernel-stack-size=true",
     };
+    // BiSheng UBDSE can discard a store when a later store to the same UB
+    // address uses a complementary mask, leaving active lanes unwritten.
+    // Keep both stores until the mask coverage check is fixed (PTOAS #1762).
+    if (targetCPU.ends_with("-vec")) {
+        args.append({"-mllvm", "-cce-vf-enable-ub-dead-st-elimination=false"});
+    }
     switch (bishengVFAutoSyncMode) {
         case BishengVFAutoSyncMode::Off:
             args.append({"-mllvm", "-cce-vf-auto-sync=off"});
