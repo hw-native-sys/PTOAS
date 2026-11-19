@@ -21,6 +21,7 @@
 #include "PTO/Transforms/VecScopeMemBar/VecScopeMemBarAnalysis.h"
 #include "PTO/Analysis/PTOMemoryDependenceAnalysis.h"
 #include "PTO/Analysis/PTOIntegerRange.h"
+#include "PTO/Analysis/PTOStoreStreamAnalysis.h"
 #include "mlir/Dialect/Affine/IR/AffineOps.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/SCF/IR/SCF.h"
@@ -31,6 +32,7 @@
 #include "mlir/Interfaces/SideEffectInterfaces.h"
 #include "mlir/Support/LLVM.h"
 #include "llvm/ADT/DenseSet.h"
+#include "llvm/ADT/DenseMap.h"
 #include "llvm/ADT/SmallVector.h"
 
 #include <algorithm>
@@ -86,26 +88,6 @@ static std::optional<Value> forResultYieldedValue(Value sink)
     return forOp.getBody()->getTerminator()->getOperand(k);
 }
 
-// Block argument: only scf.for iter_args are relayed, via the yield operand.
-// Nullopt when `sink` is not a carried iter argument.
-static std::optional<Value> iterArgYieldedValue(Value sink)
-{
-    auto ba = dyn_cast<BlockArgument>(sink);
-    if (!ba) {
-        return std::nullopt;
-    }
-    auto forOp = ba.getOwner() ? dyn_cast<scf::ForOp>(ba.getOwner()->getParentOp()) : scf::ForOp();
-    if (!forOp) {
-        return std::nullopt;
-    }
-    unsigned arg = ba.getArgNumber();
-    // arg 0 is the loop IV; iter_args start at 1.
-    if (arg == 0 || arg > forOp.getRegion().getNumArguments() - 1) {
-        return std::nullopt;
-    }
-    return forOp.getBody()->getTerminator()->getOperand(arg - 1);
-}
-
 static bool reverseReaches(Value sink, Value target, DenseSet<Value>& visited, unsigned depth, unsigned maxDepth)
 {
     if (sink == target) {
@@ -123,9 +105,20 @@ static bool reverseReaches(Value sink, Value target, DenseSet<Value>& visited, u
             return false; // relay through another store: not a value relay
         }
         if (auto yielded = forResultYieldedValue(sink)) {
-            if (reverseReaches(*yielded, target, visited, depth + 1, maxDepth)) {
-                return true;
+            auto loop = cast<scf::ForOp>(defOp);
+            unsigned index = cast<OpResult>(sink).getResultNumber();
+            auto count = integer_range::getConstBounds(loop).exactTripCount();
+            DenseSet<Value> initialVisited = visited;
+            bool initialDepends = reverseReaches(loop.getInits()[index], target, initialVisited, depth + 1, maxDepth);
+            if (count && *count == 0) {
+                return initialDepends;
             }
+            bool yieldedDepends = reverseReaches(*yielded, target, visited, depth + 1, maxDepth);
+            return yieldedDepends && ((count && *count > 0) || initialDepends);
+        }
+        bool controlFlow = defOp->getNumRegions() != 0;
+        if (controlFlow) {
+            return false; // Unknown control flow cannot establish a must-dependence.
         }
         for (Value op : defOp->getOperands()) {
             if (reverseReaches(op, target, visited, depth + 1, maxDepth)) {
@@ -135,11 +128,9 @@ static bool reverseReaches(Value sink, Value target, DenseSet<Value>& visited, u
         return false;
     }
 
-    auto yielded = iterArgYieldedValue(sink);
-    if (!yielded) {
-        return false;
-    }
-    return reverseReaches(*yielded, target, visited, depth + 1, maxDepth);
+    // A loop iter-arg contains the preceding iteration's value. Following its
+    // yield would incorrectly prove ordering between this iteration's accesses.
+    return false;
 }
 
 static bool valueDependsOn(Value sink, Value target)
@@ -329,6 +320,13 @@ static bool collectAccessOccurrences(Operation* scope, VecScopeMemBarAnalysisRes
 {
     bool anyFailed = false;
     unsigned order = 0;
+    DenseMap<Operation*, PTOIsolatedStoreStream> streams;
+    scope->walk([&](scf::ForOp loop) {
+        if (auto stream = getIsolatedStoreStream(loop)) {
+            streams.try_emplace(stream->store, *stream);
+            streams.try_emplace(stream->flush, *stream);
+        }
+    });
     scope->walk([&](Operation* op) {
         if (!isUBMemoryOp(op)) {
             return;
@@ -346,6 +344,10 @@ static bool collectAccessOccurrences(Operation* scope, VecScopeMemBarAnalysisRes
         occ.unit = (*maybe).unit;
         recordEnclosingLoopNest(result, ivs, occ);
         auto footprints = getMemoryFootprints(*maybe, ivs);
+        if (auto stream = streams.find(op); stream != streams.end()) {
+            footprints = {stream->second.footprint};
+            occ.orderedStreamFlush = stream->second.flush;
+        }
         if (footprints.empty()) {
             anyFailed = true;
             return;
@@ -425,6 +427,11 @@ static void analyzeSequentialPair(
     const auto& A = result.accesses;
     if (A[i].op == A[j].op) {
         return;
+    }
+    bool terminalStreamPair = A[i].orderedStreamFlush == A[j].op &&
+                              A[i].op->getBlock() != A[j].op->getBlock();
+    if (terminalStreamPair) {
+        return; // Store pipeline consumes its own buffered tail in order.
     }
     auto kind = hazardKind(A[i], A[j]);
     if (!kind) {
@@ -701,6 +708,11 @@ static void analyzeLoopCarriedPair(VecScopeMemBarAnalysisResult& result, unsigne
 {
     const auto& producer = result.accesses[i];
     const auto& consumer = result.accesses[j];
+    bool carriedStream = i == j && producer.orderedStreamFlush &&
+                         producer.orderedStreamFlush->getBlock() != producer.op->getBlock();
+    if (carriedStream) {
+        return; // Successive steps of the certified continuous store pipeline.
+    }
     auto kind = hazardKind(producer, consumer);
     if (!kind) {
         return;

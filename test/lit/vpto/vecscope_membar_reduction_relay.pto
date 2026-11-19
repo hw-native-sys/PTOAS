@@ -54,8 +54,13 @@ func.func @last_iteration_only() {
   return
 }
 
+// The unknown zero-trip path cannot establish an SSA must-dependence.
+// A VLD_VST cut before publishing the result orders all earlier source loads,
+// so the later source overwrites no longer need an additional VV_ALL cut.
 // CHECK-LABEL: func.func @possibly_empty_reduction(
-// CHECK: pto.mem_bar "VV_ALL"
+// CHECK: pto.mem_bar "VLD_VST"
+// CHECK: pto.vsts
+// CHECK: pto.mem_bar "VST_VLD"
 // CHECK: return
 func.func @possibly_empty_reduction(%n: index) {
   %c0 = arith.constant 0 : index

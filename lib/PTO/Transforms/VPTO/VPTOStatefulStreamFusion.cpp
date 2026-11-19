@@ -8,6 +8,7 @@
 
 #include "PTO/Transforms/VPTOStatefulStreamFusion.h"
 #include "PTO/Analysis/PTOAddressAnalysis.h"
+#include "PTO/Analysis/PTOStoreStreamAnalysis.h"
 #include "PTO/IR/PTO.h"
 #include "PTO/IR/PTOTypeUtils.h"
 #include "PTO/Transforms/Passes.h"
@@ -692,7 +693,7 @@ static bool fuseLoopCarriedStoreStream(StatefulStoreStream stream,
       loop && stream.init->getParentOp() == loop &&
       isLoopContinuousAddress(stream.initialBase, stream.totalAdvance, loop) &&
       !hasOtherStatefulOperation(loop, streamOps) &&
-      !hasPotentiallyAliasingEffect(loop, stream.initialBase, streamOps);
+      getIsolatedStoreStream(loop).has_value();
   if (!canFuse) {
     return false;
   }

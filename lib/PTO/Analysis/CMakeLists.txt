@@ -9,6 +9,7 @@
 add_mlir_library(PTOAnalysis
   PTOValueEvolutionAnalysis.cpp
   PTOAddressAnalysis.cpp
+  PTOStoreStreamAnalysis.cpp
   PTOContextRange.cpp
   PTOIntegerRange.cpp
   PTORemainderRange.cpp

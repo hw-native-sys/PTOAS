@@ -26,12 +26,11 @@
 
 // VPTO-LABEL: func.func @fused_qd_vmi_current
 // VPTO-DAG: pto.pset_b16 "PAT_ALL"
-// VPTO-DAG: %[[SCALE_BASE:[^ ]+]] = pto.addptr {{.*}}, %c0 : <ui8, ub>, index -> <ui8, ub>
-// VPTO-DAG: %[[SCALE_ALIGN:.*]] = pto.init_align
 // VPTO: pto.pset_b16 "PAT_VL8"
 // VPTO: %[[ZERO:[^ ]+]] = pto.vdup {{.*}} : bf16,
-// VPTO: %[[SCALE_LOOP:.*]]:{{[0-9]+}} = scf.for
-// VPTO-SAME: iter_args(%[[SCALE_BASE_ARG:.*]] = %[[SCALE_BASE]], %[[SCALE_ALIGN_ARG:.*]] = %[[SCALE_ALIGN]]{{.*}})
+// Other stores in this loop are outside the isolated short-stream proof.
+// Keep the original per-iteration tail flush and all compute checks.
+// VPTO: scf.for
 // VPTO: %[[LOAD_LOW:[^,]+]], %[[LOAD_HIGH:[^,]+]], %{{.*}} = pto.vldsx2 {{.*}} "DINTLV_B16"
 // VPTO: %[[BITS_LOW:[^ ]+]] = pto.vbitcast %[[LOAD_LOW]]
 // VPTO: %[[BITS_HIGH:[^ ]+]] = pto.vbitcast %[[LOAD_HIGH]]
@@ -40,7 +39,9 @@
 // VPTO: %[[REDUCE_MAX:[^ ]+]] = pto.vmax %[[ABS_LOW]], %[[ABS_HIGH]],
 // VPTO: pto.vcgmax %[[REDUCE_MAX]],
 // VPTO: pto.vcvt {{.*}} {part = "EVEN", sat = "SAT"}
-// VPTO: %[[SCALE_ALIGN_OUT:.*]], %[[SCALE_BASE_OUT:.*]] = pto.vstus %[[SCALE_ALIGN_ARG]], {{.*}}, {{.*}}, %[[SCALE_BASE_ARG]]
+// VPTO: %[[SCALE_ALIGN:.*]] = pto.init_align
+// VPTO: %[[SCALE_ALIGN_OUT:.*]], %[[SCALE_BASE_OUT:.*]] = pto.vstus %[[SCALE_ALIGN]],
+// VPTO: pto.vstas %[[SCALE_ALIGN_OUT]], %[[SCALE_BASE_OUT]],
 // VPTO: %[[RECIP_LOW:[^ ]+]] = pto.vselr {{.*}} : !pto.vreg<128xbf16>, !pto.vreg<128xui16> -> !pto.vreg<128xbf16>
 // VPTO-NOT: scf.yield
 // VPTO: %[[SCALED_LOAD_LOW:[^,]+]], %[[SCALED_LOAD_HIGH:[^,]+]], %{{.*}} = pto.vldsx2 {{.*}} "DINTLV_B16"
@@ -76,8 +77,7 @@
 // VPTO: %[[STORE_HIGH:[^ ]+]] = pto.vor %[[BF16_1]], %[[BF16_3]]
 // VPTO: pto.vsts %[[STORE_LOW]], {{.*}} -> !pto.ptr<bf16, ub>
 // VPTO: pto.vsts %[[STORE_HIGH]], {{.*}} -> !pto.ptr<bf16, ub>
-// VPTO: scf.yield %[[SCALE_BASE_OUT]], %[[SCALE_ALIGN_OUT]]
-// VPTO: pto.vstas %[[SCALE_LOOP]]#1, %[[SCALE_LOOP]]#0,
+// VPTO: scf.yield
 
 module attributes {pto.target_arch = "a5"} {
   module attributes {pto.backend = "vpto", pto.kernel_kind = #pto.kernel_kind<vector>, pto.target_arch = "a5"} {

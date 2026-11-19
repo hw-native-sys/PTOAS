@@ -18,10 +18,11 @@ struct AccessOccurrence {
     PTOMemoryAccessKind kind = PTOMemoryAccessKind::Load;
     PTOMemoryAccessUnit unit = PTOMemoryAccessUnit::Vector;
     PTOMemoryFootprint footprint;
+    // Revalidated, isolated continuous stream. Never inferred from SSA alone.
+    Operation* orderedStreamFlush = nullptr;
     SmallVector<unsigned, mlir::pto::kValue2> loopNest;
     SmallVector<unsigned, mlir::pto::kValue2> schedulePath;
     unsigned lexicalOrder = 0;
 };
-
 } // namespace mlir::pto::vecscopemembar
 #endif

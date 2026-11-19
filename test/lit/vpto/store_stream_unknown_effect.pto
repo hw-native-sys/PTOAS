@@ -1,0 +1,44 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+
+// RUN: pto-test-opt %s --vpto-stateful-stream-fusion | FileCheck %s
+// RUN: sed 's/^module {/module attributes {pto.target_arch = "a3"} {/' %s | pto-test-opt --vpto-stateful-stream-fusion | FileCheck %s
+// RUN: sed 's/^module {/module attributes {pto.target_arch = "a5"} {/' %s | pto-test-opt --vpto-stateful-stream-fusion | FileCheck %s
+
+// CHECK: scf.for
+// CHECK: pto.init_align
+// CHECK: pto.vstus
+// CHECK: pto.vstas
+
+module {
+  func.func private @unknown()
+  func.func @unknown_effect(%base: !pto.ptr<bf16, ub>) {
+    %c0 = arith.constant 0 : index
+    %c1 = arith.constant 1 : index
+    %upper = arith.constant 4 : index
+    %advance = arith.constant 8 : i32
+    %zero = arith.constant 0 : i32
+    %bfzero = arith.constant 0.0 : bf16
+    %stride = arith.constant 8 : index
+    %maxoff = arith.constant 2048 : index
+    %max = pto.addptr %base, %maxoff : !pto.ptr<bf16, ub>, index -> !pto.ptr<bf16, ub>
+    pto.vecscope {
+      %mask = pto.pset_b16 "PAT_ALL" : !pto.mask<b16>
+      %data = pto.vdup %bfzero, %mask : bf16, !pto.mask<b16> -> !pto.vreg<128xbf16>
+      scf.for %i = %c0 to %upper step %c1 {
+        %off = arith.muli %i, %stride : index
+        %dst = pto.addptr %max, %off : !pto.ptr<bf16, ub>, index -> !pto.ptr<bf16, ub>
+        %init = pto.init_align : !pto.align
+        %align, %next = pto.vstus %init, %advance, %data, %dst : !pto.align, i32, !pto.vreg<128xbf16>, !pto.ptr<bf16, ub> -> !pto.align, !pto.ptr<bf16, ub>
+        pto.vstas %align, %next, %zero : !pto.align, !pto.ptr<bf16, ub>, i32
+        func.call @unknown() : () -> ()
+      }
+    }
+    return
+  }
+}

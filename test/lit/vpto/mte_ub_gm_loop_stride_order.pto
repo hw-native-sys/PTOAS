@@ -10,6 +10,7 @@
 // so expansion must hand (dst, src) to the config op.
 //
 // RUN: ptoas --pto-arch=a5 --pto-backend=vpto --emit-vpto --mlir-print-ir-before=vpto-expand-wrapper-ops %s -o /dev/null 2>&1 | FileCheck %s --check-prefix=WRAPPER
+// RUN: ptoas --pto-arch=a5 --pto-backend=vpto --emit-vpto --mlir-print-ir-before=vpto-expand-wrapper-ops %s -o /dev/null 2>&1 | FileCheck %s --check-prefix=WRAPPER-LOOP2
 // RUN: ptoas --pto-arch=a5 --pto-backend=vpto --emit-vpto --mlir-print-ir-after=vpto-expand-wrapper-ops %s -o /dev/null 2>&1 | FileCheck %s --check-prefix=EXPAND-LOOP1
 // RUN: ptoas --pto-arch=a5 --pto-backend=vpto --emit-vpto --mlir-print-ir-after=vpto-expand-wrapper-ops %s -o /dev/null 2>&1 | FileCheck %s --check-prefix=EXPAND-LOOP2
 
@@ -53,10 +54,19 @@ module attributes {pto.target_arch = "a5", pto.kernel_kind = #pto.kernel_kind<ve
 }
 
 // Wrapper keeps (count, src_stride, dst_stride).
+// Bind constants before their uses within the same function. Function dumps
+// may arrive in either order when the pass manager runs functions in parallel.
 // WRAPPER-LABEL: func.func @mte_ub_gm_one_loop(
-// WRAPPER: pto.mte_ub_gm {{.*}} nburst(%{{[^,]+}}, %{{[^,]+}}, %{{[^)]+}}) loop(%{{[^,]+}}, %[[SRC:.*]], %[[DST:.*]])
-// WRAPPER-DAG: %[[SRC]] = arith.constant 1472 : i64
-// WRAPPER-DAG: %[[DST]] = arith.constant 6400 : i64
+// WRAPPER-DAG: %[[SRC:.*]] = arith.constant 1472 : i64
+// WRAPPER-DAG: %[[DST:.*]] = arith.constant 6400 : i64
+// WRAPPER: pto.mte_ub_gm {{.*}} nburst(%{{[^,]+}}, %{{[^,]+}}, %{{[^)]+}}) loop(%{{[^,]+}}, %[[SRC]], %[[DST]])
+
+// WRAPPER-LOOP2-LABEL: func.func @mte_ub_gm_two_loops(
+// WRAPPER-LOOP2-DAG: %[[OUTER_SRC:.*]] = arith.constant 1472 : i64
+// WRAPPER-LOOP2-DAG: %[[OUTER_DST:.*]] = arith.constant 1600 : i64
+// WRAPPER-LOOP2-DAG: %[[INNER_SRC:.*]] = arith.constant 4416 : i64
+// WRAPPER-LOOP2-DAG: %[[INNER_DST:.*]] = arith.constant 6400 : i64
+// WRAPPER-LOOP2: pto.mte_ub_gm {{.*}} nburst(%{{[^,]+}}, %{{[^,]+}}, %{{[^)]+}}) loop(%{{[^,]+}}, %[[OUTER_SRC]], %[[OUTER_DST]]) loop(%{{[^,]+}}, %[[INNER_SRC]], %[[INNER_DST]])
 
 // Config op receives (dst, src).
 // EXPAND-LOOP1-LABEL: func.func @mte_ub_gm_one_loop(
