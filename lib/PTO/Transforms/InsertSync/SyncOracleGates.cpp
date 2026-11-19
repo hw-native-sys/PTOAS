@@ -840,7 +840,6 @@ struct LoopSpan {
 /// feeding a chain of `arith.select`s over N constants
 /// (`CreateSetWaitOpForMultiBuffer`). N is the modulus, so walking back from the
 /// operand to the nearest `RemUIOp` with a constant RHS recovers it exactly.
-///
 /// Returns 0 when N cannot be recovered. Callers treat that as "unknown depth"
 /// and credit NOTHING -- crediting an ordering whose distance cannot be named
 /// would be a false pass, and this model has no way to express "some distance".
@@ -880,7 +879,6 @@ bool insideLoop(Operation* op, const Operation* loop)
 
 /// The blocks on `loop`'s ancestor spine: the block holding `loop` itself, plus
 /// the block holding each of its ancestor ops, up to the function.
-///
 /// An op in one of these blocks and earlier in program order executes on EVERY
 /// path that reaches `loop` (structured control flow, single-block regions), so
 /// the spine is what "unconditionally before the loop" means concretely. An op
@@ -900,7 +898,6 @@ llvm::SmallPtrSet<Block*, mlir::pto::kValue8> spineBlocks(Operation* loop)
 }
 
 /// Does `op` execute exactly once per iteration of `loop`?
-///
 /// Only if it is a DIRECT child of the loop's body: an op one level deeper sits
 /// inside some other region -- an `scf.if` arm, or a nested loop that may run
 /// zero times -- and may be skipped on an iteration. A carried pair whose
@@ -1751,19 +1748,16 @@ std::string anchorPipeName(Operation* op)
 }
 
 /// Can `a` and `b` both execute in one pass through the function?
-///
 /// FALSE only when they sit in DIFFERENT REGIONS of a common `scf.if`: the arms
 /// are mutually exclusive, so no ordering between them can ever be required and
 /// no sync can ever establish one. This is the same reasoning the carried rules apply to
 /// priming -- a set on the `then` arm cannot prime a loop on the `else` arm.
-///
 /// DELIBERATELY AS NARROW AS THE CORPUS ALLOWS. A too-broad exclusivity
 /// predicate silently EXCUSES real dependencies, and that failure is invisible in
 /// any "the number went down" check -- so this recognises `scf.if` and nothing
 /// else -- not `scf.index_switch`, `cf.cond_br` or `cf.switch`. If another
 /// mutually-exclusive-region op appears in the post-sync IR, this must be revisited
 /// explicitly rather than generalised on a hunch.
-///
 /// A one-armed `scf.if` is handled correctly by construction: if `b` is outside
 /// the `if` entirely, the `if` never appears as a common ancestor, so the pair is
 /// NOT excluded -- `b` always runs while `a` runs conditionally, and the ordering
@@ -2201,7 +2195,6 @@ void mlir::pto::oracle::printSelfCoverage(
 namespace {
 
 /// Test-only synthetic faults for the classes the IR cannot spell.
-///
 /// The injection happens *after* extraction, into the gate's own record buffer.
 /// It never touches the IR and therefore cannot reach codegen. Its only purpose
 /// is to prove the gate rejects what it claims to reject.
@@ -2270,7 +2263,6 @@ bool injectFaultRecords(
 /// Appends the `comp-conflict` shape: a compensation record that shares its ids
 /// with the hazard it primes BY DESIGN, plus a second record colliding with a
 /// different hazard.
-///
 /// A compensation record's link to the hazard it primes exists only before
 /// codegen, so this shape cannot be written as input IR.
 void appendCompConflictRecords(llvm::SmallVectorImpl<SyncOpRecord>& records)

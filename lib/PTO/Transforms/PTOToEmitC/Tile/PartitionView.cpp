@@ -31,7 +31,7 @@ static bool isPackedMxLayout(std::optional<Layout> layout)
     return layout == Layout::MX_A_ZZ || layout == Layout::MX_B_NN;
 }
 
-static SmallVector<int64_t, 2> getStaticMxBackingShape(Value source)
+static SmallVector<int64_t, mlir::pto::kValue2> getStaticMxBackingShape(Value source)
 {
     while (auto partition = source.getDefiningOp<PartitionViewOp>()) {
         source = partition.getSource();
@@ -40,7 +40,7 @@ static SmallVector<int64_t, 2> getStaticMxBackingShape(Value source)
     if (!root) {
         return {};
     }
-    SmallVector<int64_t, 2> shape;
+    SmallVector<int64_t, mlir::pto::kValue2> shape;
     for (Value dim : root.getShape()) {
         auto extent = getStaticIndexLikeValue(dim);
         if (!extent) {

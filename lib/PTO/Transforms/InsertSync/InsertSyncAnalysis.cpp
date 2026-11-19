@@ -554,7 +554,6 @@ void InsertSyncAnalysis::InsertSync(
 /// rather than inferred. Note the index refers to `syncIR_` even while a back edge is
 /// being analysed over the copied body slice, so it must not be resolved against the
 /// SyncIRs the current traversal happens to walk.
-///
 /// Null on every path that does not resolve to an `scf.for`: an out-of-range index, an
 /// element that is not a loop, a loop marker with no op, and an `scf.while`, which
 /// reaches the same element type through `UpdateWhileOpInfo`. Callers must treat null
@@ -599,11 +598,9 @@ static std::optional<int64_t> constantIndexOf(Value v) {
 
 /// How far `v` moves per iteration of `forOp`: the coefficient of its induction
 /// variable, or nullopt when that is not a compile-time constant.
-///
 /// `v` qualifies when it is a sum of terms that are each either loop-invariant or a
 /// constant multiple of the induction variable. A load, `iv * iv`, a select, or a
 /// non-constant scale on the induction variable all yield nullopt.
-///
 /// Loop-invariance, not constant-ness, is the base case that matters: offsets are
 /// built from the block index and from enclosing loops' induction variables, none of
 /// which folds to a constant, but a value defined outside this loop's body cannot
@@ -701,7 +698,6 @@ static std::optional<SmallVector<int64_t>> viewStrides(Value source, unsigned ra
 
 /// Whether the base pointer the `pto.partition_view` ultimately reads is invariant
 /// across the carrying loop.
-///
 /// The disjointness proof below tracks only how the `partition_view`'s OFFSETS move
 /// per iteration, scaled by the view strides. It silently assumes the underlying
 /// `pto.make_tensor_view` base pointer is fixed. If that pointer instead moves with
@@ -773,13 +769,11 @@ static std::optional<int64_t> viewAddressWindow(ValueRange sizes, llvm::ArrayRef
 }
 
 /// Do two consecutive iterations of `view` touch disjoint memory?
-///
 /// Requires, cumulatively: a constant loop step; exactly one dimension whose offset
 /// varies with the induction variable, with a compile-time constant coefficient, and
 /// every other offset loop-invariant; constant sizes in every dimension; constant
 /// view strides; a base pointer that does not move with the loop; and the separation
 /// itself.
-///
 /// The separation is proven in ADDRESS space, not index space. Disjoint index ranges
 /// imply disjoint addresses only if the layout maps distinct index tuples to
 /// distinct addresses, which a strided view does not promise: two dimensions may
@@ -791,7 +785,6 @@ static std::optional<int64_t> viewAddressWindow(ValueRange sizes, llvm::ArrayRef
 /// address step. Strictly greater means the two windows cannot overlap whatever the
 /// layout does, and a zero stride on the varying dimension makes `shift` zero, so it
 /// refuses without needing a special case.
-///
 /// The bound is tight rather than slack: an access that walks a tensor with no gap
 /// between iterations has `shift` exactly one greater than `window`, which is the
 /// intended reading -- adjacent is disjoint.
@@ -844,10 +837,8 @@ static bool partitionViewIterationsDisjoint(pto::PartitionViewOp view, scf::ForO
 /// The carried dependence `pair` claims between `element` and its own next execution
 /// does not exist, because both sides are the same `pto.partition_view` and
 /// consecutive iterations of it touch disjoint memory.
-///
 /// Scoped to a self pair: the general case of two different accesses proven never to
 /// meet at any iteration distance needs a pairwise comparison this does not attempt.
-///
 /// The multi-address refusal below is a precondition rather than a discriminator.
 /// A `pto.partition_view` source is constrained to `TensorViewType`; more than one
 /// base address arises only from a multi-tile argument or `pto.subview`, neither of
@@ -1233,7 +1224,6 @@ static bool isUFAccStoreToMatmul(const CompoundInstanceElement *store,
 // The structural proof lives in UFTokenModel: it bounds both the backward and
 // forward walks to the region the pair actually shares, and wraps the backward
 // walk around a loop body instead of walking out of the loop.
-//
 // No architecture gate is needed here. PTOAS only accepts a2/a3/a5, and
 // pto-isa forwards the phase to the hardware on both the a2a3 and a5 backends
 // (a2a3/TMatmul.hpp and a5/TMatmul.hpp both pass static_cast<uint8_t>(Phase)

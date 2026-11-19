@@ -447,10 +447,8 @@ struct SyncModel {
 /// index is already the hazard -- one group per ordering, holding its set and its
 /// wait -- which is the granularity the both-halves invariant needs, and why
 /// `Hazard` can own the pair without re-deriving the pairing.
-///
 /// `memInfoToClusters` joins a hazard's memory to its cluster(s); an empty map is
 /// legal and simply leaves every hazard unclustered with `hasReverseWar` false.
-///
 /// Assigns no ids, emits no IR, and does not mutate the SyncOperations. `syncIR` is
 /// read only to resolve a loop-carried hazard's CARRYING loop:
 /// `setOp->GetForEndIndex()` indexes a `LoopInstanceElement` whose
@@ -463,11 +461,9 @@ SyncModel buildSyncModel(const SyncOperations &syncOps, unsigned bufidCapacity,
 /// (`GetForEndIndex`) hazard, so its in-body backward pair is primed before the
 /// carrying loop and drained after. Without them the kernel deadlocks on iteration
 /// 1; this is not an optimisation. Returns the number of pairs synthesised.
-///
 /// Appends ONE `SyncOperations` group per such hazard and links both ops onto the
 /// hazard, so one `SetEventIds` stamps all four with one id. Exactly one head and
 /// one tail per hazard.
-///
 /// Also PLACES each pair into `syncIR` -- head into the `pipeBefore` of the anchor
 /// `hoistAnchorFor` picks (the carrying loop's begin, or an earlier op in that
 /// loop's own enclosing region when one is legal), tail into the loop end's
@@ -475,7 +471,6 @@ SyncModel buildSyncModel(const SyncOperations &syncOps, unsigned bufidCapacity,
 /// tail precedes any existing loop-end set. `SyncCodegen` walks those lists, so
 /// owning the pair in `syncOps` alone would let emission drop it silently. Hence
 /// `syncIR` is mutable here.
-///
 /// Runs after `buildSyncModel` and before `colorEventIds`.
 unsigned synthesizeLoopCompensation(SyncModel &model, SyncOperations &syncOps, SyncIRs &syncIR);
 
@@ -507,15 +502,12 @@ struct EventColorResult {
 
 /// Pre-colour the ids a macro's library implementation consumes internally.
 /// Returns the number of reservations recorded.
-///
 /// Runs after `buildSyncModel` and BEFORE `colorEventIds`: the colourer must see
 /// these as occupied, or it hands one to a compiler hazard whose interval spans the
 /// call and the library's wait is satisfied by the wrong producer.
-///
 /// The span runs from the macro's first phase to its last, padded one SyncIR index
 /// each side. The pad is load-bearing: without it a hazard ending exactly where the
 /// call begins reads as disjoint and the collision survives.
-///
 /// DELIBERATELY NOT SHARED with the oracle's own reservation walk, which re-derives
 /// the same spans. Sharing would hide a bug in the span arithmetic from the gate
 /// that exists to catch it.
@@ -524,7 +516,6 @@ unsigned seedHiddenMacroEvents(SyncModel &model, const SyncIRs &syncIR);
 /// Per-(src,dst) greedy first-fit interval colouring -- the classic left-edge
 /// algorithm. Event flags are per-direction DISJOINT hardware, so each direction is
 /// an independent interval graph.
-///
 /// A multi-buffered hazard needs d ids live across its interval, so this is WEIGHTED
 /// colouring and the bound is the peak SUM of demands over a point rather than the
 /// peak count of intervals. That holds only because the d ids need NOT be
@@ -532,17 +523,14 @@ unsigned seedHiddenMacroEvents(SyncModel &model, const SyncIRs &syncIR);
 /// independent constant selected by `slotMod == i`, and the dyn ops take the id as a
 /// runtime operand that lowering passes straight through. Were contiguity required
 /// this would be colouring with BANDWIDTH, which is NP-hard.
-///
 /// A hazard takes EITHER all d ids OR none: fewer than d emits a selector chain
 /// indexing past `eventIds`, which is an out-of-bounds read rather than a synchronization mismatch,
 /// so a short pool spills the whole hazard to a barrier. Structurally-lone barriers
 /// are skipped -- they hold no id.
-///
 /// Deterministic: hazards are ordered by (direction, interval start, hazard index)
 /// and take the lowest free ids, except that the most recently freed id is skipped
 /// while another free id exists -- an event flag is one signal deep, so alternating
 /// between two ids restores a step of producer run-ahead.
-///
 /// A rotating id is a RUNTIME value, recorded as -1 in the IR view, so G2/G3 cannot
 /// pair a rotating set with its wait there; the syncops view is the only place those
 /// ids are checked.

@@ -9,6 +9,7 @@
 #include "PTO/Transforms/InsertSync/DeduplicateSlotSync.h"
 
 #include "PTO/IR/PTOMultiBuffer.h"
+#include "PTO/Support/CodeConstants.h"
 #include "llvm/ADT/DenseMap.h"
 #include "llvm/ADT/Hashing.h"
 #include "llvm/ADT/STLExtras.h"
@@ -32,8 +33,10 @@ struct Family {
 
 bool hasUnprovedSlotRotation(const SyncOperations::value_type& pair)
 {
-    if (pair.size() != 2)
+    bool hasInvalidPairSize = pair.size() != mlir::pto::kValue2;
+    if (hasInvalidPairSize) {
         return false;
+    }
     const auto& set = *pair[0];
     const auto& wait = *pair[1];
     if (set.uselessSync || wait.uselessSync || set.GetType() != SyncOperation::TYPE::SET_EVENT ||
@@ -135,8 +138,10 @@ std::optional<Family> getFamily(
     SyncOperations::value_type& pair, const SyncIRs& syncIR,
     const llvm::DenseMap<const SyncOperation*, Attachment>& attachments)
 {
-    if (pair.size() != 2)
+    bool hasInvalidPairSize = pair.size() != mlir::pto::kValue2;
+    if (hasInvalidPairSize) {
         return std::nullopt;
+    }
     auto* set = pair[0].get();
     auto* wait = pair[1].get();
     if (!hasEligibleEndpoints(*set, *wait, attachments) || !hasValidLoopLifetime(*set, *wait, syncIR))

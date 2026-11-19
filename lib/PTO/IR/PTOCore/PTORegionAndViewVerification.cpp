@@ -363,8 +363,8 @@ static LogicalResult verifyPackedMxPartition(PartitionViewOp op, PartitionTensor
     if (layout != Layout::MX_A_ZZ && layout != Layout::MX_B_NN) {
         return success();
     }
-    bool hasRankTwoResult = resultType.getRank() == 2;
-    if (source.rank != 2 || !hasRankTwoResult) {
+    bool hasRankTwoResult = resultType.getRank() == pto::kValue2;
+    if (source.rank != pto::kValue2 || !hasRankTwoResult) {
         return op.emitOpError("packed MX partitions require rank-2 views");
     }
     unsigned outerDim = layout == Layout::MX_A_ZZ ? 0 : 1;
