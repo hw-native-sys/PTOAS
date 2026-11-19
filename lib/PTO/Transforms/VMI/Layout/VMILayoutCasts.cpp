@@ -62,6 +62,20 @@ bool VMILayoutRelations::isAdmissibleCastFact(const VMICastLayoutFact& fact) con
             return false;
         }
     }
+    // Strict short BF16 conversion writes even physical lanes.  A compact
+    // group-slot result is valid only for the unmasked NaN-relaxed fast path.
+    int64_t count = resultType.getElementCount();
+    bool shortCompactBF16 = isa<VMITruncFOp>(op) && sourceType.getElementType().isF32() &&
+                            resultType.getElementType().isBF16() &&
+                            sourceType.getElementCount() == count && (count == 2 || count == 4 || count == 8) &&
+                            fact.sourceLayout.isGroupSlots() && fact.resultLayout.isGroupSlots() &&
+                            fact.sourceLayout.getNumGroups() == count && fact.resultLayout.getNumGroups() == count &&
+                            fact.sourceLayout.getSlots() == 8 && fact.resultLayout.getSlots() == 8 &&
+                            fact.sourceLayout.getLaneStride() == 1 && fact.resultLayout.getLaneStride() == 1;
+    if (shortCompactBF16 &&
+        (castMaskOperand || !hasBF16NaNRelaxedFastmathState(op, getVMIFastmathState(op)))) {
+        return false;
+    }
     if (!requiresBF16NaNRelaxedLowering(sourceType, resultType, fact.sourceLayout, fact.resultLayout)) {
         return true;
     }
