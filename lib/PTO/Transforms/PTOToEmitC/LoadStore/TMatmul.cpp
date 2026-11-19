@@ -135,7 +135,7 @@ static void prepareTf32Block(Block &block, unsigned &scopeId)
     Operation *first = nullptr;
     Operation *last = nullptr;
     Attribute mode;
-    auto flush = [&]() {
+    auto flush = [&first, &last, &mode, &scopeId]() {
         if (first) {
             emitTf32Region(first, last, mode, scopeId++);
         }

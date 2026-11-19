@@ -142,10 +142,10 @@ static PTOMemoryAliasResult aliasSameRootRelative(
         // describe independent executions and must stay in the relation model.
         auto arg = dyn_cast<BlockArgument>(value);
         bool loopArgument = arg && isa<scf::ForOp>(arg.getOwner()->getParentOp());
-        equalTerms &= !loopArgument && consumer.byteOffset.getCoeff(value) == coefficient;
+        equalTerms = equalTerms && !loopArgument && consumer.byteOffset.getCoeff(value) == coefficient;
     }
     for (auto [value, coefficient] : consumer.byteOffset.coefficients) {
-        equalTerms &= producer.byteOffset.getCoeff(value) == coefficient;
+        equalTerms = equalTerms && producer.byteOffset.getCoeff(value) == coefficient;
     }
     if (equalTerms) {
         WideInt pLo = static_cast<WideInt>(producer.byteOffset.constant);
@@ -222,7 +222,8 @@ std::optional<bool> pto::memoryIntervalsOverlap(
     }
     int64_t lhsEnd;
     int64_t rhsEnd;
-    bool overflow = llvm::AddOverflow(*lhsOffset, *lhsSize, lhsEnd) || llvm::AddOverflow(*rhsOffset, *rhsSize, rhsEnd);
+    bool overflow = llvm::AddOverflow(*lhsOffset, *lhsSize, lhsEnd) != 0 ||
+                    llvm::AddOverflow(*rhsOffset, *rhsSize, rhsEnd) != 0;
     if (overflow) {
         return std::nullopt;
     }

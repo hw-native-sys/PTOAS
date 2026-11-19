@@ -210,7 +210,8 @@ struct LowerBridgeCalls final
   /// Lowers one function body. Handles never escape their function, so the
   /// storage of each object is tracked here rather than module-wide.
   LogicalResult lowerFunction(func::FuncOp function,
-                              const SymbolsByOp &symbols) {
+                              const SymbolsByOp &symbols) const
+  {
     DenseMap<Value, Value> storageByHandle;
     SmallVector<BridgeObjectCreateOp> creates;
     SmallVector<BridgeCallOp> calls;

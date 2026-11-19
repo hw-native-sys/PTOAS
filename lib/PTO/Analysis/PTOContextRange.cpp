@@ -48,7 +48,7 @@ PTOAnalysisResult<bool> PTOValueEvolutionAnalysis::preservesValueAt(Operation* c
         return PTOAnalysisResult<bool>::unknown(PTOAnalysisUnknownReason::UnsupportedCast);
     }
     unsigned width = ConstantIntRanges::getStorageBitwidth(castOp->getResult(0).getType());
-    if (!width || width > kValue64) {
+    if (width == 0 || width > kValue64) {
         return PTOAnalysisResult<bool>::unknown(PTOAnalysisUnknownReason::TypeMismatch);
     }
     auto input = getRangeAt(castOp->getOperand(0), context);
@@ -100,7 +100,7 @@ static bool isProvenNoSignedWrap(Value value)
         hi = *std::max_element(std::begin(products), std::end(products));
     }
     unsigned width = ConstantIntRanges::getStorageBitwidth(value.getType());
-    if (!width || width > kValue64) {
+    if (width == 0 || width > kValue64) {
         return false;
     }
     __int128 limit = __int128{1} << (width - 1);

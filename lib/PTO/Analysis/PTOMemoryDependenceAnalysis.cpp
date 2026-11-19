@@ -359,7 +359,7 @@ static bool symbolicDifferenceRange(
         return false;
     }
     SmallVector<Value, kValue4> symbols;
-    auto collectSymbols = [&](const PTOAffineByteExpr& expr) {
+    auto collectSymbols = [&symbols, ivs](const PTOAffineByteExpr& expr) {
         for (auto& [symbol, coefficient] : expr.coefficients) {
             bool candidate = coefficient != 0 && !isModelledIV(symbol, ivs);
             bool alreadyPresent = llvm::is_contained(symbols, symbol);
@@ -572,7 +572,7 @@ static SymbolTerms boundedSymbolDifference(
     SmallVector<Value, kValue4> symbols;
     for (const auto* expr : {&lhs, &rhs}) {
         for (auto [value, coefficient] : expr->coefficients) {
-            bool collect = coefficient && !llvm::is_contained(ivs, value) && !llvm::is_contained(symbols, value);
+            bool collect = coefficient != 0 && !llvm::is_contained(ivs, value) && !llvm::is_contained(symbols, value);
             if (collect) {
                 symbols.push_back(value);
             }
@@ -583,7 +583,7 @@ static SymbolTerms boundedSymbolDifference(
         if (coefficient <= INT64_MIN || coefficient > INT64_MAX || !inferredLeafRange(value)) {
             return {};
         }
-        if (coefficient) {
+        if (coefficient != 0) {
             terms.push_back({value, static_cast<int64_t>(coefficient)});
         }
     }
@@ -982,10 +982,10 @@ static bool modelCarriedSymbols(
     bool invariant =
         llvm::all_of(
             P.byteOffset.coefficients,
-            [&](const auto& term) {
+            [&modelledIVs, &carrying](const auto& term) {
                 return isModelledIV(term.first, modelledIVs) || symbolInvariantAcrossLoops(term.first, carrying);
             }) &&
-        llvm::all_of(C.byteOffset.coefficients, [&](const auto& term) {
+        llvm::all_of(C.byteOffset.coefficients, [&modelledIVs, &carrying](const auto& term) {
             return isModelledIV(term.first, modelledIVs) || symbolInvariantAcrossLoops(term.first, carrying);
         });
     // A bounded opaque term may vary between iterations. Its two executions

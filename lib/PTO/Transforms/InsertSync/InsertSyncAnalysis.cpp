@@ -1131,7 +1131,7 @@ void InsertSyncAnalysis::DropUFCoveredDeps(
 void InsertSyncAnalysis::MarkUFCovered(
     const CompoundInstanceElement *nowCompound,
     const CompoundInstanceElement *frontCompound,
-    SyncRecordList &syncRecordList) {
+    SyncRecordList &syncRecordList) const {
     const PipelineType frontPipe = frontCompound->kPipeValue;
     if (isValidPipeIndex(frontPipe)) {
       for (SyncRecord &record : syncRecordList) {
@@ -1640,7 +1640,7 @@ void InsertSyncAnalysis::UpdateSyncRecord(const SyncOperation *sync,
 
 void InsertSyncAnalysis::UpdateSyncRecordInfo(
     const CompoundInstanceElement *frontCompound,
-    SyncRecordList &syncRecordList) {
+    SyncRecordList &syncRecordList) const {
   (void)frontCompound;
   assert(!syncOperations_.empty());
   auto &syncPair = syncOperations_.back();

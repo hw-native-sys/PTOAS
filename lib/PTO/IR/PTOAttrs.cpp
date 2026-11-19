@@ -598,7 +598,9 @@ static LogicalResult parseConvTileConfigField(AsmParser &parser,
 
 } // namespace
 
-Attribute ConvTileConfigAttr::parse(AsmParser &odsParser, Type) {
+Attribute ConvTileConfigAttr::parse(AsmParser &odsParser, Type odsType)
+{
+    (void)odsType;
   MLIRContext *ctx = odsParser.getContext();
   ConvTileConfigFields fields = getDefaultConvTileConfigFields(ctx);
   auto emitError = [&odsParser]() -> InFlightDiagnostic {

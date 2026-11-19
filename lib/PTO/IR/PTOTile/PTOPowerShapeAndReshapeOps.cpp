@@ -272,7 +272,7 @@ static LogicalResult verifyPackedE8M0ScaleViewTReshape(TReshapeOp op,
         return op.emitOpError(
             "expects packed E8M0 scale treshape to target A5");
     };
-    auto verifyA5 = [&]() -> LogicalResult {
+    auto verifyA5 = [op, srcTb, dstTb]() -> LogicalResult {
         return verifyPackedE8M0ScaleViewA5(op, srcTb, dstTb);
     };
     return dispatchVerifierByArch(op.getOperation(), verifyA2A3, verifyA5);

@@ -213,11 +213,11 @@ static void populateUFInfo(Operation *op, CompoundInstanceElement &compound) {
   // unrecognized publisher would look transparent and the analysis could pair a
   // consumer with the wrong publication. The `handoffEligible` flag keeps the
   // removable-hand-off set at the original three matmuls plus TSTORE for now.
-  auto markProducer = [&](pto::AccPhase phase, bool eligible) {
-    compound.ufInfo.role = UFRole::MatmulProducer;
-    compound.ufInfo.accPhase = phase;
-    compound.ufInfo.handoffEligible = eligible;
-  };
+    auto markProducer = [&compound](pto::AccPhase phase, bool eligible) {
+        compound.ufInfo.role = UFRole::MatmulProducer;
+        compound.ufInfo.accPhase = phase;
+        compound.ufInfo.handoffEligible = eligible;
+    };
 
   if (auto producer = dyn_cast<pto::UFAccProducerOpInterface>(op)) {
     markProducer(producer.getAccPhase(),

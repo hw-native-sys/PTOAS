@@ -113,7 +113,7 @@ public:
     /// still emit the set/wait pair, now with no event id. All four ops, because
     /// `SetEventIds` stamps head/tail too and those are real ops in syncIR's pipe
     /// lists; a token needs no priming pair, its counter starts free.
-    void RouteToBufid()
+    void RouteToBufid() const
     {
         SetMechanism(MECHANISM::BUFID);
         setOp_->uselessSync = true;

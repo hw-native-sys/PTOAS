@@ -36,7 +36,6 @@
 #include "llvm/ADT/SmallVector.h"
 
 #include <algorithm>
-#include <cstdint>
 #include <optional>
 
 using namespace mlir;
@@ -721,7 +720,7 @@ static void analyzeLoopCarriedPair(VecScopeMemBarAnalysisResult& result, unsigne
     auto answers =
         queryCarriedMemoryOverlap({producer.op, producer.footprint}, {consumer.op, consumer.footprint}, scope);
     for (const auto& answer : answers) {
-        auto found = llvm::find_if(result.loops, [&](const auto& loop) { return loop.op == answer.loop; });
+        auto found = llvm::find_if(result.loops, [&answer](const auto& loop) { return loop.op == answer.loop; });
         if (found == result.loops.end()) {
             recordUnknown(result, i, j, *kind, DependenceReason::DynamicUnmodelledExpression);
             for (auto [level, id] : llvm::enumerate(common)) {

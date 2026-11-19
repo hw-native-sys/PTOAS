@@ -195,7 +195,7 @@ private:
   /// tagged as unit-flag coverage so event-id reuse never counts it as an event.
   void MarkUFCovered(const CompoundInstanceElement *nowCompound,
                      const CompoundInstanceElement *frontCompound,
-                     SyncRecordList &syncRecordList);
+                     SyncRecordList &syncRecordList) const;
 
   /// True when any request event id (1..N-1) already has a recorded sync.
   bool IsAlreadySyncedForAnyEventId(
@@ -210,7 +210,7 @@ private:
                          const PipelineType nowPipeValue) const;
                             
   void UpdateSyncRecordInfo(const CompoundInstanceElement *frontCompound,
-                            SyncRecordList &syncRecordList);
+                            SyncRecordList &syncRecordList) const;
  
   void UpdateSyncRecord(const SyncOperation *sync, SyncRecord &syncRecord,
                               PipelineType nowPipeValue) const;

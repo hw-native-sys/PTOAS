@@ -23,10 +23,10 @@ using mlir::presburger::IntegerPolyhedron;
 namespace mlir::pto::integer_range {
 
 // Try to evaluate `v` as a constant int64.
-std::optional<int64_t> getConstantInt(Value v)
+std::optional<int64_t> getConstantInt(Value value)
 {
     APInt c;
-    bool isConstant = matchPattern(v, m_ConstantInt(&c));
+    bool isConstant = matchPattern(value, m_ConstantInt(&c));
     bool fitsInt64 = isConstant && c.isSignedIntN(64);
     if (isConstant && fitsInt64) {
         return c.getSExtValue();
@@ -80,7 +80,7 @@ static std::optional<AddressRange> recurrenceDelta(Value value, Value argument, 
 static std::optional<ConstantIntRanges> inferIterArgumentRange(BlockArgument arg, unsigned width)
 {
     auto loop = dyn_cast_or_null<scf::ForOp>(arg.getOwner()->getParentOp());
-    bool unsupported = !loop || !arg.getArgNumber() || width > 64;
+    bool unsupported = !loop || arg.getArgNumber() == 0 || width > 64;
     if (unsupported) {
         return std::nullopt;
     }
@@ -165,7 +165,8 @@ ConstantIntRanges inferIntegerRange(Value value, unsigned depth)
     }
     SmallVector<ConstantIntRanges> operands;
     for (Value operand : op->getOperands()) {
-        if (!ConstantIntRanges::getStorageBitwidth(operand.getType())) {
+        const unsigned operandWidth = ConstantIntRanges::getStorageBitwidth(operand.getType());
+        if (operandWidth == 0) {
             return range;
         }
         operands.push_back(inferIntegerRange(operand, depth + 1));
@@ -179,12 +180,12 @@ ConstantIntRanges inferIntegerRange(Value value, unsigned depth)
 }
 
 // Constant lower/upper/step for an scf.for, else nullopt (dynamic).
-PTOLoopDomain getConstBounds(scf::ForOp forOp)
+PTOLoopDomain getConstBounds(scf::ForOp loop)
 {
     PTOLoopDomain b;
-    auto lb = getConstantInt(forOp.getLowerBound());
-    auto ub = getConstantInt(forOp.getUpperBound());
-    auto step = getConstantInt(forOp.getStep());
+    auto lb = getConstantInt(loop.getLowerBound());
+    auto ub = getConstantInt(loop.getUpperBound());
+    auto step = getConstantInt(loop.getStep());
     if (lb && ub && step && *step != 0) {
         b.lb = *lb;
         b.ub = *ub;
@@ -205,7 +206,7 @@ std::optional<AddressRange> inferredLeafRange(Value value)
         return AddressRange{0, *remBound};
     }
     unsigned width = ConstantIntRanges::getStorageBitwidth(value.getType());
-    if (!width || width > kValue64) {
+    if (width == 0 || width > kValue64) {
         return std::nullopt;
     }
     ConstantIntRanges inferred = inferIntegerRange(value);
@@ -281,7 +282,7 @@ static std::optional<unsigned> storageBitwidth(Type type)
         return std::nullopt;
     }
     unsigned width = ConstantIntRanges::getStorageBitwidth(type);
-    if (!width || width > kValue64) {
+    if (width == 0 || width > kValue64) {
         return std::nullopt;
     }
     return width;
@@ -724,7 +725,7 @@ static std::optional<AddressRange> guardedValueRange(Operation* context, Value t
 static std::optional<AddressRange> getSignedRangeAtImpl(Value value, Operation* context, unsigned depth)
 {
     unsigned width = ConstantIntRanges::getStorageBitwidth(value.getType());
-    if (!width || width > kValue64 || !context || depth >= kValue16) {
+    if (width == 0 || width > kValue64 || !context || depth >= kValue16) {
         return std::nullopt;
     }
     if (auto min = value.getDefiningOp<arith::MinSIOp>()) {
@@ -853,12 +854,12 @@ static PTOLoopDomain inferLoopEnvelope(scf::ForOp forOp)
 
 // Every consumer of an envelope, including at-most-once and cast proofs,
 // needs the final increment to remain representable before the exit test.
-PTOLoopDomain getLoopEnvelope(scf::ForOp forOp)
+PTOLoopDomain getLoopEnvelope(scf::ForOp loop)
 {
-    auto bounds = inferLoopEnvelope(forOp);
+    auto bounds = inferLoopEnvelope(loop);
     auto trip = bounds.maxTripCount();
-    unsigned width = ConstantIntRanges::getStorageBitwidth(forOp.getInductionVar().getType());
-    if (!bounds.valid || !trip || !width || width > kValue64 || bounds.step <= 0) {
+    unsigned width = ConstantIntRanges::getStorageBitwidth(loop.getInductionVar().getType());
+    if (!bounds.valid || !trip || width == 0 || width > kValue64 || bounds.step <= 0) {
         return {};
     }
     __int128 limit = static_cast<__int128>(1) << (width - 1);
@@ -936,7 +937,7 @@ std::optional<AddressRange> getAddressRange(
         return inferredLeafRange(value);
     }
     unsigned width = ConstantIntRanges::getStorageBitwidth(value.getType());
-    if (!width || width > kValue64) {
+    if (width == 0 || width > kValue64) {
         return std::nullopt;
     }
     bool arithmetic = isa<arith::AddIOp, arith::SubIOp, arith::MulIOp>(op);

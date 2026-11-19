@@ -46,7 +46,6 @@
 #include "llvm/Support/CommandLine.h"
 
 #include <array>
-#include <limits>
 
 namespace mlir {
 namespace pto {

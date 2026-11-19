@@ -147,8 +147,9 @@ static LogicalResult verifyL1L0a3dGeometryRanges(MteL1L0a3dOp op)
 
 static LogicalResult verifyL1L0a3dControlRanges(MteL1L0a3dOp op)
 {
-    auto hasInvalidOptionalControl = [&](Value control, StringRef name, int64_t min, int64_t max) {
-        return control && failed(verifyStaticControlRange(op.getOperation(), control, name, min, max));
+    Operation* operation = op.getOperation();
+    auto hasInvalidOptionalControl = [operation](Value control, StringRef name, int64_t min, int64_t max) {
+        return control && failed(verifyStaticControlRange(operation, control, name, min, max));
     };
     const bool hasInvalidControls =
         failed(verifyStaticControlRange(op.getOperation(), op.getMStart(), "m_start", 0, mlir::pto::kValue32767)) ||
@@ -203,7 +204,7 @@ static bool foldL1L0a3dConstants(
     int64_t& padLeft, int64_t& padRight, int64_t& mStart, int64_t& kStart, int64_t& repeatTime, int64_t& repeatMode,
     int64_t& dstMPosition, int64_t& dstStride, int64_t& repeatSourceStride, bool& hasStrides)
 {
-    auto fold = [&](Value value, int64_t& out) {
+    auto fold = [](Value value, int64_t& out) {
         llvm::APInt constantValue;
         if (!matchPattern(value, m_ConstantInt(&constantValue))) {
             return false;

@@ -316,7 +316,7 @@ private:
     FailureOr<int64_t> getCompactReductionComputeCount(
         const VMIGroupReduceLayoutFact& fact, VMIVRegType source, VMIVRegType result, int64_t numGroups) const;
 
-    FailureOr<int64_t> getGroupReductionComputeCount(Operation* op, const VMILayoutOpRelation& relation);
+    FailureOr<int64_t> getGroupReductionComputeCount(Operation* op, const VMILayoutOpRelation& relation) const;
 
     FailureOr<SmallVector<PhysicalValue, mlir::pto::kValue4>> buildValue(Value value);
 

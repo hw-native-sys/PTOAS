@@ -44,7 +44,8 @@ FailureOr<int64_t> PlanGraphBuilder::getCompactReductionComputeCount(
     return count;
 }
 
-FailureOr<int64_t> PlanGraphBuilder::getGroupReductionComputeCount(Operation* op, const VMILayoutOpRelation& relation)
+FailureOr<int64_t> PlanGraphBuilder::getGroupReductionComputeCount(
+    Operation* op, const VMILayoutOpRelation& relation) const
 {
     auto source = dyn_cast<VMIVRegType>(op->getOperand(0).getType());
     auto mask = dyn_cast<VMIMaskType>(op->getOperand(1).getType());

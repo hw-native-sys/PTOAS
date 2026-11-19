@@ -784,7 +784,7 @@ PTOAffineByteExpr& PTOAffineByteExpr::scale(int64_t factor)
 
 PTOAffineByteExpr& PTOAffineByteExpr::combine(const PTOAffineByteExpr& other)
 {
-    exact &= other.exact;
+    exact = exact && other.exact;
     lossy = lossy || other.lossy;
     __int128 sum = static_cast<__int128>(constant) + other.constant;
     if (sum < INT64_MIN || sum > INT64_MAX) {
@@ -945,7 +945,7 @@ bool mlir::pto::integer_range::allIntegerLanes(Value mask, uint64_t lanes, unsig
         pattern = width == 0 || width == kValue32 ? op.getPattern() : StringRef();
     }
     auto count = parseMaskPatternLaneCount(pattern, lanes);
-    return lanes && count && *count == lanes;
+    return lanes != 0 && count && *count == lanes;
 }
 
 namespace {
@@ -986,8 +986,7 @@ static std::optional<uint64_t> constantIndexScalar(Value input, IntegerType elem
 }
 
 static std::optional<ConstantIndexLanes> constantDirectIndexLanes(
-    Value value, pto::VRegType type, IntegerType elem, uint64_t lanes, uint64_t limit, unsigned& budget,
-    bool allowTable)
+    Value value, IntegerType elem, uint64_t lanes, uint64_t limit, unsigned& budget, bool allowTable)
 {
     if (auto load = value.getDefiningOp<pto::VldsOp>()) {
         return allowTable ? constantTableLanes(load, budget) : std::nullopt;
@@ -1002,7 +1001,7 @@ static std::optional<ConstantIndexLanes> constantDirectIndexLanes(
     }
     if (auto vci = value.getDefiningOp<pto::VciOp>()) {
         auto start = constantIndexScalar(vci.getIndex(), elem);
-        bool invalidRamp = !start || !lanes || lanes > 256 || (vci.getOrder() && *vci.getOrder() != "ASC") ||
+        bool invalidRamp = !start || lanes == 0 || lanes > 256 || (vci.getOrder() && *vci.getOrder() != "ASC") ||
                            *start > limit - (lanes - 1);
         if (invalidRamp) {
             return std::nullopt;
@@ -1015,7 +1014,7 @@ static std::optional<ConstantIndexLanes> constantDirectIndexLanes(
     }
     if (auto dup = value.getDefiningOp<pto::VdupOp>()) {
         auto input = constantIndexScalar(dup.getInput(), elem);
-        bool invalidDuplicate = !input || dup.getPosition() || !lanes || lanes > 256 ||
+        bool invalidDuplicate = !input || dup.getPosition() || lanes == 0 || lanes > 256 ||
                                 !mlir::pto::integer_range::allIntegerLanes(dup.getMask(), lanes, elem.getWidth());
         return invalidDuplicate ? std::nullopt : std::optional<ConstantIndexLanes>(ConstantIndexLanes(lanes, *input));
     }
@@ -1077,7 +1076,7 @@ std::optional<SmallVector<uint64_t, kValue128>> mlir::pto::integer_range::consta
 {
     auto type = dyn_cast<pto::VRegType>(value.getType());
     auto elem = type ? dyn_cast<IntegerType>(type.getElementType()) : IntegerType();
-    bool unsupportedInteger = !budget || !elem || (elem.getWidth() != 16 && elem.getWidth() != 32);
+    bool unsupportedInteger = budget == 0 || !elem || (elem.getWidth() != 16 && elem.getWidth() != 32);
     if (unsupportedInteger) {
         return std::nullopt;
     }
@@ -1087,7 +1086,7 @@ std::optional<SmallVector<uint64_t, kValue128>> mlir::pto::integer_range::consta
     Operation* op = value.getDefiningOp();
     bool isDirectDefinition = op && isa<pto::VldsOp, pto::VbitcastOp, pto::VciOp, pto::VdupOp>(op);
     if (isDirectDefinition) {
-        return constantDirectIndexLanes(value, type, elem, lanes, limit, budget, allowTable);
+        return constantDirectIndexLanes(value, elem, lanes, limit, budget, allowTable);
     }
     bool supportedOp = op && isa<pto::VandOp, pto::VaddOp, pto::VmulOp, pto::VshrOp, pto::VmulsOp, pto::VshrsOp>(op);
     bool unsupportedArithmetic = !supportedOp || !allIntegerLanes(op->getOperand(2), lanes, elem.getWidth());
@@ -1155,7 +1154,7 @@ static void tableLoopBounds(
 static std::optional<std::pair<uint64_t, uint64_t>> tableAccessRange(
     const PTOMemoryAccessDescriptor& desc, Operation* op)
 {
-    if (desc.forcesMayAlias || desc.byteOffset.lossy || !desc.conservativeByteSize || !*desc.conservativeByteSize) {
+    if (desc.forcesMayAlias || desc.byteOffset.lossy || !desc.conservativeByteSize || *desc.conservativeByteSize == 0) {
         return std::nullopt;
     }
     SmallVector<Value> ivs;
@@ -1206,8 +1205,8 @@ static std::optional<PTOMemoryAccessDescriptor> tableDmaWrite(pto::CopyGmToUbufO
     function.walk([&](pto::SetLoopSizeOutToUbOp config) {
         bool ones =
             llvm::all_of(config->getOperands(), [](Value operand) { return rangeProof::getConstantInt(operand) == 1; });
-        valid &= ones;
-        configured |= ones && dominance.properlyDominates(config, copy);
+        valid = valid && ones;
+        configured = configured || (ones && dominance.properlyDominates(config, copy));
     });
     bool unsupportedDma = !valid || !configured || rangeProof::getConstantInt(copy.getLeftPaddingCount()) != 0 ||
                           rangeProof::getConstantInt(copy.getRightPaddingCount()) != 0;
@@ -1288,7 +1287,7 @@ static std::optional<PTOMemoryAccessDescriptor> tableScatterWrite(pto::VscatterO
         pattern = elem.getWidth() == kValue32 ? mask.getPattern() : StringRef();
     }
     uint64_t active = parseMaskPatternLaneCount(pattern, type.getElementCount()).value_or(type.getElementCount());
-    if (!active) {
+    if (active == 0) {
         return std::nullopt;
     }
     __int128 lo = static_cast<__int128>(start->lo) * scale;
@@ -1528,7 +1527,7 @@ static std::optional<PTOMemoryAccessDescriptor> describeContiguousScatter(pto::V
     uint64_t requests = offsetsType.getElementCount();
     auto active = parseMaskPatternLaneCount(pattern, requests);
     auto elemBytes = elementByteSize(op.getDestination().getType());
-    if (!active || !*active || !elemBytes) {
+    if (!active || *active == 0 || !elemBytes) {
         return std::nullopt;
     }
     __int128 last = (static_cast<__int128>(base->hi) + (scale == 1 ? *active : requests) - 1) * scale;

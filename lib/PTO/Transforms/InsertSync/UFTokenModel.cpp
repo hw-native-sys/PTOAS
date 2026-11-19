@@ -326,7 +326,7 @@ void UFTokenModel::computeTokenFree(std::vector<Node>& nodes)
     }
 }
 
-void UFTokenModel::collectLeafInfo(const std::vector<Node>& nodes, const Sequence* sequence)
+void UFTokenModel::collectLeafInfo(const std::vector<Node>& nodes, const Sequence* /* sequence */)
 {
     for (const Node& node : nodes) {
         switch (node.kind) {

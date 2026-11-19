@@ -47,15 +47,18 @@ struct BarrierKindHazards {
 };
 
 // An insertion anchor keyed by the op it precedes, for de-duplication.
+// The separate sentinel tag gives DenseMap its reserved keys without forging
+// Operation pointers from integers.
 struct AnchorKey {
     Operation* op;
-    bool operator==(const AnchorKey& o) const { return op == o.op; }
+    unsigned sentinel = 0;
+    bool operator==(const AnchorKey& o) const { return sentinel == o.sentinel && op == o.op; }
 };
 
 struct AnchorKeyInfo {
-    static AnchorKey getEmptyKey() { return {reinterpret_cast<Operation*>(1)}; }
-    static AnchorKey getTombstoneKey() { return {reinterpret_cast<Operation*>(2)}; }
-    static unsigned getHashValue(const AnchorKey& a) { return llvm::hash_value(a.op); }
+    static AnchorKey getEmptyKey() { return {nullptr, 1}; }
+    static AnchorKey getTombstoneKey() { return {nullptr, 2}; }
+    static unsigned getHashValue(const AnchorKey& a) { return llvm::hash_combine(a.op, a.sentinel); }
     static bool isEqual(const AnchorKey& a, const AnchorKey& b) { return a == b; }
 };
 

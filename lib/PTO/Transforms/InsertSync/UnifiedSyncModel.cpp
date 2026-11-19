@@ -1034,7 +1034,7 @@ static void printHazards(llvm::raw_ostream &os, const SyncModel &model) {
     if (h.hasEventId()) {
       const auto &ids = h.setOp()->eventIds;
       for (size_t i = 0; i < ids.size(); ++i) {
-        if (i) {
+        if (i != 0) {
           os << "/";
         }
         os << ids[i];

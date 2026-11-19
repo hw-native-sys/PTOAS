@@ -19,7 +19,6 @@
 #include <algorithm>
 #include <array>
 #include <climits>
-#include <limits>
 
 using namespace mlir;
 using namespace mlir::pto;
@@ -88,8 +87,9 @@ static std::optional<int64_t> getAddPtrElementByteSize(AddPtrOp addPtr)
 
 static LogicalResult accumulateAddPtrDisplacement(AddPtrOp addPtr, IntegerRange& displacement)
 {
-    std::optional<IntegerRange> elementOffset = [&]() -> std::optional<IntegerRange> {
-        auto range = integer_range::inferPointIntegerRange(addPtr.getOffset());
+    Value offset = addPtr.getOffset();
+    std::optional<IntegerRange> elementOffset = [offset]() -> std::optional<IntegerRange> {
+        auto range = integer_range::inferPointIntegerRange(offset);
         bool unsupportedRange = !range || !range->smin().isSignedIntN(64) || !range->smax().isSignedIntN(64);
         if (unsupportedRange) {
             return std::nullopt;
@@ -209,11 +209,11 @@ static ResolvedMemoryAccess resolveMemoryAccess(
 }
 
 SmallVector<ResolvedMemoryAccess> pto::resolveMemoryAccesses(
-    Operation* operation, const VPTOSchedulingSemantics& semantics, PTOAddressAnalysis* addressAnalysis)
+    Operation* operation, const VPTOSchedulingSemantics& semantics, PTOAddressAnalysis* addresses)
 {
     SmallVector<PTOAddressExpr> addressExpressions;
-    if (addressAnalysis) {
-        auto result = addressAnalysis->getAddresses(operation);
+    if (addresses) {
+        auto result = addresses->getAddresses(operation);
         if (result) {
             addressExpressions = std::move(*result.value);
         }

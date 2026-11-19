@@ -20,8 +20,8 @@ using namespace mlir::pto;
 namespace {
 class VMILayoutStructuralAssignment {
 public:
-    VMILayoutStructuralAssignment(ModuleOp module, VMILayoutPropagator& propagator)
-        : module(module), propagator(&propagator)
+    VMILayoutStructuralAssignment(ModuleOp module, VMILayoutPropagator* propagator)
+        : module(module), propagator(propagator)
     {}
     LogicalResult complete()
     {
@@ -238,5 +238,5 @@ private:
 } // namespace
 LogicalResult mlir::pto::completeVMILayoutTransportAssignments(ModuleOp module, VMILayoutPropagator& propagator)
 {
-    return VMILayoutStructuralAssignment(module, propagator).complete();
+    return VMILayoutStructuralAssignment(module, &propagator).complete();
 }

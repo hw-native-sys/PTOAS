@@ -1568,7 +1568,7 @@ void mlir::pto::oracle::printCoverage(llvm::raw_ostream& os, llvm::StringRef fun
     // a suffix still matches. Reordering would break all of them for no reason.
     os << " bedge_count=" << profile.carriedEdges.size() << " bedges=";
     for (size_t i = 0; i < profile.carriedEdges.size(); ++i) {
-        if (i) {
+        if (i != 0) {
             os << ",";
         }
         os << profile.carriedEdges[i].from << "-" << profile.carriedEdges[i].to << "@"

@@ -56,7 +56,7 @@ static Value stripIndexBitcast(Value value)
 // Do not infer facts through OR, NOT, lane permutations or partial comparisons.
 static void constrainIndexLane(Value value, Value mask, unsigned lane, IndexLaneRange& range, unsigned& budget)
 {
-    if (!budget || !indexMaskMatches(mask, indexElementType(value))) {
+    if (budget == 0 || !indexMaskMatches(mask, indexElementType(value))) {
         return;
     }
     --budget;
@@ -87,10 +87,10 @@ static void constrainIndexLane(Value value, Value mask, unsigned lane, IndexLane
     int64_t bound = elem.isUnsigned() ? bits.getZExtValue() : bits.getSExtValue();
     StringRef mode = comparison.getCmpMode();
     if (mode == "ge" || mode == "gt" || mode == "eq") {
-        range.lo = std::max(range.lo, bound + (mode == "gt"));
+        range.lo = std::max(range.lo, bound + static_cast<int64_t>(mode == "gt"));
     }
     if (mode == "le" || mode == "lt" || mode == "eq") {
-        range.hi = std::min(range.hi, bound - (mode == "lt"));
+        range.hi = std::min(range.hi, bound - static_cast<int64_t>(mode == "lt"));
     }
 }
 
@@ -125,7 +125,8 @@ static std::optional<IndexLaneRange> indexArithmeticRange(
 static std::optional<IndexLaneRange> indexLaneRange(Value value, Value mask, unsigned lane, unsigned& budget)
 {
     auto elem = indexElementType(value);
-    bool supported = budget && elem && (elem.getWidth() == 16 || elem.getWidth() == 32) && indexMaskMatches(mask, elem);
+    bool supported = budget != 0 && elem && (elem.getWidth() == 16 || elem.getWidth() == 32) &&
+                     indexMaskMatches(mask, elem);
     if (!supported) {
         return std::nullopt;
     }
@@ -167,7 +168,7 @@ std::optional<std::pair<int64_t, uint64_t>> mlir::pto::integer_range::boundedInd
     auto elem = indexElementType(offsets);
     auto type = dyn_cast<pto::VRegType>(offsets.getType());
     bool supported = elem && elem.isUnsigned() && (elem.getWidth() == 16 || elem.getWidth() == 32) &&
-                     (bytes == 2 || bytes == 4) && type.getElementCount() && type.getElementCount() <= 256;
+                     (bytes == 2 || bytes == 4) && type.getElementCount() != 0 && type.getElementCount() <= 256;
     if (!supported) {
         return std::nullopt;
     }

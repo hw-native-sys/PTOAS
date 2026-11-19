@@ -9,61 +9,70 @@
 // Included by PTO.cpp as part of the PTO IR implementation translation unit.
 
 template <typename Handle>
-static Type parseAsyncHandleType(mlir::AsmParser &parser) {
-  if (failed(parser.parseOptionalLess())) {
-    return Handle::get(parser.getContext());
-  }
-  if (failed(parser.parseKeyword("urma"))) {
-    return {};
-  }
-  if (failed(parser.parseGreater())) {
-    return {};
-  }
-  return Handle::get(parser.getContext(), pto::DmaEngine::Urma);
+static Type parseAsyncHandleType(mlir::AsmParser &odsParser)
+{
+    if (failed(odsParser.parseOptionalLess())) {
+        return Handle::get(odsParser.getContext());
+    }
+    if (failed(odsParser.parseKeyword("urma"))) {
+        return {};
+    }
+    if (failed(odsParser.parseGreater())) {
+        return {};
+    }
+    return Handle::get(odsParser.getContext(), pto::DmaEngine::Urma);
 }
 
-static void printAsyncHandleType(mlir::AsmPrinter &printer,
-                                 std::optional<pto::DmaEngine> engine) {
-  if (engine) {
-    printer << '<' << pto::stringifyDmaEngine(*engine) << '>';
-  }
+static void printAsyncHandleType(mlir::AsmPrinter &odsPrinter,
+                                 std::optional<pto::DmaEngine> engine)
+{
+    if (engine) {
+        odsPrinter << '<' << pto::stringifyDmaEngine(*engine) << '>';
+    }
 }
 
 static LogicalResult verifyAsyncHandleEngine(
     llvm::function_ref<InFlightDiagnostic()> emitError,
-    std::optional<pto::DmaEngine> engine) {
-  if (engine && *engine != pto::DmaEngine::Urma) {
-    return emitError() << "only the 'urma' engine parameter is supported";
-  }
-  return success();
+    std::optional<pto::DmaEngine> engine)
+{
+    if (engine && *engine != pto::DmaEngine::Urma) {
+        return emitError() << "only the 'urma' engine parameter is supported";
+    }
+    return success();
 }
 
-Type pto::AsyncSessionType::parse(mlir::AsmParser &parser) {
-  return parseAsyncHandleType<AsyncSessionType>(parser);
+Type pto::AsyncSessionType::parse(mlir::AsmParser &odsParser)
+{
+    return parseAsyncHandleType<AsyncSessionType>(odsParser);
 }
 
-void pto::AsyncSessionType::print(mlir::AsmPrinter &printer) const {
-  printAsyncHandleType(printer, getEngine());
+void pto::AsyncSessionType::print(mlir::AsmPrinter &odsPrinter) const
+{
+    printAsyncHandleType(odsPrinter, getEngine());
 }
 
 LogicalResult pto::AsyncSessionType::verify(
     llvm::function_ref<InFlightDiagnostic()> emitError,
-    std::optional<DmaEngine> engine) {
-  return verifyAsyncHandleEngine(emitError, engine);
+    std::optional<DmaEngine> engine)
+{
+    return verifyAsyncHandleEngine(emitError, engine);
 }
 
-Type pto::AsyncEventType::parse(mlir::AsmParser &parser) {
-  return parseAsyncHandleType<AsyncEventType>(parser);
+Type pto::AsyncEventType::parse(mlir::AsmParser &odsParser)
+{
+    return parseAsyncHandleType<AsyncEventType>(odsParser);
 }
 
-void pto::AsyncEventType::print(mlir::AsmPrinter &printer) const {
-  printAsyncHandleType(printer, getEngine());
+void pto::AsyncEventType::print(mlir::AsmPrinter &odsPrinter) const
+{
+    printAsyncHandleType(odsPrinter, getEngine());
 }
 
 LogicalResult pto::AsyncEventType::verify(
     llvm::function_ref<InFlightDiagnostic()> emitError,
-    std::optional<DmaEngine> engine) {
-  return verifyAsyncHandleEngine(emitError, engine);
+    std::optional<DmaEngine> engine)
+{
+    return verifyAsyncHandleEngine(emitError, engine);
 }
 
 static Type parseShapedPTOType(OpAsmParser& parser, StringRef head)

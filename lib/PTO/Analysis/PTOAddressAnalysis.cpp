@@ -580,11 +580,11 @@ PTOAddressAnalysis::getPointerDifference(const PTOAddressExpr &from,
     return PTOAnalysisResult<PTOTypedExprRef>::unknown(
         PTOAnalysisUnknownReason::DifferentBase);
   }
-  auto point = [&](const PTOTypedExprRef& expression) {
-    return retainCastBoundaries
-        ? PTOAnalysisResult<PTOTypedExprRef>::known(valueEvolution.getConservativePointExpression(expression))
-        : valueEvolution.getPointExpression(expression);
-  };
+    auto point = [this, retainCastBoundaries](const PTOTypedExprRef& expression) {
+        return retainCastBoundaries
+            ? PTOAnalysisResult<PTOTypedExprRef>::known(valueEvolution.getConservativePointExpression(expression))
+            : valueEvolution.getPointExpression(expression);
+    };
   auto fromOffset = point(from.elementOffset);
   auto toOffset = point(to.elementOffset);
   if (!fromOffset || !toOffset) {

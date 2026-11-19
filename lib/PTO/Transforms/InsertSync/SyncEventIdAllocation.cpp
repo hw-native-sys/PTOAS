@@ -410,7 +410,7 @@ void SyncEventIdAllocation::InsertBackwardMatchBoundarySyncs(
     checkCondition(laneCount > 0 && laneCount <= kMaxMultiBufferCount,
                    "invalid allocated slot lane for event boundaries");
     constexpr size_t kLaneShiftWidth = 32;
-    uint32_t lane = laneCount <= kLaneShiftWidth ? uint32_t{1} << (laneCount - 1) : 0;
+    uint32_t lane = laneCount > 0 && laneCount <= kLaneShiftWidth ? uint32_t{1} << (laneCount - 1) : 0;
     primeSlot = (setFlag->slotBoundaryMasks->prime & lane) != 0;
     drainSlot = (setFlag->slotBoundaryMasks->drain & lane) != 0;
   }

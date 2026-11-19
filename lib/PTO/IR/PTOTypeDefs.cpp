@@ -1027,7 +1027,7 @@ static std::optional<pto::AddressSpace>
 resolveConvTileStorageFacets(AsmParser &parser,
                              const ParsedConvTileFields &fields,
                              IntegerAttr &bufferSize) {
-  auto emitError = [&]() -> InFlightDiagnostic {
+  auto emitError = [&parser]() -> InFlightDiagnostic {
     return parser.emitError(parser.getNameLoc());
   };
 
