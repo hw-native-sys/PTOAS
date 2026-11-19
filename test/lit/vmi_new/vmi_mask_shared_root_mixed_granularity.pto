@@ -1,0 +1,50 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+
+// RUN: pto-test-opt %s -vmi-mask-granularity-assignment | FileCheck %s --enable-var-scope
+// RUN: pto-test-opt %s -vmi-mask-granularity-assignment -vmi-mask-granularity-assignment | FileCheck %s --enable-var-scope
+
+// A chunk/tail root mask has no inherent granularity: the compares decide the
+// granularity of their own results, and each mask_and use adapts the shared root
+// instead of forcing it to one physical width. Regression for
+// hw-native-sys/PTOAS#1766: both uses used to conflict on one fused class.
+
+module {
+  func.func @vmi_mask_shared_root_mixed_granularity(
+      %a32: !pto.vmi.vreg<64xf32>, %a32b: !pto.vmi.vreg<64xf32>,
+      %a16: !pto.vmi.vreg<64xf16>, %a16b: !pto.vmi.vreg<64xf16>,
+      %n: index, %v32: !pto.vmi.vreg<64xf32>, %v16: !pto.vmi.vreg<64xf16>,
+      %d32: !pto.ptr<f32, ub>, %d16: !pto.ptr<f16, ub>, %off: index) {
+    %root = pto.vmi.create_mask %n : index -> !pto.vmi.mask<64xpred>
+    %cmp32 = pto.vmi.cmpf "olt", %a32, %a32b
+        : !pto.vmi.vreg<64xf32>, !pto.vmi.vreg<64xf32> -> !pto.vmi.mask<64xpred>
+    %m32 = pto.vmi.mask_and %root, %cmp32
+        : !pto.vmi.mask<64xpred>, !pto.vmi.mask<64xpred> -> !pto.vmi.mask<64xpred>
+    %cmp16 = pto.vmi.cmpf "olt", %a16, %a16b
+        : !pto.vmi.vreg<64xf16>, !pto.vmi.vreg<64xf16> -> !pto.vmi.mask<64xpred>
+    %m16 = pto.vmi.mask_and %root, %cmp16
+        : !pto.vmi.mask<64xpred>, !pto.vmi.mask<64xpred> -> !pto.vmi.mask<64xpred>
+    pto.vmi.masked_store %v32, %d32[%off], %m32
+        : !pto.vmi.vreg<64xf32>, !pto.ptr<f32, ub>, !pto.vmi.mask<64xpred>
+    pto.vmi.masked_store %v16, %d16[%off], %m16
+        : !pto.vmi.vreg<64xf16>, !pto.ptr<f16, ub>, !pto.vmi.mask<64xpred>
+    return
+  }
+}
+
+// The shared root keeps the default b32 and the f16 use rematerializes it.
+// CHECK-LABEL: func.func @vmi_mask_shared_root_mixed_granularity(
+// CHECK: %[[ROOT:.*]] = pto.vmi.create_mask %{{.*}} : index -> !pto.vmi.mask<64xb32>
+// CHECK: %[[CMP32:.*]] = pto.vmi.cmpf "olt", {{.*}} -> !pto.vmi.mask<64xb32>
+// CHECK: %[[M32:.*]] = pto.vmi.mask_and %[[ROOT]], %[[CMP32]] : !pto.vmi.mask<64xb32>, !pto.vmi.mask<64xb32> -> !pto.vmi.mask<64xb32>
+// CHECK: %[[CMP16:.*]] = pto.vmi.cmpf "olt", {{.*}} -> !pto.vmi.mask<64xb16>
+// CHECK: %[[ROOT16:.*]] = pto.vmi.create_mask %{{.*}} : index -> !pto.vmi.mask<64xb16>
+// CHECK: %[[M16:.*]] = pto.vmi.mask_and %[[ROOT16]], %[[CMP16]] : !pto.vmi.mask<64xb16>, !pto.vmi.mask<64xb16> -> !pto.vmi.mask<64xb16>
+// CHECK: pto.vmi.masked_store {{.*}}{{\[}}%{{.*}}], %[[M32]] : !pto.vmi.vreg<64xf32>, !pto.ptr<f32, ub>, !pto.vmi.mask<64xb32>
+// CHECK: pto.vmi.masked_store {{.*}}{{\[}}%{{.*}}], %[[M16]] : !pto.vmi.vreg<64xf16>, !pto.ptr<f16, ub>, !pto.vmi.mask<64xb16>
+// CHECK: return

@@ -1,0 +1,90 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+
+// RUN: pto-test-opt %s -vmi-mask-granularity-assignment | FileCheck %s --enable-var-scope
+// RUN: pto-test-opt %s -vmi-mask-granularity-assignment -vmi-mask-granularity-assignment | FileCheck %s --enable-var-scope
+
+// Two predicates without an inherent granularity merged by scf.if and by an
+// scf.for iter_arg. The join is an identity relation, so the merged value keeps
+// one granularity; the b16 compare fixes it and the f16 store agrees with it.
+// Before the solver rework the fused mask_and classes conflicted instead.
+
+module {
+  func.func @vmi_mask_granularity_if_join(%cond: i1, %n: index,
+      %a16: !pto.vmi.vreg<64xf16>, %a16b: !pto.vmi.vreg<64xf16>,
+      %v16: !pto.vmi.vreg<64xf16>, %d16: !pto.ptr<f16, ub>, %off: index) {
+    %root = pto.vmi.create_mask %n : index -> !pto.vmi.mask<64xpred>
+    %lane = pto.vmi.create_group_mask %n {num_groups = 2 : i64, group_size = 32 : i64}
+        : index -> !pto.vmi.mask<64xpred>
+    %seed = pto.vmi.mask_and %root, %lane
+        : !pto.vmi.mask<64xpred>, !pto.vmi.mask<64xpred> -> !pto.vmi.mask<64xpred>
+    %joined = scf.if %cond -> !pto.vmi.mask<64xpred> {
+      %cmp16 = pto.vmi.cmpf "olt", %a16, %a16b
+          : !pto.vmi.vreg<64xf16>, !pto.vmi.vreg<64xf16> -> !pto.vmi.mask<64xpred>
+      %then = pto.vmi.mask_and %root, %cmp16
+          : !pto.vmi.mask<64xpred>, !pto.vmi.mask<64xpred> -> !pto.vmi.mask<64xpred>
+      scf.yield %then : !pto.vmi.mask<64xpred>
+    } else {
+      scf.yield %seed : !pto.vmi.mask<64xpred>
+    }
+    pto.vmi.masked_store %v16, %d16[%off], %joined
+        : !pto.vmi.vreg<64xf16>, !pto.ptr<f16, ub>, !pto.vmi.mask<64xpred>
+    return
+  }
+
+  func.func @vmi_mask_granularity_for_iter_arg(%n: index,
+      %a16: !pto.vmi.vreg<64xf16>, %a16b: !pto.vmi.vreg<64xf16>,
+      %v16: !pto.vmi.vreg<64xf16>, %d16: !pto.ptr<f16, ub>, %off: index) {
+    %root = pto.vmi.create_mask %n : index -> !pto.vmi.mask<64xpred>
+    %lane = pto.vmi.create_group_mask %n {num_groups = 2 : i64, group_size = 32 : i64}
+        : index -> !pto.vmi.mask<64xpred>
+    %seed = pto.vmi.mask_and %root, %lane
+        : !pto.vmi.mask<64xpred>, !pto.vmi.mask<64xpred> -> !pto.vmi.mask<64xpred>
+    %c0 = arith.constant 0 : index
+    %c1 = arith.constant 1 : index
+    %c4 = arith.constant 4 : index
+    %carried = scf.for %i = %c0 to %c4 step %c1 iter_args(%carry = %seed) -> (!pto.vmi.mask<64xpred>) {
+      %cmp16 = pto.vmi.cmpf "olt", %a16, %a16b
+          : !pto.vmi.vreg<64xf16>, !pto.vmi.vreg<64xf16> -> !pto.vmi.mask<64xpred>
+      %next = pto.vmi.mask_and %carry, %cmp16
+          : !pto.vmi.mask<64xpred>, !pto.vmi.mask<64xpred> -> !pto.vmi.mask<64xpred>
+      scf.yield %next : !pto.vmi.mask<64xpred>
+    }
+    pto.vmi.masked_store %v16, %d16[%off], %carried
+        : !pto.vmi.vreg<64xf16>, !pto.ptr<f16, ub>, !pto.vmi.mask<64xpred>
+    return
+  }
+}
+
+// The unconstrained producers keep their default b32 and each b16 consumer
+// rematerializes the mask it needs.
+// CHECK-LABEL: func.func @vmi_mask_granularity_if_join(
+// CHECK: pto.vmi.create_mask %{{.*}} : index -> !pto.vmi.mask<64xb32>
+// CHECK: pto.vmi.create_group_mask %{{.*}} : index -> !pto.vmi.mask<64xb32>
+// CHECK: %[[SEED_ROOT:.*]] = pto.vmi.create_mask %{{.*}} : index -> !pto.vmi.mask<64xb16>
+// CHECK: %[[SEED_LANE:.*]] = pto.vmi.create_group_mask %{{.*}} : index -> !pto.vmi.mask<64xb16>
+// CHECK: %[[SEED:.*]] = pto.vmi.mask_and %[[SEED_ROOT]], %[[SEED_LANE]] : !pto.vmi.mask<64xb16>, !pto.vmi.mask<64xb16> -> !pto.vmi.mask<64xb16>
+// CHECK: %[[JOIN:.*]] = scf.if %{{.*}} -> (!pto.vmi.mask<64xb16>) {
+// CHECK: %[[CMP:.*]] = pto.vmi.cmpf "olt", {{.*}} -> !pto.vmi.mask<64xb16>
+// CHECK: %[[THEN_ROOT:.*]] = pto.vmi.create_mask %{{.*}} : index -> !pto.vmi.mask<64xb16>
+// CHECK: %[[THEN:.*]] = pto.vmi.mask_and %[[THEN_ROOT]], %[[CMP]] : !pto.vmi.mask<64xb16>, !pto.vmi.mask<64xb16> -> !pto.vmi.mask<64xb16>
+// CHECK: scf.yield %[[THEN]] : !pto.vmi.mask<64xb16>
+// CHECK: scf.yield %[[SEED]] : !pto.vmi.mask<64xb16>
+// CHECK: pto.vmi.masked_store {{.*}}{{\[}}%{{.*}}], %[[JOIN]] : !pto.vmi.vreg<64xf16>, !pto.ptr<f16, ub>, !pto.vmi.mask<64xb16>
+
+// CHECK-LABEL: func.func @vmi_mask_granularity_for_iter_arg(
+// CHECK: pto.vmi.create_mask %{{.*}} : index -> !pto.vmi.mask<64xb32>
+// CHECK: pto.vmi.create_group_mask %{{.*}} : index -> !pto.vmi.mask<64xb32>
+// CHECK: %[[FOR_ROOT:.*]] = pto.vmi.create_mask %{{.*}} : index -> !pto.vmi.mask<64xb16>
+// CHECK: %[[FOR_LANE:.*]] = pto.vmi.create_group_mask %{{.*}} : index -> !pto.vmi.mask<64xb16>
+// CHECK: %[[FOR_SEED:.*]] = pto.vmi.mask_and %[[FOR_ROOT]], %[[FOR_LANE]] : !pto.vmi.mask<64xb16>, !pto.vmi.mask<64xb16> -> !pto.vmi.mask<64xb16>
+// CHECK: %[[LOOP:.*]] = scf.for {{.*}} iter_args(%[[CARRY:.*]] = %[[FOR_SEED]]) -> (!pto.vmi.mask<64xb16>) {
+// CHECK: %[[FOR_CMP:.*]] = pto.vmi.cmpf "olt", {{.*}} -> !pto.vmi.mask<64xb16>
+// CHECK: %[[NEXT:.*]] = pto.vmi.mask_and %[[CARRY]], %[[FOR_CMP]] : !pto.vmi.mask<64xb16>, !pto.vmi.mask<64xb16> -> !pto.vmi.mask<64xb16>
+// CHECK: scf.yield %[[NEXT]] : !pto.vmi.mask<64xb16>
+// CHECK: pto.vmi.masked_store {{.*}}{{\[}}%{{.*}}], %[[LOOP]] : !pto.vmi.vreg<64xf16>, !pto.ptr<f16, ub>, !pto.vmi.mask<64xb16>

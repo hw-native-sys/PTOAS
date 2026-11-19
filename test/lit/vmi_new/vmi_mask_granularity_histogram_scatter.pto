@@ -1,0 +1,62 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+
+// RUN: pto-test-opt %s -vmi-mask-granularity-assignment | FileCheck %s --enable-var-scope
+// RUN: pto-test-opt %s -vmi-mask-granularity-assignment -vmi-mask-granularity-assignment | FileCheck %s --enable-var-scope
+
+// Histogram and scatter consumers drive the granularity of otherwise
+// unconstrained predicates: a 16-bit scatter runs its mask at b16 and a
+// histogram runs it at b8. The operands of the feeding mask_and are adapted at
+// the use, so the mask keeps one physical granularity across the operation.
+
+module {
+  func.func @vmi_mask_granularity_scatter_16bit(%n: index,
+      %v: !pto.vmi.vreg<64xf16>, %dst: !pto.ptr<f16, ub>,
+      %idx: !pto.vmi.vreg<64xi16>) {
+    %root = pto.vmi.create_mask %n : index -> !pto.vmi.mask<64xpred>
+    %lane = pto.vmi.create_mask %n : index -> !pto.vmi.mask<64xpred>
+    %mask = pto.vmi.mask_and %root, %lane
+        : !pto.vmi.mask<64xpred>, !pto.vmi.mask<64xpred> -> !pto.vmi.mask<64xpred>
+    pto.vmi.scatter %v, %dst[%idx], %mask
+        : !pto.vmi.vreg<64xf16>, !pto.ptr<f16, ub>, !pto.vmi.vreg<64xi16>, !pto.vmi.mask<64xpred>
+    return
+  }
+
+  func.func @vmi_mask_granularity_vdhist(%n: index,
+      %acc: !pto.vmi.vreg<256xui16>, %src: !pto.vmi.vreg<256xui8>) {
+    %root = pto.vmi.create_mask %n : index -> !pto.vmi.mask<256xpred>
+    %lane = pto.vmi.create_group_mask %n {num_groups = 2 : i64, group_size = 128 : i64}
+        : index -> !pto.vmi.mask<256xpred>
+    %flipped = pto.vmi.mask_not %root
+        : !pto.vmi.mask<256xpred> -> !pto.vmi.mask<256xpred>
+    %mask = pto.vmi.mask_and %flipped, %lane
+        : !pto.vmi.mask<256xpred>, !pto.vmi.mask<256xpred> -> !pto.vmi.mask<256xpred>
+    %hist = pto.vmi.vdhist %acc, %src, %mask
+        : !pto.vmi.vreg<256xui16>, !pto.vmi.vreg<256xui8>, !pto.vmi.mask<256xpred> -> !pto.vmi.vreg<256xui16>
+    return
+  }
+}
+
+// CHECK-LABEL: func.func @vmi_mask_granularity_scatter_16bit(
+// CHECK: pto.vmi.create_mask %{{.*}} : index -> !pto.vmi.mask<64xb32>
+// CHECK: pto.vmi.create_mask %{{.*}} : index -> !pto.vmi.mask<64xb32>
+// CHECK: %[[SCAT_ROOT:.*]] = pto.vmi.create_mask %{{.*}} : index -> !pto.vmi.mask<64xb16>
+// CHECK: %[[SCAT_LANE:.*]] = pto.vmi.create_mask %{{.*}} : index -> !pto.vmi.mask<64xb16>
+// CHECK: %[[SCAT_MASK:.*]] = pto.vmi.mask_and %[[SCAT_ROOT]], %[[SCAT_LANE]] : !pto.vmi.mask<64xb16>, !pto.vmi.mask<64xb16> -> !pto.vmi.mask<64xb16>
+// CHECK: pto.vmi.scatter {{.*}}, %[[SCAT_MASK]] : !pto.vmi.vreg<64xf16>, !pto.ptr<f16, ub>, !pto.vmi.vreg<64xi16>, !pto.vmi.mask<64xb16>
+
+// The histogram mask is b8, so the mask_not result and the group mask feeding
+// the mask_and are converted at that use.
+// CHECK-LABEL: func.func @vmi_mask_granularity_vdhist(
+// CHECK: %[[HIST_ROOT:.*]] = pto.vmi.create_mask %{{.*}} : index -> !pto.vmi.mask<256xb32>
+// CHECK: pto.vmi.create_group_mask %{{.*}} : index -> !pto.vmi.mask<256xb32>
+// CHECK: %[[FLIPPED:.*]] = pto.vmi.mask_not %[[HIST_ROOT]] : !pto.vmi.mask<256xb32> -> !pto.vmi.mask<256xb32>
+// CHECK: %[[FLIPPED8:.*]] = pto.vmi.ensure_mask_granularity %[[FLIPPED]] : !pto.vmi.mask<256xb32> -> !pto.vmi.mask<256xb8>
+// CHECK: %[[HIST_LANE:.*]] = pto.vmi.create_group_mask %{{.*}} : index -> !pto.vmi.mask<256xb8>
+// CHECK: %[[HIST_MASK:.*]] = pto.vmi.mask_and %[[FLIPPED8]], %[[HIST_LANE]] : !pto.vmi.mask<256xb8>, !pto.vmi.mask<256xb8> -> !pto.vmi.mask<256xb8>
+// CHECK: pto.vmi.vdhist {{.*}}, %[[HIST_MASK]] : !pto.vmi.vreg<256xui16>, !pto.vmi.vreg<256xui8>, !pto.vmi.mask<256xb8>

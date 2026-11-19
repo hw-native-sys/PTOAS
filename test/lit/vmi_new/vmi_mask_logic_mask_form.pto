@@ -1,0 +1,109 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+
+// RUN: pto-test-opt %s -vmi-mask-granularity-assignment | FileCheck %s --enable-var-scope
+// RUN: pto-test-opt %s -vmi-mask-granularity-assignment -vmi-mask-granularity-assignment | FileCheck %s --enable-var-scope
+
+// The mask form of vand/vor/vxor/vnot previously had no granularity constraint
+// and only failed in the op verifier. A mask logic operation now runs at the
+// granularity of its result, and every mask operand is requested at that use,
+// so mixing a b32 and a b16 compare is legal IR with one conversion.
+
+module {
+  func.func @vand_mask_form(
+      %a32: !pto.vmi.vreg<64xf32>, %a32b: !pto.vmi.vreg<64xf32>,
+      %a16: !pto.vmi.vreg<64xf16>, %a16b: !pto.vmi.vreg<64xf16>)
+      -> !pto.vmi.mask<64xpred> {
+    %cmp32 = pto.vmi.cmpf "olt", %a32, %a32b
+        : !pto.vmi.vreg<64xf32>, !pto.vmi.vreg<64xf32> -> !pto.vmi.mask<64xpred>
+    %cmp16 = pto.vmi.cmpf "olt", %a16, %a16b
+        : !pto.vmi.vreg<64xf16>, !pto.vmi.vreg<64xf16> -> !pto.vmi.mask<64xpred>
+    %and = pto.vmi.vand %cmp32, %cmp16
+        : !pto.vmi.mask<64xpred>, !pto.vmi.mask<64xpred> -> !pto.vmi.mask<64xpred>
+    return %and : !pto.vmi.mask<64xpred>
+  }
+
+  func.func @vor_mask_form(
+      %a32: !pto.vmi.vreg<64xf32>, %a32b: !pto.vmi.vreg<64xf32>,
+      %a16: !pto.vmi.vreg<64xf16>, %a16b: !pto.vmi.vreg<64xf16>)
+      -> !pto.vmi.mask<64xpred> {
+    %cmp32 = pto.vmi.cmpf "olt", %a32, %a32b
+        : !pto.vmi.vreg<64xf32>, !pto.vmi.vreg<64xf32> -> !pto.vmi.mask<64xpred>
+    %cmp16 = pto.vmi.cmpf "olt", %a16, %a16b
+        : !pto.vmi.vreg<64xf16>, !pto.vmi.vreg<64xf16> -> !pto.vmi.mask<64xpred>
+    %or = pto.vmi.vor %cmp16, %cmp32
+        : !pto.vmi.mask<64xpred>, !pto.vmi.mask<64xpred> -> !pto.vmi.mask<64xpred>
+    return %or : !pto.vmi.mask<64xpred>
+  }
+
+  func.func @vxor_mask_form(
+      %a32: !pto.vmi.vreg<64xf32>, %a32b: !pto.vmi.vreg<64xf32>,
+      %a16: !pto.vmi.vreg<64xf16>, %a16b: !pto.vmi.vreg<64xf16>)
+      -> !pto.vmi.mask<64xpred> {
+    %cmp32 = pto.vmi.cmpf "olt", %a32, %a32b
+        : !pto.vmi.vreg<64xf32>, !pto.vmi.vreg<64xf32> -> !pto.vmi.mask<64xpred>
+    %cmp16 = pto.vmi.cmpf "olt", %a16, %a16b
+        : !pto.vmi.vreg<64xf16>, !pto.vmi.vreg<64xf16> -> !pto.vmi.mask<64xpred>
+    %xor = pto.vmi.vxor %cmp32, %cmp16
+        : !pto.vmi.mask<64xpred>, !pto.vmi.mask<64xpred> -> !pto.vmi.mask<64xpred>
+    return %xor : !pto.vmi.mask<64xpred>
+  }
+
+  func.func @vnot_mask_form(
+      %a32: !pto.vmi.vreg<64xf32>, %a32b: !pto.vmi.vreg<64xf32>,
+      %a16: !pto.vmi.vreg<64xf16>, %a16b: !pto.vmi.vreg<64xf16>,
+      %v32: !pto.vmi.vreg<64xf32>, %d32: !pto.ptr<f32, ub>, %off: index)
+      -> !pto.vmi.mask<64xpred> {
+    %cmp32 = pto.vmi.cmpf "olt", %a32, %a32b
+        : !pto.vmi.vreg<64xf32>, !pto.vmi.vreg<64xf32> -> !pto.vmi.mask<64xpred>
+    %cmp16 = pto.vmi.cmpf "olt", %a16, %a16b
+        : !pto.vmi.vreg<64xf16>, !pto.vmi.vreg<64xf16> -> !pto.vmi.mask<64xpred>
+    %flipped = pto.vmi.vnot %cmp16
+        : !pto.vmi.mask<64xpred> -> !pto.vmi.mask<64xpred>
+    pto.vmi.masked_store %v32, %d32[%off], %flipped
+        : !pto.vmi.vreg<64xf32>, !pto.ptr<f32, ub>, !pto.vmi.mask<64xpred>
+    %both = pto.vmi.vand %flipped, %cmp32
+        : !pto.vmi.mask<64xpred>, !pto.vmi.mask<64xpred> -> !pto.vmi.mask<64xpred>
+    return %both : !pto.vmi.mask<64xpred>
+  }
+}
+
+// A binary mask logic can not pick one of two disagreeing compare granularities:
+// the result takes the b32 default and the b16 compare is converted at the use.
+// CHECK-LABEL: func.func @vand_mask_form(
+// CHECK: %[[VAND32:.*]] = pto.vmi.cmpf "olt", {{.*}} -> !pto.vmi.mask<64xb32>
+// CHECK: %[[VAND16:.*]] = pto.vmi.cmpf "olt", {{.*}} -> !pto.vmi.mask<64xb16>
+// CHECK: %[[VAND16B32:.*]] = pto.vmi.ensure_mask_granularity %[[VAND16]] : !pto.vmi.mask<64xb16> -> !pto.vmi.mask<64xb32>
+// CHECK: %[[VAND:.*]] = pto.vmi.vand %[[VAND32]], %[[VAND16B32]] : !pto.vmi.mask<64xb32>, !pto.vmi.mask<64xb32> -> !pto.vmi.mask<64xb32>
+// CHECK: return %[[VAND]] : !pto.vmi.mask<64xb32>
+
+// CHECK-LABEL: func.func @vor_mask_form(
+// CHECK: %[[VOR32:.*]] = pto.vmi.cmpf "olt", {{.*}} -> !pto.vmi.mask<64xb32>
+// CHECK: %[[VOR16:.*]] = pto.vmi.cmpf "olt", {{.*}} -> !pto.vmi.mask<64xb16>
+// CHECK: %[[VOR16B32:.*]] = pto.vmi.ensure_mask_granularity %[[VOR16]] : !pto.vmi.mask<64xb16> -> !pto.vmi.mask<64xb32>
+// CHECK: %[[VOR:.*]] = pto.vmi.vor %[[VOR16B32]], %[[VOR32]] : !pto.vmi.mask<64xb32>, !pto.vmi.mask<64xb32> -> !pto.vmi.mask<64xb32>
+// CHECK: return %[[VOR]] : !pto.vmi.mask<64xb32>
+
+// CHECK-LABEL: func.func @vxor_mask_form(
+// CHECK: %[[XOR32:.*]] = pto.vmi.cmpf "olt", {{.*}} -> !pto.vmi.mask<64xb32>
+// CHECK: %[[XOR16:.*]] = pto.vmi.cmpf "olt", {{.*}} -> !pto.vmi.mask<64xb16>
+// CHECK: %[[XOR16B32:.*]] = pto.vmi.ensure_mask_granularity %[[XOR16]] : !pto.vmi.mask<64xb16> -> !pto.vmi.mask<64xb32>
+// CHECK: %[[XOR:.*]] = pto.vmi.vxor %[[XOR32]], %[[XOR16B32]] : !pto.vmi.mask<64xb32>, !pto.vmi.mask<64xb32> -> !pto.vmi.mask<64xb32>
+// CHECK: return %[[XOR]] : !pto.vmi.mask<64xb32>
+
+// The vnot result follows its b16 source; the b32 store and the mask logic both
+// convert it at their use, and the compare itself is never recomputed.
+// CHECK-LABEL: func.func @vnot_mask_form(
+// CHECK: %[[NOT32:.*]] = pto.vmi.cmpf "olt", {{.*}} -> !pto.vmi.mask<64xb32>
+// CHECK: %[[NOT16:.*]] = pto.vmi.cmpf "olt", {{.*}} -> !pto.vmi.mask<64xb16>
+// CHECK: %[[NOT:.*]] = pto.vmi.vnot %[[NOT16]] : !pto.vmi.mask<64xb16> -> !pto.vmi.mask<64xb16>
+// CHECK: %[[NOT_STORE:.*]] = pto.vmi.ensure_mask_granularity %[[NOT]] : !pto.vmi.mask<64xb16> -> !pto.vmi.mask<64xb32>
+// CHECK: pto.vmi.masked_store {{.*}}{{\[}}%{{.*}}], %[[NOT_STORE]] : !pto.vmi.vreg<64xf32>, !pto.ptr<f32, ub>, !pto.vmi.mask<64xb32>
+// CHECK: %[[NOT_LOGIC:.*]] = pto.vmi.ensure_mask_granularity %[[NOT]] : !pto.vmi.mask<64xb16> -> !pto.vmi.mask<64xb32>
+// CHECK: %[[NOT_BOTH:.*]] = pto.vmi.vand %[[NOT_LOGIC]], %[[NOT32]] : !pto.vmi.mask<64xb32>, !pto.vmi.mask<64xb32> -> !pto.vmi.mask<64xb32>
+// CHECK: return %[[NOT_BOTH]] : !pto.vmi.mask<64xb32>
