@@ -27,7 +27,7 @@ on:
   workflow_dispatch:
     inputs:
       device:
-        description: "Physical A3 NPU id ('auto' = take a card from the queue)"
+        description: "A3 NPU id; 'auto' lets the driver use its default logical device (0)"
         type: string
         default: "auto"
       run_only_cases:
@@ -68,8 +68,19 @@ jobs:
           # before a multi-hour build instead of after the disk fills.
           workspace="${{ steps.process_checkout.outputs.path }}"
           [[ -n "${workspace}" ]] || workspace="${PWD}"
-          free_kb="$(df -Pk "${workspace}" | awk 'NR==2{print $4}')"
-          if (( ${free_kb:-0} < 31457280 )); then
+          # On the GitCode A3 runner df -Pk's fourth field was non-numeric
+          # (observed "500G"), which makes the arithmetic below raise
+          # "value too great for base". Ask Python for bytes and keep df
+          # only as a numeric fallback.
+          free_kb="$(python3 -c 'import shutil,sys; print(shutil.disk_usage(sys.argv[1]).free // 1024)' "${workspace}" 2>/dev/null || true)"
+          if [[ ! "${free_kb}" =~ ^[0-9]+$ ]]; then
+            free_kb="$(df -Pk "${workspace}" | awk 'NR==2{print $4}')"
+          fi
+          if [[ ! "${free_kb}" =~ ^[0-9]+$ ]]; then
+            echo "ERROR: cannot determine free space for ${workspace}: '${free_kb}'" >&2
+            exit 1
+          fi
+          if (( free_kb < 31457280 )); then
             echo "ERROR: ${workspace} has less than 30 GiB free; the full build and payload will not fit" >&2
             exit 1
           fi
@@ -77,9 +88,15 @@ jobs:
           # Fail fast on an incomplete deployment instead of after a long build.
           command -v npu-smi >/dev/null || { echo "ERROR: npu-smi is missing" >&2; exit 1; }
           compgen -G "/dev/davinci[0-9]*" >/dev/null || { echo "ERROR: no /dev/davinciN device node" >&2; exit 1; }
-          for command in bash cmake git make python3 tar task-submit; do
+          for command in bash cmake git make python3 tar; do
             command -v "${command}" >/dev/null || { echo "ERROR: required command is missing: ${command}" >&2; exit 1; }
           done
+          # The nightly driver (pre_smoke.sh -> run_remote_npu_validation.sh)
+          # selects DEVICE_ID directly. task-submit belongs to the PyPTO
+          # smoke's stage=full path, which is a separate workflow.
+          if ! command -v task-submit >/dev/null 2>&1; then
+            echo "WARNING: task-submit is not on PATH; the nightly driver does not use it." >&2
+          fi
 
       - name: Run A3 board validation
         timeout-minutes: 540
@@ -94,7 +111,14 @@ jobs:
           workspace="${{ steps.process_checkout.outputs.path }}"
           [[ -n "${workspace}" ]] || workspace="${PWD}"
           export WORKSPACE="${workspace}"
-          export DEVICE_ID="${INPUT_DEVICE:-auto}"
+          # run_remote_npu_validation.sh treats an empty DEVICE_ID as "auto"
+          # and rejects a non-empty non-integer value, so normalize the
+          # workflow's "auto" spelling before handing it over.
+          DEVICE_ID="${INPUT_DEVICE:-}"
+          if [[ "${DEVICE_ID}" == "auto" ]]; then
+            DEVICE_ID=""
+          fi
+          export DEVICE_ID
           # The driver applies its own fixed skip list (mix_kernel, the two
           # vadd_validshape cases and print); an extra skip input is deliberately
           # not exposed until the driver accepts one.

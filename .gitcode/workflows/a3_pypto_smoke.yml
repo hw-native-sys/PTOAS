@@ -113,7 +113,7 @@ jobs:
           findings="${smoke_root}/probe.env"
           : > "${findings}"
 
-          # report <key> <yes|no> <detail>
+          # report <key> <yes|no|unknown> <detail>
           report() {
             printf '%s=%s\n' "$1" "$2" >> "${findings}"
             printf '%-22s %-5s %s\n' "$1" "$2" "$3"
@@ -166,9 +166,19 @@ jobs:
             report "${key}" "$([[ "${code}" == "200" || "${code}" == "404" ]] && echo yes || echo no)" "HTTP ${code}"
           done
 
-          free_kb="$(df -Pk "${HOME}" | awk 'NR==2{print $4}')"
-          report disk "$([[ "${free_kb:-0}" -gt 5242880 ]] && echo yes || echo no)" \
-            "$(df -Ph "${HOME}" | awk 'NR==2{print $4" free of "$2}')"
+          # On the GitCode A3 runner df -Pk's fourth field was non-numeric
+          # (observed "500G"). Prefer Python for the byte count and only fall
+          # back to df when Python is unavailable or fails.
+          free_kb="$(python3 -c 'import shutil,sys; print(shutil.disk_usage(sys.argv[1]).free // 1024)' "${HOME}" 2>/dev/null || true)"
+          if [[ ! "${free_kb}" =~ ^[0-9]+$ ]]; then
+            free_kb="$(df -Pk "${HOME}" | awk 'NR==2{print $4}')"
+          fi
+          if [[ "${free_kb:-}" =~ ^[0-9]+$ ]]; then
+            report disk "$([[ "${free_kb}" -gt 5242880 ]] && echo yes || echo no)" \
+              "$(df -Ph "${HOME}" | awk 'NR==2{print $4" free of "$2}')"
+          else
+            report disk unknown "cannot parse free space from python3/df: '${free_kb:-<empty>}'"
+          fi
           report cpus "$(echo yes)" "$(nproc) CPUs, $(free -g 2>/dev/null | awk '/^Mem:/{print $2" GiB RAM"}')"
 
           echo
