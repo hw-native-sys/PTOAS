@@ -440,60 +440,60 @@ std::array<std::optional<int64_t>, kValue2> mlir::pto::getKnownTileValidShapeAt(
     return result;
 }
 
-std::optional<int64_t>
-mlir::pto::getA2A3RemainderScratchCols(Value dst, Operation *at,
-                                      RemPrecision precision) {
-  constexpr int64_t kMaxTileCols = std::numeric_limits<int32_t>::max();
-  auto type = dyn_cast<TileBufType>(dst.getType());
-  if (!type) {
-    return std::nullopt;
-  }
-  const auto shape = type.getShape();
-  const auto validShape = type.getValidShape();
-  const bool rankTwo = shape.size() == 2 && validShape.size() == 2;
-  if (!rankTwo) {
-    return std::nullopt;
-  }
-  // ISA Tile::RowStride is the physical column count for row-major tiles.
-  // Bound it to the signed width of the ISA Tile template before arithmetic.
-  const int64_t stride = shape[1];
-  if (stride <= 0 || stride > kMaxTileCols) {
-    return std::nullopt;
-  }
-
-  constexpr int64_t kVectorElements = 64; // One 256-byte repeat of i32 or f32.
-  constexpr int64_t kBlockElements = 8;   // One 32-byte block of i32 or f32.
-  constexpr int64_t kMaskBitsPerBlock = 256;
-  const int64_t candidateCols =
-      static_cast<int64_t>(llvm::alignTo(stride, kVectorElements));
-  const int64_t baseCols =
-      candidateCols + kBlockElements * llvm::divideCeil(stride, kMaskBitsPerBlock) +
-      kBlockElements;
-  int64_t requiredCols = baseCols;
-  if (precision == RemPrecision::HighPrecision && type.getElementType().isF32()) {
-    constexpr int64_t kMasksPerBlock = 4;
-    // The pinned PTO-ISA (ece75ec8) needs no compensation window. Reserve
-    // extra space for the final high-precision iteration in 7db8bb0a.
-    constexpr int64_t kCompensationVectorsPerInput = 8;
-    constexpr int64_t kFusedChunkVectors = 8;
-    const int64_t width = getKnownTileValidShapeAt(dst, at)[1].value_or(stride);
-    if (width < 0 || width > stride) {
-      return std::nullopt;
+std::optional<int64_t> mlir::pto::getA2A3RemainderScratchCols(Value dst, Operation* at, RemPrecision precision)
+{
+    constexpr int64_t kMaxTileCols = std::numeric_limits<int32_t>::max();
+    auto type = dyn_cast<TileBufType>(dst.getType());
+    if (!type) {
+        return std::nullopt;
     }
-    const int64_t capacity = std::max<int64_t>(width / kVectorElements, 1);
-    const int64_t maskCols =
-        kBlockElements * llvm::divideCeil(capacity, kMasksPerBlock);
-    const int64_t stateCols = capacity == 1 ? kVectorElements : 0;
-    const int64_t compensationCols =
-        kCompensationVectorsPerInput * kVectorElements *
-        std::min(capacity, kFusedChunkVectors);
-    const int64_t highPrecisionCols =
-        3 * kVectorElements * capacity + maskCols + kBlockElements + stateCols +
-        compensationCols;
-    requiredCols = std::max(baseCols, highPrecisionCols);
-  }
-  if (requiredCols > kMaxTileCols) {
-    return std::nullopt;
-  }
-  return requiredCols;
+    const auto shape = type.getShape();
+    const auto validShape = type.getValidShape();
+    const bool rankTwo = shape.size() == 2 && validShape.size() == 2;
+    if (!rankTwo) {
+        return std::nullopt;
+    }
+    // ISA Tile::RowStride is the physical column count for row-major tiles.
+    // Bound it to the signed width of the ISA Tile template before arithmetic.
+    const int64_t stride = shape[1];
+    if (stride <= 0 || stride > kMaxTileCols) {
+        return std::nullopt;
+    }
+
+    constexpr int64_t kVectorElements = 64; // One 256-byte repeat of i32 or f32.
+    constexpr int64_t kBlockElements = 8;   // One 32-byte block of i32 or f32.
+    constexpr int64_t kMaskBitsPerBlock = 256;
+    const bool scalarDivisor = at && isa<TRemSOp>(at);
+    const bool integerInput = type.getElementType().isInteger(32);
+    // Integer inputs stay read-only: TREM keeps three rows in tmp, TREMS two.
+    // Keep repeat padding for the final candidate row's unmasked compare.
+    const int64_t preservedRows = scalarDivisor ? 1 : 2;
+    const int64_t extraCols = integerInput ? preservedRows * stride : 0;
+    const int64_t candidateCols = static_cast<int64_t>(llvm::alignTo(stride, kVectorElements));
+    const int64_t baseCols =
+        candidateCols + extraCols + kBlockElements * llvm::divideCeil(stride, kMaskBitsPerBlock) + kBlockElements;
+    int64_t requiredCols = baseCols;
+    if (precision == RemPrecision::HighPrecision && type.getElementType().isF32()) {
+        constexpr int64_t kMasksPerBlock = 4;
+        // PTO-ISA bed4f813 reserves ten vectors for HpFusedSub's final iteration.
+        constexpr int64_t kCompensationVectorsPerInput = 10;
+        constexpr int64_t kFusedChunkVectors = 8;
+        const int64_t width = getKnownTileValidShapeAt(dst, at)[1].value_or(stride);
+        if (width < 0 || width > stride) {
+            return std::nullopt;
+        }
+        const int64_t capacity = std::max<int64_t>(width / kVectorElements, 1);
+        const int64_t maskCols = kBlockElements * llvm::divideCeil(capacity, kMasksPerBlock);
+        const int64_t stateCols = capacity == 1 ? kVectorElements : 0;
+        const int64_t compensationCols =
+            kCompensationVectorsPerInput * kVectorElements * std::min(capacity, kFusedChunkVectors);
+        const int64_t liveRows = scalarDivisor ? 2 : 3;
+        const int64_t highPrecisionCols =
+            liveRows * kVectorElements * capacity + maskCols + kBlockElements + stateCols + compensationCols;
+        requiredCols = std::max(baseCols, highPrecisionCols);
+    }
+    if (requiredCols > kMaxTileCols) {
+        return std::nullopt;
+    }
+    return requiredCols;
 }

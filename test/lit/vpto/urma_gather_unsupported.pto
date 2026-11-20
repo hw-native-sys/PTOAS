@@ -17,4 +17,4 @@ module attributes {pto.kernel_kind = #pto.kernel_kind<vector>} {
   }
 }
 
-// CHECK: 'pto.comm.build_urma_session' op is not supported by the VPTO backend; URMA Gather requires EmitC
+// CHECK: 'pto.comm.build_urma_session' op is not supported by the VPTO backend; URMA Gather/Scatter requires EmitC

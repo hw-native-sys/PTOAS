@@ -11,7 +11,7 @@ from ptoas.mlir.ir import Context, InsertionPoint, IntegerType, Location, Module
 
 
 def check_gather_bindings() -> None:
-    """Check URMA handle types, optional operands and explicit zero-valued enums."""
+    """Check shared URMA handles, Gather/Scatter builders and zero-valued enums."""
     session_type = pto.AsyncSessionType.get_urma()
     event_type = pto.AsyncEventType.get_urma()
     if session_type != Type.parse("!pto.async_session<urma>") or event_type != Type.parse("!pto.async_event<urma>"):
@@ -43,16 +43,27 @@ def check_gather_bindings() -> None:
             destinations=dsts, destinationCount=count, segments=segs, segmentCount=count,
             scratch=scratch, cqe_policy=0, submit_mode=0,
         )
-        pto.TPutAsyncGatherOp(
+        final = pto.TGetAsyncScatterOp(
             event_type, i1, vector.session, scratch=scratch,
             cqe_policy=pto.UrmaCqePolicy.Final, submit_mode=pto.AsyncSubmitMode.DeferAndSubmit,
         )
-    if str(prefix.cqe_policy) != "#pto.urma_cqe_policy<no_cqe>":
+        pto.WaitAsyncEventOp(final.event, vector.session)
+        get = pto.TGetAsyncScatterOp(
+            event_type, i1, scalar.session,
+            sources=dsts, sourceCount=count, segments=segs, segmentCount=count,
+            cqe_policy=0, submit_mode=0,
+        )
+        put_final = pto.TPutAsyncGatherOp(
+            event_type, i1, scalar.session,
+            cqe_policy=pto.UrmaCqePolicy.Final, submit_mode=pto.AsyncSubmitMode.DeferAndSubmit,
+        )
+        pto.TestAsyncEventOp(put_final.event, scalar.session)
+    if any(str(op.cqe_policy) != "#pto.urma_cqe_policy<no_cqe>" for op in (prefix, get)):
         raise RuntimeError("explicit zero-valued no_cqe policy was dropped")
     if pto.AsyncSubmitModeAttr.get(0).value != pto.AsyncSubmitMode.Immediate.value:
         raise RuntimeError("explicit zero-valued immediate mode was dropped")
     if not module.operation.verify() or not Module.parse(str(module)).operation.verify():
-        raise RuntimeError("URMA Gather bindings produced invalid IR")
+        raise RuntimeError("URMA Gather/Scatter bindings produced invalid IR")
 
 
 def check_legacy_async_builders() -> None:

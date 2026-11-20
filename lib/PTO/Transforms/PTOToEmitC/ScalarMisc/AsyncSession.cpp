@@ -5,11 +5,12 @@
 // THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
 // INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
 // See LICENSE in the root of the software repository for the full text of the License.
-//===- AsyncSession.cpp - ScalarMisc AsyncSession op lowering --------------------------------===//
+// Async session lowering, including shared URMA Gather PUT / Scatter GET emission.
 //===----------------------------------------------------------------------===//
 
 #include "../PTOToEmitCEmitters.h"
 #include "ScalarMiscInternal.h"
+#include <type_traits>
 
 using namespace mlir;
 using namespace mlir::pto;
@@ -295,56 +296,61 @@ static StringRef asyncSubmitModeToken(AsyncSubmitMode mode) {
   llvm_unreachable("invalid async submit mode");
 }
 
-static std::string urmaGatherCallee(TPutAsyncGatherOp op) {
-  auto size = op.getBatchSizeAttr();
-  std::string batchSize = size
-      ? std::to_string(size.getValue().getZExtValue()) + "u"
-      : "UINT32_MAX";
-  return (llvm::Twine("ptoas_urma_gather<") +
-          (op.getDestinations() ? "true, " : "false, ") +
-          urmaCqePolicyToken(op.getCqePolicy()) + ", " +
-          asyncSubmitModeToken(op.getSubmitMode()) + ", " + batchSize + ">")
-      .str();
+template <typename TransferOp>
+static std::string urmaTransferCallee(TransferOp op, bool isGet)
+{
+    auto size = op.getBatchSizeAttr();
+    std::string batchSize = size ? std::to_string(size.getValue().getZExtValue()) + "u" : "UINT32_MAX";
+    return (llvm::Twine(isGet ? "ptoas_urma_scatter<" : "ptoas_urma_gather<") +
+            (op.getSegments() ? "true, " : "false, ") + urmaCqePolicyToken(op.getCqePolicy()) + ", " +
+            asyncSubmitModeToken(op.getSubmitMode()) + ", " + batchSize + ">")
+        .str();
 }
 
-struct PTOPutAsyncGatherToEmitC : public OpConversionPattern<TPutAsyncGatherOp> {
-  using OpConversionPattern::OpConversionPattern;
+template <typename TransferOp>
+struct PTOUrmaTransferToEmitC : public OpConversionPattern<TransferOp> {
+    using OpConversionPattern<TransferOp>::OpConversionPattern;
 
-  LogicalResult matchAndRewrite(
-      TPutAsyncGatherOp op, OpAdaptor adaptor,
-      ConversionPatternRewriter &rewriter) const override {
-    Location loc = op.getLoc();
-    auto *ctx = rewriter.getContext();
-    auto eventTy = getTypeConverter()->convertType(op.getEvent().getType());
-    auto boolTy = getTypeConverter()->convertType(op.getPostOk().getType());
-    SmallVector<Value> args;
-    if (Value destinations = adaptor.getDestinations()) {
-      args = {castToGMBytePointer(rewriter, loc, destinations),
-              adaptor.getDestinationCount(),
-              castToGMBytePointer(rewriter, loc, adaptor.getSegments()),
-              adaptor.getSegmentCount()};
-    } else {
-      auto ptrTy = emitc::PointerType::get(emitc::OpaqueType::get(ctx, "__gm__ uint8_t"));
-      Value null = makeEmitCOpaqueConstant(rewriter, loc, ptrTy, "nullptr");
-      auto countTy = emitc::OpaqueType::get(ctx, "uint32_t");
-      Value zero = makeEmitCOpaqueConstant(rewriter, loc, countTy, "0u");
-      args = {null, zero, null, zero};
+    LogicalResult matchAndRewrite(
+        TransferOp op, typename TransferOp::Adaptor adaptor, ConversionPatternRewriter& rewriter) const override
+    {
+        Location loc = op.getLoc();
+        auto* ctx = rewriter.getContext();
+        auto eventTy = this->getTypeConverter()->convertType(op.getEvent().getType());
+        auto boolTy = this->getTypeConverter()->convertType(op.getPostOk().getType());
+        constexpr bool isGet = std::is_same_v<TransferOp, TGetAsyncScatterOp>;
+        Value remotes;
+        Value remoteCount;
+        if constexpr (isGet) {
+            remotes = adaptor.getSources();
+            remoteCount = adaptor.getSourceCount();
+        } else {
+            remotes = adaptor.getDestinations();
+            remoteCount = adaptor.getDestinationCount();
+        }
+        SmallVector<Value> args;
+        if (remotes) {
+            args = {
+                castToGMBytePointer(rewriter, loc, remotes), remoteCount,
+                castToGMBytePointer(rewriter, loc, adaptor.getSegments()), adaptor.getSegmentCount()};
+        } else {
+            auto ptrTy = emitc::PointerType::get(emitc::OpaqueType::get(ctx, "__gm__ uint8_t"));
+            Value null = makeEmitCOpaqueConstant(rewriter, loc, ptrTy, "nullptr");
+            auto countTy = emitc::OpaqueType::get(ctx, "uint32_t");
+            Value zero = makeEmitCOpaqueConstant(rewriter, loc, countTy, "0u");
+            args = {null, zero, null, zero};
+        }
+        args.push_back(adaptor.getSession());
+        Value event = rewriter
+                          .create<emitc::CallOpaqueOp>(
+                              loc, TypeRange{eventTy}, urmaTransferCallee(op, isGet), ArrayAttr{}, ArrayAttr{}, args)
+                          .getResult(0);
+        Value postFailed =
+            rewriter.create<emitc::MemberOp>(loc, boolTy, rewriter.getStringAttr("postFailed"), event).getResult();
+        Value postOk = rewriter.create<emitc::LogicalNotOp>(loc, boolTy, postFailed).getResult();
+        rewriter.replaceOp(op, ValueRange{event, postOk});
+        return success();
     }
-    args.push_back(adaptor.getSession());
-    Value event = rewriter
-        .create<emitc::CallOpaqueOp>(loc, TypeRange{eventTy},
-                                     urmaGatherCallee(op), ArrayAttr{},
-                                     ArrayAttr{}, args)
-        .getResult(0);
-    Value postFailed = rewriter
-        .create<emitc::MemberOp>(loc, boolTy, rewriter.getStringAttr("postFailed"),
-                                 event)
-        .getResult();
-    Value postOk =
-        rewriter.create<emitc::LogicalNotOp>(loc, boolTy, postFailed).getResult();
-    rewriter.replaceOp(op, ValueRange{event, postOk});
-    return success();
-  }
 };
 
 template <typename AsyncOp>
@@ -412,7 +418,9 @@ void populateScalarMiscAsyncSessionPatterns(RewritePatternSet &patterns,
                         PTOArch targetArch) {
   patterns.add<PTOBuildAsyncSessionToEmitC>(typeConverter, ctx);
   if (targetArch == PTOArch::A5) {
-    patterns.add<PTOBuildUrmaSessionToEmitC, PTOPutAsyncGatherToEmitC>(
+    patterns.add<PTOBuildUrmaSessionToEmitC,
+                 PTOUrmaTransferToEmitC<TPutAsyncGatherOp>,
+                 PTOUrmaTransferToEmitC<TGetAsyncScatterOp>>(
         typeConverter, ctx);
   }
   patterns.add<PTOAsyncTransferToEmitC<pto::TPutAsyncOp>>(typeConverter, ctx,

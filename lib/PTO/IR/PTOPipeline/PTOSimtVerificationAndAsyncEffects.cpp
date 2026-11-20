@@ -293,15 +293,28 @@ void pto::BuildUrmaSessionOp::getEffects(MemoryEffectList &effects) {
   }
 }
 
-void pto::TPutAsyncGatherOp::getEffects(MemoryEffectList &effects) {
-  addGroupEffects(effects, getDestinationsMutable(), MemoryEffects::Read::get());
-  addGroupEffects(effects, getSegmentsMutable(), MemoryEffects::Read::get());
-  addReadWriteEffects(effects, getSessionMutable());
-  addOptionalReadWriteEffects(effects, getScratchMutable());
-  for (OpResult result : getOperation()->getResults()) {
-    addEffect(effects, result, MemoryEffects::Write::get());
-  }
-  addAsyncMemoryEffects(effects);
+template <typename TransferOp>
+static void addUrmaDescriptorTransferEffects(TransferOp op, MemoryEffectList& effects)
+{
+    addGroupEffects(effects, op.getSegmentsMutable(), MemoryEffects::Read::get());
+    addReadWriteEffects(effects, op.getSessionMutable());
+    addOptionalReadWriteEffects(effects, op.getScratchMutable());
+    for (OpResult result : op.getOperation()->getResults()) {
+        addEffect(effects, result, MemoryEffects::Write::get());
+    }
+    addAsyncMemoryEffects(effects);
+}
+
+void pto::TPutAsyncGatherOp::getEffects(MemoryEffectList& effects)
+{
+    addGroupEffects(effects, getDestinationsMutable(), MemoryEffects::Read::get());
+    addUrmaDescriptorTransferEffects(*this, effects);
+}
+
+void pto::TGetAsyncScatterOp::getEffects(MemoryEffectList& effects)
+{
+    addGroupEffects(effects, getSourcesMutable(), MemoryEffects::Read::get());
+    addUrmaDescriptorTransferEffects(*this, effects);
 }
 
 void TPutAsyncOp::getEffects(

@@ -1,0 +1,155 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+
+// RUN: ptoas --pto-arch=a5 %s -o - | FileCheck %s
+// RUN: pto-test-opt --cse --canonicalize --pto-test-async-effects %s | FileCheck %s --check-prefix=IR
+// RUN: ptoas --pto-arch=a5 --emit-pto-ir --mlir-print-ir-after=pto-plan-memory %s -o /dev/null 2>&1 | FileCheck %s --check-prefix=PLAN
+
+module attributes {pto.target_arch = "a5"} {
+  func.func @scatter(%workspace: !pto.ptr<i8, gm>, %srcs: !pto.ptr<i8, gm>,
+                    %segs: !pto.ptr<i8, gm>, %nd: ui32, %ns: ui32) -> i1
+      attributes {pto.kernel_kind = #pto.kernel_kind<vector>} {
+    %session, %init = pto.comm.build_urma_session
+        workspace(%workspace : !pto.ptr<i8, gm>) -> !pto.async_session<urma>, i1
+    %prefix, %staged = pto.comm.tget_async_scatter
+        sources(%srcs, %nd : !pto.ptr<i8, gm>, ui32)
+        segments(%segs, %ns : !pto.ptr<i8, gm>, ui32)
+        session(%session : !pto.async_session<urma>)
+        {cqe_policy = #pto.urma_cqe_policy<no_cqe>,
+         submit_mode = #pto.async_submit_mode<defer>, batch_size = 4 : ui32}
+        -> !pto.async_event<urma>, i1
+    %final, %published = pto.comm.tget_async_scatter session(%session : !pto.async_session<urma>)
+        {cqe_policy = #pto.urma_cqe_policy<final>,
+         submit_mode = #pto.async_submit_mode<defer_and_submit>}
+        -> !pto.async_event<urma>, i1
+    %ready = pto.comm.test_async_event(%final, %session : !pto.async_event<urma>, !pto.async_session<urma>) -> i1
+    %done = pto.comm.wait_async_event(%final, %session : !pto.async_event<urma>, !pto.async_session<urma>) -> i1
+    %default, %accepted = pto.comm.tget_async_scatter
+        sources(%srcs, %nd : !pto.ptr<i8, gm>, ui32)
+        segments(%segs, %ns : !pto.ptr<i8, gm>, ui32)
+        session(%session : !pto.async_session<urma>) -> !pto.async_event<urma>, i1
+    %next = pto.comm.wait_async_event(%default, %session : !pto.async_event<urma>, !pto.async_session<urma>) -> i1
+    return %published : i1
+  }
+
+  func.func @mixed_put_get(%workspace: !pto.ptr<i8, gm>, %desc: !pto.ptr<i8, gm>,
+                            %segs: !pto.ptr<i8, gm>, %n: ui32) -> i1
+      attributes {pto.kernel_kind = #pto.kernel_kind<vector>} {
+    %session, %init = pto.comm.build_urma_session
+        workspace(%workspace : !pto.ptr<i8, gm>) -> !pto.async_session<urma>, i1
+    %put, %put_ok = pto.comm.tput_async_gather
+        destinations(%desc, %n : !pto.ptr<i8, gm>, ui32)
+        segments(%segs, %n : !pto.ptr<i8, gm>, ui32)
+        session(%session : !pto.async_session<urma>)
+        {cqe_policy = #pto.urma_cqe_policy<no_cqe>, submit_mode = #pto.async_submit_mode<defer>}
+        -> !pto.async_event<urma>, i1
+    %get, %get_ok = pto.comm.tget_async_scatter
+        sources(%desc, %n : !pto.ptr<i8, gm>, ui32)
+        segments(%segs, %n : !pto.ptr<i8, gm>, ui32)
+        session(%session : !pto.async_session<urma>)
+        {cqe_policy = #pto.urma_cqe_policy<final>, submit_mode = #pto.async_submit_mode<defer_and_submit>}
+        -> !pto.async_event<urma>, i1
+    %done = pto.comm.wait_async_event(%get, %session : !pto.async_event<urma>, !pto.async_session<urma>) -> i1
+    %put_final, %flushed = pto.comm.tput_async_gather session(%session : !pto.async_session<urma>)
+        {cqe_policy = #pto.urma_cqe_policy<final>, submit_mode = #pto.async_submit_mode<defer_and_submit>}
+        -> !pto.async_event<urma>, i1
+    %tested = pto.comm.test_async_event(%put_final, %session : !pto.async_event<urma>, !pto.async_session<urma>) -> i1
+    return %done : i1
+  }
+
+  func.func @scatter_scratch(%workspace: !pto.ptr<i8, gm>, %srcs: !pto.ptr<i8, gm>,
+                            %segs: !pto.ptr<i8, gm>, %nd: ui32, %ns: ui32)
+      attributes {pto.kernel_kind = #pto.kernel_kind<vector>} {
+    %scratch = pto.alloc_tile : !pto.tile_buf<vec, 1x1280xi8>
+    %session, %init = pto.comm.build_urma_session
+        workspace(%workspace : !pto.ptr<i8, gm>) scratch(%scratch : !pto.tile_buf<vec, 1x1280xi8>)
+        -> !pto.async_session<urma>, i1
+    %other = pto.alloc_tile : !pto.tile_buf<vec, 1x640xi16>
+    %zero = arith.constant 0 : i16
+    pto.tci ins(%zero : i16) outs(%other : !pto.tile_buf<vec, 1x640xi16>)
+    %event, %ok = pto.comm.tget_async_scatter
+        sources(%srcs, %nd : !pto.ptr<i8, gm>, ui32)
+        segments(%segs, %ns : !pto.ptr<i8, gm>, ui32)
+        session(%session : !pto.async_session<urma>) scratch(%scratch : !pto.tile_buf<vec, 1x1280xi8>)
+        -> !pto.async_event<urma>, i1
+    %done = pto.comm.wait_async_event(%event, %session : !pto.async_event<urma>, !pto.async_session<urma>) -> i1
+    return
+  }
+
+  func.func @scatter_vector_section(%workspace: !pto.ptr<i8, gm>) {
+    pto.section.vector {
+      %session, %init = pto.comm.build_urma_session
+          workspace(%workspace : !pto.ptr<i8, gm>) -> !pto.async_session<urma>, i1
+      %event, %posted = pto.comm.tget_async_scatter session(%session : !pto.async_session<urma>)
+          {cqe_policy = #pto.urma_cqe_policy<final>, submit_mode = #pto.async_submit_mode<defer_and_submit>}
+          -> !pto.async_event<urma>, i1
+      %done = pto.comm.wait_async_event(%event, %session : !pto.async_event<urma>, !pto.async_session<urma>) -> i1
+    }
+    return
+  }
+}
+
+// CHECK: #error "PTOAS URMA Gather/Scatter requires A5 (NPU_ARCH 3510) with URMA support"
+// CHECK: ptoas_urma_prepare(
+// CHECK: if (!session.valid || session.engine != pto::comm::DmaEngine::URMA ||
+// CHECK: remoteCount == 0u || segmentCount == 0u
+// CHECK: return false;
+// CHECK: session.cfg.urma.cqePolicy = Policy;
+// CHECK-NEXT: session.submitMode = SubmitMode;
+// CHECK-NEXT: session.batchSize = BatchSize;
+// CHECK: ptoas_urma_scatter(
+// CHECK: return pto::comm::AsyncEvent::Failed(pto::comm::DmaEngine::URMA);
+// CHECK: return pto::comm::TGET_ASYNC<pto::comm::DmaEngine::URMA>(
+// CHECK-NEXT: reinterpret_cast<__gm__ const pto::comm::ScatterSegment{{ *}}*>(segments), segmentCount,
+// CHECK-NEXT: reinterpret_cast<__gm__ const pto::comm::ScatterSource{{ *}}*>(remotes), remoteCount, session);
+// CHECK-LABEL: bool scatter(
+// CHECK: pto::comm::AsyncSession [[SESSION:[a-zA-Z_][a-zA-Z_0-9]*]]
+// CHECK: bool {{.*}} = pto::comm::BuildAsyncSession<pto::comm::DmaEngine::URMA>({{[^,]+}}, [[SESSION]]);
+// CHECK: ptoas_urma_scatter<true, pto::comm::urma::UrmaCqePolicy::NoCqe, pto::comm::AsyncSubmitMode::DEFER, 4u>
+// CHECK: pto::comm::AsyncEvent [[FINAL:[a-zA-Z_][a-zA-Z_0-9]*]] = ptoas_urma_scatter<false, pto::comm::urma::UrmaCqePolicy::Final, pto::comm::AsyncSubmitMode::DEFER_AND_SUBMIT, UINT32_MAX>
+// CHECK: [[FINAL]].Test([[SESSION]])
+// CHECK: [[FINAL]].Wait([[SESSION]])
+// CHECK: ptoas_urma_scatter<true, pto::comm::urma::UrmaCqePolicy::OneCqe, pto::comm::AsyncSubmitMode::IMMEDIATE, UINT32_MAX>
+// CHECK: return ![[FINAL]].postFailed;
+// CHECK-LABEL: bool mixed_put_get(
+// CHECK: ptoas_urma_gather<true, pto::comm::urma::UrmaCqePolicy::NoCqe
+// CHECK: ptoas_urma_scatter<true, pto::comm::urma::UrmaCqePolicy::Final
+// CHECK: .Wait(
+// CHECK: ptoas_urma_gather<false, pto::comm::urma::UrmaCqePolicy::Final
+// CHECK: .Test(
+// CHECK-LABEL: void scatter_scratch(
+// CHECK: bool {{.*}} = pto::comm::BuildAsyncSession<pto::comm::DmaEngine::URMA>({{[^,]+}}, {{[^,]+}}, {{[^,]+}});
+// CHECK-LABEL: void scatter_vector_section(
+// CHECK: ptoas_urma_scatter<false, pto::comm::urma::UrmaCqePolicy::Final
+
+// IR-LABEL: func.func @scatter(
+// IR: pto.comm.tget_async_scatter sources
+// IR-SAME: #pto.urma_cqe_policy<no_cqe>
+// IR: pto.comm.tget_async_scatter session
+// IR-SAME: #pto.urma_cqe_policy<final>
+// IR: pto.comm.test_async_event
+// IR: pto.comm.wait_async_event
+// IR: pto.comm.tget_async_scatter sources
+
+// IR-LABEL: func.func @mixed_put_get(
+// IR: pto.comm.tput_async_gather destinations
+// IR: pto.comm.tget_async_scatter sources
+// IR: pto.comm.wait_async_event
+// IR: pto.comm.tput_async_gather session
+// IR: pto.comm.test_async_event
+
+// PLAN-LABEL: func.func @scatter_scratch(
+// PLAN-DAG: %[[OTHER_ADDR:[^ ]+]] = arith.constant 1280 : i64
+// PLAN-DAG: %[[SCRATCH_ADDR:[^ ]+]] = arith.constant 0 : i64
+// PLAN: %[[SCRATCH:[^ ]+]] = pto.alloc_tile addr = %[[SCRATCH_ADDR]]
+// PLAN: pto.comm.build_urma_session
+// PLAN-SAME: scratch(%[[SCRATCH]]
+// PLAN: pto.alloc_tile addr = %[[OTHER_ADDR]]
+// PLAN: pto.tci
+// PLAN: pto.comm.tget_async_scatter
+// PLAN-SAME: scratch(%[[SCRATCH]]

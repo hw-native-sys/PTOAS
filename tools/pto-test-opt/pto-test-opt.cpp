@@ -46,7 +46,8 @@ struct VerifyAsyncEffectsPass
   void runOnOperation() override {
     auto result = getOperation().walk([](mlir::Operation *op) {
       mlir::Value session = llvm::TypeSwitch<mlir::Operation *, mlir::Value>(op)
-          .Case<mlir::pto::TPutAsyncGatherOp, mlir::pto::TPutAsyncOp,
+          .Case<mlir::pto::TPutAsyncGatherOp, mlir::pto::TGetAsyncScatterOp,
+                mlir::pto::TPutAsyncOp,
                 mlir::pto::TGetAsyncOp, mlir::pto::WaitAsyncEventOp,
                 mlir::pto::TestAsyncEventOp>([](auto async) {
             return async.getSession();

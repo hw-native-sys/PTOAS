@@ -781,12 +781,20 @@ struct EmitPTOManualPass
     bool bitcast = false;
     bool convTileInit = false;
     bool debugHeader = false;
+    bool urmaSession = false;
     bool urmaGather = false;
+    bool urmaScatter = false;
   };
 
   static void setHelperFlagsForOp(Operation *op, HelperFlags &flags) {
-    if (isa<pto::BuildUrmaSessionOp, pto::TPutAsyncGatherOp>(op)) {
+    if (isa<pto::BuildUrmaSessionOp>(op)) {
+      flags.urmaSession = true;
+    }
+    if (isa<pto::TPutAsyncGatherOp>(op)) {
       flags.urmaGather = true;
+    }
+    if (isa<pto::TGetAsyncScatterOp>(op)) {
+      flags.urmaScatter = true;
     }
     if (isa<mlir::pto::AssertOp>(op)) {
       flags.debugHeader = true;
@@ -867,36 +875,94 @@ struct EmitPTOManualPass
   }
 
   // Emit the optional runtime helper snippets needed by this module.
-  static void emitUrmaGatherHelper(OpBuilder &builder, Location loc) {
-    builder.create<emitc::VerbatimOp>(
-        loc, builder.getStringAttr(R"cpp(
-#if defined(__CPU_SIM) || (defined(__CCE_AICORE__) && \
-    (!defined(PTO_URMA_SUPPORTED) || !defined(__NPU_ARCH__) || (__NPU_ARCH__ != 3510)))
-#error "PTOAS URMA Gather requires A5 (NPU_ARCH 3510) with URMA support"
-#elif defined(__CCE_AICORE__)
-template <bool HasPayload, pto::comm::urma::UrmaCqePolicy Policy,
-          pto::comm::AsyncSubmitMode SubmitMode, uint32_t BatchSize>
-static AICORE inline pto::comm::AsyncEvent ptoas_urma_gather(
-    __gm__ const uint8_t *destinations, uint32_t destinationCount,
-    __gm__ const uint8_t *segments, uint32_t segmentCount,
-    pto::comm::AsyncSession &session) {
-  if (!session.valid || session.engine != pto::comm::DmaEngine::URMA ||
-      (HasPayload && (destinationCount == 0u || segmentCount == 0u ||
-                      destinations == nullptr || segments == nullptr))) {
-    return pto::comm::AsyncEvent::Failed(pto::comm::DmaEngine::URMA);
+  static void emitUrmaPrepareHelper(OpBuilder& builder, Location loc)
+  {
+      builder.create<emitc::VerbatimOp>(loc, builder.getStringAttr(R"cpp(
+#if defined(__CCE_AICORE__)
+          template <
+              bool HasPayload, pto::comm::urma::UrmaCqePolicy Policy, pto::comm::AsyncSubmitMode SubmitMode,
+              uint32_t BatchSize>
+          static AICORE inline bool ptoas_urma_prepare(
+              __gm__ const uint8_t* remotes, uint32_t remoteCount, __gm__ const uint8_t* segments,
+              uint32_t segmentCount, pto::comm::AsyncSession& session)
+          {
+              if (!session.valid || session.engine != pto::comm::DmaEngine::URMA ||
+                  (HasPayload &&
+                   (remoteCount == 0u || segmentCount == 0u || remotes == nullptr || segments == nullptr))) {
+                  return false;
+              }
+              session.cfg.urma.cqePolicy = Policy;
+              session.submitMode = SubmitMode;
+              session.batchSize = BatchSize;
+              return true;
+          }
+#endif
+      )cpp"));
   }
 
-  session.cfg.urma.cqePolicy = Policy;
-  session.submitMode = SubmitMode;
-  session.batchSize = BatchSize;
-  return pto::comm::TPUT_ASYNC<pto::comm::DmaEngine::URMA>(
-      reinterpret_cast<__gm__ const pto::comm::GatherDestination *>(destinations),
-      destinationCount,
-      reinterpret_cast<__gm__ const pto::comm::GatherSegment *>(segments),
-      segmentCount, session);
-}
+  static void emitUrmaGatherHelper(OpBuilder& builder, Location loc)
+  {
+      builder.create<emitc::VerbatimOp>(loc, builder.getStringAttr(R"cpp(
+#if defined(__CCE_AICORE__)
+          template <
+              bool HasPayload, pto::comm::urma::UrmaCqePolicy Policy, pto::comm::AsyncSubmitMode SubmitMode,
+              uint32_t BatchSize>
+          static AICORE inline pto::comm::AsyncEvent ptoas_urma_gather(
+              __gm__ const uint8_t* remotes, uint32_t remoteCount, __gm__ const uint8_t* segments,
+              uint32_t segmentCount, pto::comm::AsyncSession& session)
+          {
+              if (!ptoas_urma_prepare<HasPayload, Policy, SubmitMode, BatchSize>(
+                      remotes, remoteCount, segments, segmentCount, session)) {
+                  return pto::comm::AsyncEvent::Failed(pto::comm::DmaEngine::URMA);
+              }
+              return pto::comm::TPUT_ASYNC<pto::comm::DmaEngine::URMA>(
+                  reinterpret_cast<__gm__ const pto::comm::GatherDestination*>(remotes), remoteCount,
+                  reinterpret_cast<__gm__ const pto::comm::GatherSegment*>(segments), segmentCount, session);
+          }
 #endif
-)cpp"));
+      )cpp"));
+  }
+
+  static void emitUrmaScatterHelper(OpBuilder& builder, Location loc)
+  {
+      builder.create<emitc::VerbatimOp>(loc, builder.getStringAttr(R"cpp(
+#if defined(__CCE_AICORE__)
+          template <
+              bool HasPayload, pto::comm::urma::UrmaCqePolicy Policy, pto::comm::AsyncSubmitMode SubmitMode,
+              uint32_t BatchSize>
+          static AICORE inline pto::comm::AsyncEvent ptoas_urma_scatter(
+              __gm__ const uint8_t* remotes, uint32_t remoteCount, __gm__ const uint8_t* segments,
+              uint32_t segmentCount, pto::comm::AsyncSession& session)
+          {
+              if (!ptoas_urma_prepare<HasPayload, Policy, SubmitMode, BatchSize>(
+                      remotes, remoteCount, segments, segmentCount, session)) {
+                  return pto::comm::AsyncEvent::Failed(pto::comm::DmaEngine::URMA);
+              }
+              return pto::comm::TGET_ASYNC<pto::comm::DmaEngine::URMA>(
+                  reinterpret_cast<__gm__ const pto::comm::ScatterSegment*>(segments), segmentCount,
+                  reinterpret_cast<__gm__ const pto::comm::ScatterSource*>(remotes), remoteCount, session);
+          }
+#endif
+      )cpp"));
+  }
+
+  static void emitUrmaHelpers(OpBuilder& builder, Location loc, const HelperFlags& flags)
+  {
+      builder.create<emitc::VerbatimOp>(loc, builder.getStringAttr(R"cpp(
+#if defined(__CPU_SIM) || (defined(__CCE_AICORE__) && (!defined(PTO_URMA_SUPPORTED) || \
+                                                                 !defined(__NPU_ARCH__) || (__NPU_ARCH__ != 3510)))
+#error "PTOAS URMA Gather/Scatter requires A5 (NPU_ARCH 3510) with URMA support"
+#endif
+      )cpp"));
+      if (flags.urmaGather || flags.urmaScatter) {
+          emitUrmaPrepareHelper(builder, loc);
+      }
+      if (flags.urmaGather) {
+          emitUrmaGatherHelper(builder, loc);
+      }
+      if (flags.urmaScatter) {
+          emitUrmaScatterHelper(builder, loc);
+      }
   }
 
   static void emitConvTileInitHelper(OpBuilder &builder, Location loc) {
@@ -977,8 +1043,8 @@ static AICORE inline void PTOAS__TRANDOM(
     if (flags.convTileInit) {
       emitConvTileInitHelper(builder, loc);
     }
-    if (flags.urmaGather) {
-      emitUrmaGatherHelper(builder, loc);
+    if (flags.urmaSession || flags.urmaGather || flags.urmaScatter) {
+      emitUrmaHelpers(builder, loc, flags);
     }
   }
 

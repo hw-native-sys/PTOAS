@@ -104,7 +104,7 @@ module attributes {pto.target_arch = "a5"} {
     %event, %ok = pto.comm.tput_async_gather session(%s : !pto.async_session<urma>)
         {cqe_policy = #pto.urma_cqe_policy<final>, submit_mode = #pto.async_submit_mode<defer_and_submit>}
         -> !pto.async_event<urma>, i1
-    // expected-error @+1 {{requires a Gather event and its submitting session in the same function}}
+    // expected-error @+1 {{requires a Gather or Scatter event and its submitting session in the same function}}
     %done = pto.comm.wait_async_event(%event, %other : !pto.async_event<urma>, !pto.async_session<urma>) -> i1
     return
   }
@@ -131,7 +131,7 @@ module attributes {pto.target_arch = "a5"} {
     %event, %ok = pto.comm.tput_async_gather destinations(%desc, %n : !pto.ptr<i8, gm>, ui32)
         segments(%desc, %n : !pto.ptr<i8, gm>, ui32) session(%s : !pto.async_session<urma>)
         {cqe_policy = #pto.urma_cqe_policy<no_cqe>} -> !pto.async_event<urma>, i1
-    // expected-error @+1 {{cannot wait on or test a no_cqe Gather event}}
+    // expected-error @+1 {{cannot wait on or test a no_cqe Gather or Scatter event}}
     %done = pto.comm.wait_async_event(%event, %s : !pto.async_event<urma>, !pto.async_session<urma>) -> i1
     return
   }

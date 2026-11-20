@@ -7,6 +7,7 @@
 // See LICENSE in the root of the software repository for the full text of the License.
 
 // Included by PTO.cpp as part of the PTO IR implementation translation unit.
+// Shared URMA checks cover Gather PUT and Scatter GET sessions and events.
 
 static bool getTensorLikeElementAndShape(Type ty, Type &elementType,
                                          ArrayRef<int64_t> &shape) {
@@ -224,113 +225,135 @@ LogicalResult pto::BuildUrmaSessionOp::verify() {
   return success();
 }
 
-static bool isKnownZeroGatherCount(Value value) {
-  // Arith integer constants are signless. A same-width cast supplies ui32
-  // without changing the count's bits.
-  while (auto conversion = value.getDefiningOp<mlir::UnrealizedConversionCastOp>()) {
-    const auto inputs = conversion.getInputs();
-    const auto results = conversion.getResults();
-    const bool singleInput = llvm::hasSingleElement(inputs);
-    const bool singleResult = llvm::hasSingleElement(results);
-    if (!singleInput || !singleResult) {
-      break;
+static bool isKnownZeroUrmaCount(Value value)
+{
+    // Arith integer constants are signless. A same-width cast supplies ui32
+    // without changing the count's bits.
+    while (auto conversion = value.getDefiningOp<mlir::UnrealizedConversionCastOp>()) {
+        const auto inputs = conversion.getInputs();
+        const auto results = conversion.getResults();
+        const bool singleInput = llvm::hasSingleElement(inputs);
+        const bool singleResult = llvm::hasSingleElement(results);
+        if (!singleInput || !singleResult) {
+            break;
+        }
+        Value input = inputs.front();
+        auto inputType = dyn_cast<IntegerType>(input.getType());
+        auto resultType = dyn_cast<IntegerType>(value.getType());
+        if (!inputType || !resultType) {
+            break;
+        }
+        const unsigned inputWidth = inputType.getWidth();
+        if (inputWidth != resultType.getWidth()) {
+            break;
+        }
+        value = input;
     }
-    Value input = inputs.front();
-    auto inputType = dyn_cast<IntegerType>(input.getType());
-    auto resultType = dyn_cast<IntegerType>(value.getType());
-    if (!inputType || !resultType) {
-      break;
-    }
-    const unsigned inputWidth = inputType.getWidth();
-    if (inputWidth != resultType.getWidth()) {
-      break;
-    }
-    value = input;
-  }
-  llvm::APInt count;
-  return matchPattern(value, mlir::m_ConstantInt(&count)) && count.isZero();
+    llvm::APInt count;
+    return matchPattern(value, mlir::m_ConstantInt(&count)) && count.isZero();
 }
 
-static LogicalResult verifyUrmaGatherPayload(pto::TPutAsyncGatherOp op) {
-  Value destinations = op.getDestinations();
-  Value destinationCount = op.getDestinationCount();
-  Value segments = op.getSegments();
-  Value segmentCount = op.getSegmentCount();
-  if (!destinations && !destinationCount && !segments && !segmentCount) {
-    const auto policy = op.getCqePolicy();
-    const auto mode = op.getSubmitMode();
-    if (policy != pto::UrmaCqePolicy::Final || mode != pto::AsyncSubmitMode::DeferAndSubmit) {
-      return op.emitOpError("requires final and defer_and_submit for empty Gather");
+template <typename TransferOp>
+static LogicalResult verifyUrmaDescriptorPayload(
+    TransferOp op, Value remotes, Value remoteCount, StringRef kind, StringRef remoteName)
+{
+    Value segments = op.getSegments();
+    Value segmentCount = op.getSegmentCount();
+    if (!remotes && !remoteCount && !segments && !segmentCount) {
+        const auto policy = op.getCqePolicy();
+        const auto mode = op.getSubmitMode();
+        if (policy != pto::UrmaCqePolicy::Final || mode != pto::AsyncSubmitMode::DeferAndSubmit) {
+            return op.emitOpError("requires final and defer_and_submit for empty ") << kind;
+        }
+        return success();
+    }
+    if (!remotes || !remoteCount || !segments || !segmentCount) {
+        return op.emitOpError("expects both descriptor pointers and both counts");
+    }
+    const bool zeroRemotes = isKnownZeroUrmaCount(remoteCount);
+    const bool zeroSegments = isKnownZeroUrmaCount(segmentCount);
+    if (zeroRemotes || zeroSegments) {
+        return op.emitOpError("expects positive descriptor counts for payload ") << kind;
+    }
+    if (failed(verifyUrmaBytePointer(op.getOperation(), remotes, remoteName))) {
+        return failure();
+    }
+    return verifyUrmaBytePointer(op.getOperation(), segments, "segments");
+}
+
+template <typename TransferOp>
+static LogicalResult verifyUrmaDescriptorTransfer(TransferOp op)
+{
+    const auto sessionEngine = op.getSession().getType().getEngine();
+    const auto eventEngine = op.getEvent().getType().getEngine();
+    if (sessionEngine != pto::DmaEngine::Urma || eventEngine != pto::DmaEngine::Urma) {
+        return op.emitOpError("expects !pto.async_session<urma> and !pto.async_event<urma>");
+    }
+    if (failed(verifyUrmaExecutionScope(op.getOperation()))) {
+        return failure();
+    }
+    pto::BuildUrmaSessionOp builder = op.getSession().template getDefiningOp<pto::BuildUrmaSessionOp>();
+    const auto parent = op.getOperation()->template getParentOfType<func::FuncOp>();
+    const bool isLocalBuilder = builder && builder->getParentOfType<func::FuncOp>() == parent;
+    if (!isLocalBuilder) {
+        return op.emitOpError("requires a session from build_urma_session in the same function");
+    }
+    const Value builderScratch = builder.getScratch();
+    if (builderScratch != op.getScratch()) {
+        return op.emitOpError("requires the same scratch operand as build_urma_session");
+    }
+    auto batchSize = op.getBatchSizeAttr();
+    const bool deferred = op.getSubmitMode() != pto::AsyncSubmitMode::Immediate;
+    if (deferred && batchSize && batchSize.getValue().isZero()) {
+        return op.emitOpError("requires nonzero batch_size for deferred submission");
     }
     return success();
-  }
-  if (!destinations || !destinationCount || !segments || !segmentCount) {
-    return op.emitOpError("expects both descriptor pointers and both counts");
-  }
-  const bool zeroDestinations = isKnownZeroGatherCount(destinationCount);
-  const bool zeroSegments = isKnownZeroGatherCount(segmentCount);
-  if (zeroDestinations || zeroSegments) {
-    return op.emitOpError("expects positive descriptor counts for payload Gather");
-  }
-  if (failed(verifyUrmaBytePointer(op.getOperation(), destinations,
-                                  "destinations"))) {
-    return failure();
-  }
-  return verifyUrmaBytePointer(op.getOperation(), segments, "segments");
 }
 
-LogicalResult pto::TPutAsyncGatherOp::verify() {
-  const auto sessionEngine = getSession().getType().getEngine();
-  const auto eventEngine = getEvent().getType().getEngine();
-  if (sessionEngine != pto::DmaEngine::Urma || eventEngine != pto::DmaEngine::Urma) {
-    return emitOpError("expects !pto.async_session<urma> and !pto.async_event<urma>");
-  }
-  if (failed(verifyUrmaExecutionScope(getOperation()))) {
-    return failure();
-  }
-  auto builder = getSession().getDefiningOp<pto::BuildUrmaSessionOp>();
-  const auto parent = getOperation()->getParentOfType<func::FuncOp>();
-  const bool isLocalBuilder = builder && builder->getParentOfType<func::FuncOp>() == parent;
-  if (!isLocalBuilder) {
-    return emitOpError("requires a session from build_urma_session in the same function");
-  }
-  const Value builderScratch = builder.getScratch();
-  if (builderScratch != getScratch()) {
-    return emitOpError("requires the same scratch operand as build_urma_session");
-  }
-  auto batchSize = getBatchSizeAttr();
-  const bool deferred = getSubmitMode() != pto::AsyncSubmitMode::Immediate;
-  if (deferred && batchSize && batchSize.getValue().isZero()) {
-    return emitOpError("requires nonzero batch_size for deferred submission");
-  }
-  return verifyUrmaGatherPayload(*this);
+LogicalResult pto::TPutAsyncGatherOp::verify()
+{
+    if (failed(verifyUrmaDescriptorTransfer(*this))) {
+        return failure();
+    }
+    return verifyUrmaDescriptorPayload(*this, getDestinations(), getDestinationCount(), "Gather", "destinations");
 }
 
-static LogicalResult verifyAsyncEventSession(Operation *op, Value event,
-                                             Value session) {
-  auto eventEngine = cast<pto::AsyncEventType>(event.getType()).getEngine();
-  auto sessionEngine = cast<pto::AsyncSessionType>(session.getType()).getEngine();
-  if (eventEngine != sessionEngine) {
-    return op->emitOpError("requires matching async event and session engine types");
-  }
-  if (!eventEngine) {
+LogicalResult pto::TGetAsyncScatterOp::verify()
+{
+    if (failed(verifyUrmaDescriptorTransfer(*this))) {
+        return failure();
+    }
+    return verifyUrmaDescriptorPayload(*this, getSources(), getSourceCount(), "Scatter", "sources");
+}
+
+static LogicalResult verifyAsyncEventSession(Operation* op, Value event, Value session)
+{
+    auto eventEngine = cast<pto::AsyncEventType>(event.getType()).getEngine();
+    auto sessionEngine = cast<pto::AsyncSessionType>(session.getType()).getEngine();
+    if (eventEngine != sessionEngine) {
+        return op->emitOpError("requires matching async event and session engine types");
+    }
+    if (!eventEngine) {
+        return success();
+    }
+    if (failed(verifyUrmaExecutionScope(op))) {
+        return failure();
+    }
+    auto gather = event.getDefiningOp<pto::TPutAsyncGatherOp>();
+    auto scatter = event.getDefiningOp<pto::TGetAsyncScatterOp>();
+    Operation* submit = event.getDefiningOp();
+    Value submittingSession = gather ? gather.getSession() : scatter ? scatter.getSession() : Value();
+    const auto parent = op->getParentOfType<func::FuncOp>();
+    const bool matchesSubmission =
+        submit && submit->getParentOfType<func::FuncOp>() == parent && submittingSession == session;
+    if (!matchesSubmission) {
+        return op->emitOpError("requires a Gather or Scatter event and its submitting session in the same function");
+    }
+    const auto policy = gather ? gather.getCqePolicy() : scatter.getCqePolicy();
+    if (policy == pto::UrmaCqePolicy::NoCqe) {
+        return op->emitOpError("cannot wait on or test a no_cqe Gather or Scatter event");
+    }
     return success();
-  }
-  if (failed(verifyUrmaExecutionScope(op))) {
-    return failure();
-  }
-  auto submit = event.getDefiningOp<pto::TPutAsyncGatherOp>();
-  const auto parent = op->getParentOfType<func::FuncOp>();
-  const bool matchesSubmission =
-      submit && submit->getParentOfType<func::FuncOp>() == parent && submit.getSession() == session;
-  if (!matchesSubmission) {
-    return op->emitOpError("requires a Gather event and its submitting session in the same function");
-  }
-  const auto policy = submit.getCqePolicy();
-  if (policy == pto::UrmaCqePolicy::NoCqe) {
-    return op->emitOpError("cannot wait on or test a no_cqe Gather event");
-  }
-  return success();
 }
 
 LogicalResult pto::WaitAsyncEventOp::verify() {

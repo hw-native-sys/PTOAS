@@ -14,6 +14,12 @@
 // RUN: not ptoas --pto-arch=a3 --emit-pto-ir %t/short-hp.pto 2>&1 | FileCheck %s --check-prefix=HP
 
 // RUN: not ptoas --pto-arch=a3 --emit-pto-ir %t/short-repeat.pto 2>&1 | FileCheck %s --check-prefix=REPEAT
+// RUN: not ptoas --pto-arch=a3 --emit-pto-ir %t/old-i32-trem.pto 2>&1 | FileCheck %s --check-prefix=I32-TREM
+// RUN: not ptoas --pto-arch=a3 --emit-pto-ir %t/old-i32-trems.pto 2>&1 | FileCheck %s --check-prefix=I32-TREMS
+// RUN: not ptoas --pto-arch=a3 --emit-pto-ir %t/short-i32-trem.pto 2>&1 | FileCheck %s --check-prefix=I32-TREM
+// RUN: not ptoas --pto-arch=a3 --emit-pto-ir %t/short-i32-trems.pto 2>&1 | FileCheck %s --check-prefix=I32-TREMS
+// RUN: not ptoas --pto-arch=a3 --emit-pto-ir %t/old-hp.pto 2>&1 | FileCheck %s --check-prefix=OLD-HP
+// RUN: not ptoas --pto-arch=a3 --emit-pto-ir %t/overflow.pto 2>&1 | FileCheck %s --check-prefix=OVERFLOW
 
 //--- valid.pto
 !full = !pto.tile_buf<vec, 1x128xf32>
@@ -23,8 +29,12 @@
 !scalar_data = !pto.tile_buf<vec, 1x64xf32>
 !unaligned_stride = !pto.tile_buf<vec, 1x72xf32>
 !integer_data = !pto.tile_buf<vec, 1x64xi32>
+!integer_rows = !pto.tile_buf<vec, 16x64xi32>
+!integer_unaligned = !pto.tile_buf<vec, 1x72xi32>
+!integer_trem_tmp = !pto.tile_buf<vec, 1x208xi32>
+!integer_trems_tmp = !pto.tile_buf<vec, 1x144xi32>
 !boxed_tmp = !pto.tile_buf<vec, 8x80xf32, valid=1x80, slayout=col_major>
-!hp_tmp = !pto.tile_buf<vec, 1x784xf32>
+!hp_tmp = !pto.tile_buf<vec, 1x912xf32>
 
 module attributes {pto.target_arch = "a2a3"} {
   func.func @explicit_hp_partial() attributes {pto.kernel_kind = #pto.kernel_kind<vector>} {
@@ -118,11 +128,43 @@ module attributes {pto.target_arch = "a2a3"} {
     pto.trems ins(%lhs, %scalar : !integer_data, i32) outs(%dst : !integer_data)
     return
   }
+
+  func.func @explicit_i32_tmp() attributes {pto.kernel_kind = #pto.kernel_kind<vector>} {
+    %scalar = arith.constant 3 : i32
+    %lhs = pto.alloc_tile : !integer_data
+    %rhs = pto.alloc_tile : !integer_data
+    %dst = pto.alloc_tile : !integer_data
+    %tmp = pto.alloc_tile : !integer_trem_tmp
+    %tmps = pto.alloc_tile : !integer_trems_tmp
+    pto.trem ins(%lhs, %rhs, %tmp : !integer_data, !integer_data, !integer_trem_tmp) outs(%dst : !integer_data)
+    pto.trems ins(%lhs, %scalar, %tmps : !integer_data, i32, !integer_trems_tmp) outs(%dst : !integer_data)
+    return
+  }
+
+  func.func @implicit_i32_multirow() attributes {pto.kernel_kind = #pto.kernel_kind<vector>} {
+    %scalar = arith.constant 3 : i32
+    %lhs = pto.alloc_tile : !integer_rows
+    %rhs = pto.alloc_tile : !integer_rows
+    %dst = pto.alloc_tile : !integer_rows
+    pto.trem ins(%lhs, %rhs : !integer_rows, !integer_rows) outs(%dst : !integer_rows)
+    pto.trems ins(%lhs, %scalar : !integer_rows, i32) outs(%dst : !integer_rows)
+    return
+  }
+
+  func.func @implicit_i32_repeat_padding() attributes {pto.kernel_kind = #pto.kernel_kind<vector>} {
+    %scalar = arith.constant 3 : i32
+    %lhs = pto.alloc_tile : !integer_unaligned
+    %rhs = pto.alloc_tile : !integer_unaligned
+    %dst = pto.alloc_tile : !integer_unaligned
+    pto.trem ins(%lhs, %rhs : !integer_unaligned, !integer_unaligned) outs(%dst : !integer_unaligned)
+    pto.trems ins(%lhs, %scalar : !integer_unaligned, i32) outs(%dst : !integer_unaligned)
+    return
+  }
 }
 
 // IR-LABEL: func.func @explicit_hp_partial
 // IR: pto.trem ins(
-// IR-SAME: !pto.tile_buf<vec, 1x784xf32>
+// IR-SAME: !pto.tile_buf<vec, 1x912xf32>
 // IR-SAME: precisionType = #pto<rem_precision high_precision>
 // IR-LABEL: func.func @implicit_default_partial
 // IR: pto.trem ins(
@@ -131,21 +173,21 @@ module attributes {pto.target_arch = "a2a3"} {
 // IR-SAME: !pto.tile_buf<vec, 1x144xf32>
 // IR-LABEL: func.func @implicit_hp_full
 // IR: pto.trem ins(
-// IR-SAME: !pto.tile_buf<vec, 1x1424xf32>
+// IR-SAME: !pto.tile_buf<vec, 1x1680xf32>
 // IR-SAME: precisionType = #pto<rem_precision high_precision>
 
 // IR-LABEL: func.func @implicit_hp_dynamic
 // IR: pto.trem ins(
-// IR-SAME: !pto.tile_buf<vec, 1x1424xf32>
+// IR-SAME: !pto.tile_buf<vec, 1x1680xf32>
 
 // IR-LABEL: func.func @hp_known_width
 // IR: pto.trem ins(
-// IR-SAME: !pto.tile_buf<vec, 1x784xf32>
+// IR-SAME: !pto.tile_buf<vec, 1x912xf32>
 // IR: pto.trem ins(
-// IR-SAME: !pto.tile_buf<vec, 1x784xf32>
+// IR-SAME: !pto.tile_buf<vec, 1x912xf32>
 // IR-LABEL: func.func @hp_updated_width
 // IR: pto.trem ins(
-// IR-SAME: !pto.tile_buf<vec, 1x784xf32>
+// IR-SAME: !pto.tile_buf<vec, 1x912xf32>
 // IR-LABEL: func.func @explicit_boxed_tmp
 // IR: pto.trems ins(
 // IR-SAME: !pto.tile_buf<vec, 8x80xf32
@@ -156,9 +198,24 @@ module attributes {pto.target_arch = "a2a3"} {
 // IR-SAME: !pto.tile_buf<vec, 1x144xf32>
 // IR-LABEL: func.func @implicit_i32
 // IR: pto.trem ins(
-// IR-SAME: !pto.tile_buf<vec, 1x80xi32>
+// IR-SAME: !pto.tile_buf<vec, 1x208xi32>
 // IR: pto.trems ins(
-// IR-SAME: !pto.tile_buf<vec, 1x80xi32>
+// IR-SAME: !pto.tile_buf<vec, 1x144xi32>
+// IR-LABEL: func.func @explicit_i32_tmp
+// IR: pto.trem ins(
+// IR-SAME: !pto.tile_buf<vec, 1x208xi32>
+// IR: pto.trems ins(
+// IR-SAME: !pto.tile_buf<vec, 1x144xi32>
+// IR-LABEL: func.func @implicit_i32_multirow
+// IR: pto.trem ins(
+// IR-SAME: !pto.tile_buf<vec, 1x208xi32>
+// IR: pto.trems ins(
+// IR-SAME: !pto.tile_buf<vec, 1x144xi32>
+// IR-LABEL: func.func @implicit_i32_repeat_padding
+// IR: pto.trem ins(
+// IR-SAME: !pto.tile_buf<vec, 1x288xi32>
+// IR: pto.trems ins(
+// IR-SAME: !pto.tile_buf<vec, 1x216xi32>
 
 // CPP-LABEL: void explicit_hp_partial(
 // CPP: TREM<pto::RemAlgorithm::HIGH_PRECISION>(
@@ -201,7 +258,7 @@ module attributes {pto.target_arch = "a2a3"} {
 
 //--- short-hp.pto
 !data = !pto.tile_buf<vec, 1x64xf32>
-!tmp = !pto.tile_buf<vec, 1x784xf32, valid=1x783>
+!tmp = !pto.tile_buf<vec, 1x912xf32, valid=1x911>
 
 module attributes {pto.target_arch = "a2a3"} {
   func.func @short_hp() attributes {pto.kernel_kind = #pto.kernel_kind<vector>} {
@@ -215,8 +272,8 @@ module attributes {pto.target_arch = "a2a3"} {
   }
 }
 
-// HP: error: 'pto.trem' op expects A2/A3 tmp to have at least 784 columns in one row with precisionType=high_precision
-// HP-SAME: got 784 physical columns and 783 valid columns
+// HP: error: 'pto.trem' op expects A2/A3 tmp to have at least 912 columns in one row with precisionType=high_precision
+// HP-SAME: got 912 physical columns and 911 valid columns
 
 //--- short-repeat.pto
 !data = !pto.tile_buf<vec, 1x72xf32>
@@ -235,3 +292,91 @@ module attributes {pto.target_arch = "a2a3"} {
 
 // REPEAT: error: 'pto.trems' op expects A2/A3 tmp to have at least 144 columns in one row
 // REPEAT-SAME: got 88 physical columns and 88 valid columns
+
+//--- old-i32-trem.pto
+!data = !pto.tile_buf<vec, 1x64xi32>
+!tmp = !pto.tile_buf<vec, 1x80xi32>
+module attributes {pto.target_arch = "a2a3"} {
+  func.func @old_tmp() attributes {pto.kernel_kind = #pto.kernel_kind<vector>} {
+    %a = pto.alloc_tile : !data
+    %b = pto.alloc_tile : !data
+    %dst = pto.alloc_tile : !data
+    %tmp = pto.alloc_tile : !tmp
+    pto.trem ins(%a, %b, %tmp : !data, !data, !tmp) outs(%dst : !data)
+    return
+  }
+}
+// I32-TREM: error: 'pto.trem' op expects A2/A3 tmp to have at least 208 columns in one row
+
+//--- old-i32-trems.pto
+!data = !pto.tile_buf<vec, 1x64xi32>
+!tmp = !pto.tile_buf<vec, 1x80xi32>
+module attributes {pto.target_arch = "a2a3"} {
+  func.func @old_tmp() attributes {pto.kernel_kind = #pto.kernel_kind<vector>} {
+    %s = arith.constant 3 : i32
+    %a = pto.alloc_tile : !data
+    %dst = pto.alloc_tile : !data
+    %tmp = pto.alloc_tile : !tmp
+    pto.trems ins(%a, %s, %tmp : !data, i32, !tmp) outs(%dst : !data)
+    return
+  }
+}
+// I32-TREMS: error: 'pto.trems' op expects A2/A3 tmp to have at least 144 columns in one row
+
+//--- short-i32-trem.pto
+!data = !pto.tile_buf<vec, 1x64xi32>
+!tmp = !pto.tile_buf<vec, 1x208xi32, valid=1x207>
+module attributes {pto.target_arch = "a2a3"} {
+  func.func @short_tmp() attributes {pto.kernel_kind = #pto.kernel_kind<vector>} {
+    %a = pto.alloc_tile : !data
+    %b = pto.alloc_tile : !data
+    %dst = pto.alloc_tile : !data
+    %tmp = pto.alloc_tile : !tmp
+    pto.trem ins(%a, %b, %tmp : !data, !data, !tmp) outs(%dst : !data)
+    return
+  }
+}
+
+//--- short-i32-trems.pto
+!data = !pto.tile_buf<vec, 1x64xi32>
+!tmp = !pto.tile_buf<vec, 1x144xi32, valid=1x143>
+module attributes {pto.target_arch = "a2a3"} {
+  func.func @short_tmp() attributes {pto.kernel_kind = #pto.kernel_kind<vector>} {
+    %s = arith.constant 3 : i32
+    %a = pto.alloc_tile : !data
+    %dst = pto.alloc_tile : !data
+    %tmp = pto.alloc_tile : !tmp
+    pto.trems ins(%a, %s, %tmp : !data, i32, !tmp) outs(%dst : !data)
+    return
+  }
+}
+
+//--- old-hp.pto
+!data = !pto.tile_buf<vec, 1x64xf32>
+!tmp = !pto.tile_buf<vec, 1x784xf32>
+module attributes {pto.target_arch = "a2a3"} {
+  func.func @old_hp() attributes {pto.kernel_kind = #pto.kernel_kind<vector>} {
+    %a = pto.alloc_tile : !data
+    %b = pto.alloc_tile : !data
+    %dst = pto.alloc_tile : !data
+    %tmp = pto.alloc_tile : !tmp
+    pto.trem ins(%a, %b, %tmp : !data, !data, !tmp) outs(%dst : !data)
+      {precisionType = #pto<rem_precision high_precision>}
+    return
+  }
+}
+// OLD-HP: error: 'pto.trem' op expects A2/A3 tmp to have at least 912 columns in one row
+// OLD-HP-SAME: got 784 physical columns and 784 valid columns
+
+//--- overflow.pto
+!data = !pto.tile_buf<vec, 1x2147483640xi32>
+module attributes {pto.target_arch = "a2a3"} {
+  func.func @overflow() attributes {pto.kernel_kind = #pto.kernel_kind<vector>} {
+    %a = pto.alloc_tile : !data
+    %b = pto.alloc_tile : !data
+    %dst = pto.alloc_tile : !data
+    pto.trem ins(%a, %b : !data, !data) outs(%dst : !data)
+    return
+  }
+}
+// OVERFLOW: cannot determine dst row stride to materialize implicit trem tmp

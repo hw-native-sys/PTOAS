@@ -2207,7 +2207,7 @@ def BuildAsyncSessionOp : PTO_Op<"comm.build_async_session", [
 def BuildUrmaSessionOp : PTO_Op<"comm.build_urma_session", [
     DeclareOpInterfaceMethods<MemoryEffectsOpInterface>
 ]> {
-  let summary = "Build a peer-independent URMA Gather session";
+  let summary = "Build a peer-independent URMA Gather/Scatter session";
   let arguments = (ins PtrType:$workspace, Optional<TileBufType>:$scratch);
   let results = (outs AsyncSessionType:$session, I1:$initOk);
   let hasVerifier = 1;
@@ -2241,6 +2241,37 @@ def TPutAsyncGatherOp : PTO_Op<"comm.tput_async_gather", [
   let assemblyFormat = [{
     (`destinations` `(` $destinations^ `,` $destinationCount `:`
         qualified(type($destinations)) `,` type($destinationCount) `)`
+     `segments` `(` $segments `,` $segmentCount `:`
+        qualified(type($segments)) `,` type($segmentCount) `)`)?
+    `session` `(` $session `:` qualified(type($session)) `)`
+    (`scratch` `(` $scratch^ `:` qualified(type($scratch)) `)`)?
+    attr-dict `->` qualified(type($event)) `,` type($postOk)
+  }];
+}
+
+def TGetAsyncScatterOp : PTO_Op<"comm.tget_async_scatter", [
+    AttrSizedOperandSegments,
+    DeclareOpInterfaceMethods<MemoryEffectsOpInterface>
+]> {
+  let summary = "Read contiguous remote URMA sources into ordered local GM segments";
+  let arguments = (ins
+      Optional<PtrType>:$sources,
+      Optional<UI32>:$sourceCount,
+      Optional<PtrType>:$segments,
+      Optional<UI32>:$segmentCount,
+      AsyncSessionType:$session,
+      Optional<TileBufType>:$scratch,
+      DefaultValuedAttr<PTO_UrmaCqePolicyAttr,
+                        "::mlir::pto::UrmaCqePolicy::OneCqe">:$cqe_policy,
+      DefaultValuedAttr<PTO_AsyncSubmitModeAttr,
+                        "::mlir::pto::AsyncSubmitMode::Immediate">:$submit_mode,
+      OptionalAttr<UI32Attr>:$batch_size
+  );
+  let results = (outs AsyncEventType:$event, I1:$postOk);
+  let hasVerifier = 1;
+  let assemblyFormat = [{
+    (`sources` `(` $sources^ `,` $sourceCount `:`
+        qualified(type($sources)) `,` type($sourceCount) `)`
      `segments` `(` $segments `,` $segmentCount `:`
         qualified(type($segments)) `,` type($segmentCount) `)`)?
     `session` `(` $session `:` qualified(type($session)) `)`

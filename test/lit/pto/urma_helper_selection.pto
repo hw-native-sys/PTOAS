@@ -1,0 +1,43 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+
+// RUN: split-file %s %t
+// RUN: ptoas --pto-arch=a5 %t/scatter.pto -o - | FileCheck %s --check-prefix=SCATTER --implicit-check-not='pto::comm::Gather' --implicit-check-not='ptoas_urma_gather' --implicit-check-not='TPUT_ASYNC'
+// RUN: ptoas --pto-arch=a5 %t/session.pto -o - | FileCheck %s --check-prefix=SESSION --implicit-check-not='ptoas_urma_' --implicit-check-not='pto::comm::Scatter' --implicit-check-not='pto::comm::Gather'
+
+//--- scatter.pto
+module attributes {pto.target_arch = "a5"} {
+  func.func @scatter_only(%workspace: !pto.ptr<i8, gm>) -> i1
+      attributes {pto.kernel_kind = #pto.kernel_kind<vector>} {
+    %session, %init = pto.comm.build_urma_session
+      workspace(%workspace : !pto.ptr<i8, gm>) -> !pto.async_session<urma>, i1
+    %event, %ok = pto.comm.tget_async_scatter session(%session : !pto.async_session<urma>)
+      {cqe_policy = #pto.urma_cqe_policy<final>, submit_mode = #pto.async_submit_mode<defer_and_submit>}
+      -> !pto.async_event<urma>, i1
+    return %ok : i1
+  }
+}
+// SCATTER: ptoas_urma_prepare(
+// SCATTER: ptoas_urma_scatter(
+// SCATTER: pto::comm::TGET_ASYNC<pto::comm::DmaEngine::URMA>(
+// SCATTER: pto::comm::ScatterSegment
+// SCATTER: pto::comm::ScatterSource
+// SCATTER-LABEL: bool scatter_only(
+
+//--- session.pto
+module attributes {pto.target_arch = "a5"} {
+  func.func @session_only(%workspace: !pto.ptr<i8, gm>) -> i1
+      attributes {pto.kernel_kind = #pto.kernel_kind<vector>} {
+    %session, %init = pto.comm.build_urma_session
+      workspace(%workspace : !pto.ptr<i8, gm>) -> !pto.async_session<urma>, i1
+    return %init : i1
+  }
+}
+// SESSION: #error "PTOAS URMA Gather/Scatter requires A5
+// SESSION-LABEL: bool session_only(
+// SESSION: pto::comm::BuildAsyncSession<pto::comm::DmaEngine::URMA>

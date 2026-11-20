@@ -6,7 +6,7 @@
 // INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
 // See LICENSE in the root of the software repository for the full text of the License.
 
-// RUN: ptoas --pto-arch=a5 %s -o - | FileCheck %s
+// RUN: ptoas --pto-arch=a5 %s -o - | FileCheck %s --implicit-check-not='pto::comm::Scatter' --implicit-check-not='ptoas_urma_scatter' --implicit-check-not='TGET_ASYNC'
 // RUN: pto-test-opt --cse --canonicalize --pto-test-async-effects %s | FileCheck %s --check-prefix=IR
 // RUN: ptoas --pto-arch=a5 --emit-pto-ir --mlir-print-ir-after=pto-plan-memory %s -o /dev/null 2>&1 | FileCheck %s --check-prefix=PLAN
 
@@ -69,15 +69,17 @@ module attributes {pto.target_arch = "a5"} {
   }
 }
 
-// CHECK: #error "PTOAS URMA Gather requires A5 (NPU_ARCH 3510) with URMA support"
-// CHECK: ptoas_urma_gather(
+// CHECK: #error "PTOAS URMA Gather/Scatter requires A5 (NPU_ARCH 3510) with URMA support"
+// CHECK: ptoas_urma_prepare(
 // CHECK: if (!session.valid || session.engine != pto::comm::DmaEngine::URMA ||
-// CHECK: destinationCount == 0u || segmentCount == 0u
-// CHECK: return pto::comm::AsyncEvent::Failed(pto::comm::DmaEngine::URMA);
+// CHECK: remoteCount == 0u || segmentCount == 0u
+// CHECK: return false;
 // CHECK: session.cfg.urma.cqePolicy = Policy;
 // CHECK-NEXT: session.submitMode = SubmitMode;
 // CHECK-NEXT: session.batchSize = BatchSize;
-// CHECK-NEXT: return pto::comm::TPUT_ASYNC<pto::comm::DmaEngine::URMA>(
+// CHECK: ptoas_urma_gather(
+// CHECK: return pto::comm::AsyncEvent::Failed(pto::comm::DmaEngine::URMA);
+// CHECK: return pto::comm::TPUT_ASYNC<pto::comm::DmaEngine::URMA>(
 // CHECK-LABEL: bool gather(
 // CHECK: pto::comm::AsyncSession [[SESSION:[a-zA-Z_][a-zA-Z_0-9]*]]
 // CHECK: bool {{.*}} = pto::comm::BuildAsyncSession<pto::comm::DmaEngine::URMA>({{[^,]+}}, [[SESSION]]);

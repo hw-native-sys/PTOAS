@@ -2945,9 +2945,9 @@ pto.trem ins(<src0>, <src1>, <tmp> : <src0_type>, <src1_type>, <tmp_type>)
   - `tmp` must be a row-major `loc=vec` tile.
   - `src0/src1/dst` must have the same `validRow/validCol`.
   - `tmp` must provide at least one valid row. Its physical and valid columns must both cover the required scratch width.
-  - With physical destination row stride `S` in elements, default precision requires `base = alignTo(S, 64) + 8 * ceil(S / 256) + 8` columns. The candidate capacity rounds up to a full 64-element repeat. The two extra regions hold a packed mask rounded to a 32-byte block and a 32-byte address buffer.
-  - FP32 `high_precision` also requires `hp = 192*C + 8*ceil(C/4) + 8 + (C == 1 ? 64 : 0) + 512*min(C, 8)` columns, where `C = max(floor(dst.validCol / 64), 1)`. Use `max(base, hp)`. PTOAS uses the valid width when it can prove its value and uses the physical width otherwise. The final term reserves the compensation window used by PTO-ISA `7db8bb0a`. The default pin `ece75ec8` needs no compensation window.
-  - With `S = dst.validCol = 64`, default precision requires 80 columns and FP32 high precision requires 784 columns.
+  - With physical destination row stride `S` in elements, default precision requires `base = alignTo(S, 64) + E*S + 8 * ceil(S / 256) + 8` columns, where `E = 2` for `i32` and `E = 0` for `f32`. Integer inputs remain read-only, so their dividend, divisor and quotient occupy three scratch rows. The final row reserves a full 64-element repeat; the extra regions hold a packed mask rounded to 32 bytes and a 32-byte address buffer.
+  - FP32 `high_precision` also requires `hp = 192*C + 8*ceil(C/4) + 8 + (C == 1 ? 64 : 0) + 640*min(C, 8)` columns, where `C = max(floor(dst.validCol / 64), 1)`. Use `max(base, hp)`. PTOAS uses the valid width when it can prove its value and uses the physical width otherwise. The final term covers the ten-vector compensation window in the default PTO-ISA pin `bed4f813`.
+  - With `S = dst.validCol = 64`, default precision requires 80 columns for `f32` and 208 columns for `i32`; FP32 high precision requires 912 columns. With a full 128-column destination, FP32 high precision requires 1680 columns. A single scratch row is reused across all destination rows.
 - **Implementation checks (A5)**
   - `src0/src1/dst` element type must match, and must be one of: `i32`, `i16`, `f16`, `f32`.
   - `src0/src1/dst` must use row-major layout (`blayout=row_major`).
@@ -3944,7 +3944,7 @@ pto.trems ins(<src>, <scalar>, <tmp> : <src_type>, <scalar_type>, <tmp_type>)
   - `src/dst` must use row-major layout (`blayout=row_major`).
   - `tmp` must be a row-major `loc=vec` tile.
   - `src` and `dst` must have the same `validRow/validCol`.
-  - `tmp` must provide at least one valid row. Its physical and valid columns must both cover `alignTo(S, 64) + 8 * ceil(S / 256) + 8`, where `S` is the physical destination row stride in elements.
+  - `tmp` must provide at least one valid row. Its physical and valid columns must both cover `alignTo(S, 64) + E*S + 8 * ceil(S / 256) + 8`, where `S` is the physical destination row stride in elements, `E = 1` for `i32`, and `E = 0` for `f32`. With `S = 64`, this is 144 columns for `i32` and 80 for `f32`; one scratch row is reused across all destination rows. The `pto.trems` IR operation currently emits the default algorithm and does not expose a high-precision selector.
 - **Implementation checks (A5)**
   - `src/dst` element type must match, and must be one of: `i16`, `i32`, `ui16`, `ui32`, `f16`, `f32`.
   - `scalar` type must match the tile element type.
@@ -10711,7 +10711,7 @@ This section documents PTO communication primitives. PTOAS currently exposes:
 - Synchronous signal ops: `pto.comm.tnotify`, `pto.comm.twait`, `pto.comm.ttest`
 - Synchronous collective ops: `pto.comm.tbroadcast`, `pto.comm.tgather`, `pto.comm.tscatter`, `pto.comm.treduce`
 - Asynchronous communication/session ops: `pto.comm.build_async_session`, `pto.comm.tput_async`, `pto.comm.tget_async`, `pto.comm.wait_async_event`, `pto.comm.test_async_event`
-- A5 URMA Gather ops: `pto.comm.build_urma_session`, `pto.comm.tput_async_gather`
+- A5 URMA descriptor ops: `pto.comm.build_urma_session`, `pto.comm.tput_async_gather`, `pto.comm.tget_async_scatter`
 
 ##### `pto.comm.build_async_session` - Create Async DMA Session
 
@@ -10800,11 +10800,20 @@ This section documents PTO communication primitives. PTOAS currently exposes:
 
 ---
 
-##### `pto.comm.build_urma_session` / `pto.comm.tput_async_gather` - A5 URMA Gather
+##### `pto.comm.build_urma_session` / `pto.comm.tput_async_gather` / `pto.comm.tget_async_scatter` - A5 URMA Transfers
 
-URMA Gather writes ordered local GM segments into contiguous remote GM destinations. Each destination descriptor selects a peer rank and gives the number of source segments to consume from the segment table.
+URMA Gather PUT writes ordered local GM segments into contiguous remote GM destinations. Scatter GET reads contiguous remote GM sources into ordered local GM destination segments. Each remote descriptor selects a peer rank and gives the number of consecutive segments to consume from the segment table.
 
-These operations require the EmitC backend and an A5 (3510) AIV kernel or vector section. The host must initialize the GM workspace with PTO-ISA's `UrmaWorkspaceManager`. The destination and segment operands point to arrays of PTO-ISA `GatherDestination` and `GatherSegment` respectively. Their layout and alignment follow PTO-ISA. Each count has type `ui32` and must be positive for a payload call.
+These operations require the EmitC backend and an A5 (3510) AIV kernel or vector section. The host must initialize the GM workspace with PTO-ISA's `UrmaWorkspaceManager`. The destination and segment operands point to arrays of PTO-ISA `GatherDestination` and `GatherSegment` respectively. Scatter's `sources` and `segments` operands point to arrays of `ScatterSource` and `ScatterSegment`. All descriptor pointers have type `!pto.ptr<i8, gm>`; their layout and alignment follow PTO-ISA. Each count has type `ui32` and counts descriptors, rather than bytes. Both counts must be positive for a payload call. Scatter requires PTO-ISA with [!2114](https://gitcode.com/cann/pto-isa/pull/2114); the default dependency also includes its CPU-SIM compatibility fix.
+
+Gather and Scatter runtime helpers are emitted independently. A module that only builds a URMA session or performs Gather PUT does not reference Scatter types or `TGET_ASYNC`, preserving compatibility with Gather-capable PTO-ISA revisions before !2114.
+
+| Scatter descriptor | Fields | Meaning |
+|--------------------|--------|---------|
+| `ScatterSource` | `addr`, `segCount`, `peer` | Contiguous remote GM source, number of destination segments consumed, source rank |
+| `ScatterSegment` | `addr`, `length` | Local GM destination and length in bytes |
+
+Sources consume disjoint consecutive slices of the segment table, with the sum of `segCount` equal to `segmentCount`. For each source, the remote read offset starts at zero and advances by each destination segment's byte length. Descriptor arrays must remain stable until completion; payload and workspace lifetimes must also cover completion. Outstanding destination ranges must not overlap. PTO-ISA validates peer IDs, registered memory ranges and segment lengths at submission.
 
 ```mlir
 %session, %init_ok = pto.comm.build_urma_session
@@ -10817,7 +10826,20 @@ These operations require the EmitC backend and an A5 (3510) AIV kernel or vector
     %event, %session : !pto.async_event<urma>, !pto.async_session<urma>) -> i1
 ```
 
-Check `init_ok` and `post_ok` before depending on the transfer. The example uses the default `one_cqe` and `immediate` policies. The table lists the optional attributes.
+The same session supports Scatter GET:
+
+```mlir
+%get_event, %get_ok = pto.comm.tget_async_scatter
+    sources(%srcs, %source_count : !pto.ptr<i8, gm>, ui32)
+    segments(%dst_segments, %segment_count : !pto.ptr<i8, gm>, ui32)
+    session(%session : !pto.async_session<urma>) -> !pto.async_event<urma>, i1
+%read_done = pto.comm.wait_async_event(
+    %get_event, %session : !pto.async_event<urma>, !pto.async_session<urma>) -> i1
+```
+
+For example, one source with `segCount = 2` and destination lengths of 4096 and 8192 bytes reads remote bytes `[0, 4096)` into the first local segment and `[4096, 12288)` into the second. Consume those results only after successful Wait or Test.
+
+Check `init_ok` and `post_ok` before depending on the transfer. `post_ok` reports submission acceptance; Wait/Test reports completion. Both examples use the default `one_cqe` and `immediate` policies, independently of the previous call's policy. The table lists the optional attributes.
 
 | Attribute | Values | Behavior |
 |-----------|--------|----------|
@@ -10827,7 +10849,9 @@ Check `init_ok` and `post_ok` before depending on the transfer. The example uses
 
 Both descriptor clauses may be omitted for an empty `final` with `defer_and_submit`. If there is no open `no_cqe` prefix, the call can still publish staged work and return a successful empty event. Keep the original `one_cqe` events for that work and wait on them after publishing. In general, only wait once on an event with a completion target, and only after the relevant queues have been published. Use the same session that produced the event. A `no_cqe` payload event cannot be used with Wait or Test.
 
-For SIMT SQE filling, optionally provide `scratch(%tile : !pto.tile_buf<vec, 1x1280xi8>)` to the builder and each Gather using that session, after the workspace and session clauses respectively. The same VEC tile must be used throughout, with at least 1184 bytes of static storage. PTO-ISA chooses the filling path. The host and device must keep payload buffers and the workspace valid through completion.
+PUT and GET can share one session and batch. Both use the policies above, including an empty `final` of either operation to publish staged work. Wait/Test does not publish a deferred batch.
+
+For SIMT submission, optionally provide `scratch(%tile : !pto.tile_buf<vec, 1x1280xi8>)` to the builder and every Gather/Scatter using that session, after the workspace and session clauses respectively. The same VEC tile must be used throughout, with at least 1184 bytes of static storage. PTO-ISA chooses the submission path. The host and device must keep payload buffers and the workspace valid through completion.
 
 ---
 
@@ -10845,7 +10869,7 @@ For SIMT SQE filling, optionally provide `scratch(%tile : !pto.tile_buf<vec, 1x1
 **Constraints & Verification:**
 
 - SDMA and prefetch use `!pto.async_event` and `!pto.async_session`.
-- URMA Gather uses `!pto.async_event<urma>` and `!pto.async_session<urma>`. Pass the event directly from Gather and the session that produced it.
+- URMA Gather/Scatter uses `!pto.async_event<urma>` and `!pto.async_session<urma>`. Pass the event directly from Gather or Scatter and the session that produced it.
 
 **Basic Example:**
 
