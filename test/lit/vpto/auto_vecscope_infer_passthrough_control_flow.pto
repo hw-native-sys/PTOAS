@@ -1,0 +1,102 @@
+// RUN: pto-test-opt %s -pto-infer-vpto-vecscope | FileCheck %s
+
+// A vector-typed SCF carrier requires vector scope even when its regions only
+// contain terminators. Cover all SCF operations handled as atomic clusters.
+module {
+  func.func @passthrough_for(%end: index, %value: f32, %dst: !pto.ptr<f32, ub>) {
+    %c0 = arith.constant 0 : index
+    %c1 = arith.constant 1 : index
+    %mask = pto.pset_b32 "PAT_ALL" : !pto.mask<b32>
+    %vec = pto.vdup %value, %mask : f32, !pto.mask<b32> -> !pto.vreg<64xf32>
+    %loop = scf.for %i = %c0 to %end step %c1 iter_args(%carry = %vec) -> (!pto.vreg<64xf32>) {
+      scf.yield %carry : !pto.vreg<64xf32>
+    }
+    pto.vsts %loop, %dst[%c0], %mask : !pto.vreg<64xf32>, !pto.ptr<f32, ub>, !pto.mask<b32>
+    return
+  }
+
+  // CHECK-LABEL: func.func @passthrough_for(
+  // CHECK: pto.vecscope {
+  // CHECK: %[[V:.*]] = pto.vdup
+  // CHECK: %[[FOR:.*]] = scf.for
+  // CHECK-SAME: iter_args(%[[CARRY:.*]] = %[[V]])
+  // CHECK-NEXT: scf.yield %[[CARRY]]
+  // CHECK-NEXT: }
+  // CHECK-NEXT: pto.vsts %[[FOR]],
+  // CHECK-NEXT: }
+  // CHECK-NEXT: return
+
+  func.func @passthrough_if(%cond: i1, %value: f32, %dst: !pto.ptr<f32, ub>) {
+    %c0 = arith.constant 0 : index
+    %mask = pto.pset_b32 "PAT_ALL" : !pto.mask<b32>
+    %vec = pto.vdup %value, %mask : f32, !pto.mask<b32> -> !pto.vreg<64xf32>
+    %result = scf.if %cond -> (!pto.vreg<64xf32>) {
+      scf.yield %vec : !pto.vreg<64xf32>
+    } else {
+      scf.yield %vec : !pto.vreg<64xf32>
+    }
+    pto.vsts %result, %dst[%c0], %mask : !pto.vreg<64xf32>, !pto.ptr<f32, ub>, !pto.mask<b32>
+    return
+  }
+
+  // CHECK-LABEL: func.func @passthrough_if(
+  // CHECK: pto.vecscope {
+  // CHECK: %[[V:.*]] = pto.vdup
+  // CHECK: %[[IF:.*]] = scf.if
+  // CHECK-NEXT: scf.yield %[[V]]
+  // CHECK-NEXT: } else {
+  // CHECK-NEXT: scf.yield %[[V]]
+  // CHECK-NEXT: }
+  // CHECK-NEXT: pto.vsts %[[IF]],
+  // CHECK-NEXT: }
+  // CHECK-NEXT: return
+
+  func.func @passthrough_while(%cond: i1, %value: f32, %dst: !pto.ptr<f32, ub>) {
+    %c0 = arith.constant 0 : index
+    %mask = pto.pset_b32 "PAT_ALL" : !pto.mask<b32>
+    %vec = pto.vdup %value, %mask : f32, !pto.mask<b32> -> !pto.vreg<64xf32>
+    %result = scf.while (%before = %vec) : (!pto.vreg<64xf32>) -> !pto.vreg<64xf32> {
+      scf.condition(%cond) %before : !pto.vreg<64xf32>
+    } do {
+    ^bb0(%after: !pto.vreg<64xf32>):
+      scf.yield %after : !pto.vreg<64xf32>
+    }
+    pto.vsts %result, %dst[%c0], %mask : !pto.vreg<64xf32>, !pto.ptr<f32, ub>, !pto.mask<b32>
+    return
+  }
+
+  // CHECK-LABEL: func.func @passthrough_while(
+  // CHECK: pto.vecscope {
+  // CHECK: %[[V:.*]] = pto.vdup
+  // CHECK: %[[WHILE:.*]] = scf.while
+  // CHECK: scf.condition
+  // CHECK: scf.yield
+  // CHECK-NEXT: }
+  // CHECK-NEXT: pto.vsts %[[WHILE]],
+  // CHECK-NEXT: }
+  // CHECK-NEXT: return
+
+  func.func @passthrough_mask(%end: index, %value: f32, %dst: !pto.ptr<f32, ub>) {
+    %c0 = arith.constant 0 : index
+    %c1 = arith.constant 1 : index
+    %mask = pto.pset_b32 "PAT_ALL" : !pto.mask<b32>
+    %loop = scf.for %i = %c0 to %end step %c1 iter_args(%carry = %mask) -> (!pto.mask<b32>) {
+      scf.yield %carry : !pto.mask<b32>
+    }
+    %vec = pto.vdup %value, %loop : f32, !pto.mask<b32> -> !pto.vreg<64xf32>
+    pto.vsts %vec, %dst[%c0], %loop : !pto.vreg<64xf32>, !pto.ptr<f32, ub>, !pto.mask<b32>
+    return
+  }
+
+  // CHECK-LABEL: func.func @passthrough_mask(
+  // CHECK: pto.vecscope {
+  // CHECK: %[[MASK:.*]] = pto.pset_b32
+  // CHECK: %[[FOR:.*]] = scf.for
+  // CHECK-SAME: iter_args(%[[CARRY:.*]] = %[[MASK]]) -> (!pto.mask<b32>)
+  // CHECK-NEXT: scf.yield %[[CARRY]]
+  // CHECK-NEXT: }
+  // CHECK-NEXT: {{.*}}pto.vdup {{.*}}%[[FOR]]
+  // CHECK-NEXT: pto.vsts
+  // CHECK-NEXT: }
+  // CHECK-NEXT: return
+}

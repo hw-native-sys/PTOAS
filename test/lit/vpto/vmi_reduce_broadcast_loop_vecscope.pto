@@ -1,0 +1,205 @@
+// RUN: ptoas --pto-arch=a5 --pto-level=level3 --emit-vpto --mlir-print-ir-after=pto-infer-vpto-vecscope %s -o /dev/null > %t.scope 2>&1
+// RUN: FileCheck %s --check-prefix=ADD_SI32 < %t.scope
+// RUN: FileCheck %s --check-prefix=MAX_SI32 < %t.scope
+// RUN: FileCheck %s --check-prefix=MIN_SI32 < %t.scope
+// RUN: FileCheck %s --check-prefix=ADD_UI32 < %t.scope
+// RUN: FileCheck %s --check-prefix=MAX_UI32 < %t.scope
+// RUN: FileCheck %s --check-prefix=MIN_UI32 < %t.scope
+// RUN: FileCheck %s --check-prefix=DEPENDENT < %t.scope
+// RUN: ptoas --pto-arch=a5 --pto-level=level3 --emit-vpto-llvm-ir %s -o %t.ll
+
+// CSE folds each body reduction/broadcast into the outer broadcast. The
+// surviving scf.for still carries vector data and must stay inside the same
+// resultless vecscope as the broadcast and store (issue #1634). Inspect the
+// inference boundary because later canonicalization may remove the trivial loop.
+// Function-pass dumps can arrive in parallel order, so check each function independently.
+module attributes {pto.target_arch = "a5", pto.backend = "vpto"} {
+  func.func @vcadd_si32_broadcast_loop(%src: !pto.ptr<si32, ub>, %dst: !pto.ptr<si32, ub>) attributes {pto.kernel_kind = #pto.kernel_kind<vector>} {
+    %c0 = arith.constant 0 : index
+    %c1 = arith.constant 1 : index
+    %c2 = arith.constant 2 : index
+    %c64 = arith.constant 64 : index
+    %x = pto.vmi.vload %src[%c0] : !pto.ptr<si32, ub> -> !pto.vmi.vreg<64xsi32>
+    %m = pto.vmi.create_mask %c64 : index -> !pto.vmi.mask<64xpred>
+    %r = pto.vmi.vcadd %x, %m {group = 1 : i64, pmode = "zero"} : !pto.vmi.vreg<64xsi32>, !pto.vmi.mask<64xpred> -> !pto.vmi.vreg<1xsi32>
+    %b = pto.vmi.vbrc %r : !pto.vmi.vreg<1xsi32> -> !pto.vmi.vreg<64xsi32>
+    %out = scf.for %i = %c0 to %c2 step %c1 iter_args(%acc = %b) -> (!pto.vmi.vreg<64xsi32>) {
+      %r2 = pto.vmi.vcadd %x, %m {group = 1 : i64, pmode = "zero"} : !pto.vmi.vreg<64xsi32>, !pto.vmi.mask<64xpred> -> !pto.vmi.vreg<1xsi32>
+      %b2 = pto.vmi.vbrc %r2 : !pto.vmi.vreg<1xsi32> -> !pto.vmi.vreg<64xsi32>
+      scf.yield %b2 : !pto.vmi.vreg<64xsi32>
+    }
+    pto.vmi.vstore %out, %dst[%c0] : !pto.vmi.vreg<64xsi32>, !pto.ptr<si32, ub>
+    return
+  }
+
+// ADD_SI32-LABEL: func.func @vcadd_si32_broadcast_loop(
+// ADD_SI32: pto.vecscope {
+// ADD_SI32: %[[BCAST:.*]] = pto.vdup
+// ADD_SI32: %[[LOOP:.*]] = scf.for
+// ADD_SI32-SAME: iter_args({{.*}} = %[[BCAST]]) -> (!pto.vreg<64xsi32>)
+// ADD_SI32-NEXT: scf.yield %[[BCAST]] : !pto.vreg<64xsi32>
+// ADD_SI32: pto.vsts %[[LOOP]],
+// ADD_SI32: return
+
+  func.func @vcmax_si32_broadcast_loop(%src: !pto.ptr<si32, ub>, %dst: !pto.ptr<si32, ub>) attributes {pto.kernel_kind = #pto.kernel_kind<vector>} {
+    %c0 = arith.constant 0 : index
+    %c1 = arith.constant 1 : index
+    %c2 = arith.constant 2 : index
+    %c64 = arith.constant 64 : index
+    %x = pto.vmi.vload %src[%c0] : !pto.ptr<si32, ub> -> !pto.vmi.vreg<64xsi32>
+    %m = pto.vmi.create_mask %c64 : index -> !pto.vmi.mask<64xpred>
+    %r = pto.vmi.vcmax %x, %m {group = 1 : i64, pmode = "zero"} : !pto.vmi.vreg<64xsi32>, !pto.vmi.mask<64xpred> -> !pto.vmi.vreg<1xsi32>
+    %b = pto.vmi.vbrc %r : !pto.vmi.vreg<1xsi32> -> !pto.vmi.vreg<64xsi32>
+    %out = scf.for %i = %c0 to %c2 step %c1 iter_args(%acc = %b) -> (!pto.vmi.vreg<64xsi32>) {
+      %r2 = pto.vmi.vcmax %x, %m {group = 1 : i64, pmode = "zero"} : !pto.vmi.vreg<64xsi32>, !pto.vmi.mask<64xpred> -> !pto.vmi.vreg<1xsi32>
+      %b2 = pto.vmi.vbrc %r2 : !pto.vmi.vreg<1xsi32> -> !pto.vmi.vreg<64xsi32>
+      scf.yield %b2 : !pto.vmi.vreg<64xsi32>
+    }
+    pto.vmi.vstore %out, %dst[%c0] : !pto.vmi.vreg<64xsi32>, !pto.ptr<si32, ub>
+    return
+  }
+
+// MAX_SI32-LABEL: func.func @vcmax_si32_broadcast_loop(
+// MAX_SI32: pto.vecscope {
+// MAX_SI32: %[[BCAST:.*]] = pto.vdup
+// MAX_SI32: %[[LOOP:.*]] = scf.for
+// MAX_SI32-SAME: iter_args({{.*}} = %[[BCAST]]) -> (!pto.vreg<64xsi32>)
+// MAX_SI32-NEXT: scf.yield %[[BCAST]] : !pto.vreg<64xsi32>
+// MAX_SI32: pto.vsts %[[LOOP]],
+// MAX_SI32: return
+
+  func.func @vcmin_si32_broadcast_loop(%src: !pto.ptr<si32, ub>, %dst: !pto.ptr<si32, ub>) attributes {pto.kernel_kind = #pto.kernel_kind<vector>} {
+    %c0 = arith.constant 0 : index
+    %c1 = arith.constant 1 : index
+    %c2 = arith.constant 2 : index
+    %c64 = arith.constant 64 : index
+    %x = pto.vmi.vload %src[%c0] : !pto.ptr<si32, ub> -> !pto.vmi.vreg<64xsi32>
+    %m = pto.vmi.create_mask %c64 : index -> !pto.vmi.mask<64xpred>
+    %r = pto.vmi.vcmin %x, %m {group = 1 : i64, pmode = "zero"} : !pto.vmi.vreg<64xsi32>, !pto.vmi.mask<64xpred> -> !pto.vmi.vreg<1xsi32>
+    %b = pto.vmi.vbrc %r : !pto.vmi.vreg<1xsi32> -> !pto.vmi.vreg<64xsi32>
+    %out = scf.for %i = %c0 to %c2 step %c1 iter_args(%acc = %b) -> (!pto.vmi.vreg<64xsi32>) {
+      %r2 = pto.vmi.vcmin %x, %m {group = 1 : i64, pmode = "zero"} : !pto.vmi.vreg<64xsi32>, !pto.vmi.mask<64xpred> -> !pto.vmi.vreg<1xsi32>
+      %b2 = pto.vmi.vbrc %r2 : !pto.vmi.vreg<1xsi32> -> !pto.vmi.vreg<64xsi32>
+      scf.yield %b2 : !pto.vmi.vreg<64xsi32>
+    }
+    pto.vmi.vstore %out, %dst[%c0] : !pto.vmi.vreg<64xsi32>, !pto.ptr<si32, ub>
+    return
+  }
+
+// MIN_SI32-LABEL: func.func @vcmin_si32_broadcast_loop(
+// MIN_SI32: pto.vecscope {
+// MIN_SI32: %[[BCAST:.*]] = pto.vdup
+// MIN_SI32: %[[LOOP:.*]] = scf.for
+// MIN_SI32-SAME: iter_args({{.*}} = %[[BCAST]]) -> (!pto.vreg<64xsi32>)
+// MIN_SI32-NEXT: scf.yield %[[BCAST]] : !pto.vreg<64xsi32>
+// MIN_SI32: pto.vsts %[[LOOP]],
+// MIN_SI32: return
+
+  func.func @vcadd_ui32_broadcast_loop(%src: !pto.ptr<ui32, ub>, %dst: !pto.ptr<ui32, ub>) attributes {pto.kernel_kind = #pto.kernel_kind<vector>} {
+    %c0 = arith.constant 0 : index
+    %c1 = arith.constant 1 : index
+    %c2 = arith.constant 2 : index
+    %c64 = arith.constant 64 : index
+    %x = pto.vmi.vload %src[%c0] : !pto.ptr<ui32, ub> -> !pto.vmi.vreg<64xui32>
+    %m = pto.vmi.create_mask %c64 : index -> !pto.vmi.mask<64xpred>
+    %r = pto.vmi.vcadd %x, %m {group = 1 : i64, pmode = "zero"} : !pto.vmi.vreg<64xui32>, !pto.vmi.mask<64xpred> -> !pto.vmi.vreg<1xui32>
+    %b = pto.vmi.vbrc %r : !pto.vmi.vreg<1xui32> -> !pto.vmi.vreg<64xui32>
+    %out = scf.for %i = %c0 to %c2 step %c1 iter_args(%acc = %b) -> (!pto.vmi.vreg<64xui32>) {
+      %r2 = pto.vmi.vcadd %x, %m {group = 1 : i64, pmode = "zero"} : !pto.vmi.vreg<64xui32>, !pto.vmi.mask<64xpred> -> !pto.vmi.vreg<1xui32>
+      %b2 = pto.vmi.vbrc %r2 : !pto.vmi.vreg<1xui32> -> !pto.vmi.vreg<64xui32>
+      scf.yield %b2 : !pto.vmi.vreg<64xui32>
+    }
+    pto.vmi.vstore %out, %dst[%c0] : !pto.vmi.vreg<64xui32>, !pto.ptr<ui32, ub>
+    return
+  }
+
+// ADD_UI32-LABEL: func.func @vcadd_ui32_broadcast_loop(
+// ADD_UI32: pto.vecscope {
+// ADD_UI32: %[[BCAST:.*]] = pto.vdup
+// ADD_UI32: %[[LOOP:.*]] = scf.for
+// ADD_UI32-SAME: iter_args({{.*}} = %[[BCAST]]) -> (!pto.vreg<64xui32>)
+// ADD_UI32-NEXT: scf.yield %[[BCAST]] : !pto.vreg<64xui32>
+// ADD_UI32: pto.vsts %[[LOOP]],
+// ADD_UI32: return
+
+  func.func @vcmax_ui32_broadcast_loop(%src: !pto.ptr<ui32, ub>, %dst: !pto.ptr<ui32, ub>) attributes {pto.kernel_kind = #pto.kernel_kind<vector>} {
+    %c0 = arith.constant 0 : index
+    %c1 = arith.constant 1 : index
+    %c2 = arith.constant 2 : index
+    %c64 = arith.constant 64 : index
+    %x = pto.vmi.vload %src[%c0] : !pto.ptr<ui32, ub> -> !pto.vmi.vreg<64xui32>
+    %m = pto.vmi.create_mask %c64 : index -> !pto.vmi.mask<64xpred>
+    %r = pto.vmi.vcmax %x, %m {group = 1 : i64, pmode = "zero"} : !pto.vmi.vreg<64xui32>, !pto.vmi.mask<64xpred> -> !pto.vmi.vreg<1xui32>
+    %b = pto.vmi.vbrc %r : !pto.vmi.vreg<1xui32> -> !pto.vmi.vreg<64xui32>
+    %out = scf.for %i = %c0 to %c2 step %c1 iter_args(%acc = %b) -> (!pto.vmi.vreg<64xui32>) {
+      %r2 = pto.vmi.vcmax %x, %m {group = 1 : i64, pmode = "zero"} : !pto.vmi.vreg<64xui32>, !pto.vmi.mask<64xpred> -> !pto.vmi.vreg<1xui32>
+      %b2 = pto.vmi.vbrc %r2 : !pto.vmi.vreg<1xui32> -> !pto.vmi.vreg<64xui32>
+      scf.yield %b2 : !pto.vmi.vreg<64xui32>
+    }
+    pto.vmi.vstore %out, %dst[%c0] : !pto.vmi.vreg<64xui32>, !pto.ptr<ui32, ub>
+    return
+  }
+
+// MAX_UI32-LABEL: func.func @vcmax_ui32_broadcast_loop(
+// MAX_UI32: pto.vecscope {
+// MAX_UI32: %[[BCAST:.*]] = pto.vdup
+// MAX_UI32: %[[LOOP:.*]] = scf.for
+// MAX_UI32-SAME: iter_args({{.*}} = %[[BCAST]]) -> (!pto.vreg<64xui32>)
+// MAX_UI32-NEXT: scf.yield %[[BCAST]] : !pto.vreg<64xui32>
+// MAX_UI32: pto.vsts %[[LOOP]],
+// MAX_UI32: return
+
+  func.func @vcmin_ui32_broadcast_loop(%src: !pto.ptr<ui32, ub>, %dst: !pto.ptr<ui32, ub>) attributes {pto.kernel_kind = #pto.kernel_kind<vector>} {
+    %c0 = arith.constant 0 : index
+    %c1 = arith.constant 1 : index
+    %c2 = arith.constant 2 : index
+    %c64 = arith.constant 64 : index
+    %x = pto.vmi.vload %src[%c0] : !pto.ptr<ui32, ub> -> !pto.vmi.vreg<64xui32>
+    %m = pto.vmi.create_mask %c64 : index -> !pto.vmi.mask<64xpred>
+    %r = pto.vmi.vcmin %x, %m {group = 1 : i64, pmode = "zero"} : !pto.vmi.vreg<64xui32>, !pto.vmi.mask<64xpred> -> !pto.vmi.vreg<1xui32>
+    %b = pto.vmi.vbrc %r : !pto.vmi.vreg<1xui32> -> !pto.vmi.vreg<64xui32>
+    %out = scf.for %i = %c0 to %c2 step %c1 iter_args(%acc = %b) -> (!pto.vmi.vreg<64xui32>) {
+      %r2 = pto.vmi.vcmin %x, %m {group = 1 : i64, pmode = "zero"} : !pto.vmi.vreg<64xui32>, !pto.vmi.mask<64xpred> -> !pto.vmi.vreg<1xui32>
+      %b2 = pto.vmi.vbrc %r2 : !pto.vmi.vreg<1xui32> -> !pto.vmi.vreg<64xui32>
+      scf.yield %b2 : !pto.vmi.vreg<64xui32>
+    }
+    pto.vmi.vstore %out, %dst[%c0] : !pto.vmi.vreg<64xui32>, !pto.ptr<ui32, ub>
+    return
+  }
+
+// MIN_UI32-LABEL: func.func @vcmin_ui32_broadcast_loop(
+// MIN_UI32: pto.vecscope {
+// MIN_UI32: %[[BCAST:.*]] = pto.vdup
+// MIN_UI32: %[[LOOP:.*]] = scf.for
+// MIN_UI32-SAME: iter_args({{.*}} = %[[BCAST]]) -> (!pto.vreg<64xui32>)
+// MIN_UI32-NEXT: scf.yield %[[BCAST]] : !pto.vreg<64xui32>
+// MIN_UI32: pto.vsts %[[LOOP]],
+// MIN_UI32: return
+
+  func.func @dependent_broadcast_loop(%src: !pto.ptr<si32, ub>, %dst: !pto.ptr<si32, ub>) attributes {pto.kernel_kind = #pto.kernel_kind<vector>} {
+    %c0 = arith.constant 0 : index
+    %c1 = arith.constant 1 : index
+    %c2 = arith.constant 2 : index
+    %c64 = arith.constant 64 : index
+    %x = pto.vmi.vload %src[%c0] : !pto.ptr<si32, ub> -> !pto.vmi.vreg<64xsi32>
+    %m = pto.vmi.create_mask %c64 : index -> !pto.vmi.mask<64xpred>
+    %r = pto.vmi.vcadd %x, %m {group = 1 : i64, pmode = "zero"} : !pto.vmi.vreg<64xsi32>, !pto.vmi.mask<64xpred> -> !pto.vmi.vreg<1xsi32>
+    %b = pto.vmi.vbrc %r : !pto.vmi.vreg<1xsi32> -> !pto.vmi.vreg<64xsi32>
+    %out = scf.for %i = %c0 to %c2 step %c1 iter_args(%acc = %b) -> (!pto.vmi.vreg<64xsi32>) {
+      %r2 = pto.vmi.vcadd %acc, %m {group = 1 : i64, pmode = "zero"} : !pto.vmi.vreg<64xsi32>, !pto.vmi.mask<64xpred> -> !pto.vmi.vreg<1xsi32>
+      %b2 = pto.vmi.vbrc %r2 : !pto.vmi.vreg<1xsi32> -> !pto.vmi.vreg<64xsi32>
+      scf.yield %b2 : !pto.vmi.vreg<64xsi32>
+    }
+    pto.vmi.vstore %out, %dst[%c0] : !pto.vmi.vreg<64xsi32>, !pto.ptr<si32, ub>
+    return
+  }
+
+// DEPENDENT-LABEL: func.func @dependent_broadcast_loop(
+// DEPENDENT: pto.vecscope {
+// DEPENDENT: pto.vdup
+// DEPENDENT: %[[LOOP:.*]] = scf.for
+// DEPENDENT: pto.vdup
+// DEPENDENT: scf.yield
+// DEPENDENT: pto.vsts %[[LOOP]],
+// DEPENDENT: return
+}

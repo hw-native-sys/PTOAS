@@ -189,19 +189,23 @@ static void summarizeNestedRegionForAtomicCluster(
   }
 }
 
-static bool canTreatAsAtomicControlFlow(Operation *op) {
-  if (!isAtomicControlFlowCandidate(op)) {
-    return false;
-  }
-
-  NestedRegionSummary summary;
-  for (Region &region : op->getRegions()) {
-    summarizeNestedRegionForAtomicCluster(region, summary);
-    if (summary.hasBoundaryOperation) {
-      return false;
+static bool canTreatAsAtomicControlFlow(Operation* op)
+{
+    if (!isAtomicControlFlowCandidate(op)) {
+        return false;
     }
-  }
-  return summary.hasVectorOperation;
+
+    NestedRegionSummary summary;
+    for (Region& region : op->getRegions()) {
+        summarizeNestedRegionForAtomicCluster(region, summary);
+        if (summary.hasBoundaryOperation) {
+            return false;
+        }
+    }
+    // CSE can leave only scf.yield/scf.condition in a vector-carrying region.
+    // The carrier still belongs to the vector cluster even when no nested
+    // instruction remains; otherwise its init/yield values escape a scope.
+    return summary.hasVectorOperation || hasVecScopeTypedOperandOrResult(op);
 }
 
 static VPTOInferenceOpClass classifyOperationForInference(Operation *op) {
