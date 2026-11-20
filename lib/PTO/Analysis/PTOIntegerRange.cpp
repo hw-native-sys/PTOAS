@@ -520,30 +520,40 @@ static std::optional<std::pair<CertifiedAffineForm, int64_t>> certifiedGuardCons
     return std::nullopt;
 }
 
-// A dominating scf.if guard as a certified inequality
-// `diff >= rhs` over leaf values, where diff = high - low per the predicate.
-static void collectGuardConstraint(
-    Operation* context, Operation* parent, SmallVectorImpl<std::pair<CertifiedAffineForm, int64_t>>& out)
+using GuardConstraints = SmallVector<std::pair<CertifiedAffineForm, int64_t>, kValue2>;
+
+// A true conjunction implies each signed comparison. Disjunctions and the
+// else arm do not provide these facts.
+static void collectTrueGuard(Value condition, GuardConstraints& out, unsigned depth)
 {
-    CertifiedLeafRanges freeRanges;
-    auto ifOp = dyn_cast<scf::IfOp>(parent);
-    if (!ifOp || ifOp.getElseRegion().isAncestor(context->getParentRegion())) {
+    if (depth >= kValue16) {
         return;
     }
-    auto cmp = ifOp.getCondition().getDefiningOp<arith::CmpIOp>();
-    if (!cmp) {
+    if (auto conjunction = condition.getDefiningOp<arith::AndIOp>()) {
+        collectTrueGuard(conjunction.getLhs(), out, depth + 1);
+        collectTrueGuard(conjunction.getRhs(), out, depth + 1);
         return;
     }
-    auto operands = signedGuardOperands(cmp);
+    auto cmp = condition.getDefiningOp<arith::CmpIOp>();
+    auto operands = cmp ? signedGuardOperands(cmp) : std::nullopt;
     if (!operands) {
         return;
     }
+    CertifiedLeafRanges freeRanges;
     if (auto constraint = certifiedGuardConstraint(*operands, freeRanges)) {
         out.push_back(std::move(*constraint));
     }
 }
 
-static void collectGuardConstraints(Operation* context, SmallVectorImpl<std::pair<CertifiedAffineForm, int64_t>>& out)
+static void collectGuardConstraint(Operation* context, Operation* parent, GuardConstraints& out)
+{
+    auto ifOp = dyn_cast<scf::IfOp>(parent);
+    if (ifOp && !ifOp.getElseRegion().isAncestor(context->getParentRegion())) {
+        collectTrueGuard(ifOp.getCondition(), out, 0);
+    }
+}
+
+static void collectGuardConstraints(Operation* context, GuardConstraints& out)
 {
     for (Operation* parent = context->getParentOp(); parent; parent = parent->getParentOp()) {
         collectGuardConstraint(context, parent, out);
@@ -578,8 +588,6 @@ static bool addFormConstraint(
     poly.addInequality(row);
     return true;
 }
-
-using GuardConstraints = SmallVector<std::pair<CertifiedAffineForm, int64_t>, kValue2>;
 
 struct GuardLeafDimensions {
     SmallVector<Value, kValue4> leaves;
@@ -836,6 +844,9 @@ static PTOLoopDomain inferLoopEnvelope(scf::ForOp forOp)
     bool directBound = direct.isSignedIntN(64) && (direct.getBitWidth() < 64 || !direct.isMaxSignedValue());
     if (directBound) {
         upper = direct.getSExtValue();
+    }
+    if (auto guarded = guardedValueRange(forOp, forOp.getUpperBound())) {
+        upper = upper ? std::min(*upper, guarded->hi) : std::optional<int64_t>(guarded->hi);
     }
     // A truncation-narrowed clamp bound loses the minsi clamp to the full
     // narrow range; the guards of the loop may certify it back.

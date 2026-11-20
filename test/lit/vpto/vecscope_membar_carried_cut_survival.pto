@@ -1,0 +1,139 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+
+// RUN: pto-test-opt %s --pto-insert-vecscope-membar | FileCheck %s
+// RUN: sed 's/target_arch = "a5"/target_arch = "a3"/' %s | pto-test-opt --pto-insert-vecscope-membar | FileCheck %s
+// RUN: pto-test-opt %s --pto-insert-vecscope-membar --pto-insert-vecscope-membar | FileCheck %s
+// RUN: ptoas %s --pto-arch=a5 --pto-backend=vpto --emit-vpto --enable-vecscope-mem-bar=true -o - | FileCheck %s
+// RUN: ptoas %s --pto-arch=a3 --pto-backend=vpto --emit-vpto --enable-vecscope-mem-bar=true -o - | FileCheck %s
+
+// The second T load has redundant same-iteration coverage from B1. Its B2
+// cut must survive when it also discharges a carried RAW or WAR obligation.
+module attributes {pto.target_arch = "a5"} {
+// CHECK-LABEL: func.func @cut_removed
+// CHECK: pto.vlds
+// CHECK: pto.vsts
+// CHECK-NEXT: pto.mem_bar "VST_VLD"
+// CHECK-NEXT: {{.*}}pto.vlds
+// CHECK: pto.vsts
+// CHECK-NEXT: pto.vsts
+// CHECK-NEXT: pto.mem_bar "VST_VLD"
+// CHECK-NEXT: {{.*}}pto.vlds
+// CHECK: pto.vsts
+// CHECK-NOT: pto.mem_bar
+// CHECK: return
+func.func @cut_removed(%base: !pto.ptr<f32, ub>, %data: !pto.vreg<64xf32>) attributes {pto.aiv} {
+ %z = arith.constant 0 : index
+ %one = arith.constant 1 : index
+ %eight = arith.constant 8 : index
+ %stride = arith.constant 64 : index
+ %scratch = arith.constant 4096 : index
+ %out1off = arith.constant 8192 : index
+ %out2off = arith.constant 12288 : index
+ %out1 = pto.addptr %base, %out1off : <f32, ub>, index -> <f32, ub>
+ %out2 = pto.addptr %base, %out2off : <f32, ub>, index -> <f32, ub>
+ %tmp = pto.addptr %base, %scratch : <f32, ub>, index -> <f32, ub>
+ pto.vecscope {
+  %m = pto.pset_b32 "PAT_ALL" : !pto.mask<b32>
+  scf.for %i = %z to %eight step %one {
+   %off = arith.muli %i, %stride : index
+   %next = arith.addi %off, %stride : index
+   %read_prev = pto.vlds %base[%off] : !pto.ptr<f32, ub>, index -> !pto.vreg<64xf32>
+   pto.vsts %read_prev, %tmp[%off], %m : !pto.vreg<64xf32>, !pto.ptr<f32, ub>, index, !pto.mask<b32>
+   %first = pto.vlds %tmp[%off] : !pto.ptr<f32, ub>, index -> !pto.vreg<64xf32>
+   pto.vsts %first, %out1[%off], %m : !pto.vreg<64xf32>, !pto.ptr<f32, ub>, index, !pto.mask<b32>
+   pto.vsts %data, %base[%next], %m : !pto.vreg<64xf32>, !pto.ptr<f32, ub>, index, !pto.mask<b32>
+   %second = pto.vlds %tmp[%off] : !pto.ptr<f32, ub>, index -> !pto.vreg<64xf32>
+   pto.vsts %second, %out2[%off], %m : !pto.vreg<64xf32>, !pto.ptr<f32, ub>, index, !pto.mask<b32>
+  }
+ }
+ return
+}
+
+// CHECK-LABEL: func.func @war_cut_removed
+// CHECK: pto.vsts
+// CHECK-NEXT: pto.mem_bar "VST_VLD"
+// CHECK-NEXT: {{.*}}pto.vlds
+// CHECK-NEXT: pto.vsts
+// CHECK-NEXT: {{.*}}pto.vlds
+// CHECK-NEXT: pto.vsts
+// CHECK-NEXT: pto.mem_bar "VST_VLD"
+// CHECK-NEXT: {{.*}}pto.vlds
+// CHECK: pto.vsts
+// CHECK-NOT: pto.mem_bar
+// CHECK: return
+func.func @war_cut_removed(%base: !pto.ptr<f32, ub>, %data: !pto.vreg<64xf32>) attributes {pto.aiv} {
+ %z = arith.constant 0 : index
+ %one = arith.constant 1 : index
+ %eight = arith.constant 8 : index
+ %stride = arith.constant 64 : index
+ %scratch = arith.constant 4096 : index
+ %out1off = arith.constant 8192 : index
+ %out2off = arith.constant 12288 : index
+ %out1 = pto.addptr %base, %out1off : <f32, ub>, index -> <f32, ub>
+ %out2 = pto.addptr %base, %out2off : <f32, ub>, index -> <f32, ub>
+ %tmp = pto.addptr %base, %scratch : <f32, ub>, index -> <f32, ub>
+ pto.vecscope {
+  %m = pto.pset_b32 "PAT_ALL" : !pto.mask<b32>
+  scf.for %i = %z to %eight step %one {
+   %off = arith.muli %i, %stride : index
+   %next = arith.addi %off, %stride : index
+   pto.vsts %data, %tmp[%off], %m : !pto.vreg<64xf32>, !pto.ptr<f32, ub>, index, !pto.mask<b32>
+   %first = pto.vlds %tmp[%off] : !pto.ptr<f32, ub>, index -> !pto.vreg<64xf32>
+   pto.vsts %first, %base[%off], %m : !pto.vreg<64xf32>, !pto.ptr<f32, ub>, index, !pto.mask<b32>
+   %read_next = pto.vlds %base[%next] : !pto.ptr<f32, ub>, index -> !pto.vreg<64xf32>
+   pto.vsts %read_next, %out1[%off], %m : !pto.vreg<64xf32>, !pto.ptr<f32, ub>, index, !pto.mask<b32>
+   %second = pto.vlds %tmp[%off] : !pto.ptr<f32, ub>, index -> !pto.vreg<64xf32>
+   pto.vsts %second, %out2[%off], %m : !pto.vreg<64xf32>, !pto.ptr<f32, ub>, index, !pto.mask<b32>
+  }
+ }
+ return
+}
+
+// An alternative surviving cut may replace the original proof witness.
+// CHECK-LABEL: func.func @replacement_cut
+// CHECK: pto.vlds
+// CHECK: pto.vsts
+// CHECK-NEXT: pto.mem_bar "VST_VLD"
+// CHECK-NEXT: {{.*}}pto.vlds
+// CHECK: pto.vsts
+// CHECK-NEXT: pto.vsts
+// CHECK-NEXT: {{.*}}pto.vlds
+// CHECK-NEXT: pto.mem_bar "VST_VLD"
+// CHECK-NEXT: pto.vsts
+// CHECK-NOT: pto.mem_bar
+// CHECK: return
+func.func @replacement_cut(%base: !pto.ptr<f32, ub>, %data: !pto.vreg<64xf32>) attributes {pto.aiv} {
+ %z = arith.constant 0 : index
+ %one = arith.constant 1 : index
+ %eight = arith.constant 8 : index
+ %stride = arith.constant 64 : index
+ %scratch = arith.constant 4096 : index
+ %out1off = arith.constant 8192 : index
+ %out2off = arith.constant 12288 : index
+ %out1 = pto.addptr %base, %out1off : <f32, ub>, index -> <f32, ub>
+ %out2 = pto.addptr %base, %out2off : <f32, ub>, index -> <f32, ub>
+ %tmp = pto.addptr %base, %scratch : <f32, ub>, index -> <f32, ub>
+ pto.vecscope {
+  %m = pto.pset_b32 "PAT_ALL" : !pto.mask<b32>
+  scf.for %i = %z to %eight step %one {
+   %off = arith.muli %i, %stride : index
+   %next = arith.addi %off, %stride : index
+   %read_prev = pto.vlds %base[%off] : !pto.ptr<f32, ub>, index -> !pto.vreg<64xf32>
+   pto.vsts %read_prev, %tmp[%off], %m : !pto.vreg<64xf32>, !pto.ptr<f32, ub>, index, !pto.mask<b32>
+   %first = pto.vlds %tmp[%off] : !pto.ptr<f32, ub>, index -> !pto.vreg<64xf32>
+   pto.vsts %first, %out1[%off], %m : !pto.vreg<64xf32>, !pto.ptr<f32, ub>, index, !pto.mask<b32>
+   pto.vsts %data, %base[%next], %m : !pto.vreg<64xf32>, !pto.ptr<f32, ub>, index, !pto.mask<b32>
+   %second = pto.vlds %tmp[%off] : !pto.ptr<f32, ub>, index -> !pto.vreg<64xf32>
+   pto.mem_bar "VST_VLD"
+   pto.vsts %second, %out2[%off], %m : !pto.vreg<64xf32>, !pto.ptr<f32, ub>, index, !pto.mask<b32>
+  }
+ }
+ return
+}
+}

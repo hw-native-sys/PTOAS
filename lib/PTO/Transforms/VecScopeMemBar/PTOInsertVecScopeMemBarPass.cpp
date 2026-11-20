@@ -10,6 +10,7 @@
 #include "PTO/Transforms/Passes.h"
 #include "PTO/Transforms/VecScopeMemBar/VecScopeMemBarAnalysis.h"
 #include "PTO/Transforms/VecScopeMemBar/VecScopeMemBarCodegen.h"
+#include "PTO/Transforms/VecScopeMemBar/VecScopeMemBarVersioning.h"
 #include "PTO/Transforms/VecScopeMemBar/VecScopeMemBarPlacement.h"
 
 #include "mlir/Dialect/Affine/IR/AffineOps.h"
@@ -38,6 +39,7 @@ struct PTOInsertVecScopeMemBarPass : pto::impl::PTOInsertVecScopeMemBarBase<PTOI
     void runOnOperation() override
     {
         func::FuncOp func = getOperation();
+        versionDynamicStoreStreams(func);
 
         SmallVector<Operation*, mlir::pto::kValue4> scopes;
         func.walk([&](Operation* op) {

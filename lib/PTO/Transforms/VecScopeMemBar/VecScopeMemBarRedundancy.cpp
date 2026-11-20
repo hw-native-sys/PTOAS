@@ -9,12 +9,14 @@
 // Prove redundancy using actual surviving barrier cuts, including their ordering
 // of non-aliasing accesses, and straight-line SSA dependencies. All original
 // planned hazard obligations are rechecked after every proposed removal so one
-// removed barrier cannot be used to justify another. Existing IR barriers and
-// loop-latch cuts are preserved. Nested accesses may be endpoints, but cannot
+// removed barrier cannot be used to justify another. Same-iteration and carried
+// obligations discharged by analysis are also checked on the surviving plan.
+// Existing IR barriers and loop-latch cuts are preserved. Nested accesses may be endpoints, but cannot
 // relay ordering through a possibly empty third loop or a conditional region.
 
 #include "PTO/Support/CodeConstants.h"
 #include "PTO/Transforms/VecScopeMemBar/VecScopeMemBarPlacement.h"
+#include "PTO/Transforms/VecScopeMemBar/VecScopeMemBarOrdering.h"
 #include "PTO/Analysis/PTOIntegerRange.h"
 
 #include "mlir/Dialect/SCF/IR/SCF.h"
@@ -261,16 +263,26 @@ static OrderGraph buildSurvivingEdges(
 }
 
 static bool preservesHazards(
-    const VecScopeMemBarAnalysisResult& result, const OrderGraph& edges, Block* block, bool reductions = false)
+    const VecScopeMemBarAnalysisResult& result, ArrayRef<MemoryHazard> hazards, const OrderGraph& edges,
+    Block* block, bool reductions = false, bool requireCoverage = false)
 {
-    for (const auto& hazard : result.hazards) {
+    for (const auto& hazard : hazards) {
         if (hazard.scope != VecScopeHazardScope::SameIteration || hazard.producer >= result.accesses.size() ||
             hazard.consumer >= result.accesses.size()) {
             continue;
         }
         Operation* producer = ancestorInBlock(result.accesses[hazard.producer].op, block);
         Operation* consumer = ancestorInBlock(result.accesses[hazard.consumer].op, block);
-        if (!producer || !consumer || producer == consumer) {
+        if (!producer || !consumer) {
+            // A discharged proof may relay through this block and a loop
+            // result to an external endpoint. An unmodelled obligation is
+            // not evidence that removing an internal cut is safe.
+            if (requireCoverage) {
+                return false;
+            }
+            continue;
+        }
+        if (producer == consumer) {
             continue;
         }
         if (!reaches(edges, result.accesses, block, hazard.producer, hazard.consumer, reductions)) {
@@ -301,6 +313,31 @@ static bool canModelCut(const BarrierPlacement& candidate, const VecScopeMemBarA
     return true;
 }
 
+static bool preservesCarriedOrdering(
+    const VecScopeMemBarAnalysisResult& result, const VecScopeMemBarPlan& plan, ArrayRef<bool> live, unsigned excluded)
+{
+    SmallVector<MemoryOrderingCut> cuts;
+    for (const auto& barrier : result.existingBarriers) {
+        cuts.push_back({barrier.op, barrier.kind});
+    }
+    for (unsigned index = 0; index < plan.barriers.size(); ++index) {
+        const auto& barrier = plan.barriers[index];
+        if (index != excluded && live[index] && barrier.anchorKind == BarrierAnchorKind::BeforeOperation) {
+            cuts.push_back({barrier.anchor, barrier.kind});
+        }
+    }
+    return llvm::all_of(result.dischargedHazards, [&](const auto& obligation) {
+        if (obligation.scope == VecScopeHazardScope::SameIteration) {
+            return true;
+        }
+        auto loop = llvm::find_if(result.loops, [&](const auto& entry) {
+            return obligation.carryingLoop && entry.id == *obligation.carryingLoop;
+        });
+        return loop != result.loops.end() &&
+               carriedMemoryAlreadyOrdered(result, obligation.producer, obligation.consumer, loop->op, cuts);
+    });
+}
+
 } // namespace
 
 void vecscopemembar::eliminateTransitiveMemBars(const VecScopeMemBarAnalysisResult& result, VecScopeMemBarPlan& plan)
@@ -311,16 +348,22 @@ void vecscopemembar::eliminateTransitiveMemBars(const VecScopeMemBarAnalysisResu
     // cannot create a new ordering proof for a previously rejected candidate.
     for (unsigned index = 0; index < plan.barriers.size(); ++index) {
         const auto& candidate = plan.barriers[index];
-        if (!canModelCut(candidate, result)) {
+        bool canRemove = canModelCut(candidate, result) && preservesCarriedOrdering(result, plan, live, index);
+        if (!canRemove) {
             continue;
         }
         OrderGraph edges = buildSurvivingEdges(result, plan, live, index);
-        if (preservesHazards(result, edges, candidate.anchor->getBlock())) {
+        Block* block = candidate.anchor->getBlock();
+        bool preservesSequential = preservesHazards(result, result.hazards, edges, block) &&
+                                   preservesHazards(result, result.dischargedHazards, edges, block, false, true);
+        if (preservesSequential) {
             live[index] = false;
             continue;
         }
         edges = buildSurvivingEdges(result, plan, live, index, true);
-        if (preservesHazards(result, edges, candidate.anchor->getBlock(), true)) {
+        preservesSequential = preservesHazards(result, result.hazards, edges, block, true) &&
+                              preservesHazards(result, result.dischargedHazards, edges, block, true, true);
+        if (preservesSequential) {
             live[index] = false;
         }
     }

@@ -1,0 +1,88 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+
+// RUN: pto-test-opt %s --pto-insert-vecscope-membar | FileCheck %s
+// RUN: sed 's/target_arch = "a5"/target_arch = "a3"/' %s | pto-test-opt --pto-insert-vecscope-membar | FileCheck %s
+// RUN: pto-test-opt %s --pto-insert-vecscope-membar --pto-insert-vecscope-membar | FileCheck %s
+// RUN: ptoas %s --pto-arch=a5 --pto-backend=vpto --emit-vpto --enable-vecscope-mem-bar=true -o - | FileCheck %s
+// RUN: ptoas %s --pto-arch=a3 --pto-backend=vpto --emit-vpto --enable-vecscope-mem-bar=true -o - | FileCheck %s
+
+// B1 covers both T reads, but B2 also orders old A -> store U -> second T
+// -> overwrite A. Preserve that discharged same-iteration WAR obligation.
+// CHECK-LABEL: func.func @sequential_war_cut
+// CHECK: pto.vsts
+// CHECK-NEXT: pto.mem_bar "VST_VLD"
+// CHECK-DAG: {{.*}}pto.vlds
+// CHECK-DAG: {{.*}}pto.vlds
+// CHECK-DAG: pto.vsts
+// CHECK-DAG: pto.vsts
+// CHECK: pto.mem_bar "VST_VLD"
+// CHECK-NEXT: {{.*}}pto.vlds
+// CHECK-NEXT: pto.vsts
+// CHECK-NOT: pto.mem_bar
+// CHECK: return
+module attributes {pto.target_arch = "a5"} {
+func.func @sequential_war_cut(%base: !pto.ptr<f32, ub>, %data: !pto.vreg<64xf32>) attributes {pto.aiv} {
+ %zero = arith.constant 0 : index
+ %scratch = arith.constant 4096 : index
+ %out1off = arith.constant 8192 : index
+ %out2off = arith.constant 12288 : index
+ %out1 = pto.addptr %base, %out1off : <f32, ub>, index -> <f32, ub>
+ %out2 = pto.addptr %base, %out2off : <f32, ub>, index -> <f32, ub>
+ %tmp = pto.addptr %base, %scratch : <f32, ub>, index -> <f32, ub>
+ pto.vecscope {
+  %m = pto.pset_b32 "PAT_ALL" : !pto.mask<b32>
+  pto.vsts %data, %tmp[%zero], %m : !pto.vreg<64xf32>, !pto.ptr<f32, ub>, index, !pto.mask<b32>
+  %first = pto.vlds %tmp[%zero] : !pto.ptr<f32, ub>, index -> !pto.vreg<64xf32>
+  pto.vsts %first, %out1[%zero], %m : !pto.vreg<64xf32>, !pto.ptr<f32, ub>, index, !pto.mask<b32>
+  %old = pto.vlds %base[%zero] : !pto.ptr<f32, ub>, index -> !pto.vreg<64xf32>
+  pto.vsts %old, %out2[%zero], %m : !pto.vreg<64xf32>, !pto.ptr<f32, ub>, index, !pto.mask<b32>
+  %second = pto.vlds %tmp[%zero] : !pto.ptr<f32, ub>, index -> !pto.vreg<64xf32>
+  pto.vsts %second, %base[%zero], %m : !pto.vreg<64xf32>, !pto.ptr<f32, ub>, index, !pto.mask<b32>
+ }
+ return
+}
+
+// A cut inside a one-trip loop also protects an overwrite outside its block.
+// CHECK-LABEL: func.func @cross_block_war_cut
+// CHECK: pto.vsts
+// CHECK-NEXT: pto.mem_bar "VST_VLD"
+// CHECK-DAG: {{.*}}pto.vlds
+// CHECK-DAG: {{.*}}pto.vlds
+// CHECK-DAG: pto.vsts
+// CHECK-DAG: pto.vsts
+// CHECK: pto.mem_bar "VST_VLD"
+// CHECK-NEXT: {{.*}}pto.vlds
+// CHECK: pto.vsts
+// CHECK-NOT: pto.mem_bar
+// CHECK: return
+func.func @cross_block_war_cut(%base: !pto.ptr<f32, ub>, %data: !pto.vreg<64xf32>) attributes {pto.aiv} {
+ %zero = arith.constant 0 : index
+ %one = arith.constant 1 : index
+ %scratch = arith.constant 4096 : index
+ %out1off = arith.constant 8192 : index
+ %out2off = arith.constant 12288 : index
+ %out1 = pto.addptr %base, %out1off : <f32, ub>, index -> <f32, ub>
+ %out2 = pto.addptr %base, %out2off : <f32, ub>, index -> <f32, ub>
+ %tmp = pto.addptr %base, %scratch : <f32, ub>, index -> <f32, ub>
+ pto.vecscope {
+  %m = pto.pset_b32 "PAT_ALL" : !pto.mask<b32>
+  %result = scf.for %i = %zero to %one step %one iter_args(%unused = %data) -> !pto.vreg<64xf32> {
+  pto.vsts %data, %tmp[%zero], %m : !pto.vreg<64xf32>, !pto.ptr<f32, ub>, index, !pto.mask<b32>
+  %first = pto.vlds %tmp[%zero] : !pto.ptr<f32, ub>, index -> !pto.vreg<64xf32>
+  pto.vsts %first, %out1[%zero], %m : !pto.vreg<64xf32>, !pto.ptr<f32, ub>, index, !pto.mask<b32>
+  %old = pto.vlds %base[%zero] : !pto.ptr<f32, ub>, index -> !pto.vreg<64xf32>
+  pto.vsts %old, %out2[%zero], %m : !pto.vreg<64xf32>, !pto.ptr<f32, ub>, index, !pto.mask<b32>
+  %second = pto.vlds %tmp[%zero] : !pto.ptr<f32, ub>, index -> !pto.vreg<64xf32>
+  scf.yield %second : !pto.vreg<64xf32>
+  }
+  pto.vsts %result, %base[%zero], %m : !pto.vreg<64xf32>, !pto.ptr<f32, ub>, index, !pto.mask<b32>
+ }
+ return
+}
+}

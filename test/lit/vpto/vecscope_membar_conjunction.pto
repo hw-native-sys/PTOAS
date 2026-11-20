@@ -1,0 +1,88 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+
+// RUN: pto-test-opt %s --pto-insert-vecscope-membar | FileCheck %s
+// RUN: sed 's/^module {/module attributes {pto.target_arch = "a3"} {/' %s | pto-test-opt --pto-insert-vecscope-membar | FileCheck %s
+// RUN: sed 's/^module {/module attributes {pto.target_arch = "a5"} {/' %s | pto-test-opt --pto-insert-vecscope-membar | FileCheck %s
+module {
+// CHECK-LABEL: func.func @conjunction
+// CHECK-NOT: pto.mem_bar
+// CHECK: return
+func.func @conjunction(%base: !pto.ptr<f32, ub>, %data: !pto.vreg<64xf32>, %n: index) {
+ %z = arith.constant 0 : index
+ %one = arith.constant 1 : index
+ %bound = arith.constant 4 : index
+ %stride = arith.constant 64 : index
+ %read = arith.constant 1024 : index
+ %lo = arith.cmpi sge, %n, %z : index
+ %hi = arith.cmpi sle, %n, %bound : index
+ %condition = arith.andi %lo, %hi : i1
+ pto.vecscope {
+  %m = pto.pset_b32 "PAT_ALL" : !pto.mask<b32>
+  scf.if %condition {
+  scf.for %i = %z to %n step %one {
+   %off = arith.muli %i, %stride : index
+   pto.vsts %data, %base[%off], %m : !pto.vreg<64xf32>, !pto.ptr<f32, ub>, index, !pto.mask<b32>
+   %load = pto.vlds %base[%read] : !pto.ptr<f32, ub>, index -> !pto.vreg<64xf32>
+  }
+  } else {
+  }
+ }
+ return
+}
+// CHECK-LABEL: func.func @disjunction
+// CHECK: pto.mem_bar
+// CHECK: return
+func.func @disjunction(%base: !pto.ptr<f32, ub>, %data: !pto.vreg<64xf32>, %n: index) {
+ %z = arith.constant 0 : index
+ %one = arith.constant 1 : index
+ %bound = arith.constant 4 : index
+ %stride = arith.constant 64 : index
+ %read = arith.constant 1024 : index
+ %lo = arith.cmpi sge, %n, %z : index
+ %hi = arith.cmpi sle, %n, %bound : index
+ %condition = arith.ori %lo, %hi : i1
+ pto.vecscope {
+  %m = pto.pset_b32 "PAT_ALL" : !pto.mask<b32>
+  scf.if %condition {
+  scf.for %i = %z to %n step %one {
+   %off = arith.muli %i, %stride : index
+   pto.vsts %data, %base[%off], %m : !pto.vreg<64xf32>, !pto.ptr<f32, ub>, index, !pto.mask<b32>
+   %load = pto.vlds %base[%read] : !pto.ptr<f32, ub>, index -> !pto.vreg<64xf32>
+  }
+  } else {
+  }
+ }
+ return
+}
+// CHECK-LABEL: func.func @else_arm
+// CHECK: pto.mem_bar
+// CHECK: return
+func.func @else_arm(%base: !pto.ptr<f32, ub>, %data: !pto.vreg<64xf32>, %n: index) {
+ %z = arith.constant 0 : index
+ %one = arith.constant 1 : index
+ %bound = arith.constant 4 : index
+ %stride = arith.constant 64 : index
+ %read = arith.constant 1024 : index
+ %lo = arith.cmpi sge, %n, %z : index
+ %hi = arith.cmpi sle, %n, %bound : index
+ %condition = arith.andi %lo, %hi : i1
+ pto.vecscope {
+  %m = pto.pset_b32 "PAT_ALL" : !pto.mask<b32>
+  scf.if %condition {
+  } else {
+  scf.for %i = %z to %n step %one {
+   %off = arith.muli %i, %stride : index
+   pto.vsts %data, %base[%off], %m : !pto.vreg<64xf32>, !pto.ptr<f32, ub>, index, !pto.mask<b32>
+   %load = pto.vlds %base[%read] : !pto.ptr<f32, ub>, index -> !pto.vreg<64xf32>
+  }
+  }
+ }
+ return
+}
+}

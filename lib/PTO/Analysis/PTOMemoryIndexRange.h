@@ -21,6 +21,13 @@ namespace mlir::pto::integer_range {
 bool allIntegerLanes(Value mask, uint64_t lanes, unsigned width = 0);
 std::optional<llvm::SmallVector<uint64_t, kValue128>> constantIndexLanes(
     Value value, unsigned& budget, bool allowTable = false);
+struct ScalarIndexEnvelope {
+    Value scalar;
+    int64_t laneMinimum;
+    uint64_t laneSpan;
+};
+// Preserve a shared scalar offset instead of widening it across all rows.
+std::optional<ScalarIndexEnvelope> scalarIndexEnvelope(Value offsets, Value mask);
 std::optional<std::pair<int64_t, uint64_t>> boundedIndexByteRange(Value offsets, Value mask, uint64_t bytes);
 
 } // namespace mlir::pto::integer_range

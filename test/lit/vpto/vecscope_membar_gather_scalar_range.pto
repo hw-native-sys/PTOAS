@@ -1,0 +1,140 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+
+// RUN: pto-test-opt %s --pto-insert-vecscope-membar | FileCheck %s
+// RUN: sed 's/target_arch = "a5"/target_arch = "a3"/' %s | pto-test-opt --pto-insert-vecscope-membar | FileCheck %s
+module attributes {pto.target_arch = "a5"} {
+// CHECK-LABEL: func.func @scalar_row_range
+// CHECK-NOT: pto.mem_bar
+// CHECK: return
+func.func @scalar_row_range(%base: !pto.ptr<f32, ub>, %data: !pto.vreg<64xf32>, %unknown: ui32) {
+ %z = arith.constant 0 : index
+ %one = arith.constant 1 : index
+ %four = arith.constant 4 : index
+ %stride = arith.constant 64 : index
+ %dst = arith.constant 1024 : index
+ %out = arith.constant 2048 : index
+ %zi = arith.constant 0 : i32
+ %zu = builtin.unrealized_conversion_cast %zi : i32 to ui32
+ %wrapi = arith.constant -1 : i32
+ %wrapping = builtin.unrealized_conversion_cast %wrapi : i32 to ui32
+ pto.vecscope {
+  %mask = pto.pset_b32 "PAT_ALL" : !pto.mask<b32>
+  %short = pto.pset_b32 "PAT_VL32" : !pto.mask<b32>
+  %lane = pto.vci %zu : ui32 -> !pto.vreg<64xui32>
+  scf.for %row = %z to %four step %one {
+   %offset = arith.muli %row, %stride : index
+   %ri = arith.index_cast %offset : index to i32
+   %row32 = builtin.unrealized_conversion_cast %ri : i32 to ui32
+   %indices = pto.vadds %lane, %row32, %mask : !pto.vreg<64xui32>, ui32, !pto.mask<b32> -> !pto.vreg<64xui32>
+   %d = arith.addi %dst, %offset : index
+   %o = arith.addi %out, %offset : index
+   pto.vsts %data, %base[%d], %mask : !pto.vreg<64xf32>, !pto.ptr<f32, ub>, index, !pto.mask<b32>
+   %g = pto.vgather2_bc %base, %indices, %mask : !pto.ptr<f32, ub>, !pto.vreg<64xui32>, !pto.mask<b32> -> !pto.vreg<64xf32>
+   pto.vsts %g, %base[%o], %mask : !pto.vreg<64xf32>, !pto.ptr<f32, ub>, index, !pto.mask<b32>
+  }
+ }
+ return
+}
+// CHECK-LABEL: func.func @unknown_scalar
+// CHECK: pto.mem_bar
+// CHECK: return
+func.func @unknown_scalar(%base: !pto.ptr<f32, ub>, %data: !pto.vreg<64xf32>, %unknown: ui32) {
+ %z = arith.constant 0 : index
+ %one = arith.constant 1 : index
+ %four = arith.constant 4 : index
+ %stride = arith.constant 64 : index
+ %dst = arith.constant 1024 : index
+ %out = arith.constant 2048 : index
+ %zi = arith.constant 0 : i32
+ %zu = builtin.unrealized_conversion_cast %zi : i32 to ui32
+ %wrapi = arith.constant -1 : i32
+ %wrapping = builtin.unrealized_conversion_cast %wrapi : i32 to ui32
+ pto.vecscope {
+  %mask = pto.pset_b32 "PAT_ALL" : !pto.mask<b32>
+  %short = pto.pset_b32 "PAT_VL32" : !pto.mask<b32>
+  %lane = pto.vci %zu : ui32 -> !pto.vreg<64xui32>
+  scf.for %row = %z to %four step %one {
+   %offset = arith.muli %row, %stride : index
+   %ri = arith.index_cast %offset : index to i32
+   %row32 = builtin.unrealized_conversion_cast %ri : i32 to ui32
+   %indices = pto.vadds %lane, %unknown, %mask : !pto.vreg<64xui32>, ui32, !pto.mask<b32> -> !pto.vreg<64xui32>
+   %d = arith.addi %dst, %offset : index
+   %o = arith.addi %out, %offset : index
+   pto.vsts %data, %base[%d], %mask : !pto.vreg<64xf32>, !pto.ptr<f32, ub>, index, !pto.mask<b32>
+   %g = pto.vgather2_bc %base, %indices, %mask : !pto.ptr<f32, ub>, !pto.vreg<64xui32>, !pto.mask<b32> -> !pto.vreg<64xf32>
+   pto.vsts %g, %base[%o], %mask : !pto.vreg<64xf32>, !pto.ptr<f32, ub>, index, !pto.mask<b32>
+  }
+ }
+ return
+}
+// CHECK-LABEL: func.func @wrapping_scalar
+// CHECK: pto.mem_bar
+// CHECK: return
+func.func @wrapping_scalar(%base: !pto.ptr<f32, ub>, %data: !pto.vreg<64xf32>, %unknown: ui32) {
+ %z = arith.constant 0 : index
+ %one = arith.constant 1 : index
+ %four = arith.constant 4 : index
+ %stride = arith.constant 64 : index
+ %dst = arith.constant 1024 : index
+ %out = arith.constant 2048 : index
+ %zi = arith.constant 0 : i32
+ %zu = builtin.unrealized_conversion_cast %zi : i32 to ui32
+ %wrapi = arith.constant -1 : i32
+ %wrapping = builtin.unrealized_conversion_cast %wrapi : i32 to ui32
+ pto.vecscope {
+  %mask = pto.pset_b32 "PAT_ALL" : !pto.mask<b32>
+  %short = pto.pset_b32 "PAT_VL32" : !pto.mask<b32>
+  %lane = pto.vci %zu : ui32 -> !pto.vreg<64xui32>
+  scf.for %row = %z to %four step %one {
+   %offset = arith.muli %row, %stride : index
+   %ri = arith.index_cast %offset : index to i32
+   %row32 = builtin.unrealized_conversion_cast %ri : i32 to ui32
+   %indices = pto.vadds %lane, %wrapping, %mask : !pto.vreg<64xui32>, ui32, !pto.mask<b32> -> !pto.vreg<64xui32>
+   %d = arith.addi %dst, %offset : index
+   %o = arith.addi %out, %offset : index
+   pto.vsts %data, %base[%d], %mask : !pto.vreg<64xf32>, !pto.ptr<f32, ub>, index, !pto.mask<b32>
+   %g = pto.vgather2_bc %base, %indices, %mask : !pto.ptr<f32, ub>, !pto.vreg<64xui32>, !pto.mask<b32> -> !pto.vreg<64xf32>
+   pto.vsts %g, %base[%o], %mask : !pto.vreg<64xf32>, !pto.ptr<f32, ub>, index, !pto.mask<b32>
+  }
+ }
+ return
+}
+// CHECK-LABEL: func.func @partial_index_mask
+// CHECK: pto.mem_bar
+// CHECK: return
+func.func @partial_index_mask(%base: !pto.ptr<f32, ub>, %data: !pto.vreg<64xf32>, %unknown: ui32) {
+ %z = arith.constant 0 : index
+ %one = arith.constant 1 : index
+ %four = arith.constant 4 : index
+ %stride = arith.constant 64 : index
+ %dst = arith.constant 1024 : index
+ %out = arith.constant 2048 : index
+ %zi = arith.constant 0 : i32
+ %zu = builtin.unrealized_conversion_cast %zi : i32 to ui32
+ %wrapi = arith.constant -1 : i32
+ %wrapping = builtin.unrealized_conversion_cast %wrapi : i32 to ui32
+ pto.vecscope {
+  %mask = pto.pset_b32 "PAT_ALL" : !pto.mask<b32>
+  %short = pto.pset_b32 "PAT_VL32" : !pto.mask<b32>
+  %lane = pto.vci %zu : ui32 -> !pto.vreg<64xui32>
+  scf.for %row = %z to %four step %one {
+   %offset = arith.muli %row, %stride : index
+   %ri = arith.index_cast %offset : index to i32
+   %row32 = builtin.unrealized_conversion_cast %ri : i32 to ui32
+   %indices = pto.vadds %lane, %row32, %short : !pto.vreg<64xui32>, ui32, !pto.mask<b32> -> !pto.vreg<64xui32>
+   %d = arith.addi %dst, %offset : index
+   %o = arith.addi %out, %offset : index
+   pto.vsts %data, %base[%d], %mask : !pto.vreg<64xf32>, !pto.ptr<f32, ub>, index, !pto.mask<b32>
+   %g = pto.vgather2_bc %base, %indices, %mask : !pto.ptr<f32, ub>, !pto.vreg<64xui32>, !pto.mask<b32> -> !pto.vreg<64xf32>
+   pto.vsts %g, %base[%o], %mask : !pto.vreg<64xf32>, !pto.ptr<f32, ub>, index, !pto.mask<b32>
+  }
+ }
+ return
+}
+}

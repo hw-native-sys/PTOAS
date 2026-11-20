@@ -13,7 +13,7 @@
 
 namespace mlir::pto {
 
-void runVPTOStatefulStreamFusion(ModuleOp module);
+void runVPTOStatefulStreamFusion(Operation* scope);
 
 } // namespace mlir::pto
 

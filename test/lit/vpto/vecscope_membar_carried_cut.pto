@@ -1,0 +1,117 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+
+// RUN: pto-test-opt %s --pto-insert-vecscope-membar | FileCheck %s
+// RUN: sed 's/target_arch = "a5"/target_arch = "a3"/' %s | pto-test-opt --pto-insert-vecscope-membar | FileCheck %s
+// RUN: pto-test-opt %s --pto-insert-vecscope-membar --pto-insert-vecscope-membar | FileCheck %s
+
+// Physical UNPK overread of the next row stays in the dependence model.
+// A dependent store followed by RAW orders it before the next dependent
+// overwrite. An independent overwrite cannot use this transitive proof.
+module attributes {pto.target_arch = "a5"} {
+// CHECK-LABEL: func.func @ordered
+// CHECK: pto.vlds
+// CHECK: pto.vsts
+// CHECK: pto.mem_bar "VST_VLD"
+// CHECK: pto.vlds
+// CHECK: pto.vsts
+// CHECK: pto.mem_bar "VST_VLD"
+// CHECK: pto.vlds
+// CHECK-NOT: pto.mem_bar
+// CHECK: return
+func.func @ordered(%base: !pto.ptr<bf16, ub>, %data: !pto.vreg<128xbf16>, %cond: i1) {
+ %z = arith.constant 0 : index
+ %one = arith.constant 1 : index
+ %eight = arith.constant 8 : index
+ %stride = arith.constant 32 : index
+ %scratch = arith.constant 4096 : index
+ %source = arith.constant 8192 : index
+ %wideStride = arith.constant 128 : index
+ %tmp = pto.addptr %base, %scratch : <bf16, ub>, index -> <bf16, ub>
+ %src = pto.addptr %base, %source : <bf16, ub>, index -> <bf16, ub>
+ pto.vecscope {
+  %m = pto.pset_b16 "PAT_VL32" : !pto.mask<b16>
+  scf.for %i = %z to %eight step %one {
+   %offset = arith.muli %i, %stride : index
+   %wide = arith.muli %i, %wideStride : index
+   %input = pto.vlds %src[%wide] : !pto.ptr<bf16, ub>, index -> !pto.vreg<128xbf16>
+   pto.vsts %input, %base[%offset], %m : !pto.vreg<128xbf16>, !pto.ptr<bf16, ub>, index, !pto.mask<b16>
+   %loaded = pto.vlds %base[%offset] {dist = "UNPK_B16"} : !pto.ptr<bf16, ub>, index -> !pto.vreg<128xbf16>
+   pto.vsts %loaded, %tmp[%wide], %m : !pto.vreg<128xbf16>, !pto.ptr<bf16, ub>, index, !pto.mask<b16>
+   %use = pto.vlds %tmp[%wide] : !pto.ptr<bf16, ub>, index -> !pto.vreg<128xbf16>
+  }
+ }
+ return
+}
+// CHECK-LABEL: func.func @independent_overwrite
+// CHECK: pto.vlds
+// CHECK: pto.vsts
+// CHECK: pto.mem_bar "VST_VLD"
+// CHECK: pto.vlds
+// CHECK: pto.mem_bar "VLD_VST"
+// CHECK: return
+func.func @independent_overwrite(%base: !pto.ptr<bf16, ub>, %data: !pto.vreg<128xbf16>, %cond: i1) {
+ %z = arith.constant 0 : index
+ %one = arith.constant 1 : index
+ %eight = arith.constant 8 : index
+ %stride = arith.constant 32 : index
+ %scratch = arith.constant 4096 : index
+ %source = arith.constant 8192 : index
+ %wideStride = arith.constant 128 : index
+ %tmp = pto.addptr %base, %scratch : <bf16, ub>, index -> <bf16, ub>
+ %src = pto.addptr %base, %source : <bf16, ub>, index -> <bf16, ub>
+ pto.vecscope {
+  %m = pto.pset_b16 "PAT_VL32" : !pto.mask<b16>
+  scf.for %i = %z to %eight step %one {
+   %offset = arith.muli %i, %stride : index
+   %wide = arith.muli %i, %wideStride : index
+   %input = pto.vlds %src[%wide] : !pto.ptr<bf16, ub>, index -> !pto.vreg<128xbf16>
+   pto.vsts %data, %base[%offset], %m : !pto.vreg<128xbf16>, !pto.ptr<bf16, ub>, index, !pto.mask<b16>
+   %loaded = pto.vlds %base[%offset] {dist = "UNPK_B16"} : !pto.ptr<bf16, ub>, index -> !pto.vreg<128xbf16>
+   pto.vsts %loaded, %tmp[%wide], %m : !pto.vreg<128xbf16>, !pto.ptr<bf16, ub>, index, !pto.mask<b16>
+   %use = pto.vlds %tmp[%wide] : !pto.ptr<bf16, ub>, index -> !pto.vreg<128xbf16>
+  }
+ }
+ return
+}
+// CHECK-LABEL: func.func @intervening_store
+// CHECK: pto.vlds
+// CHECK: pto.vsts
+// CHECK: pto.mem_bar "VST_VLD"
+// CHECK: pto.vlds
+// CHECK: pto.vsts
+// CHECK: pto.mem_bar "VST_VLD"
+// CHECK: pto.vlds
+// CHECK-NOT: pto.mem_bar
+// CHECK: return
+func.func @intervening_store(%base: !pto.ptr<bf16, ub>, %data: !pto.vreg<128xbf16>, %cond: i1) {
+ %z = arith.constant 0 : index
+ %one = arith.constant 1 : index
+ %eight = arith.constant 8 : index
+ %stride = arith.constant 32 : index
+ %scratch = arith.constant 4096 : index
+ %source = arith.constant 8192 : index
+ %wideStride = arith.constant 128 : index
+ %tmp = pto.addptr %base, %scratch : <bf16, ub>, index -> <bf16, ub>
+ %src = pto.addptr %base, %source : <bf16, ub>, index -> <bf16, ub>
+ pto.vecscope {
+  %m = pto.pset_b16 "PAT_VL32" : !pto.mask<b16>
+  scf.for %i = %z to %eight step %one {
+   %offset = arith.muli %i, %stride : index
+   %wide = arith.muli %i, %wideStride : index
+   %input = pto.vlds %src[%wide] : !pto.ptr<bf16, ub>, index -> !pto.vreg<128xbf16>
+   pto.vsts %input, %base[%offset], %m : !pto.vreg<128xbf16>, !pto.ptr<bf16, ub>, index, !pto.mask<b16>
+   pto.vsts %data, %tmp[%wide], %m : !pto.vreg<128xbf16>, !pto.ptr<bf16, ub>, index, !pto.mask<b16>
+   %loaded = pto.vlds %base[%offset] {dist = "UNPK_B16"} : !pto.ptr<bf16, ub>, index -> !pto.vreg<128xbf16>
+   pto.vsts %loaded, %tmp[%wide], %m : !pto.vreg<128xbf16>, !pto.ptr<bf16, ub>, index, !pto.mask<b16>
+   %use = pto.vlds %tmp[%wide] : !pto.ptr<bf16, ub>, index -> !pto.vreg<128xbf16>
+  }
+ }
+ return
+}
+}

@@ -1110,26 +1110,11 @@ static bool carriedEnvelopeFits(const CarriedPairModel& model)
     return producerFits && consumerFits;
 }
 
-static bool queryCarriedEnvelope(const CarriedPairModel& model, ArrayRef<unsigned> commonLoops)
-{
-    for (unsigned level = 0; level < commonLoops.size(); ++level) {
-        auto poly = buildCarriedBase(model);
-        if (!poly || !addCarriedIntersection(*poly, model)) {
-            return false;
-        }
-        addCarryingOrder(*poly, model, level);
-        if (!poly->isIntegerEmpty()) {
-            return false;
-        }
-    }
-    return true;
-}
-
 // Only emptiness of the widened carried relation disproves a hazard.
 // Varying symbols have independent execution ranges; only invariants cancel.
 static bool disproveDynamicCarriedPair(
     MemoryQueryContext& result, unsigned i, unsigned j, ArrayRef<Value> pi, ArrayRef<Value> pj,
-    ArrayRef<unsigned> commonLoops)
+    ArrayRef<unsigned> commonLoops, unsigned level)
 {
     CarriedPairModel model;
     model.depthP = pi.size();
@@ -1153,7 +1138,12 @@ static bool disproveDynamicCarriedPair(
     if (!carriedEnvelopeFits(model)) {
         return false;
     }
-    return queryCarriedEnvelope(model, commonLoops);
+    auto poly = buildCarriedBase(model);
+    if (!poly || !addCarriedIntersection(*poly, model)) {
+        return false;
+    }
+    addCarryingOrder(*poly, model, level);
+    return poly->isIntegerEmpty();
 }
 
 // A same-iteration NoAlias is also valid across iterations only when neither
@@ -1238,7 +1228,6 @@ SmallVector<PTOMemoryCarriedDependence> pto::queryCarriedMemoryOverlap(
     bool constant = gatherConstBounds(context, pj, model.boundsC) && producerConstant;
     PTOMemoryDependenceReason failure = PTOMemoryDependenceReason::UnsupportedAccessShape;
     bool modelled = constant && modelCarriedPairRoots(context, 0, 1, pi, pj, common, model, failure);
-    bool disjoint = !constant && disproveDynamicCarriedPair(context, 0, 1, pi, pj, common);
     for (auto [level, id] : llvm::enumerate(common)) {
         scf::ForOp loop = context.loops[id].op;
         auto status = PTOMemoryDependenceStatus::Unknown;
@@ -1249,6 +1238,7 @@ SmallVector<PTOMemoryCarriedDependence> pto::queryCarriedMemoryOverlap(
         } else if (!constant) {
             auto bound = getLoopEnvelope(loop);
             auto trip = bound.maxTripCount();
+            bool disjoint = disproveDynamicCarriedPair(context, 0, 1, pi, pj, common, level);
             if (disjoint || (trip && *trip <= 1)) {
                 status = PTOMemoryDependenceStatus::NoDependence;
             }

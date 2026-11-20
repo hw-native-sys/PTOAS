@@ -24,6 +24,7 @@
 #include "mlir/IR/Value.h"
 #include "mlir/Support/LLVM.h"
 #include "llvm/ADT/APInt.h"
+#include "llvm/Support/MathExtras.h"
 
 #include <algorithm>
 #include <cstdint>
@@ -1801,6 +1802,20 @@ static std::optional<PTOMemoryAccessDescriptor> describeBoundedIndexedAccess(
     desc.addressSpace = getTypeAddressSpace(base.getType());
     desc.byteOffset.constant = range->first;
     desc.conservativeByteSize = range->second;
+    if (auto symbolic = rangeProof::scalarIndexEnvelope(offsets, mask)) {
+        SmallVector<Value> ivs;
+        for (Operation* parent = offsets.getDefiningOp(); parent; parent = parent->getParentOp()) {
+            if (auto loop = dyn_cast<scf::ForOp>(parent)) {
+                ivs.push_back(loop.getInductionVar());
+            }
+        }
+        auto expression = extractAffineElement(symbolic->scalar, ivs);
+        bool constantFits = llvm::AddOverflow(expression.constant, symbolic->laneMinimum, expression.constant) == 0;
+        if (constantFits && expression.exact && !expression.lossy && scaleChecked(expression, *bytes)) {
+            desc.byteOffset = expression;
+            desc.conservativeByteSize = symbolic->laneSpan * *bytes;
+        }
+    }
     desc.offsetDomainCovered = true;
     return desc;
 }

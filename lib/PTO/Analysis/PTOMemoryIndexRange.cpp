@@ -8,6 +8,7 @@
 
 #include "PTOMemoryIndexRange.h"
 #include "PTO/IR/PTO.h"
+#include "PTO/Analysis/PTOIntegerRange.h"
 #include "llvm/ADT/APInt.h"
 
 #include <algorithm>
@@ -96,10 +97,39 @@ static void constrainIndexLane(Value value, Value mask, unsigned lane, IndexLane
 
 static std::optional<IndexLaneRange> indexLaneRange(Value value, Value mask, unsigned lane, unsigned& budget);
 
+// Scalar ranges include enclosing loop domains and value-preserving storage
+// casts. Reinterpretation is admitted only for nonnegative representable values.
+static std::optional<IndexLaneRange> scalarIndexRange(Value value, Operation* context, IntegerType elem)
+{
+    auto storage = value.getDefiningOp<UnrealizedConversionCastOp>();
+    if (
+        storage && storage.getInputs().size() == 1 &&
+        isa<IntegerType>(storage.getInputs().front().getType()) &&
+        cast<IntegerType>(storage.getInputs().front().getType()).getWidth() == elem.getWidth()) {
+        value = storage.getInputs().front();
+    }
+    SmallVector<Value> ivs;
+    SmallVector<PTOLoopDomain> bounds;
+    for (Operation* op = context; op; op = op->getParentOp()) {
+        if (auto loop = dyn_cast<scf::ForOp>(op)) {
+            ivs.push_back(loop.getInductionVar());
+            bounds.push_back(getLoopEnvelope(loop));
+        }
+    }
+    auto range = getAddressRange(value, ivs, bounds);
+    uint64_t limit = elem.isUnsigned() ? APInt::getMaxValue(elem.getWidth()).getZExtValue() :
+                                         APInt::getSignedMaxValue(elem.getWidth()).getZExtValue();
+    if (
+        !range || range->lo < 0 || static_cast<uint64_t>(range->hi) > limit) {
+        return std::nullopt;
+    }
+    return IndexLaneRange{range->lo, range->hi};
+}
+
 static std::optional<IndexLaneRange> indexArithmeticRange(
     Operation* op, Value mask, unsigned lane, unsigned& budget, IntegerType elem)
 {
-    bool supported = isa<pto::VaddOp, pto::VmulOp>(op);
+    bool supported = isa<pto::VaddOp, pto::VmulOp, pto::VaddsOp, pto::VmulsOp>(op);
     bool defined = supported && allIntegerLanes(
                                     op->getOperand(2),
                                     cast<pto::VRegType>(op->getResult(0).getType()).getElementCount(), elem.getWidth());
@@ -107,11 +137,13 @@ static std::optional<IndexLaneRange> indexArithmeticRange(
         return std::nullopt;
     }
     auto lhs = indexLaneRange(op->getOperand(0), mask, lane, budget);
-    auto rhs = indexLaneRange(op->getOperand(1), mask, lane, budget);
+    bool scalar = isa<pto::VaddsOp, pto::VmulsOp>(op);
+    auto rhs = scalar ? scalarIndexRange(op->getOperand(1), op, elem) :
+                        indexLaneRange(op->getOperand(1), mask, lane, budget);
     if (!lhs || !rhs || lhs->lo < 0 || rhs->lo < 0) {
         return std::nullopt;
     }
-    bool multiply = isa<pto::VmulOp>(op);
+    bool multiply = isa<pto::VmulOp, pto::VmulsOp>(op);
     __int128 lo = multiply ? static_cast<__int128>(lhs->lo) * rhs->lo : static_cast<__int128>(lhs->lo) + rhs->lo;
     __int128 hi = multiply ? static_cast<__int128>(lhs->hi) * rhs->hi : static_cast<__int128>(lhs->hi) + rhs->hi;
     uint64_t limit = elem.isUnsigned() ? APInt::getMaxValue(elem.getWidth()).getZExtValue() :
@@ -161,6 +193,41 @@ static std::optional<IndexLaneRange> indexLaneRange(Value value, Value mask, uns
 }
 
 } // namespace
+
+std::optional<ScalarIndexEnvelope> mlir::pto::integer_range::scalarIndexEnvelope(Value offsets, Value mask)
+{
+    auto add = offsets.getDefiningOp<pto::VaddsOp>();
+    auto elem = indexElementType(offsets);
+    auto type = dyn_cast<pto::VRegType>(offsets.getType());
+    if (
+        !add || !elem || !elem.isUnsigned() || !indexMaskMatches(mask, elem) ||
+        !allIntegerLanes(add->getOperand(2), type.getElementCount(), elem.getWidth())) {
+        return std::nullopt;
+    }
+    unsigned budget = 64;
+    auto lanes = constantIndexLanes(add->getOperand(0), budget, true);
+    auto scalar = scalarIndexRange(add->getOperand(1), add, elem);
+    if (
+        !lanes || lanes->empty() || !scalar) {
+        return std::nullopt;
+    }
+    auto extrema = std::minmax_element(lanes->begin(), lanes->end());
+    uint64_t limit = APInt::getMaxValue(elem.getWidth()).getZExtValue();
+    if (
+        static_cast<__int128>(scalar->hi) + *extrema.second > limit) {
+        return std::nullopt;
+    }
+    Value value = add->getOperand(1);
+    if (auto cast = value.getDefiningOp<UnrealizedConversionCastOp>()) {
+        if (
+            cast.getInputs().size() != 1 ||
+            ConstantIntRanges::getStorageBitwidth(cast.getInputs().front().getType()) != elem.getWidth()) {
+            return std::nullopt;
+        }
+        value = cast.getInputs().front();
+    }
+    return ScalarIndexEnvelope{value, static_cast<int64_t>(*extrema.first), *extrema.second - *extrema.first + 1};
+}
 
 std::optional<std::pair<int64_t, uint64_t>> mlir::pto::integer_range::boundedIndexByteRange(
     Value offsets, Value mask, uint64_t bytes)

@@ -1,0 +1,77 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+
+// RUN: ptoas %S/Inputs/vecscope_membar_vf2.pto --pto-arch=a5 --pto-backend=vpto --emit-vpto --vmi-fastmath=false --enable-vecscope-mem-bar=true -o %t.dynamic
+// RUN: FileCheck %s --check-prefixes=INDEX,DYNAMIC < %t.dynamic
+// RUN: pto-test-opt %t.dynamic --pto-insert-vecscope-membar -o %t.twice
+// RUN: diff %t.dynamic %t.twice
+// RUN: sed 's/%rows: index)/%n: i32)/; /attributes {pto.aiv} {/a\  %rows = arith.index_cast %n : i32 to index' %S/Inputs/vecscope_membar_vf2.pto > %t.i32.pto
+// RUN: ptoas %t.i32.pto --pto-arch=a5 --pto-backend=vpto --emit-vpto --vmi-fastmath=false --enable-vecscope-mem-bar=true -o %t.i32.vpto
+// RUN: FileCheck %s --check-prefixes=CAST,DYNAMIC < %t.i32.vpto
+// RUN: pto-test-opt %t.i32.vpto --pto-insert-vecscope-membar -o %t.i32.twice
+// RUN: diff %t.i32.vpto %t.i32.twice
+// RUN: sed 's/to %rows step/to %c8_index step/' %S/Inputs/vecscope_membar_vf2.pto | ptoas --pto-arch=a5 --pto-backend=vpto --emit-vpto --vmi-fastmath=false --enable-vecscope-mem-bar=true -o - | FileCheck %s --check-prefix=STATIC
+// RUN: sed 's/to %rows step/to %c0_index step/' %S/Inputs/vecscope_membar_vf2.pto | ptoas --pto-arch=a5 --pto-backend=vpto --emit-vpto --vmi-fastmath=false --enable-vecscope-mem-bar=true -o - | FileCheck %s --check-prefix=ZERO
+// RUN: ptoas %S/Inputs/vecscope_membar_vf2.pto --pto-arch=a5 --pto-backend=vpto --emit-vpto-llvm-ir --vmi-fastmath=false --enable-vecscope-mem-bar=true -o %t.ll
+
+// Automatic versioning proves an envelope rather than trusting user bounds.
+// The optimized branch has two real RAW cuts and one flush per row. The
+// original loop remains in the fallback. Do not count fallback barriers as
+// instructions executed on the optimized path.
+// DYNAMIC-LABEL: func.func @vf2_public_source
+// DYNAMIC-DAG: %[[BOUND:.*]] = arith.constant 8 : index
+// DYNAMIC-DAG: %[[Z:.*]] = arith.constant 0 : index
+// CAST-DAG: %[[CAST_ROWS:[^ ]+]] = arith.index_cast %arg1 : i32 to index
+// INDEX: %[[LO:.*]] = arith.cmpi sge, %[[CAST_ROWS:arg1]], %[[Z]]
+// CAST: %[[LO:.*]] = arith.cmpi sge, %[[CAST_ROWS]], %[[Z]]
+// DYNAMIC-NEXT: %[[HI:.*]] = arith.cmpi sle, %[[CAST_ROWS]], %[[BOUND]]
+// DYNAMIC: %[[OK:.*]] = arith.andi %[[LO]], %[[HI]]
+// DYNAMIC: scf.if %[[OK]] {
+// DYNAMIC-NOT: pto.mem_bar
+// DYNAMIC: pto.init_align
+// DYNAMIC: scf.for
+// DYNAMIC-NOT: pto.init_align
+// DYNAMIC-NOT: pto.mem_bar
+// DYNAMIC: pto.vstus
+// DYNAMIC-NOT: pto.vstas
+// DYNAMIC: scf.yield
+// DYNAMIC: pto.vstas
+// DYNAMIC: pto.mem_bar "VST_VLD"
+// DYNAMIC-NOT: pto.mem_bar
+// DYNAMIC: pto.mem_bar "VST_VLD"
+// DYNAMIC-NOT: pto.mem_bar
+// DYNAMIC: } else {
+// DYNAMIC: pto.init_align
+// DYNAMIC: pto.mem_bar "VLD_VST"
+// DYNAMIC: pto.vstus
+// The fallback retains WAR obligations too, strengthening this cut to ALL.
+// DYNAMIC: pto.mem_bar "VV_ALL"
+// DYNAMIC: pto.vstas
+// DYNAMIC: pto.mem_bar "VV_ALL"
+// DYNAMIC: return
+
+// STATIC-LABEL: func.func @vf2_public_source
+// STATIC-NOT: scf.if
+// STATIC-NOT: pto.mem_bar
+// STATIC: pto.init_align
+// STATIC: scf.for
+// STATIC-NOT: pto.mem_bar
+// STATIC-NOT: pto.vstas
+// STATIC: pto.vstus
+// STATIC: scf.yield
+// STATIC: pto.vstas
+// STATIC: pto.mem_bar "VST_VLD"
+// STATIC-NOT: pto.mem_bar
+// STATIC: pto.mem_bar "VST_VLD"
+// STATIC-NOT: pto.mem_bar
+// STATIC: return
+
+// ZERO-LABEL: func.func @vf2_public_source
+// ZERO-NOT: pto.vstas
+// ZERO-NOT: pto.mem_bar
+// ZERO: return

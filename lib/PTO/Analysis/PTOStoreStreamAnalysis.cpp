@@ -14,6 +14,7 @@
 #include "mlir/IR/Matchers.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "PTO/IR/VPTOAddressSemantics.h"
+#include "PTOStoreStreamRange.h"
 #include "mlir/Interfaces/SideEffectInterfaces.h"
 #include <algorithm>
 #include <cstdint>
@@ -21,52 +22,6 @@
 using namespace mlir;
 using namespace mlir::pto;
 namespace {
-constexpr int64_t kTransactionBytes = 32;
-constexpr unsigned kAddressDepthLimit = 32;
-
-// Only address forms whose complete scalar arithmetic is bounded are admitted.
-static bool addressIsBounded(Value pointer, scf::ForOp loop, unsigned depth = 0)
-{
-    if (depth == kAddressDepthLimit) {
-        return false;
-    }
-    if (auto add = pointer.getDefiningOp<AddPtrOp>()) {
-        auto range = integer_range::getAddressRange(
-            add.getOffset(), {loop.getInductionVar()}, {integer_range::getConstBounds(loop)});
-        return range && addressIsBounded(add.getPtr(), loop, depth + 1);
-    }
-    if (auto cast = pointer.getDefiningOp<CastPtrOp>()) {
-        bool pointerInput = isa<PtrType>(cast.getInput().getType());
-        if (pointerInput) {
-            return addressIsBounded(cast.getInput(), loop, depth + 1);
-        }
-        auto constant = integer_range::getConstantInt(cast.getInput());
-        return constant && *constant >= 0;
-    }
-    if (auto arg = dyn_cast<BlockArgument>(pointer)) {
-        bool localArgument = arg.getOwner() == loop.getBody();
-        if (!localArgument) {
-            return loop.isDefinedOutsideOfLoop(pointer);
-        }
-        bool induction = arg.getArgNumber() == 0;
-        if (induction) {
-            return false;
-        }
-        unsigned index = arg.getArgNumber() - 1;
-        auto yield = cast<scf::YieldOp>(loop.getBody()->getTerminator());
-        Operation* producer = yield.getOperand(index).getDefiningOp();
-        if (!producer) {
-            return false;
-        }
-        auto semantics = getDefaultVPTOAddressSemantics(producer);
-        auto update = semantics.postUpdate;
-        auto amount = update && update->advanceOperand ? integer_range::getConstantInt(update->advanceOperand->get()) :
-                                                         std::nullopt;
-        return update && update->baseOperand->get() == pointer && amount && *amount > 0 &&
-               addressIsBounded(loop.getInits()[index], loop, depth + 1);
-    }
-    return false;
-}
 
 static bool isContinuous(VstusOp store, scf::ForOp loop, int64_t bytes)
 {
@@ -90,84 +45,19 @@ static bool isContinuous(VstusOp store, scf::ForOp loop, int64_t bytes)
     }
     auto delta = addresses.getDeltaBytes(expressions.value->front(), loop);
     auto constant = delta ? foldPTOConstant(*delta.value) : std::nullopt;
-    return constant && *constant == bytes;
-}
-
-// Replace IV terms by their full fixed-loop envelope. Reject other symbols.
-static std::optional<PTOMemoryFootprint> boundFootprint(PTOMemoryFootprint footprint, scf::ForOp loop)
-{
-    auto bounds = integer_range::getConstBounds(loop);
-    auto count = bounds.exactTripCount();
-    if (!count || *count <= 0 || !footprint.byteOffset.exact || footprint.byteOffset.lossy ||
-        footprint.forcesMayAlias || !footprint.byteSize || !addressIsBounded(footprint.accessBase, loop)) {
-        return std::nullopt;
+    if (constant) {
+        return *constant == bytes;
     }
-    if (footprint.accessOffset &&
-        !integer_range::getAddressRange(footprint.accessOffset, {loop.getInductionVar()}, {bounds})) {
-        return std::nullopt;
-    }
-    __int128 lo = footprint.byteOffset.constant;
-    __int128 hi = lo;
-    for (auto [iv, coefficient] : footprint.byteOffset.coefficients) {
-        if (iv != loop.getInductionVar()) {
-            return std::nullopt;
-        }
-        __int128 first = static_cast<__int128>(bounds.lb) * coefficient;
-        __int128 last =
-            (static_cast<__int128>(bounds.lb) + (*count - 1) * static_cast<__int128>(bounds.step)) * coefficient;
-        lo += std::min(first, last);
-        hi += std::max(first, last);
-    }
-    hi += *footprint.byteSize;
-    if (lo < INT64_MIN || hi > INT64_MAX || hi - lo > INT64_MAX) {
-        return std::nullopt;
-    }
-    footprint.byteOffset = {};
-    footprint.byteOffset.constant = static_cast<int64_t>(lo);
-    footprint.byteSize = static_cast<uint64_t>(hi - lo);
-    return footprint;
-}
-
-static std::optional<PTOMemoryFootprint> transactionEnvelope(VstusOp store, scf::ForOp loop, int64_t bytes)
-{
+    // Typed evolution may not know an enclosing IV's range. Certify the
+    // complete address before using its affine coefficient as a fallback.
     PTOMemoryAccessDescriptor descriptor;
-    descriptor.kind = PTOMemoryAccessKind::Store;
     descriptor.base = store.getBase();
-    bool carried = false;
-    if (auto argument = dyn_cast<BlockArgument>(store.getBase())) {
-        carried = argument.getOwner() == loop.getBody() && argument.getArgNumber() != 0;
-        if (carried) {
-            descriptor.base = loop.getInits()[argument.getArgNumber() - 1];
-        }
-    }
-    descriptor.addressSpace = AddressSpace::VEC;
-    descriptor.conservativeByteSize = bytes;
-    auto footprint = boundFootprint(memoryFootprintFromDescriptor(descriptor, {loop.getInductionVar()}), loop);
-    if (!footprint) {
-        return std::nullopt;
-    }
-    if (carried) {
-        auto count = integer_range::getConstBounds(loop).exactTripCount();
-        if (!count || *count <= 0) {
-            return std::nullopt;
-        }
-        __int128 span = static_cast<__int128>(*footprint->byteSize) +
-                        static_cast<__int128>(*count - 1) * bytes;
-        if (span > INT64_MAX) {
-            return std::nullopt;
-        }
-        footprint->byteSize = static_cast<uint64_t>(span);
-    }
-    // Cover any partial 32-byte blocks touched by the complete stream,
-    // including a tail whose bytes are committed only by the final flush.
-    __int128 lo = static_cast<__int128>(footprint->byteOffset.constant) - (kTransactionBytes - 1);
-    __int128 size = static_cast<__int128>(*footprint->byteSize) + 2 * (kTransactionBytes - 1);
-    if (lo < INT64_MIN || size > INT64_MAX || lo + size > INT64_MAX) {
-        return std::nullopt;
-    }
-    footprint->byteOffset.constant = static_cast<int64_t>(lo);
-    footprint->byteSize = static_cast<uint64_t>(size);
-    return footprint;
+    StreamDomains domains(loop);
+    auto footprint = memoryFootprintFromDescriptor(descriptor, domains.ivs);
+    auto step = integer_range::getConstantInt(loop.getStep());
+    return step && footprint.byteOffset.exact && !footprint.byteOffset.lossy &&
+           addressIsBounded(store.getBase(), loop) &&
+           static_cast<__int128>(footprint.byteOffset.getCoeff(loop.getInductionVar())) * *step == bytes;
 }
 
 static bool otherAccessesDisjoint(
@@ -189,10 +79,14 @@ static bool otherAccessesDisjoint(
         if (!isa<VldsOp, Vldsx2Op>(op)) {
             return false;
         }
-        auto footprints = getMemoryFootprints(&op, {loop.getInductionVar()});
+        StreamDomains domains(loop);
+        auto footprints = getMemoryFootprints(&op, domains.ivs);
         for (const auto& footprint : footprints) {
             auto bounded = boundFootprint(footprint, loop);
-            bool disjoint = bounded && aliasMemorySameIteration(envelope, *bounded) == PTOMemoryAliasResult::NoAlias;
+            auto closed = bounded ? closeEnclosingDomains(*bounded, loop) : std::nullopt;
+            auto stream = closeEnclosingDomains(envelope, loop);
+            bool disjoint = closed && stream &&
+                            aliasMemorySameIteration(*stream, *closed) == PTOMemoryAliasResult::NoAlias;
             if (!disjoint) {
                 return false;
             }
@@ -218,9 +112,6 @@ static bool flushImmediatelyAfter(scf::ForOp loop, VstasOp flush)
     }
     return loop->isBeforeInBlock(flush);
 }
-} // namespace
-
-namespace {
 static VstusOp findSingleStore(scf::ForOp loop)
 {
     VstusOp store;
@@ -305,7 +196,7 @@ static VstasOp findFlush(const StreamEndpoints& ends, VstusOp store, scf::ForOp 
 
 std::optional<PTOIsolatedStoreStream> pto::getIsolatedStoreStream(scf::ForOp loop)
 {
-    if (!loop || !isa<VecScopeOp, func::FuncOp>(loop->getParentOp())) {
+    if (!loop || !isa<VecScopeOp, func::FuncOp, scf::ForOp, scf::IfOp>(loop->getParentOp())) {
         return std::nullopt;
     }
     auto function = loop->getParentOfType<func::FuncOp>();

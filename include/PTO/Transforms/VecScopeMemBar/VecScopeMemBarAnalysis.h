@@ -89,6 +89,9 @@ struct VecScopeMemBarAnalysisResult {
     SmallVector<VecScopeLoopInfo> loops;
     SmallVector<AccessOccurrence> accesses;
     SmallVector<MemoryHazard> hazards;
+    // Hazards discharged by ordering proofs using cuts placement may remove.
+    // Recheck these obligations against the surviving cuts before any removal.
+    SmallVector<MemoryHazard> dischargedHazards;
     SmallVector<UnknownDependence> unknownDependences;
     SmallVector<ExistingBarrier> existingBarriers;
 };

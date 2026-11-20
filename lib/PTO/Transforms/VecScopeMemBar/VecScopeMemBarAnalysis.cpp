@@ -19,6 +19,7 @@
 
 #include "PTO/Support/CodeConstants.h"
 #include "PTO/Transforms/VecScopeMemBar/VecScopeMemBarAnalysis.h"
+#include "PTO/Transforms/VecScopeMemBar/VecScopeMemBarOrdering.h"
 #include "PTO/Analysis/PTOMemoryDependenceAnalysis.h"
 #include "PTO/Analysis/PTOIntegerRange.h"
 #include "PTO/Analysis/PTOStoreStreamAnalysis.h"
@@ -346,6 +347,7 @@ static bool collectAccessOccurrences(Operation* scope, VecScopeMemBarAnalysisRes
         if (auto stream = streams.find(op); stream != streams.end()) {
             footprints = {stream->second.footprint};
             occ.orderedStreamFlush = stream->second.flush;
+            occ.orderedStreamLoop = stream->second.store->getParentOp();
         }
         if (footprints.empty()) {
             anyFailed = true;
@@ -419,12 +421,14 @@ static DependenceStatus sequentialOverlapStatus(
                                                           DependenceStatus::ProvenDependence;
 }
 
+static bool exclusiveOutsideLoops(Operation* lhs, Operation* rhs, Operation* scope);
+
 static void analyzeSequentialPair(
     VecScopeMemBarAnalysisResult& result, Operation* scope, unsigned i, unsigned j,
     SmallVectorImpl<std::pair<unsigned, unsigned>>& pendingWAR)
 {
     const auto& A = result.accesses;
-    if (A[i].op == A[j].op) {
+    if (A[i].op == A[j].op || exclusiveOutsideLoops(A[i].op, A[j].op, scope)) {
         return;
     }
     bool terminalStreamPair = A[i].orderedStreamFlush == A[j].op &&
@@ -669,9 +673,7 @@ static void resolvePendingWARHazards(
     addExistingBarrierEdges(result, edges);
 
     for (const auto& [load, store] : pendingWAR) {
-        if (reachesViaEdges(edges, load, store)) {
-            continue;
-        }
+        bool alreadyOrdered = reachesViaEdges(edges, load, store);
         MemoryHazard h;
         h.id = result.hazards.size();
         h.producer = load;
@@ -682,7 +684,11 @@ static void resolvePendingWARHazards(
         if (!h.sameIterationAnchor) {
             h.sameIterationAnchor = A[store].op;
         }
-        result.hazards.push_back(h);
+        if (alreadyOrdered) {
+            result.dischargedHazards.push_back(h);
+        } else {
+            result.hazards.push_back(h);
+        }
     }
 }
 
@@ -703,23 +709,61 @@ static DependenceReason dependenceReason(PTOMemoryDependenceReason reason)
     llvm_unreachable("invalid memory dependence reason");
 }
 
-static void analyzeLoopCarriedPair(VecScopeMemBarAnalysisResult& result, unsigned i, unsigned j, Operation* scope)
+// Opposite arms cannot execute in the same enclosing iteration. Across a
+// loop that contains the condition they may execute on different iterations;
+// retain that case rather than applying a global branch exclusion.
+static bool exclusiveOutsideLoops(Operation* lhs, Operation* rhs, Operation* scope)
+{
+    for (Operation* parent = lhs->getParentOp(); parent && parent != scope; parent = parent->getParentOp()) {
+        auto branch = dyn_cast<scf::IfOp>(parent);
+        if (!branch || !branch->isProperAncestor(rhs)) {
+            continue;
+        }
+        bool lhsThen = branch.getThenRegion().isAncestor(lhs->getParentRegion());
+        bool rhsThen = branch.getThenRegion().isAncestor(rhs->getParentRegion());
+        if (lhsThen == rhsThen) {
+            continue;
+        }
+        for (Operation* outer = branch->getParentOp(); outer && outer != scope; outer = outer->getParentOp()) {
+            if (isa<scf::ForOp>(outer)) {
+                return false;
+            }
+        }
+        return true;
+    }
+    return false;
+}
+
+static MemoryHazard makeLoopCarriedHazard(
+    unsigned producer, unsigned consumer, MemBarKind kind, VecScopeHazardScope scope, unsigned carryingLoop)
+{
+    MemoryHazard hazard;
+    hazard.producer = producer;
+    hazard.consumer = consumer;
+    hazard.kind = kind;
+    hazard.scope = scope;
+    hazard.carryingLoop = carryingLoop;
+    return hazard;
+}
+
+static void analyzeLoopCarriedPair(
+    VecScopeMemBarAnalysisResult& result, unsigned i, unsigned j, Operation* scope, ArrayRef<MemoryOrderingCut> cuts)
 {
     const auto& producer = result.accesses[i];
     const auto& consumer = result.accesses[j];
     bool carriedStream = i == j && producer.orderedStreamFlush &&
                          producer.orderedStreamFlush->getBlock() != producer.op->getBlock();
-    if (carriedStream) {
-        return; // Successive steps of the certified continuous store pipeline.
-    }
     auto kind = hazardKind(producer, consumer);
-    if (!kind) {
+    if (!kind || exclusiveOutsideLoops(producer.op, consumer.op, scope)) {
         return;
     }
     auto common = getCommonLoopPrefix(producer.loopNest, consumer.loopNest);
     auto answers =
         queryCarriedMemoryOverlap({producer.op, producer.footprint}, {consumer.op, consumer.footprint}, scope);
     for (const auto& answer : answers) {
+        if (carriedStream && answer.loop == producer.orderedStreamLoop) {
+            continue; // Only successive steps of this certified stream are ordered.
+        }
         auto found = llvm::find_if(result.loops, [&answer](const auto& loop) { return loop.op == answer.loop; });
         if (found == result.loops.end()) {
             recordUnknown(result, i, j, *kind, DependenceReason::DynamicUnmodelledExpression);
@@ -731,17 +775,16 @@ static void analyzeLoopCarriedPair(VecScopeMemBarAnalysisResult& result, unsigne
         }
         unsigned level = llvm::find(common, found->id) - common.begin();
         auto hazardScope = carriedScopeAt(level, common.size());
+        if (carriedMemoryAlreadyOrdered(result, i, j, answer.loop, cuts)) {
+            result.dischargedHazards.push_back(makeLoopCarriedHazard(i, j, *kind, hazardScope, found->id));
+            continue;
+        }
         if (answer.status == PTOMemoryDependenceStatus::Unknown) {
             recordUnknown(result, i, j, *kind, dependenceReason(answer.reason), hazardScope, found->id);
             continue;
         }
-        MemoryHazard hazard;
+        auto hazard = makeLoopCarriedHazard(i, j, *kind, hazardScope, found->id);
         hazard.id = result.hazards.size();
-        hazard.producer = i;
-        hazard.consumer = j;
-        hazard.kind = *kind;
-        hazard.scope = hazardScope;
-        hazard.carryingLoop = found->id;
         hazard.distance.positive = true;
         result.hazards.push_back(hazard);
     }
@@ -754,10 +797,19 @@ static void analyzeLoopCarriedPair(VecScopeMemBarAnalysisResult& result, unsigne
 // ordered in either direction.
 static void enumerateLoopCarriedHazards(VecScopeMemBarAnalysisResult& result, Operation* scope)
 {
+    SmallVector<MemoryOrderingCut> cuts;
+    for (const auto& barrier : result.existingBarriers) {
+        cuts.push_back({barrier.op, barrier.kind});
+    }
+    for (const auto& hazard : result.hazards) {
+        if (hazard.scope == VecScopeHazardScope::SameIteration) {
+            cuts.push_back({hazard.sameIterationAnchor, hazard.kind});
+        }
+    }
     const unsigned N = result.accesses.size();
     for (unsigned i = 0; i < N; ++i) {
         for (unsigned j = 0; j < N; ++j) {
-            analyzeLoopCarriedPair(result, i, j, scope);
+            analyzeLoopCarriedPair(result, i, j, scope, cuts);
         }
     }
 }

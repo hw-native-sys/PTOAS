@@ -7,6 +7,8 @@
 // INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY OR FITNESS FOR A PARTICULAR PURPOSE.
 // See LICENSE in the root of the software repository for the full text of the License.
 
+// A mandatory RAW cut drains earlier stores across the row backedge;
+// an independent next-iteration store still needs its WAR cut.
 // RUN: pto-test-opt --pto-insert-vecscope-membar %s | FileCheck %s
 // RUN: pto-test-opt --pto-insert-vecscope-membar --pto-insert-vecscope-membar %s | FileCheck %s
 
@@ -53,7 +55,7 @@ module attributes {pto.target_arch = "a5", pto.kernel_kind = #pto.kernel_kind<ve
 // CHECK: scf.for
 // CHECK: pto.vsts
 // CHECK: pto.mem_bar "VST_VLD"
-// CHECK: pto.mem_bar "VV_ALL"
+// CHECK: pto.mem_bar "VLD_VST"
 // CHECK: return
   func.func @guard_clamp_unguarded_conservative(%n: i32, %ofs: i32, %v0: !v64xf32) {
     %zero = arith.constant 0 : i64
@@ -85,7 +87,7 @@ module attributes {pto.target_arch = "a5", pto.kernel_kind = #pto.kernel_kind<ve
 // CHECK: scf.for
 // CHECK: pto.vsts
 // CHECK: pto.mem_bar "VST_VLD"
-// CHECK: pto.mem_bar "VV_ALL"
+// CHECK: pto.mem_bar "VLD_VST"
 // CHECK: return
   func.func @guard_clamp_unrelated_guard_conservative(%n: i32, %ofs: i32, %junk: i32, %v0: !v64xf32) {
     %zero = arith.constant 0 : i64
@@ -121,7 +123,7 @@ module attributes {pto.target_arch = "a5", pto.kernel_kind = #pto.kernel_kind<ve
 // CHECK: scf.for
 // CHECK: pto.vsts
 // CHECK: pto.mem_bar "VST_VLD"
-// CHECK: pto.mem_bar "VV_ALL"
+// CHECK: pto.mem_bar "VLD_VST"
 // CHECK: return
   func.func @guard_clamp_nonrepresentable_conservative(%n: i32, %ofs: i32, %v0: !v64xf32) {
     %zero = arith.constant 0 : i64
@@ -157,7 +159,7 @@ module attributes {pto.target_arch = "a5", pto.kernel_kind = #pto.kernel_kind<ve
 // CHECK: scf.for
 // CHECK: pto.vsts
 // CHECK: pto.mem_bar "VST_VLD"
-// CHECK: pto.mem_bar "VV_ALL"
+// CHECK: pto.mem_bar "VLD_VST"
 // CHECK: return
   func.func @guard_clamp_real_overlap(%n: i32, %ofs: i32, %v0: !v64xf32) {
     %zero = arith.constant 0 : i64
@@ -192,7 +194,7 @@ module attributes {pto.target_arch = "a5", pto.kernel_kind = #pto.kernel_kind<ve
 // CHECK: scf.for
 // CHECK: pto.vsts
 // CHECK: pto.mem_bar "VST_VLD"
-// CHECK: pto.mem_bar "VV_ALL"
+// CHECK: pto.mem_bar "VLD_VST"
 // CHECK: return
   func.func @guard_clamp_i64_real_overlap(%n: i64, %ofs: i64, %v0: !v64xf32) {
     %zero = arith.constant 0 : i64
@@ -225,7 +227,7 @@ module attributes {pto.target_arch = "a5", pto.kernel_kind = #pto.kernel_kind<ve
 // CHECK: scf.for
 // CHECK: pto.vsts
 // CHECK: pto.mem_bar "VST_VLD"
-// CHECK: pto.mem_bar "VV_ALL"
+// CHECK: pto.mem_bar "VLD_VST"
 // CHECK: return
   func.func @guard_clamp_int64_min_boundary_conservative(%n: i32, %ofs: i32, %v0: !v64xf32) {
     %zero = arith.constant 0 : i64
@@ -261,7 +263,7 @@ module attributes {pto.target_arch = "a5", pto.kernel_kind = #pto.kernel_kind<ve
 // CHECK: pto.vsts
 // CHECK: pto.mem_bar "VST_VLD"
 // CHECK: pto.vlds
-// CHECK: pto.mem_bar "VV_ALL"
+// CHECK: pto.mem_bar "VLD_VST"
 // CHECK: return
   func.func @guard_clamp_i128_guard_conservative(%n: i64, %ofs: i64, %g: i128, %v0: !v64xf32) {
     %zero = arith.constant 0 : i64

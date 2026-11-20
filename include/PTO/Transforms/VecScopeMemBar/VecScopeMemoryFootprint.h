@@ -20,6 +20,7 @@ struct AccessOccurrence {
     PTOMemoryFootprint footprint;
     // Revalidated, isolated continuous stream. Never inferred from SSA alone.
     Operation* orderedStreamFlush = nullptr;
+    Operation* orderedStreamLoop = nullptr;
     SmallVector<unsigned, mlir::pto::kValue2> loopNest;
     SmallVector<unsigned, mlir::pto::kValue2> schedulePath;
     unsigned lexicalOrder = 0;

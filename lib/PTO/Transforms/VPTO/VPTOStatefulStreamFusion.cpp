@@ -201,10 +201,11 @@ static bool tryFuseStatefulStoreStreams(StatefulStoreStream first,
   return true;
 }
 
-static void fuseStatefulStoreStreams(ModuleOp module) {
+static void fuseStatefulStoreStreams(Operation* scope)
+{
   while (true) {
     SmallVector<InitAlignOp> initializers;
-    module.walk([&](InitAlignOp init) { initializers.push_back(init); });
+    scope->walk([&](InitAlignOp init) { initializers.push_back(init); });
     DenseMap<Block *, StatefulStoreStream> previousStreams;
     bool changed = false;
     for (InitAlignOp init : initializers) {
@@ -324,10 +325,11 @@ static bool tryFuseStatefulLoadStreams(StatefulLoadStream first,
   return true;
 }
 
-static void fuseStatefulLoadStreams(ModuleOp module) {
+static void fuseStatefulLoadStreams(Operation* scope)
+{
   while (true) {
     SmallVector<VldasOp> initializers;
-    module.walk([&](VldasOp init) { initializers.push_back(init); });
+    scope->walk([&](VldasOp init) { initializers.push_back(init); });
     DenseMap<Block *, StatefulLoadStream> previousStreams;
     bool changed = false;
     for (VldasOp init : initializers) {
@@ -768,12 +770,13 @@ static bool fuseLoopCarriedLoadStream(StatefulLoadStream stream,
   return true;
 }
 
-static void fuseLoopCarriedStatefulStreams(ModuleOp module) {
-  IRRewriter rewriter(module.getContext());
+static void fuseLoopCarriedStatefulStreams(Operation* scope)
+{
+  IRRewriter rewriter(scope->getContext());
   while (true) {
     bool changed = false;
     SmallVector<InitAlignOp> storeInitializers;
-    module.walk([&](InitAlignOp init) { storeInitializers.push_back(init); });
+    scope->walk([&](InitAlignOp init) { storeInitializers.push_back(init); });
     for (InitAlignOp init : storeInitializers) {
       auto stream = parseStatefulStoreStream(init);
       if (stream && fuseLoopCarriedStoreStream(*stream, rewriter)) {
@@ -786,7 +789,7 @@ static void fuseLoopCarriedStatefulStreams(ModuleOp module) {
     }
 
     SmallVector<VldasOp> loadInitializers;
-    module.walk([&](VldasOp init) { loadInitializers.push_back(init); });
+    scope->walk([&](VldasOp init) { loadInitializers.push_back(init); });
     for (VldasOp init : loadInitializers) {
       auto stream = parseStatefulLoadStream(init);
       if (stream && fuseLoopCarriedLoadStream(*stream, rewriter)) {
@@ -800,10 +803,11 @@ static void fuseLoopCarriedStatefulStreams(ModuleOp module) {
   }
 }
 
-static void runVPTOStatefulStreamFusionImpl(ModuleOp module) {
-  fuseStatefulStoreStreams(module);
-  fuseStatefulLoadStreams(module);
-  fuseLoopCarriedStatefulStreams(module);
+static void runVPTOStatefulStreamFusionImpl(Operation* scope)
+{
+  fuseStatefulStoreStreams(scope);
+  fuseStatefulLoadStreams(scope);
+  fuseLoopCarriedStatefulStreams(scope);
 }
 } // namespace
 
@@ -823,7 +827,8 @@ std::unique_ptr<Pass> createVPTOStatefulStreamFusionPass() {
   return std::make_unique<VPTOStatefulStreamFusionPass>();
 }
 
-void runVPTOStatefulStreamFusion(ModuleOp module) {
-  runVPTOStatefulStreamFusionImpl(module);
+void runVPTOStatefulStreamFusion(Operation* scope)
+{
+  runVPTOStatefulStreamFusionImpl(scope);
 }
 } // namespace mlir::pto
