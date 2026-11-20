@@ -66,6 +66,11 @@ static bool tcvtIsResolvedSubview(Value value) {
   return semantics && semantics.getValue() == "subview";
 }
 
+static bool hasCompactMode(TileBufType tile, pto::CompactMode mode)
+{
+    return tile.getCompactModeI32() == static_cast<int32_t>(mode);
+}
+
 static bool tcvtNeedsTmp(TCvtOp op, Type srcElem, Type dstElem) {
   if (op.getSatMode() != pto::SaturationMode::OFF) {
     return false;
@@ -135,27 +140,38 @@ static LogicalResult verifyTCvtTmp(TCvtOp op, Type srcTy, Type dstTy,
 // Returns dstIsNZ on success: the shape checks below need it.
 static LogicalResult verifyDirectFp4ToFp8TCvtLayout(TCvtOp op, Type srcTy,
                                                     Type dstTy, bool &dstNZ) {
-  auto src = cast<pto::TileBufType>(srcTy);
-  auto dst = cast<pto::TileBufType>(dstTy);
-  if (!isRowMajorTileBuf(srcTy) ||
-      src.getSLayoutValueI32() != static_cast<int32_t>(pto::SLayout::NoneBox) ||
-      src.getCompactModeI32() != static_cast<int32_t>(pto::CompactMode::Null)) {
-    return op.emitOpError("expects direct FP4/FP8 src to use ND layout with compact=null");
-  }
-  bool dstND = isRowMajorTileBuf(dstTy) &&
-               dst.getSLayoutValueI32() == static_cast<int32_t>(pto::SLayout::NoneBox);
-  dstNZ = isColMajorTileBuf(dstTy) &&
-          dst.getSLayoutValueI32() == static_cast<int32_t>(pto::SLayout::RowMajor) &&
-          dst.getSFractalSizeI32() == mlir::pto::kValue512;
-  if (!dstND && !dstNZ) {
-    return op.emitOpError("expects direct FP4/FP8 dst to use ND or standard 512-byte NZ layout");
-  }
-  int32_t compact = dst.getCompactModeI32();
-  if (compact != static_cast<int32_t>(pto::CompactMode::Null) &&
-      !(dstNZ && compact == static_cast<int32_t>(pto::CompactMode::Normal))) {
-    return op.emitOpError("expects direct FP4/FP8 dst compact=null, or compact=normal for NZ");
-  }
-  return success();
+    auto src = cast<pto::TileBufType>(srcTy);
+    auto dst = cast<pto::TileBufType>(dstTy);
+    bool srcRowMajor = isRowMajorTileBuf(srcTy);
+    bool srcNoneBox = src.getSLayoutValueI32() ==
+            static_cast<int32_t>(pto::SLayout::NoneBox);
+    if (!srcRowMajor || !srcNoneBox ||
+            !hasCompactMode(src, pto::CompactMode::Null)) {
+        return op.emitOpError(
+            "expects direct FP4/FP8 src to use ND layout with compact=null");
+    }
+    bool dstND =
+            isRowMajorTileBuf(dstTy) &&
+            dst.getSLayoutValueI32() ==
+                    static_cast<int32_t>(pto::SLayout::NoneBox);
+    dstNZ = isColMajorTileBuf(dstTy) &&
+            dst.getSLayoutValueI32() ==
+                    static_cast<int32_t>(pto::SLayout::RowMajor) &&
+            dst.getSFractalSizeI32() == mlir::pto::kValue512;
+    if (!dstND && !dstNZ) {
+        return op.emitOpError("expects direct FP4/FP8 dst to use ND or "
+            "standard 512-byte NZ layout");
+    }
+    if (hasCompactMode(dst, pto::CompactMode::Null)) {
+        return success();
+    }
+    bool nzNormal = hasCompactMode(dst, pto::CompactMode::Normal);
+    bool nzRowPlusOne = hasCompactMode(dst, pto::CompactMode::RowPlusOne);
+    if (!dstNZ || !(nzNormal || nzRowPlusOne)) {
+        return op.emitOpError("expects direct FP4/FP8 dst compact=null, or "
+            "compact=normal/row_plus_one for NZ");
+    }
+    return success();
 }
 
 // ISA limits for this path: byte offsets are signed 32-bit, the VF loop
@@ -163,42 +179,56 @@ static LogicalResult verifyDirectFp4ToFp8TCvtLayout(TCvtOp op, Type srcTy,
 // and a source row covers whole registers' worth of packed FP4 bytes.
 static LogicalResult verifyDirectFp4ToFp8TCvtShape(TCvtOp op, TileBufType src,
                                                    TileBufType dst, bool dstNZ) {
-  auto srcShape = src.getShape();
-  auto dstShape = dst.getShape();
-  constexpr int64_t maxOffset = 0x7FFFFFFF;
-  constexpr int64_t maxVFCount = 0xFFFF;
-  constexpr int64_t vecRegBytes = mlir::pto::kValue256;
-  constexpr int64_t srcPackedColAlign = mlir::pto::kValue32;
-  for (auto shape : {srcShape, dstShape}) {
-    if (llvm::any_of(shape, [](int64_t dim) {
-          return dim <= 0 || dim > maxOffset;
-        })) {
-      return op.emitOpError("expects direct FP4/FP8 physical dimensions to be "
-                            "static positive signed 32-bit integers");
+    auto srcShape = src.getShape();
+    auto dstShape = dst.getShape();
+    constexpr int64_t maxOffset = 0x7FFFFFFF;
+    constexpr int64_t maxVFCount = 0xFFFF;
+    constexpr int64_t vecRegBytes = mlir::pto::kValue256;
+    constexpr int64_t srcPackedColAlign = mlir::pto::kValue32;
+    for (auto shape : {srcShape, dstShape}) {
+        if (llvm::any_of(shape, [](int64_t dim) {
+                return dim <= 0 || dim > maxOffset;
+            })) {
+            return op.emitOpError(
+                "expects direct FP4/FP8 physical dimensions to be static "
+                "positive signed 32-bit integers");
+        }
     }
-  }
-  // Check before doubling packed columns or multiplying dimensions.
-  if (srcShape[1] > maxOffset / mlir::pto::kValue2 ||
-      srcShape[0] > maxOffset / srcShape[1] ||
-      dstShape[0] > maxOffset / dstShape[1]) {
-    return op.emitOpError("expects direct FP4/FP8 logical columns and byte "
-                          "offsets to fit signed 32 bits");
-  }
-  if (srcShape[1] % srcPackedColAlign != 0) {
-    return op.emitOpError("expects direct FP4/FP8 src rows to have a multiple "
-                          "of 64 logical columns (32 packed bytes)");
-  }
-  if (dstNZ && (dstShape[0] % mlir::pto::kValue16 != 0 ||
-                dstShape[0] > maxVFCount)) {
-    return op.emitOpError("expects direct FP4/FP8 NZ physical rows to be a "
-                          "multiple of 16 and fit a 16-bit block stride");
-  }
-  if (std::min(srcShape[0], dstShape[0]) > maxVFCount ||
-      srcShape[1] / vecRegBytes > maxVFCount) {
-    return op.emitOpError("expects direct FP4/FP8 VF row and source register "
-                          "counts to fit 16 bits");
-  }
-  return success();
+    // Check before doubling packed columns or multiplying dimensions.
+    if (srcShape[1] > maxOffset / mlir::pto::kValue2 ||
+            srcShape[0] > maxOffset / srcShape[1] ||
+            dstShape[0] > maxOffset / dstShape[1]) {
+        return op.emitOpError("expects direct FP4/FP8 logical columns and "
+            "byte offsets to fit signed 32 bits");
+    }
+    if (srcShape[1] % srcPackedColAlign != 0) {
+        return op.emitOpError("expects direct FP4/FP8 src rows to have a "
+            "multiple of 64 logical columns (32 packed bytes)");
+    }
+    if (dstNZ && (dstShape[0] % mlir::pto::kValue16 != 0 ||
+            dstShape[0] > maxVFCount)) {
+        return op.emitOpError("expects direct FP4/FP8 NZ physical rows to be "
+            "a multiple of 16 and fit a 16-bit block stride");
+    }
+    // RowPlusOne changes physical capacity, not logical Rows/Cols. The
+    // ordinary dense bounds above do not prove that the padded panel pitch
+    // and scatter byte offsets fit; PlanMemory already reserves the padded
+    // envelope ((Cols - 1) * (Rows + 1) + Rows bytes) rounded to the local
+    // 256-byte boundary.
+    bool pitchOverflow = dstShape[0] + 1 > maxVFCount;
+    bool bytesOverflow = dstShape[0] + 1 > maxOffset / dstShape[1];
+    bool rowPlusOne = hasCompactMode(dst, pto::CompactMode::RowPlusOne);
+    if (rowPlusOne && (pitchOverflow || bytesOverflow)) {
+        return op.emitOpError("expects direct FP4/FP8 row_plus_one padded "
+            "stride and byte offsets to fit supported bounds");
+    }
+    int64_t vfRowCount = std::min(srcShape[0], dstShape[0]);
+    if (vfRowCount > maxVFCount ||
+            srcShape[1] / vecRegBytes > maxVFCount) {
+        return op.emitOpError("expects direct FP4/FP8 VF row and source "
+            "register counts to fit 16 bits");
+    }
+    return success();
 }
 
 static LogicalResult verifyDirectFp4ToFp8TCvt(TCvtOp op, Type srcTy, Type dstTy) {

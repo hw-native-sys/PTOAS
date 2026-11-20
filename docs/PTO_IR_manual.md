@@ -8702,8 +8702,14 @@ dst[i, j] = saturate(cast(src[i, j], rmode), satmode)
     `compact=0`, and its `cols` must be a multiple of 32 packed bytes
     (64 logical FP4 values). `dst` uses either the same ND layout with
     `compact=0`, or standard NZ (`blayout=col_major`, `slayout=row_major`,
-    `fractal=512`) with `compact=0` or `compact=1`; NZ `rows` must be a
-    multiple of 16. `compact=2` (RowPlusOne) is rejected. Physical padding may
+    `fractal=512`) with `compact=0` (Null), `compact=1` (Normal), or
+    `compact=2` (RowPlusOne). RowPlusOne is only accepted for the standard NZ
+    destination; an ND destination still requires `compact=0`. NZ `rows` must
+    be a multiple of 16. With RowPlusOne the padded panel pitch is physical
+    `rows` + 1; the pitch must fit a 16-bit stride, and the padded envelope
+    ((`rows` + 1) * `cols` bytes for one-byte FP8 elements), derived from the
+    physical `rows`/`cols` even when the valid region is smaller or its row
+    count is dynamic, must fit signed 32-bit byte offsets. Physical padding may
     differ between the two tiles, but their logical valid regions must agree,
     where `src` valid columns count packed bytes and `dst` valid columns count
     FP8 elements. Valid columns must be static on both tiles; valid rows may be

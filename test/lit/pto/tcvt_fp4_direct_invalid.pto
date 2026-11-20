@@ -160,7 +160,7 @@ module attributes {pto.target_arch = "a5"} {
 
 module attributes {pto.target_arch = "a5"} {
   func.func @dst_nd_normal(%src: !pto.tile_buf<loc=vec, dtype=!pto.f4E2M1x2, rows=32, cols=256, v_row=32, v_col=256, blayout=row_major, slayout=none_box, fractal=512, pad=0, compact=0>, %dst: !pto.tile_buf<loc=vec, dtype=f8E4M3FN, rows=32, cols=512, v_row=32, v_col=512, blayout=row_major, slayout=none_box, fractal=512, pad=0, compact=1>) {
-    // expected-error@+1 {{expects direct FP4/FP8 dst compact=null, or compact=normal for NZ}}
+    // expected-error@+1 {{expects direct FP4/FP8 dst compact=null, or compact=normal/row_plus_one for NZ}}
     pto.tcvt ins(%src : !pto.tile_buf<loc=vec, dtype=!pto.f4E2M1x2, rows=32, cols=256, v_row=32, v_col=256, blayout=row_major, slayout=none_box, fractal=512, pad=0, compact=0>) outs(%dst : !pto.tile_buf<loc=vec, dtype=f8E4M3FN, rows=32, cols=512, v_row=32, v_col=512, blayout=row_major, slayout=none_box, fractal=512, pad=0, compact=1>)
     return
   }
@@ -169,9 +169,9 @@ module attributes {pto.target_arch = "a5"} {
 // -----
 
 module attributes {pto.target_arch = "a5"} {
-  func.func @dst_row_plus_one(%src: !pto.tile_buf<loc=vec, dtype=!pto.f4E2M1x2, rows=32, cols=256, v_row=32, v_col=256, blayout=row_major, slayout=none_box, fractal=512, pad=0, compact=0>, %dst: !pto.tile_buf<loc=vec, dtype=f8E4M3FN, rows=32, cols=512, v_row=32, v_col=512, blayout=col_major, slayout=row_major, fractal=512, pad=0, compact=2>) {
-    // expected-error@+1 {{expects direct FP4/FP8 dst compact=null, or compact=normal for NZ}}
-    pto.tcvt ins(%src : !pto.tile_buf<loc=vec, dtype=!pto.f4E2M1x2, rows=32, cols=256, v_row=32, v_col=256, blayout=row_major, slayout=none_box, fractal=512, pad=0, compact=0>) outs(%dst : !pto.tile_buf<loc=vec, dtype=f8E4M3FN, rows=32, cols=512, v_row=32, v_col=512, blayout=col_major, slayout=row_major, fractal=512, pad=0, compact=2>)
+  func.func @dst_nd_row_plus_one(%src: !pto.tile_buf<loc=vec, dtype=!pto.f4E2M1x2, rows=32, cols=256, v_row=32, v_col=256, blayout=row_major, slayout=none_box, fractal=512, pad=0, compact=0>, %dst: !pto.tile_buf<loc=vec, dtype=f8E4M3FN, rows=32, cols=512, v_row=32, v_col=512, blayout=row_major, slayout=none_box, fractal=512, pad=0, compact=2>) {
+    // expected-error@+1 {{expects direct FP4/FP8 dst compact=null, or compact=normal/row_plus_one for NZ}}
+    pto.tcvt ins(%src : !pto.tile_buf<loc=vec, dtype=!pto.f4E2M1x2, rows=32, cols=256, v_row=32, v_col=256, blayout=row_major, slayout=none_box, fractal=512, pad=0, compact=0>) outs(%dst : !pto.tile_buf<loc=vec, dtype=f8E4M3FN, rows=32, cols=512, v_row=32, v_col=512, blayout=row_major, slayout=none_box, fractal=512, pad=0, compact=2>)
     return
   }
 }
