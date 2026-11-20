@@ -118,7 +118,7 @@ struct MaskUseRequest {
 /// different element widths.
 struct MaskLogicGroup {
     Value result;
-    SmallVector<OpOperand *, 2> operands;
+    SmallVector<OpOperand *, mlir::pto::kValue2> operands;
 };
 
 static unsigned getElementBitWidth(Type type) {

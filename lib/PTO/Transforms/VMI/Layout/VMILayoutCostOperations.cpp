@@ -695,7 +695,7 @@ LogicalResult PlanGraphBuilder::buildDeinterleaveExtf(const VMILayoutOpRelation&
     if (!packed) {
         zero = graph.addAction(PhysicalActionKind::Compute, scope, {}, "deinterleave_extf:zero")[0];
     }
-    for (unsigned channel = 0; channel < 2; ++channel) {
+    for (unsigned channel = 0; channel < mlir::pto::kValue2; ++channel) {
         PhysicalValues result;
         if (packed) {
             for (PhysicalValue input : *source) {

@@ -14,6 +14,7 @@
 #include "VMIInternal.h"
 #include "PTO/Analysis/PTOAddressAnalysis.h"
 #include "PTO/IR/PTO.h"
+#include "PTO/Support/CodeConstants.h"
 #include "mlir/Interfaces/SideEffectInterfaces.h"
 #include "mlir/Interfaces/InferIntRangeInterface.h"
 #include "mlir/Dialect/SCF/IR/SCF.h"
@@ -73,7 +74,7 @@ static ConstantIntRanges inferLocalRange(Value value, DenseMap<Value, ConstantIn
     }
     unsigned width = ConstantIntRanges::getStorageBitwidth(value.getType());
     auto full = ConstantIntRanges::maxRange(width);
-    if (depth >= 32) {
+    if (depth >= mlir::pto::kValue32) {
         return full;
     }
     if (auto argument = dyn_cast<BlockArgument>(value)) {
@@ -133,7 +134,7 @@ static std::optional<int64_t> getAdjacentPointerDifference(Value low, Value high
     }
     auto constant = add.getRhs().getDefiningOp<arith::ConstantOp>();
     auto delta = constant ? dyn_cast<IntegerAttr>(constant.getValue()) : IntegerAttr();
-    if (!delta || !delta.getValue().isSignedIntN(62)) {
+    if (!delta || !delta.getValue().isSignedIntN(mlir::pto::kValue62)) {
         return std::nullopt;
     }
     DenseMap<Value, ConstantIntRanges> ranges;
@@ -145,7 +146,7 @@ static std::optional<int64_t> getAdjacentPointerDifference(Value low, Value high
     if (!incrementDoesNotWrap) {
         return std::nullopt;
     }
-    return delta.getInt() * 2;
+    return delta.getInt() * mlir::pto::kValue2;
 }
 
 static bool areContiguousStores(PackedOutputMatch match, int64_t lanes)
@@ -164,7 +165,7 @@ static bool areContiguousStores(PackedOutputMatch match, int64_t lanes)
         return false;
     }
     // APInt keeps the proof well-defined even for extreme source offsets.
-    llvm::APInt difference(128, static_cast<uint64_t>(*delta), true);
+    llvm::APInt difference(mlir::pto::kValue128, static_cast<uint64_t>(*delta), true);
     bool identicalOffsets = match.lowStore.getOffset() == match.highStore.getOffset();
     if (!identicalOffsets) {
         auto low = getConstantIndexValue(match.lowStore.getOffset());
@@ -172,11 +173,12 @@ static bool areContiguousStores(PackedOutputMatch match, int64_t lanes)
         if (!low || !high) {
             return false;
         }
-        difference += (llvm::APInt(128, static_cast<uint64_t>(*high), true) -
-                       llvm::APInt(128, static_cast<uint64_t>(*low), true)) *
-                      2;
+        difference += (llvm::APInt(mlir::pto::kValue128, static_cast<uint64_t>(*high), true) -
+                       llvm::APInt(mlir::pto::kValue128, static_cast<uint64_t>(*low), true)) *
+                      mlir::pto::kValue2;
     }
-    return difference == llvm::APInt(128, static_cast<uint64_t>(lanes * 2));
+    return difference ==
+           llvm::APInt(mlir::pto::kValue128, static_cast<uint64_t>(lanes * mlir::pto::kValue2));
 }
 
 static bool canDelayFirstStore(PackedOutputMatch match)
