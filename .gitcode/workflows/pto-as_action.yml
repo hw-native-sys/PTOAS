@@ -227,6 +227,9 @@ stages:
               object-prefix: ${{ env.obs_path }}/sim/
         runs-on: ["self-hosted", "runner=label_1"]
       PreSmoke_A5:
+        permissions:
+          repository: read
+          id-token: write
         name: PreSmoke_A5
         steps:
           -
@@ -236,6 +239,15 @@ stages:
             with:
               ref: ${{ atomgit.event.pull_request.merge_commit_sha }}
               token: ${{secrets.GIT_TOKEN}}
+          -
+            name: oidc_auth
+            uses: huaweicloud-oidc-auth
+            with:
+              audience: ${{ secrets.audience }}
+              agency_urn: ${{ secrets.agency_urn }}
+              provider_urn: ${{ secrets.provider_urn }}
+              region: cn-north-4
+              duration: 3600
           -
             name: download pr files
             uses: obs-download
@@ -261,8 +273,6 @@ stages:
                 export repo_name=${{env.repo_name}}
                 export obs_smoke_path=${{ env.obs_smoke_path }}
                 export pr_id=${{ env.MERGE_ID }}
-                export AK=${{secrets.AK}}
-                export SK=${{secrets.SK}}
                 # Ascend950PR board; keep ST_PART out of build.sh's environment so
                 # this job builds from source (the x86_64 Compile installer carries
                 # no ptobc, which runop --enablebc needs).
@@ -281,8 +291,6 @@ stages:
             with:
               endpoint: "https://obs.cn-north-4.myhuaweicloud.com"
               bucket: "ascend-ci"
-              access-key: ${{ secrets.AK }}
-              secret-key: ${{ secrets.SK }}
               artifact-path: "${{ steps.process_checkout.outputs.path }}/slog*.tar.gz"
               object-prefix: ${obs_smoke_path}/plog/a5/
         if: env.TARGET_BRANCH == 'master'
