@@ -551,14 +551,14 @@ static std::string getTRandomRoundsString(pto::TRandomOp op) {
   return std::to_string(op.getRounds());
 }
 
-// Appends the round_mode context attr for a TCvt op, when present.
-static void appendTCvtRoundModeAttr(
-    pto::TCvtOp tcvt,
-    SmallVectorImpl<std::pair<std::string, std::string>> &attrs) {
-  std::optional<std::string> roundMode = getTCvtRoundModeString(tcvt);
-  if (roundMode) {
-    attrs.emplace_back("round_mode", *roundMode);
-  }
+// Appends the round_mode / sat_mode context attrs for a TCvt op.
+static void appendTCvtContextAttrs(pto::TCvtOp tcvt, SmallVectorImpl<std::pair<std::string, std::string>>& attrs)
+{
+    std::optional<std::string> roundMode = getTCvtRoundModeString(tcvt);
+    if (roundMode) {
+        attrs.emplace_back("round_mode", *roundMode);
+    }
+    attrs.emplace_back("sat_mode", stringifySaturationMode(tcvt.getSatMode()).str());
 }
 
 // Returns the cmp_mode context attr for TCmpOp / TCmpSOp, when present.
@@ -673,7 +673,7 @@ static LogicalResult appendOpContextAttrs(
     Operation *op,
     SmallVectorImpl<std::pair<std::string, std::string>> &attrs) {
   if (auto tcvt = dyn_cast<pto::TCvtOp>(op)) {
-    appendTCvtRoundModeAttr(tcvt, attrs);
+    appendTCvtContextAttrs(tcvt, attrs);
   }
   if (auto trandom = dyn_cast<pto::TRandomOp>(op)) {
     attrs.emplace_back("rounds", getTRandomRoundsString(trandom));

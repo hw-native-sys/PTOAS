@@ -12,6 +12,10 @@
 # Covers the 4:1 unsigned integer narrowing (i32/ui32 -> ui8, packed with vselr) and
 # the FP8 <-> F32 pairs.  The signed 4:1 pairs (i32/ui32 -> si8) have no A5 intrinsic
 # and intentionally stay unsupported.
+#
+# Issue #1686 adds the f32 -> i16 saturation case: pto.tcvt defaults sat_mode to ON,
+# so every out-of-range element must clamp to the int16 range after RINT instead of
+# wrapping through the low 16 bits of the rounded i32 value.
 
 from pathlib import Path
 import sys
@@ -75,6 +79,46 @@ def _f32_inputs() -> list:
 
 def _f8bits_inputs() -> list:
     return [_tile(E4M3_BITS, np.uint8)]
+
+
+# f32 -> i16 saturation (issue #1686): a range wide enough that 48 of the 256
+# elements fall outside int16, so a missing saturation is visible as a wrap.
+I16_LOW, I16_HIGH = -32768, 32767
+SAT_VALUES = np.linspace(-40000.0, 40000.0, TOTAL, dtype=np.float32).reshape(ROWS, COLS)
+
+
+def _sat_kernel(name, sat_mode):
+    @pto.jit(name=name, target="a5")
+    def _kernel(src_ptr: pto.ptr(pto.f32, "gm"), out_ptr: pto.ptr(pto.i16, "gm")):
+        src_view = pto.make_tensor_view(src_ptr, shape=[ROWS, COLS], strides=[COLS, 1])
+        out_view = pto.make_tensor_view(out_ptr, shape=[ROWS, COLS], strides=[COLS, 1])
+        src = pto.alloc_tile(shape=[ROWS, COLS], dtype=pto.f32, valid_shape=[ROWS, COLS])
+        dst = pto.alloc_tile(shape=[ROWS, COLS], dtype=pto.i16, valid_shape=[ROWS, COLS])
+        pto.tile.load(src_view, src)
+        pto.tile.cvt(src, dst, rmode=pto.RoundMode.RINT, sat_mode=sat_mode)
+        pto.tile.store(dst, out_view)
+
+    return _kernel
+
+
+_f32_i16_sat_on = _sat_kernel("cvt_f32_to_i16_s8x32_sat_on", "ON")
+# sat_mode=OFF keeps the plain truncation, so the out-of-range half wraps.  This
+# case exists to lock the sat_mode *attribute plumbing*: with the template
+# defaulting to ON, an ON-only case would still pass if ExpandTileOp stopped
+# forwarding the attribute.
+_f32_i16_sat_off = _sat_kernel("cvt_f32_to_i16_s8x32_sat_off", "OFF")
+
+
+def _sat_inputs() -> list:
+    return [SAT_VALUES]
+
+
+def _i16_sat_expected(src):
+    return np.clip(np.rint(src), I16_LOW, I16_HIGH).astype(np.int16)
+
+
+def _i16_nosat_expected(src):
+    return np.rint(src).astype(np.int64).astype(np.int16)
 
 
 # bf16 -> f4e2m1x2: two source values become one packed destination byte.
@@ -167,6 +211,22 @@ CASES = [
         expected=lambda src: _fp4_expected(src),
         output_shape=(FP4_ROWS, FP4_DST_COLS),
         output_dtype=np.uint8,
+        rtol=0.0,
+        atol=0.0,
+    ),
+    golden_output_case(
+        "cvt_f32_to_i16_s8x32_sat_on",
+        _f32_i16_sat_on,
+        inputs=_sat_inputs,
+        expected=_i16_sat_expected,
+        rtol=0.0,
+        atol=0.0,
+    ),
+    golden_output_case(
+        "cvt_f32_to_i16_s8x32_sat_off",
+        _f32_i16_sat_off,
+        inputs=_sat_inputs,
+        expected=_i16_nosat_expected,
         rtol=0.0,
         atol=0.0,
     ),

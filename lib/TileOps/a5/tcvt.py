@@ -85,6 +85,35 @@ def _sat_mode(token):
     return None
 
 
+def _tcvt_sat_mode():
+    """Saturation mode for the plain f32 -> integer narrowing templates.
+
+    pto.tcvt carries sat_mode (default ON); the templates must honour it
+    instead of hard-coding no-saturation, otherwise an out-of-range element
+    keeps the low bits of the rounded value (issue #1686).
+    """
+    token = str(pto.get_op_attr("sat_mode", "ON")).upper()
+    return pto.VcvtSatMode.SAT if token == "ON" else pto.VcvtSatMode.NOSAT
+
+
+def _tcvt_f32_to_i16_pair(vec_f32, full_mask):
+    """Rounded, saturation-aware f32 -> i16 split: f32 -> i32 -> i16 (PART_EVEN)."""
+    vec_i32 = pto.vcvt(
+        vec_f32,
+        pto.i32,
+        full_mask,
+        rnd=_round_mode(),
+        sat=_tcvt_sat_mode(),
+    )
+    return pto.vcvt(
+        vec_i32,
+        pto.i16,
+        full_mask,
+        sat=_tcvt_sat_mode(),
+        part=pto.VcvtPartMode.EVEN,
+    )
+
+
 def _part_mode(token):
     if token == "even":
         return pto.VcvtPartMode.EVEN
@@ -603,20 +632,7 @@ def template_tcvt_f32_to_i16(src: pto.Tile, dst: pto.Tile):
         for col in range(0, valid_cols, lanes_f32):
             store_mask, remained = pto.make_mask(src.dtype, remained)
             vec_f32 = pto.vlds(src[row, col:])
-            vec_i32 = pto.vcvt(
-                vec_f32,
-                pto.i32,
-                full_mask,
-                rnd=_round_mode(),
-                sat=pto.VcvtSatMode.NOSAT,
-            )
-            vec_i16 = pto.vcvt(
-                vec_i32,
-                pto.i16,
-                full_mask,
-                sat=pto.VcvtSatMode.NOSAT,
-                part=pto.VcvtPartMode.EVEN,
-            )
+            vec_i16 = _tcvt_f32_to_i16_pair(vec_f32, full_mask)
             pto.vsts(vec_i16, dst[row, col:], store_mask, dist=pto.VStoreDist.PK_B32)
 
 
@@ -627,20 +643,7 @@ def _render_tcvt_f32_to_i16_1d(src: pto.Tile, dst: pto.Tile):
 
     def emit_chunk(offset, store_mask):
         vec_f32 = pto.vlds(src_ptr, offset)
-        vec_i32 = pto.vcvt(
-            vec_f32,
-            pto.i32,
-            full_mask,
-            rnd=_round_mode(),
-            sat=pto.VcvtSatMode.NOSAT,
-        )
-        vec_i16 = pto.vcvt(
-            vec_i32,
-            pto.i16,
-            full_mask,
-            sat=pto.VcvtSatMode.NOSAT,
-            part=pto.VcvtPartMode.EVEN,
-        )
+        vec_i16 = _tcvt_f32_to_i16_pair(vec_f32, full_mask)
         pto.vsts(
             vec_i16,
             dst_ptr,
