@@ -127,7 +127,7 @@ jobs:
           report arch "$([[ "$(uname -m)" == "aarch64" ]] && echo yes || echo no)" "$(uname -m)"
           report task_submit "$(have task-submit && echo yes || echo no)" "card queue client"
 
-          for tool in bash git curl tar make cmake ninja gcc g++ unzip; do
+          for tool in bash git curl tar make cmake ninja gcc g++ unzip stat; do
             key="tool_$(printf '%s' "${tool}" | tr '+' 'p')"
             report "${key}" "$(have "${tool}" && echo yes || echo no)" "$(have "${tool}" && command -v "${tool}" || echo 'not on PATH')"
           done
@@ -166,18 +166,23 @@ jobs:
             report "${key}" "$([[ "${code}" == "200" || "${code}" == "404" ]] && echo yes || echo no)" "HTTP ${code}"
           done
 
-          # On the GitCode A3 runner df -Pk's fourth field was non-numeric
-          # (observed "500G"). Prefer Python for the byte count and only fall
-          # back to df when Python is unavailable or fails.
-          free_kb="$(python3 -c 'import shutil,sys; print(shutil.disk_usage(sys.argv[1]).free // 1024)' "${HOME}" 2>/dev/null || true)"
-          if [[ ! "${free_kb}" =~ ^[0-9]+$ ]]; then
-            free_kb="$(df -Pk "${HOME}" | awk 'NR==2{print $4}')"
-          fi
-          if [[ "${free_kb:-}" =~ ^[0-9]+$ ]]; then
-            report disk "$([[ "${free_kb}" -gt 5242880 ]] && echo yes || echo no)" \
-              "$(df -Ph "${HOME}" | awk 'NR==2{print $4" free of "$2}')"
+          # stat -f prints remaining blocks and block size as plain numbers.
+          # Keep stderr visible: df and the conda python3 both failed on one
+          # A3 pod, and silently swallowing the error hid the cause.
+          if have stat; then
+            if stat_output="$(stat -f -c '%a %S' "${HOME}" 2>&1)"; then
+              read -r avail_blocks block_size <<< "${stat_output}"
+              if [[ "${avail_blocks}" =~ ^[0-9]+$ && "${block_size}" =~ ^[0-9]+$ ]]; then
+                free_kb=$(( avail_blocks * block_size / 1024 ))
+                report disk "$([[ "${free_kb}" -gt 5242880 ]] && echo yes || echo no)" "${free_kb} KiB free"
+              else
+                report disk unknown "unexpected stat -f output: ${stat_output}"
+              fi
+            else
+              report disk unknown "stat -f failed: ${stat_output}"
+            fi
           else
-            report disk unknown "cannot parse free space from python3/df: '${free_kb:-<empty>}'"
+            report disk unknown "stat is not on PATH"
           fi
           report cpus "$(echo yes)" "$(nproc) CPUs, $(free -g 2>/dev/null | awk '/^Mem:/{print $2" GiB RAM"}')"
 

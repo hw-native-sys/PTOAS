@@ -18,6 +18,18 @@ name: A3 Nightly Board
 # The runner is selected by label: the engineering group assigns the A3 board
 # slot as `smoke=301`. Match the A5 slot's `npu=4`: `npu=1` found no runner, and
 # the labels are AND-matched, so every requested label must exist on the host.
+#
+# A full sweep occupies the single A3 slot for hours. Serialize runs the same
+# way the PyPTO smoke does, so two `/a3-nightly` comments or a comment plus the
+# 01:00 schedule cannot pile onto the same board.
+concurrency:
+  max: 1
+  exceed-action: QUEUE
+  enable: true
+  preemption:
+    enable: true
+    events: [mr_id]
+
 on:
   schedule:
     # GitCode evaluates cron in UTC+8, not UTC. This is 01:00 Asia/Shanghai,
@@ -34,6 +46,13 @@ on:
         description: "Comma/space separated testcase names to run (empty = all A3 cases)"
         type: string
         default: ""
+  # Trigger an early full sweep from a PR comment: `/a3-nightly`. This runs the
+  # same job as the 01:00 schedule, so use it when the preflight needs to be
+  # validated before the next night.
+  pull_request_comment:
+    types: [created]
+    branches: [ '**' ]
+    comments: [ '^(?:\/)?a3-nightly' ]
 
 env:
   # The driver derives every artifact from WORKSPACE; keep the checkout and the
@@ -68,16 +87,22 @@ jobs:
           # before a multi-hour build instead of after the disk fills.
           workspace="${{ steps.process_checkout.outputs.path }}"
           [[ -n "${workspace}" ]] || workspace="${PWD}"
-          # On the GitCode A3 runner df -Pk's fourth field was non-numeric
-          # (observed "500G"), which makes the arithmetic below raise
-          # "value too great for base". Ask Python for bytes and keep df
-          # only as a numeric fallback.
-          free_kb="$(python3 -c 'import shutil,sys; print(shutil.disk_usage(sys.argv[1]).free // 1024)' "${workspace}" 2>/dev/null || true)"
-          if [[ ! "${free_kb}" =~ ^[0-9]+$ ]]; then
-            free_kb="$(df -Pk "${workspace}" | awk 'NR==2{print $4}')"
+          # stat -f prints the remaining blocks and block size as plain
+          # numbers, independent of the df formatting that varied between the
+          # A3 pods. Keep stderr visible so a failure can be diagnosed.
+          if ! command -v stat >/dev/null 2>&1; then
+            echo "ERROR: stat is missing; cannot determine free space for ${workspace}" >&2
+            exit 1
           fi
-          if [[ ! "${free_kb}" =~ ^[0-9]+$ ]]; then
-            echo "ERROR: cannot determine free space for ${workspace}: '${free_kb}'" >&2
+          if stat_output="$(stat -f -c '%a %S' "${workspace}" 2>&1)"; then
+            read -r avail_blocks block_size <<< "${stat_output}"
+            if [[ ! "${avail_blocks}" =~ ^[0-9]+$ || ! "${block_size}" =~ ^[0-9]+$ ]]; then
+              echo "ERROR: unexpected stat -f output for ${workspace}: ${stat_output}" >&2
+              exit 1
+            fi
+            free_kb=$(( avail_blocks * block_size / 1024 ))
+          else
+            echo "ERROR: stat -f failed for ${workspace}: ${stat_output}" >&2
             exit 1
           fi
           if (( free_kb < 31457280 )); then
