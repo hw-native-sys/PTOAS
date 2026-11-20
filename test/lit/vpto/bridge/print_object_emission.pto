@@ -66,10 +66,10 @@ module attributes {pto.target_arch = "a5", pto.kernel_kind = #pto.kernel_kind<ve
 // pass crashes when the trailing .DTData argument is missing. What differs is
 // which value the lifecycle calls bind to, which is settled in the IR.
 // IMPLICIT: define void @print_kernel_mix_aiv(ptr addrspace(1) %{{[0-9]+}}, ptr addrspace(1) %.DTData)
-// IMPLICIT: call void @pto_vpto_print_init__{{[0-9]+}}(ptr addrspace(1) %.DTData)
+// IMPLICIT: call void @pto_vpto_print_init__{{[0-9a-f]+}}_{{(cube|vector|any)}}_{{[0-9]+}}(ptr addrspace(1) %.DTData)
 
 // EXPLICIT: define void @print_kernel_mix_aiv(ptr addrspace(1) %[[ARG0:[0-9]+]], ptr addrspace(1) %.DTData)
-// EXPLICIT: call void @pto_vpto_print_init__{{[0-9]+}}(ptr addrspace(1) %[[ARG0]])
+// EXPLICIT: call void @pto_vpto_print_init__{{[0-9a-f]+}}_{{(cube|vector|any)}}_{{[0-9]+}}(ptr addrspace(1) %[[ARG0]])
 
 // Driver mode for the stub, with print enabled and the CC1-only options
 // forwarded, plus the close override compiled and merged.

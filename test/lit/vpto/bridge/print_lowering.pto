@@ -16,7 +16,7 @@ module {
 
 // The declaration comes from the registry descriptor (GM pointer = addrspace 1),
 // not from the call-site PTO pointer type.
-// CHECK: func.func private @pto_vpto_print_f32__0(!llvm.ptr<1>, f32)
+// CHECK: func.func private @pto_vpto_print_f32__{{[0-9a-f]+}}_{{(cube|vector|any)}}_0(!llvm.ptr<1>, f32)
 // CHECK-LABEL: func.func @print_without_kernel_kind
 // CHECK: %[[FMT:.*]] = builtin.unrealized_conversion_cast %arg0 : !pto.ptr<i8, gm> to !llvm.ptr<1>
-// CHECK: call @pto_vpto_print_f32__0(%[[FMT]], %arg1) : (!llvm.ptr<1>, f32) -> ()
+// CHECK: call @pto_vpto_print_f32__{{[0-9a-f]+}}_{{(cube|vector|any)}}_0(%[[FMT]], %arg1) : (!llvm.ptr<1>, f32) -> ()

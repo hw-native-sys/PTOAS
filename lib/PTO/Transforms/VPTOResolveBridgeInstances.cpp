@@ -10,7 +10,11 @@
 // calls inherit their object's specialization before entry-specific resolution.
 #include "PTO/Transforms/Passes.h"
 #include "PTO/IR/VPTOBridgeRegistry.h"
+#include "mlir/Bytecode/BytecodeWriter.h"
+#include "mlir/IR/OwningOpRef.h"
 #include "llvm/ADT/DenseMap.h"
+#include "llvm/ADT/StringExtras.h"
+#include "llvm/Support/SHA256.h"
 #include <tuple>
 
 namespace mlir::pto {
@@ -18,6 +22,34 @@ namespace mlir::pto {
 #include "PTO/Transforms/Passes.h.inc"
 
 namespace {
+static FailureOr<std::string> getCompileUnitDigest(ModuleOp module)
+{
+    // Bytecode retains full regions and attribute payloads regardless of the
+    // process-wide assembly printer flags. Strip locations on a private copy so
+    // source paths do not enter the digest or disappear from later diagnostics.
+    OwningOpRef<ModuleOp> snapshot(module.clone());
+    auto unknownLoc = UnknownLoc::get(module.getContext());
+    snapshot->walk([unknownLoc](Operation* op) {
+        op->setLoc(unknownLoc);
+        for (Region& region : op->getRegions()) {
+            for (Block& block : region) {
+                for (BlockArgument argument : block.getArguments()) {
+                    argument.setLoc(unknownLoc);
+                }
+            }
+        }
+    });
+    std::string bytecode;
+    llvm::raw_string_ostream stream(bytecode);
+    if (failed(writeBytecodeToFile(snapshot->getOperation(), stream))) {
+        return failure();
+    }
+    llvm::SHA256 hash;
+    hash.update(stream.str());
+    // Encode the digest using lowercase hexadecimal digits.
+    return llvm::toHex(hash.final(), true);
+}
+
 // Same order as CV split partitioning: nearest section, then an explicit
 // pto.kernel_kind on an enclosing function or module.
 std::optional<BridgeCoreKind> findContextCore(Operation *op) {
@@ -90,8 +122,9 @@ struct ResolveInstances final
   /// canonical identity of a specialization, so equal specs share a symbol.
   class InstanceTable {
   public:
-    explicit InstanceTable(ModuleOp module)
-        : module(module), builder(OpBuilder::atBlockBegin(module.getBody())) {}
+    InstanceTable(ModuleOp module, std::string digest)
+        : module(module), builder(OpBuilder::atBlockBegin(module.getBody())),
+          unitDigest(std::move(digest)) {}
 
     FlatSymbolRefAttr intern(const BridgeFunctionDesc &desc, Attribute spec,
                              BridgeCoreKind core, Location loc) {
@@ -101,7 +134,8 @@ struct ResolveInstances final
         return found->second;
       }
       std::string symbol =
-          desc.symbolBase.str() + "__" + std::to_string(instances.size());
+          desc.symbolBase.str() + "__" + unitDigest + "_" +
+          stringifyBridgeCoreKind(core).str() + "_" + std::to_string(instances.size());
       auto instance = builder.create<BridgeInstanceOp>(
           loc, builder.getStringAttr(symbol),
           BridgeEntryAttr::get(module.getContext(), desc.id),
@@ -116,6 +150,7 @@ struct ResolveInstances final
     using Key = std::tuple<uint32_t, uint32_t, Attribute>;
     ModuleOp module;
     OpBuilder builder;
+    std::string unitDigest;
     llvm::DenseMap<Key, FlatSymbolRefAttr> instances;
   };
 
@@ -138,29 +173,35 @@ struct ResolveInstances final
     return success();
   }
 
-  void runOnOperation() override {
-    ModuleOp module = getOperation();
-    if (failed(inheritPipeSpec(module))) {
-      signalPassFailure();
-      return;
+    void runOnOperation() override
+    {
+        ModuleOp module = getOperation();
+        if (failed(inheritPipeSpec(module))) {
+            signalPassFailure();
+            return;
+        }
+        if (!module.getOps<BridgeInstanceOp>().empty()) {
+            module.emitError("bridge instances are already resolved");
+            signalPassFailure();
+            return;
+        }
+        FailureOr<std::string> digest = getCompileUnitDigest(module);
+        if (failed(digest)) {
+            module.emitError("failed to serialize bridge compile unit for its digest");
+            signalPassFailure();
+            return;
+        }
+        InstanceTable instances(module, std::move(*digest));
+        auto result = module.walk([&instances](Operation* op) {
+            if (!isa<BridgeCallOp, BridgeObjectCreateOp>(op)) {
+                return WalkResult::advance();
+            }
+            return failed(resolveOne(op, instances)) ? WalkResult::interrupt() : WalkResult::advance();
+        });
+        if (result.wasInterrupted()) {
+            signalPassFailure();
+        }
     }
-    if (!module.getOps<BridgeInstanceOp>().empty()) {
-      module.emitError("bridge instances are already resolved");
-      signalPassFailure();
-      return;
-    }
-    InstanceTable instances(module);
-    auto result = module.walk([&instances](Operation *op) {
-      if (!isa<BridgeCallOp, BridgeObjectCreateOp>(op)) {
-        return WalkResult::advance();
-      }
-      return failed(resolveOne(op, instances)) ? WalkResult::interrupt()
-                                               : WalkResult::advance();
-    });
-    if (result.wasInterrupted()) {
-      signalPassFailure();
-    }
-  }
 };
 } // namespace
 

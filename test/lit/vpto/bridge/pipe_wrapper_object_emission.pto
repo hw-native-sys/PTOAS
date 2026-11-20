@@ -63,4 +63,4 @@ module attributes {pto.target_arch = "a5"} {
 // The bitcode is then linked into that core's device IR, not compiled separately.
 // LINK: bridge wrapper bitcode linking failed
 // LINK: Command:
-// LINK-SAME: llvm-link -S {{[^ ]*}}ptoas-device-{{[^ ]*}}.ll {{[^ ]*}}ptoas-vpto-bridge-wrapper-{{[^ ]*}}.bc -o {{[^ ]*}}ptoas-device-bridge-linked-{{[^ ]*}}.ll
+// LINK-SAME: llvm-link {{[^ ]*}}ptoas-device-{{[^ ]*}}.ll {{[^ ]*}}ptoas-vpto-bridge-wrapper-{{[^ ]*}}.bc -o {{[^ ]*}}ptoas-device-bridge-linked-{{[^ ]*}}.bc

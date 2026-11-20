@@ -70,6 +70,6 @@ module attributes {pto.target_arch = "a5"} {
 // UNITS-DAG: {core = #pto.bridge_core<any>, renderer = "print"
 
 // Both families reach the device IR of each core.
-// LLVM-DAG: declare void @pto_vpto_pipe_push__{{[0-9]+}}(ptr, i64)
-// LLVM-DAG: declare i64 @pto_vpto_pipe_pop__{{[0-9]+}}(ptr)
-// LLVM-DAG: declare void @pto_vpto_print_i64__{{[0-9]+}}(ptr addrspace(1), i64)
+// LLVM-DAG: declare void @pto_vpto_pipe_push__{{[0-9a-f]+}}_{{(cube|vector|any)}}_{{[0-9]+}}(ptr, i64)
+// LLVM-DAG: declare i64 @pto_vpto_pipe_pop__{{[0-9a-f]+}}_{{(cube|vector|any)}}_{{[0-9]+}}(ptr)
+// LLVM-DAG: declare void @pto_vpto_print_i64__{{[0-9a-f]+}}_{{(cube|vector|any)}}_{{[0-9]+}}(ptr addrspace(1), i64)

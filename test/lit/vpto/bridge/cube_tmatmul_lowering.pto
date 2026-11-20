@@ -24,9 +24,9 @@ module attributes {pto.kernel_kind = #pto.kernel_kind<cube>} {
 // Each AccPhase is a distinct specialization; the instance table is consumed
 // by call lowering, leaving only declarations.
 // CHECK-NOT: pto.bridge.instance
-// CHECK: func.func private @pto_vpto_tmatmul__0(i64, i64, i64)
+// CHECK: func.func private @pto_vpto_tmatmul__{{[0-9a-f]+}}_{{(cube|vector|any)}}_0(i64, i64, i64)
 // CHECK-LABEL: func.func @matmul
-// CHECK: call @pto_vpto_tmatmul__0(%arg0, %arg1, %arg2) : (i64, i64, i64) -> ()
-// CHECK: pto_vpto_tmatmul__1
-// CHECK: pto_vpto_tmatmul__2
+// CHECK: call @pto_vpto_tmatmul__{{[0-9a-f]+}}_{{(cube|vector|any)}}_0(%arg0, %arg1, %arg2) : (i64, i64, i64) -> ()
+// CHECK: pto_vpto_tmatmul__{{[0-9a-f]+}}_{{(cube|vector|any)}}_1
+// CHECK: pto_vpto_tmatmul__{{[0-9a-f]+}}_{{(cube|vector|any)}}_2
 // FALLBACK: pto.tmatmul ins

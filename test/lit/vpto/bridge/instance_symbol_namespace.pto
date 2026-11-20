@@ -1,0 +1,22 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+
+// Independent units must link normally even when both start at instance zero.
+// The helper also checks deterministic names, location independence, different
+// specializations, matching C++/IR symbols, and same-unit deduplication.
+// Global IR printing options must preserve names and include dense payloads.
+// No CANN, device or host JIT is needed; lit adds LLVM tools to PATH.
+// RUN: bash "%S/Inputs/check_bridge_symbol_namespace.sh" "%s" "%t" %python "pto-test-opt" llvm-link
+
+module attributes {pto.kernel_kind = #pto.kernel_kind<vector>, pto.namespace_payload = dense<[1, 2]> : tensor<2xi32>} {
+  func.func @unit_a(%local: i32) {
+    %pipe0 = pto.initialize_l2l_pipe {dir_mask = 2, slot_size = 1024, slot_num = 8, flag_base = 0, nosplit = true}(%local : i32) -> !pto.pipe
+    %pipe1 = pto.initialize_l2l_pipe {dir_mask = 2, slot_size = 1024, slot_num = 8, flag_base = 0, nosplit = true}(%local : i32) -> !pto.pipe
+    return
+  }
+}

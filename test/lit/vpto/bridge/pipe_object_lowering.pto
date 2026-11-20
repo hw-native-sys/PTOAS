@@ -16,12 +16,12 @@ module {
   }
 }
 
-// CHECK: func.func private @pto_vpto_pipe_init__0(!llvm.ptr, i32)
+// CHECK: func.func private @pto_vpto_pipe_init__{{[0-9a-f]+}}_{{(cube|vector|any)}}_0(!llvm.ptr, i32)
 // CHECK-LABEL: func.func @consumer
 // CHECK: %[[SIZE:.*]] = llvm.mlir.constant(256 : i64) : i64
 // CHECK: %[[STORAGE:.*]] = llvm.alloca %[[SIZE]] x i8 {alignment = 32 : i64}
-// CHECK: call @pto_vpto_pipe_init__0(%[[STORAGE]], %{{.*}}) : (!llvm.ptr, i32) -> ()
+// CHECK: call @pto_vpto_pipe_init__{{[0-9a-f]+}}_{{(cube|vector|any)}}_0(%[[STORAGE]], %{{.*}}) : (!llvm.ptr, i32) -> ()
 // The object handle is replaced by its storage pointer; no !pto.pipe cast.
 // CHECK-NOT: unrealized_conversion_cast
-// CHECK: call @pto_vpto_pipe_pop__1(%[[STORAGE]]) : (!llvm.ptr) -> i64
-// CHECK: call @pto_vpto_pipe_free__2(%[[STORAGE]]) : (!llvm.ptr) -> ()
+// CHECK: call @pto_vpto_pipe_pop__{{[0-9a-f]+}}_{{(cube|vector|any)}}_1(%[[STORAGE]]) : (!llvm.ptr) -> i64
+// CHECK: call @pto_vpto_pipe_free__{{[0-9a-f]+}}_{{(cube|vector|any)}}_2(%[[STORAGE]]) : (!llvm.ptr) -> ()

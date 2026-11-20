@@ -30,7 +30,7 @@ module attributes {pto.target_arch = "a5", pto.kernel_kind = #pto.kernel_kind<cu
 }
 
 // The spec carries the accumulator alongside the usual three tiles.
-// VPTO: pto.bridge.instance @[[I:pto_vpto_tmatmul_acc__[0-9]+]] <cube_tmatmul_acc> core <cube>
+// VPTO: pto.bridge.instance @[[I:pto_vpto_tmatmul_acc__[0-9a-f]{64}_(cube|vector|any)_[0-9]+]] <cube_tmatmul_acc> core <cube>
 // VPTO-SAME: accPhase = final
 // VPTO-SAME: accIn = <<acc, 16x16xf32
 // VPTO-NOT: pto.tmatmul.acc
@@ -39,7 +39,7 @@ module attributes {pto.target_arch = "a5", pto.kernel_kind = #pto.kernel_kind<cu
 
 // Four addresses in the PTO-ISA call order, and the accumulate call spelling.
 // WRAPPER: renderer = "cube_direct"
-// WRAPPER-SAME: void pto_vpto_tmatmul_acc__0(uint64_t dstAddress, uint64_t accAddress, uint64_t lhsAddress, uint64_t rhsAddress)
+// WRAPPER-SAME: void pto_vpto_tmatmul_acc__{{[0-9a-f]+}}_{{(cube|vector|any)}}_0(uint64_t dstAddress, uint64_t accAddress, uint64_t lhsAddress, uint64_t rhsAddress)
 // WRAPPER-SAME: using AccIn = pto::Tile<pto::TileType::Acc, float, 16, 16,
 // WRAPPER-SAME: pto::TMATMUL_ACC<pto::AccPhase::Final>(dst, accIn, lhs, rhs);
 

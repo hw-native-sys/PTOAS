@@ -57,17 +57,17 @@ module attributes {pto.target_arch = "a5"} {
 
 // Each core module declares only the entries it calls; handles are storage
 // pointers.
-// LLVM-DAG: declare void @[[VFREE:pto_vpto_pipe_free__[0-9]+]](ptr)
-// LLVM-DAG: declare i64 @[[VPOP:pto_vpto_pipe_pop__[0-9]+]](ptr)
-// LLVM-DAG: declare void @[[VINIT:pto_vpto_pipe_init__[0-9]+]](ptr, i32)
+// LLVM-DAG: declare void @[[VFREE:pto_vpto_pipe_free__[0-9a-f]{64}_(cube|vector|any)_[0-9]+]](ptr)
+// LLVM-DAG: declare i64 @[[VPOP:pto_vpto_pipe_pop__[0-9a-f]{64}_(cube|vector|any)_[0-9]+]](ptr)
+// LLVM-DAG: declare void @[[VINIT:pto_vpto_pipe_init__[0-9a-f]{64}_(cube|vector|any)_[0-9]+]](ptr, i32)
 // LLVM: define void @fifo_sections(
 // LLVM: %[[VSTORAGE:[0-9]+]] = alloca i8, i64 256, align 32
 // LLVM: call void @[[VINIT]](ptr %[[VSTORAGE]], i32 0)
 // LLVM: call i64 @[[VPOP]](ptr %[[VSTORAGE]])
 // LLVM: call void @[[VFREE]](ptr %[[VSTORAGE]])
 // LLVM-NOT: pipe_push
-// LLVM-DAG: declare void @[[CPUSH:pto_vpto_pipe_push__[0-9]+]](ptr, i64)
-// LLVM-DAG: declare void @[[CINIT:pto_vpto_pipe_init__[0-9]+]](ptr, i32)
+// LLVM-DAG: declare void @[[CPUSH:pto_vpto_pipe_push__[0-9a-f]{64}_(cube|vector|any)_[0-9]+]](ptr, i64)
+// LLVM-DAG: declare void @[[CINIT:pto_vpto_pipe_init__[0-9a-f]{64}_(cube|vector|any)_[0-9]+]](ptr, i32)
 // LLVM: define void @fifo_sections(
 // LLVM: %[[CSTORAGE:[0-9]+]] = alloca i8, i64 256, align 32
 // LLVM: call void @[[CINIT]](ptr %[[CSTORAGE]], i32 0)

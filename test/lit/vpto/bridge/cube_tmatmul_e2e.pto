@@ -42,8 +42,8 @@ module attributes {pto.target_arch = "a5", pto.kernel_kind = #pto.kernel_kind<cu
 }
 
 // Two phases, two instances, both on the cube core.
-// VPTO-DAG: pto.bridge.instance @[[P:pto_vpto_tmatmul__[0-9]+]] <cube_tmatmul> core <cube> {spec = #pto.bridge_cube_spec<{{.*}}accPhase = partial>}
-// VPTO-DAG: pto.bridge.instance @[[F:pto_vpto_tmatmul__[0-9]+]] <cube_tmatmul> core <cube> {spec = #pto.bridge_cube_spec<{{.*}}accPhase = final>}
+// VPTO-DAG: pto.bridge.instance @[[P:pto_vpto_tmatmul__[0-9a-f]{64}_(cube|vector|any)_[0-9]+]] <cube_tmatmul> core <cube> {spec = #pto.bridge_cube_spec<{{.*}}accPhase = partial>}
+// VPTO-DAG: pto.bridge.instance @[[F:pto_vpto_tmatmul__[0-9a-f]{64}_(cube|vector|any)_[0-9]+]] <cube_tmatmul> core <cube> {spec = #pto.bridge_cube_spec<{{.*}}accPhase = final>}
 // VPTO-NOT: pto.tmatmul
 // VPTO: pto.bridge.call <cube_tmatmul>
 // VPTO-SAME: instance = @[[P]]
@@ -54,7 +54,7 @@ module attributes {pto.target_arch = "a5", pto.kernel_kind = #pto.kernel_kind<cu
 // from the tile types, and the non-default AccPhase as a template argument.
 // WRAPPER: pto.vpto.bridge.wrappers
 // WRAPPER-SAME: renderer = "cube_direct"
-// WRAPPER-SAME: extern \22C\22 [aicore] void pto_vpto_tmatmul__0(uint64_t dstAddress, uint64_t lhsAddress, uint64_t rhsAddress)
+// WRAPPER-SAME: extern \22C\22 [aicore] void pto_vpto_tmatmul__{{[0-9a-f]+}}_{{(cube|vector|any)}}_0(uint64_t dstAddress, uint64_t lhsAddress, uint64_t rhsAddress)
 // WRAPPER-SAME: using Dst = pto::Tile<pto::TileType::Acc, float, 16, 16, pto::BLayout::ColMajor, 16, 16, pto::SLayout::RowMajor, 1024>;
 // WRAPPER-SAME: using Lhs = pto::Tile<pto::TileType::Left, half, 16, 16, pto::BLayout::ColMajor, 16, 16, pto::SLayout::RowMajor, 512>;
 // WRAPPER-SAME: using Rhs = pto::Tile<pto::TileType::Right, half, 16, 16, pto::BLayout::RowMajor, 16, 16, pto::SLayout::ColMajor, 512>;
@@ -62,11 +62,11 @@ module attributes {pto.target_arch = "a5", pto.kernel_kind = #pto.kernel_kind<cu
 // WRAPPER-SAME: pto::TMATMUL<pto::AccPhase::Final>(dst, lhs, rhs);
 
 // The call survives into the device LLVM IR with the descriptor's signature.
-// LLVM-DAG: declare void @pto_vpto_tmatmul__0(i64, i64, i64)
-// LLVM-DAG: declare void @pto_vpto_tmatmul__1(i64, i64, i64)
+// LLVM-DAG: declare void @pto_vpto_tmatmul__{{[0-9a-f]+}}_{{(cube|vector|any)}}_0(i64, i64, i64)
+// LLVM-DAG: declare void @pto_vpto_tmatmul__{{[0-9a-f]+}}_{{(cube|vector|any)}}_1(i64, i64, i64)
 // LLVM: define void @tmatmul_phases
-// LLVM: call void @pto_vpto_tmatmul__0(
-// LLVM: call void @pto_vpto_tmatmul__1(
+// LLVM: call void @pto_vpto_tmatmul__{{[0-9a-f]+}}_{{(cube|vector|any)}}_0(
+// LLVM: call void @pto_vpto_tmatmul__{{[0-9a-f]+}}_{{(cube|vector|any)}}_1(
 
 // UNROUTED-NOT: pto.bridge
 // UNROUTED-NOT: pto_vpto_tmatmul

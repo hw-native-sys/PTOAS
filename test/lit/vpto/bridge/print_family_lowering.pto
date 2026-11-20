@@ -59,12 +59,12 @@ module attributes {pto.kernel_kind = #pto.kernel_kind<vector>} {
 // entry with no specialization.
 // WRAPPER: renderer = "print"
 // WRAPPER-SAME: ccelib/__ccelib.h
-// WRAPPER-SAME: void pto_vpto_print_f32__0(__gm__ void *fmt, float value)
+// WRAPPER-SAME: void pto_vpto_print_f32__{{[0-9a-f]+}}_{{(cube|vector|any)}}_0(__gm__ void *fmt, float value)
 // WRAPPER-SAME: cce::printf((__gm__ const char *)fmt, value);
-// WRAPPER-SAME: void pto_vpto_print_u64__2(__gm__ void *fmt, uint64_t value)
+// WRAPPER-SAME: void pto_vpto_print_u64__{{[0-9a-f]+}}_{{(cube|vector|any)}}_2(__gm__ void *fmt, uint64_t value)
 // WRAPPER-SAME: cce::printf((__gm__ const char *)fmt, (long long)value);
-// WRAPPER-DAG: pto.bridge.instance @pto_vpto_print_f32__0 <print_f32> core <vector>{{$}}
-// WRAPPER-DAG: pto.bridge.instance @pto_vpto_print_i64__1 <print_i64> core <vector>{{$}}
-// WRAPPER-DAG: pto.bridge.instance @pto_vpto_print_u64__2 <print_u64> core <vector>{{$}}
+// WRAPPER-DAG: pto.bridge.instance @pto_vpto_print_f32__{{[0-9a-f]+}}_{{(cube|vector|any)}}_0 <print_f32> core <vector>{{$}}
+// WRAPPER-DAG: pto.bridge.instance @pto_vpto_print_i64__{{[0-9a-f]+}}_{{(cube|vector|any)}}_1 <print_i64> core <vector>{{$}}
+// WRAPPER-DAG: pto.bridge.instance @pto_vpto_print_u64__{{[0-9a-f]+}}_{{(cube|vector|any)}}_2 <print_u64> core <vector>{{$}}
 
 // UNROUTED: the route policy excludes pto.print, which has no non-bridge VPTO lowering

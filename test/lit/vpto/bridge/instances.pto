@@ -37,11 +37,11 @@ module {
     return
   }
 }
-// CHECK: pto.bridge.instance @[[MM0:pto_vpto_tmatmul__0]] <cube_tmatmul> core <cube> {spec = #pto.bridge_cube_spec<dst = <<acc, 16x16xf32>>
-// CHECK-NEXT: pto.bridge.instance @[[MM1:pto_vpto_tmatmul__1]] <cube_tmatmul> core <cube> {spec = #pto.bridge_cube_spec<dst = <<acc, 32x16xf32>>
-// CHECK-NEXT: pto.bridge.instance @[[PC:pto_vpto_pipe_init__2]] <pipe_init> core <cube>
-// CHECK-NEXT: pto.bridge.instance @[[PV:pto_vpto_pipe_init__3]] <pipe_init> core <vector>
-// CHECK-NEXT: pto.bridge.instance @[[PR:pto_vpto_print_f32__4]] <print_f32> core <any>{{$}}
+// CHECK: pto.bridge.instance @[[MM0:pto_vpto_tmatmul__[0-9a-f]{64}_(cube|vector|any)_0]] <cube_tmatmul> core <cube> {spec = #pto.bridge_cube_spec<dst = <<acc, 16x16xf32>>
+// CHECK-NEXT: pto.bridge.instance @[[MM1:pto_vpto_tmatmul__[0-9a-f]{64}_(cube|vector|any)_1]] <cube_tmatmul> core <cube> {spec = #pto.bridge_cube_spec<dst = <<acc, 32x16xf32>>
+// CHECK-NEXT: pto.bridge.instance @[[PC:pto_vpto_pipe_init__[0-9a-f]{64}_(cube|vector|any)_2]] <pipe_init> core <cube>
+// CHECK-NEXT: pto.bridge.instance @[[PV:pto_vpto_pipe_init__[0-9a-f]{64}_(cube|vector|any)_3]] <pipe_init> core <vector>
+// CHECK-NEXT: pto.bridge.instance @[[PR:pto_vpto_print_f32__[0-9a-f]{64}_(cube|vector|any)_4]] <print_f32> core <any>{{$}}
 // CHECK-LABEL: func.func @instances
 // CHECK: instance = @[[MM0]]
 // CHECK: instance = @[[MM0]]

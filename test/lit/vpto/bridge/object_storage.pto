@@ -30,9 +30,9 @@ module attributes {pto.kernel_kind = #pto.kernel_kind<vector>} {
 // CHECK: %[[S1:.*]] = llvm.alloca %[[SIZE1]] x i8 {alignment = 32 : i64}
 // CHECK: %[[SIZE0:.*]] = llvm.mlir.constant(256 : i64) : i64
 // CHECK: %[[S0:.*]] = llvm.alloca %[[SIZE0]] x i8 {alignment = 32 : i64}
-// CHECK: call @pto_vpto_pipe_init__0(%[[S0]], %arg0)
-// CHECK: call @pto_vpto_pipe_init__0(%[[S1]], %arg0)
+// CHECK: call @pto_vpto_pipe_init__{{[0-9a-f]+}}_{{(cube|vector|any)}}_0(%[[S0]], %arg0)
+// CHECK: call @pto_vpto_pipe_init__{{[0-9a-f]+}}_{{(cube|vector|any)}}_0(%[[S1]], %arg0)
 // CHECK: scf.for
 // CHECK-NOT: llvm.alloca
-// CHECK: call @pto_vpto_pipe_init__1(%[[S2]], %arg0)
+// CHECK: call @pto_vpto_pipe_init__{{[0-9a-f]+}}_{{(cube|vector|any)}}_1(%[[S2]], %arg0)
 // CHECK: }

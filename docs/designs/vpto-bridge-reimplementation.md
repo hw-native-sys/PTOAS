@@ -123,6 +123,13 @@ Pipe 和 Cube 使用带 verifier 的 tile spec；Pipe、Cube 的对象和 tile �
 模块顶层的 bridge instance symbol 统一管理。bridge 操作使用 symbol reference
 引用实例，规范化后的属性身份用于去重。
 
+实例的外部 wrapper 名称由编译单元的 SHA-256 摘要、core 和模块内实例编号
+共同限定。摘要基于实例表插入前、去除操作及块参数调试位置的 IR 副本，
+使用完整的 MLIR bytecode 序列化，不受全局 IR 打印和省略选项影响。因此名称不依赖
+临时文件路径、进程地址或跨编译调用的全局计数器。独立子核即使使用相同的
+局部实例编号也不会直接复用同名外部符号。设备调用声明与 C++ 定义均从同一
+instance symbol 派生。
+
 entry 的 core 由最近的 `pto.section.vector` 或 `pto.section.cube` 确定；没有局部
 section 时，再使用函数或模块上的 `pto.kernel_kind`。声明为具体 core 的 entry
 在 core 不匹配或缺少 core 上下文时会报错。拆分 vector/cube 子模块时，只保留

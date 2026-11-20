@@ -339,6 +339,7 @@ add_mlir_dialect_library(PTOTransforms
   PTOAnalysis
   PTOIR
   MLIRAnalysis
+  MLIRBytecodeWriter
   MLIRIR
   MLIRLLVMDialect
   MLIRPass

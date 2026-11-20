@@ -452,6 +452,7 @@ static bool compileBridgeWrapperToBitcode(
 
 // Links the bridge wrapper bitcode into the device IR with the llvm-link that
 // ships with the Bisheng toolchain, so both sides use one LLVM version.
+// Keep its output as bitcode: some CANN builds disable textual IR printing.
 static bool linkDeviceLLVMWithBridge(
     llvm::StringRef llPath, llvm::ArrayRef<std::string> bitcodePaths,
     llvm::StringRef outLinkedPath, const mlir::pto::CANNToolchain &toolchain,
@@ -462,8 +463,7 @@ static bool linkDeviceLLVMWithBridge(
     diagOS << "Error: unable to locate llvm-link: " << llvmLinkPath << "\n";
     return false;
   }
-  llvm::SmallVector<std::string, mlir::pto::kValue8> args = {llvmLinkPath, "-S",
-                                                             llPath.str()};
+  llvm::SmallVector<std::string, mlir::pto::kValue8> args = {llvmLinkPath, llPath.str()};
   for (const std::string &bitcodePath : bitcodePaths) {
     args.push_back(bitcodePath);
   }
@@ -552,7 +552,7 @@ public:
       return false;
     }
     mlir::pto::BridgeLinkInputs bridge;
-    if (!prepareBridgeLink(cubeBridgeBitcodePaths, cubeLinkedLLPath, bridge,
+    if (!prepareBridgeLink(cubeBridgeBitcodePaths, cubeLinkedBitcodePath, bridge,
                            diagOS)) {
       return false;
     }
@@ -578,8 +578,8 @@ public:
       return false;
     }
     mlir::pto::BridgeLinkInputs bridge;
-    if (!prepareBridgeLink(vectorBridgeBitcodePaths, vectorLinkedLLPath, bridge,
-                           diagOS)) {
+    if (!prepareBridgeLink(vectorBridgeBitcodePaths, vectorLinkedBitcodePath,
+                           bridge, diagOS)) {
       return false;
     }
     if (failed(mlir::pto::emitVPTOVectorDeviceObject(
@@ -758,18 +758,18 @@ private:
   mlir::pto::TempFileRegistry &tempFiles;
   std::string cubeLLPath;
   bool prepareBridgeLink(const std::vector<std::string> &bitcodePaths,
-                         std::string &linkedLLPath,
+                         std::string &linkedBitcodePath,
                          mlir::pto::BridgeLinkInputs &bridge,
                          llvm::raw_ostream &diagOS) {
     if (bitcodePaths.empty()) {
       return true;
     }
-    if (failed(tempFiles.create("ptoas-device-bridge-linked", ".ll",
-                                linkedLLPath, diagOS))) {
+    if (failed(tempFiles.create("ptoas-device-bridge-linked", ".bc",
+                                linkedBitcodePath, diagOS))) {
       return false;
     }
     bridge.bitcodePaths = bitcodePaths;
-    bridge.linkedLLPath = linkedLLPath;
+    bridge.linkedBitcodePath = linkedBitcodePath;
     return true;
   }
 
@@ -780,8 +780,8 @@ private:
   std::string stderrPath;
   std::string stubPath;
   std::string hostStubObjPath;
-  std::string cubeLinkedLLPath;
-  std::string vectorLinkedLLPath;
+  std::string cubeLinkedBitcodePath;
+  std::string vectorLinkedBitcodePath;
   mlir::pto::PrintDTDataMode printMode = mlir::pto::PrintDTDataMode::None;
   std::vector<std::string> cubeBridgeBitcodePaths;
   std::vector<std::string> vectorBridgeBitcodePaths;
@@ -1458,12 +1458,12 @@ static mlir::LogicalResult emitVPTODeviceObject(
   llvm::StringRef compileInput = llPath;
   if (!bridge.bitcodePaths.empty()) {
     const bool linked = linkDeviceLLVMWithBridge(
-        llPath, bridge.bitcodePaths, bridge.linkedLLPath, toolchain,
+        llPath, bridge.bitcodePaths, bridge.linkedBitcodePath, toolchain,
         stderrPath, diagOS);
     if (!linked) {
       return mlir::failure();
     }
-    compileInput = bridge.linkedLLPath;
+    compileInput = bridge.linkedBitcodePath;
   }
   const bool compiled = compileDeviceLLVMToObject(
       compileInput, outObjPath, resolveTargetCPU(module, target),

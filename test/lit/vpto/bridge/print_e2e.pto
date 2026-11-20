@@ -47,10 +47,10 @@ module attributes {pto.target_arch = "a5", pto.kernel_kind = #pto.kernel_kind<ve
 // fixed-prototype, not variadic.
 // LLVM-DAG: @[[F0:pto_vpto_print_fmt_[0-9]+]] = private addrspace(1) constant [18 x i8] c"offset = %+08.3f\0A\00"
 // LLVM-DAG: @[[F1:pto_vpto_print_fmt_[0-9]+]] = private addrspace(1) constant [8 x i8] c"n = %d\0A\00"
-// LLVM-DAG: declare void @[[INIT:pto_vpto_print_init__[0-9]+]](ptr addrspace(1))
-// LLVM-DAG: declare void @[[F32:pto_vpto_print_f32__[0-9]+]](ptr addrspace(1), float)
-// LLVM-DAG: declare void @[[I64:pto_vpto_print_i64__[0-9]+]](ptr addrspace(1), i64)
-// LLVM-DAG: declare void @[[FIN:pto_vpto_print_finish__[0-9]+]](ptr addrspace(1))
+// LLVM-DAG: declare void @[[INIT:pto_vpto_print_init__[0-9a-f]{64}_(cube|vector|any)_[0-9]+]](ptr addrspace(1))
+// LLVM-DAG: declare void @[[F32:pto_vpto_print_f32__[0-9a-f]{64}_(cube|vector|any)_[0-9]+]](ptr addrspace(1), float)
+// LLVM-DAG: declare void @[[I64:pto_vpto_print_i64__[0-9a-f]{64}_(cube|vector|any)_[0-9]+]](ptr addrspace(1), i64)
+// LLVM-DAG: declare void @[[FIN:pto_vpto_print_finish__[0-9a-f]{64}_(cube|vector|any)_[0-9]+]](ptr addrspace(1))
 // LLVM: define void @print_kernel_mix_aiv(ptr addrspace(1) %0, ptr addrspace(1) %.DTData)
 // LLVM: call void @[[INIT]](ptr addrspace(1) %.DTData)
 // LLVM: call void @[[F32]](ptr addrspace(1) @[[F0]], float

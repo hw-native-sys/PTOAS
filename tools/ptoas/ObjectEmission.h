@@ -140,10 +140,10 @@ struct BridgeWrapperTU {
 enum class PrintDTDataMode { None, Implicit, Explicit };
 
 /// Bridge wrapper bitcode to link into one device module before the Bisheng
-/// object compile. `linkedLLPath` is where the linked IR is written.
+/// object compile. `linkedBitcodePath` is where the linked bitcode is written.
 struct BridgeLinkInputs {
   llvm::ArrayRef<std::string> bitcodePaths;
-  llvm::StringRef linkedLLPath;
+  llvm::StringRef linkedBitcodePath;
 };
 
 LogicalResult emitVPTOVectorDeviceObject(
