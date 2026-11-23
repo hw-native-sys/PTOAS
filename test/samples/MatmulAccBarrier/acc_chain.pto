@@ -1,0 +1,70 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+
+// Resident-input FP32 accumulator-chain diagnostic: M16, effective N24, K256.
+// The first iteration initializes the accumulator; later iterations update it
+// in place. Inputs are loaded once, and the final output has physical width 32.
+// The caller supplies a positive repeat count and reads the first 24 columns.
+// This research sample preserves automatic synchronization and does not change
+// the compiler's synchronization rules. Inspect emitted PIPE_M barriers with:
+// ptoas --enable-insert-sync --pto-level=level3 acc_chain.pto -o acc_chain.cpp
+
+!amat = !pto.tile_buf<loc=mat, dtype=f32, rows=16, cols=256, v_row=16, v_col=256, blayout=col_major, slayout=row_major, fractal=512, pad=0>
+!wmat = !pto.tile_buf<loc=mat, dtype=f32, rows=32, cols=256, v_row=24, v_col=256, blayout=col_major, slayout=row_major, fractal=512, pad=0>
+!btmat = !pto.tile_buf<loc=mat, dtype=f32, rows=256, cols=32, v_row=256, v_col=24, blayout=row_major, slayout=col_major, fractal=512, pad=0>
+!left = !pto.tile_buf<loc=left, dtype=f32, rows=16, cols=256, v_row=16, v_col=256, blayout=col_major, slayout=row_major, fractal=512, pad=0>
+!right = !pto.tile_buf<loc=right, dtype=f32, rows=256, cols=32, v_row=256, v_col=24, blayout=row_major, slayout=col_major, fractal=512, pad=0>
+!acc = !pto.tile_buf<loc=acc, dtype=f32, rows=16, cols=32, v_row=16, v_col=24, blayout=col_major, slayout=row_major, fractal=1024, pad=0>
+!tensor = !pto.tensor_view<?x?xf32>
+!aview = !pto.partition_tensor_view<16x256xf32>
+!wview = !pto.partition_tensor_view<24x256xf32>
+!cview = !pto.partition_tensor_view<16x24xf32>
+
+module attributes {pto.target_arch = "a5"} {
+  func.func @acc_chain(%a_ptr: !pto.ptr<f32>, %w_ptr: !pto.ptr<f32>,
+                       %out_ptr: !pto.ptr<f32>, %repeats: index)
+      attributes {pto.kernel_kind = #pto.kernel_kind<cube>} {
+    %c0 = arith.constant 0 : index
+    %c1 = arith.constant 1 : index
+    %c16 = arith.constant 16 : index
+    %c24 = arith.constant 24 : index
+    %c32 = arith.constant 32 : index
+    %c256 = arith.constant 256 : index
+    %addr0 = arith.constant 0 : i64
+    %addr16384 = arith.constant 16384 : i64
+
+    %a_tensor = pto.make_tensor_view %a_ptr, shape = [%c16, %c256], strides = [%c256, %c1] : !tensor
+    %w_tensor = pto.make_tensor_view %w_ptr, shape = [%c24, %c256], strides = [%c256, %c1] : !tensor
+    %out_tensor = pto.make_tensor_view %out_ptr, shape = [%c16, %c32], strides = [%c32, %c1] : !tensor
+    %a_view = pto.partition_view %a_tensor, offsets = [%c0, %c0], sizes = [%c16, %c256] : !tensor -> !aview
+    %w_view = pto.partition_view %w_tensor, offsets = [%c0, %c0], sizes = [%c24, %c256] : !tensor -> !wview
+    %out_view = pto.partition_view %out_tensor, offsets = [%c0, %c0], sizes = [%c16, %c24] : !tensor -> !cview
+
+    %a_mat = pto.alloc_tile addr = %addr0 : !amat
+    %w_mat = pto.alloc_tile addr = %addr16384 : !wmat
+    %bt_mat = pto.alloc_tile addr = %addr16384 : !btmat
+    %lhs = pto.alloc_tile addr = %addr0 : !left
+    %rhs = pto.alloc_tile addr = %addr0 : !right
+    %result = pto.alloc_tile addr = %addr0 : !acc
+    pto.tload ins(%a_view : !aview) outs(%a_mat : !amat)
+    pto.tload ins(%w_view : !wview) outs(%w_mat : !wmat)
+    pto.tmov ins(%a_mat : !amat) outs(%lhs : !left)
+    pto.tmov ins(%bt_mat : !btmat) outs(%rhs : !right)
+
+    scf.for %iteration = %c0 to %repeats step %c1 {
+      %initialize = arith.cmpi eq, %iteration, %c0 : index
+      scf.if %initialize {
+        pto.tmatmul ins(%lhs, %rhs : !left, !right) outs(%result : !acc)
+      } else {
+        pto.tmatmul.acc ins(%result, %lhs, %rhs : !acc, !left, !right) outs(%result : !acc)
+      }
+    }
+    pto.tstore ins(%result : !acc) outs(%out_view : !cview)
+    return
+  }
+}
