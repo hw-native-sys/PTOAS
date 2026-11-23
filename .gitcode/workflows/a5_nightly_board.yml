@@ -53,6 +53,9 @@ env:
 
 jobs:
   a5-board:
+    permissions:
+      repository: read
+      id-token: write
     name: A5 nightly board validation
     # GitCode selects the board slot by label: npu=<devices>, smoke=<slot>.
     # The A5 slot is smoke=501 and the board has four devices, so npu=4.
@@ -137,14 +140,24 @@ jobs:
           fi
           bash "${workspace}/.gitcode/scripts/a5_board_nightly.sh" "${args[@]}"
 
+      # The validation step alone may run 450 minutes, longer than the 3600s
+      # OIDC credential, so exchange it right before the upload.
+      - name: oidc_auth
+        if: ${{ always() && env.A5_BOARD_OBS_UPLOAD == 'true' }}
+        uses: huaweicloud-oidc-auth
+        with:
+          audience: ${{ secrets.audience }}
+          agency_urn: ${{ secrets.agency_urn }}
+          provider_urn: ${{ secrets.provider_urn }}
+          region: cn-north-4
+          duration: 3600
+
       - name: Upload board logs
         if: ${{ always() && env.A5_BOARD_OBS_UPLOAD == 'true' }}
         uses: obs-upload
         with:
           endpoint: "https://obs.cn-north-4.myhuaweicloud.com"
           bucket: "ascend-ci"
-          access-key: ${{ secrets.AK }}
-          secret-key: ${{ secrets.SK }}
           artifact-path: |
             ${{ env.PTOAS_CI_ROOT }}/work/latest-artifacts/remote_npu_validation_results.tsv
             ${{ env.PTOAS_CI_ROOT }}/work/latest-artifacts/board-validation.log
