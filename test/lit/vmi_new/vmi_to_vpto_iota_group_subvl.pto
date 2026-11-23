@@ -26,7 +26,7 @@ module {
         : !pto.vmi.vreg<64xi32>, i32, !pto.vmi.mask<64xpred>
         -> !pto.vmi.vreg<64xi32>
     pto.vmi.vstore %out, %dst[%c0]
-        : !pto.vmi.vreg<64xi32>, !pto.ptr<i32, ub>
+        : !pto.vmi.vreg<64xi32>, !pto.ptr<i32, ub>, index
     return
   }
 
@@ -40,7 +40,7 @@ module {
         : !pto.vmi.vreg<64xi32>, i32, !pto.vmi.mask<64xpred>
         -> !pto.vmi.vreg<64xi32>
     pto.vmi.vstore %out, %dst[%c0]
-        : !pto.vmi.vreg<64xi32>, !pto.ptr<i32, ub>
+        : !pto.vmi.vreg<64xi32>, !pto.ptr<i32, ub>, index
     return
   }
 
@@ -54,7 +54,7 @@ module {
         : !pto.vmi.vreg<64xi32>, i32, !pto.vmi.mask<64xpred>
         -> !pto.vmi.vreg<64xi32>
     pto.vmi.vstore %out, %dst[%c0]
-        : !pto.vmi.vreg<64xi32>, !pto.ptr<i32, ub>
+        : !pto.vmi.vreg<64xi32>, !pto.ptr<i32, ub>, index
     return
   }
 
@@ -68,7 +68,7 @@ module {
         : !pto.vmi.vreg<128xi16>, i16, !pto.vmi.mask<128xpred>
         -> !pto.vmi.vreg<128xi16>
     pto.vmi.vstore %out, %dst[%c0]
-        : !pto.vmi.vreg<128xi16>, !pto.ptr<i16, ub>
+        : !pto.vmi.vreg<128xi16>, !pto.ptr<i16, ub>, index
     return
   }
 
@@ -82,7 +82,7 @@ module {
         : !pto.vmi.vreg<128xi16>, i16, !pto.vmi.mask<128xpred>
         -> !pto.vmi.vreg<128xi16>
     pto.vmi.vstore %out, %dst[%c0]
-        : !pto.vmi.vreg<128xi16>, !pto.ptr<i16, ub>
+        : !pto.vmi.vreg<128xi16>, !pto.ptr<i16, ub>, index
     return
   }
 }

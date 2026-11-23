@@ -27,7 +27,7 @@ module {
         : !pto.vmi.vreg<32xi32>, i32, !pto.vmi.mask<32xpred>
         -> !pto.vmi.vreg<32xi32>
     pto.vmi.vstore %out, %dst[%c0]
-        : !pto.vmi.vreg<32xi32>, !pto.ptr<i32, ub>
+        : !pto.vmi.vreg<32xi32>, !pto.ptr<i32, ub>, index
     return
   }
 
@@ -41,7 +41,7 @@ module {
         : !pto.vmi.vreg<96xi32>, i32, !pto.vmi.mask<96xpred>
         -> !pto.vmi.vreg<96xi32>
     pto.vmi.vstore %out, %dst[%c0]
-        : !pto.vmi.vreg<96xi32>, !pto.ptr<i32, ub>
+        : !pto.vmi.vreg<96xi32>, !pto.ptr<i32, ub>, index
     return
   }
 }

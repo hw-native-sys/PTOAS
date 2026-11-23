@@ -15,7 +15,7 @@
 module {
   func.func @over_block_f32_16(%src: !pto.ptr<f32, ub>, %off: index)
       -> !pto.vmi.vreg<16xf32> {
-    %v = pto.vmi.vload %src[%off] : !pto.ptr<f32, ub> -> !pto.vmi.vreg<16xf32>
+    %v = pto.vmi.vload %src[%off] : !pto.ptr<f32, ub>, index -> !pto.vmi.vreg<16xf32>
     return %v : !pto.vmi.vreg<16xf32>
   }
 }

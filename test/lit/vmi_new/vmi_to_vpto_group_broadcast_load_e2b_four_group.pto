@@ -24,7 +24,7 @@ module {
     %c16 = arith.constant 16 : index
     %aligned_off = arith.muli %off, %c16 : index
     %slots = pto.vmi.vload %src[%aligned_off], %c1 {group = 4}
-        : !pto.ptr<bf16, ub> -> !pto.vmi.vreg<4xbf16>
+        : !pto.ptr<bf16, ub>, index -> !pto.vmi.vreg<4xbf16>
     %out = pto.vmi.vbrc %slots {group = 4}
         : !pto.vmi.vreg<4xbf16> -> !pto.vmi.vreg<128xbf16, #pto.vmi.layout<deinterleaved = 2>>
     return %out : !pto.vmi.vreg<128xbf16, #pto.vmi.layout<deinterleaved = 2>>

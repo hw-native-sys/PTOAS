@@ -22,8 +22,8 @@ module {
         : !pto.vmi.vreg<128xf32>, !pto.vmi.vreg<128xf32>,
           !pto.vmi.mask<128xb32>
         -> !pto.vmi.vreg<128xf32>, !pto.vmi.vreg<128xf32>
-    pto.vmi.store %lo, %ptr[%c0] : !pto.vmi.vreg<128xf32>, !pto.ptr<f32, ub>
-    pto.vmi.store %hi, %ptr[%c128] : !pto.vmi.vreg<128xf32>, !pto.ptr<f32, ub>
+    pto.vmi.store %lo, %ptr[%c0] : !pto.vmi.vreg<128xf32>, !pto.ptr<f32, ub>, index
+    pto.vmi.store %hi, %ptr[%c128] : !pto.vmi.vreg<128xf32>, !pto.ptr<f32, ub>, index
     return
   }
 
@@ -38,8 +38,8 @@ module {
         : !pto.vmi.vreg<128xf32>, !pto.vmi.vreg<128xf32>,
           !pto.vmi.mask<128xb32>
         -> !pto.vmi.vreg<128xf32>, !pto.vmi.vreg<128xf32>
-    pto.vmi.store %lo, %ptr[%c0] : !pto.vmi.vreg<128xf32>, !pto.ptr<f32, ub>
-    pto.vmi.store %hi, %ptr[%c128] : !pto.vmi.vreg<128xf32>, !pto.ptr<f32, ub>
+    pto.vmi.store %lo, %ptr[%c0] : !pto.vmi.vreg<128xf32>, !pto.ptr<f32, ub>, index
+    pto.vmi.store %hi, %ptr[%c128] : !pto.vmi.vreg<128xf32>, !pto.ptr<f32, ub>, index
     return
   }
 

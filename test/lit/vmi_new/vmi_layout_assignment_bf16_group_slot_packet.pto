@@ -30,7 +30,7 @@ module {
     %narrow = pto.vmi.truncf %sum {rounding = "R", saturate = "SAT"}
         : !pto.vmi.vreg<8xf32> -> !pto.vmi.vreg<8xbf16>
     pto.vmi.vstore %narrow, %dst[%off], %c1 {group = 8}
-        : !pto.vmi.vreg<8xbf16>, !pto.ptr<bf16, ub>
+        : !pto.vmi.vreg<8xbf16>, !pto.ptr<bf16, ub>, index
     return
   }
 
@@ -44,7 +44,7 @@ module {
     %narrow = pto.vmi.truncf %sum {rounding = "Z", saturate = "NOSAT"}
         : !pto.vmi.vreg<8xf32> -> !pto.vmi.vreg<8xbf16>
     pto.vmi.vstore %narrow, %dst[%off], %c1 {group = 8}
-        : !pto.vmi.vreg<8xbf16>, !pto.ptr<bf16, ub>
+        : !pto.vmi.vreg<8xbf16>, !pto.ptr<bf16, ub>, index
     return
   }
 }

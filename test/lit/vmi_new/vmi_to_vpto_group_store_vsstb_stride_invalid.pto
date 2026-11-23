@@ -16,7 +16,7 @@ module {
     pto.vmi.group_store %value, %dst[%off], %c1048576
         {num_groups = 8 : i64}
         : !pto.vmi.vreg<128xbf16, #pto.vmi.layout<contiguous>>,
-          !pto.ptr<bf16, ub>
+          !pto.ptr<bf16, ub>, index
     return
   }
 }

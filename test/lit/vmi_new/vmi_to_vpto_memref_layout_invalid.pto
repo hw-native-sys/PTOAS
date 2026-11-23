@@ -13,7 +13,7 @@ module {
       %src: memref<128xf32, strided<[2], offset: 0>, #pto.address_space<vec>>) {
     %c0 = arith.constant 0 : index
     %value = pto.vmi.vload %src[%c0]
-        : memref<128xf32, strided<[2], offset: 0>, #pto.address_space<vec>>
+        : memref<128xf32, strided<[2], offset: 0>, #pto.address_space<vec>>, index
           -> !pto.vmi.vreg<64xf32, #pto.vmi.layout<contiguous>>
     return
   }
@@ -29,7 +29,7 @@ module {
     %view = memref.subview %src[%c0] [64] [1]
         : memref<128xf32, #pto.address_space<vec>> to memref<64xf32, strided<[1], offset: ?>, #pto.address_space<vec>>
     %value = pto.vmi.vload %view[%c0]
-        : memref<64xf32, strided<[1], offset: ?>, #pto.address_space<vec>>
+        : memref<64xf32, strided<[1], offset: ?>, #pto.address_space<vec>>, index
           -> !pto.vmi.vreg<64xf32, #pto.vmi.layout<contiguous>>
     return
   }
@@ -47,7 +47,7 @@ module {
     %c0 = arith.constant 0 : index
     %value = pto.vmi.masked_load %src[%c0], %mask, %passthru
         : memref<128xf32, strided<[2], offset: 0>, #pto.address_space<vec>>,
-          !pto.vmi.mask<64xb32, #pto.vmi.layout<contiguous>>,
+          index, !pto.vmi.mask<64xb32, #pto.vmi.layout<contiguous>>,
           !pto.vmi.vreg<64xf32, #pto.vmi.layout<contiguous>>
           -> !pto.vmi.vreg<64xf32, #pto.vmi.layout<contiguous>>
     return
@@ -66,7 +66,7 @@ module {
     %c0 = arith.constant 0 : index
     %value = pto.vmi.expand_load %src[%c0], %mask, %passthru
         : memref<128xf32, strided<[2], offset: 0>, #pto.address_space<vec>>,
-          !pto.vmi.mask<64xb32, #pto.vmi.layout<contiguous>>,
+          index, !pto.vmi.mask<64xb32, #pto.vmi.layout<contiguous>>,
           !pto.vmi.vreg<64xf32, #pto.vmi.layout<contiguous>>
           -> !pto.vmi.vreg<64xf32, #pto.vmi.layout<contiguous>>
     return
@@ -84,7 +84,7 @@ module {
     %c0 = arith.constant 0 : index
     pto.vmi.vstore %value, %dst[%c0]
         : !pto.vmi.vreg<64xf32, #pto.vmi.layout<contiguous>>,
-          memref<128xf32, strided<[2], offset: 0>, #pto.address_space<vec>>
+          memref<128xf32, strided<[2], offset: 0>, #pto.address_space<vec>>, index
     return
   }
 }
@@ -102,7 +102,7 @@ module {
         : memref<128xf32, #pto.address_space<vec>> to memref<64xf32, strided<[1], offset: ?>, #pto.address_space<vec>>
     pto.vmi.vstore %value, %view[%c0]
         : !pto.vmi.vreg<64xf32, #pto.vmi.layout<contiguous>>,
-          memref<64xf32, strided<[1], offset: ?>, #pto.address_space<vec>>
+          memref<64xf32, strided<[1], offset: ?>, #pto.address_space<vec>>, index
     return
   }
 }
@@ -120,7 +120,7 @@ module {
     pto.vmi.vstore %value, %dst[%c0], %mask
         : !pto.vmi.vreg<64xf32, #pto.vmi.layout<contiguous>>,
           memref<128xf32, strided<[2], offset: 0>, #pto.address_space<vec>>,
-          !pto.vmi.mask<64xb32, #pto.vmi.layout<contiguous>>
+          index, !pto.vmi.mask<64xb32, #pto.vmi.layout<contiguous>>
     return
   }
 }

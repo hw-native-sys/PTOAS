@@ -16,7 +16,7 @@ module {
       -> (!pto.vreg<64xf32>, !pto.vreg<64xf32>) {
     %cm1 = arith.constant -1 : index
     %loaded = pto.vmi.vload %src[%cm1]
-        : !pto.ptr<f32, ub>
+        : !pto.ptr<f32, ub>, index
         -> !pto.vmi.vreg<100xf32, #pto.vmi.layout<contiguous>>
     %out = pto.vmi.vsel %mask, %loaded, %passthru
         : !pto.vmi.mask<100xb32, #pto.vmi.layout<contiguous>>,

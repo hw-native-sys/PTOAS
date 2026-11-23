@@ -22,11 +22,11 @@ module {
       %dst: !pto.ptr<f8E4M3FN, ub>,
       %offset: index) {
     %wide = pto.vmi.vload %src[%offset]
-        : !pto.ptr<f16, ub> -> !pto.vmi.vreg<64xf16>
+        : !pto.ptr<f16, ub>, index -> !pto.vmi.vreg<64xf16>
     %packed = pto.vmi.truncf %wide {rounding = "R", saturate = "SAT"}
         : !pto.vmi.vreg<64xf16> -> !pto.vmi.vreg<64xf8E4M3FN>
     pto.vmi.vstore %packed, %dst[%offset]
-        : !pto.vmi.vreg<64xf8E4M3FN>, !pto.ptr<f8E4M3FN, ub>
+        : !pto.vmi.vreg<64xf8E4M3FN>, !pto.ptr<f8E4M3FN, ub>, index
     return
   }
 }

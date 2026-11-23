@@ -39,7 +39,7 @@ KERNEL_SOURCE = (
     ': i64\n\n    %ub_dst = pto.castptr %c0_i64 : i64 -> !pto.ptr<i16, ub>\n\n    pto.vecscope {\n      // VL=64 '
     'i16: store preferred layout = lane_stride=2, propagated back to vci.\n      // No vadds needed: store direct'
     'ly consumes vci as the layout sink.\n      %iota = pto.vmi.vci %c0_i16\n          : i16 -> !pto.vmi.vreg<64x'
-    'i16>\n      pto.vmi.vstore %iota, %ub_dst[%c0]\n          : !pto.vmi.vreg<64xi16>, !pto.ptr<i16, ub>\n    }'
+    'i16>\n      pto.vmi.vstore %iota, %ub_dst[%c0]\n          : !pto.vmi.vreg<64xi16>, !pto.ptr<i16, ub>, index\n    }'
     '\n\n    pto.set_flag["PIPE_V", "PIPE_MTE3", "EVENT_ID0"]\n    pto.wait_flag["PIPE_V", "PIPE_MTE3", "EVENT_ID'
     '0"]\n    pto.mte_ub_gm %ub_dst, %dst_gm, %c128_i64\n      nburst(%c1_i64, %c128_i64, %c128_i64)\n      : !pt'
     'o.ptr<i16, ub>, !pto.ptr<i16, gm>, i64, i64, i64, i64\n    pto.barrier #pto.pipe<PIPE_ALL>\n    return\n  }'

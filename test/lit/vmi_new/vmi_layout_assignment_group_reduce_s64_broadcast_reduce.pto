@@ -30,7 +30,7 @@ module {
         : !pto.vmi.vreg<512xf32>, !pto.vmi.mask<512xpred>
         -> !pto.vmi.vreg<8xf32>
     pto.vmi.vstore %scaled_sum, %dst[%off], %c8 {group = 8}
-        : !pto.vmi.vreg<8xf32>, !pto.ptr<f32, ub>
+        : !pto.vmi.vreg<8xf32>, !pto.ptr<f32, ub>, index
     return
   }
 }

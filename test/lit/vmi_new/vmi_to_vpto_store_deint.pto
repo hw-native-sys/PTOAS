@@ -15,7 +15,7 @@ module {
     %c8 = arith.constant 8 : index
     %aligned_offset = arith.muli %offset, %c8 : index
     pto.vmi.vstore %value, %dst[%aligned_offset]
-        : !pto.vmi.vreg<128xf32, #pto.vmi.layout<deinterleaved = 2>>, !pto.ptr<f32, ub>
+        : !pto.vmi.vreg<128xf32, #pto.vmi.layout<deinterleaved = 2>>, !pto.ptr<f32, ub>, index
     return
   }
 
@@ -25,7 +25,7 @@ module {
     %c8 = arith.constant 8 : index
     %aligned_offset = arith.muli %offset, %c8 : index
     pto.vmi.vstore %value, %dst[%aligned_offset]
-        : !pto.vmi.vreg<256xf32, #pto.vmi.layout<deinterleaved = 4>>, !pto.ptr<f32, ub>
+        : !pto.vmi.vreg<256xf32, #pto.vmi.layout<deinterleaved = 4>>, !pto.ptr<f32, ub>, index
     return
   }
 
@@ -35,7 +35,7 @@ module {
     %c8 = arith.constant 8 : index
     %aligned_offset = arith.muli %offset, %c8 : index
     pto.vmi.vstore %value, %dst[%aligned_offset]
-        : !pto.vmi.vreg<256xf32, #pto.vmi.layout<deinterleaved = 2>>, !pto.ptr<f32, ub>
+        : !pto.vmi.vreg<256xf32, #pto.vmi.layout<deinterleaved = 2>>, !pto.ptr<f32, ub>, index
     return
   }
 }

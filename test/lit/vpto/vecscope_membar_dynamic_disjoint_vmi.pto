@@ -29,8 +29,8 @@ module attributes {pto.target_arch = "a5", pto.kernel_kind = #pto.kernel_kind<ve
       %mask = pto.vmi.create_mask %c64 : index -> !pto.vmi.mask<64xpred>
       scf.for %i = %c0 to %bound step %c1 {
         %offset = arith.muli %i, %c64 : index
-        %v = pto.vmi.vload %src[%offset] : !pf32ub -> !pto.vmi.vreg<64xf32>
-        pto.vmi.vstore %v, %dst[%offset], %mask : !pto.vmi.vreg<64xf32>, !pf32ub, !pto.vmi.mask<64xpred>
+        %v = pto.vmi.vload %src[%offset] : !pf32ub, index -> !pto.vmi.vreg<64xf32>
+        pto.vmi.vstore %v, %dst[%offset], %mask : !pto.vmi.vreg<64xf32>, !pf32ub, index, !pto.vmi.mask<64xpred>
       }
     }
     return

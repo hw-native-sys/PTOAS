@@ -27,7 +27,7 @@ module {
         -> !pto.vmi.vreg<100xi32, #pto.vmi.layout<contiguous>>
     pto.vmi.vstore %out, %dst[%c0]
         : !pto.vmi.vreg<100xi32, #pto.vmi.layout<contiguous>>,
-          !pto.ptr<i32, ub>
+          !pto.ptr<i32, ub>, index
     return
   }
 
@@ -44,7 +44,7 @@ module {
         -> !pto.vmi.vreg<64xi32, #pto.vmi.layout<contiguous>>
     pto.vmi.vstore %out, %dst[%c0]
         : !pto.vmi.vreg<64xi32, #pto.vmi.layout<contiguous>>,
-          !pto.ptr<i32, ub>
+          !pto.ptr<i32, ub>, index
     return
   }
 }

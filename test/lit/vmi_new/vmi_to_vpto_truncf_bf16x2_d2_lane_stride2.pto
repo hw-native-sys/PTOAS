@@ -22,7 +22,7 @@ module {
         : !pto.vmi.vreg<128x!pto.bf16x2, #pto.vmi.layout<deinterleaved = 2>>
        -> !pto.vmi.vreg<128x!pto.f4E1M2x2>
     pto.vmi.vstore %r, %dst[%aligned_off]
-        : !pto.vmi.vreg<128x!pto.f4E1M2x2>, !pto.ptr<!pto.f4E1M2x2, ub>
+        : !pto.vmi.vreg<128x!pto.f4E1M2x2>, !pto.ptr<!pto.f4E1M2x2, ub>, index
     return
   }
 }

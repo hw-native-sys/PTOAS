@@ -83,45 +83,45 @@ module {
  func.func @quant_chain(%src: !pto.ptr<bf16, ub>, %scale: !pto.ptr<bf16, ub>, %out: !pto.ptr<f8E4M3FN, ub>) {
   %c0 = arith.constant 0 : index
   %c1 = arith.constant 1 : index
-  %s = pto.vmi.group_broadcast_load %scale[%c0], %c1 {num_groups = 8 : i64} : !pto.ptr<bf16, ub> -> !pto.vmi.vreg<256xbf16>
-  %x = pto.vmi.load %src[%c0] : !pto.ptr<bf16, ub> -> !pto.vmi.vreg<256xbf16>
+  %s = pto.vmi.group_broadcast_load %scale[%c0], %c1 {num_groups = 8 : i64} : !pto.ptr<bf16, ub>, index -> !pto.vmi.vreg<256xbf16>
+  %x = pto.vmi.load %src[%c0] : !pto.ptr<bf16, ub>, index -> !pto.vmi.vreg<256xbf16>
   %q = pto.vmi.vmul %x, %s : !pto.vmi.vreg<256xbf16>, !pto.vmi.vreg<256xbf16> -> !pto.vmi.vreg<256xbf16>
   %f = pto.vmi.extf %q : !pto.vmi.vreg<256xbf16> -> !pto.vmi.vreg<256xf32>
   %y = pto.vmi.truncf %f {rounding = "R", saturate = "SAT"} : !pto.vmi.vreg<256xf32> -> !pto.vmi.vreg<256xf8E4M3FN>
-  pto.vmi.store %y, %out[%c0] : !pto.vmi.vreg<256xf8E4M3FN>, !pto.ptr<f8E4M3FN, ub>
+  pto.vmi.store %y, %out[%c0] : !pto.vmi.vreg<256xf8E4M3FN>, !pto.ptr<f8E4M3FN, ub>, index
   return
  }
  func.func @row_results(%src: !pto.ptr<f32, ub>, %out: !pto.ptr<f32, ub>) {
   %c0 = arith.constant 0 : index
   %c1 = arith.constant 1 : index
   %count = arith.constant 128 : index
-  %x = pto.vmi.load %src[%c0] : !pto.ptr<f32, ub> -> !pto.vmi.vreg<128xf32>
+  %x = pto.vmi.load %src[%c0] : !pto.ptr<f32, ub>, index -> !pto.vmi.vreg<128xf32>
   %m = pto.vmi.create_mask %count : index -> !pto.vmi.mask<128xb32>
   %z = pto.vmi.vabs %x, %m : !pto.vmi.vreg<128xf32>, !pto.vmi.mask<128xb32> -> !pto.vmi.vreg<128xf32>
   %r = pto.vmi.group_reduce_maxf %z, %m {num_groups = 4 : i64} : !pto.vmi.vreg<128xf32>, !pto.vmi.mask<128xb32> -> !pto.vmi.vreg<4xf32>
-  pto.vmi.group_store %r, %out[%c0], %c1 {num_groups = 4 : i64} : !pto.vmi.vreg<4xf32>, !pto.ptr<f32, ub>
+  pto.vmi.group_store %r, %out[%c0], %c1 {num_groups = 4 : i64} : !pto.vmi.vreg<4xf32>, !pto.ptr<f32, ub>, index
   return
  }
  func.func @integer_group_results(%src: !pto.ptr<ui16, ub>, %out: !pto.ptr<ui32, ub>) {
   %c0 = arith.constant 0 : index
   %c1 = arith.constant 1 : index
   %count = arith.constant 256 : index
-  %x = pto.vmi.load %src[%c0] : !pto.ptr<ui16, ub> -> !pto.vmi.vreg<256xui16>
+  %x = pto.vmi.load %src[%c0] : !pto.ptr<ui16, ub>, index -> !pto.vmi.vreg<256xui16>
   %m = pto.vmi.create_mask %count : index -> !pto.vmi.mask<256xb16>
   %r = pto.vmi.group_reduce_maxi %x, %m {num_groups = 8 : i64} : !pto.vmi.vreg<256xui16>, !pto.vmi.mask<256xb16> -> !pto.vmi.vreg<8xui16>
   %w = pto.vmi.extui %r : !pto.vmi.vreg<8xui16> -> !pto.vmi.vreg<8xui32>
-  pto.vmi.group_store %w, %out[%c0], %c1 {num_groups = 8 : i64} : !pto.vmi.vreg<8xui32>, !pto.ptr<ui32, ub>
+  pto.vmi.group_store %w, %out[%c0], %c1 {num_groups = 8 : i64} : !pto.vmi.vreg<8xui32>, !pto.ptr<ui32, ub>, index
   return
  }
  func.func @integer_tail_results(%src: !pto.ptr<ui16, ub>, %out: !pto.ptr<ui32, ub>) {
   %c0 = arith.constant 0 : index
   %c1 = arith.constant 1 : index
   %count = arith.constant 128 : index
-  %x = pto.vmi.load %src[%c0] : !pto.ptr<ui16, ub> -> !pto.vmi.vreg<128xui16>
+  %x = pto.vmi.load %src[%c0] : !pto.ptr<ui16, ub>, index -> !pto.vmi.vreg<128xui16>
   %m = pto.vmi.create_mask %count : index -> !pto.vmi.mask<128xb16>
   %r = pto.vmi.group_reduce_maxi %x, %m {num_groups = 4 : i64} : !pto.vmi.vreg<128xui16>, !pto.vmi.mask<128xb16> -> !pto.vmi.vreg<4xui16>
   %w = pto.vmi.extui %r : !pto.vmi.vreg<4xui16> -> !pto.vmi.vreg<4xui32>
-  pto.vmi.group_store %w, %out[%c0], %c1 {num_groups = 4 : i64} : !pto.vmi.vreg<4xui32>, !pto.ptr<ui32, ub>
+  pto.vmi.group_store %w, %out[%c0], %c1 {num_groups = 4 : i64} : !pto.vmi.vreg<4xui32>, !pto.ptr<ui32, ub>, index
   return
  }
 }

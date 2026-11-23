@@ -24,7 +24,7 @@ module {
        -> !pto.vmi.vreg<64x!pto.bf16x2, #pto.vmi.layout<contiguous>>
     pto.vmi.vstore %r, %dst[%off]
         : !pto.vmi.vreg<64x!pto.bf16x2, #pto.vmi.layout<contiguous>>,
-          !pto.ptr<!pto.bf16x2, ub>
+          !pto.ptr<!pto.bf16x2, ub>, index
     return
   }
 }

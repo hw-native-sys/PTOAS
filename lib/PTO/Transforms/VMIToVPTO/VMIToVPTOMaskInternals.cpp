@@ -1138,24 +1138,18 @@ FailureOr<Value> materializeConstantMaskChunk(Location loc, MaskType maskType,
 
 Value createChunkOffset(Location loc, Value baseOffset, int64_t laneOffset,
                         PatternRewriter &rewriter) {
-  if (laneOffset == 0) {
-    return baseOffset;
-  }
-  Value delta = rewriter.create<arith::ConstantIndexOp>(loc, laneOffset);
-  return rewriter.create<arith::AddIOp>(loc, baseOffset, delta).getResult();
+    return addToElementOffset(loc, baseOffset, laneOffset, rewriter);
 }
 
 Value createGroupChunkOffset(Location loc, Value baseOffset, Value rowStride,
                              int64_t group, int64_t inGroupLaneOffset,
                              PatternRewriter &rewriter) {
-  Value offset = baseOffset;
-  if (group != 0) {
-    Value groupIndex = rewriter.create<arith::ConstantIndexOp>(loc, group);
-    Value rowOffset =
-        rewriter.create<arith::MulIOp>(loc, rowStride, groupIndex).getResult();
-    offset = rewriter.create<arith::AddIOp>(loc, offset, rowOffset).getResult();
-  }
-  return createChunkOffset(loc, offset, inGroupLaneOffset, rewriter);
+    Value offset = baseOffset;
+    if (group != 0) {
+        offset = addScaledStrideToElementOffset(loc, offset, rowStride, group,
+            rewriter);
+    }
+    return createChunkOffset(loc, offset, inGroupLaneOffset, rewriter);
 }
 
 LogicalResult checkContiguousFullGroupChunks(

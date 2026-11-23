@@ -20,9 +20,9 @@ module attributes {pto.target_arch = "a5", pto.kernel_kind = #pto.kernel_kind<ve
     %c16 = arith.constant 16 : index
     %aoff = arith.muli %off, %c16 : index
     pto.vecscope {
-      %s = pto.vmi.vload %src[%aoff] : !pto.ptr<f32, ub> -> !pto.vmi.vreg<2xf32>
+      %s = pto.vmi.vload %src[%aoff] : !pto.ptr<f32, ub>, index -> !pto.vmi.vreg<2xf32>
       %n = pto.vmi.vcvt %s {saturate = "SAT"} : !pto.vmi.vreg<2xf32> -> !pto.vmi.vreg<2xf16>
-      pto.vmi.vstore %n, %dst[%aoff] : !pto.vmi.vreg<2xf16>, !pto.ptr<f16, ub>
+      pto.vmi.vstore %n, %dst[%aoff] : !pto.vmi.vreg<2xf16>, !pto.ptr<f16, ub>, index
     }
     return
   }
@@ -31,9 +31,9 @@ module attributes {pto.target_arch = "a5", pto.kernel_kind = #pto.kernel_kind<ve
     %c16 = arith.constant 16 : index
     %aoff = arith.muli %off, %c16 : index
     pto.vecscope {
-      %s = pto.vmi.vload %src[%aoff] : !pto.ptr<f32, ub> -> !pto.vmi.vreg<4xf32>
+      %s = pto.vmi.vload %src[%aoff] : !pto.ptr<f32, ub>, index -> !pto.vmi.vreg<4xf32>
       %n = pto.vmi.vcvt %s {saturate = "SAT"} : !pto.vmi.vreg<4xf32> -> !pto.vmi.vreg<4xf16>
-      pto.vmi.vstore %n, %dst[%aoff] : !pto.vmi.vreg<4xf16>, !pto.ptr<f16, ub>
+      pto.vmi.vstore %n, %dst[%aoff] : !pto.vmi.vreg<4xf16>, !pto.ptr<f16, ub>, index
     }
     return
   }
@@ -42,9 +42,9 @@ module attributes {pto.target_arch = "a5", pto.kernel_kind = #pto.kernel_kind<ve
     %c16 = arith.constant 16 : index
     %aoff = arith.muli %off, %c16 : index
     pto.vecscope {
-      %s = pto.vmi.vload %src[%aoff] : !pto.ptr<f32, ub> -> !pto.vmi.vreg<8xf32>
+      %s = pto.vmi.vload %src[%aoff] : !pto.ptr<f32, ub>, index -> !pto.vmi.vreg<8xf32>
       %n = pto.vmi.vcvt %s {saturate = "SAT"} : !pto.vmi.vreg<8xf32> -> !pto.vmi.vreg<8xf16>
-      pto.vmi.vstore %n, %dst[%aoff] : !pto.vmi.vreg<8xf16>, !pto.ptr<f16, ub>
+      pto.vmi.vstore %n, %dst[%aoff] : !pto.vmi.vreg<8xf16>, !pto.ptr<f16, ub>, index
     }
     return
   }
@@ -55,9 +55,9 @@ module attributes {pto.target_arch = "a5", pto.kernel_kind = #pto.kernel_kind<ve
     pto.vecscope {
       %cn = arith.constant 8 : index
       %m = pto.vmi.create_mask %cn : index -> !pto.vmi.mask<8xpred>
-      %s = pto.vmi.vload %src[%aoff] : !pto.ptr<f32, ub> -> !pto.vmi.vreg<8xf32>
+      %s = pto.vmi.vload %src[%aoff] : !pto.ptr<f32, ub>, index -> !pto.vmi.vreg<8xf32>
       %n = pto.vmi.vcvt %s {saturate = "SAT"} : !pto.vmi.vreg<8xf32> -> !pto.vmi.vreg<8xf16>
-      pto.vmi.vstore %n, %dst[%aoff], %m : !pto.vmi.vreg<8xf16>, !pto.ptr<f16, ub>, !pto.vmi.mask<8xpred>
+      pto.vmi.vstore %n, %dst[%aoff], %m : !pto.vmi.vreg<8xf16>, !pto.ptr<f16, ub>, index, !pto.vmi.mask<8xpred>
     }
     return
   }

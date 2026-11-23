@@ -29,7 +29,7 @@ module {
         : !pto.vmi.vreg<1xf16>, !pto.vmi.vreg<1xf16>,
           !pto.vmi.mask<1xpred> -> !pto.vmi.vreg<1xf32>
     %c0 = arith.constant 0 : index
-    pto.vmi.vstore %result, %out[%c0] : !pto.vmi.vreg<1xf32>, !pto.ptr<f32, ub>
+    pto.vmi.vstore %result, %out[%c0] : !pto.vmi.vreg<1xf32>, !pto.ptr<f32, ub>, index
     return
   }
 
@@ -42,7 +42,7 @@ module {
         : !pto.vmi.vreg<2xf16>, !pto.vmi.vreg<2xf16>,
           !pto.vmi.mask<2xpred> -> !pto.vmi.vreg<2xf32>
     %c0 = arith.constant 0 : index
-    pto.vmi.vstore %result, %out[%c0] : !pto.vmi.vreg<2xf32>, !pto.ptr<f32, ub>
+    pto.vmi.vstore %result, %out[%c0] : !pto.vmi.vreg<2xf32>, !pto.ptr<f32, ub>, index
     return
   }
 
@@ -55,7 +55,7 @@ module {
         : !pto.vmi.vreg<4xf16>, !pto.vmi.vreg<4xf16>,
           !pto.vmi.mask<4xpred> -> !pto.vmi.vreg<4xf32>
     %c0 = arith.constant 0 : index
-    pto.vmi.vstore %result, %out[%c0] : !pto.vmi.vreg<4xf32>, !pto.ptr<f32, ub>
+    pto.vmi.vstore %result, %out[%c0] : !pto.vmi.vreg<4xf32>, !pto.ptr<f32, ub>, index
     return
   }
 
@@ -68,7 +68,7 @@ module {
         : !pto.vmi.vreg<8xf16>, !pto.vmi.vreg<8xf16>,
           !pto.vmi.mask<8xpred> -> !pto.vmi.vreg<8xf32>
     %c0 = arith.constant 0 : index
-    pto.vmi.vstore %result, %out[%c0] : !pto.vmi.vreg<8xf32>, !pto.ptr<f32, ub>
+    pto.vmi.vstore %result, %out[%c0] : !pto.vmi.vreg<8xf32>, !pto.ptr<f32, ub>, index
     return
   }
 
@@ -81,7 +81,7 @@ module {
         : !pto.vmi.vreg<64xf16>, !pto.vmi.vreg<64xf16>,
           !pto.vmi.mask<64xpred> -> !pto.vmi.vreg<64xf32>
     %c0 = arith.constant 0 : index
-    pto.vmi.vstore %result, %out[%c0] : !pto.vmi.vreg<64xf32>, !pto.ptr<f32, ub>
+    pto.vmi.vstore %result, %out[%c0] : !pto.vmi.vreg<64xf32>, !pto.ptr<f32, ub>, index
     return
   }
 }

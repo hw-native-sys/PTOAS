@@ -16,11 +16,11 @@ module {
     %c0 = arith.constant 0 : index
     %c1 = arith.constant 1 : index
     %slots = pto.vmi.vload %src[%c0], %c1 {group = 4}
-        : !pto.ptr<f32, ub> -> !pto.vmi.vreg<4xf32>
+        : !pto.ptr<f32, ub>, index -> !pto.vmi.vreg<4xf32>
     %out = pto.vmi.vbrc %slots {group = 4}
         : !pto.vmi.vreg<4xf32> -> !pto.vmi.vreg<128xf32>
     pto.vmi.vstore %out, %dst[%c0]
-        : !pto.vmi.vreg<128xf32>, !pto.ptr<f32, ub>
+        : !pto.vmi.vreg<128xf32>, !pto.ptr<f32, ub>, index
     return
   }
 }

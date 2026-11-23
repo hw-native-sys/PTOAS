@@ -25,7 +25,7 @@ module {
     %rows16 = pto.vmi.vcvt %rows32 {saturate = "SAT"}
         : !pto.vmi.vreg<128xf32> -> !pto.vmi.vreg<128xf16>
     pto.vmi.vstore %rows16, %dst[%aligned_off]
-        : !pto.vmi.vreg<128xf16>, !pto.ptr<f16, ub>
+        : !pto.vmi.vreg<128xf16>, !pto.ptr<f16, ub>, index
     return
   }
 }

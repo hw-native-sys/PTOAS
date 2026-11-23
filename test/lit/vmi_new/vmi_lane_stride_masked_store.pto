@@ -27,7 +27,7 @@ module {
     pto.vmi.vstore %value_c, %dst[%aligned_offset], %mask_c
         : !pto.vmi.vreg<64xf16, #pto.vmi.layout<contiguous>>,
           !pto.ptr<f16, ub>,
-          !pto.vmi.mask<64xb16, #pto.vmi.layout<contiguous>>
+          index, !pto.vmi.mask<64xb16, #pto.vmi.layout<contiguous>>
     return
   }
 
@@ -46,7 +46,7 @@ module {
     pto.vmi.vstore %value_c, %dst[%aligned_offset], %mask_c
         : !pto.vmi.vreg<64xui8, #pto.vmi.layout<contiguous>>,
           !pto.ptr<ui8, ub>,
-          !pto.vmi.mask<64xb8, #pto.vmi.layout<contiguous>>
+          index, !pto.vmi.mask<64xb8, #pto.vmi.layout<contiguous>>
     return
   }
 }

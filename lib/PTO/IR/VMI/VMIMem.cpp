@@ -622,9 +622,12 @@ static ParseResult parseVStorePreBracket(
   return success();
 }
 
-// Disambiguate post-bracket operands into stride/block/mask.
+// Disambiguate post-bracket operands into stride/block/mask.  The type list
+// carries the element offset type and, when present, the mask type; the block
+// stride type is never listed, so an unaccounted post-bracket operand is the
+// block stride unless the type list says a mask follows.
 static void disambiguateVStorePostBracket(
-    bool hasGroup, size_t numPostOps, size_t nValues, size_t nTypes,
+    bool hasGroup, size_t numPostOps, bool hasMaskType,
     bool &hasStride, bool &hasBlock, bool &hasMask,
     int &strideIdx, int &blockIdx, int &maskIdx) {
   hasStride = false;
@@ -634,14 +637,11 @@ static void disambiguateVStorePostBracket(
   blockIdx = -1;
   maskIdx = -1;
   if (hasGroup) {
-    // Group mode: post-bracket ops are stride[, mask]
+    // Group mode: the only post-bracket operand is the row stride.  A mask type
+    // is rejected before this is called, so no mask slot is assigned here.
     if (numPostOps >= 1) {
       hasStride = true;
       strideIdx = 0;
-    }
-    if (numPostOps >= mlir::pto::kValue2) {
-      hasMask = true;
-      maskIdx = 1;
     }
   } else if (numPostOps == mlir::pto::kValue2) {
     // Block-stride mode with a mask: block_stride, mask.
@@ -650,8 +650,7 @@ static void disambiguateVStorePostBracket(
     blockIdx = 0;
     maskIdx = 1;
   } else if (numPostOps == 1) {
-    // The type list includes mask types, but never block-stride types.
-    if (nTypes == nValues + mlir::pto::kValue2) {
+    if (hasMaskType) {
       hasMask = true;
       maskIdx = 0;
     } else {
@@ -661,113 +660,210 @@ static void disambiguateVStorePostBracket(
   }
 }
 
-// Resolve all parsed operands against their types.
-static ParseResult resolveVStoreOperands(
+// Post-bracket operand slots of a vstore: a row stride (group mode), an i16
+// block stride and/or a mask, each at most once.
+struct VStorePostOperands {
+    bool hasStride = false;
+    bool hasBlock = false;
+    bool hasMask = false;
+    int strideIdx = -1;
+    int blockIdx = -1;
+    int maskIdx = -1;
+};
+
+// Parse up to three operands after the destination; they are classified later,
+// once the attributes and the type list are known.
+static ParseResult parseVStorePostBracketOperands(
+    OpAsmParser &parser,
+    SmallVectorImpl<OpAsmParser::UnresolvedOperand> &postBracketOps)
+{
+    while (succeeded(parser.parseOptionalComma())) {
+        OpAsmParser::UnresolvedOperand postOp;
+        if (parser.parseOperand(postOp)) {
+            return failure();
+        }
+        postBracketOps.push_back(postOp);
+        const size_t numPostOps = postBracketOps.size();
+        if (numPostOps >= mlir::pto::kValue3) {
+            break;
+        }
+    }
+    return success();
+}
+
+// Parse the vstore type list: value(s), destination, element offset and an
+// optional mask.
+static ParseResult parseVStoreTypeList(OpAsmParser &parser,
+    SmallVectorImpl<Type> &types, size_t nValues, bool hasGroup,
+    bool &hasMaskType)
+{
+    if (parser.parseColon()) {
+        return failure();
+    }
+    if (parser.parseTypeList(types)) {
+        return failure();
+    }
+    const size_t numBaseTypes = nValues + 2;
+    const size_t numTypes = types.size();
+    if (numTypes != numBaseTypes && numTypes != numBaseTypes + 1) {
+        return parser.emitError(parser.getCurrentLocation())
+            << "expected " << numBaseTypes << " or " << numBaseTypes + 1
+            << " types (" << nValues
+            << " value(s), 1 destination, 1 element offset"
+            << ", optional 1 mask), got " << numTypes;
+    }
+    hasMaskType = numTypes == numBaseTypes + 1;
+    if (hasGroup && hasMaskType) {
+        return parser.emitError(parser.getCurrentLocation())
+            << "group mode does not take a mask operand";
+    }
+    return success();
+}
+
+// Classify the parsed post-bracket operands and reject shapes that would leave
+// an operand unaccounted for.
+static ParseResult classifyVStorePostBracket(OpAsmParser &parser, bool hasGroup,
+    size_t numPostOps, bool hasMaskType, VStorePostOperands &postOps)
+{
+    disambiguateVStorePostBracket(hasGroup, numPostOps, hasMaskType,
+        postOps.hasStride, postOps.hasBlock, postOps.hasMask,
+        postOps.strideIdx, postOps.blockIdx, postOps.maskIdx);
+    const size_t expectedPostOps = (postOps.hasStride ? 1 : 0) +
+        (postOps.hasBlock ? 1 : 0) + (postOps.hasMask ? 1 : 0);
+    if (numPostOps == expectedPostOps) {
+        return success();
+    }
+    return parser.emitError(parser.getCurrentLocation())
+        << "unexpected operands after the destination: pto.vmi.vstore "
+        << "takes an optional row stride (group mode), an optional i16 "
+        << "block stride and an optional mask";
+}
+
+// Resolve the value, destination and element offset operands.  The type count
+// is validated here because the mask presence comes from the post-bracket
+// classification.
+static ParseResult resolveVStoreMainOperands(
+    OpAsmParser &parser, OperationState &result,
+    SmallVectorImpl<OpAsmParser::UnresolvedOperand> &preBracketOperands,
+    OpAsmParser::UnresolvedOperand offsetOperand,
+    SmallVectorImpl<Type> &types, size_t nValues, bool hasMask)
+{
+    const size_t expectedTypes = nValues + 2 + (hasMask ? 1 : 0);
+    const size_t nTypes = types.size();
+    if (nTypes != expectedTypes) {
+        return parser.emitError(parser.getCurrentLocation())
+            << "expected " << expectedTypes << " types (" << nValues
+            << " value(s), 1 destination, 1 element offset"
+            << (hasMask ? ", 1 mask" : "") << "), got " << nTypes;
+    }
+    for (size_t i = 0; i < nValues; ++i) {
+        if (parser.resolveOperand(preBracketOperands[i], types[i],
+            result.operands)) {
+            return failure();
+        }
+    }
+    if (parser.resolveOperand(preBracketOperands[nValues], types[nValues],
+        result.operands)) {
+        return failure();
+    }
+    if (parser.resolveOperand(offsetOperand, types[nValues + 1],
+        result.operands)) {
+        return failure();
+    }
+    return success();
+}
+
+// Resolve the optional stride, block-stride and mask operands against their
+// declared types.
+static ParseResult resolveVStorePostBracketOperands(
+    OpAsmParser &parser, OperationState &result,
+    SmallVectorImpl<OpAsmParser::UnresolvedOperand> &postBracketOps,
+    SmallVectorImpl<Type> &types, const VStorePostOperands &postOps)
+{
+    if (postOps.hasStride &&
+        parser.resolveOperand(postBracketOps[postOps.strideIdx],
+        parser.getBuilder().getIndexType(), result.operands)) {
+        return failure();
+    }
+    if (postOps.hasBlock &&
+        parser.resolveOperand(postBracketOps[postOps.blockIdx],
+        parser.getBuilder().getIntegerType(mlir::pto::kValue16),
+        result.operands)) {
+        return failure();
+    }
+    if (postOps.hasMask &&
+        parser.resolveOperand(postBracketOps[postOps.maskIdx], types.back(),
+        result.operands)) {
+        return failure();
+    }
+    return success();
+}
+
+// Resolve every parsed operand and record the operand segment sizes.
+static ParseResult finalizeVStoreParse(
     OpAsmParser &parser, OperationState &result,
     SmallVectorImpl<OpAsmParser::UnresolvedOperand> &preBracketOperands,
     OpAsmParser::UnresolvedOperand offsetOperand,
     SmallVectorImpl<OpAsmParser::UnresolvedOperand> &postBracketOps,
-    SmallVectorImpl<Type> &types, size_t nValues, bool hasStride,
-    bool hasBlock, bool hasMask, int strideIdx, int blockIdx,
-    int maskIdx) {
-  size_t expectedTypes = nValues + 1 + (hasMask ? 1 : 0);
-  size_t nTypes = types.size();
-  if (nTypes != expectedTypes) {
-    return parser.emitError(parser.getCurrentLocation())
-           << "expected " << expectedTypes << " types (" << nValues
-           << " value(s), 1 destination" << (hasMask ? ", 1 mask" : "")
-           << "), got " << nTypes;
-  }
-  for (size_t i = 0; i < nValues; ++i) {
-    if (parser.resolveOperand(preBracketOperands[i], types[i], result.operands)) {
-      return failure();
+    SmallVectorImpl<Type> &types, size_t nValues,
+    const VStorePostOperands &postOps)
+{
+    if (failed(resolveVStoreMainOperands(parser, result, preBracketOperands,
+        offsetOperand, types, nValues, postOps.hasMask))) {
+        return failure();
     }
-  }
-  Type destType = types[nValues];
-  if (parser.resolveOperand(preBracketOperands[nValues], destType,
-                            result.operands)) {
-    return failure();
-  }
-  if (parser.resolveOperand(offsetOperand, parser.getBuilder().getIndexType(),
-                            result.operands)) {
-    return failure();
-  }
-  if (hasStride &&
-      parser.resolveOperand(postBracketOps[strideIdx],
-                            parser.getBuilder().getIndexType(),
-                            result.operands)) {
-    return failure();
-  }
-  if (hasBlock &&
-      parser.resolveOperand(postBracketOps[blockIdx],
-                            parser.getBuilder().getIntegerType(mlir::pto::kValue16),
-                            result.operands)) {
-    return failure();
-  }
-  if (hasMask) {
-    Type maskType = types.back();
-    if (parser.resolveOperand(postBracketOps[maskIdx], maskType,
-                              result.operands)) {
-      return failure();
+    if (failed(resolveVStorePostBracketOperands(parser, result, postBracketOps,
+        types, postOps))) {
+        return failure();
     }
-  }
-  return success();
+    const int32_t hasStride = postOps.hasStride ? 1 : 0;
+    const int32_t hasBlock = postOps.hasBlock ? 1 : 0;
+    const int32_t hasMask = postOps.hasMask ? 1 : 0;
+    result.addAttribute("operandSegmentSizes",
+        parser.getBuilder().getDenseI32ArrayAttr({1, 1, 1, hasStride, hasBlock, hasMask}));
+    return success();
 }
 
-ParseResult VMIvStoreOp::parse(OpAsmParser &parser, OperationState &result) {
-  SmallVector<OpAsmParser::UnresolvedOperand, mlir::pto::kValue4> preBracketOperands;
-  OpAsmParser::UnresolvedOperand operand, offsetOperand;
-  SmallVector<OpAsmParser::UnresolvedOperand, mlir::pto::kValue3> postBracketOps;
-  if (failed(parseVStorePreBracket(parser, operand, offsetOperand,
-                                   preBracketOperands))) {
-    return failure();
-  }
-  size_t numValueAndDestinationOperands = preBracketOperands.size();
-  if (numValueAndDestinationOperands != mlir::pto::kValue2) {
-    return parser.emitError(parser.getCurrentLocation(),
-                            "expected one value and one destination");
-  }
-  // Optional post-bracket operands: stride, block_stride, and/or mask.
-  // Up to 2, disambiguated after parsing attrs and the type list.
-  while (succeeded(parser.parseOptionalComma())) {
-    OpAsmParser::UnresolvedOperand postOp;
-    if (parser.parseOperand(postOp)) {
-      return failure();
+ParseResult VMIvStoreOp::parse(OpAsmParser &parser, OperationState &result)
+{
+    // One value and one destination before the brackets, then the offset.
+    SmallVector<OpAsmParser::UnresolvedOperand, mlir::pto::kValue4> preBracketOperands;
+    OpAsmParser::UnresolvedOperand operand;
+    OpAsmParser::UnresolvedOperand offsetOperand;
+    if (failed(parseVStorePreBracket(parser, operand, offsetOperand,
+        preBracketOperands))) {
+        return failure();
     }
-    postBracketOps.push_back(postOp);
-    if (postBracketOps.size() >= mlir::pto::kValue3) {
-      break;
+    constexpr size_t nValues = 1;
+    const size_t numPreBracketOps = preBracketOperands.size();
+    if (numPreBracketOps != nValues + 1) {
+        return parser.emitError(parser.getCurrentLocation(),
+            "expected one value and one destination");
     }
-  }
-  if (parser.parseOptionalAttrDict(result.attributes)) {
-    return failure();
-  }
-  SmallVector<Type, mlir::pto::kValue6> types;
-  if (parser.parseColon() || parser.parseTypeList(types)) {
-    return failure();
-  }
-  bool hasGroup = result.attributes.get("group") != nullptr;
-  bool hasStride, hasBlock, hasMask;
-  int strideIdx, blockIdx, maskIdx;
-  disambiguateVStorePostBracket(hasGroup, postBracketOps.size(),
-                                preBracketOperands.size() - 1, types.size(),
-                                hasStride, hasBlock, hasMask,
-                                strideIdx, blockIdx, maskIdx);
-  constexpr size_t nValues = 1;
-  if (failed(resolveVStoreOperands(parser, result, preBracketOperands,
-                                   offsetOperand, postBracketOps, types,
-                                   nValues, hasStride, hasBlock, hasMask,
-                                   strideIdx, blockIdx, maskIdx))) {
-    return failure();
-  }
-  result.addAttribute("operandSegmentSizes",
-                      parser.getBuilder().getDenseI32ArrayAttr(
-                          {1, 1, 1,
-                           hasStride ? 1 : 0, hasBlock ? 1 : 0,
-                           hasMask ? 1 : 0}));
-  return success();
+    // Optional post-bracket operands (stride, block stride, mask) are parsed
+    // before the attributes, then classified against the type list.
+    SmallVector<OpAsmParser::UnresolvedOperand, mlir::pto::kValue3> postBracketOps;
+    if (failed(parseVStorePostBracketOperands(parser, postBracketOps))) {
+        return failure();
+    }
+    if (parser.parseOptionalAttrDict(result.attributes)) {
+        return failure();
+    }
+    const bool hasGroup = result.attributes.get("group") != nullptr;
+    SmallVector<Type, mlir::pto::kValue6> types;
+    bool hasMaskType = false;
+    if (failed(parseVStoreTypeList(parser, types, nValues, hasGroup,
+        hasMaskType))) {
+        return failure();
+    }
+    VStorePostOperands postOps;
+    if (failed(classifyVStorePostBracket(parser, hasGroup,
+        postBracketOps.size(), hasMaskType, postOps))) {
+        return failure();
+    }
+    return finalizeVStoreParse(parser, result, preBracketOperands, offsetOperand,
+        postBracketOps, types, nValues, postOps);
 }
-
 // Shared stride/block_stride operand printing for vstore/vload.
 static void printVStrideBlockStride(OpAsmPrinter &p, Value stride,
                                     Value blockStride) {
@@ -782,21 +878,22 @@ static void printVStrideBlockStride(OpAsmPrinter &p, Value stride,
 }
 
 void VMIvStoreOp::print(OpAsmPrinter &p) {
-  p << ' ' << getValue() << ", " << getDestination() << '[';
-  p.printOperand(getOffset());
-  p << ']';
-  printVStrideBlockStride(p, getStride(), getBlockStride());
-  if (!getMask().empty()) {
-    p << ", ";
-    p.printOperand(getMask()[0]);
-  }
-  p.printOptionalAttrDict((*this)->getAttrs(), {"operandSegmentSizes"});
-  p << " : ";
-  p << getValue().getType() << ", ";
-  p << getDestination().getType();
-  if (!getMask().empty()) {
-    p << ", " << getMask()[0].getType();
-  }
+    p << ' ' << getValue() << ", " << getDestination() << '[';
+    p.printOperand(getOffset());
+    p << ']';
+    printVStrideBlockStride(p, getStride(), getBlockStride());
+    if (!getMask().empty()) {
+        p << ", ";
+        p.printOperand(getMask()[0]);
+    }
+    p.printOptionalAttrDict((*this)->getAttrs(), {"operandSegmentSizes"});
+    p << " : ";
+    p << getValue().getType() << ", ";
+    p << getDestination().getType() << ", ";
+    p << getOffset().getType();
+    if (!getMask().empty()) {
+        p << ", " << getMask()[0].getType();
+    }
 }
 
 static LogicalResult verifyBlockStrideExclusions(
@@ -961,14 +1058,15 @@ static ParseResult resolveVLoadOperandsAndFinalize(
     OpAsmParser::UnresolvedOperand offsetOperand,
     OpAsmParser::UnresolvedOperand strideOperand,
     OpAsmParser::UnresolvedOperand blockStrideOperand, bool hasStride,
-    bool hasBlock, Type sourceType, ArrayRef<Type> resultTypes) {
+    bool hasBlock, Type sourceType, Type offsetType,
+    ArrayRef<Type> resultTypes)
+{
   if (parser.resolveOperand(sourceOperand, sourceType, result.operands)) {
     return failure();
   }
-  if (parser.resolveOperand(offsetOperand, parser.getBuilder().getIndexType(),
-                            result.operands)) {
-    return failure();
-  }
+    if (parser.resolveOperand(offsetOperand, offsetType, result.operands)) {
+        return failure();
+    }
   if (hasStride &&
       parser.resolveOperand(strideOperand, parser.getBuilder().getIndexType(),
                             result.operands)) {
@@ -1010,6 +1108,15 @@ ParseResult VMIvLoadOp::parse(OpAsmParser &parser, OperationState &result) {
   if (parser.parseColonType(sourceType)) {
     return failure();
   }
+    // The element offset type follows the source type in the type list, exactly
+    // like the other operand types.
+    Type offsetType;
+    if (parser.parseComma()) {
+        return failure();
+    }
+    if (parser.parseType(offsetType)) {
+        return failure();
+    }
   if (parser.parseArrow()) {
     return failure();
   }
@@ -1028,7 +1135,8 @@ ParseResult VMIvLoadOp::parse(OpAsmParser &parser, OperationState &result) {
                                 blockStrideOperand, hasStride, hasBlock);
   return resolveVLoadOperandsAndFinalize(
       parser, result, sourceOperand, offsetOperand, strideOperand,
-      blockStrideOperand, hasStride, hasBlock, sourceType, resultTypes);
+      blockStrideOperand, hasStride, hasBlock, sourceType, offsetType,
+      resultTypes);
 }
 
 void VMIvLoadOp::print(OpAsmPrinter &p) {
@@ -1037,7 +1145,8 @@ void VMIvLoadOp::print(OpAsmPrinter &p) {
   p << ']';
   printVStrideBlockStride(p, getStride(), getBlockStride());
   p.printOptionalAttrDict((*this)->getAttrs(), {"operandSegmentSizes"});
-  p << " : " << getSource().getType() << " -> " << getResult().getType();
+    p << " : " << getSource().getType() << ", " << getOffset().getType()
+        << " -> " << getResult().getType();
 }
 
 static LogicalResult verifyVLoadGroupAndBlockModes(

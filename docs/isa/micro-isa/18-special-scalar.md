@@ -229,8 +229,8 @@ Examples:
   ```
 
 - **Operands:** `%ptr` is `!pto.ptr<T, space>` and `%offset` is `index` or
-  a signless integer (`i32`, `i64`), declared in the type list right after the
-  pointer type, as in
+  a 32/64-bit signless integer (`i32`, `i64`), declared in the type list right
+  after the pointer type, as in
   `pto.addptr %ptr, %offset : !pto.ptr<T, space>, index -> !pto.ptr<T, space>`.
 - **Result:** A pointer with exactly the same element type and memory space as
   `%ptr`.

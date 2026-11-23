@@ -31,13 +31,13 @@ module attributes {pto.target_arch = "a5", pto.kernel_kind = #pto.kernel_kind<ve
     %off = arith.muli %tile, %c16 : index
 
     %x0 = pto.vmi.load %src[%off]
-        : !pto.ptr<f32, ub> -> !pto.vmi.vreg<64xf32>
+        : !pto.ptr<f32, ub>, index -> !pto.vmi.vreg<64xf32>
     %x1 = pto.vmi.load %src[%c64]
-        : !pto.ptr<f32, ub> -> !pto.vmi.vreg<64xf32>
+        : !pto.ptr<f32, ub>, index -> !pto.vmi.vreg<64xf32>
     %x2 = pto.vmi.load %src[%c128]
-        : !pto.ptr<f32, ub> -> !pto.vmi.vreg<64xf32>
+        : !pto.ptr<f32, ub>, index -> !pto.vmi.vreg<64xf32>
     %x3 = pto.vmi.load %src[%c192]
-        : !pto.ptr<f32, ub> -> !pto.vmi.vreg<64xf32>
+        : !pto.ptr<f32, ub>, index -> !pto.vmi.vreg<64xf32>
 
     %h0 = pto.vmi.truncf %x0 {saturate = "SAT"}
         : !pto.vmi.vreg<64xf32> -> !pto.vmi.vreg<64xf16>
@@ -49,13 +49,13 @@ module attributes {pto.target_arch = "a5", pto.kernel_kind = #pto.kernel_kind<ve
         : !pto.vmi.vreg<64xf32> -> !pto.vmi.vreg<64xf16>
 
     pto.vmi.group_store %h0, %dst[%off], %c2064 {num_groups = 4 : i64}
-        : !pto.vmi.vreg<64xf16>, !pto.ptr<f16, ub>
+        : !pto.vmi.vreg<64xf16>, !pto.ptr<f16, ub>, index
     pto.vmi.group_store %h1, %dst[%c16], %c2064 {num_groups = 4 : i64}
-        : !pto.vmi.vreg<64xf16>, !pto.ptr<f16, ub>
+        : !pto.vmi.vreg<64xf16>, !pto.ptr<f16, ub>, index
     pto.vmi.group_store %h2, %dst[%c1024], %c2064 {num_groups = 4 : i64}
-        : !pto.vmi.vreg<64xf16>, !pto.ptr<f16, ub>
+        : !pto.vmi.vreg<64xf16>, !pto.ptr<f16, ub>, index
     pto.vmi.group_store %h3, %dst[%c1040], %c2064 {num_groups = 4 : i64}
-        : !pto.vmi.vreg<64xf16>, !pto.ptr<f16, ub>
+        : !pto.vmi.vreg<64xf16>, !pto.ptr<f16, ub>, index
     return
   }
 }

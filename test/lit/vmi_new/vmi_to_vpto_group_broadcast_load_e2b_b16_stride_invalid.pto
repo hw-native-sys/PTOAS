@@ -17,7 +17,7 @@ module {
       -> !pto.vmi.vreg<256xbf16, #pto.vmi.layout<deinterleaved = 2>> {
     %out = pto.vmi.group_broadcast_load %src[%off], %stride
         {num_groups = 8}
-        : !pto.ptr<bf16, ub>
+        : !pto.ptr<bf16, ub>, index
         -> !pto.vmi.vreg<256xbf16, #pto.vmi.layout<deinterleaved = 2>>
     return %out : !pto.vmi.vreg<256xbf16, #pto.vmi.layout<deinterleaved = 2>>
   }

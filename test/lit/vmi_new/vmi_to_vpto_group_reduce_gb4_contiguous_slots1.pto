@@ -22,13 +22,13 @@ module {
     %c1 = arith.constant 1 : index
     %mask = pto.vmi.create_mask %c128 : index -> !pto.vmi.mask<128xpred>
     %x = pto.vmi.vload %src[%off]
-        : !pto.ptr<f32, ub> -> !pto.vmi.vreg<128xf32>
+        : !pto.ptr<f32, ub>, index -> !pto.vmi.vreg<128xf32>
     %abs = pto.vmi.vabs %x
         : !pto.vmi.vreg<128xf32> -> !pto.vmi.vreg<128xf32>
     %amax = pto.vmi.vcmax %abs, %mask {group = 4}
         : !pto.vmi.vreg<128xf32>, !pto.vmi.mask<128xpred> -> !pto.vmi.vreg<4xf32>
     pto.vmi.vstore %amax, %scale_out[%off], %c1 {group = 4}
-        : !pto.vmi.vreg<4xf32>, !pto.ptr<f32, ub>
+        : !pto.vmi.vreg<4xf32>, !pto.ptr<f32, ub>, index
     return
   }
 }

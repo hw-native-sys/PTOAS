@@ -18,9 +18,9 @@ module {
     %c1024 = arith.constant 1024 : index
     %aligned_off = arith.muli %off, %c8 : index
     %x = pto.vmi.vload %scores[%aligned_off]
-        : !pto.ptr<f32, ub> -> !pto.vmi.vreg<128xf32>
+        : !pto.ptr<f32, ub>, index -> !pto.vmi.vreg<128xf32>
     %max_scalar = pto.vmi.vload %row_max[%aligned_off]
-        : !pto.ptr<f32, ub> -> !pto.vmi.vreg<1xf32>
+        : !pto.ptr<f32, ub>, index -> !pto.vmi.vreg<1xf32>
     %max = pto.vmi.vbrc %max_scalar
         : !pto.vmi.vreg<1xf32> -> !pto.vmi.vreg<128xf32>
     %mask = pto.vmi.create_mask %c128
@@ -31,7 +31,7 @@ module {
     %narrow = pto.vmi.truncf %exp {saturate = "SAT"}
         : !pto.vmi.vreg<128xf32> -> !pto.vmi.vreg<128xbf16>
     pto.vmi.vstore %narrow, %dst[%aligned_off], %c1024 {group = 8}
-        : !pto.vmi.vreg<128xbf16>, !pto.ptr<bf16, ub>
+        : !pto.vmi.vreg<128xbf16>, !pto.ptr<bf16, ub>, index
     return
   }
 }
@@ -45,13 +45,13 @@ module {
 // ASSIGN-NEXT: %[[VAL_5:[a-zA-Z0-9_.$-]+]] = arith.constant 128 : index
 // ASSIGN-NEXT: %[[VAL_6:[a-zA-Z0-9_.$-]+]] = arith.constant 1024 : index
 // ASSIGN-NEXT: %[[VAL_7:[a-zA-Z0-9_.$-]+]] = arith.muli %[[VAL_3]], %[[VAL_4]] : index
-// ASSIGN-NEXT: %[[VAL_8:[a-zA-Z0-9_.$-]+]] = pto.vmi.load %[[VAL_0]]{{\[}}%[[VAL_7]]] : !pto.ptr<f32, ub> -> !pto.vmi.vreg<128xf32, #pto.vmi.layout<deinterleaved = 2>>
+// ASSIGN-NEXT: %[[VAL_8:[a-zA-Z0-9_.$-]+]] = pto.vmi.load %[[VAL_0]]{{\[}}%[[VAL_7]]] : !pto.ptr<f32, ub>, index -> !pto.vmi.vreg<128xf32, #pto.vmi.layout<deinterleaved = 2>>
 // ASSIGN-NEXT: %[[VAL_9:[a-zA-Z0-9_.$-]+]] = arith.constant 0 : index
-// ASSIGN-NEXT: %[[VAL_10:[a-zA-Z0-9_.$-]+]] = pto.vmi.group_broadcast_load %[[VAL_1]]{{\[}}%[[VAL_7]]], %[[VAL_9]] {num_groups = 1 : i64} : !pto.ptr<f32, ub> -> !pto.vmi.vreg<128xf32, #pto.vmi.layout<deinterleaved = 2>>
+// ASSIGN-NEXT: %[[VAL_10:[a-zA-Z0-9_.$-]+]] = pto.vmi.group_broadcast_load %[[VAL_1]]{{\[}}%[[VAL_7]]], %[[VAL_9]] {num_groups = 1 : i64} : !pto.ptr<f32, ub>, index -> !pto.vmi.vreg<128xf32, #pto.vmi.layout<deinterleaved = 2>>
 // ASSIGN-NEXT: %[[VAL_11:[a-zA-Z0-9_.$-]+]] = pto.vmi.create_mask %[[VAL_5]] : index -> !pto.vmi.mask<128xb32, #pto.vmi.layout<deinterleaved = 2>>
 // ASSIGN-NEXT: %[[VAL_12:[a-zA-Z0-9_.$-]+]] = pto.vmi.vexpdif %[[VAL_8]], %[[VAL_10]], %[[VAL_11]] : !pto.vmi.vreg<128xf32, #pto.vmi.layout<deinterleaved = 2>>, !pto.vmi.vreg<128xf32, #pto.vmi.layout<deinterleaved = 2>>, !pto.vmi.mask<128xb32, #pto.vmi.layout<deinterleaved = 2>> -> !pto.vmi.vreg<128xf32, #pto.vmi.layout<deinterleaved = 2>>
 // ASSIGN-NEXT: %[[VAL_13:[a-zA-Z0-9_.$-]+]] = pto.vmi.truncf %[[VAL_12]] {saturate = "SAT"} : !pto.vmi.vreg<128xf32, #pto.vmi.layout<deinterleaved = 2>> -> !pto.vmi.vreg<128xbf16, #pto.vmi.layout<contiguous>>
-// ASSIGN-NEXT: pto.vmi.group_store %[[VAL_13]], %[[VAL_2]]{{\[}}%[[VAL_7]]], %[[VAL_6]] {num_groups = 8 : i64} : !pto.vmi.vreg<128xbf16, #pto.vmi.layout<contiguous>>, !pto.ptr<bf16, ub>
+// ASSIGN-NEXT: pto.vmi.group_store %[[VAL_13]], %[[VAL_2]]{{\[}}%[[VAL_7]]], %[[VAL_6]] {num_groups = 8 : i64} : !pto.vmi.vreg<128xbf16, #pto.vmi.layout<contiguous>>, !pto.ptr<bf16, ub>, index
 // ASSIGN-NEXT: return
 // ASSIGN-NEXT: }
 

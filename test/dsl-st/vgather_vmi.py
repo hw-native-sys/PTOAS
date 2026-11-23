@@ -56,13 +56,13 @@ module attributes {pto.target_arch = "a5", pto.kernel_kind = #pto.kernel_kind<ve
 
     pto.vecscope {
       %idx = pto.vmi.vload %ub_idx[%c0]
-          : !pto.ptr<ui16, ub> -> !pto.vmi.vreg<512xui16>
+          : !pto.ptr<ui16, ub>, index -> !pto.vmi.vreg<512xui16>
       %mask = pto.vmi.create_mask %c512 : index -> !pto.vmi.mask<512xpred>
       %out = pto.vmi.vgather %ub_src, %idx, %mask
           : !pto.ptr<bf16, ub>, !pto.vmi.vreg<512xui16>,
             !pto.vmi.mask<512xpred> -> !pto.vmi.vreg<512xbf16>
       pto.vmi.vstore %out, %ub_dst[%c0]
-          : !pto.vmi.vreg<512xbf16>, !pto.ptr<bf16, ub>
+          : !pto.vmi.vreg<512xbf16>, !pto.ptr<bf16, ub>, index
     }
 
     pto.set_flag["PIPE_V", "PIPE_MTE3", "EVENT_ID0"]
@@ -113,13 +113,13 @@ module attributes {pto.target_arch = "a5", pto.kernel_kind = #pto.kernel_kind<ve
 
     pto.vecscope {
       %idx = pto.vmi.vload %ub_idx[%c0]
-          : !pto.ptr<ui16, ub> -> !pto.vmi.vreg<512xui16>
+          : !pto.ptr<ui16, ub>, index -> !pto.vmi.vreg<512xui16>
       %mask = pto.vmi.create_mask %c512 : index -> !pto.vmi.mask<512xpred>
       %out = pto.vmi.vgather %ub_src, %idx, %mask
           : !pto.ptr<f16, ub>, !pto.vmi.vreg<512xui16>,
             !pto.vmi.mask<512xpred> -> !pto.vmi.vreg<512xf16>
       pto.vmi.vstore %out, %ub_dst[%c0]
-          : !pto.vmi.vreg<512xf16>, !pto.ptr<f16, ub>
+          : !pto.vmi.vreg<512xf16>, !pto.ptr<f16, ub>, index
     }
 
     pto.set_flag["PIPE_V", "PIPE_MTE3", "EVENT_ID0"]
@@ -170,13 +170,13 @@ module attributes {pto.target_arch = "a5", pto.kernel_kind = #pto.kernel_kind<ve
 
     pto.vecscope {
       %idx = pto.vmi.vload %ub_idx[%c0]
-          : !pto.ptr<ui16, ub> -> !pto.vmi.vreg<512xui16>
+          : !pto.ptr<ui16, ub>, index -> !pto.vmi.vreg<512xui16>
       %mask = pto.vmi.create_mask %c512 : index -> !pto.vmi.mask<512xpred>
       %out = pto.vmi.vgather %ub_src, %idx, %mask
           : !pto.ptr<i8, ub>, !pto.vmi.vreg<512xui16>,
             !pto.vmi.mask<512xpred> -> !pto.vmi.vreg<512xi16>
       pto.vmi.vstore %out, %ub_dst[%c0]
-          : !pto.vmi.vreg<512xi16>, !pto.ptr<i16, ub>
+          : !pto.vmi.vreg<512xi16>, !pto.ptr<i16, ub>, index
     }
 
     pto.set_flag["PIPE_V", "PIPE_MTE3", "EVENT_ID0"]
@@ -227,13 +227,13 @@ module attributes {pto.target_arch = "a5", pto.kernel_kind = #pto.kernel_kind<ve
 
     pto.vecscope {
       %idx = pto.vmi.vload %ub_idx[%c0]
-          : !pto.ptr<ui16, ub> -> !pto.vmi.vreg<512xui16>
+          : !pto.ptr<ui16, ub>, index -> !pto.vmi.vreg<512xui16>
       %mask = pto.vmi.create_mask %c512 : index -> !pto.vmi.mask<512xpred>
       %out = pto.vmi.vgather %ub_src, %idx, %mask
           : !pto.ptr<ui8, ub>, !pto.vmi.vreg<512xui16>,
             !pto.vmi.mask<512xpred> -> !pto.vmi.vreg<512xui16>
       pto.vmi.vstore %out, %ub_dst[%c0]
-          : !pto.vmi.vreg<512xui16>, !pto.ptr<ui16, ub>
+          : !pto.vmi.vreg<512xui16>, !pto.ptr<ui16, ub>, index
     }
 
     pto.set_flag["PIPE_V", "PIPE_MTE3", "EVENT_ID0"]
@@ -284,13 +284,13 @@ module attributes {pto.target_arch = "a5", pto.kernel_kind = #pto.kernel_kind<ve
 
     pto.vecscope {
       %idx = pto.vmi.vload %ub_idx[%c0]
-          : !pto.ptr<ui16, ub> -> !pto.vmi.vreg<512xui16>
+          : !pto.ptr<ui16, ub>, index -> !pto.vmi.vreg<512xui16>
       %mask = pto.vmi.create_mask %c512 : index -> !pto.vmi.mask<512xpred>
       %out = pto.vmi.vgather %ub_src, %idx, %mask
           : !pto.ptr<ui16, ub>, !pto.vmi.vreg<512xui16>,
             !pto.vmi.mask<512xpred> -> !pto.vmi.vreg<512xui16>
       pto.vmi.vstore %out, %ub_dst[%c0]
-          : !pto.vmi.vreg<512xui16>, !pto.ptr<ui16, ub>
+          : !pto.vmi.vreg<512xui16>, !pto.ptr<ui16, ub>, index
     }
 
     pto.set_flag["PIPE_V", "PIPE_MTE3", "EVENT_ID0"]

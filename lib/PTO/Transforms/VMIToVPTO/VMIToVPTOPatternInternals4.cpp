@@ -24,23 +24,18 @@ constexpr unsigned kPairResultCount = 2;
 /// access.  One physical chunk is one 256B carrier, so the first 32B block of
 /// chunk `n` is `8 * block_stride` blocks past the first block of chunk
 /// `n - 1`, i.e. `block_stride * lanesPerPart` elements.  The product stays in
-/// index arithmetic so that a dynamic block_stride cannot overflow the 16-bit
-/// hardware control word.
+/// the offset's own type so that a dynamic block_stride cannot overflow the
+/// 16-bit hardware control word, and so that an integer offset is never widened
+/// to index just to compute the advance.
 static Value createStrideChunkOffset(Location loc, Value baseOffset,
                                      Value blockStride, int64_t chunk,
                                      int64_t lanesPerPart,
                                      OneToNPatternRewriter &rewriter) {
-  if (chunk == 0) {
-    return baseOffset;
-  }
-  Value stride =
-      rewriter.create<arith::IndexCastOp>(loc, rewriter.getIndexType(),
-                                          blockStride);
-  Value chunkAdvance = rewriter.create<arith::ConstantIndexOp>(
-      loc, chunk * lanesPerPart);
-  Value advance =
-      rewriter.create<arith::MulIOp>(loc, stride, chunkAdvance).getResult();
-  return rewriter.create<arith::AddIOp>(loc, baseOffset, advance).getResult();
+    if (chunk == 0) {
+        return baseOffset;
+    }
+    return addScaledStrideToElementOffset(loc, baseOffset, blockStride,
+        chunk * lanesPerPart, rewriter);
 }
 
 struct OneToNVMIStrideLoadOpPattern

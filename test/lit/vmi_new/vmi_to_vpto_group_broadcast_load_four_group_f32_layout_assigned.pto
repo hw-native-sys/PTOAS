@@ -35,11 +35,11 @@ module {
     %c16 = arith.constant 16 : index
     %aligned_off = arith.muli %off, %c16 : index
     %slots = pto.vmi.vload %src[%aligned_off], %c1 {group = 4}
-        : !pto.ptr<bf16, ub> -> !pto.vmi.vreg<4xbf16>
+        : !pto.ptr<bf16, ub>, index -> !pto.vmi.vreg<4xbf16>
     %out = pto.vmi.vbrc %slots {group = 4}
         : !pto.vmi.vreg<4xbf16> -> !pto.vmi.vreg<128xbf16>
     pto.vmi.vstore %out, %dst[%aligned_off]
-        : !pto.vmi.vreg<128xbf16>, !pto.ptr<bf16, ub>
+        : !pto.vmi.vreg<128xbf16>, !pto.ptr<bf16, ub>, index
     return
   }
 
@@ -49,11 +49,11 @@ module {
     %c8 = arith.constant 8 : index
     %aligned_off = arith.muli %off, %c8 : index
     %slots = pto.vmi.vload %src[%aligned_off], %c1 {group = 4}
-        : !pto.ptr<f32, ub> -> !pto.vmi.vreg<4xf32>
+        : !pto.ptr<f32, ub>, index -> !pto.vmi.vreg<4xf32>
     %out = pto.vmi.vbrc %slots {group = 4}
         : !pto.vmi.vreg<4xf32> -> !pto.vmi.vreg<128xf32>
     pto.vmi.vstore %out, %dst[%aligned_off]
-        : !pto.vmi.vreg<128xf32>, !pto.ptr<f32, ub>
+        : !pto.vmi.vreg<128xf32>, !pto.ptr<f32, ub>, index
     return
   }
 
@@ -68,11 +68,11 @@ module {
     %aligned_off = arith.muli %off, %c8 : index
     %unaligned_off = arith.addi %aligned_off, %c1 : index
     %slots = pto.vmi.vload %src[%unaligned_off], %c1 {group = 4}
-        : !pto.ptr<f32, ub> -> !pto.vmi.vreg<4xf32>
+        : !pto.ptr<f32, ub>, index -> !pto.vmi.vreg<4xf32>
     %out = pto.vmi.vbrc %slots {group = 4}
         : !pto.vmi.vreg<4xf32> -> !pto.vmi.vreg<128xf32>
     pto.vmi.vstore %out, %dst[%unaligned_off]
-        : !pto.vmi.vreg<128xf32>, !pto.ptr<f32, ub>
+        : !pto.vmi.vreg<128xf32>, !pto.ptr<f32, ub>, index
     return
   }
 
@@ -85,11 +85,11 @@ module {
     %aligned_off = arith.muli %off, %c16 : index
     %unaligned_off = arith.addi %aligned_off, %c1 : index
     %slots = pto.vmi.vload %src[%unaligned_off], %c1 {group = 4}
-        : !pto.ptr<bf16, ub> -> !pto.vmi.vreg<4xbf16>
+        : !pto.ptr<bf16, ub>, index -> !pto.vmi.vreg<4xbf16>
     %out = pto.vmi.vbrc %slots {group = 4}
         : !pto.vmi.vreg<4xbf16> -> !pto.vmi.vreg<128xbf16>
     pto.vmi.vstore %out, %dst[%unaligned_off]
-        : !pto.vmi.vreg<128xbf16>, !pto.ptr<bf16, ub>
+        : !pto.vmi.vreg<128xbf16>, !pto.ptr<bf16, ub>, index
     return
   }
 }

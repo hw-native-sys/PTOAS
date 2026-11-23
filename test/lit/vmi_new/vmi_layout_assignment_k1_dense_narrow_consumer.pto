@@ -35,7 +35,7 @@ module {
         : !pto.vmi.vreg<64xbf16>, !pto.vmi.vreg<64xbf16>, !pto.vmi.mask<64xpred>
         -> !pto.vmi.vreg<64xbf16>
     pto.vmi.vstore %max, %dst[%off]
-        : !pto.vmi.vreg<64xbf16>, !pto.ptr<bf16, ub>
+        : !pto.vmi.vreg<64xbf16>, !pto.ptr<bf16, ub>, index
     return
   }
 }

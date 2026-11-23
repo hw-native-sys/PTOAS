@@ -12,7 +12,7 @@ module {
   func.func @group_load_element_type_mismatch(
       %src: !pto.ptr<f32, ub>, %offset: index, %stride: index) {
     %value = pto.vmi.vload %src[%offset], %stride {group = 8}
-        : !pto.ptr<f32, ub> -> !pto.vmi.vreg<64xf16>
+        : !pto.ptr<f32, ub>, index -> !pto.vmi.vreg<64xf16>
     return
   }
 }
@@ -26,7 +26,7 @@ module {
       %value: !pto.vmi.vreg<64xf16>, %dst: !pto.ptr<f32, ub>,
       %offset: index, %stride: index) {
     pto.vmi.vstore %value, %dst[%offset], %stride {group = 8}
-        : !pto.vmi.vreg<64xf16>, !pto.ptr<f32, ub>
+        : !pto.vmi.vreg<64xf16>, !pto.ptr<f32, ub>, index
     return
   }
 }
@@ -39,7 +39,7 @@ module {
   func.func @block_stride_load_element_type_mismatch(
       %src: !pto.ptr<f32, ub>, %offset: index, %block: i16) {
     %value = pto.vmi.vload %src[%offset], %block
-        : !pto.ptr<f32, ub> -> !pto.vmi.vreg<64xf16>
+        : !pto.ptr<f32, ub>, index -> !pto.vmi.vreg<64xf16>
     return
   }
 }
@@ -53,7 +53,7 @@ module {
       %value: !pto.vmi.vreg<64xf16>, %dst: !pto.ptr<f32, ub>,
       %offset: index, %block: i16) {
     pto.vmi.vstore %value, %dst[%offset], %block
-        : !pto.vmi.vreg<64xf16>, !pto.ptr<f32, ub>
+        : !pto.vmi.vreg<64xf16>, !pto.ptr<f32, ub>, index
     return
   }
 }
@@ -66,7 +66,7 @@ module {
   func.func @group_load_nondivisible(
       %src: !pto.ptr<f32, ub>, %offset: index, %stride: index) {
     %value = pto.vmi.vload %src[%offset], %stride {group = 6}
-        : !pto.ptr<f32, ub> -> !pto.vmi.vreg<64xf32>
+        : !pto.ptr<f32, ub>, index -> !pto.vmi.vreg<64xf32>
     return
   }
 }
@@ -80,7 +80,7 @@ module {
       %value: !pto.vmi.vreg<64xf32>, %dst: !pto.ptr<f32, ub>,
       %offset: index, %stride: index) {
     pto.vmi.vstore %value, %dst[%offset], %stride {group = 6}
-        : !pto.vmi.vreg<64xf32>, !pto.ptr<f32, ub>
+        : !pto.vmi.vreg<64xf32>, !pto.ptr<f32, ub>, index
     return
   }
 }

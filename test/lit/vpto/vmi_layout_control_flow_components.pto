@@ -33,7 +33,7 @@ module {
     %1 = pto.vmi.broadcast %arg3 : f32 -> !pto.vmi.vreg<128xf32>
     cf.br ^bb3(%1 : !pto.vmi.vreg<128xf32>)
   ^bb3(%2: !pto.vmi.vreg<128xf32>):  // 2 preds: ^bb1, ^bb2
-    pto.vmi.store %2, %arg4[%c0] : !pto.vmi.vreg<128xf32>, !pto.ptr<f32, ub>
+    pto.vmi.store %2, %arg4[%c0] : !pto.vmi.vreg<128xf32>, !pto.ptr<f32, ub>, index
     return
   }
 }
@@ -58,7 +58,7 @@ module {
     %1 = pto.vmi.broadcast %arg2 : f32 -> !pto.vmi.vreg<128xf32>
     cf.br ^bb3(%1 : !pto.vmi.vreg<128xf32>)
   ^bb3(%2: !pto.vmi.vreg<128xf32>):  // 2 preds: ^bb1, ^bb2
-    pto.vmi.store %2, %arg4[%c0] : !pto.vmi.vreg<128xf32>, !pto.ptr<f32, ub>
+    pto.vmi.store %2, %arg4[%c0] : !pto.vmi.vreg<128xf32>, !pto.ptr<f32, ub>, index
     return
   }
 }
@@ -79,7 +79,7 @@ module {
     %1 = scf.execute_region -> !pto.vmi.vreg<128xf32> {
       scf.yield %0 : !pto.vmi.vreg<128xf32>
     }
-    pto.vmi.store %1, %arg4[%c0] : !pto.vmi.vreg<128xf32>, !pto.ptr<f32, ub>
+    pto.vmi.store %1, %arg4[%c0] : !pto.vmi.vreg<128xf32>, !pto.ptr<f32, ub>, index
     return
   }
 }
@@ -101,7 +101,7 @@ module {
     %2 = scf.for %arg5 = %c0 to %c2 step %c1 iter_args(%arg6 = %0) -> (!pto.vmi.vreg<128xf32>) {
       scf.yield %1 : !pto.vmi.vreg<128xf32>
     }
-    pto.vmi.store %2, %arg4[%c0] : !pto.vmi.vreg<128xf32>, !pto.ptr<f32, ub>
+    pto.vmi.store %2, %arg4[%c0] : !pto.vmi.vreg<128xf32>, !pto.ptr<f32, ub>, index
     return
   }
 }
@@ -123,7 +123,7 @@ module {
     %2 = scf.for %arg5 = %c0 to %c2 step %c1 iter_args(%arg6 = %1) -> (!pto.vmi.vreg<128xf32>) {
       scf.yield %0 : !pto.vmi.vreg<128xf32>
     }
-    pto.vmi.store %2, %arg4[%c0] : !pto.vmi.vreg<128xf32>, !pto.ptr<f32, ub>
+    pto.vmi.store %2, %arg4[%c0] : !pto.vmi.vreg<128xf32>, !pto.ptr<f32, ub>, index
     return
   }
 }
@@ -147,7 +147,7 @@ module {
     } else {
       scf.yield %1 : !pto.vmi.vreg<128xf32>
     }
-    pto.vmi.store %2, %arg4[%c0] : !pto.vmi.vreg<128xf32>, !pto.ptr<f32, ub>
+    pto.vmi.store %2, %arg4[%c0] : !pto.vmi.vreg<128xf32>, !pto.ptr<f32, ub>, index
     return
   }
 }
@@ -171,7 +171,7 @@ module {
       %1 = pto.vmi.broadcast %arg3 : f32 -> !pto.vmi.vreg<128xf32>
       scf.yield %1 : !pto.vmi.vreg<128xf32>
     }
-    pto.vmi.store %0, %arg4[%c0] : !pto.vmi.vreg<128xf32>, !pto.ptr<f32, ub>
+    pto.vmi.store %0, %arg4[%c0] : !pto.vmi.vreg<128xf32>, !pto.ptr<f32, ub>, index
     return
   }
 }
@@ -200,7 +200,7 @@ module {
     } else {
       scf.yield %1 : !pto.vmi.vreg<128xf32>
     }
-    pto.vmi.store %2, %arg4[%c0] : !pto.vmi.vreg<128xf32>, !pto.ptr<f32, ub>
+    pto.vmi.store %2, %arg4[%c0] : !pto.vmi.vreg<128xf32>, !pto.ptr<f32, ub>, index
     return
   }
 }
@@ -224,7 +224,7 @@ module {
     } else {
       scf.yield %0 : !pto.vmi.vreg<128xf32>
     }
-    pto.vmi.store %2, %arg4[%c0] : !pto.vmi.vreg<128xf32>, !pto.ptr<f32, ub>
+    pto.vmi.store %2, %arg4[%c0] : !pto.vmi.vreg<128xf32>, !pto.ptr<f32, ub>, index
     return
   }
 }
@@ -250,7 +250,7 @@ module {
     default {
       scf.yield %1 : !pto.vmi.vreg<128xf32>
     }
-    pto.vmi.store %2, %arg4[%c0] : !pto.vmi.vreg<128xf32>, !pto.ptr<f32, ub>
+    pto.vmi.store %2, %arg4[%c0] : !pto.vmi.vreg<128xf32>, !pto.ptr<f32, ub>, index
     return
   }
 }
@@ -275,7 +275,7 @@ module {
     ^bb0(%arg5: !pto.vmi.vreg<128xf32>):
       scf.yield %0 : !pto.vmi.vreg<128xf32>
     }
-    pto.vmi.store %2, %arg4[%c0] : !pto.vmi.vreg<128xf32>, !pto.ptr<f32, ub>
+    pto.vmi.store %2, %arg4[%c0] : !pto.vmi.vreg<128xf32>, !pto.ptr<f32, ub>, index
     return
   }
 }

@@ -13,9 +13,9 @@ module {
   func.func @compact_1(%src: !pto.ptr<f32, ub>, %dst: !pto.ptr<f32, ub>,
                        %off: index) {
     %value = pto.vmi.vload %src[%off]
-        : !pto.ptr<f32, ub> -> !pto.vmi.vreg<1xf32>
+        : !pto.ptr<f32, ub>, index -> !pto.vmi.vreg<1xf32>
     pto.vmi.vstore %value, %dst[%off]
-        : !pto.vmi.vreg<1xf32>, !pto.ptr<f32, ub>
+        : !pto.vmi.vreg<1xf32>, !pto.ptr<f32, ub>, index
     return
   }
 
@@ -24,9 +24,9 @@ module {
     %zero = arith.constant 0 : index
     %src_element = pto.addptr %src, %element : !pto.ptr<f32, ub>, index -> !pto.ptr<f32, ub>
     %value = pto.vmi.vload %src_element[%zero]
-        : !pto.ptr<f32, ub> -> !pto.vmi.vreg<1xf32>
+        : !pto.ptr<f32, ub>, index -> !pto.vmi.vreg<1xf32>
     pto.vmi.vstore %value, %dst[%element]
-        : !pto.vmi.vreg<1xf32>, !pto.ptr<f32, ub>
+        : !pto.vmi.vreg<1xf32>, !pto.ptr<f32, ub>, index
     return
   }
 
@@ -36,9 +36,9 @@ module {
     %c8 = arith.constant 8 : index
     %loadOff = arith.muli %off, %c8 : index
     %value = pto.vmi.vload %src[%loadOff]
-        : !pto.ptr<f32, ub> -> !pto.vmi.vreg<2xf32>
+        : !pto.ptr<f32, ub>, index -> !pto.vmi.vreg<2xf32>
     pto.vmi.vstore %value, %dst[%off]
-        : !pto.vmi.vreg<2xf32>, !pto.ptr<f32, ub>
+        : !pto.vmi.vreg<2xf32>, !pto.ptr<f32, ub>, index
     return
   }
 
@@ -48,9 +48,9 @@ module {
     %c8 = arith.constant 8 : index
     %loadOff = arith.muli %off, %c8 : index
     %value = pto.vmi.vload %src[%loadOff]
-        : !pto.ptr<f32, ub> -> !pto.vmi.vreg<4xf32>
+        : !pto.ptr<f32, ub>, index -> !pto.vmi.vreg<4xf32>
     pto.vmi.vstore %value, %dst[%off]
-        : !pto.vmi.vreg<4xf32>, !pto.ptr<f32, ub>
+        : !pto.vmi.vreg<4xf32>, !pto.ptr<f32, ub>, index
     return
   }
 
@@ -60,9 +60,9 @@ module {
     %c8 = arith.constant 8 : index
     %loadOff = arith.muli %off, %c8 : index
     %value = pto.vmi.vload %src[%loadOff]
-        : !pto.ptr<f32, ub> -> !pto.vmi.vreg<8xf32>
+        : !pto.ptr<f32, ub>, index -> !pto.vmi.vreg<8xf32>
     pto.vmi.vstore %value, %dst[%off]
-        : !pto.vmi.vreg<8xf32>, !pto.ptr<f32, ub>
+        : !pto.vmi.vreg<8xf32>, !pto.ptr<f32, ub>, index
     return
   }
 
@@ -78,7 +78,7 @@ module {
         : !pto.vmi.vreg<1xf32>, !pto.vmi.vreg<1xf32>
         -> !pto.vmi.vreg<1xf32>
     pto.vmi.vstore %scaled, %dst[%off]
-        : !pto.vmi.vreg<1xf32>, !pto.ptr<f32, ub>
+        : !pto.vmi.vreg<1xf32>, !pto.ptr<f32, ub>, index
     return
   }
 

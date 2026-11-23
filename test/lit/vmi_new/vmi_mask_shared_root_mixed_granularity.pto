@@ -30,9 +30,9 @@ module {
     %m16 = pto.vmi.mask_and %root, %cmp16
         : !pto.vmi.mask<64xpred>, !pto.vmi.mask<64xpred> -> !pto.vmi.mask<64xpred>
     pto.vmi.masked_store %v32, %d32[%off], %m32
-        : !pto.vmi.vreg<64xf32>, !pto.ptr<f32, ub>, !pto.vmi.mask<64xpred>
+        : !pto.vmi.vreg<64xf32>, !pto.ptr<f32, ub>, index, !pto.vmi.mask<64xpred>
     pto.vmi.masked_store %v16, %d16[%off], %m16
-        : !pto.vmi.vreg<64xf16>, !pto.ptr<f16, ub>, !pto.vmi.mask<64xpred>
+        : !pto.vmi.vreg<64xf16>, !pto.ptr<f16, ub>, index, !pto.vmi.mask<64xpred>
     return
   }
 }
@@ -45,6 +45,6 @@ module {
 // CHECK: %[[CMP16:.*]] = pto.vmi.cmpf "olt", {{.*}} -> !pto.vmi.mask<64xb16>
 // CHECK: %[[ROOT16:.*]] = pto.vmi.create_mask %{{.*}} : index -> !pto.vmi.mask<64xb16>
 // CHECK: %[[M16:.*]] = pto.vmi.mask_and %[[ROOT16]], %[[CMP16]] : !pto.vmi.mask<64xb16>, !pto.vmi.mask<64xb16> -> !pto.vmi.mask<64xb16>
-// CHECK: pto.vmi.masked_store {{.*}}{{\[}}%{{.*}}], %[[M32]] : !pto.vmi.vreg<64xf32>, !pto.ptr<f32, ub>, !pto.vmi.mask<64xb32>
-// CHECK: pto.vmi.masked_store {{.*}}{{\[}}%{{.*}}], %[[M16]] : !pto.vmi.vreg<64xf16>, !pto.ptr<f16, ub>, !pto.vmi.mask<64xb16>
+// CHECK: pto.vmi.masked_store {{.*}}{{\[}}%{{.*}}], %[[M32]] : !pto.vmi.vreg<64xf32>, !pto.ptr<f32, ub>, index, !pto.vmi.mask<64xb32>
+// CHECK: pto.vmi.masked_store {{.*}}{{\[}}%{{.*}}], %[[M16]] : !pto.vmi.vreg<64xf16>, !pto.ptr<f16, ub>, index, !pto.vmi.mask<64xb16>
 // CHECK: return

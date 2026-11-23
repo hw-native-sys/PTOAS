@@ -398,8 +398,9 @@ static bool isAllActiveMask(Value mask)
     return maskType && activeLanes && *activeLanes >= maskType.getElementCount();
 }
 
-// Frontend offsets are `index_cast` of `i32` arithmetic, so peel the cast before
-// comparing anything. `PTOScalarOps.h` owns the PTO/arith spelling split.
+// Frontends may route `i32` arithmetic through an `index_cast` (that is the shape
+// this strip exists for; a direct integer offset needs no peeling), so peel it
+// before comparing anything. `PTOScalarOps.h` owns the PTO/arith spelling split.
 static Value stripOffsetCast(Value value)
 {
     Operation* definition = value.getDefiningOp();

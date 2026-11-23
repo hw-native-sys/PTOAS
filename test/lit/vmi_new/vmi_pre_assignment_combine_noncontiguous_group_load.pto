@@ -13,7 +13,7 @@ module {
       %src: !pto.ptr<bf16, ub>, %off: index) -> !pto.vmi.vreg<256xbf16> {
     %c40 = arith.constant 40 : index
     %x = pto.vmi.vload %src[%off], %c40 {group = 8}
-        : !pto.ptr<bf16, ub> -> !pto.vmi.vreg<256xbf16>
+        : !pto.ptr<bf16, ub>, index -> !pto.vmi.vreg<256xbf16>
     return %x : !pto.vmi.vreg<256xbf16>
   }
 
@@ -21,7 +21,7 @@ module {
       %src: !pto.ptr<bf16, ub>, %off: index, %stride: index)
       -> !pto.vmi.vreg<256xbf16> {
     %x = pto.vmi.vload %src[%off], %stride {group = 8}
-        : !pto.ptr<bf16, ub> -> !pto.vmi.vreg<256xbf16>
+        : !pto.ptr<bf16, ub>, index -> !pto.vmi.vreg<256xbf16>
     return %x : !pto.vmi.vreg<256xbf16>
   }
 }

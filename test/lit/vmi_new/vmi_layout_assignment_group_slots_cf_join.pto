@@ -22,23 +22,23 @@ module {
     %mask = pto.vmi.create_mask %c128 : index -> !pto.vmi.mask<128xpred>
     %sum = scf.if %cond -> !pto.vmi.vreg<8xf32> {
       %x = pto.vmi.vload %src[%aligned_off]
-          : !pto.ptr<f32, ub> -> !pto.vmi.vreg<128xf32>
+          : !pto.ptr<f32, ub>, index -> !pto.vmi.vreg<128xf32>
       %a = pto.vmi.vcadd %x, %mask {group = 8, reassoc}
           : !pto.vmi.vreg<128xf32>, !pto.vmi.mask<128xpred>
           -> !pto.vmi.vreg<8xf32>
       scf.yield %a : !pto.vmi.vreg<8xf32>
     } else {
       %b = pto.vmi.vload %rhs[%aligned_off], %c1 {group = 8}
-          : !pto.ptr<f32, ub> -> !pto.vmi.vreg<8xf32>
+          : !pto.ptr<f32, ub>, index -> !pto.vmi.vreg<8xf32>
       scf.yield %b : !pto.vmi.vreg<8xf32>
     }
     %bias = pto.vmi.vload %rhs[%aligned_off], %c1 {group = 8}
-        : !pto.ptr<f32, ub> -> !pto.vmi.vreg<8xf32>
+        : !pto.ptr<f32, ub>, index -> !pto.vmi.vreg<8xf32>
     %out = pto.vmi.vadd %sum, %bias
         : !pto.vmi.vreg<8xf32>, !pto.vmi.vreg<8xf32>
         -> !pto.vmi.vreg<8xf32>
     pto.vmi.vstore %out, %dst[%aligned_off], %c1 {group = 8}
-        : !pto.vmi.vreg<8xf32>, !pto.ptr<f32, ub>
+        : !pto.vmi.vreg<8xf32>, !pto.ptr<f32, ub>, index
     return
   }
 }

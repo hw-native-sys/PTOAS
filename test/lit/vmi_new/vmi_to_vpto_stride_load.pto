@@ -16,7 +16,7 @@ module {
       -> !pto.vreg<256xf8E4M3FN> {
     %c1 = arith.constant 1 : i16
     %out = pto.vmi.stride_load %src[%offset], %c1, %mask
-        : !pto.ptr<f8E4M3FN, ub>, i16,
+        : !pto.ptr<f8E4M3FN, ub>, index, i16,
           !pto.vmi.mask<64xb8, #pto.vmi.layout<contiguous>>
         -> !pto.vmi.vreg<64xf8E4M3FN, #pto.vmi.layout<contiguous>>
     %part = "pto.vmi.unpack"(%out)

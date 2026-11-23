@@ -37,11 +37,11 @@ VCVT_SOURCE = """module attributes {pto.target_arch = "a5", pto.kernel_kind = #p
     pto.wait_flag["PIPE_MTE2", "PIPE_V", "EVENT_ID0"]
 
     pto.vecscope {
-      %wide = pto.vmi.vload %ub_src[%c0] : !pto.ptr<si8, ub> -> !pto.vmi.vreg<256xsi8>
+      %wide = pto.vmi.vload %ub_src[%c0] : !pto.ptr<si8, ub>, index -> !pto.vmi.vreg<256xsi8>
       %cvt = pto.vmi.vcvt %wide
           : !pto.vmi.vreg<256xsi8> -> !pto.vmi.vreg<256xf16>
       pto.vmi.vstore %cvt, %ub_dst[%c0]
-          : !pto.vmi.vreg<256xf16>, !pto.ptr<f16, ub>
+          : !pto.vmi.vreg<256xf16>, !pto.ptr<f16, ub>, index
     }
 
     pto.set_flag["PIPE_V", "PIPE_MTE3", "EVENT_ID0"]

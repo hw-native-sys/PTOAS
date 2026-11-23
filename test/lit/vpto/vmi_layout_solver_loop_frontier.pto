@@ -34,7 +34,7 @@ module {
     %limit = pto.vmi.vbrc %i254 : ui32 -> !pto.vmi.vreg<128xui32>
     %max = scf.for %i = %c0 to %c4 step %c1 iter_args(%acc = %zero) -> (!pto.vmi.vreg<128xf32>) {
       %off = arith.muli %i, %c128 : index
-      %x = pto.vmi.vload %src[%off] : !pto.ptr<bf16, ub> -> !pto.vmi.vreg<128xbf16>
+      %x = pto.vmi.vload %src[%off] : !pto.ptr<bf16, ub>, index -> !pto.vmi.vreg<128xbf16>
       %wide = pto.vmi.vcvt %x : !pto.vmi.vreg<128xbf16> -> !pto.vmi.vreg<128xf32>
       %abs_mask = pto.vmi.create_mask %c128 : index -> !pto.vmi.mask<128xpred>
       %abs = pto.vmi.vabs %wide, %abs_mask : !pto.vmi.vreg<128xf32>, !pto.vmi.mask<128xpred> -> !pto.vmi.vreg<128xf32>
@@ -50,12 +50,12 @@ module {
     %bias_add = pto.vmi.vbrc %i127 : ui32 -> !pto.vmi.vreg<128xui32>
     %c = pto.vmi.vadd %b, %bias_add : !pto.vmi.vreg<128xui32>, !pto.vmi.vreg<128xui32> -> !pto.vmi.vreg<128xui32>
     %bytes = pto.vmi.vcvt %c {saturate = "SAT"} : !pto.vmi.vreg<128xui32> -> !pto.vmi.vreg<128xui8>
-    pto.vmi.vstore %bytes, %packed[%c0] : !pto.vmi.vreg<128xui8>, !pto.ptr<ui8, ub>
+    pto.vmi.vstore %bytes, %packed[%c0] : !pto.vmi.vreg<128xui8>, !pto.ptr<ui8, ub>, index
     %d = pto.vmi.vsub %limit, %c : !pto.vmi.vreg<128xui32>, !pto.vmi.vreg<128xui32> -> !pto.vmi.vreg<128xui32>
     %shift_out = pto.vmi.vbrc %i23 : ui32 -> !pto.vmi.vreg<128xui32>
     %e = pto.vmi.vshl %d, %shift_out : !pto.vmi.vreg<128xui32>, !pto.vmi.vreg<128xui32> -> !pto.vmi.vreg<128xui32>
     %factor = pto.vmi.vinterpret_cast %e : !pto.vmi.vreg<128xui32> -> !pto.vmi.vreg<128xf32>
-    pto.vmi.vstore %factor, %scale[%c0] : !pto.vmi.vreg<128xf32>, !pto.ptr<f32, ub>
+    pto.vmi.vstore %factor, %scale[%c0] : !pto.vmi.vreg<128xf32>, !pto.ptr<f32, ub>, index
     return
   }
 }

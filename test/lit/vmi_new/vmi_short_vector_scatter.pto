@@ -14,7 +14,7 @@ module {
                              %idx: !pto.vmi.vreg<4xi32>) {
     %c0 = arith.constant 0 : index
     %n = arith.constant 4 : index
-    %v = pto.vmi.vload %src[%c0] : !pto.ptr<f32, ub> -> !pto.vmi.vreg<4xf32>
+    %v = pto.vmi.vload %src[%c0] : !pto.ptr<f32, ub>, index -> !pto.vmi.vreg<4xf32>
     %m = pto.vmi.create_mask %n : index -> !pto.vmi.mask<4xpred>
     pto.vmi.vscatter %v, %dst, %idx, %m
         : !pto.vmi.vreg<4xf32>, !pto.ptr<f32, ub>,

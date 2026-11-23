@@ -18,7 +18,7 @@ module {
     // CHECK-SAME: got group = 8 bytes, row_stride = 16 bytes
     %stride16 = arith.constant 16 : index
     %x = pto.vmi.vload %base[%off], %stride16 {group = 8}
-        : !pto.ptr<ui8, ub> -> !pto.vmi.vreg<64xui8>
+        : !pto.ptr<ui8, ub>, index -> !pto.vmi.vreg<64xui8>
     return
   }
 }

@@ -18,7 +18,7 @@ module {
     %c32 = arith.constant 32 : index
     %aligned_offset = arith.muli %offset, %c32 : index
     %wide = pto.vmi.vload %src[%aligned_offset]
-        : !pto.ptr<f32, ub> -> !pto.vmi.vreg<256xf32>
+        : !pto.ptr<f32, ub>, index -> !pto.vmi.vreg<256xf32>
     %scale_vec = pto.vmi.vbrc %inv_scale
         : f32 -> !pto.vmi.vreg<256xf32>
     %scaled = pto.vmi.vmul %wide, %scale_vec
@@ -27,7 +27,7 @@ module {
     %packed = pto.vmi.vcvt %scaled {rounding = "H", saturate = "SAT"}
         : !pto.vmi.vreg<256xf32> -> !pto.vmi.vreg<256xf8E4M3FN>
     pto.vmi.vstore %packed, %dst[%aligned_offset]
-        : !pto.vmi.vreg<256xf8E4M3FN>, !pto.ptr<f8E4M3FN, ub>
+        : !pto.vmi.vreg<256xf8E4M3FN>, !pto.ptr<f8E4M3FN, ub>, index
     return
   }
 }

@@ -23,9 +23,9 @@
 module {
   func.func @fptosi_d2(%src: !pto.ptr<f32, ub>, %dst: !pto.ptr<si32, ub>) {
     %c0 = arith.constant 0 : index
-    %x = pto.vmi.load %src[%c0] : !pto.ptr<f32, ub> -> !pto.vmi.vreg<128xf32>
+    %x = pto.vmi.load %src[%c0] : !pto.ptr<f32, ub>, index -> !pto.vmi.vreg<128xf32>
     %y = pto.vmi.fptosi %x {saturate = "SAT"} : !pto.vmi.vreg<128xf32> -> !pto.vmi.vreg<128xsi32, #pto.vmi.layout<deinterleaved = 2>>
-    pto.vmi.store %y, %dst[%c0] : !pto.vmi.vreg<128xsi32, #pto.vmi.layout<deinterleaved = 2>>, !pto.ptr<si32, ub>
+    pto.vmi.store %y, %dst[%c0] : !pto.vmi.vreg<128xsi32, #pto.vmi.layout<deinterleaved = 2>>, !pto.ptr<si32, ub>, index
     return
   }
 }
@@ -60,11 +60,11 @@ module {
 module {
   func.func @sitofp_component_d2(%src: !pto.ptr<si32, ub>, %dst: !pto.ptr<f32, ub>, %value: f32) {
     %c0 = arith.constant 0 : index
-    %x = pto.vmi.load %src[%c0] : !pto.ptr<si32, ub> -> !pto.vmi.vreg<128xsi32>
+    %x = pto.vmi.load %src[%c0] : !pto.ptr<si32, ub>, index -> !pto.vmi.vreg<128xsi32>
     %y = pto.vmi.sitofp %x : !pto.vmi.vreg<128xsi32> -> !pto.vmi.vreg<128xf32>
     %other = pto.vmi.broadcast %value : f32 -> !pto.vmi.vreg<128xf32>
     %sum = pto.vmi.vadd %y, %other : !pto.vmi.vreg<128xf32>, !pto.vmi.vreg<128xf32> -> !pto.vmi.vreg<128xf32>
-    pto.vmi.store %sum, %dst[%c0] : !pto.vmi.vreg<128xf32>, !pto.ptr<f32, ub>
+    pto.vmi.store %sum, %dst[%c0] : !pto.vmi.vreg<128xf32>, !pto.ptr<f32, ub>, index
     return
   }
 }

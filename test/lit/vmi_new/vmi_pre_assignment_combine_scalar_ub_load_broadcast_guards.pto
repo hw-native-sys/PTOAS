@@ -36,7 +36,7 @@ module {
   func.func @vmi_load_with_intervening_store(
       %src: !pto.ptr<f32, ub>, %off: index) -> !pto.vmi.vreg<64xf32> {
     %scalar = pto.vmi.vload %src[%off]
-        : !pto.ptr<f32, ub> -> !pto.vmi.vreg<1xf32>
+        : !pto.ptr<f32, ub>, index -> !pto.vmi.vreg<1xf32>
     %zero = arith.constant 0.0 : f32
     pto.store %zero, %src[%off] : !pto.ptr<f32, ub>, index, f32
     %broadcast = pto.vmi.vbrc %scalar
@@ -62,7 +62,7 @@ module {
     %src = memref.alloc() : memref<64xf32, #pto.address_space<vec>>
     %dst = memref.alloc() : memref<64xf32, #pto.address_space<vec>>
     %scalar = pto.vmi.vload %src[%off]
-        : memref<64xf32, #pto.address_space<vec>>
+        : memref<64xf32, #pto.address_space<vec>>, index
         -> !pto.vmi.vreg<1xf32>
     %zero = arith.constant 0.0 : f32
     pto.store %zero, %dst[%off]

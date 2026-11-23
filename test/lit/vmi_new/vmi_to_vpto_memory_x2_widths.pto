@@ -17,9 +17,9 @@ module {
     %c128 = arith.constant 128 : index
     %second_offset = arith.addi %aligned_offset, %c128 : index
     %first = pto.vmi.vload %src[%aligned_offset]
-        : !pto.ptr<f16, ub> -> !pto.vmi.vreg<128xf16, #pto.vmi.layout<contiguous>>
+        : !pto.ptr<f16, ub>, index -> !pto.vmi.vreg<128xf16, #pto.vmi.layout<contiguous>>
     %second = pto.vmi.vload %src[%second_offset]
-        : !pto.ptr<f16, ub> -> !pto.vmi.vreg<128xf16, #pto.vmi.layout<contiguous>>
+        : !pto.ptr<f16, ub>, index -> !pto.vmi.vreg<128xf16, #pto.vmi.layout<contiguous>>
     %mask = pto.vmi.pset "PAT_ALL"
         : !pto.vmi.mask<128xb16, #pto.vmi.layout<contiguous>>
     %lo, %hi = pto.vmi.vdintlv %first, %second, %mask
@@ -52,9 +52,9 @@ module {
         -> !pto.vmi.vreg<256xi8, #pto.vmi.layout<contiguous>>,
            !pto.vmi.vreg<256xi8, #pto.vmi.layout<contiguous>>
     pto.vmi.vstore %first, %dst[%aligned_offset]
-        : !pto.vmi.vreg<256xi8, #pto.vmi.layout<contiguous>>, !pto.ptr<i8, ub>
+        : !pto.vmi.vreg<256xi8, #pto.vmi.layout<contiguous>>, !pto.ptr<i8, ub>, index
     pto.vmi.vstore %second, %dst[%second_offset]
-        : !pto.vmi.vreg<256xi8, #pto.vmi.layout<contiguous>>, !pto.ptr<i8, ub>
+        : !pto.vmi.vreg<256xi8, #pto.vmi.layout<contiguous>>, !pto.ptr<i8, ub>, index
     return
   }
 }

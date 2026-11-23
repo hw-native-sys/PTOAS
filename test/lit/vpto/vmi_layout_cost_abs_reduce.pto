@@ -18,24 +18,24 @@ module {
     %c0 = arith.constant 0 : index
     %c1 = arith.constant 1 : index
     %count = arith.constant 128 : index
-    %x = pto.vmi.vload %src[%c0] : !pto.ptr<bf16, ub> -> !pto.vmi.vreg<128xbf16>
+    %x = pto.vmi.vload %src[%c0] : !pto.ptr<bf16, ub>, index -> !pto.vmi.vreg<128xbf16>
     %y = pto.vmi.vcvt %x : !pto.vmi.vreg<128xbf16> -> !pto.vmi.vreg<128xf32>
     %m = pto.vmi.create_mask %count : index -> !pto.vmi.mask<128xpred>
     %z = pto.vmi.vabs %y, %m : !pto.vmi.vreg<128xf32>, !pto.vmi.mask<128xpred> -> !pto.vmi.vreg<128xf32>
     %r = pto.vmi.group_reduce_maxf %z, %m {num_groups = 4 : i64} : !pto.vmi.vreg<128xf32>, !pto.vmi.mask<128xpred> -> !pto.vmi.vreg<4xf32>
-    pto.vmi.group_store %r, %out[%c0], %c1 {num_groups = 4 : i64} : !pto.vmi.vreg<4xf32>, !pto.ptr<f32, ub>
+    pto.vmi.group_store %r, %out[%c0], %c1 {num_groups = 4 : i64} : !pto.vmi.vreg<4xf32>, !pto.ptr<f32, ub>, index
     return
   }
   func.func @bf16_abs_reduce_256(%src: !pto.ptr<bf16, ub>, %out: !pto.ptr<f32, ub>) {
     %c0 = arith.constant 0 : index
     %c1 = arith.constant 1 : index
     %count = arith.constant 256 : index
-    %x = pto.vmi.vload %src[%c0] : !pto.ptr<bf16, ub> -> !pto.vmi.vreg<256xbf16>
+    %x = pto.vmi.vload %src[%c0] : !pto.ptr<bf16, ub>, index -> !pto.vmi.vreg<256xbf16>
     %y = pto.vmi.vcvt %x : !pto.vmi.vreg<256xbf16> -> !pto.vmi.vreg<256xf32>
     %m = pto.vmi.create_mask %count : index -> !pto.vmi.mask<256xpred>
     %z = pto.vmi.vabs %y, %m : !pto.vmi.vreg<256xf32>, !pto.vmi.mask<256xpred> -> !pto.vmi.vreg<256xf32>
     %r = pto.vmi.group_reduce_maxf %z, %m {num_groups = 8 : i64} : !pto.vmi.vreg<256xf32>, !pto.vmi.mask<256xpred> -> !pto.vmi.vreg<8xf32>
-    pto.vmi.group_store %r, %out[%c0], %c1 {num_groups = 8 : i64} : !pto.vmi.vreg<8xf32>, !pto.ptr<f32, ub>
+    pto.vmi.group_store %r, %out[%c0], %c1 {num_groups = 8 : i64} : !pto.vmi.vreg<8xf32>, !pto.ptr<f32, ub>, index
     return
   }
 }

@@ -28,8 +28,8 @@ module {
        -> !pto.vmi.vreg<64xf32>, !pto.vmi.vreg<64xf32>
     %blo = pto.vmi.vcvt %lo {rounding = "R", saturate = "SAT"} : !pto.vmi.vreg<64xf32> -> !pto.vmi.vreg<64xbf16>
     %bhi = pto.vmi.vcvt %hi, %half {rounding = "R", saturate = "SAT"} : !pto.vmi.vreg<64xf32>, !pto.vmi.mask<64xpred> -> !pto.vmi.vreg<64xbf16>
-    pto.vmi.vstore %blo, %dst[%c0] : !pto.vmi.vreg<64xbf16>, !pto.ptr<bf16, ub>
-    pto.vmi.vstore %bhi, %dst[%c64] : !pto.vmi.vreg<64xbf16>, !pto.ptr<bf16, ub>
+    pto.vmi.vstore %blo, %dst[%c0] : !pto.vmi.vreg<64xbf16>, !pto.ptr<bf16, ub>, index
+    pto.vmi.vstore %bhi, %dst[%c64] : !pto.vmi.vreg<64xbf16>, !pto.ptr<bf16, ub>, index
     return
   }
 
@@ -51,8 +51,8 @@ module {
        -> !pto.vmi.vreg<64xf32>, !pto.vmi.vreg<64xf32>
     %blo = pto.vmi.vcvt %lo, %half {rounding = "R", saturate = "SAT"} : !pto.vmi.vreg<64xf32>, !pto.vmi.mask<64xpred> -> !pto.vmi.vreg<64xbf16>
     %bhi = pto.vmi.vcvt %hi, %half {rounding = "R", saturate = "SAT"} : !pto.vmi.vreg<64xf32>, !pto.vmi.mask<64xpred> -> !pto.vmi.vreg<64xbf16>
-    pto.vmi.vstore %blo, %dst[%c0] : !pto.vmi.vreg<64xbf16>, !pto.ptr<bf16, ub>
-    pto.vmi.vstore %bhi, %dst[%c64] : !pto.vmi.vreg<64xbf16>, !pto.ptr<bf16, ub>
+    pto.vmi.vstore %blo, %dst[%c0] : !pto.vmi.vreg<64xbf16>, !pto.ptr<bf16, ub>, index
+    pto.vmi.vstore %bhi, %dst[%c64] : !pto.vmi.vreg<64xbf16>, !pto.ptr<bf16, ub>, index
     return
   }
 }

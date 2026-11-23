@@ -16,7 +16,7 @@ module {
     %addr = arith.constant 1024 : i64
     %src = pto.castptr %addr : i64 -> !pto.ptr<ui8, ub>
     %off = arith.constant 0 : index
-    %v = pto.vmi.vload %src[%off] : !pto.ptr<ui8, ub> -> !pto.vmi.vreg<8xui8>
+    %v = pto.vmi.vload %src[%off] : !pto.ptr<ui8, ub>, index -> !pto.vmi.vreg<8xui8>
     return %v : !pto.vmi.vreg<8xui8>
   }
 
@@ -24,7 +24,7 @@ module {
     %addr = arith.constant 1024 : i64
     %src = pto.castptr %addr : i64 -> !pto.ptr<ui8, ub>
     %off = arith.constant 0 : index
-    %v = pto.vmi.vload %src[%off] : !pto.ptr<ui8, ub> -> !pto.vmi.vreg<32xui8>
+    %v = pto.vmi.vload %src[%off] : !pto.ptr<ui8, ub>, index -> !pto.vmi.vreg<32xui8>
     return %v : !pto.vmi.vreg<32xui8>
   }
 
@@ -32,7 +32,7 @@ module {
     %addr = arith.constant 1024 : i64
     %src = pto.castptr %addr : i64 -> !pto.ptr<f16, ub>
     %off = arith.constant 0 : index
-    %v = pto.vmi.vload %src[%off] : !pto.ptr<f16, ub> -> !pto.vmi.vreg<16xf16>
+    %v = pto.vmi.vload %src[%off] : !pto.ptr<f16, ub>, index -> !pto.vmi.vreg<16xf16>
     return %v : !pto.vmi.vreg<16xf16>
   }
 
@@ -40,7 +40,7 @@ module {
     %addr = arith.constant 1024 : i64
     %src = pto.castptr %addr : i64 -> !pto.ptr<f32, ub>
     %off = arith.constant 0 : index
-    %v = pto.vmi.vload %src[%off] : !pto.ptr<f32, ub> -> !pto.vmi.vreg<8xf32>
+    %v = pto.vmi.vload %src[%off] : !pto.ptr<f32, ub>, index -> !pto.vmi.vreg<8xf32>
     return %v : !pto.vmi.vreg<8xf32>
   }
 
@@ -48,7 +48,7 @@ module {
   // guarantees element alignment -- so it broadcast-loads that element.
   func.func @scalar_f32(%src: !pto.ptr<f32, ub>, %off: index)
       -> !pto.vmi.vreg<1xf32> {
-    %v = pto.vmi.vload %src[%off] : !pto.ptr<f32, ub> -> !pto.vmi.vreg<1xf32>
+    %v = pto.vmi.vload %src[%off] : !pto.ptr<f32, ub>, index -> !pto.vmi.vreg<1xf32>
     return %v : !pto.vmi.vreg<1xf32>
   }
 }

@@ -17,7 +17,7 @@ module {
     pto.vmi.vstore %value, %dst[%off], %row_stride
         {group = 8}
         : !pto.vmi.vreg<8xf32, #pto.vmi.layout<num_groups = 8, slots = 2>>,
-          !pto.ptr<f32, ub>
+          !pto.ptr<f32, ub>, index
     return
   }
 }

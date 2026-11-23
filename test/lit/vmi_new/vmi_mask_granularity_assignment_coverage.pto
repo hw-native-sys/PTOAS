@@ -77,7 +77,7 @@ func.func @legacy_reduce(%n: index, %a: !pto.vmi.vreg<128xf16>) -> !pto.vmi.vreg
 
 func.func @store(%n: index, %a: !pto.vmi.vreg<128xf16>, %p: !pto.ptr<f16, ub>, %i: index) {
   %m = pto.vmi.create_mask %n : index -> !pto.vmi.mask<128xpred>
-  pto.vmi.masked_store %a, %p[%i], %m : !pto.vmi.vreg<128xf16>, !pto.ptr<f16, ub>, !pto.vmi.mask<128xpred>
+  pto.vmi.masked_store %a, %p[%i], %m : !pto.vmi.vreg<128xf16>, !pto.ptr<f16, ub>, index, !pto.vmi.mask<128xpred>
   return
 }
 // CHECK-LABEL: func.func @store(

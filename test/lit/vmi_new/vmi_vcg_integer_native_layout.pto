@@ -19,10 +19,10 @@ module {
     %one = arith.constant 1 : index
     %eight = arith.constant 8 : index
     %offset = arith.constant 32 : index
-    %x = pto.vmi.vload %src[%zero] : !pto.ptr<f16, ub> -> !pto.vmi.vreg<64xf16>
+    %x = pto.vmi.vload %src[%zero] : !pto.ptr<f16, ub>, index -> !pto.vmi.vreg<64xf16>
     %mask = pto.vmi.create_mask %active : index -> !pto.vmi.mask<64xpred>
     %r = pto.vmi.vcadd %x, %mask {group = 8, reassoc} : !pto.vmi.vreg<64xf16>, !pto.vmi.mask<64xpred> -> !pto.vmi.vreg<8xf16>
-    pto.vmi.vstore %r, %dst[%zero] : !pto.vmi.vreg<8xf16>, !pto.ptr<f16, ub>
+    pto.vmi.vstore %r, %dst[%zero] : !pto.vmi.vreg<8xf16>, !pto.ptr<f16, ub>, index
     return
   }
   func.func @si16_vl128_broadcast(%src: !pto.ptr<si16, ub>, %dst: !pto.ptr<si16, ub>, %wide: !pto.ptr<si32, ub>, %active: index) {
@@ -30,11 +30,11 @@ module {
     %one = arith.constant 1 : index
     %eight = arith.constant 8 : index
     %offset = arith.constant 32 : index
-    %x = pto.vmi.vload %src[%zero] : !pto.ptr<si16, ub> -> !pto.vmi.vreg<128xsi16>
+    %x = pto.vmi.vload %src[%zero] : !pto.ptr<si16, ub>, index -> !pto.vmi.vreg<128xsi16>
     %mask = pto.vmi.create_mask %active : index -> !pto.vmi.mask<128xpred>
     %r = pto.vmi.vcadd %x, %mask {group = 8} : !pto.vmi.vreg<128xsi16>, !pto.vmi.mask<128xpred> -> !pto.vmi.vreg<8xsi16>
     %b = pto.vmi.vbrc %r {group = 8} : !pto.vmi.vreg<8xsi16> -> !pto.vmi.vreg<128xsi16>
-    pto.vmi.vstore %b, %dst[%offset] : !pto.vmi.vreg<128xsi16>, !pto.ptr<si16, ub>
+    pto.vmi.vstore %b, %dst[%offset] : !pto.vmi.vreg<128xsi16>, !pto.ptr<si16, ub>, index
     return
   }
   func.func @si16_vl128_cast(%src: !pto.ptr<si16, ub>, %dst: !pto.ptr<si16, ub>, %wide: !pto.ptr<si32, ub>, %active: index) {
@@ -42,11 +42,11 @@ module {
     %one = arith.constant 1 : index
     %eight = arith.constant 8 : index
     %offset = arith.constant 32 : index
-    %x = pto.vmi.vload %src[%zero] : !pto.ptr<si16, ub> -> !pto.vmi.vreg<128xsi16>
+    %x = pto.vmi.vload %src[%zero] : !pto.ptr<si16, ub>, index -> !pto.vmi.vreg<128xsi16>
     %mask = pto.vmi.create_mask %active : index -> !pto.vmi.mask<128xpred>
     %r = pto.vmi.vcadd %x, %mask {group = 8} : !pto.vmi.vreg<128xsi16>, !pto.vmi.mask<128xpred> -> !pto.vmi.vreg<8xsi16>
     %w = pto.vmi.extsi %r : !pto.vmi.vreg<8xsi16> -> !pto.vmi.vreg<8xsi32>
-    pto.vmi.vstore %w, %wide[%zero] : !pto.vmi.vreg<8xsi32>, !pto.ptr<si32, ub>
+    pto.vmi.vstore %w, %wide[%zero] : !pto.vmi.vreg<8xsi32>, !pto.ptr<si32, ub>, index
     return
   }
   func.func @si16_vl128_group_store(%src: !pto.ptr<si16, ub>, %dst: !pto.ptr<si16, ub>, %wide: !pto.ptr<si32, ub>, %active: index) {
@@ -54,10 +54,10 @@ module {
     %one = arith.constant 1 : index
     %eight = arith.constant 8 : index
     %offset = arith.constant 32 : index
-    %x = pto.vmi.vload %src[%zero] : !pto.ptr<si16, ub> -> !pto.vmi.vreg<128xsi16>
+    %x = pto.vmi.vload %src[%zero] : !pto.ptr<si16, ub>, index -> !pto.vmi.vreg<128xsi16>
     %mask = pto.vmi.create_mask %active : index -> !pto.vmi.mask<128xpred>
     %r = pto.vmi.vcadd %x, %mask {group = 8} : !pto.vmi.vreg<128xsi16>, !pto.vmi.mask<128xpred> -> !pto.vmi.vreg<8xsi16>
-    pto.vmi.vstore %r, %dst[%zero], %one {group = 8} : !pto.vmi.vreg<8xsi16>, !pto.ptr<si16, ub>
+    pto.vmi.vstore %r, %dst[%zero], %one {group = 8} : !pto.vmi.vreg<8xsi16>, !pto.ptr<si16, ub>, index
     return
   }
   func.func @si16_vl128_multi(%src: !pto.ptr<si16, ub>, %dst: !pto.ptr<si16, ub>, %wide: !pto.ptr<si32, ub>, %active: index) {
@@ -65,14 +65,14 @@ module {
     %one = arith.constant 1 : index
     %eight = arith.constant 8 : index
     %offset = arith.constant 32 : index
-    %x = pto.vmi.vload %src[%zero] : !pto.ptr<si16, ub> -> !pto.vmi.vreg<128xsi16>
+    %x = pto.vmi.vload %src[%zero] : !pto.ptr<si16, ub>, index -> !pto.vmi.vreg<128xsi16>
     %mask = pto.vmi.create_mask %active : index -> !pto.vmi.mask<128xpred>
     %r = pto.vmi.vcadd %x, %mask {group = 8} : !pto.vmi.vreg<128xsi16>, !pto.vmi.mask<128xpred> -> !pto.vmi.vreg<8xsi16>
-    pto.vmi.vstore %r, %dst[%zero] : !pto.vmi.vreg<8xsi16>, !pto.ptr<si16, ub>
+    pto.vmi.vstore %r, %dst[%zero] : !pto.vmi.vreg<8xsi16>, !pto.ptr<si16, ub>, index
     %w = pto.vmi.extsi %r : !pto.vmi.vreg<8xsi16> -> !pto.vmi.vreg<8xsi32>
-    pto.vmi.vstore %w, %wide[%zero] : !pto.vmi.vreg<8xsi32>, !pto.ptr<si32, ub>
+    pto.vmi.vstore %w, %wide[%zero] : !pto.vmi.vreg<8xsi32>, !pto.ptr<si32, ub>, index
     %b = pto.vmi.vbrc %r {group = 8} : !pto.vmi.vreg<8xsi16> -> !pto.vmi.vreg<128xsi16>
-    pto.vmi.vstore %b, %dst[%offset] : !pto.vmi.vreg<128xsi16>, !pto.ptr<si16, ub>
+    pto.vmi.vstore %b, %dst[%offset] : !pto.vmi.vreg<128xsi16>, !pto.ptr<si16, ub>, index
     return
   }
   func.func @si16_vl128_store(%src: !pto.ptr<si16, ub>, %dst: !pto.ptr<si16, ub>, %wide: !pto.ptr<si32, ub>, %active: index) {
@@ -80,10 +80,10 @@ module {
     %one = arith.constant 1 : index
     %eight = arith.constant 8 : index
     %offset = arith.constant 32 : index
-    %x = pto.vmi.vload %src[%zero] : !pto.ptr<si16, ub> -> !pto.vmi.vreg<128xsi16>
+    %x = pto.vmi.vload %src[%zero] : !pto.ptr<si16, ub>, index -> !pto.vmi.vreg<128xsi16>
     %mask = pto.vmi.create_mask %active : index -> !pto.vmi.mask<128xpred>
     %r = pto.vmi.vcadd %x, %mask {group = 8} : !pto.vmi.vreg<128xsi16>, !pto.vmi.mask<128xpred> -> !pto.vmi.vreg<8xsi16>
-    pto.vmi.vstore %r, %dst[%zero] : !pto.vmi.vreg<8xsi16>, !pto.ptr<si16, ub>
+    pto.vmi.vstore %r, %dst[%zero] : !pto.vmi.vreg<8xsi16>, !pto.ptr<si16, ub>, index
     return
   }
   func.func @si16_vl64_broadcast(%src: !pto.ptr<si16, ub>, %dst: !pto.ptr<si16, ub>, %wide: !pto.ptr<si32, ub>, %active: index) {
@@ -91,11 +91,11 @@ module {
     %one = arith.constant 1 : index
     %eight = arith.constant 8 : index
     %offset = arith.constant 32 : index
-    %x = pto.vmi.vload %src[%zero] : !pto.ptr<si16, ub> -> !pto.vmi.vreg<64xsi16>
+    %x = pto.vmi.vload %src[%zero] : !pto.ptr<si16, ub>, index -> !pto.vmi.vreg<64xsi16>
     %mask = pto.vmi.create_mask %active : index -> !pto.vmi.mask<64xpred>
     %r = pto.vmi.vcadd %x, %mask {group = 8} : !pto.vmi.vreg<64xsi16>, !pto.vmi.mask<64xpred> -> !pto.vmi.vreg<8xsi16>
     %b = pto.vmi.vbrc %r {group = 8} : !pto.vmi.vreg<8xsi16> -> !pto.vmi.vreg<64xsi16>
-    pto.vmi.vstore %b, %dst[%offset] : !pto.vmi.vreg<64xsi16>, !pto.ptr<si16, ub>
+    pto.vmi.vstore %b, %dst[%offset] : !pto.vmi.vreg<64xsi16>, !pto.ptr<si16, ub>, index
     return
   }
   func.func @si16_vl64_cast(%src: !pto.ptr<si16, ub>, %dst: !pto.ptr<si16, ub>, %wide: !pto.ptr<si32, ub>, %active: index) {
@@ -103,11 +103,11 @@ module {
     %one = arith.constant 1 : index
     %eight = arith.constant 8 : index
     %offset = arith.constant 32 : index
-    %x = pto.vmi.vload %src[%zero] : !pto.ptr<si16, ub> -> !pto.vmi.vreg<64xsi16>
+    %x = pto.vmi.vload %src[%zero] : !pto.ptr<si16, ub>, index -> !pto.vmi.vreg<64xsi16>
     %mask = pto.vmi.create_mask %active : index -> !pto.vmi.mask<64xpred>
     %r = pto.vmi.vcadd %x, %mask {group = 8} : !pto.vmi.vreg<64xsi16>, !pto.vmi.mask<64xpred> -> !pto.vmi.vreg<8xsi16>
     %w = pto.vmi.extsi %r : !pto.vmi.vreg<8xsi16> -> !pto.vmi.vreg<8xsi32>
-    pto.vmi.vstore %w, %wide[%zero] : !pto.vmi.vreg<8xsi32>, !pto.ptr<si32, ub>
+    pto.vmi.vstore %w, %wide[%zero] : !pto.vmi.vreg<8xsi32>, !pto.ptr<si32, ub>, index
     return
   }
   func.func @si16_vl64_group_store(%src: !pto.ptr<si16, ub>, %dst: !pto.ptr<si16, ub>, %wide: !pto.ptr<si32, ub>, %active: index) {
@@ -115,10 +115,10 @@ module {
     %one = arith.constant 1 : index
     %eight = arith.constant 8 : index
     %offset = arith.constant 32 : index
-    %x = pto.vmi.vload %src[%zero] : !pto.ptr<si16, ub> -> !pto.vmi.vreg<64xsi16>
+    %x = pto.vmi.vload %src[%zero] : !pto.ptr<si16, ub>, index -> !pto.vmi.vreg<64xsi16>
     %mask = pto.vmi.create_mask %active : index -> !pto.vmi.mask<64xpred>
     %r = pto.vmi.vcadd %x, %mask {group = 8} : !pto.vmi.vreg<64xsi16>, !pto.vmi.mask<64xpred> -> !pto.vmi.vreg<8xsi16>
-    pto.vmi.vstore %r, %dst[%zero], %one {group = 8} : !pto.vmi.vreg<8xsi16>, !pto.ptr<si16, ub>
+    pto.vmi.vstore %r, %dst[%zero], %one {group = 8} : !pto.vmi.vreg<8xsi16>, !pto.ptr<si16, ub>, index
     return
   }
   func.func @si16_vl64_multi(%src: !pto.ptr<si16, ub>, %dst: !pto.ptr<si16, ub>, %wide: !pto.ptr<si32, ub>, %active: index) {
@@ -126,14 +126,14 @@ module {
     %one = arith.constant 1 : index
     %eight = arith.constant 8 : index
     %offset = arith.constant 32 : index
-    %x = pto.vmi.vload %src[%zero] : !pto.ptr<si16, ub> -> !pto.vmi.vreg<64xsi16>
+    %x = pto.vmi.vload %src[%zero] : !pto.ptr<si16, ub>, index -> !pto.vmi.vreg<64xsi16>
     %mask = pto.vmi.create_mask %active : index -> !pto.vmi.mask<64xpred>
     %r = pto.vmi.vcadd %x, %mask {group = 8} : !pto.vmi.vreg<64xsi16>, !pto.vmi.mask<64xpred> -> !pto.vmi.vreg<8xsi16>
-    pto.vmi.vstore %r, %dst[%zero] : !pto.vmi.vreg<8xsi16>, !pto.ptr<si16, ub>
+    pto.vmi.vstore %r, %dst[%zero] : !pto.vmi.vreg<8xsi16>, !pto.ptr<si16, ub>, index
     %w = pto.vmi.extsi %r : !pto.vmi.vreg<8xsi16> -> !pto.vmi.vreg<8xsi32>
-    pto.vmi.vstore %w, %wide[%zero] : !pto.vmi.vreg<8xsi32>, !pto.ptr<si32, ub>
+    pto.vmi.vstore %w, %wide[%zero] : !pto.vmi.vreg<8xsi32>, !pto.ptr<si32, ub>, index
     %b = pto.vmi.vbrc %r {group = 8} : !pto.vmi.vreg<8xsi16> -> !pto.vmi.vreg<64xsi16>
-    pto.vmi.vstore %b, %dst[%offset] : !pto.vmi.vreg<64xsi16>, !pto.ptr<si16, ub>
+    pto.vmi.vstore %b, %dst[%offset] : !pto.vmi.vreg<64xsi16>, !pto.ptr<si16, ub>, index
     return
   }
   func.func @si16_vl64_store(%src: !pto.ptr<si16, ub>, %dst: !pto.ptr<si16, ub>, %wide: !pto.ptr<si32, ub>, %active: index) {
@@ -141,10 +141,10 @@ module {
     %one = arith.constant 1 : index
     %eight = arith.constant 8 : index
     %offset = arith.constant 32 : index
-    %x = pto.vmi.vload %src[%zero] : !pto.ptr<si16, ub> -> !pto.vmi.vreg<64xsi16>
+    %x = pto.vmi.vload %src[%zero] : !pto.ptr<si16, ub>, index -> !pto.vmi.vreg<64xsi16>
     %mask = pto.vmi.create_mask %active : index -> !pto.vmi.mask<64xpred>
     %r = pto.vmi.vcadd %x, %mask {group = 8} : !pto.vmi.vreg<64xsi16>, !pto.vmi.mask<64xpred> -> !pto.vmi.vreg<8xsi16>
-    pto.vmi.vstore %r, %dst[%zero] : !pto.vmi.vreg<8xsi16>, !pto.ptr<si16, ub>
+    pto.vmi.vstore %r, %dst[%zero] : !pto.vmi.vreg<8xsi16>, !pto.ptr<si16, ub>, index
     return
   }
   func.func @ui16_vl128_broadcast(%src: !pto.ptr<ui16, ub>, %dst: !pto.ptr<ui16, ub>, %wide: !pto.ptr<ui32, ub>, %active: index) {
@@ -152,11 +152,11 @@ module {
     %one = arith.constant 1 : index
     %eight = arith.constant 8 : index
     %offset = arith.constant 32 : index
-    %x = pto.vmi.vload %src[%zero] : !pto.ptr<ui16, ub> -> !pto.vmi.vreg<128xui16>
+    %x = pto.vmi.vload %src[%zero] : !pto.ptr<ui16, ub>, index -> !pto.vmi.vreg<128xui16>
     %mask = pto.vmi.create_mask %active : index -> !pto.vmi.mask<128xpred>
     %r = pto.vmi.vcadd %x, %mask {group = 8} : !pto.vmi.vreg<128xui16>, !pto.vmi.mask<128xpred> -> !pto.vmi.vreg<8xui16>
     %b = pto.vmi.vbrc %r {group = 8} : !pto.vmi.vreg<8xui16> -> !pto.vmi.vreg<128xui16>
-    pto.vmi.vstore %b, %dst[%offset] : !pto.vmi.vreg<128xui16>, !pto.ptr<ui16, ub>
+    pto.vmi.vstore %b, %dst[%offset] : !pto.vmi.vreg<128xui16>, !pto.ptr<ui16, ub>, index
     return
   }
   func.func @ui16_vl128_cast(%src: !pto.ptr<ui16, ub>, %dst: !pto.ptr<ui16, ub>, %wide: !pto.ptr<ui32, ub>, %active: index) {
@@ -164,11 +164,11 @@ module {
     %one = arith.constant 1 : index
     %eight = arith.constant 8 : index
     %offset = arith.constant 32 : index
-    %x = pto.vmi.vload %src[%zero] : !pto.ptr<ui16, ub> -> !pto.vmi.vreg<128xui16>
+    %x = pto.vmi.vload %src[%zero] : !pto.ptr<ui16, ub>, index -> !pto.vmi.vreg<128xui16>
     %mask = pto.vmi.create_mask %active : index -> !pto.vmi.mask<128xpred>
     %r = pto.vmi.vcadd %x, %mask {group = 8} : !pto.vmi.vreg<128xui16>, !pto.vmi.mask<128xpred> -> !pto.vmi.vreg<8xui16>
     %w = pto.vmi.extui %r : !pto.vmi.vreg<8xui16> -> !pto.vmi.vreg<8xui32>
-    pto.vmi.vstore %w, %wide[%zero] : !pto.vmi.vreg<8xui32>, !pto.ptr<ui32, ub>
+    pto.vmi.vstore %w, %wide[%zero] : !pto.vmi.vreg<8xui32>, !pto.ptr<ui32, ub>, index
     return
   }
   func.func @ui16_vl128_group_store(%src: !pto.ptr<ui16, ub>, %dst: !pto.ptr<ui16, ub>, %wide: !pto.ptr<ui32, ub>, %active: index) {
@@ -176,10 +176,10 @@ module {
     %one = arith.constant 1 : index
     %eight = arith.constant 8 : index
     %offset = arith.constant 32 : index
-    %x = pto.vmi.vload %src[%zero] : !pto.ptr<ui16, ub> -> !pto.vmi.vreg<128xui16>
+    %x = pto.vmi.vload %src[%zero] : !pto.ptr<ui16, ub>, index -> !pto.vmi.vreg<128xui16>
     %mask = pto.vmi.create_mask %active : index -> !pto.vmi.mask<128xpred>
     %r = pto.vmi.vcadd %x, %mask {group = 8} : !pto.vmi.vreg<128xui16>, !pto.vmi.mask<128xpred> -> !pto.vmi.vreg<8xui16>
-    pto.vmi.vstore %r, %dst[%zero], %one {group = 8} : !pto.vmi.vreg<8xui16>, !pto.ptr<ui16, ub>
+    pto.vmi.vstore %r, %dst[%zero], %one {group = 8} : !pto.vmi.vreg<8xui16>, !pto.ptr<ui16, ub>, index
     return
   }
   func.func @ui16_vl128_multi(%src: !pto.ptr<ui16, ub>, %dst: !pto.ptr<ui16, ub>, %wide: !pto.ptr<ui32, ub>, %active: index) {
@@ -187,14 +187,14 @@ module {
     %one = arith.constant 1 : index
     %eight = arith.constant 8 : index
     %offset = arith.constant 32 : index
-    %x = pto.vmi.vload %src[%zero] : !pto.ptr<ui16, ub> -> !pto.vmi.vreg<128xui16>
+    %x = pto.vmi.vload %src[%zero] : !pto.ptr<ui16, ub>, index -> !pto.vmi.vreg<128xui16>
     %mask = pto.vmi.create_mask %active : index -> !pto.vmi.mask<128xpred>
     %r = pto.vmi.vcadd %x, %mask {group = 8} : !pto.vmi.vreg<128xui16>, !pto.vmi.mask<128xpred> -> !pto.vmi.vreg<8xui16>
-    pto.vmi.vstore %r, %dst[%zero] : !pto.vmi.vreg<8xui16>, !pto.ptr<ui16, ub>
+    pto.vmi.vstore %r, %dst[%zero] : !pto.vmi.vreg<8xui16>, !pto.ptr<ui16, ub>, index
     %w = pto.vmi.extui %r : !pto.vmi.vreg<8xui16> -> !pto.vmi.vreg<8xui32>
-    pto.vmi.vstore %w, %wide[%zero] : !pto.vmi.vreg<8xui32>, !pto.ptr<ui32, ub>
+    pto.vmi.vstore %w, %wide[%zero] : !pto.vmi.vreg<8xui32>, !pto.ptr<ui32, ub>, index
     %b = pto.vmi.vbrc %r {group = 8} : !pto.vmi.vreg<8xui16> -> !pto.vmi.vreg<128xui16>
-    pto.vmi.vstore %b, %dst[%offset] : !pto.vmi.vreg<128xui16>, !pto.ptr<ui16, ub>
+    pto.vmi.vstore %b, %dst[%offset] : !pto.vmi.vreg<128xui16>, !pto.ptr<ui16, ub>, index
     return
   }
   func.func @ui16_vl128_store(%src: !pto.ptr<ui16, ub>, %dst: !pto.ptr<ui16, ub>, %wide: !pto.ptr<ui32, ub>, %active: index) {
@@ -202,10 +202,10 @@ module {
     %one = arith.constant 1 : index
     %eight = arith.constant 8 : index
     %offset = arith.constant 32 : index
-    %x = pto.vmi.vload %src[%zero] : !pto.ptr<ui16, ub> -> !pto.vmi.vreg<128xui16>
+    %x = pto.vmi.vload %src[%zero] : !pto.ptr<ui16, ub>, index -> !pto.vmi.vreg<128xui16>
     %mask = pto.vmi.create_mask %active : index -> !pto.vmi.mask<128xpred>
     %r = pto.vmi.vcadd %x, %mask {group = 8} : !pto.vmi.vreg<128xui16>, !pto.vmi.mask<128xpred> -> !pto.vmi.vreg<8xui16>
-    pto.vmi.vstore %r, %dst[%zero] : !pto.vmi.vreg<8xui16>, !pto.ptr<ui16, ub>
+    pto.vmi.vstore %r, %dst[%zero] : !pto.vmi.vreg<8xui16>, !pto.ptr<ui16, ub>, index
     return
   }
   func.func @ui16_vl64_broadcast(%src: !pto.ptr<ui16, ub>, %dst: !pto.ptr<ui16, ub>, %wide: !pto.ptr<ui32, ub>, %active: index) {
@@ -213,11 +213,11 @@ module {
     %one = arith.constant 1 : index
     %eight = arith.constant 8 : index
     %offset = arith.constant 32 : index
-    %x = pto.vmi.vload %src[%zero] : !pto.ptr<ui16, ub> -> !pto.vmi.vreg<64xui16>
+    %x = pto.vmi.vload %src[%zero] : !pto.ptr<ui16, ub>, index -> !pto.vmi.vreg<64xui16>
     %mask = pto.vmi.create_mask %active : index -> !pto.vmi.mask<64xpred>
     %r = pto.vmi.vcadd %x, %mask {group = 8} : !pto.vmi.vreg<64xui16>, !pto.vmi.mask<64xpred> -> !pto.vmi.vreg<8xui16>
     %b = pto.vmi.vbrc %r {group = 8} : !pto.vmi.vreg<8xui16> -> !pto.vmi.vreg<64xui16>
-    pto.vmi.vstore %b, %dst[%offset] : !pto.vmi.vreg<64xui16>, !pto.ptr<ui16, ub>
+    pto.vmi.vstore %b, %dst[%offset] : !pto.vmi.vreg<64xui16>, !pto.ptr<ui16, ub>, index
     return
   }
   func.func @ui16_vl64_cast(%src: !pto.ptr<ui16, ub>, %dst: !pto.ptr<ui16, ub>, %wide: !pto.ptr<ui32, ub>, %active: index) {
@@ -225,11 +225,11 @@ module {
     %one = arith.constant 1 : index
     %eight = arith.constant 8 : index
     %offset = arith.constant 32 : index
-    %x = pto.vmi.vload %src[%zero] : !pto.ptr<ui16, ub> -> !pto.vmi.vreg<64xui16>
+    %x = pto.vmi.vload %src[%zero] : !pto.ptr<ui16, ub>, index -> !pto.vmi.vreg<64xui16>
     %mask = pto.vmi.create_mask %active : index -> !pto.vmi.mask<64xpred>
     %r = pto.vmi.vcadd %x, %mask {group = 8} : !pto.vmi.vreg<64xui16>, !pto.vmi.mask<64xpred> -> !pto.vmi.vreg<8xui16>
     %w = pto.vmi.extui %r : !pto.vmi.vreg<8xui16> -> !pto.vmi.vreg<8xui32>
-    pto.vmi.vstore %w, %wide[%zero] : !pto.vmi.vreg<8xui32>, !pto.ptr<ui32, ub>
+    pto.vmi.vstore %w, %wide[%zero] : !pto.vmi.vreg<8xui32>, !pto.ptr<ui32, ub>, index
     return
   }
   func.func @ui16_vl64_group_store(%src: !pto.ptr<ui16, ub>, %dst: !pto.ptr<ui16, ub>, %wide: !pto.ptr<ui32, ub>, %active: index) {
@@ -237,10 +237,10 @@ module {
     %one = arith.constant 1 : index
     %eight = arith.constant 8 : index
     %offset = arith.constant 32 : index
-    %x = pto.vmi.vload %src[%zero] : !pto.ptr<ui16, ub> -> !pto.vmi.vreg<64xui16>
+    %x = pto.vmi.vload %src[%zero] : !pto.ptr<ui16, ub>, index -> !pto.vmi.vreg<64xui16>
     %mask = pto.vmi.create_mask %active : index -> !pto.vmi.mask<64xpred>
     %r = pto.vmi.vcadd %x, %mask {group = 8} : !pto.vmi.vreg<64xui16>, !pto.vmi.mask<64xpred> -> !pto.vmi.vreg<8xui16>
-    pto.vmi.vstore %r, %dst[%zero], %one {group = 8} : !pto.vmi.vreg<8xui16>, !pto.ptr<ui16, ub>
+    pto.vmi.vstore %r, %dst[%zero], %one {group = 8} : !pto.vmi.vreg<8xui16>, !pto.ptr<ui16, ub>, index
     return
   }
   func.func @ui16_vl64_multi(%src: !pto.ptr<ui16, ub>, %dst: !pto.ptr<ui16, ub>, %wide: !pto.ptr<ui32, ub>, %active: index) {
@@ -248,14 +248,14 @@ module {
     %one = arith.constant 1 : index
     %eight = arith.constant 8 : index
     %offset = arith.constant 32 : index
-    %x = pto.vmi.vload %src[%zero] : !pto.ptr<ui16, ub> -> !pto.vmi.vreg<64xui16>
+    %x = pto.vmi.vload %src[%zero] : !pto.ptr<ui16, ub>, index -> !pto.vmi.vreg<64xui16>
     %mask = pto.vmi.create_mask %active : index -> !pto.vmi.mask<64xpred>
     %r = pto.vmi.vcadd %x, %mask {group = 8} : !pto.vmi.vreg<64xui16>, !pto.vmi.mask<64xpred> -> !pto.vmi.vreg<8xui16>
-    pto.vmi.vstore %r, %dst[%zero] : !pto.vmi.vreg<8xui16>, !pto.ptr<ui16, ub>
+    pto.vmi.vstore %r, %dst[%zero] : !pto.vmi.vreg<8xui16>, !pto.ptr<ui16, ub>, index
     %w = pto.vmi.extui %r : !pto.vmi.vreg<8xui16> -> !pto.vmi.vreg<8xui32>
-    pto.vmi.vstore %w, %wide[%zero] : !pto.vmi.vreg<8xui32>, !pto.ptr<ui32, ub>
+    pto.vmi.vstore %w, %wide[%zero] : !pto.vmi.vreg<8xui32>, !pto.ptr<ui32, ub>, index
     %b = pto.vmi.vbrc %r {group = 8} : !pto.vmi.vreg<8xui16> -> !pto.vmi.vreg<64xui16>
-    pto.vmi.vstore %b, %dst[%offset] : !pto.vmi.vreg<64xui16>, !pto.ptr<ui16, ub>
+    pto.vmi.vstore %b, %dst[%offset] : !pto.vmi.vreg<64xui16>, !pto.ptr<ui16, ub>, index
     return
   }
   func.func @ui16_vl64_store(%src: !pto.ptr<ui16, ub>, %dst: !pto.ptr<ui16, ub>, %wide: !pto.ptr<ui32, ub>, %active: index) {
@@ -263,10 +263,10 @@ module {
     %one = arith.constant 1 : index
     %eight = arith.constant 8 : index
     %offset = arith.constant 32 : index
-    %x = pto.vmi.vload %src[%zero] : !pto.ptr<ui16, ub> -> !pto.vmi.vreg<64xui16>
+    %x = pto.vmi.vload %src[%zero] : !pto.ptr<ui16, ub>, index -> !pto.vmi.vreg<64xui16>
     %mask = pto.vmi.create_mask %active : index -> !pto.vmi.mask<64xpred>
     %r = pto.vmi.vcadd %x, %mask {group = 8} : !pto.vmi.vreg<64xui16>, !pto.vmi.mask<64xpred> -> !pto.vmi.vreg<8xui16>
-    pto.vmi.vstore %r, %dst[%zero] : !pto.vmi.vreg<8xui16>, !pto.ptr<ui16, ub>
+    pto.vmi.vstore %r, %dst[%zero] : !pto.vmi.vreg<8xui16>, !pto.ptr<ui16, ub>, index
     return
   }
   func.func @ui32_vl64_store(%src: !pto.ptr<ui32, ub>, %dst: !pto.ptr<ui32, ub>, %wide: !pto.ptr<ui32, ub>, %active: index) {
@@ -274,10 +274,10 @@ module {
     %one = arith.constant 1 : index
     %eight = arith.constant 8 : index
     %offset = arith.constant 32 : index
-    %x = pto.vmi.vload %src[%zero] : !pto.ptr<ui32, ub> -> !pto.vmi.vreg<64xui32>
+    %x = pto.vmi.vload %src[%zero] : !pto.ptr<ui32, ub>, index -> !pto.vmi.vreg<64xui32>
     %mask = pto.vmi.create_mask %active : index -> !pto.vmi.mask<64xpred>
     %r = pto.vmi.vcadd %x, %mask {group = 8, reassoc} : !pto.vmi.vreg<64xui32>, !pto.vmi.mask<64xpred> -> !pto.vmi.vreg<8xui32>
-    pto.vmi.vstore %r, %dst[%zero] : !pto.vmi.vreg<8xui32>, !pto.ptr<ui32, ub>
+    pto.vmi.vstore %r, %dst[%zero] : !pto.vmi.vreg<8xui32>, !pto.ptr<ui32, ub>, index
     return
   }
 func.func @si16_vl256_cast(%src: !pto.ptr<si16, ub>, %dst: !pto.ptr<si16, ub>, %wide: !pto.ptr<si32, ub>, %active: index) {
@@ -285,11 +285,11 @@ func.func @si16_vl256_cast(%src: !pto.ptr<si16, ub>, %dst: !pto.ptr<si16, ub>, %
 %one = arith.constant 1 : index
 %eight = arith.constant 8 : index
 %offset = arith.constant 32 : index
-%x = pto.vmi.vload %src[%zero] : !pto.ptr<si16, ub> -> !pto.vmi.vreg<256xsi16>
+%x = pto.vmi.vload %src[%zero] : !pto.ptr<si16, ub>, index -> !pto.vmi.vreg<256xsi16>
 %mask = pto.vmi.create_mask %active : index -> !pto.vmi.mask<256xpred>
 %r = pto.vmi.vcadd %x, %mask {group = 8} : !pto.vmi.vreg<256xsi16>, !pto.vmi.mask<256xpred> -> !pto.vmi.vreg<8xsi16>
 %w = pto.vmi.extsi %r : !pto.vmi.vreg<8xsi16> -> !pto.vmi.vreg<8xsi32>
-pto.vmi.vstore %w, %wide[%zero] : !pto.vmi.vreg<8xsi32>, !pto.ptr<si32, ub>
+pto.vmi.vstore %w, %wide[%zero] : !pto.vmi.vreg<8xsi32>, !pto.ptr<si32, ub>, index
 return
  }
 func.func @si16_vl512_cast(%src: !pto.ptr<si16, ub>, %dst: !pto.ptr<si16, ub>, %wide: !pto.ptr<si32, ub>, %active: index) {
@@ -297,11 +297,11 @@ func.func @si16_vl512_cast(%src: !pto.ptr<si16, ub>, %dst: !pto.ptr<si16, ub>, %
 %one = arith.constant 1 : index
 %eight = arith.constant 8 : index
 %offset = arith.constant 32 : index
-%x = pto.vmi.vload %src[%zero] : !pto.ptr<si16, ub> -> !pto.vmi.vreg<512xsi16>
+%x = pto.vmi.vload %src[%zero] : !pto.ptr<si16, ub>, index -> !pto.vmi.vreg<512xsi16>
 %mask = pto.vmi.create_mask %active : index -> !pto.vmi.mask<512xpred>
 %r = pto.vmi.vcadd %x, %mask {group = 8} : !pto.vmi.vreg<512xsi16>, !pto.vmi.mask<512xpred> -> !pto.vmi.vreg<8xsi16>
 %w = pto.vmi.extsi %r : !pto.vmi.vreg<8xsi16> -> !pto.vmi.vreg<8xsi32>
-pto.vmi.vstore %w, %wide[%zero] : !pto.vmi.vreg<8xsi32>, !pto.ptr<si32, ub>
+pto.vmi.vstore %w, %wide[%zero] : !pto.vmi.vreg<8xsi32>, !pto.ptr<si32, ub>, index
 return
  }
 func.func @ui16_vl256_cast(%src: !pto.ptr<ui16, ub>, %dst: !pto.ptr<ui16, ub>, %wide: !pto.ptr<ui32, ub>, %active: index) {
@@ -309,11 +309,11 @@ func.func @ui16_vl256_cast(%src: !pto.ptr<ui16, ub>, %dst: !pto.ptr<ui16, ub>, %
 %one = arith.constant 1 : index
 %eight = arith.constant 8 : index
 %offset = arith.constant 32 : index
-%x = pto.vmi.vload %src[%zero] : !pto.ptr<ui16, ub> -> !pto.vmi.vreg<256xui16>
+%x = pto.vmi.vload %src[%zero] : !pto.ptr<ui16, ub>, index -> !pto.vmi.vreg<256xui16>
 %mask = pto.vmi.create_mask %active : index -> !pto.vmi.mask<256xpred>
 %r = pto.vmi.vcadd %x, %mask {group = 8} : !pto.vmi.vreg<256xui16>, !pto.vmi.mask<256xpred> -> !pto.vmi.vreg<8xui16>
 %w = pto.vmi.extui %r : !pto.vmi.vreg<8xui16> -> !pto.vmi.vreg<8xui32>
-pto.vmi.vstore %w, %wide[%zero] : !pto.vmi.vreg<8xui32>, !pto.ptr<ui32, ub>
+pto.vmi.vstore %w, %wide[%zero] : !pto.vmi.vreg<8xui32>, !pto.ptr<ui32, ub>, index
 return
  }
 func.func @ui16_vl512_cast(%src: !pto.ptr<ui16, ub>, %dst: !pto.ptr<ui16, ub>, %wide: !pto.ptr<ui32, ub>, %active: index) {
@@ -321,11 +321,11 @@ func.func @ui16_vl512_cast(%src: !pto.ptr<ui16, ub>, %dst: !pto.ptr<ui16, ub>, %
 %one = arith.constant 1 : index
 %eight = arith.constant 8 : index
 %offset = arith.constant 32 : index
-%x = pto.vmi.vload %src[%zero] : !pto.ptr<ui16, ub> -> !pto.vmi.vreg<512xui16>
+%x = pto.vmi.vload %src[%zero] : !pto.ptr<ui16, ub>, index -> !pto.vmi.vreg<512xui16>
 %mask = pto.vmi.create_mask %active : index -> !pto.vmi.mask<512xpred>
 %r = pto.vmi.vcadd %x, %mask {group = 8} : !pto.vmi.vreg<512xui16>, !pto.vmi.mask<512xpred> -> !pto.vmi.vreg<8xui16>
 %w = pto.vmi.extui %r : !pto.vmi.vreg<8xui16> -> !pto.vmi.vreg<8xui32>
-pto.vmi.vstore %w, %wide[%zero] : !pto.vmi.vreg<8xui32>, !pto.ptr<ui32, ub>
+pto.vmi.vstore %w, %wide[%zero] : !pto.vmi.vreg<8xui32>, !pto.ptr<ui32, ub>, index
 return
  }
 

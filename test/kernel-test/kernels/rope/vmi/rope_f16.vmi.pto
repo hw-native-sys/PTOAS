@@ -164,13 +164,13 @@ module attributes {pto.target_arch = "a5", pto.kernel_kind = #pto.kernel_kind<ve
             //   且明白有效数据只占 EVEN 位置，ODD 是填充 0。
             // VMI 消除了 dist 模式选择——编译器根据上下文自动决定物理排布。
             %cos1_16 = pto.vmi.load %cos_ub[%cos1_off]
-                : !pto.ptr<f16, ub> -> !pto.vmi.vreg<128xf16>
+                : !pto.ptr<f16, ub>, index -> !pto.vmi.vreg<128xf16>
             %cos2_16 = pto.vmi.load %cos_ub[%cos2_off]
-                : !pto.ptr<f16, ub> -> !pto.vmi.vreg<128xf16>
+                : !pto.ptr<f16, ub>, index -> !pto.vmi.vreg<128xf16>
             %sin1_16 = pto.vmi.load %sin_ub[%sin1_off]
-                : !pto.ptr<f16, ub> -> !pto.vmi.vreg<128xf16>
+                : !pto.ptr<f16, ub>, index -> !pto.vmi.vreg<128xf16>
             %sin2_16 = pto.vmi.load %sin_ub[%sin2_off]
-                : !pto.ptr<f16, ub> -> !pto.vmi.vreg<128xf16>
+                : !pto.ptr<f16, ub>, index -> !pto.vmi.vreg<128xf16>
 
             scf.for %n = %c0_i16 to %n_count_i16 step %c1_i16 : i16 {
               %n_idx = arith.index_cast %n : i16 to index
@@ -187,9 +187,9 @@ module attributes {pto.target_arch = "a5", pto.kernel_kind = #pto.kernel_kind<ve
               %y2_off = arith.addi %y2_base, %elem_off : index
 
               %x1_16 = pto.vmi.load %x_ub[%x1_off]
-                  : !pto.ptr<f16, ub> -> !pto.vmi.vreg<128xf16>
+                  : !pto.ptr<f16, ub>, index -> !pto.vmi.vreg<128xf16>
               %x2_16 = pto.vmi.load %x_ub[%x2_off]
-                  : !pto.ptr<f16, ub> -> !pto.vmi.vreg<128xf16>
+                  : !pto.ptr<f16, ub>, index -> !pto.vmi.vreg<128xf16>
 
               // ========================================================================
               // Half 模式 RoPE 核心计算 (f16, 无 f32 中间转换)
@@ -226,9 +226,9 @@ module attributes {pto.target_arch = "a5", pto.kernel_kind = #pto.kernel_kind<ve
               //   （当数据从 f32 narrowing 后分散在 EVEN 位置时），
               //   VMI 无需关心 pack 策略。
               pto.vmi.masked_store %out1, %y_ub[%y1_off], %mask
-                  : !pto.vmi.vreg<128xf16>, !pto.ptr<f16, ub>, !pto.vmi.mask<128xpred>
+                  : !pto.vmi.vreg<128xf16>, !pto.ptr<f16, ub>, index, !pto.vmi.mask<128xpred>
               pto.vmi.masked_store %out2, %y_ub[%y2_off], %mask
-                  : !pto.vmi.vreg<128xf16>, !pto.ptr<f16, ub>, !pto.vmi.mask<128xpred>
+                  : !pto.vmi.vreg<128xf16>, !pto.ptr<f16, ub>, index, !pto.vmi.mask<128xpred>
             }
           }
         }
@@ -258,9 +258,9 @@ module attributes {pto.target_arch = "a5", pto.kernel_kind = #pto.kernel_kind<ve
 
             %cs_elem_off = arith.addi %cs_off, %elem_off : index
             %cos16 = pto.vmi.load %cos_ub[%cs_elem_off]
-                : !pto.ptr<f16, ub> -> !pto.vmi.vreg<128xf16>
+                : !pto.ptr<f16, ub>, index -> !pto.vmi.vreg<128xf16>
             %sin16 = pto.vmi.load %sin_ub[%cs_elem_off]
-                : !pto.ptr<f16, ub> -> !pto.vmi.vreg<128xf16>
+                : !pto.ptr<f16, ub>, index -> !pto.vmi.vreg<128xf16>
             %cos_even, %cos_odd = "pto.vmi.channel_split"(%cos16)
                 : (!pto.vmi.vreg<128xf16>) -> (!pto.vmi.vreg<64xf16>, !pto.vmi.vreg<64xf16>)
             %sin_even, %sin_odd = "pto.vmi.channel_split"(%sin16)
@@ -277,7 +277,7 @@ module attributes {pto.target_arch = "a5", pto.kernel_kind = #pto.kernel_kind<ve
               %y_elem_off = arith.addi %y_off, %elem_off : index
 
               %x16 = pto.vmi.load %x_ub[%x_elem_off]
-                  : !pto.ptr<f16, ub> -> !pto.vmi.vreg<128xf16>
+                  : !pto.ptr<f16, ub>, index -> !pto.vmi.vreg<128xf16>
 
               // ========================================================================
               // VMI: channel_split / channel_merge 是第一公民的通道算子，
@@ -319,7 +319,7 @@ module attributes {pto.target_arch = "a5", pto.kernel_kind = #pto.kernel_kind<ve
               // MI 对应: pto.vsts %y_pack, %y_ub[%y_off], %mask16_full
               //   → 需要 !pto.mask<b16> + 可能需要 pk 模式。
               pto.vmi.masked_store %out, %y_ub[%y_elem_off], %mask
-                  : !pto.vmi.vreg<128xf16>, !pto.ptr<f16, ub>, !pto.vmi.mask<128xpred>
+                  : !pto.vmi.vreg<128xf16>, !pto.ptr<f16, ub>, index, !pto.vmi.mask<128xpred>
             }
           }
         }

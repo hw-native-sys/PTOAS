@@ -19,9 +19,9 @@
 module {
   func.func @compact_broadcast_i8_1_1(%src: !pto.ptr<i8, ub>, %dst: !pto.ptr<i8, ub>) {
     %zero = arith.constant 0 : index
-    %x = pto.vmi.vload %src[%zero] : !pto.ptr<i8, ub> -> !pto.vmi.vreg<1xi8>
+    %x = pto.vmi.vload %src[%zero] : !pto.ptr<i8, ub>, index -> !pto.vmi.vreg<1xi8>
     %r = pto.vmi.vbrc %x {group = 1} : !pto.vmi.vreg<1xi8> -> !pto.vmi.vreg<1xi8>
-    pto.vmi.vstore %r, %dst[%zero] : !pto.vmi.vreg<1xi8>, !pto.ptr<i8, ub>
+    pto.vmi.vstore %r, %dst[%zero] : !pto.vmi.vreg<1xi8>, !pto.ptr<i8, ub>, index
     return
   }
 
@@ -31,9 +31,9 @@ module {
 // CHECK-NOT: pto.vmi.
   func.func @compact_broadcast_i8_2_1(%src: !pto.ptr<i8, ub>, %dst: !pto.ptr<i8, ub>) {
     %zero = arith.constant 0 : index
-    %x = pto.vmi.vload %src[%zero] : !pto.ptr<i8, ub> -> !pto.vmi.vreg<1xi8>
+    %x = pto.vmi.vload %src[%zero] : !pto.ptr<i8, ub>, index -> !pto.vmi.vreg<1xi8>
     %r = pto.vmi.vbrc %x {group = 1} : !pto.vmi.vreg<1xi8> -> !pto.vmi.vreg<2xi8>
-    pto.vmi.vstore %r, %dst[%zero] : !pto.vmi.vreg<2xi8>, !pto.ptr<i8, ub>
+    pto.vmi.vstore %r, %dst[%zero] : !pto.vmi.vreg<2xi8>, !pto.ptr<i8, ub>, index
     return
   }
 
@@ -43,9 +43,9 @@ module {
 // CHECK-NOT: pto.vmi.
   func.func @compact_broadcast_i8_2_2(%src: !pto.ptr<i8, ub>, %dst: !pto.ptr<i8, ub>) {
     %zero = arith.constant 0 : index
-    %x = pto.vmi.vload %src[%zero] : !pto.ptr<i8, ub> -> !pto.vmi.vreg<2xi8>
+    %x = pto.vmi.vload %src[%zero] : !pto.ptr<i8, ub>, index -> !pto.vmi.vreg<2xi8>
     %r = pto.vmi.vbrc %x {group = 2} : !pto.vmi.vreg<2xi8> -> !pto.vmi.vreg<2xi8>
-    pto.vmi.vstore %r, %dst[%zero] : !pto.vmi.vreg<2xi8>, !pto.ptr<i8, ub>
+    pto.vmi.vstore %r, %dst[%zero] : !pto.vmi.vreg<2xi8>, !pto.ptr<i8, ub>, index
     return
   }
 
@@ -54,9 +54,9 @@ module {
 // CHECK-NOT: pto.vmi.
   func.func @compact_broadcast_i8_4_1(%src: !pto.ptr<i8, ub>, %dst: !pto.ptr<i8, ub>) {
     %zero = arith.constant 0 : index
-    %x = pto.vmi.vload %src[%zero] : !pto.ptr<i8, ub> -> !pto.vmi.vreg<1xi8>
+    %x = pto.vmi.vload %src[%zero] : !pto.ptr<i8, ub>, index -> !pto.vmi.vreg<1xi8>
     %r = pto.vmi.vbrc %x {group = 1} : !pto.vmi.vreg<1xi8> -> !pto.vmi.vreg<4xi8>
-    pto.vmi.vstore %r, %dst[%zero] : !pto.vmi.vreg<4xi8>, !pto.ptr<i8, ub>
+    pto.vmi.vstore %r, %dst[%zero] : !pto.vmi.vreg<4xi8>, !pto.ptr<i8, ub>, index
     return
   }
 
@@ -66,9 +66,9 @@ module {
 // CHECK-NOT: pto.vmi.
   func.func @compact_broadcast_i8_4_2(%src: !pto.ptr<i8, ub>, %dst: !pto.ptr<i8, ub>) {
     %zero = arith.constant 0 : index
-    %x = pto.vmi.vload %src[%zero] : !pto.ptr<i8, ub> -> !pto.vmi.vreg<2xi8>
+    %x = pto.vmi.vload %src[%zero] : !pto.ptr<i8, ub>, index -> !pto.vmi.vreg<2xi8>
     %r = pto.vmi.vbrc %x {group = 2} : !pto.vmi.vreg<2xi8> -> !pto.vmi.vreg<4xi8>
-    pto.vmi.vstore %r, %dst[%zero] : !pto.vmi.vreg<4xi8>, !pto.ptr<i8, ub>
+    pto.vmi.vstore %r, %dst[%zero] : !pto.vmi.vreg<4xi8>, !pto.ptr<i8, ub>, index
     return
   }
 
@@ -77,9 +77,9 @@ module {
 // CHECK-NOT: pto.vmi.
   func.func @compact_broadcast_i8_4_4(%src: !pto.ptr<i8, ub>, %dst: !pto.ptr<i8, ub>) {
     %zero = arith.constant 0 : index
-    %x = pto.vmi.vload %src[%zero] : !pto.ptr<i8, ub> -> !pto.vmi.vreg<4xi8>
+    %x = pto.vmi.vload %src[%zero] : !pto.ptr<i8, ub>, index -> !pto.vmi.vreg<4xi8>
     %r = pto.vmi.vbrc %x {group = 4} : !pto.vmi.vreg<4xi8> -> !pto.vmi.vreg<4xi8>
-    pto.vmi.vstore %r, %dst[%zero] : !pto.vmi.vreg<4xi8>, !pto.ptr<i8, ub>
+    pto.vmi.vstore %r, %dst[%zero] : !pto.vmi.vreg<4xi8>, !pto.ptr<i8, ub>, index
     return
   }
 
@@ -88,9 +88,9 @@ module {
 // CHECK-NOT: pto.vmi.
   func.func @compact_broadcast_i8_8_1(%src: !pto.ptr<i8, ub>, %dst: !pto.ptr<i8, ub>) {
     %zero = arith.constant 0 : index
-    %x = pto.vmi.vload %src[%zero] : !pto.ptr<i8, ub> -> !pto.vmi.vreg<1xi8>
+    %x = pto.vmi.vload %src[%zero] : !pto.ptr<i8, ub>, index -> !pto.vmi.vreg<1xi8>
     %r = pto.vmi.vbrc %x {group = 1} : !pto.vmi.vreg<1xi8> -> !pto.vmi.vreg<8xi8>
-    pto.vmi.vstore %r, %dst[%zero] : !pto.vmi.vreg<8xi8>, !pto.ptr<i8, ub>
+    pto.vmi.vstore %r, %dst[%zero] : !pto.vmi.vreg<8xi8>, !pto.ptr<i8, ub>, index
     return
   }
 
@@ -100,9 +100,9 @@ module {
 // CHECK-NOT: pto.vmi.
   func.func @compact_broadcast_i8_8_2(%src: !pto.ptr<i8, ub>, %dst: !pto.ptr<i8, ub>) {
     %zero = arith.constant 0 : index
-    %x = pto.vmi.vload %src[%zero] : !pto.ptr<i8, ub> -> !pto.vmi.vreg<2xi8>
+    %x = pto.vmi.vload %src[%zero] : !pto.ptr<i8, ub>, index -> !pto.vmi.vreg<2xi8>
     %r = pto.vmi.vbrc %x {group = 2} : !pto.vmi.vreg<2xi8> -> !pto.vmi.vreg<8xi8>
-    pto.vmi.vstore %r, %dst[%zero] : !pto.vmi.vreg<8xi8>, !pto.ptr<i8, ub>
+    pto.vmi.vstore %r, %dst[%zero] : !pto.vmi.vreg<8xi8>, !pto.ptr<i8, ub>, index
     return
   }
 
@@ -111,9 +111,9 @@ module {
 // CHECK-NOT: pto.vmi.
   func.func @compact_broadcast_i8_8_4(%src: !pto.ptr<i8, ub>, %dst: !pto.ptr<i8, ub>) {
     %zero = arith.constant 0 : index
-    %x = pto.vmi.vload %src[%zero] : !pto.ptr<i8, ub> -> !pto.vmi.vreg<4xi8>
+    %x = pto.vmi.vload %src[%zero] : !pto.ptr<i8, ub>, index -> !pto.vmi.vreg<4xi8>
     %r = pto.vmi.vbrc %x {group = 4} : !pto.vmi.vreg<4xi8> -> !pto.vmi.vreg<8xi8>
-    pto.vmi.vstore %r, %dst[%zero] : !pto.vmi.vreg<8xi8>, !pto.ptr<i8, ub>
+    pto.vmi.vstore %r, %dst[%zero] : !pto.vmi.vreg<8xi8>, !pto.ptr<i8, ub>, index
     return
   }
 
@@ -122,9 +122,9 @@ module {
 // CHECK-NOT: pto.vmi.
   func.func @compact_broadcast_i8_8_8(%src: !pto.ptr<i8, ub>, %dst: !pto.ptr<i8, ub>) {
     %zero = arith.constant 0 : index
-    %x = pto.vmi.vload %src[%zero] : !pto.ptr<i8, ub> -> !pto.vmi.vreg<8xi8>
+    %x = pto.vmi.vload %src[%zero] : !pto.ptr<i8, ub>, index -> !pto.vmi.vreg<8xi8>
     %r = pto.vmi.vbrc %x {group = 8} : !pto.vmi.vreg<8xi8> -> !pto.vmi.vreg<8xi8>
-    pto.vmi.vstore %r, %dst[%zero] : !pto.vmi.vreg<8xi8>, !pto.ptr<i8, ub>
+    pto.vmi.vstore %r, %dst[%zero] : !pto.vmi.vreg<8xi8>, !pto.ptr<i8, ub>, index
     return
   }
 
@@ -133,9 +133,9 @@ module {
 // CHECK-NOT: pto.vmi.
   func.func @compact_broadcast_ui8_1_1(%src: !pto.ptr<ui8, ub>, %dst: !pto.ptr<ui8, ub>) {
     %zero = arith.constant 0 : index
-    %x = pto.vmi.vload %src[%zero] : !pto.ptr<ui8, ub> -> !pto.vmi.vreg<1xui8>
+    %x = pto.vmi.vload %src[%zero] : !pto.ptr<ui8, ub>, index -> !pto.vmi.vreg<1xui8>
     %r = pto.vmi.vbrc %x {group = 1} : !pto.vmi.vreg<1xui8> -> !pto.vmi.vreg<1xui8>
-    pto.vmi.vstore %r, %dst[%zero] : !pto.vmi.vreg<1xui8>, !pto.ptr<ui8, ub>
+    pto.vmi.vstore %r, %dst[%zero] : !pto.vmi.vreg<1xui8>, !pto.ptr<ui8, ub>, index
     return
   }
 
@@ -145,9 +145,9 @@ module {
 // CHECK-NOT: pto.vmi.
   func.func @compact_broadcast_ui8_2_1(%src: !pto.ptr<ui8, ub>, %dst: !pto.ptr<ui8, ub>) {
     %zero = arith.constant 0 : index
-    %x = pto.vmi.vload %src[%zero] : !pto.ptr<ui8, ub> -> !pto.vmi.vreg<1xui8>
+    %x = pto.vmi.vload %src[%zero] : !pto.ptr<ui8, ub>, index -> !pto.vmi.vreg<1xui8>
     %r = pto.vmi.vbrc %x {group = 1} : !pto.vmi.vreg<1xui8> -> !pto.vmi.vreg<2xui8>
-    pto.vmi.vstore %r, %dst[%zero] : !pto.vmi.vreg<2xui8>, !pto.ptr<ui8, ub>
+    pto.vmi.vstore %r, %dst[%zero] : !pto.vmi.vreg<2xui8>, !pto.ptr<ui8, ub>, index
     return
   }
 
@@ -157,9 +157,9 @@ module {
 // CHECK-NOT: pto.vmi.
   func.func @compact_broadcast_ui8_2_2(%src: !pto.ptr<ui8, ub>, %dst: !pto.ptr<ui8, ub>) {
     %zero = arith.constant 0 : index
-    %x = pto.vmi.vload %src[%zero] : !pto.ptr<ui8, ub> -> !pto.vmi.vreg<2xui8>
+    %x = pto.vmi.vload %src[%zero] : !pto.ptr<ui8, ub>, index -> !pto.vmi.vreg<2xui8>
     %r = pto.vmi.vbrc %x {group = 2} : !pto.vmi.vreg<2xui8> -> !pto.vmi.vreg<2xui8>
-    pto.vmi.vstore %r, %dst[%zero] : !pto.vmi.vreg<2xui8>, !pto.ptr<ui8, ub>
+    pto.vmi.vstore %r, %dst[%zero] : !pto.vmi.vreg<2xui8>, !pto.ptr<ui8, ub>, index
     return
   }
 
@@ -168,9 +168,9 @@ module {
 // CHECK-NOT: pto.vmi.
   func.func @compact_broadcast_ui8_4_1(%src: !pto.ptr<ui8, ub>, %dst: !pto.ptr<ui8, ub>) {
     %zero = arith.constant 0 : index
-    %x = pto.vmi.vload %src[%zero] : !pto.ptr<ui8, ub> -> !pto.vmi.vreg<1xui8>
+    %x = pto.vmi.vload %src[%zero] : !pto.ptr<ui8, ub>, index -> !pto.vmi.vreg<1xui8>
     %r = pto.vmi.vbrc %x {group = 1} : !pto.vmi.vreg<1xui8> -> !pto.vmi.vreg<4xui8>
-    pto.vmi.vstore %r, %dst[%zero] : !pto.vmi.vreg<4xui8>, !pto.ptr<ui8, ub>
+    pto.vmi.vstore %r, %dst[%zero] : !pto.vmi.vreg<4xui8>, !pto.ptr<ui8, ub>, index
     return
   }
 
@@ -180,9 +180,9 @@ module {
 // CHECK-NOT: pto.vmi.
   func.func @compact_broadcast_ui8_4_2(%src: !pto.ptr<ui8, ub>, %dst: !pto.ptr<ui8, ub>) {
     %zero = arith.constant 0 : index
-    %x = pto.vmi.vload %src[%zero] : !pto.ptr<ui8, ub> -> !pto.vmi.vreg<2xui8>
+    %x = pto.vmi.vload %src[%zero] : !pto.ptr<ui8, ub>, index -> !pto.vmi.vreg<2xui8>
     %r = pto.vmi.vbrc %x {group = 2} : !pto.vmi.vreg<2xui8> -> !pto.vmi.vreg<4xui8>
-    pto.vmi.vstore %r, %dst[%zero] : !pto.vmi.vreg<4xui8>, !pto.ptr<ui8, ub>
+    pto.vmi.vstore %r, %dst[%zero] : !pto.vmi.vreg<4xui8>, !pto.ptr<ui8, ub>, index
     return
   }
 
@@ -191,9 +191,9 @@ module {
 // CHECK-NOT: pto.vmi.
   func.func @compact_broadcast_ui8_4_4(%src: !pto.ptr<ui8, ub>, %dst: !pto.ptr<ui8, ub>) {
     %zero = arith.constant 0 : index
-    %x = pto.vmi.vload %src[%zero] : !pto.ptr<ui8, ub> -> !pto.vmi.vreg<4xui8>
+    %x = pto.vmi.vload %src[%zero] : !pto.ptr<ui8, ub>, index -> !pto.vmi.vreg<4xui8>
     %r = pto.vmi.vbrc %x {group = 4} : !pto.vmi.vreg<4xui8> -> !pto.vmi.vreg<4xui8>
-    pto.vmi.vstore %r, %dst[%zero] : !pto.vmi.vreg<4xui8>, !pto.ptr<ui8, ub>
+    pto.vmi.vstore %r, %dst[%zero] : !pto.vmi.vreg<4xui8>, !pto.ptr<ui8, ub>, index
     return
   }
 
@@ -202,9 +202,9 @@ module {
 // CHECK-NOT: pto.vmi.
   func.func @compact_broadcast_ui8_8_1(%src: !pto.ptr<ui8, ub>, %dst: !pto.ptr<ui8, ub>) {
     %zero = arith.constant 0 : index
-    %x = pto.vmi.vload %src[%zero] : !pto.ptr<ui8, ub> -> !pto.vmi.vreg<1xui8>
+    %x = pto.vmi.vload %src[%zero] : !pto.ptr<ui8, ub>, index -> !pto.vmi.vreg<1xui8>
     %r = pto.vmi.vbrc %x {group = 1} : !pto.vmi.vreg<1xui8> -> !pto.vmi.vreg<8xui8>
-    pto.vmi.vstore %r, %dst[%zero] : !pto.vmi.vreg<8xui8>, !pto.ptr<ui8, ub>
+    pto.vmi.vstore %r, %dst[%zero] : !pto.vmi.vreg<8xui8>, !pto.ptr<ui8, ub>, index
     return
   }
 
@@ -214,9 +214,9 @@ module {
 // CHECK-NOT: pto.vmi.
   func.func @compact_broadcast_ui8_8_2(%src: !pto.ptr<ui8, ub>, %dst: !pto.ptr<ui8, ub>) {
     %zero = arith.constant 0 : index
-    %x = pto.vmi.vload %src[%zero] : !pto.ptr<ui8, ub> -> !pto.vmi.vreg<2xui8>
+    %x = pto.vmi.vload %src[%zero] : !pto.ptr<ui8, ub>, index -> !pto.vmi.vreg<2xui8>
     %r = pto.vmi.vbrc %x {group = 2} : !pto.vmi.vreg<2xui8> -> !pto.vmi.vreg<8xui8>
-    pto.vmi.vstore %r, %dst[%zero] : !pto.vmi.vreg<8xui8>, !pto.ptr<ui8, ub>
+    pto.vmi.vstore %r, %dst[%zero] : !pto.vmi.vreg<8xui8>, !pto.ptr<ui8, ub>, index
     return
   }
 
@@ -225,9 +225,9 @@ module {
 // CHECK-NOT: pto.vmi.
   func.func @compact_broadcast_ui8_8_4(%src: !pto.ptr<ui8, ub>, %dst: !pto.ptr<ui8, ub>) {
     %zero = arith.constant 0 : index
-    %x = pto.vmi.vload %src[%zero] : !pto.ptr<ui8, ub> -> !pto.vmi.vreg<4xui8>
+    %x = pto.vmi.vload %src[%zero] : !pto.ptr<ui8, ub>, index -> !pto.vmi.vreg<4xui8>
     %r = pto.vmi.vbrc %x {group = 4} : !pto.vmi.vreg<4xui8> -> !pto.vmi.vreg<8xui8>
-    pto.vmi.vstore %r, %dst[%zero] : !pto.vmi.vreg<8xui8>, !pto.ptr<ui8, ub>
+    pto.vmi.vstore %r, %dst[%zero] : !pto.vmi.vreg<8xui8>, !pto.ptr<ui8, ub>, index
     return
   }
 
@@ -236,9 +236,9 @@ module {
 // CHECK-NOT: pto.vmi.
   func.func @compact_broadcast_ui8_8_8(%src: !pto.ptr<ui8, ub>, %dst: !pto.ptr<ui8, ub>) {
     %zero = arith.constant 0 : index
-    %x = pto.vmi.vload %src[%zero] : !pto.ptr<ui8, ub> -> !pto.vmi.vreg<8xui8>
+    %x = pto.vmi.vload %src[%zero] : !pto.ptr<ui8, ub>, index -> !pto.vmi.vreg<8xui8>
     %r = pto.vmi.vbrc %x {group = 8} : !pto.vmi.vreg<8xui8> -> !pto.vmi.vreg<8xui8>
-    pto.vmi.vstore %r, %dst[%zero] : !pto.vmi.vreg<8xui8>, !pto.ptr<ui8, ub>
+    pto.vmi.vstore %r, %dst[%zero] : !pto.vmi.vreg<8xui8>, !pto.ptr<ui8, ub>, index
     return
   }
 
@@ -247,9 +247,9 @@ module {
 // CHECK-NOT: pto.vmi.
   func.func @compact_broadcast_si8_1_1(%src: !pto.ptr<si8, ub>, %dst: !pto.ptr<si8, ub>) {
     %zero = arith.constant 0 : index
-    %x = pto.vmi.vload %src[%zero] : !pto.ptr<si8, ub> -> !pto.vmi.vreg<1xsi8>
+    %x = pto.vmi.vload %src[%zero] : !pto.ptr<si8, ub>, index -> !pto.vmi.vreg<1xsi8>
     %r = pto.vmi.vbrc %x {group = 1} : !pto.vmi.vreg<1xsi8> -> !pto.vmi.vreg<1xsi8>
-    pto.vmi.vstore %r, %dst[%zero] : !pto.vmi.vreg<1xsi8>, !pto.ptr<si8, ub>
+    pto.vmi.vstore %r, %dst[%zero] : !pto.vmi.vreg<1xsi8>, !pto.ptr<si8, ub>, index
     return
   }
 
@@ -259,9 +259,9 @@ module {
 // CHECK-NOT: pto.vmi.
   func.func @compact_broadcast_si8_2_1(%src: !pto.ptr<si8, ub>, %dst: !pto.ptr<si8, ub>) {
     %zero = arith.constant 0 : index
-    %x = pto.vmi.vload %src[%zero] : !pto.ptr<si8, ub> -> !pto.vmi.vreg<1xsi8>
+    %x = pto.vmi.vload %src[%zero] : !pto.ptr<si8, ub>, index -> !pto.vmi.vreg<1xsi8>
     %r = pto.vmi.vbrc %x {group = 1} : !pto.vmi.vreg<1xsi8> -> !pto.vmi.vreg<2xsi8>
-    pto.vmi.vstore %r, %dst[%zero] : !pto.vmi.vreg<2xsi8>, !pto.ptr<si8, ub>
+    pto.vmi.vstore %r, %dst[%zero] : !pto.vmi.vreg<2xsi8>, !pto.ptr<si8, ub>, index
     return
   }
 
@@ -271,9 +271,9 @@ module {
 // CHECK-NOT: pto.vmi.
   func.func @compact_broadcast_si8_2_2(%src: !pto.ptr<si8, ub>, %dst: !pto.ptr<si8, ub>) {
     %zero = arith.constant 0 : index
-    %x = pto.vmi.vload %src[%zero] : !pto.ptr<si8, ub> -> !pto.vmi.vreg<2xsi8>
+    %x = pto.vmi.vload %src[%zero] : !pto.ptr<si8, ub>, index -> !pto.vmi.vreg<2xsi8>
     %r = pto.vmi.vbrc %x {group = 2} : !pto.vmi.vreg<2xsi8> -> !pto.vmi.vreg<2xsi8>
-    pto.vmi.vstore %r, %dst[%zero] : !pto.vmi.vreg<2xsi8>, !pto.ptr<si8, ub>
+    pto.vmi.vstore %r, %dst[%zero] : !pto.vmi.vreg<2xsi8>, !pto.ptr<si8, ub>, index
     return
   }
 
@@ -282,9 +282,9 @@ module {
 // CHECK-NOT: pto.vmi.
   func.func @compact_broadcast_si8_4_1(%src: !pto.ptr<si8, ub>, %dst: !pto.ptr<si8, ub>) {
     %zero = arith.constant 0 : index
-    %x = pto.vmi.vload %src[%zero] : !pto.ptr<si8, ub> -> !pto.vmi.vreg<1xsi8>
+    %x = pto.vmi.vload %src[%zero] : !pto.ptr<si8, ub>, index -> !pto.vmi.vreg<1xsi8>
     %r = pto.vmi.vbrc %x {group = 1} : !pto.vmi.vreg<1xsi8> -> !pto.vmi.vreg<4xsi8>
-    pto.vmi.vstore %r, %dst[%zero] : !pto.vmi.vreg<4xsi8>, !pto.ptr<si8, ub>
+    pto.vmi.vstore %r, %dst[%zero] : !pto.vmi.vreg<4xsi8>, !pto.ptr<si8, ub>, index
     return
   }
 
@@ -294,9 +294,9 @@ module {
 // CHECK-NOT: pto.vmi.
   func.func @compact_broadcast_si8_4_2(%src: !pto.ptr<si8, ub>, %dst: !pto.ptr<si8, ub>) {
     %zero = arith.constant 0 : index
-    %x = pto.vmi.vload %src[%zero] : !pto.ptr<si8, ub> -> !pto.vmi.vreg<2xsi8>
+    %x = pto.vmi.vload %src[%zero] : !pto.ptr<si8, ub>, index -> !pto.vmi.vreg<2xsi8>
     %r = pto.vmi.vbrc %x {group = 2} : !pto.vmi.vreg<2xsi8> -> !pto.vmi.vreg<4xsi8>
-    pto.vmi.vstore %r, %dst[%zero] : !pto.vmi.vreg<4xsi8>, !pto.ptr<si8, ub>
+    pto.vmi.vstore %r, %dst[%zero] : !pto.vmi.vreg<4xsi8>, !pto.ptr<si8, ub>, index
     return
   }
 
@@ -305,9 +305,9 @@ module {
 // CHECK-NOT: pto.vmi.
   func.func @compact_broadcast_si8_4_4(%src: !pto.ptr<si8, ub>, %dst: !pto.ptr<si8, ub>) {
     %zero = arith.constant 0 : index
-    %x = pto.vmi.vload %src[%zero] : !pto.ptr<si8, ub> -> !pto.vmi.vreg<4xsi8>
+    %x = pto.vmi.vload %src[%zero] : !pto.ptr<si8, ub>, index -> !pto.vmi.vreg<4xsi8>
     %r = pto.vmi.vbrc %x {group = 4} : !pto.vmi.vreg<4xsi8> -> !pto.vmi.vreg<4xsi8>
-    pto.vmi.vstore %r, %dst[%zero] : !pto.vmi.vreg<4xsi8>, !pto.ptr<si8, ub>
+    pto.vmi.vstore %r, %dst[%zero] : !pto.vmi.vreg<4xsi8>, !pto.ptr<si8, ub>, index
     return
   }
 
@@ -316,9 +316,9 @@ module {
 // CHECK-NOT: pto.vmi.
   func.func @compact_broadcast_si8_8_1(%src: !pto.ptr<si8, ub>, %dst: !pto.ptr<si8, ub>) {
     %zero = arith.constant 0 : index
-    %x = pto.vmi.vload %src[%zero] : !pto.ptr<si8, ub> -> !pto.vmi.vreg<1xsi8>
+    %x = pto.vmi.vload %src[%zero] : !pto.ptr<si8, ub>, index -> !pto.vmi.vreg<1xsi8>
     %r = pto.vmi.vbrc %x {group = 1} : !pto.vmi.vreg<1xsi8> -> !pto.vmi.vreg<8xsi8>
-    pto.vmi.vstore %r, %dst[%zero] : !pto.vmi.vreg<8xsi8>, !pto.ptr<si8, ub>
+    pto.vmi.vstore %r, %dst[%zero] : !pto.vmi.vreg<8xsi8>, !pto.ptr<si8, ub>, index
     return
   }
 
@@ -328,9 +328,9 @@ module {
 // CHECK-NOT: pto.vmi.
   func.func @compact_broadcast_si8_8_2(%src: !pto.ptr<si8, ub>, %dst: !pto.ptr<si8, ub>) {
     %zero = arith.constant 0 : index
-    %x = pto.vmi.vload %src[%zero] : !pto.ptr<si8, ub> -> !pto.vmi.vreg<2xsi8>
+    %x = pto.vmi.vload %src[%zero] : !pto.ptr<si8, ub>, index -> !pto.vmi.vreg<2xsi8>
     %r = pto.vmi.vbrc %x {group = 2} : !pto.vmi.vreg<2xsi8> -> !pto.vmi.vreg<8xsi8>
-    pto.vmi.vstore %r, %dst[%zero] : !pto.vmi.vreg<8xsi8>, !pto.ptr<si8, ub>
+    pto.vmi.vstore %r, %dst[%zero] : !pto.vmi.vreg<8xsi8>, !pto.ptr<si8, ub>, index
     return
   }
 
@@ -339,9 +339,9 @@ module {
 // CHECK-NOT: pto.vmi.
   func.func @compact_broadcast_si8_8_4(%src: !pto.ptr<si8, ub>, %dst: !pto.ptr<si8, ub>) {
     %zero = arith.constant 0 : index
-    %x = pto.vmi.vload %src[%zero] : !pto.ptr<si8, ub> -> !pto.vmi.vreg<4xsi8>
+    %x = pto.vmi.vload %src[%zero] : !pto.ptr<si8, ub>, index -> !pto.vmi.vreg<4xsi8>
     %r = pto.vmi.vbrc %x {group = 4} : !pto.vmi.vreg<4xsi8> -> !pto.vmi.vreg<8xsi8>
-    pto.vmi.vstore %r, %dst[%zero] : !pto.vmi.vreg<8xsi8>, !pto.ptr<si8, ub>
+    pto.vmi.vstore %r, %dst[%zero] : !pto.vmi.vreg<8xsi8>, !pto.ptr<si8, ub>, index
     return
   }
 
@@ -350,9 +350,9 @@ module {
 // CHECK-NOT: pto.vmi.
   func.func @compact_broadcast_si8_8_8(%src: !pto.ptr<si8, ub>, %dst: !pto.ptr<si8, ub>) {
     %zero = arith.constant 0 : index
-    %x = pto.vmi.vload %src[%zero] : !pto.ptr<si8, ub> -> !pto.vmi.vreg<8xsi8>
+    %x = pto.vmi.vload %src[%zero] : !pto.ptr<si8, ub>, index -> !pto.vmi.vreg<8xsi8>
     %r = pto.vmi.vbrc %x {group = 8} : !pto.vmi.vreg<8xsi8> -> !pto.vmi.vreg<8xsi8>
-    pto.vmi.vstore %r, %dst[%zero] : !pto.vmi.vreg<8xsi8>, !pto.ptr<si8, ub>
+    pto.vmi.vstore %r, %dst[%zero] : !pto.vmi.vreg<8xsi8>, !pto.ptr<si8, ub>, index
     return
   }
 
@@ -361,9 +361,9 @@ module {
 // CHECK-NOT: pto.vmi.
   func.func @compact_broadcast_i16_1_1(%src: !pto.ptr<i16, ub>, %dst: !pto.ptr<i16, ub>) {
     %zero = arith.constant 0 : index
-    %x = pto.vmi.vload %src[%zero] : !pto.ptr<i16, ub> -> !pto.vmi.vreg<1xi16>
+    %x = pto.vmi.vload %src[%zero] : !pto.ptr<i16, ub>, index -> !pto.vmi.vreg<1xi16>
     %r = pto.vmi.vbrc %x {group = 1} : !pto.vmi.vreg<1xi16> -> !pto.vmi.vreg<1xi16>
-    pto.vmi.vstore %r, %dst[%zero] : !pto.vmi.vreg<1xi16>, !pto.ptr<i16, ub>
+    pto.vmi.vstore %r, %dst[%zero] : !pto.vmi.vreg<1xi16>, !pto.ptr<i16, ub>, index
     return
   }
 
@@ -373,9 +373,9 @@ module {
 // CHECK-NOT: pto.vmi.
   func.func @compact_broadcast_i16_2_1(%src: !pto.ptr<i16, ub>, %dst: !pto.ptr<i16, ub>) {
     %zero = arith.constant 0 : index
-    %x = pto.vmi.vload %src[%zero] : !pto.ptr<i16, ub> -> !pto.vmi.vreg<1xi16>
+    %x = pto.vmi.vload %src[%zero] : !pto.ptr<i16, ub>, index -> !pto.vmi.vreg<1xi16>
     %r = pto.vmi.vbrc %x {group = 1} : !pto.vmi.vreg<1xi16> -> !pto.vmi.vreg<2xi16>
-    pto.vmi.vstore %r, %dst[%zero] : !pto.vmi.vreg<2xi16>, !pto.ptr<i16, ub>
+    pto.vmi.vstore %r, %dst[%zero] : !pto.vmi.vreg<2xi16>, !pto.ptr<i16, ub>, index
     return
   }
 
@@ -385,9 +385,9 @@ module {
 // CHECK-NOT: pto.vmi.
   func.func @compact_broadcast_i16_2_2(%src: !pto.ptr<i16, ub>, %dst: !pto.ptr<i16, ub>) {
     %zero = arith.constant 0 : index
-    %x = pto.vmi.vload %src[%zero] : !pto.ptr<i16, ub> -> !pto.vmi.vreg<2xi16>
+    %x = pto.vmi.vload %src[%zero] : !pto.ptr<i16, ub>, index -> !pto.vmi.vreg<2xi16>
     %r = pto.vmi.vbrc %x {group = 2} : !pto.vmi.vreg<2xi16> -> !pto.vmi.vreg<2xi16>
-    pto.vmi.vstore %r, %dst[%zero] : !pto.vmi.vreg<2xi16>, !pto.ptr<i16, ub>
+    pto.vmi.vstore %r, %dst[%zero] : !pto.vmi.vreg<2xi16>, !pto.ptr<i16, ub>, index
     return
   }
 
@@ -396,9 +396,9 @@ module {
 // CHECK-NOT: pto.vmi.
   func.func @compact_broadcast_i16_4_1(%src: !pto.ptr<i16, ub>, %dst: !pto.ptr<i16, ub>) {
     %zero = arith.constant 0 : index
-    %x = pto.vmi.vload %src[%zero] : !pto.ptr<i16, ub> -> !pto.vmi.vreg<1xi16>
+    %x = pto.vmi.vload %src[%zero] : !pto.ptr<i16, ub>, index -> !pto.vmi.vreg<1xi16>
     %r = pto.vmi.vbrc %x {group = 1} : !pto.vmi.vreg<1xi16> -> !pto.vmi.vreg<4xi16>
-    pto.vmi.vstore %r, %dst[%zero] : !pto.vmi.vreg<4xi16>, !pto.ptr<i16, ub>
+    pto.vmi.vstore %r, %dst[%zero] : !pto.vmi.vreg<4xi16>, !pto.ptr<i16, ub>, index
     return
   }
 
@@ -408,9 +408,9 @@ module {
 // CHECK-NOT: pto.vmi.
   func.func @compact_broadcast_i16_4_2(%src: !pto.ptr<i16, ub>, %dst: !pto.ptr<i16, ub>) {
     %zero = arith.constant 0 : index
-    %x = pto.vmi.vload %src[%zero] : !pto.ptr<i16, ub> -> !pto.vmi.vreg<2xi16>
+    %x = pto.vmi.vload %src[%zero] : !pto.ptr<i16, ub>, index -> !pto.vmi.vreg<2xi16>
     %r = pto.vmi.vbrc %x {group = 2} : !pto.vmi.vreg<2xi16> -> !pto.vmi.vreg<4xi16>
-    pto.vmi.vstore %r, %dst[%zero] : !pto.vmi.vreg<4xi16>, !pto.ptr<i16, ub>
+    pto.vmi.vstore %r, %dst[%zero] : !pto.vmi.vreg<4xi16>, !pto.ptr<i16, ub>, index
     return
   }
 
@@ -419,9 +419,9 @@ module {
 // CHECK-NOT: pto.vmi.
   func.func @compact_broadcast_i16_4_4(%src: !pto.ptr<i16, ub>, %dst: !pto.ptr<i16, ub>) {
     %zero = arith.constant 0 : index
-    %x = pto.vmi.vload %src[%zero] : !pto.ptr<i16, ub> -> !pto.vmi.vreg<4xi16>
+    %x = pto.vmi.vload %src[%zero] : !pto.ptr<i16, ub>, index -> !pto.vmi.vreg<4xi16>
     %r = pto.vmi.vbrc %x {group = 4} : !pto.vmi.vreg<4xi16> -> !pto.vmi.vreg<4xi16>
-    pto.vmi.vstore %r, %dst[%zero] : !pto.vmi.vreg<4xi16>, !pto.ptr<i16, ub>
+    pto.vmi.vstore %r, %dst[%zero] : !pto.vmi.vreg<4xi16>, !pto.ptr<i16, ub>, index
     return
   }
 
@@ -430,9 +430,9 @@ module {
 // CHECK-NOT: pto.vmi.
   func.func @compact_broadcast_i16_8_1(%src: !pto.ptr<i16, ub>, %dst: !pto.ptr<i16, ub>) {
     %zero = arith.constant 0 : index
-    %x = pto.vmi.vload %src[%zero] : !pto.ptr<i16, ub> -> !pto.vmi.vreg<1xi16>
+    %x = pto.vmi.vload %src[%zero] : !pto.ptr<i16, ub>, index -> !pto.vmi.vreg<1xi16>
     %r = pto.vmi.vbrc %x {group = 1} : !pto.vmi.vreg<1xi16> -> !pto.vmi.vreg<8xi16>
-    pto.vmi.vstore %r, %dst[%zero] : !pto.vmi.vreg<8xi16>, !pto.ptr<i16, ub>
+    pto.vmi.vstore %r, %dst[%zero] : !pto.vmi.vreg<8xi16>, !pto.ptr<i16, ub>, index
     return
   }
 
@@ -442,9 +442,9 @@ module {
 // CHECK-NOT: pto.vmi.
   func.func @compact_broadcast_i16_8_2(%src: !pto.ptr<i16, ub>, %dst: !pto.ptr<i16, ub>) {
     %zero = arith.constant 0 : index
-    %x = pto.vmi.vload %src[%zero] : !pto.ptr<i16, ub> -> !pto.vmi.vreg<2xi16>
+    %x = pto.vmi.vload %src[%zero] : !pto.ptr<i16, ub>, index -> !pto.vmi.vreg<2xi16>
     %r = pto.vmi.vbrc %x {group = 2} : !pto.vmi.vreg<2xi16> -> !pto.vmi.vreg<8xi16>
-    pto.vmi.vstore %r, %dst[%zero] : !pto.vmi.vreg<8xi16>, !pto.ptr<i16, ub>
+    pto.vmi.vstore %r, %dst[%zero] : !pto.vmi.vreg<8xi16>, !pto.ptr<i16, ub>, index
     return
   }
 
@@ -453,9 +453,9 @@ module {
 // CHECK-NOT: pto.vmi.
   func.func @compact_broadcast_i16_8_4(%src: !pto.ptr<i16, ub>, %dst: !pto.ptr<i16, ub>) {
     %zero = arith.constant 0 : index
-    %x = pto.vmi.vload %src[%zero] : !pto.ptr<i16, ub> -> !pto.vmi.vreg<4xi16>
+    %x = pto.vmi.vload %src[%zero] : !pto.ptr<i16, ub>, index -> !pto.vmi.vreg<4xi16>
     %r = pto.vmi.vbrc %x {group = 4} : !pto.vmi.vreg<4xi16> -> !pto.vmi.vreg<8xi16>
-    pto.vmi.vstore %r, %dst[%zero] : !pto.vmi.vreg<8xi16>, !pto.ptr<i16, ub>
+    pto.vmi.vstore %r, %dst[%zero] : !pto.vmi.vreg<8xi16>, !pto.ptr<i16, ub>, index
     return
   }
 
@@ -464,9 +464,9 @@ module {
 // CHECK-NOT: pto.vmi.
   func.func @compact_broadcast_i16_8_8(%src: !pto.ptr<i16, ub>, %dst: !pto.ptr<i16, ub>) {
     %zero = arith.constant 0 : index
-    %x = pto.vmi.vload %src[%zero] : !pto.ptr<i16, ub> -> !pto.vmi.vreg<8xi16>
+    %x = pto.vmi.vload %src[%zero] : !pto.ptr<i16, ub>, index -> !pto.vmi.vreg<8xi16>
     %r = pto.vmi.vbrc %x {group = 8} : !pto.vmi.vreg<8xi16> -> !pto.vmi.vreg<8xi16>
-    pto.vmi.vstore %r, %dst[%zero] : !pto.vmi.vreg<8xi16>, !pto.ptr<i16, ub>
+    pto.vmi.vstore %r, %dst[%zero] : !pto.vmi.vreg<8xi16>, !pto.ptr<i16, ub>, index
     return
   }
 
@@ -475,9 +475,9 @@ module {
 // CHECK-NOT: pto.vmi.
   func.func @compact_broadcast_ui16_1_1(%src: !pto.ptr<ui16, ub>, %dst: !pto.ptr<ui16, ub>) {
     %zero = arith.constant 0 : index
-    %x = pto.vmi.vload %src[%zero] : !pto.ptr<ui16, ub> -> !pto.vmi.vreg<1xui16>
+    %x = pto.vmi.vload %src[%zero] : !pto.ptr<ui16, ub>, index -> !pto.vmi.vreg<1xui16>
     %r = pto.vmi.vbrc %x {group = 1} : !pto.vmi.vreg<1xui16> -> !pto.vmi.vreg<1xui16>
-    pto.vmi.vstore %r, %dst[%zero] : !pto.vmi.vreg<1xui16>, !pto.ptr<ui16, ub>
+    pto.vmi.vstore %r, %dst[%zero] : !pto.vmi.vreg<1xui16>, !pto.ptr<ui16, ub>, index
     return
   }
 
@@ -487,9 +487,9 @@ module {
 // CHECK-NOT: pto.vmi.
   func.func @compact_broadcast_ui16_2_1(%src: !pto.ptr<ui16, ub>, %dst: !pto.ptr<ui16, ub>) {
     %zero = arith.constant 0 : index
-    %x = pto.vmi.vload %src[%zero] : !pto.ptr<ui16, ub> -> !pto.vmi.vreg<1xui16>
+    %x = pto.vmi.vload %src[%zero] : !pto.ptr<ui16, ub>, index -> !pto.vmi.vreg<1xui16>
     %r = pto.vmi.vbrc %x {group = 1} : !pto.vmi.vreg<1xui16> -> !pto.vmi.vreg<2xui16>
-    pto.vmi.vstore %r, %dst[%zero] : !pto.vmi.vreg<2xui16>, !pto.ptr<ui16, ub>
+    pto.vmi.vstore %r, %dst[%zero] : !pto.vmi.vreg<2xui16>, !pto.ptr<ui16, ub>, index
     return
   }
 
@@ -499,9 +499,9 @@ module {
 // CHECK-NOT: pto.vmi.
   func.func @compact_broadcast_ui16_2_2(%src: !pto.ptr<ui16, ub>, %dst: !pto.ptr<ui16, ub>) {
     %zero = arith.constant 0 : index
-    %x = pto.vmi.vload %src[%zero] : !pto.ptr<ui16, ub> -> !pto.vmi.vreg<2xui16>
+    %x = pto.vmi.vload %src[%zero] : !pto.ptr<ui16, ub>, index -> !pto.vmi.vreg<2xui16>
     %r = pto.vmi.vbrc %x {group = 2} : !pto.vmi.vreg<2xui16> -> !pto.vmi.vreg<2xui16>
-    pto.vmi.vstore %r, %dst[%zero] : !pto.vmi.vreg<2xui16>, !pto.ptr<ui16, ub>
+    pto.vmi.vstore %r, %dst[%zero] : !pto.vmi.vreg<2xui16>, !pto.ptr<ui16, ub>, index
     return
   }
 
@@ -510,9 +510,9 @@ module {
 // CHECK-NOT: pto.vmi.
   func.func @compact_broadcast_ui16_4_1(%src: !pto.ptr<ui16, ub>, %dst: !pto.ptr<ui16, ub>) {
     %zero = arith.constant 0 : index
-    %x = pto.vmi.vload %src[%zero] : !pto.ptr<ui16, ub> -> !pto.vmi.vreg<1xui16>
+    %x = pto.vmi.vload %src[%zero] : !pto.ptr<ui16, ub>, index -> !pto.vmi.vreg<1xui16>
     %r = pto.vmi.vbrc %x {group = 1} : !pto.vmi.vreg<1xui16> -> !pto.vmi.vreg<4xui16>
-    pto.vmi.vstore %r, %dst[%zero] : !pto.vmi.vreg<4xui16>, !pto.ptr<ui16, ub>
+    pto.vmi.vstore %r, %dst[%zero] : !pto.vmi.vreg<4xui16>, !pto.ptr<ui16, ub>, index
     return
   }
 
@@ -522,9 +522,9 @@ module {
 // CHECK-NOT: pto.vmi.
   func.func @compact_broadcast_ui16_4_2(%src: !pto.ptr<ui16, ub>, %dst: !pto.ptr<ui16, ub>) {
     %zero = arith.constant 0 : index
-    %x = pto.vmi.vload %src[%zero] : !pto.ptr<ui16, ub> -> !pto.vmi.vreg<2xui16>
+    %x = pto.vmi.vload %src[%zero] : !pto.ptr<ui16, ub>, index -> !pto.vmi.vreg<2xui16>
     %r = pto.vmi.vbrc %x {group = 2} : !pto.vmi.vreg<2xui16> -> !pto.vmi.vreg<4xui16>
-    pto.vmi.vstore %r, %dst[%zero] : !pto.vmi.vreg<4xui16>, !pto.ptr<ui16, ub>
+    pto.vmi.vstore %r, %dst[%zero] : !pto.vmi.vreg<4xui16>, !pto.ptr<ui16, ub>, index
     return
   }
 
@@ -533,9 +533,9 @@ module {
 // CHECK-NOT: pto.vmi.
   func.func @compact_broadcast_ui16_4_4(%src: !pto.ptr<ui16, ub>, %dst: !pto.ptr<ui16, ub>) {
     %zero = arith.constant 0 : index
-    %x = pto.vmi.vload %src[%zero] : !pto.ptr<ui16, ub> -> !pto.vmi.vreg<4xui16>
+    %x = pto.vmi.vload %src[%zero] : !pto.ptr<ui16, ub>, index -> !pto.vmi.vreg<4xui16>
     %r = pto.vmi.vbrc %x {group = 4} : !pto.vmi.vreg<4xui16> -> !pto.vmi.vreg<4xui16>
-    pto.vmi.vstore %r, %dst[%zero] : !pto.vmi.vreg<4xui16>, !pto.ptr<ui16, ub>
+    pto.vmi.vstore %r, %dst[%zero] : !pto.vmi.vreg<4xui16>, !pto.ptr<ui16, ub>, index
     return
   }
 
@@ -544,9 +544,9 @@ module {
 // CHECK-NOT: pto.vmi.
   func.func @compact_broadcast_ui16_8_1(%src: !pto.ptr<ui16, ub>, %dst: !pto.ptr<ui16, ub>) {
     %zero = arith.constant 0 : index
-    %x = pto.vmi.vload %src[%zero] : !pto.ptr<ui16, ub> -> !pto.vmi.vreg<1xui16>
+    %x = pto.vmi.vload %src[%zero] : !pto.ptr<ui16, ub>, index -> !pto.vmi.vreg<1xui16>
     %r = pto.vmi.vbrc %x {group = 1} : !pto.vmi.vreg<1xui16> -> !pto.vmi.vreg<8xui16>
-    pto.vmi.vstore %r, %dst[%zero] : !pto.vmi.vreg<8xui16>, !pto.ptr<ui16, ub>
+    pto.vmi.vstore %r, %dst[%zero] : !pto.vmi.vreg<8xui16>, !pto.ptr<ui16, ub>, index
     return
   }
 
@@ -556,9 +556,9 @@ module {
 // CHECK-NOT: pto.vmi.
   func.func @compact_broadcast_ui16_8_2(%src: !pto.ptr<ui16, ub>, %dst: !pto.ptr<ui16, ub>) {
     %zero = arith.constant 0 : index
-    %x = pto.vmi.vload %src[%zero] : !pto.ptr<ui16, ub> -> !pto.vmi.vreg<2xui16>
+    %x = pto.vmi.vload %src[%zero] : !pto.ptr<ui16, ub>, index -> !pto.vmi.vreg<2xui16>
     %r = pto.vmi.vbrc %x {group = 2} : !pto.vmi.vreg<2xui16> -> !pto.vmi.vreg<8xui16>
-    pto.vmi.vstore %r, %dst[%zero] : !pto.vmi.vreg<8xui16>, !pto.ptr<ui16, ub>
+    pto.vmi.vstore %r, %dst[%zero] : !pto.vmi.vreg<8xui16>, !pto.ptr<ui16, ub>, index
     return
   }
 
@@ -567,9 +567,9 @@ module {
 // CHECK-NOT: pto.vmi.
   func.func @compact_broadcast_ui16_8_4(%src: !pto.ptr<ui16, ub>, %dst: !pto.ptr<ui16, ub>) {
     %zero = arith.constant 0 : index
-    %x = pto.vmi.vload %src[%zero] : !pto.ptr<ui16, ub> -> !pto.vmi.vreg<4xui16>
+    %x = pto.vmi.vload %src[%zero] : !pto.ptr<ui16, ub>, index -> !pto.vmi.vreg<4xui16>
     %r = pto.vmi.vbrc %x {group = 4} : !pto.vmi.vreg<4xui16> -> !pto.vmi.vreg<8xui16>
-    pto.vmi.vstore %r, %dst[%zero] : !pto.vmi.vreg<8xui16>, !pto.ptr<ui16, ub>
+    pto.vmi.vstore %r, %dst[%zero] : !pto.vmi.vreg<8xui16>, !pto.ptr<ui16, ub>, index
     return
   }
 
@@ -578,9 +578,9 @@ module {
 // CHECK-NOT: pto.vmi.
   func.func @compact_broadcast_ui16_8_8(%src: !pto.ptr<ui16, ub>, %dst: !pto.ptr<ui16, ub>) {
     %zero = arith.constant 0 : index
-    %x = pto.vmi.vload %src[%zero] : !pto.ptr<ui16, ub> -> !pto.vmi.vreg<8xui16>
+    %x = pto.vmi.vload %src[%zero] : !pto.ptr<ui16, ub>, index -> !pto.vmi.vreg<8xui16>
     %r = pto.vmi.vbrc %x {group = 8} : !pto.vmi.vreg<8xui16> -> !pto.vmi.vreg<8xui16>
-    pto.vmi.vstore %r, %dst[%zero] : !pto.vmi.vreg<8xui16>, !pto.ptr<ui16, ub>
+    pto.vmi.vstore %r, %dst[%zero] : !pto.vmi.vreg<8xui16>, !pto.ptr<ui16, ub>, index
     return
   }
 
@@ -589,9 +589,9 @@ module {
 // CHECK-NOT: pto.vmi.
   func.func @compact_broadcast_si16_1_1(%src: !pto.ptr<si16, ub>, %dst: !pto.ptr<si16, ub>) {
     %zero = arith.constant 0 : index
-    %x = pto.vmi.vload %src[%zero] : !pto.ptr<si16, ub> -> !pto.vmi.vreg<1xsi16>
+    %x = pto.vmi.vload %src[%zero] : !pto.ptr<si16, ub>, index -> !pto.vmi.vreg<1xsi16>
     %r = pto.vmi.vbrc %x {group = 1} : !pto.vmi.vreg<1xsi16> -> !pto.vmi.vreg<1xsi16>
-    pto.vmi.vstore %r, %dst[%zero] : !pto.vmi.vreg<1xsi16>, !pto.ptr<si16, ub>
+    pto.vmi.vstore %r, %dst[%zero] : !pto.vmi.vreg<1xsi16>, !pto.ptr<si16, ub>, index
     return
   }
 
@@ -601,9 +601,9 @@ module {
 // CHECK-NOT: pto.vmi.
   func.func @compact_broadcast_si16_2_1(%src: !pto.ptr<si16, ub>, %dst: !pto.ptr<si16, ub>) {
     %zero = arith.constant 0 : index
-    %x = pto.vmi.vload %src[%zero] : !pto.ptr<si16, ub> -> !pto.vmi.vreg<1xsi16>
+    %x = pto.vmi.vload %src[%zero] : !pto.ptr<si16, ub>, index -> !pto.vmi.vreg<1xsi16>
     %r = pto.vmi.vbrc %x {group = 1} : !pto.vmi.vreg<1xsi16> -> !pto.vmi.vreg<2xsi16>
-    pto.vmi.vstore %r, %dst[%zero] : !pto.vmi.vreg<2xsi16>, !pto.ptr<si16, ub>
+    pto.vmi.vstore %r, %dst[%zero] : !pto.vmi.vreg<2xsi16>, !pto.ptr<si16, ub>, index
     return
   }
 
@@ -613,9 +613,9 @@ module {
 // CHECK-NOT: pto.vmi.
   func.func @compact_broadcast_si16_2_2(%src: !pto.ptr<si16, ub>, %dst: !pto.ptr<si16, ub>) {
     %zero = arith.constant 0 : index
-    %x = pto.vmi.vload %src[%zero] : !pto.ptr<si16, ub> -> !pto.vmi.vreg<2xsi16>
+    %x = pto.vmi.vload %src[%zero] : !pto.ptr<si16, ub>, index -> !pto.vmi.vreg<2xsi16>
     %r = pto.vmi.vbrc %x {group = 2} : !pto.vmi.vreg<2xsi16> -> !pto.vmi.vreg<2xsi16>
-    pto.vmi.vstore %r, %dst[%zero] : !pto.vmi.vreg<2xsi16>, !pto.ptr<si16, ub>
+    pto.vmi.vstore %r, %dst[%zero] : !pto.vmi.vreg<2xsi16>, !pto.ptr<si16, ub>, index
     return
   }
 
@@ -624,9 +624,9 @@ module {
 // CHECK-NOT: pto.vmi.
   func.func @compact_broadcast_si16_4_1(%src: !pto.ptr<si16, ub>, %dst: !pto.ptr<si16, ub>) {
     %zero = arith.constant 0 : index
-    %x = pto.vmi.vload %src[%zero] : !pto.ptr<si16, ub> -> !pto.vmi.vreg<1xsi16>
+    %x = pto.vmi.vload %src[%zero] : !pto.ptr<si16, ub>, index -> !pto.vmi.vreg<1xsi16>
     %r = pto.vmi.vbrc %x {group = 1} : !pto.vmi.vreg<1xsi16> -> !pto.vmi.vreg<4xsi16>
-    pto.vmi.vstore %r, %dst[%zero] : !pto.vmi.vreg<4xsi16>, !pto.ptr<si16, ub>
+    pto.vmi.vstore %r, %dst[%zero] : !pto.vmi.vreg<4xsi16>, !pto.ptr<si16, ub>, index
     return
   }
 
@@ -636,9 +636,9 @@ module {
 // CHECK-NOT: pto.vmi.
   func.func @compact_broadcast_si16_4_2(%src: !pto.ptr<si16, ub>, %dst: !pto.ptr<si16, ub>) {
     %zero = arith.constant 0 : index
-    %x = pto.vmi.vload %src[%zero] : !pto.ptr<si16, ub> -> !pto.vmi.vreg<2xsi16>
+    %x = pto.vmi.vload %src[%zero] : !pto.ptr<si16, ub>, index -> !pto.vmi.vreg<2xsi16>
     %r = pto.vmi.vbrc %x {group = 2} : !pto.vmi.vreg<2xsi16> -> !pto.vmi.vreg<4xsi16>
-    pto.vmi.vstore %r, %dst[%zero] : !pto.vmi.vreg<4xsi16>, !pto.ptr<si16, ub>
+    pto.vmi.vstore %r, %dst[%zero] : !pto.vmi.vreg<4xsi16>, !pto.ptr<si16, ub>, index
     return
   }
 
@@ -647,9 +647,9 @@ module {
 // CHECK-NOT: pto.vmi.
   func.func @compact_broadcast_si16_4_4(%src: !pto.ptr<si16, ub>, %dst: !pto.ptr<si16, ub>) {
     %zero = arith.constant 0 : index
-    %x = pto.vmi.vload %src[%zero] : !pto.ptr<si16, ub> -> !pto.vmi.vreg<4xsi16>
+    %x = pto.vmi.vload %src[%zero] : !pto.ptr<si16, ub>, index -> !pto.vmi.vreg<4xsi16>
     %r = pto.vmi.vbrc %x {group = 4} : !pto.vmi.vreg<4xsi16> -> !pto.vmi.vreg<4xsi16>
-    pto.vmi.vstore %r, %dst[%zero] : !pto.vmi.vreg<4xsi16>, !pto.ptr<si16, ub>
+    pto.vmi.vstore %r, %dst[%zero] : !pto.vmi.vreg<4xsi16>, !pto.ptr<si16, ub>, index
     return
   }
 
@@ -658,9 +658,9 @@ module {
 // CHECK-NOT: pto.vmi.
   func.func @compact_broadcast_si16_8_1(%src: !pto.ptr<si16, ub>, %dst: !pto.ptr<si16, ub>) {
     %zero = arith.constant 0 : index
-    %x = pto.vmi.vload %src[%zero] : !pto.ptr<si16, ub> -> !pto.vmi.vreg<1xsi16>
+    %x = pto.vmi.vload %src[%zero] : !pto.ptr<si16, ub>, index -> !pto.vmi.vreg<1xsi16>
     %r = pto.vmi.vbrc %x {group = 1} : !pto.vmi.vreg<1xsi16> -> !pto.vmi.vreg<8xsi16>
-    pto.vmi.vstore %r, %dst[%zero] : !pto.vmi.vreg<8xsi16>, !pto.ptr<si16, ub>
+    pto.vmi.vstore %r, %dst[%zero] : !pto.vmi.vreg<8xsi16>, !pto.ptr<si16, ub>, index
     return
   }
 
@@ -670,9 +670,9 @@ module {
 // CHECK-NOT: pto.vmi.
   func.func @compact_broadcast_si16_8_2(%src: !pto.ptr<si16, ub>, %dst: !pto.ptr<si16, ub>) {
     %zero = arith.constant 0 : index
-    %x = pto.vmi.vload %src[%zero] : !pto.ptr<si16, ub> -> !pto.vmi.vreg<2xsi16>
+    %x = pto.vmi.vload %src[%zero] : !pto.ptr<si16, ub>, index -> !pto.vmi.vreg<2xsi16>
     %r = pto.vmi.vbrc %x {group = 2} : !pto.vmi.vreg<2xsi16> -> !pto.vmi.vreg<8xsi16>
-    pto.vmi.vstore %r, %dst[%zero] : !pto.vmi.vreg<8xsi16>, !pto.ptr<si16, ub>
+    pto.vmi.vstore %r, %dst[%zero] : !pto.vmi.vreg<8xsi16>, !pto.ptr<si16, ub>, index
     return
   }
 
@@ -681,9 +681,9 @@ module {
 // CHECK-NOT: pto.vmi.
   func.func @compact_broadcast_si16_8_4(%src: !pto.ptr<si16, ub>, %dst: !pto.ptr<si16, ub>) {
     %zero = arith.constant 0 : index
-    %x = pto.vmi.vload %src[%zero] : !pto.ptr<si16, ub> -> !pto.vmi.vreg<4xsi16>
+    %x = pto.vmi.vload %src[%zero] : !pto.ptr<si16, ub>, index -> !pto.vmi.vreg<4xsi16>
     %r = pto.vmi.vbrc %x {group = 4} : !pto.vmi.vreg<4xsi16> -> !pto.vmi.vreg<8xsi16>
-    pto.vmi.vstore %r, %dst[%zero] : !pto.vmi.vreg<8xsi16>, !pto.ptr<si16, ub>
+    pto.vmi.vstore %r, %dst[%zero] : !pto.vmi.vreg<8xsi16>, !pto.ptr<si16, ub>, index
     return
   }
 
@@ -692,9 +692,9 @@ module {
 // CHECK-NOT: pto.vmi.
   func.func @compact_broadcast_si16_8_8(%src: !pto.ptr<si16, ub>, %dst: !pto.ptr<si16, ub>) {
     %zero = arith.constant 0 : index
-    %x = pto.vmi.vload %src[%zero] : !pto.ptr<si16, ub> -> !pto.vmi.vreg<8xsi16>
+    %x = pto.vmi.vload %src[%zero] : !pto.ptr<si16, ub>, index -> !pto.vmi.vreg<8xsi16>
     %r = pto.vmi.vbrc %x {group = 8} : !pto.vmi.vreg<8xsi16> -> !pto.vmi.vreg<8xsi16>
-    pto.vmi.vstore %r, %dst[%zero] : !pto.vmi.vreg<8xsi16>, !pto.ptr<si16, ub>
+    pto.vmi.vstore %r, %dst[%zero] : !pto.vmi.vreg<8xsi16>, !pto.ptr<si16, ub>, index
     return
   }
 
@@ -703,9 +703,9 @@ module {
 // CHECK-NOT: pto.vmi.
   func.func @compact_broadcast_i32_1_1(%src: !pto.ptr<i32, ub>, %dst: !pto.ptr<i32, ub>) {
     %zero = arith.constant 0 : index
-    %x = pto.vmi.vload %src[%zero] : !pto.ptr<i32, ub> -> !pto.vmi.vreg<1xi32>
+    %x = pto.vmi.vload %src[%zero] : !pto.ptr<i32, ub>, index -> !pto.vmi.vreg<1xi32>
     %r = pto.vmi.vbrc %x {group = 1} : !pto.vmi.vreg<1xi32> -> !pto.vmi.vreg<1xi32>
-    pto.vmi.vstore %r, %dst[%zero] : !pto.vmi.vreg<1xi32>, !pto.ptr<i32, ub>
+    pto.vmi.vstore %r, %dst[%zero] : !pto.vmi.vreg<1xi32>, !pto.ptr<i32, ub>, index
     return
   }
 
@@ -715,9 +715,9 @@ module {
 // CHECK-NOT: pto.vmi.
   func.func @compact_broadcast_i32_2_1(%src: !pto.ptr<i32, ub>, %dst: !pto.ptr<i32, ub>) {
     %zero = arith.constant 0 : index
-    %x = pto.vmi.vload %src[%zero] : !pto.ptr<i32, ub> -> !pto.vmi.vreg<1xi32>
+    %x = pto.vmi.vload %src[%zero] : !pto.ptr<i32, ub>, index -> !pto.vmi.vreg<1xi32>
     %r = pto.vmi.vbrc %x {group = 1} : !pto.vmi.vreg<1xi32> -> !pto.vmi.vreg<2xi32>
-    pto.vmi.vstore %r, %dst[%zero] : !pto.vmi.vreg<2xi32>, !pto.ptr<i32, ub>
+    pto.vmi.vstore %r, %dst[%zero] : !pto.vmi.vreg<2xi32>, !pto.ptr<i32, ub>, index
     return
   }
 
@@ -727,9 +727,9 @@ module {
 // CHECK-NOT: pto.vmi.
   func.func @compact_broadcast_i32_2_2(%src: !pto.ptr<i32, ub>, %dst: !pto.ptr<i32, ub>) {
     %zero = arith.constant 0 : index
-    %x = pto.vmi.vload %src[%zero] : !pto.ptr<i32, ub> -> !pto.vmi.vreg<2xi32>
+    %x = pto.vmi.vload %src[%zero] : !pto.ptr<i32, ub>, index -> !pto.vmi.vreg<2xi32>
     %r = pto.vmi.vbrc %x {group = 2} : !pto.vmi.vreg<2xi32> -> !pto.vmi.vreg<2xi32>
-    pto.vmi.vstore %r, %dst[%zero] : !pto.vmi.vreg<2xi32>, !pto.ptr<i32, ub>
+    pto.vmi.vstore %r, %dst[%zero] : !pto.vmi.vreg<2xi32>, !pto.ptr<i32, ub>, index
     return
   }
 
@@ -738,9 +738,9 @@ module {
 // CHECK-NOT: pto.vmi.
   func.func @compact_broadcast_i32_4_1(%src: !pto.ptr<i32, ub>, %dst: !pto.ptr<i32, ub>) {
     %zero = arith.constant 0 : index
-    %x = pto.vmi.vload %src[%zero] : !pto.ptr<i32, ub> -> !pto.vmi.vreg<1xi32>
+    %x = pto.vmi.vload %src[%zero] : !pto.ptr<i32, ub>, index -> !pto.vmi.vreg<1xi32>
     %r = pto.vmi.vbrc %x {group = 1} : !pto.vmi.vreg<1xi32> -> !pto.vmi.vreg<4xi32>
-    pto.vmi.vstore %r, %dst[%zero] : !pto.vmi.vreg<4xi32>, !pto.ptr<i32, ub>
+    pto.vmi.vstore %r, %dst[%zero] : !pto.vmi.vreg<4xi32>, !pto.ptr<i32, ub>, index
     return
   }
 
@@ -750,9 +750,9 @@ module {
 // CHECK-NOT: pto.vmi.
   func.func @compact_broadcast_i32_4_2(%src: !pto.ptr<i32, ub>, %dst: !pto.ptr<i32, ub>) {
     %zero = arith.constant 0 : index
-    %x = pto.vmi.vload %src[%zero] : !pto.ptr<i32, ub> -> !pto.vmi.vreg<2xi32>
+    %x = pto.vmi.vload %src[%zero] : !pto.ptr<i32, ub>, index -> !pto.vmi.vreg<2xi32>
     %r = pto.vmi.vbrc %x {group = 2} : !pto.vmi.vreg<2xi32> -> !pto.vmi.vreg<4xi32>
-    pto.vmi.vstore %r, %dst[%zero] : !pto.vmi.vreg<4xi32>, !pto.ptr<i32, ub>
+    pto.vmi.vstore %r, %dst[%zero] : !pto.vmi.vreg<4xi32>, !pto.ptr<i32, ub>, index
     return
   }
 
@@ -761,9 +761,9 @@ module {
 // CHECK-NOT: pto.vmi.
   func.func @compact_broadcast_i32_4_4(%src: !pto.ptr<i32, ub>, %dst: !pto.ptr<i32, ub>) {
     %zero = arith.constant 0 : index
-    %x = pto.vmi.vload %src[%zero] : !pto.ptr<i32, ub> -> !pto.vmi.vreg<4xi32>
+    %x = pto.vmi.vload %src[%zero] : !pto.ptr<i32, ub>, index -> !pto.vmi.vreg<4xi32>
     %r = pto.vmi.vbrc %x {group = 4} : !pto.vmi.vreg<4xi32> -> !pto.vmi.vreg<4xi32>
-    pto.vmi.vstore %r, %dst[%zero] : !pto.vmi.vreg<4xi32>, !pto.ptr<i32, ub>
+    pto.vmi.vstore %r, %dst[%zero] : !pto.vmi.vreg<4xi32>, !pto.ptr<i32, ub>, index
     return
   }
 
@@ -772,9 +772,9 @@ module {
 // CHECK-NOT: pto.vmi.
   func.func @compact_broadcast_i32_8_1(%src: !pto.ptr<i32, ub>, %dst: !pto.ptr<i32, ub>) {
     %zero = arith.constant 0 : index
-    %x = pto.vmi.vload %src[%zero] : !pto.ptr<i32, ub> -> !pto.vmi.vreg<1xi32>
+    %x = pto.vmi.vload %src[%zero] : !pto.ptr<i32, ub>, index -> !pto.vmi.vreg<1xi32>
     %r = pto.vmi.vbrc %x {group = 1} : !pto.vmi.vreg<1xi32> -> !pto.vmi.vreg<8xi32>
-    pto.vmi.vstore %r, %dst[%zero] : !pto.vmi.vreg<8xi32>, !pto.ptr<i32, ub>
+    pto.vmi.vstore %r, %dst[%zero] : !pto.vmi.vreg<8xi32>, !pto.ptr<i32, ub>, index
     return
   }
 
@@ -784,9 +784,9 @@ module {
 // CHECK-NOT: pto.vmi.
   func.func @compact_broadcast_i32_8_2(%src: !pto.ptr<i32, ub>, %dst: !pto.ptr<i32, ub>) {
     %zero = arith.constant 0 : index
-    %x = pto.vmi.vload %src[%zero] : !pto.ptr<i32, ub> -> !pto.vmi.vreg<2xi32>
+    %x = pto.vmi.vload %src[%zero] : !pto.ptr<i32, ub>, index -> !pto.vmi.vreg<2xi32>
     %r = pto.vmi.vbrc %x {group = 2} : !pto.vmi.vreg<2xi32> -> !pto.vmi.vreg<8xi32>
-    pto.vmi.vstore %r, %dst[%zero] : !pto.vmi.vreg<8xi32>, !pto.ptr<i32, ub>
+    pto.vmi.vstore %r, %dst[%zero] : !pto.vmi.vreg<8xi32>, !pto.ptr<i32, ub>, index
     return
   }
 
@@ -795,9 +795,9 @@ module {
 // CHECK-NOT: pto.vmi.
   func.func @compact_broadcast_i32_8_4(%src: !pto.ptr<i32, ub>, %dst: !pto.ptr<i32, ub>) {
     %zero = arith.constant 0 : index
-    %x = pto.vmi.vload %src[%zero] : !pto.ptr<i32, ub> -> !pto.vmi.vreg<4xi32>
+    %x = pto.vmi.vload %src[%zero] : !pto.ptr<i32, ub>, index -> !pto.vmi.vreg<4xi32>
     %r = pto.vmi.vbrc %x {group = 4} : !pto.vmi.vreg<4xi32> -> !pto.vmi.vreg<8xi32>
-    pto.vmi.vstore %r, %dst[%zero] : !pto.vmi.vreg<8xi32>, !pto.ptr<i32, ub>
+    pto.vmi.vstore %r, %dst[%zero] : !pto.vmi.vreg<8xi32>, !pto.ptr<i32, ub>, index
     return
   }
 
@@ -806,9 +806,9 @@ module {
 // CHECK-NOT: pto.vmi.
   func.func @compact_broadcast_i32_8_8(%src: !pto.ptr<i32, ub>, %dst: !pto.ptr<i32, ub>) {
     %zero = arith.constant 0 : index
-    %x = pto.vmi.vload %src[%zero] : !pto.ptr<i32, ub> -> !pto.vmi.vreg<8xi32>
+    %x = pto.vmi.vload %src[%zero] : !pto.ptr<i32, ub>, index -> !pto.vmi.vreg<8xi32>
     %r = pto.vmi.vbrc %x {group = 8} : !pto.vmi.vreg<8xi32> -> !pto.vmi.vreg<8xi32>
-    pto.vmi.vstore %r, %dst[%zero] : !pto.vmi.vreg<8xi32>, !pto.ptr<i32, ub>
+    pto.vmi.vstore %r, %dst[%zero] : !pto.vmi.vreg<8xi32>, !pto.ptr<i32, ub>, index
     return
   }
 
@@ -817,9 +817,9 @@ module {
 // CHECK-NOT: pto.vmi.
   func.func @compact_broadcast_ui32_1_1(%src: !pto.ptr<ui32, ub>, %dst: !pto.ptr<ui32, ub>) {
     %zero = arith.constant 0 : index
-    %x = pto.vmi.vload %src[%zero] : !pto.ptr<ui32, ub> -> !pto.vmi.vreg<1xui32>
+    %x = pto.vmi.vload %src[%zero] : !pto.ptr<ui32, ub>, index -> !pto.vmi.vreg<1xui32>
     %r = pto.vmi.vbrc %x {group = 1} : !pto.vmi.vreg<1xui32> -> !pto.vmi.vreg<1xui32>
-    pto.vmi.vstore %r, %dst[%zero] : !pto.vmi.vreg<1xui32>, !pto.ptr<ui32, ub>
+    pto.vmi.vstore %r, %dst[%zero] : !pto.vmi.vreg<1xui32>, !pto.ptr<ui32, ub>, index
     return
   }
 
@@ -829,9 +829,9 @@ module {
 // CHECK-NOT: pto.vmi.
   func.func @compact_broadcast_ui32_2_1(%src: !pto.ptr<ui32, ub>, %dst: !pto.ptr<ui32, ub>) {
     %zero = arith.constant 0 : index
-    %x = pto.vmi.vload %src[%zero] : !pto.ptr<ui32, ub> -> !pto.vmi.vreg<1xui32>
+    %x = pto.vmi.vload %src[%zero] : !pto.ptr<ui32, ub>, index -> !pto.vmi.vreg<1xui32>
     %r = pto.vmi.vbrc %x {group = 1} : !pto.vmi.vreg<1xui32> -> !pto.vmi.vreg<2xui32>
-    pto.vmi.vstore %r, %dst[%zero] : !pto.vmi.vreg<2xui32>, !pto.ptr<ui32, ub>
+    pto.vmi.vstore %r, %dst[%zero] : !pto.vmi.vreg<2xui32>, !pto.ptr<ui32, ub>, index
     return
   }
 
@@ -841,9 +841,9 @@ module {
 // CHECK-NOT: pto.vmi.
   func.func @compact_broadcast_ui32_2_2(%src: !pto.ptr<ui32, ub>, %dst: !pto.ptr<ui32, ub>) {
     %zero = arith.constant 0 : index
-    %x = pto.vmi.vload %src[%zero] : !pto.ptr<ui32, ub> -> !pto.vmi.vreg<2xui32>
+    %x = pto.vmi.vload %src[%zero] : !pto.ptr<ui32, ub>, index -> !pto.vmi.vreg<2xui32>
     %r = pto.vmi.vbrc %x {group = 2} : !pto.vmi.vreg<2xui32> -> !pto.vmi.vreg<2xui32>
-    pto.vmi.vstore %r, %dst[%zero] : !pto.vmi.vreg<2xui32>, !pto.ptr<ui32, ub>
+    pto.vmi.vstore %r, %dst[%zero] : !pto.vmi.vreg<2xui32>, !pto.ptr<ui32, ub>, index
     return
   }
 
@@ -852,9 +852,9 @@ module {
 // CHECK-NOT: pto.vmi.
   func.func @compact_broadcast_ui32_4_1(%src: !pto.ptr<ui32, ub>, %dst: !pto.ptr<ui32, ub>) {
     %zero = arith.constant 0 : index
-    %x = pto.vmi.vload %src[%zero] : !pto.ptr<ui32, ub> -> !pto.vmi.vreg<1xui32>
+    %x = pto.vmi.vload %src[%zero] : !pto.ptr<ui32, ub>, index -> !pto.vmi.vreg<1xui32>
     %r = pto.vmi.vbrc %x {group = 1} : !pto.vmi.vreg<1xui32> -> !pto.vmi.vreg<4xui32>
-    pto.vmi.vstore %r, %dst[%zero] : !pto.vmi.vreg<4xui32>, !pto.ptr<ui32, ub>
+    pto.vmi.vstore %r, %dst[%zero] : !pto.vmi.vreg<4xui32>, !pto.ptr<ui32, ub>, index
     return
   }
 
@@ -864,9 +864,9 @@ module {
 // CHECK-NOT: pto.vmi.
   func.func @compact_broadcast_ui32_4_2(%src: !pto.ptr<ui32, ub>, %dst: !pto.ptr<ui32, ub>) {
     %zero = arith.constant 0 : index
-    %x = pto.vmi.vload %src[%zero] : !pto.ptr<ui32, ub> -> !pto.vmi.vreg<2xui32>
+    %x = pto.vmi.vload %src[%zero] : !pto.ptr<ui32, ub>, index -> !pto.vmi.vreg<2xui32>
     %r = pto.vmi.vbrc %x {group = 2} : !pto.vmi.vreg<2xui32> -> !pto.vmi.vreg<4xui32>
-    pto.vmi.vstore %r, %dst[%zero] : !pto.vmi.vreg<4xui32>, !pto.ptr<ui32, ub>
+    pto.vmi.vstore %r, %dst[%zero] : !pto.vmi.vreg<4xui32>, !pto.ptr<ui32, ub>, index
     return
   }
 
@@ -875,9 +875,9 @@ module {
 // CHECK-NOT: pto.vmi.
   func.func @compact_broadcast_ui32_4_4(%src: !pto.ptr<ui32, ub>, %dst: !pto.ptr<ui32, ub>) {
     %zero = arith.constant 0 : index
-    %x = pto.vmi.vload %src[%zero] : !pto.ptr<ui32, ub> -> !pto.vmi.vreg<4xui32>
+    %x = pto.vmi.vload %src[%zero] : !pto.ptr<ui32, ub>, index -> !pto.vmi.vreg<4xui32>
     %r = pto.vmi.vbrc %x {group = 4} : !pto.vmi.vreg<4xui32> -> !pto.vmi.vreg<4xui32>
-    pto.vmi.vstore %r, %dst[%zero] : !pto.vmi.vreg<4xui32>, !pto.ptr<ui32, ub>
+    pto.vmi.vstore %r, %dst[%zero] : !pto.vmi.vreg<4xui32>, !pto.ptr<ui32, ub>, index
     return
   }
 
@@ -886,9 +886,9 @@ module {
 // CHECK-NOT: pto.vmi.
   func.func @compact_broadcast_ui32_8_1(%src: !pto.ptr<ui32, ub>, %dst: !pto.ptr<ui32, ub>) {
     %zero = arith.constant 0 : index
-    %x = pto.vmi.vload %src[%zero] : !pto.ptr<ui32, ub> -> !pto.vmi.vreg<1xui32>
+    %x = pto.vmi.vload %src[%zero] : !pto.ptr<ui32, ub>, index -> !pto.vmi.vreg<1xui32>
     %r = pto.vmi.vbrc %x {group = 1} : !pto.vmi.vreg<1xui32> -> !pto.vmi.vreg<8xui32>
-    pto.vmi.vstore %r, %dst[%zero] : !pto.vmi.vreg<8xui32>, !pto.ptr<ui32, ub>
+    pto.vmi.vstore %r, %dst[%zero] : !pto.vmi.vreg<8xui32>, !pto.ptr<ui32, ub>, index
     return
   }
 
@@ -898,9 +898,9 @@ module {
 // CHECK-NOT: pto.vmi.
   func.func @compact_broadcast_ui32_8_2(%src: !pto.ptr<ui32, ub>, %dst: !pto.ptr<ui32, ub>) {
     %zero = arith.constant 0 : index
-    %x = pto.vmi.vload %src[%zero] : !pto.ptr<ui32, ub> -> !pto.vmi.vreg<2xui32>
+    %x = pto.vmi.vload %src[%zero] : !pto.ptr<ui32, ub>, index -> !pto.vmi.vreg<2xui32>
     %r = pto.vmi.vbrc %x {group = 2} : !pto.vmi.vreg<2xui32> -> !pto.vmi.vreg<8xui32>
-    pto.vmi.vstore %r, %dst[%zero] : !pto.vmi.vreg<8xui32>, !pto.ptr<ui32, ub>
+    pto.vmi.vstore %r, %dst[%zero] : !pto.vmi.vreg<8xui32>, !pto.ptr<ui32, ub>, index
     return
   }
 
@@ -909,9 +909,9 @@ module {
 // CHECK-NOT: pto.vmi.
   func.func @compact_broadcast_ui32_8_4(%src: !pto.ptr<ui32, ub>, %dst: !pto.ptr<ui32, ub>) {
     %zero = arith.constant 0 : index
-    %x = pto.vmi.vload %src[%zero] : !pto.ptr<ui32, ub> -> !pto.vmi.vreg<4xui32>
+    %x = pto.vmi.vload %src[%zero] : !pto.ptr<ui32, ub>, index -> !pto.vmi.vreg<4xui32>
     %r = pto.vmi.vbrc %x {group = 4} : !pto.vmi.vreg<4xui32> -> !pto.vmi.vreg<8xui32>
-    pto.vmi.vstore %r, %dst[%zero] : !pto.vmi.vreg<8xui32>, !pto.ptr<ui32, ub>
+    pto.vmi.vstore %r, %dst[%zero] : !pto.vmi.vreg<8xui32>, !pto.ptr<ui32, ub>, index
     return
   }
 
@@ -920,9 +920,9 @@ module {
 // CHECK-NOT: pto.vmi.
   func.func @compact_broadcast_ui32_8_8(%src: !pto.ptr<ui32, ub>, %dst: !pto.ptr<ui32, ub>) {
     %zero = arith.constant 0 : index
-    %x = pto.vmi.vload %src[%zero] : !pto.ptr<ui32, ub> -> !pto.vmi.vreg<8xui32>
+    %x = pto.vmi.vload %src[%zero] : !pto.ptr<ui32, ub>, index -> !pto.vmi.vreg<8xui32>
     %r = pto.vmi.vbrc %x {group = 8} : !pto.vmi.vreg<8xui32> -> !pto.vmi.vreg<8xui32>
-    pto.vmi.vstore %r, %dst[%zero] : !pto.vmi.vreg<8xui32>, !pto.ptr<ui32, ub>
+    pto.vmi.vstore %r, %dst[%zero] : !pto.vmi.vreg<8xui32>, !pto.ptr<ui32, ub>, index
     return
   }
 
@@ -931,9 +931,9 @@ module {
 // CHECK-NOT: pto.vmi.
   func.func @compact_broadcast_si32_1_1(%src: !pto.ptr<si32, ub>, %dst: !pto.ptr<si32, ub>) {
     %zero = arith.constant 0 : index
-    %x = pto.vmi.vload %src[%zero] : !pto.ptr<si32, ub> -> !pto.vmi.vreg<1xsi32>
+    %x = pto.vmi.vload %src[%zero] : !pto.ptr<si32, ub>, index -> !pto.vmi.vreg<1xsi32>
     %r = pto.vmi.vbrc %x {group = 1} : !pto.vmi.vreg<1xsi32> -> !pto.vmi.vreg<1xsi32>
-    pto.vmi.vstore %r, %dst[%zero] : !pto.vmi.vreg<1xsi32>, !pto.ptr<si32, ub>
+    pto.vmi.vstore %r, %dst[%zero] : !pto.vmi.vreg<1xsi32>, !pto.ptr<si32, ub>, index
     return
   }
 
@@ -943,9 +943,9 @@ module {
 // CHECK-NOT: pto.vmi.
   func.func @compact_broadcast_si32_2_1(%src: !pto.ptr<si32, ub>, %dst: !pto.ptr<si32, ub>) {
     %zero = arith.constant 0 : index
-    %x = pto.vmi.vload %src[%zero] : !pto.ptr<si32, ub> -> !pto.vmi.vreg<1xsi32>
+    %x = pto.vmi.vload %src[%zero] : !pto.ptr<si32, ub>, index -> !pto.vmi.vreg<1xsi32>
     %r = pto.vmi.vbrc %x {group = 1} : !pto.vmi.vreg<1xsi32> -> !pto.vmi.vreg<2xsi32>
-    pto.vmi.vstore %r, %dst[%zero] : !pto.vmi.vreg<2xsi32>, !pto.ptr<si32, ub>
+    pto.vmi.vstore %r, %dst[%zero] : !pto.vmi.vreg<2xsi32>, !pto.ptr<si32, ub>, index
     return
   }
 
@@ -955,9 +955,9 @@ module {
 // CHECK-NOT: pto.vmi.
   func.func @compact_broadcast_si32_2_2(%src: !pto.ptr<si32, ub>, %dst: !pto.ptr<si32, ub>) {
     %zero = arith.constant 0 : index
-    %x = pto.vmi.vload %src[%zero] : !pto.ptr<si32, ub> -> !pto.vmi.vreg<2xsi32>
+    %x = pto.vmi.vload %src[%zero] : !pto.ptr<si32, ub>, index -> !pto.vmi.vreg<2xsi32>
     %r = pto.vmi.vbrc %x {group = 2} : !pto.vmi.vreg<2xsi32> -> !pto.vmi.vreg<2xsi32>
-    pto.vmi.vstore %r, %dst[%zero] : !pto.vmi.vreg<2xsi32>, !pto.ptr<si32, ub>
+    pto.vmi.vstore %r, %dst[%zero] : !pto.vmi.vreg<2xsi32>, !pto.ptr<si32, ub>, index
     return
   }
 
@@ -966,9 +966,9 @@ module {
 // CHECK-NOT: pto.vmi.
   func.func @compact_broadcast_si32_4_1(%src: !pto.ptr<si32, ub>, %dst: !pto.ptr<si32, ub>) {
     %zero = arith.constant 0 : index
-    %x = pto.vmi.vload %src[%zero] : !pto.ptr<si32, ub> -> !pto.vmi.vreg<1xsi32>
+    %x = pto.vmi.vload %src[%zero] : !pto.ptr<si32, ub>, index -> !pto.vmi.vreg<1xsi32>
     %r = pto.vmi.vbrc %x {group = 1} : !pto.vmi.vreg<1xsi32> -> !pto.vmi.vreg<4xsi32>
-    pto.vmi.vstore %r, %dst[%zero] : !pto.vmi.vreg<4xsi32>, !pto.ptr<si32, ub>
+    pto.vmi.vstore %r, %dst[%zero] : !pto.vmi.vreg<4xsi32>, !pto.ptr<si32, ub>, index
     return
   }
 
@@ -978,9 +978,9 @@ module {
 // CHECK-NOT: pto.vmi.
   func.func @compact_broadcast_si32_4_2(%src: !pto.ptr<si32, ub>, %dst: !pto.ptr<si32, ub>) {
     %zero = arith.constant 0 : index
-    %x = pto.vmi.vload %src[%zero] : !pto.ptr<si32, ub> -> !pto.vmi.vreg<2xsi32>
+    %x = pto.vmi.vload %src[%zero] : !pto.ptr<si32, ub>, index -> !pto.vmi.vreg<2xsi32>
     %r = pto.vmi.vbrc %x {group = 2} : !pto.vmi.vreg<2xsi32> -> !pto.vmi.vreg<4xsi32>
-    pto.vmi.vstore %r, %dst[%zero] : !pto.vmi.vreg<4xsi32>, !pto.ptr<si32, ub>
+    pto.vmi.vstore %r, %dst[%zero] : !pto.vmi.vreg<4xsi32>, !pto.ptr<si32, ub>, index
     return
   }
 
@@ -989,9 +989,9 @@ module {
 // CHECK-NOT: pto.vmi.
   func.func @compact_broadcast_si32_4_4(%src: !pto.ptr<si32, ub>, %dst: !pto.ptr<si32, ub>) {
     %zero = arith.constant 0 : index
-    %x = pto.vmi.vload %src[%zero] : !pto.ptr<si32, ub> -> !pto.vmi.vreg<4xsi32>
+    %x = pto.vmi.vload %src[%zero] : !pto.ptr<si32, ub>, index -> !pto.vmi.vreg<4xsi32>
     %r = pto.vmi.vbrc %x {group = 4} : !pto.vmi.vreg<4xsi32> -> !pto.vmi.vreg<4xsi32>
-    pto.vmi.vstore %r, %dst[%zero] : !pto.vmi.vreg<4xsi32>, !pto.ptr<si32, ub>
+    pto.vmi.vstore %r, %dst[%zero] : !pto.vmi.vreg<4xsi32>, !pto.ptr<si32, ub>, index
     return
   }
 
@@ -1000,9 +1000,9 @@ module {
 // CHECK-NOT: pto.vmi.
   func.func @compact_broadcast_si32_8_1(%src: !pto.ptr<si32, ub>, %dst: !pto.ptr<si32, ub>) {
     %zero = arith.constant 0 : index
-    %x = pto.vmi.vload %src[%zero] : !pto.ptr<si32, ub> -> !pto.vmi.vreg<1xsi32>
+    %x = pto.vmi.vload %src[%zero] : !pto.ptr<si32, ub>, index -> !pto.vmi.vreg<1xsi32>
     %r = pto.vmi.vbrc %x {group = 1} : !pto.vmi.vreg<1xsi32> -> !pto.vmi.vreg<8xsi32>
-    pto.vmi.vstore %r, %dst[%zero] : !pto.vmi.vreg<8xsi32>, !pto.ptr<si32, ub>
+    pto.vmi.vstore %r, %dst[%zero] : !pto.vmi.vreg<8xsi32>, !pto.ptr<si32, ub>, index
     return
   }
 
@@ -1012,9 +1012,9 @@ module {
 // CHECK-NOT: pto.vmi.
   func.func @compact_broadcast_si32_8_2(%src: !pto.ptr<si32, ub>, %dst: !pto.ptr<si32, ub>) {
     %zero = arith.constant 0 : index
-    %x = pto.vmi.vload %src[%zero] : !pto.ptr<si32, ub> -> !pto.vmi.vreg<2xsi32>
+    %x = pto.vmi.vload %src[%zero] : !pto.ptr<si32, ub>, index -> !pto.vmi.vreg<2xsi32>
     %r = pto.vmi.vbrc %x {group = 2} : !pto.vmi.vreg<2xsi32> -> !pto.vmi.vreg<8xsi32>
-    pto.vmi.vstore %r, %dst[%zero] : !pto.vmi.vreg<8xsi32>, !pto.ptr<si32, ub>
+    pto.vmi.vstore %r, %dst[%zero] : !pto.vmi.vreg<8xsi32>, !pto.ptr<si32, ub>, index
     return
   }
 
@@ -1023,9 +1023,9 @@ module {
 // CHECK-NOT: pto.vmi.
   func.func @compact_broadcast_si32_8_4(%src: !pto.ptr<si32, ub>, %dst: !pto.ptr<si32, ub>) {
     %zero = arith.constant 0 : index
-    %x = pto.vmi.vload %src[%zero] : !pto.ptr<si32, ub> -> !pto.vmi.vreg<4xsi32>
+    %x = pto.vmi.vload %src[%zero] : !pto.ptr<si32, ub>, index -> !pto.vmi.vreg<4xsi32>
     %r = pto.vmi.vbrc %x {group = 4} : !pto.vmi.vreg<4xsi32> -> !pto.vmi.vreg<8xsi32>
-    pto.vmi.vstore %r, %dst[%zero] : !pto.vmi.vreg<8xsi32>, !pto.ptr<si32, ub>
+    pto.vmi.vstore %r, %dst[%zero] : !pto.vmi.vreg<8xsi32>, !pto.ptr<si32, ub>, index
     return
   }
 
@@ -1034,9 +1034,9 @@ module {
 // CHECK-NOT: pto.vmi.
   func.func @compact_broadcast_si32_8_8(%src: !pto.ptr<si32, ub>, %dst: !pto.ptr<si32, ub>) {
     %zero = arith.constant 0 : index
-    %x = pto.vmi.vload %src[%zero] : !pto.ptr<si32, ub> -> !pto.vmi.vreg<8xsi32>
+    %x = pto.vmi.vload %src[%zero] : !pto.ptr<si32, ub>, index -> !pto.vmi.vreg<8xsi32>
     %r = pto.vmi.vbrc %x {group = 8} : !pto.vmi.vreg<8xsi32> -> !pto.vmi.vreg<8xsi32>
-    pto.vmi.vstore %r, %dst[%zero] : !pto.vmi.vreg<8xsi32>, !pto.ptr<si32, ub>
+    pto.vmi.vstore %r, %dst[%zero] : !pto.vmi.vreg<8xsi32>, !pto.ptr<si32, ub>, index
     return
   }
 
@@ -1045,9 +1045,9 @@ module {
 // CHECK-NOT: pto.vmi.
   func.func @compact_broadcast_f16_1_1(%src: !pto.ptr<f16, ub>, %dst: !pto.ptr<f16, ub>) {
     %zero = arith.constant 0 : index
-    %x = pto.vmi.vload %src[%zero] : !pto.ptr<f16, ub> -> !pto.vmi.vreg<1xf16>
+    %x = pto.vmi.vload %src[%zero] : !pto.ptr<f16, ub>, index -> !pto.vmi.vreg<1xf16>
     %r = pto.vmi.vbrc %x {group = 1} : !pto.vmi.vreg<1xf16> -> !pto.vmi.vreg<1xf16>
-    pto.vmi.vstore %r, %dst[%zero] : !pto.vmi.vreg<1xf16>, !pto.ptr<f16, ub>
+    pto.vmi.vstore %r, %dst[%zero] : !pto.vmi.vreg<1xf16>, !pto.ptr<f16, ub>, index
     return
   }
 
@@ -1057,9 +1057,9 @@ module {
 // CHECK-NOT: pto.vmi.
   func.func @compact_broadcast_f16_2_1(%src: !pto.ptr<f16, ub>, %dst: !pto.ptr<f16, ub>) {
     %zero = arith.constant 0 : index
-    %x = pto.vmi.vload %src[%zero] : !pto.ptr<f16, ub> -> !pto.vmi.vreg<1xf16>
+    %x = pto.vmi.vload %src[%zero] : !pto.ptr<f16, ub>, index -> !pto.vmi.vreg<1xf16>
     %r = pto.vmi.vbrc %x {group = 1} : !pto.vmi.vreg<1xf16> -> !pto.vmi.vreg<2xf16>
-    pto.vmi.vstore %r, %dst[%zero] : !pto.vmi.vreg<2xf16>, !pto.ptr<f16, ub>
+    pto.vmi.vstore %r, %dst[%zero] : !pto.vmi.vreg<2xf16>, !pto.ptr<f16, ub>, index
     return
   }
 
@@ -1069,9 +1069,9 @@ module {
 // CHECK-NOT: pto.vmi.
   func.func @compact_broadcast_f16_2_2(%src: !pto.ptr<f16, ub>, %dst: !pto.ptr<f16, ub>) {
     %zero = arith.constant 0 : index
-    %x = pto.vmi.vload %src[%zero] : !pto.ptr<f16, ub> -> !pto.vmi.vreg<2xf16>
+    %x = pto.vmi.vload %src[%zero] : !pto.ptr<f16, ub>, index -> !pto.vmi.vreg<2xf16>
     %r = pto.vmi.vbrc %x {group = 2} : !pto.vmi.vreg<2xf16> -> !pto.vmi.vreg<2xf16>
-    pto.vmi.vstore %r, %dst[%zero] : !pto.vmi.vreg<2xf16>, !pto.ptr<f16, ub>
+    pto.vmi.vstore %r, %dst[%zero] : !pto.vmi.vreg<2xf16>, !pto.ptr<f16, ub>, index
     return
   }
 
@@ -1080,9 +1080,9 @@ module {
 // CHECK-NOT: pto.vmi.
   func.func @compact_broadcast_f16_4_1(%src: !pto.ptr<f16, ub>, %dst: !pto.ptr<f16, ub>) {
     %zero = arith.constant 0 : index
-    %x = pto.vmi.vload %src[%zero] : !pto.ptr<f16, ub> -> !pto.vmi.vreg<1xf16>
+    %x = pto.vmi.vload %src[%zero] : !pto.ptr<f16, ub>, index -> !pto.vmi.vreg<1xf16>
     %r = pto.vmi.vbrc %x {group = 1} : !pto.vmi.vreg<1xf16> -> !pto.vmi.vreg<4xf16>
-    pto.vmi.vstore %r, %dst[%zero] : !pto.vmi.vreg<4xf16>, !pto.ptr<f16, ub>
+    pto.vmi.vstore %r, %dst[%zero] : !pto.vmi.vreg<4xf16>, !pto.ptr<f16, ub>, index
     return
   }
 
@@ -1092,9 +1092,9 @@ module {
 // CHECK-NOT: pto.vmi.
   func.func @compact_broadcast_f16_4_2(%src: !pto.ptr<f16, ub>, %dst: !pto.ptr<f16, ub>) {
     %zero = arith.constant 0 : index
-    %x = pto.vmi.vload %src[%zero] : !pto.ptr<f16, ub> -> !pto.vmi.vreg<2xf16>
+    %x = pto.vmi.vload %src[%zero] : !pto.ptr<f16, ub>, index -> !pto.vmi.vreg<2xf16>
     %r = pto.vmi.vbrc %x {group = 2} : !pto.vmi.vreg<2xf16> -> !pto.vmi.vreg<4xf16>
-    pto.vmi.vstore %r, %dst[%zero] : !pto.vmi.vreg<4xf16>, !pto.ptr<f16, ub>
+    pto.vmi.vstore %r, %dst[%zero] : !pto.vmi.vreg<4xf16>, !pto.ptr<f16, ub>, index
     return
   }
 
@@ -1103,9 +1103,9 @@ module {
 // CHECK-NOT: pto.vmi.
   func.func @compact_broadcast_f16_4_4(%src: !pto.ptr<f16, ub>, %dst: !pto.ptr<f16, ub>) {
     %zero = arith.constant 0 : index
-    %x = pto.vmi.vload %src[%zero] : !pto.ptr<f16, ub> -> !pto.vmi.vreg<4xf16>
+    %x = pto.vmi.vload %src[%zero] : !pto.ptr<f16, ub>, index -> !pto.vmi.vreg<4xf16>
     %r = pto.vmi.vbrc %x {group = 4} : !pto.vmi.vreg<4xf16> -> !pto.vmi.vreg<4xf16>
-    pto.vmi.vstore %r, %dst[%zero] : !pto.vmi.vreg<4xf16>, !pto.ptr<f16, ub>
+    pto.vmi.vstore %r, %dst[%zero] : !pto.vmi.vreg<4xf16>, !pto.ptr<f16, ub>, index
     return
   }
 
@@ -1114,9 +1114,9 @@ module {
 // CHECK-NOT: pto.vmi.
   func.func @compact_broadcast_f16_8_1(%src: !pto.ptr<f16, ub>, %dst: !pto.ptr<f16, ub>) {
     %zero = arith.constant 0 : index
-    %x = pto.vmi.vload %src[%zero] : !pto.ptr<f16, ub> -> !pto.vmi.vreg<1xf16>
+    %x = pto.vmi.vload %src[%zero] : !pto.ptr<f16, ub>, index -> !pto.vmi.vreg<1xf16>
     %r = pto.vmi.vbrc %x {group = 1} : !pto.vmi.vreg<1xf16> -> !pto.vmi.vreg<8xf16>
-    pto.vmi.vstore %r, %dst[%zero] : !pto.vmi.vreg<8xf16>, !pto.ptr<f16, ub>
+    pto.vmi.vstore %r, %dst[%zero] : !pto.vmi.vreg<8xf16>, !pto.ptr<f16, ub>, index
     return
   }
 
@@ -1126,9 +1126,9 @@ module {
 // CHECK-NOT: pto.vmi.
   func.func @compact_broadcast_f16_8_2(%src: !pto.ptr<f16, ub>, %dst: !pto.ptr<f16, ub>) {
     %zero = arith.constant 0 : index
-    %x = pto.vmi.vload %src[%zero] : !pto.ptr<f16, ub> -> !pto.vmi.vreg<2xf16>
+    %x = pto.vmi.vload %src[%zero] : !pto.ptr<f16, ub>, index -> !pto.vmi.vreg<2xf16>
     %r = pto.vmi.vbrc %x {group = 2} : !pto.vmi.vreg<2xf16> -> !pto.vmi.vreg<8xf16>
-    pto.vmi.vstore %r, %dst[%zero] : !pto.vmi.vreg<8xf16>, !pto.ptr<f16, ub>
+    pto.vmi.vstore %r, %dst[%zero] : !pto.vmi.vreg<8xf16>, !pto.ptr<f16, ub>, index
     return
   }
 
@@ -1137,9 +1137,9 @@ module {
 // CHECK-NOT: pto.vmi.
   func.func @compact_broadcast_f16_8_4(%src: !pto.ptr<f16, ub>, %dst: !pto.ptr<f16, ub>) {
     %zero = arith.constant 0 : index
-    %x = pto.vmi.vload %src[%zero] : !pto.ptr<f16, ub> -> !pto.vmi.vreg<4xf16>
+    %x = pto.vmi.vload %src[%zero] : !pto.ptr<f16, ub>, index -> !pto.vmi.vreg<4xf16>
     %r = pto.vmi.vbrc %x {group = 4} : !pto.vmi.vreg<4xf16> -> !pto.vmi.vreg<8xf16>
-    pto.vmi.vstore %r, %dst[%zero] : !pto.vmi.vreg<8xf16>, !pto.ptr<f16, ub>
+    pto.vmi.vstore %r, %dst[%zero] : !pto.vmi.vreg<8xf16>, !pto.ptr<f16, ub>, index
     return
   }
 
@@ -1148,9 +1148,9 @@ module {
 // CHECK-NOT: pto.vmi.
   func.func @compact_broadcast_f16_8_8(%src: !pto.ptr<f16, ub>, %dst: !pto.ptr<f16, ub>) {
     %zero = arith.constant 0 : index
-    %x = pto.vmi.vload %src[%zero] : !pto.ptr<f16, ub> -> !pto.vmi.vreg<8xf16>
+    %x = pto.vmi.vload %src[%zero] : !pto.ptr<f16, ub>, index -> !pto.vmi.vreg<8xf16>
     %r = pto.vmi.vbrc %x {group = 8} : !pto.vmi.vreg<8xf16> -> !pto.vmi.vreg<8xf16>
-    pto.vmi.vstore %r, %dst[%zero] : !pto.vmi.vreg<8xf16>, !pto.ptr<f16, ub>
+    pto.vmi.vstore %r, %dst[%zero] : !pto.vmi.vreg<8xf16>, !pto.ptr<f16, ub>, index
     return
   }
 
@@ -1159,9 +1159,9 @@ module {
 // CHECK-NOT: pto.vmi.
   func.func @compact_broadcast_bf16_1_1(%src: !pto.ptr<bf16, ub>, %dst: !pto.ptr<bf16, ub>) {
     %zero = arith.constant 0 : index
-    %x = pto.vmi.vload %src[%zero] : !pto.ptr<bf16, ub> -> !pto.vmi.vreg<1xbf16>
+    %x = pto.vmi.vload %src[%zero] : !pto.ptr<bf16, ub>, index -> !pto.vmi.vreg<1xbf16>
     %r = pto.vmi.vbrc %x {group = 1} : !pto.vmi.vreg<1xbf16> -> !pto.vmi.vreg<1xbf16>
-    pto.vmi.vstore %r, %dst[%zero] : !pto.vmi.vreg<1xbf16>, !pto.ptr<bf16, ub>
+    pto.vmi.vstore %r, %dst[%zero] : !pto.vmi.vreg<1xbf16>, !pto.ptr<bf16, ub>, index
     return
   }
 
@@ -1171,9 +1171,9 @@ module {
 // CHECK-NOT: pto.vmi.
   func.func @compact_broadcast_bf16_2_1(%src: !pto.ptr<bf16, ub>, %dst: !pto.ptr<bf16, ub>) {
     %zero = arith.constant 0 : index
-    %x = pto.vmi.vload %src[%zero] : !pto.ptr<bf16, ub> -> !pto.vmi.vreg<1xbf16>
+    %x = pto.vmi.vload %src[%zero] : !pto.ptr<bf16, ub>, index -> !pto.vmi.vreg<1xbf16>
     %r = pto.vmi.vbrc %x {group = 1} : !pto.vmi.vreg<1xbf16> -> !pto.vmi.vreg<2xbf16>
-    pto.vmi.vstore %r, %dst[%zero] : !pto.vmi.vreg<2xbf16>, !pto.ptr<bf16, ub>
+    pto.vmi.vstore %r, %dst[%zero] : !pto.vmi.vreg<2xbf16>, !pto.ptr<bf16, ub>, index
     return
   }
 
@@ -1183,9 +1183,9 @@ module {
 // CHECK-NOT: pto.vmi.
   func.func @compact_broadcast_bf16_2_2(%src: !pto.ptr<bf16, ub>, %dst: !pto.ptr<bf16, ub>) {
     %zero = arith.constant 0 : index
-    %x = pto.vmi.vload %src[%zero] : !pto.ptr<bf16, ub> -> !pto.vmi.vreg<2xbf16>
+    %x = pto.vmi.vload %src[%zero] : !pto.ptr<bf16, ub>, index -> !pto.vmi.vreg<2xbf16>
     %r = pto.vmi.vbrc %x {group = 2} : !pto.vmi.vreg<2xbf16> -> !pto.vmi.vreg<2xbf16>
-    pto.vmi.vstore %r, %dst[%zero] : !pto.vmi.vreg<2xbf16>, !pto.ptr<bf16, ub>
+    pto.vmi.vstore %r, %dst[%zero] : !pto.vmi.vreg<2xbf16>, !pto.ptr<bf16, ub>, index
     return
   }
 
@@ -1194,9 +1194,9 @@ module {
 // CHECK-NOT: pto.vmi.
   func.func @compact_broadcast_bf16_4_1(%src: !pto.ptr<bf16, ub>, %dst: !pto.ptr<bf16, ub>) {
     %zero = arith.constant 0 : index
-    %x = pto.vmi.vload %src[%zero] : !pto.ptr<bf16, ub> -> !pto.vmi.vreg<1xbf16>
+    %x = pto.vmi.vload %src[%zero] : !pto.ptr<bf16, ub>, index -> !pto.vmi.vreg<1xbf16>
     %r = pto.vmi.vbrc %x {group = 1} : !pto.vmi.vreg<1xbf16> -> !pto.vmi.vreg<4xbf16>
-    pto.vmi.vstore %r, %dst[%zero] : !pto.vmi.vreg<4xbf16>, !pto.ptr<bf16, ub>
+    pto.vmi.vstore %r, %dst[%zero] : !pto.vmi.vreg<4xbf16>, !pto.ptr<bf16, ub>, index
     return
   }
 
@@ -1206,9 +1206,9 @@ module {
 // CHECK-NOT: pto.vmi.
   func.func @compact_broadcast_bf16_4_2(%src: !pto.ptr<bf16, ub>, %dst: !pto.ptr<bf16, ub>) {
     %zero = arith.constant 0 : index
-    %x = pto.vmi.vload %src[%zero] : !pto.ptr<bf16, ub> -> !pto.vmi.vreg<2xbf16>
+    %x = pto.vmi.vload %src[%zero] : !pto.ptr<bf16, ub>, index -> !pto.vmi.vreg<2xbf16>
     %r = pto.vmi.vbrc %x {group = 2} : !pto.vmi.vreg<2xbf16> -> !pto.vmi.vreg<4xbf16>
-    pto.vmi.vstore %r, %dst[%zero] : !pto.vmi.vreg<4xbf16>, !pto.ptr<bf16, ub>
+    pto.vmi.vstore %r, %dst[%zero] : !pto.vmi.vreg<4xbf16>, !pto.ptr<bf16, ub>, index
     return
   }
 
@@ -1217,9 +1217,9 @@ module {
 // CHECK-NOT: pto.vmi.
   func.func @compact_broadcast_bf16_4_4(%src: !pto.ptr<bf16, ub>, %dst: !pto.ptr<bf16, ub>) {
     %zero = arith.constant 0 : index
-    %x = pto.vmi.vload %src[%zero] : !pto.ptr<bf16, ub> -> !pto.vmi.vreg<4xbf16>
+    %x = pto.vmi.vload %src[%zero] : !pto.ptr<bf16, ub>, index -> !pto.vmi.vreg<4xbf16>
     %r = pto.vmi.vbrc %x {group = 4} : !pto.vmi.vreg<4xbf16> -> !pto.vmi.vreg<4xbf16>
-    pto.vmi.vstore %r, %dst[%zero] : !pto.vmi.vreg<4xbf16>, !pto.ptr<bf16, ub>
+    pto.vmi.vstore %r, %dst[%zero] : !pto.vmi.vreg<4xbf16>, !pto.ptr<bf16, ub>, index
     return
   }
 
@@ -1228,9 +1228,9 @@ module {
 // CHECK-NOT: pto.vmi.
   func.func @compact_broadcast_bf16_8_1(%src: !pto.ptr<bf16, ub>, %dst: !pto.ptr<bf16, ub>) {
     %zero = arith.constant 0 : index
-    %x = pto.vmi.vload %src[%zero] : !pto.ptr<bf16, ub> -> !pto.vmi.vreg<1xbf16>
+    %x = pto.vmi.vload %src[%zero] : !pto.ptr<bf16, ub>, index -> !pto.vmi.vreg<1xbf16>
     %r = pto.vmi.vbrc %x {group = 1} : !pto.vmi.vreg<1xbf16> -> !pto.vmi.vreg<8xbf16>
-    pto.vmi.vstore %r, %dst[%zero] : !pto.vmi.vreg<8xbf16>, !pto.ptr<bf16, ub>
+    pto.vmi.vstore %r, %dst[%zero] : !pto.vmi.vreg<8xbf16>, !pto.ptr<bf16, ub>, index
     return
   }
 
@@ -1240,9 +1240,9 @@ module {
 // CHECK-NOT: pto.vmi.
   func.func @compact_broadcast_bf16_8_2(%src: !pto.ptr<bf16, ub>, %dst: !pto.ptr<bf16, ub>) {
     %zero = arith.constant 0 : index
-    %x = pto.vmi.vload %src[%zero] : !pto.ptr<bf16, ub> -> !pto.vmi.vreg<2xbf16>
+    %x = pto.vmi.vload %src[%zero] : !pto.ptr<bf16, ub>, index -> !pto.vmi.vreg<2xbf16>
     %r = pto.vmi.vbrc %x {group = 2} : !pto.vmi.vreg<2xbf16> -> !pto.vmi.vreg<8xbf16>
-    pto.vmi.vstore %r, %dst[%zero] : !pto.vmi.vreg<8xbf16>, !pto.ptr<bf16, ub>
+    pto.vmi.vstore %r, %dst[%zero] : !pto.vmi.vreg<8xbf16>, !pto.ptr<bf16, ub>, index
     return
   }
 
@@ -1251,9 +1251,9 @@ module {
 // CHECK-NOT: pto.vmi.
   func.func @compact_broadcast_bf16_8_4(%src: !pto.ptr<bf16, ub>, %dst: !pto.ptr<bf16, ub>) {
     %zero = arith.constant 0 : index
-    %x = pto.vmi.vload %src[%zero] : !pto.ptr<bf16, ub> -> !pto.vmi.vreg<4xbf16>
+    %x = pto.vmi.vload %src[%zero] : !pto.ptr<bf16, ub>, index -> !pto.vmi.vreg<4xbf16>
     %r = pto.vmi.vbrc %x {group = 4} : !pto.vmi.vreg<4xbf16> -> !pto.vmi.vreg<8xbf16>
-    pto.vmi.vstore %r, %dst[%zero] : !pto.vmi.vreg<8xbf16>, !pto.ptr<bf16, ub>
+    pto.vmi.vstore %r, %dst[%zero] : !pto.vmi.vreg<8xbf16>, !pto.ptr<bf16, ub>, index
     return
   }
 
@@ -1262,9 +1262,9 @@ module {
 // CHECK-NOT: pto.vmi.
   func.func @compact_broadcast_bf16_8_8(%src: !pto.ptr<bf16, ub>, %dst: !pto.ptr<bf16, ub>) {
     %zero = arith.constant 0 : index
-    %x = pto.vmi.vload %src[%zero] : !pto.ptr<bf16, ub> -> !pto.vmi.vreg<8xbf16>
+    %x = pto.vmi.vload %src[%zero] : !pto.ptr<bf16, ub>, index -> !pto.vmi.vreg<8xbf16>
     %r = pto.vmi.vbrc %x {group = 8} : !pto.vmi.vreg<8xbf16> -> !pto.vmi.vreg<8xbf16>
-    pto.vmi.vstore %r, %dst[%zero] : !pto.vmi.vreg<8xbf16>, !pto.ptr<bf16, ub>
+    pto.vmi.vstore %r, %dst[%zero] : !pto.vmi.vreg<8xbf16>, !pto.ptr<bf16, ub>, index
     return
   }
 
@@ -1273,9 +1273,9 @@ module {
 // CHECK-NOT: pto.vmi.
   func.func @compact_broadcast_f32_1_1(%src: !pto.ptr<f32, ub>, %dst: !pto.ptr<f32, ub>) {
     %zero = arith.constant 0 : index
-    %x = pto.vmi.vload %src[%zero] : !pto.ptr<f32, ub> -> !pto.vmi.vreg<1xf32>
+    %x = pto.vmi.vload %src[%zero] : !pto.ptr<f32, ub>, index -> !pto.vmi.vreg<1xf32>
     %r = pto.vmi.vbrc %x {group = 1} : !pto.vmi.vreg<1xf32> -> !pto.vmi.vreg<1xf32>
-    pto.vmi.vstore %r, %dst[%zero] : !pto.vmi.vreg<1xf32>, !pto.ptr<f32, ub>
+    pto.vmi.vstore %r, %dst[%zero] : !pto.vmi.vreg<1xf32>, !pto.ptr<f32, ub>, index
     return
   }
 
@@ -1285,9 +1285,9 @@ module {
 // CHECK-NOT: pto.vmi.
   func.func @compact_broadcast_f32_2_1(%src: !pto.ptr<f32, ub>, %dst: !pto.ptr<f32, ub>) {
     %zero = arith.constant 0 : index
-    %x = pto.vmi.vload %src[%zero] : !pto.ptr<f32, ub> -> !pto.vmi.vreg<1xf32>
+    %x = pto.vmi.vload %src[%zero] : !pto.ptr<f32, ub>, index -> !pto.vmi.vreg<1xf32>
     %r = pto.vmi.vbrc %x {group = 1} : !pto.vmi.vreg<1xf32> -> !pto.vmi.vreg<2xf32>
-    pto.vmi.vstore %r, %dst[%zero] : !pto.vmi.vreg<2xf32>, !pto.ptr<f32, ub>
+    pto.vmi.vstore %r, %dst[%zero] : !pto.vmi.vreg<2xf32>, !pto.ptr<f32, ub>, index
     return
   }
 
@@ -1297,9 +1297,9 @@ module {
 // CHECK-NOT: pto.vmi.
   func.func @compact_broadcast_f32_2_2(%src: !pto.ptr<f32, ub>, %dst: !pto.ptr<f32, ub>) {
     %zero = arith.constant 0 : index
-    %x = pto.vmi.vload %src[%zero] : !pto.ptr<f32, ub> -> !pto.vmi.vreg<2xf32>
+    %x = pto.vmi.vload %src[%zero] : !pto.ptr<f32, ub>, index -> !pto.vmi.vreg<2xf32>
     %r = pto.vmi.vbrc %x {group = 2} : !pto.vmi.vreg<2xf32> -> !pto.vmi.vreg<2xf32>
-    pto.vmi.vstore %r, %dst[%zero] : !pto.vmi.vreg<2xf32>, !pto.ptr<f32, ub>
+    pto.vmi.vstore %r, %dst[%zero] : !pto.vmi.vreg<2xf32>, !pto.ptr<f32, ub>, index
     return
   }
 
@@ -1308,9 +1308,9 @@ module {
 // CHECK-NOT: pto.vmi.
   func.func @compact_broadcast_f32_4_1(%src: !pto.ptr<f32, ub>, %dst: !pto.ptr<f32, ub>) {
     %zero = arith.constant 0 : index
-    %x = pto.vmi.vload %src[%zero] : !pto.ptr<f32, ub> -> !pto.vmi.vreg<1xf32>
+    %x = pto.vmi.vload %src[%zero] : !pto.ptr<f32, ub>, index -> !pto.vmi.vreg<1xf32>
     %r = pto.vmi.vbrc %x {group = 1} : !pto.vmi.vreg<1xf32> -> !pto.vmi.vreg<4xf32>
-    pto.vmi.vstore %r, %dst[%zero] : !pto.vmi.vreg<4xf32>, !pto.ptr<f32, ub>
+    pto.vmi.vstore %r, %dst[%zero] : !pto.vmi.vreg<4xf32>, !pto.ptr<f32, ub>, index
     return
   }
 
@@ -1320,9 +1320,9 @@ module {
 // CHECK-NOT: pto.vmi.
   func.func @compact_broadcast_f32_4_2(%src: !pto.ptr<f32, ub>, %dst: !pto.ptr<f32, ub>) {
     %zero = arith.constant 0 : index
-    %x = pto.vmi.vload %src[%zero] : !pto.ptr<f32, ub> -> !pto.vmi.vreg<2xf32>
+    %x = pto.vmi.vload %src[%zero] : !pto.ptr<f32, ub>, index -> !pto.vmi.vreg<2xf32>
     %r = pto.vmi.vbrc %x {group = 2} : !pto.vmi.vreg<2xf32> -> !pto.vmi.vreg<4xf32>
-    pto.vmi.vstore %r, %dst[%zero] : !pto.vmi.vreg<4xf32>, !pto.ptr<f32, ub>
+    pto.vmi.vstore %r, %dst[%zero] : !pto.vmi.vreg<4xf32>, !pto.ptr<f32, ub>, index
     return
   }
 
@@ -1331,9 +1331,9 @@ module {
 // CHECK-NOT: pto.vmi.
   func.func @compact_broadcast_f32_4_4(%src: !pto.ptr<f32, ub>, %dst: !pto.ptr<f32, ub>) {
     %zero = arith.constant 0 : index
-    %x = pto.vmi.vload %src[%zero] : !pto.ptr<f32, ub> -> !pto.vmi.vreg<4xf32>
+    %x = pto.vmi.vload %src[%zero] : !pto.ptr<f32, ub>, index -> !pto.vmi.vreg<4xf32>
     %r = pto.vmi.vbrc %x {group = 4} : !pto.vmi.vreg<4xf32> -> !pto.vmi.vreg<4xf32>
-    pto.vmi.vstore %r, %dst[%zero] : !pto.vmi.vreg<4xf32>, !pto.ptr<f32, ub>
+    pto.vmi.vstore %r, %dst[%zero] : !pto.vmi.vreg<4xf32>, !pto.ptr<f32, ub>, index
     return
   }
 
@@ -1342,9 +1342,9 @@ module {
 // CHECK-NOT: pto.vmi.
   func.func @compact_broadcast_f32_8_1(%src: !pto.ptr<f32, ub>, %dst: !pto.ptr<f32, ub>) {
     %zero = arith.constant 0 : index
-    %x = pto.vmi.vload %src[%zero] : !pto.ptr<f32, ub> -> !pto.vmi.vreg<1xf32>
+    %x = pto.vmi.vload %src[%zero] : !pto.ptr<f32, ub>, index -> !pto.vmi.vreg<1xf32>
     %r = pto.vmi.vbrc %x {group = 1} : !pto.vmi.vreg<1xf32> -> !pto.vmi.vreg<8xf32>
-    pto.vmi.vstore %r, %dst[%zero] : !pto.vmi.vreg<8xf32>, !pto.ptr<f32, ub>
+    pto.vmi.vstore %r, %dst[%zero] : !pto.vmi.vreg<8xf32>, !pto.ptr<f32, ub>, index
     return
   }
 
@@ -1354,9 +1354,9 @@ module {
 // CHECK-NOT: pto.vmi.
   func.func @compact_broadcast_f32_8_2(%src: !pto.ptr<f32, ub>, %dst: !pto.ptr<f32, ub>) {
     %zero = arith.constant 0 : index
-    %x = pto.vmi.vload %src[%zero] : !pto.ptr<f32, ub> -> !pto.vmi.vreg<2xf32>
+    %x = pto.vmi.vload %src[%zero] : !pto.ptr<f32, ub>, index -> !pto.vmi.vreg<2xf32>
     %r = pto.vmi.vbrc %x {group = 2} : !pto.vmi.vreg<2xf32> -> !pto.vmi.vreg<8xf32>
-    pto.vmi.vstore %r, %dst[%zero] : !pto.vmi.vreg<8xf32>, !pto.ptr<f32, ub>
+    pto.vmi.vstore %r, %dst[%zero] : !pto.vmi.vreg<8xf32>, !pto.ptr<f32, ub>, index
     return
   }
 
@@ -1365,9 +1365,9 @@ module {
 // CHECK-NOT: pto.vmi.
   func.func @compact_broadcast_f32_8_4(%src: !pto.ptr<f32, ub>, %dst: !pto.ptr<f32, ub>) {
     %zero = arith.constant 0 : index
-    %x = pto.vmi.vload %src[%zero] : !pto.ptr<f32, ub> -> !pto.vmi.vreg<4xf32>
+    %x = pto.vmi.vload %src[%zero] : !pto.ptr<f32, ub>, index -> !pto.vmi.vreg<4xf32>
     %r = pto.vmi.vbrc %x {group = 4} : !pto.vmi.vreg<4xf32> -> !pto.vmi.vreg<8xf32>
-    pto.vmi.vstore %r, %dst[%zero] : !pto.vmi.vreg<8xf32>, !pto.ptr<f32, ub>
+    pto.vmi.vstore %r, %dst[%zero] : !pto.vmi.vreg<8xf32>, !pto.ptr<f32, ub>, index
     return
   }
 
@@ -1376,9 +1376,9 @@ module {
 // CHECK-NOT: pto.vmi.
   func.func @compact_broadcast_f32_8_8(%src: !pto.ptr<f32, ub>, %dst: !pto.ptr<f32, ub>) {
     %zero = arith.constant 0 : index
-    %x = pto.vmi.vload %src[%zero] : !pto.ptr<f32, ub> -> !pto.vmi.vreg<8xf32>
+    %x = pto.vmi.vload %src[%zero] : !pto.ptr<f32, ub>, index -> !pto.vmi.vreg<8xf32>
     %r = pto.vmi.vbrc %x {group = 8} : !pto.vmi.vreg<8xf32> -> !pto.vmi.vreg<8xf32>
-    pto.vmi.vstore %r, %dst[%zero] : !pto.vmi.vreg<8xf32>, !pto.ptr<f32, ub>
+    pto.vmi.vstore %r, %dst[%zero] : !pto.vmi.vreg<8xf32>, !pto.ptr<f32, ub>, index
     return
   }
 

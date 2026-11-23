@@ -21,11 +21,10 @@ void PldsOp::getEffects(
 }
 
 LogicalResult PldsOp::verify() {
-  return verifyPredicateLoadOp(
-      *this, [&]() -> LogicalResult {
+    return verifyPredicateLoadOp(*this, [&]() -> LogicalResult {
         if (!isElementOffsetType(getOffset().getType())) {
-          return emitOpError("requires an index or signless integer element offset");
+            return emitOpError("requires an index, i32 or i64 element offset");
         }
         return success();
-      });
+    });
 }

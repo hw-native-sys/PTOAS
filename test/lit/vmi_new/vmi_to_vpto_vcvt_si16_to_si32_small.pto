@@ -17,12 +17,12 @@ module attributes {pto.target_arch = "a5", pto.kernel_kind = #pto.kernel_kind<ve
     %c16 = arith.constant 16 : index
     %aoff = arith.muli %off, %c16 : index
     pto.vecscope {
-      %v = pto.vmi.vload %src[%aoff] : !pto.ptr<si16, ub> -> !pto.vmi.vreg<2xsi16>
+      %v = pto.vmi.vload %src[%aoff] : !pto.ptr<si16, ub>, index -> !pto.vmi.vreg<2xsi16>
       %a = pto.vmi.vmul %v, %v
           : !pto.vmi.vreg<2xsi16>, !pto.vmi.vreg<2xsi16>
           -> !pto.vmi.vreg<2xsi16>
       %w = pto.vmi.vcvt %a : !pto.vmi.vreg<2xsi16> -> !pto.vmi.vreg<2xsi32>
-      pto.vmi.vstore %w, %dst[%aoff] : !pto.vmi.vreg<2xsi32>, !pto.ptr<si32, ub>
+      pto.vmi.vstore %w, %dst[%aoff] : !pto.vmi.vreg<2xsi32>, !pto.ptr<si32, ub>, index
     }
     return
   }
@@ -30,12 +30,12 @@ module attributes {pto.target_arch = "a5", pto.kernel_kind = #pto.kernel_kind<ve
     %c16 = arith.constant 16 : index
     %aoff = arith.muli %off, %c16 : index
     pto.vecscope {
-      %v = pto.vmi.vload %src[%aoff] : !pto.ptr<si16, ub> -> !pto.vmi.vreg<4xsi16>
+      %v = pto.vmi.vload %src[%aoff] : !pto.ptr<si16, ub>, index -> !pto.vmi.vreg<4xsi16>
       %a = pto.vmi.vmul %v, %v
           : !pto.vmi.vreg<4xsi16>, !pto.vmi.vreg<4xsi16>
           -> !pto.vmi.vreg<4xsi16>
       %w = pto.vmi.vcvt %a : !pto.vmi.vreg<4xsi16> -> !pto.vmi.vreg<4xsi32>
-      pto.vmi.vstore %w, %dst[%aoff] : !pto.vmi.vreg<4xsi32>, !pto.ptr<si32, ub>
+      pto.vmi.vstore %w, %dst[%aoff] : !pto.vmi.vreg<4xsi32>, !pto.ptr<si32, ub>, index
     }
     return
   }
@@ -43,12 +43,12 @@ module attributes {pto.target_arch = "a5", pto.kernel_kind = #pto.kernel_kind<ve
     %c16 = arith.constant 16 : index
     %aoff = arith.muli %off, %c16 : index
     pto.vecscope {
-      %v = pto.vmi.vload %src[%aoff] : !pto.ptr<si16, ub> -> !pto.vmi.vreg<8xsi16>
+      %v = pto.vmi.vload %src[%aoff] : !pto.ptr<si16, ub>, index -> !pto.vmi.vreg<8xsi16>
       %a = pto.vmi.vmul %v, %v
           : !pto.vmi.vreg<8xsi16>, !pto.vmi.vreg<8xsi16>
           -> !pto.vmi.vreg<8xsi16>
       %w = pto.vmi.vcvt %a : !pto.vmi.vreg<8xsi16> -> !pto.vmi.vreg<8xsi32>
-      pto.vmi.vstore %w, %dst[%aoff] : !pto.vmi.vreg<8xsi32>, !pto.ptr<si32, ub>
+      pto.vmi.vstore %w, %dst[%aoff] : !pto.vmi.vreg<8xsi32>, !pto.ptr<si32, ub>, index
     }
     return
   }
@@ -70,12 +70,12 @@ module attributes {pto.target_arch = "a5", pto.kernel_kind = #pto.kernel_kind<ve
 // LAYOUT-NEXT: %[[VAL_3:[a-zA-Z0-9_.$-]+]] = arith.constant 16 : index
 // LAYOUT-NEXT: %[[VAL_4:[a-zA-Z0-9_.$-]+]] = arith.muli %[[VAL_2]], %[[VAL_3]] : index
 // LAYOUT-NEXT: pto.vecscope {
-// LAYOUT-NEXT: %[[VAL_5:[a-zA-Z0-9_.$-]+]] = pto.vmi.load %[[VAL_0]]{{\[}}%[[VAL_4]]] : !pto.ptr<si16, ub> -> !pto.vmi.vreg<2xsi16, #pto.vmi.layout<contiguous>>
+// LAYOUT-NEXT: %[[VAL_5:[a-zA-Z0-9_.$-]+]] = pto.vmi.load %[[VAL_0]]{{\[}}%[[VAL_4]]] : !pto.ptr<si16, ub>, index -> !pto.vmi.vreg<2xsi16, #pto.vmi.layout<contiguous>>
 // LAYOUT-NEXT: %[[VAL_6:[a-zA-Z0-9_.$-]+]] = pto.vmi.vmul %[[VAL_5]], %[[VAL_5]] : !pto.vmi.vreg<2xsi16, #pto.vmi.layout<contiguous>>, !pto.vmi.vreg<2xsi16, #pto.vmi.layout<contiguous>> -> !pto.vmi.vreg<2xsi16, #pto.vmi.layout<contiguous>>
 // LAYOUT-NEXT: %[[VAL_7:[a-zA-Z0-9_.$-]+]] = pto.vmi.ensure_layout %[[VAL_6]] : !pto.vmi.vreg<2xsi16, #pto.vmi.layout<contiguous>> -> !pto.vmi.vreg<2xsi16, #pto.vmi.layout<num_groups = 2, slots = 8, lane_stride = 2>>
 // LAYOUT-NEXT: %[[VAL_8:[a-zA-Z0-9_.$-]+]] = pto.vmi.extsi %[[VAL_7]] : !pto.vmi.vreg<2xsi16, #pto.vmi.layout<num_groups = 2, slots = 8, lane_stride = 2>> -> !pto.vmi.vreg<2xsi32, #pto.vmi.layout<num_groups = 2, slots = 8>>
 // LAYOUT-NEXT: %[[VAL_9:[a-zA-Z0-9_.$-]+]] = arith.constant 1 : index
-// LAYOUT-NEXT: pto.vmi.group_store %[[VAL_8]], %[[VAL_1]]{{\[}}%[[VAL_4]]], %[[VAL_9]] {num_groups = 2 : i64} : !pto.vmi.vreg<2xsi32, #pto.vmi.layout<num_groups = 2, slots = 8>>, !pto.ptr<si32, ub>
+// LAYOUT-NEXT: pto.vmi.group_store %[[VAL_8]], %[[VAL_1]]{{\[}}%[[VAL_4]]], %[[VAL_9]] {num_groups = 2 : i64} : !pto.vmi.vreg<2xsi32, #pto.vmi.layout<num_groups = 2, slots = 8>>, !pto.ptr<si32, ub>, index
 // LAYOUT-NEXT: }
 // LAYOUT-NEXT: return
 // LAYOUT-NEXT: }
@@ -86,12 +86,12 @@ module attributes {pto.target_arch = "a5", pto.kernel_kind = #pto.kernel_kind<ve
 // LAYOUT-NEXT: %[[VAL_3:[a-zA-Z0-9_.$-]+]] = arith.constant 16 : index
 // LAYOUT-NEXT: %[[VAL_4:[a-zA-Z0-9_.$-]+]] = arith.muli %[[VAL_2]], %[[VAL_3]] : index
 // LAYOUT-NEXT: pto.vecscope {
-// LAYOUT-NEXT: %[[VAL_5:[a-zA-Z0-9_.$-]+]] = pto.vmi.load %[[VAL_0]]{{\[}}%[[VAL_4]]] : !pto.ptr<si16, ub> -> !pto.vmi.vreg<4xsi16, #pto.vmi.layout<contiguous>>
+// LAYOUT-NEXT: %[[VAL_5:[a-zA-Z0-9_.$-]+]] = pto.vmi.load %[[VAL_0]]{{\[}}%[[VAL_4]]] : !pto.ptr<si16, ub>, index -> !pto.vmi.vreg<4xsi16, #pto.vmi.layout<contiguous>>
 // LAYOUT-NEXT: %[[VAL_6:[a-zA-Z0-9_.$-]+]] = pto.vmi.vmul %[[VAL_5]], %[[VAL_5]] : !pto.vmi.vreg<4xsi16, #pto.vmi.layout<contiguous>>, !pto.vmi.vreg<4xsi16, #pto.vmi.layout<contiguous>> -> !pto.vmi.vreg<4xsi16, #pto.vmi.layout<contiguous>>
 // LAYOUT-NEXT: %[[VAL_7:[a-zA-Z0-9_.$-]+]] = pto.vmi.ensure_layout %[[VAL_6]] : !pto.vmi.vreg<4xsi16, #pto.vmi.layout<contiguous>> -> !pto.vmi.vreg<4xsi16, #pto.vmi.layout<num_groups = 4, slots = 8, lane_stride = 2>>
 // LAYOUT-NEXT: %[[VAL_8:[a-zA-Z0-9_.$-]+]] = pto.vmi.extsi %[[VAL_7]] : !pto.vmi.vreg<4xsi16, #pto.vmi.layout<num_groups = 4, slots = 8, lane_stride = 2>> -> !pto.vmi.vreg<4xsi32, #pto.vmi.layout<num_groups = 4, slots = 8>>
 // LAYOUT-NEXT: %[[VAL_9:[a-zA-Z0-9_.$-]+]] = arith.constant 1 : index
-// LAYOUT-NEXT: pto.vmi.group_store %[[VAL_8]], %[[VAL_1]]{{\[}}%[[VAL_4]]], %[[VAL_9]] {num_groups = 4 : i64} : !pto.vmi.vreg<4xsi32, #pto.vmi.layout<num_groups = 4, slots = 8>>, !pto.ptr<si32, ub>
+// LAYOUT-NEXT: pto.vmi.group_store %[[VAL_8]], %[[VAL_1]]{{\[}}%[[VAL_4]]], %[[VAL_9]] {num_groups = 4 : i64} : !pto.vmi.vreg<4xsi32, #pto.vmi.layout<num_groups = 4, slots = 8>>, !pto.ptr<si32, ub>, index
 // LAYOUT-NEXT: }
 // LAYOUT-NEXT: return
 // LAYOUT-NEXT: }
@@ -102,12 +102,12 @@ module attributes {pto.target_arch = "a5", pto.kernel_kind = #pto.kernel_kind<ve
 // LAYOUT-NEXT: %[[VAL_3:[a-zA-Z0-9_.$-]+]] = arith.constant 16 : index
 // LAYOUT-NEXT: %[[VAL_4:[a-zA-Z0-9_.$-]+]] = arith.muli %[[VAL_2]], %[[VAL_3]] : index
 // LAYOUT-NEXT: pto.vecscope {
-// LAYOUT-NEXT: %[[VAL_5:[a-zA-Z0-9_.$-]+]] = pto.vmi.load %[[VAL_0]]{{\[}}%[[VAL_4]]] : !pto.ptr<si16, ub> -> !pto.vmi.vreg<8xsi16, #pto.vmi.layout<contiguous>>
+// LAYOUT-NEXT: %[[VAL_5:[a-zA-Z0-9_.$-]+]] = pto.vmi.load %[[VAL_0]]{{\[}}%[[VAL_4]]] : !pto.ptr<si16, ub>, index -> !pto.vmi.vreg<8xsi16, #pto.vmi.layout<contiguous>>
 // LAYOUT-NEXT: %[[VAL_6:[a-zA-Z0-9_.$-]+]] = pto.vmi.vmul %[[VAL_5]], %[[VAL_5]] : !pto.vmi.vreg<8xsi16, #pto.vmi.layout<contiguous>>, !pto.vmi.vreg<8xsi16, #pto.vmi.layout<contiguous>> -> !pto.vmi.vreg<8xsi16, #pto.vmi.layout<contiguous>>
 // LAYOUT-NEXT: %[[VAL_7:[a-zA-Z0-9_.$-]+]] = pto.vmi.ensure_layout %[[VAL_6]] : !pto.vmi.vreg<8xsi16, #pto.vmi.layout<contiguous>> -> !pto.vmi.vreg<8xsi16, #pto.vmi.layout<num_groups = 8, slots = 8, lane_stride = 2>>
 // LAYOUT-NEXT: %[[VAL_8:[a-zA-Z0-9_.$-]+]] = pto.vmi.extsi %[[VAL_7]] : !pto.vmi.vreg<8xsi16, #pto.vmi.layout<num_groups = 8, slots = 8, lane_stride = 2>> -> !pto.vmi.vreg<8xsi32, #pto.vmi.layout<num_groups = 8, slots = 8>>
 // LAYOUT-NEXT: %[[VAL_9:[a-zA-Z0-9_.$-]+]] = arith.constant 1 : index
-// LAYOUT-NEXT: pto.vmi.group_store %[[VAL_8]], %[[VAL_1]]{{\[}}%[[VAL_4]]], %[[VAL_9]] {num_groups = 8 : i64} : !pto.vmi.vreg<8xsi32, #pto.vmi.layout<num_groups = 8, slots = 8>>, !pto.ptr<si32, ub>
+// LAYOUT-NEXT: pto.vmi.group_store %[[VAL_8]], %[[VAL_1]]{{\[}}%[[VAL_4]]], %[[VAL_9]] {num_groups = 8 : i64} : !pto.vmi.vreg<8xsi32, #pto.vmi.layout<num_groups = 8, slots = 8>>, !pto.ptr<si32, ub>, index
 // LAYOUT-NEXT: }
 // LAYOUT-NEXT: return
 // LAYOUT-NEXT: }

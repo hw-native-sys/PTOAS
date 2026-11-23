@@ -18,7 +18,7 @@ module {
     %c1 = arith.constant 1 : index
     pto.vmi.vstore %r, %dst[%off], %c1 {group = 8}
         : !pto.vmi.vreg<8xui8, #pto.vmi.layout<num_groups = 8, slots = 8, lane_stride = 2>>,
-          !pto.ptr<ui8, ub>
+          !pto.ptr<ui8, ub>, index
     return
   }
 
@@ -31,7 +31,7 @@ module {
     %c1 = arith.constant 1 : index
     pto.vmi.vstore %r, %dst[%off], %c1 {group = 8}
         : !pto.vmi.vreg<8xui8, #pto.vmi.layout<num_groups = 8, slots = 8>>,
-          !pto.ptr<ui8, ub>
+          !pto.ptr<ui8, ub>, index
     return
   }
 
@@ -44,7 +44,7 @@ module {
     %c1 = arith.constant 1 : index
     pto.vmi.vstore %r, %dst[%off], %c1 {group = 8}
         : !pto.vmi.vreg<8xui8, #pto.vmi.layout<num_groups = 8, slots = 8, lane_stride = 4>>,
-          !pto.ptr<ui8, ub>
+          !pto.ptr<ui8, ub>, index
     return
   }
 
@@ -57,7 +57,7 @@ module {
     %c1 = arith.constant 1 : index
     pto.vmi.vstore %r, %dst[%off], %c1 {group = 8}
         : !pto.vmi.vreg<8xui8, #pto.vmi.layout<num_groups = 8, slots = 8>>,
-          !pto.ptr<ui8, ub>
+          !pto.ptr<ui8, ub>, index
     return
   }
 
@@ -70,7 +70,7 @@ module {
     %c1 = arith.constant 1 : index
     pto.vmi.vstore %r, %dst[%off], %c1 {group = 8}
         : !pto.vmi.vreg<8xui8, #pto.vmi.layout<num_groups = 8, slots = 8, lane_stride = 4>>,
-          !pto.ptr<ui8, ub>
+          !pto.ptr<ui8, ub>, index
     return
   }
 
@@ -83,7 +83,7 @@ module {
     %c1 = arith.constant 1 : index
     pto.vmi.vstore %r, %dst[%off], %c1 {group = 8}
         : !pto.vmi.vreg<8xui8, #pto.vmi.layout<num_groups = 8, slots = 8, lane_stride = 2>>,
-          !pto.ptr<ui8, ub>
+          !pto.ptr<ui8, ub>, index
     return
   }
 
@@ -96,7 +96,7 @@ module {
     %c1 = arith.constant 1 : index
     pto.vmi.vstore %r, %dst[%off], %c1 {group = 8}
         : !pto.vmi.vreg<8xui16, #pto.vmi.layout<num_groups = 8, slots = 8, lane_stride = 2>>,
-          !pto.ptr<ui16, ub>
+          !pto.ptr<ui16, ub>, index
     return
   }
 
@@ -109,7 +109,7 @@ module {
     %c1 = arith.constant 1 : index
     pto.vmi.vstore %r, %dst[%off], %c1 {group = 8}
         : !pto.vmi.vreg<8xui16, #pto.vmi.layout<num_groups = 8, slots = 8>>,
-          !pto.ptr<ui16, ub>
+          !pto.ptr<ui16, ub>, index
     return
   }
 
@@ -122,7 +122,7 @@ module {
     %c1 = arith.constant 1 : index
     pto.vmi.vstore %r, %dst[%off], %c1 {group = 16}
         : !pto.vmi.vreg<16xui8, #pto.vmi.layout<num_groups = 16, slots = 8, lane_stride = 2>>,
-          !pto.ptr<ui8, ub>
+          !pto.ptr<ui8, ub>, index
     return
   }
 

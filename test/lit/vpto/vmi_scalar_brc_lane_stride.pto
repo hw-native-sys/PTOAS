@@ -14,7 +14,7 @@ module {
   func.func @scalar_brc_ls2_i8(%src: !pto.ptr<i8, ub>, %off: index,
       %stride: index) -> !pto.vmi.vreg<512xi8, #pto.vmi.layout<contiguous, lane_stride = 2>> {
     %out = pto.vmi.group_broadcast_load %src[%off], %stride {num_groups = 1 : i64}
-        : !pto.ptr<i8, ub> -> !pto.vmi.vreg<512xi8, #pto.vmi.layout<contiguous, lane_stride = 2>>
+        : !pto.ptr<i8, ub>, index -> !pto.vmi.vreg<512xi8, #pto.vmi.layout<contiguous, lane_stride = 2>>
     return %out : !pto.vmi.vreg<512xi8, #pto.vmi.layout<contiguous, lane_stride = 2>>
   }
 
@@ -29,7 +29,7 @@ module {
   func.func @scalar_brc_ls2_f16(%src: !pto.ptr<f16, ub>, %off: index,
       %stride: index) -> !pto.vmi.vreg<256xf16, #pto.vmi.layout<contiguous, lane_stride = 2>> {
     %out = pto.vmi.group_broadcast_load %src[%off], %stride {num_groups = 1 : i64}
-        : !pto.ptr<f16, ub> -> !pto.vmi.vreg<256xf16, #pto.vmi.layout<contiguous, lane_stride = 2>>
+        : !pto.ptr<f16, ub>, index -> !pto.vmi.vreg<256xf16, #pto.vmi.layout<contiguous, lane_stride = 2>>
     return %out : !pto.vmi.vreg<256xf16, #pto.vmi.layout<contiguous, lane_stride = 2>>
   }
 
@@ -44,7 +44,7 @@ module {
   func.func @scalar_brc_ls2_f32(%src: !pto.ptr<f32, ub>, %off: index,
       %stride: index) -> !pto.vmi.vreg<128xf32, #pto.vmi.layout<contiguous, lane_stride = 2>> {
     %out = pto.vmi.group_broadcast_load %src[%off], %stride {num_groups = 1 : i64}
-        : !pto.ptr<f32, ub> -> !pto.vmi.vreg<128xf32, #pto.vmi.layout<contiguous, lane_stride = 2>>
+        : !pto.ptr<f32, ub>, index -> !pto.vmi.vreg<128xf32, #pto.vmi.layout<contiguous, lane_stride = 2>>
     return %out : !pto.vmi.vreg<128xf32, #pto.vmi.layout<contiguous, lane_stride = 2>>
   }
 

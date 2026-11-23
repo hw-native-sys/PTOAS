@@ -21,7 +21,7 @@ module {
     %root = pto.vmi.create_mask %n : index -> !pto.vmi.mask<64xpred>
     pto.vecscope {
       pto.vmi.masked_store %v, %d[%off], %root
-          : !pto.vmi.vreg<64xf16>, !pto.ptr<f16, ub>, !pto.vmi.mask<64xpred>
+          : !pto.vmi.vreg<64xf16>, !pto.ptr<f16, ub>, index, !pto.vmi.mask<64xpred>
     }
     return
   }
@@ -31,5 +31,5 @@ module {
 // CHECK: %[[ROOT:.*]] = pto.vmi.create_mask %{{.*}} : index -> !pto.vmi.mask<64xb32>
 // CHECK: pto.vecscope {
 // CHECK-NEXT: %[[IN_SCOPE:.*]] = pto.vmi.create_mask %{{.*}} : index -> !pto.vmi.mask<64xb16>
-// CHECK-NEXT: pto.vmi.masked_store {{.*}}, %{{.*}}{{\[}}%{{.*}}], %[[IN_SCOPE]] : !pto.vmi.vreg<64xf16>, !pto.ptr<f16, ub>, !pto.vmi.mask<64xb16>
+// CHECK-NEXT: pto.vmi.masked_store {{.*}}, %{{.*}}{{\[}}%{{.*}}], %[[IN_SCOPE]] : !pto.vmi.vreg<64xf16>, !pto.ptr<f16, ub>, index, !pto.vmi.mask<64xb16>
 // CHECK: return

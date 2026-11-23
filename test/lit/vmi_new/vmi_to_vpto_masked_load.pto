@@ -17,7 +17,7 @@ module {
       -> !pto.vreg<64xf32> {
     %c4 = arith.constant 4 : index
     %loaded = pto.vmi.vload %src[%c4]
-        : memref<72xf32, #pto.address_space<vec>>
+        : memref<72xf32, #pto.address_space<vec>>, index
         -> !pto.vmi.vreg<64xf32, #pto.vmi.layout<contiguous>>
     %out = pto.vmi.vsel %mask, %loaded, %passthru
         : !pto.vmi.mask<64xb32, #pto.vmi.layout<contiguous>>,

@@ -25,7 +25,7 @@ module {
     %zero = pto.vmi.vbrc %c0_f32
         : f32 -> !pto.vmi.vreg<256xf32>
     %loaded = pto.vmi.vload %base[%aligned_off]
-        : !pto.ptr<f32, ub> -> !pto.vmi.vreg<256xf32>
+        : !pto.ptr<f32, ub>, index -> !pto.vmi.vreg<256xf32>
     %x = pto.vmi.vsel %mask, %loaded, %zero
         : !pto.vmi.mask<256xpred>, !pto.vmi.vreg<256xf32>,
           !pto.vmi.vreg<256xf32> -> !pto.vmi.vreg<256xf32>
@@ -33,7 +33,7 @@ module {
         : !pto.vmi.vreg<256xf32>, !pto.vmi.mask<256xpred>
         -> !pto.vmi.vreg<8xf32>
     pto.vmi.vstore %sum, %sum_out[%aligned_off], %c1 {group = 8}
-        : !pto.vmi.vreg<8xf32>, !pto.ptr<f32, ub>
+        : !pto.vmi.vreg<8xf32>, !pto.ptr<f32, ub>, index
     return
   }
 }
@@ -49,10 +49,10 @@ module {
 // ASSIGN-NEXT: %[[VAL_7:[a-zA-Z0-9_.$-]+]] = arith.muli %[[VAL_2]], %[[VAL_5]] : index
 // ASSIGN-NEXT: %[[VAL_8:[a-zA-Z0-9_.$-]+]] = pto.vmi.create_group_mask %[[VAL_6]] {group_size = 32 : i64, num_groups = 8 : i64} : index -> !pto.vmi.mask<256xb32, #pto.vmi.layout<contiguous>>
 // ASSIGN-NEXT: %[[VAL_9:[a-zA-Z0-9_.$-]+]] = pto.vmi.broadcast %[[VAL_3]] : f32 -> !pto.vmi.vreg<256xf32, #pto.vmi.layout<contiguous>>
-// ASSIGN-NEXT: %[[VAL_10:[a-zA-Z0-9_.$-]+]] = pto.vmi.load %[[VAL_0]]{{\[}}%[[VAL_7]]] : !pto.ptr<f32, ub> -> !pto.vmi.vreg<256xf32, #pto.vmi.layout<contiguous>>
+// ASSIGN-NEXT: %[[VAL_10:[a-zA-Z0-9_.$-]+]] = pto.vmi.load %[[VAL_0]]{{\[}}%[[VAL_7]]] : !pto.ptr<f32, ub>, index -> !pto.vmi.vreg<256xf32, #pto.vmi.layout<contiguous>>
 // ASSIGN-NEXT: %[[VAL_11:[a-zA-Z0-9_.$-]+]] = pto.vmi.select %[[VAL_8]], %[[VAL_10]], %[[VAL_9]] : !pto.vmi.mask<256xb32, #pto.vmi.layout<contiguous>>, !pto.vmi.vreg<256xf32, #pto.vmi.layout<contiguous>>, !pto.vmi.vreg<256xf32, #pto.vmi.layout<contiguous>> -> !pto.vmi.vreg<256xf32, #pto.vmi.layout<contiguous>>
 // ASSIGN-NEXT: %[[VAL_12:[a-zA-Z0-9_.$-]+]] = pto.vmi.group_reduce_addf %[[VAL_11]], %[[VAL_8]] {num_groups = 8 : i64, reassoc} : !pto.vmi.vreg<256xf32, #pto.vmi.layout<contiguous>>, !pto.vmi.mask<256xb32, #pto.vmi.layout<contiguous>> -> !pto.vmi.vreg<8xf32, #pto.vmi.layout<num_groups = 8, slots = 1>>
-// ASSIGN-NEXT: pto.vmi.group_store %[[VAL_12]], %[[VAL_1]]{{\[}}%[[VAL_7]]], %[[VAL_4]] {num_groups = 8 : i64} : !pto.vmi.vreg<8xf32, #pto.vmi.layout<num_groups = 8, slots = 1>>, !pto.ptr<f32, ub>
+// ASSIGN-NEXT: pto.vmi.group_store %[[VAL_12]], %[[VAL_1]]{{\[}}%[[VAL_7]]], %[[VAL_4]] {num_groups = 8 : i64} : !pto.vmi.vreg<8xf32, #pto.vmi.layout<num_groups = 8, slots = 1>>, !pto.ptr<f32, ub>, index
 // ASSIGN-NEXT: return
 // ASSIGN-NEXT: }
 

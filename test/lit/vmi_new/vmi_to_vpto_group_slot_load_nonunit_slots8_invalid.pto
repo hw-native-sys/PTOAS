@@ -14,7 +14,7 @@ module {
       -> !pto.vmi.vreg<8xf32, #pto.vmi.layout<num_groups = 8, slots = 8>> {
     %out = pto.vmi.group_slot_load %src[%off], %stride
         {num_groups = 8}
-        : !pto.ptr<f32, ub>
+        : !pto.ptr<f32, ub>, index
         -> !pto.vmi.vreg<8xf32, #pto.vmi.layout<num_groups = 8, slots = 8>>
     return %out : !pto.vmi.vreg<8xf32, #pto.vmi.layout<num_groups = 8, slots = 8>>
   }

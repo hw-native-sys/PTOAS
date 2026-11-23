@@ -22,9 +22,9 @@ module attributes {pto.target_arch = "a5", pto.kernel_kind = #pto.kernel_kind<ve
     %c16 = arith.constant 16 : index
     %aoff = arith.muli %off, %c16 : index
     pto.vecscope {
-      %s = pto.vmi.vload %src[%aoff] : !pto.ptr<f16, ub> -> !pto.vmi.vreg<1xf16>
+      %s = pto.vmi.vload %src[%aoff] : !pto.ptr<f16, ub>, index -> !pto.vmi.vreg<1xf16>
       %w = pto.vmi.vcvt %s : !pto.vmi.vreg<1xf16> -> !pto.vmi.vreg<1xf32>
-      pto.vmi.vstore %w, %dst[%aoff] : !pto.vmi.vreg<1xf32>, !pto.ptr<f32, ub>
+      pto.vmi.vstore %w, %dst[%aoff] : !pto.vmi.vreg<1xf32>, !pto.ptr<f32, ub>, index
     }
     return
   }
@@ -32,9 +32,9 @@ module attributes {pto.target_arch = "a5", pto.kernel_kind = #pto.kernel_kind<ve
     %c16 = arith.constant 16 : index
     %aoff = arith.muli %off, %c16 : index
     pto.vecscope {
-      %s = pto.vmi.vload %src[%aoff] : !pto.ptr<f16, ub> -> !pto.vmi.vreg<2xf16>
+      %s = pto.vmi.vload %src[%aoff] : !pto.ptr<f16, ub>, index -> !pto.vmi.vreg<2xf16>
       %w = pto.vmi.vcvt %s : !pto.vmi.vreg<2xf16> -> !pto.vmi.vreg<2xf32>
-      pto.vmi.vstore %w, %dst[%aoff] : !pto.vmi.vreg<2xf32>, !pto.ptr<f32, ub>
+      pto.vmi.vstore %w, %dst[%aoff] : !pto.vmi.vreg<2xf32>, !pto.ptr<f32, ub>, index
     }
     return
   }
@@ -42,9 +42,9 @@ module attributes {pto.target_arch = "a5", pto.kernel_kind = #pto.kernel_kind<ve
     %c16 = arith.constant 16 : index
     %aoff = arith.muli %off, %c16 : index
     pto.vecscope {
-      %s = pto.vmi.vload %src[%aoff] : !pto.ptr<f16, ub> -> !pto.vmi.vreg<4xf16>
+      %s = pto.vmi.vload %src[%aoff] : !pto.ptr<f16, ub>, index -> !pto.vmi.vreg<4xf16>
       %w = pto.vmi.vcvt %s : !pto.vmi.vreg<4xf16> -> !pto.vmi.vreg<4xf32>
-      pto.vmi.vstore %w, %dst[%aoff] : !pto.vmi.vreg<4xf32>, !pto.ptr<f32, ub>
+      pto.vmi.vstore %w, %dst[%aoff] : !pto.vmi.vreg<4xf32>, !pto.ptr<f32, ub>, index
     }
     return
   }
@@ -52,9 +52,9 @@ module attributes {pto.target_arch = "a5", pto.kernel_kind = #pto.kernel_kind<ve
     %c16 = arith.constant 16 : index
     %aoff = arith.muli %off, %c16 : index
     pto.vecscope {
-      %s = pto.vmi.vload %src[%aoff] : !pto.ptr<f16, ub> -> !pto.vmi.vreg<8xf16>
+      %s = pto.vmi.vload %src[%aoff] : !pto.ptr<f16, ub>, index -> !pto.vmi.vreg<8xf16>
       %w = pto.vmi.vcvt %s : !pto.vmi.vreg<8xf16> -> !pto.vmi.vreg<8xf32>
-      pto.vmi.vstore %w, %dst[%aoff] : !pto.vmi.vreg<8xf32>, !pto.ptr<f32, ub>
+      pto.vmi.vstore %w, %dst[%aoff] : !pto.vmi.vreg<8xf32>, !pto.ptr<f32, ub>, index
     }
     return
   }

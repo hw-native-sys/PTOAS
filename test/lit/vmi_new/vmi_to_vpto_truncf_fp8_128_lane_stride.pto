@@ -19,7 +19,7 @@ module {
     %packed = pto.vmi.vcvt %input {saturate = "SAT"}
         : !pto.vmi.vreg<128xf32> -> !pto.vmi.vreg<128xf8E4M3FN>
     pto.vmi.vstore %packed, %dst[%aligned_off]
-        : !pto.vmi.vreg<128xf8E4M3FN>, !pto.ptr<f8E4M3FN, ub>
+        : !pto.vmi.vreg<128xf8E4M3FN>, !pto.ptr<f8E4M3FN, ub>, index
     return
   }
 }

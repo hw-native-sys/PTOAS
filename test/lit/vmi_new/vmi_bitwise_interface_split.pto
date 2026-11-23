@@ -34,7 +34,7 @@ module {
         : !pto.vmi.vreg<256xsi32>, !pto.vmi.mask<256xpred>
         -> !pto.vmi.vreg<256xsi32>
     pto.vmi.vstore %not, %dst[%off]
-        : !pto.vmi.vreg<256xsi32>, !pto.ptr<si32, ub>
+        : !pto.vmi.vreg<256xsi32>, !pto.ptr<si32, ub>, index
     return
   }
 }

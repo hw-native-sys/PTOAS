@@ -20,9 +20,9 @@ module attributes {pto.target_arch = "a5", pto.kernel_kind = #pto.kernel_kind<ve
     %c16 = arith.constant 16 : index
     %aoff = arith.muli %off, %c16 : index
     pto.vecscope {
-      %s = pto.vmi.vload %src[%aoff] : !pto.ptr<f32, ub> -> !pto.vmi.vreg<1xf32>
+      %s = pto.vmi.vload %src[%aoff] : !pto.ptr<f32, ub>, index -> !pto.vmi.vreg<1xf32>
       %n = pto.vmi.vcvt %s {saturate = "SAT"} : !pto.vmi.vreg<1xf32> -> !pto.vmi.vreg<1xf16>
-      pto.vmi.vstore %n, %dst[%aoff] : !pto.vmi.vreg<1xf16>, !pto.ptr<f16, ub>
+      pto.vmi.vstore %n, %dst[%aoff] : !pto.vmi.vreg<1xf16>, !pto.ptr<f16, ub>, index
     }
     return
   }

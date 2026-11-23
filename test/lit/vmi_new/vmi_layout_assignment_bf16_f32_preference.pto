@@ -50,9 +50,9 @@ module {
     %wide = pto.vmi.extf %narrow
         : !pto.vmi.vreg<8xbf16> -> !pto.vmi.vreg<8xf32>
     pto.vmi.vstore %narrow, %dst_bf16[%off], %c1 {group = 8}
-        : !pto.vmi.vreg<8xbf16>, !pto.ptr<bf16, ub>
+        : !pto.vmi.vreg<8xbf16>, !pto.ptr<bf16, ub>, index
     pto.vmi.vstore %wide, %dst_f32[%off], %c1 {group = 8}
-        : !pto.vmi.vreg<8xf32>, !pto.ptr<f32, ub>
+        : !pto.vmi.vreg<8xf32>, !pto.ptr<f32, ub>, index
     return
   }
 }
@@ -95,7 +95,7 @@ module {
 // ASSIGN-NEXT: %[[VAL_9:[a-zA-Z0-9_.$-]+]] = pto.vmi.truncf %[[VAL_8]] {rounding = "Z", saturate = "NOSAT"} : !pto.vmi.vreg<8xf32, #pto.vmi.layout<num_groups = 8, slots = 8>> -> !pto.vmi.vreg<8xbf16, #pto.vmi.layout<num_groups = 8, slots = 8, lane_stride = 2>>
 // ASSIGN-NEXT: %[[VAL_10:[a-zA-Z0-9_.$-]+]] = pto.vmi.extf %[[VAL_9]] : !pto.vmi.vreg<8xbf16, #pto.vmi.layout<num_groups = 8, slots = 8, lane_stride = 2>> -> !pto.vmi.vreg<8xf32, #pto.vmi.layout<num_groups = 8, slots = 8>>
 // ASSIGN-NEXT: %[[VAL_11:[a-zA-Z0-9_.$-]+]] = pto.vmi.ensure_layout %[[VAL_9]] : !pto.vmi.vreg<8xbf16, #pto.vmi.layout<num_groups = 8, slots = 8, lane_stride = 2>> -> !pto.vmi.vreg<8xbf16, #pto.vmi.layout<num_groups = 8, slots = 8>>
-// ASSIGN-NEXT: pto.vmi.group_store %[[VAL_11]], %[[VAL_2]]{{\[}}%[[VAL_4]]], %[[VAL_5]] {num_groups = 8 : i64} : !pto.vmi.vreg<8xbf16, #pto.vmi.layout<num_groups = 8, slots = 8>>, !pto.ptr<bf16, ub>
-// ASSIGN-NEXT: pto.vmi.group_store %[[VAL_10]], %[[VAL_3]]{{\[}}%[[VAL_4]]], %[[VAL_5]] {num_groups = 8 : i64} : !pto.vmi.vreg<8xf32, #pto.vmi.layout<num_groups = 8, slots = 8>>, !pto.ptr<f32, ub>
+// ASSIGN-NEXT: pto.vmi.group_store %[[VAL_11]], %[[VAL_2]]{{\[}}%[[VAL_4]]], %[[VAL_5]] {num_groups = 8 : i64} : !pto.vmi.vreg<8xbf16, #pto.vmi.layout<num_groups = 8, slots = 8>>, !pto.ptr<bf16, ub>, index
+// ASSIGN-NEXT: pto.vmi.group_store %[[VAL_10]], %[[VAL_3]]{{\[}}%[[VAL_4]]], %[[VAL_5]] {num_groups = 8 : i64} : !pto.vmi.vreg<8xf32, #pto.vmi.layout<num_groups = 8, slots = 8>>, !pto.ptr<f32, ub>, index
 // ASSIGN-NEXT: return
 // ASSIGN-NEXT: }

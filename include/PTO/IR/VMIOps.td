@@ -204,10 +204,13 @@ def VMICompressOp : VMI_Op<"compress"> {
 def VMICompressStoreOp : VMI_Op<"compress_store", [DeclareOpInterfaceMethods<MemoryEffectsOpInterface>]> {
   let summary = "VMI store active source lanes contiguously according to a predicate mask";
   let arguments = (ins VMI_VRegTypeConstraint:$value, PtrOrMemRef:$destination,
-                       Index:$offset, VMI_MaskTypeConstraint:$mask);
+                       PTO_ElementOffset:$offset, VMI_MaskTypeConstraint:$mask);
   let results = (outs);
   let hasVerifier = 1;
-  let assemblyFormat = "$value `,` $destination `[` $offset `]` `,` $mask attr-dict `:` type($value) `,` type($destination) `,` type($mask)";
+  let assemblyFormat = [{
+    $value `,` $destination `[` $offset `]` `,` $mask attr-dict `:`
+    type($value) `,` type($destination) `,` type($offset) `,` type($mask)
+  }];
 }
 
 def VMIReduceAddIOp : VMI_Op<"reduce_addi"> {
@@ -452,67 +455,82 @@ def VMIBitcastOp : VMI_Op<"bitcast", [Pure]> {
 
 def VMILoadOp : VMI_Op<"load", [DeclareOpInterfaceMethods<MemoryEffectsOpInterface>]> {
   let summary = "VMI logical vector load";
-  let arguments = (ins PtrOrMemRef:$source, Index:$offset);
+  let arguments = (ins PtrOrMemRef:$source, PTO_ElementOffset:$offset);
   let results = (outs VMI_VRegTypeConstraint:$result);
   let hasVerifier = 1;
-  let assemblyFormat = "$source `[` $offset `]` attr-dict `:` type($source) `->` type($result)";
+  let assemblyFormat = "$source `[` $offset `]` attr-dict `:` type($source) `,` type($offset) `->` type($result)";
 }
 
 def VMIDeinterleaveLoadOp : VMI_Op<"deinterleave_load", [DeclareOpInterfaceMethods<MemoryEffectsOpInterface>]> {
   let summary = "VMI two-way logical deinterleave load";
-  let arguments = (ins PtrOrMemRef:$source, Index:$offset);
+  let arguments = (ins PtrOrMemRef:$source, PTO_ElementOffset:$offset);
   let results = (outs VMI_VRegTypeConstraint:$low, VMI_VRegTypeConstraint:$high);
   let hasVerifier = 1;
-  let assemblyFormat = "$source `[` $offset `]` attr-dict `:` type($source) `->` type($low) `,` type($high)";
+  let assemblyFormat = [{
+    $source `[` $offset `]` attr-dict `:` type($source)
+    `,` type($offset) `->` type($low) `,` type($high)
+  }];
 }
 
 def VMIGroupLoadOp : VMI_Op<"group_load", [DeclareOpInterfaceMethods<MemoryEffectsOpInterface>]> {
   let summary = "VMI logical grouped vector load with a row stride between groups";
-  let arguments = (ins PtrOrMemRef:$source, Index:$offset, Index:$row_stride,
+  let arguments = (ins PtrOrMemRef:$source, PTO_ElementOffset:$offset, Index:$row_stride,
                        I64Attr:$num_groups);
   let results = (outs VMI_VRegTypeConstraint:$result);
   let hasVerifier = 1;
-  let assemblyFormat = "$source `[` $offset `]` `,` $row_stride attr-dict `:` type($source) `->` type($result)";
+  let assemblyFormat = [{
+    $source `[` $offset `]` `,` $row_stride attr-dict `:`
+    type($source) `,` type($offset) `->` type($result)
+  }];
 }
 
 def VMIGroupSlotLoadOp : VMI_Op<"group_slot_load", [DeclareOpInterfaceMethods<MemoryEffectsOpInterface>]> {
   let summary = "VMI load one scalar value per logical group into group slots";
-  let arguments = (ins PtrOrMemRef:$source, Index:$offset, Index:$source_group_stride,
+  let arguments = (ins PtrOrMemRef:$source, PTO_ElementOffset:$offset, Index:$source_group_stride,
                        I64Attr:$num_groups);
   let results = (outs VMI_VRegTypeConstraint:$result);
   let hasVerifier = 1;
-  let assemblyFormat = "$source `[` $offset `]` `,` $source_group_stride attr-dict `:` type($source) `->` type($result)";
+  let assemblyFormat = [{
+    $source `[` $offset `]` `,` $source_group_stride attr-dict
+    `:` type($source) `,` type($offset) `->` type($result)
+  }];
 }
 
 def VMIGroupBroadcastLoadOp : VMI_Op<"group_broadcast_load", [DeclareOpInterfaceMethods<MemoryEffectsOpInterface>]> {
   let summary = "VMI load one scalar value per logical group and broadcast it to group lanes";
-  let arguments = (ins PtrOrMemRef:$source, Index:$offset, Index:$source_group_stride,
+  let arguments = (ins PtrOrMemRef:$source, PTO_ElementOffset:$offset, Index:$source_group_stride,
                        I64Attr:$num_groups);
   let results = (outs VMI_VRegTypeConstraint:$result);
   let hasVerifier = 1;
-  let assemblyFormat = "$source `[` $offset `]` `,` $source_group_stride attr-dict `:` type($source) `->` type($result)";
+  let assemblyFormat = [{
+    $source `[` $offset `]` `,` $source_group_stride attr-dict
+    `:` type($source) `,` type($offset) `->` type($result)
+  }];
 }
 
 def VMIStrideLoadOp : VMI_Op<"stride_load", [DeclareOpInterfaceMethods<MemoryEffectsOpInterface>]> {
   let summary = "VMI block-strided vector load";
-  let arguments = (ins PtrOrMemRef:$source, Index:$offset,
+  let arguments = (ins PtrOrMemRef:$source, PTO_ElementOffset:$offset,
                        I16:$block_stride, VMI_MaskTypeConstraint:$mask);
   let results = (outs VMI_VRegTypeConstraint:$result);
   let hasVerifier = 1;
   let assemblyFormat = [{
     $source `[` $offset `]` `,` $block_stride `,` $mask attr-dict `:`
-    type($source) `,` type($block_stride) `,` type($mask) `->` type($result)
+    type($source) `,` type($offset) `,` type($block_stride) `,` type($mask) `->` type($result)
   }];
 }
 
 def VMIMaskedLoadOp : VMI_Op<"masked_load", [DeclareOpInterfaceMethods<MemoryEffectsOpInterface>]> {
   let summary = "VMI logical masked vector load with passthrough lanes";
-  let arguments = (ins PtrOrMemRef:$source, Index:$offset,
+  let arguments = (ins PtrOrMemRef:$source, PTO_ElementOffset:$offset,
                        VMI_MaskTypeConstraint:$mask,
                        VMI_VRegTypeConstraint:$passthru);
   let results = (outs VMI_VRegTypeConstraint:$result);
   let hasVerifier = 1;
-  let assemblyFormat = "$source `[` $offset `]` `,` $mask `,` $passthru attr-dict `:` type($source) `,` type($mask) `,` type($passthru) `->` type($result)";
+  let assemblyFormat = [{
+    $source `[` $offset `]` `,` $mask `,` $passthru attr-dict `:` type($source)
+    `,` type($offset) `,` type($mask) `,` type($passthru) `->` type($result)
+  }];
 }
 
 def VMIGatherOp : VMI_Op<"gather", [DeclareOpInterfaceMethods<MemoryEffectsOpInterface>]> {
@@ -535,59 +553,74 @@ def VMIGatherOp : VMI_Op<"gather", [DeclareOpInterfaceMethods<MemoryEffectsOpInt
 
 def VMIExpandLoadOp : VMI_Op<"expand_load", [DeclareOpInterfaceMethods<MemoryEffectsOpInterface>]> {
   let summary = "VMI load a dense active-lane stream into masked logical lanes";
-  let arguments = (ins PtrOrMemRef:$source, Index:$offset,
+  let arguments = (ins PtrOrMemRef:$source, PTO_ElementOffset:$offset,
                        VMI_MaskTypeConstraint:$mask,
                        VMI_VRegTypeConstraint:$passthru);
   let results = (outs VMI_VRegTypeConstraint:$result);
   let hasVerifier = 1;
-  let assemblyFormat = "$source `[` $offset `]` `,` $mask `,` $passthru attr-dict `:` type($source) `,` type($mask) `,` type($passthru) `->` type($result)";
+  let assemblyFormat = [{
+    $source `[` $offset `]` `,` $mask `,` $passthru attr-dict `:` type($source)
+    `,` type($offset) `,` type($mask) `,` type($passthru) `->` type($result)
+  }];
 }
 
 def VMIStoreOp : VMI_Op<"store", [DeclareOpInterfaceMethods<MemoryEffectsOpInterface>]> {
   let summary = "VMI logical vector store";
-  let arguments = (ins VMI_VRegTypeConstraint:$value, PtrOrMemRef:$destination, Index:$offset);
+  let arguments = (ins VMI_VRegTypeConstraint:$value, PtrOrMemRef:$destination, PTO_ElementOffset:$offset);
   let results = (outs);
   let hasVerifier = 1;
-  let assemblyFormat = "$value `,` $destination `[` $offset `]` attr-dict `:` type($value) `,` type($destination)";
+  let assemblyFormat = [{
+    $value `,` $destination `[` $offset `]` attr-dict `:`
+    type($value) `,` type($destination) `,` type($offset)
+  }];
 }
 
 def VMIInterleaveStoreOp : VMI_Op<"interleave_store", [DeclareOpInterfaceMethods<MemoryEffectsOpInterface>]> {
   let summary = "VMI two-way logical interleave store";
   let arguments = (ins VMI_VRegTypeConstraint:$low, VMI_VRegTypeConstraint:$high,
-                       PtrOrMemRef:$destination, Index:$offset);
+                       PtrOrMemRef:$destination, PTO_ElementOffset:$offset);
   let results = (outs);
   let hasVerifier = 1;
-  let assemblyFormat = "$low `,` $high `,` $destination `[` $offset `]` attr-dict `:` type($low) `,` type($high) `,` type($destination)";
+  let assemblyFormat = [{
+    $low `,` $high `,` $destination `[` $offset `]` attr-dict `:`
+    type($low) `,` type($high) `,` type($destination) `,` type($offset)
+  }];
 }
 
 def VMIGroupStoreOp : VMI_Op<"group_store", [DeclareOpInterfaceMethods<MemoryEffectsOpInterface>]> {
   let summary = "VMI logical grouped vector store with a row stride between groups";
   let arguments = (ins VMI_VRegTypeConstraint:$value, PtrOrMemRef:$destination,
-                       Index:$offset, Index:$row_stride, I64Attr:$num_groups);
+                       PTO_ElementOffset:$offset, Index:$row_stride, I64Attr:$num_groups);
   let results = (outs);
   let hasVerifier = 1;
-  let assemblyFormat = "$value `,` $destination `[` $offset `]` `,` $row_stride attr-dict `:` type($value) `,` type($destination)";
+  let assemblyFormat = [{
+    $value `,` $destination `[` $offset `]` `,` $row_stride attr-dict
+    `:` type($value) `,` type($destination) `,` type($offset)
+  }];
 }
 
 def VMIMaskedStoreOp : VMI_Op<"masked_store", [DeclareOpInterfaceMethods<MemoryEffectsOpInterface>]> {
   let summary = "VMI logical masked vector store";
   let arguments = (ins VMI_VRegTypeConstraint:$value, PtrOrMemRef:$destination,
-                       Index:$offset, VMI_MaskTypeConstraint:$mask);
+                       PTO_ElementOffset:$offset, VMI_MaskTypeConstraint:$mask);
   let results = (outs);
   let hasVerifier = 1;
-  let assemblyFormat = "$value `,` $destination `[` $offset `]` `,` $mask attr-dict `:` type($value) `,` type($destination) `,` type($mask)";
+  let assemblyFormat = [{
+    $value `,` $destination `[` $offset `]` `,` $mask attr-dict `:`
+    type($value) `,` type($destination) `,` type($offset) `,` type($mask)
+  }];
 }
 
 def VMIStrideStoreOp : VMI_Op<"stride_store", [DeclareOpInterfaceMethods<MemoryEffectsOpInterface>]> {
   let summary = "VMI block-strided vector store";
   let arguments = (ins VMI_VRegTypeConstraint:$value, PtrOrMemRef:$destination,
-                       Index:$offset, I16:$block_stride,
+                       PTO_ElementOffset:$offset, I16:$block_stride,
                        VMI_MaskTypeConstraint:$mask);
   let results = (outs);
   let hasVerifier = 1;
   let assemblyFormat = [{
     $value `,` $destination `[` $offset `]` `,` $block_stride `,` $mask attr-dict `:`
-    type($value) `,` type($destination) `,` type($block_stride) `,` type($mask)
+    type($value) `,` type($destination) `,` type($offset) `,` type($block_stride) `,` type($mask)
   }];
 }
 
@@ -1490,7 +1523,7 @@ def VMIvLoadOp : VMI_Op<"vload",
   }];
   let arguments = (ins
     PtrOrMemRef:$source,
-    Index:$offset,
+    PTO_ElementOffset:$offset,
     Optional<Index>:$stride,
     Optional<I16>:$block_stride,
     OptionalAttr<I64Attr>:$group,
@@ -1526,7 +1559,7 @@ def VMIvStoreOp : VMI_Op<"vstore",
   let arguments = (ins
     VMI_VRegTypeConstraint:$value,
     PtrOrMemRef:$destination,
-    Index:$offset,
+    PTO_ElementOffset:$offset,
     Optional<Index>:$stride,
     Optional<I16>:$block_stride,
     Variadic<VMI_MaskTypeConstraint>:$mask,
@@ -1545,11 +1578,14 @@ def VMIVsstbOp : VMI_Op<"vsstb",
     block is not written, so the prior destination contents are retained.
   }];
   let arguments = (ins VMI_VRegTypeConstraint:$value,
-                       PtrOrMemRef:$destination, Index:$offset,
+                       PtrOrMemRef:$destination, PTO_ElementOffset:$offset,
                        I16:$block_stride, VMI_MaskTypeConstraint:$mask);
   let results = (outs);
   let hasVerifier = 1;
-  let assemblyFormat = "$value `,` $destination `[` $offset `]` `,` $block_stride `,` $mask attr-dict `:` type($value) `,` type($destination) `,` type($mask)";
+  let assemblyFormat = [{
+    $value `,` $destination `[` $offset `]` `,` $block_stride `,` $mask attr-dict
+    `:` type($value) `,` type($destination) `,` type($offset) `,` type($mask)
+  }];
 }
 
 def VMIVinterpretCastOp : VMI_Op<"vinterpret_cast", [Pure]> {

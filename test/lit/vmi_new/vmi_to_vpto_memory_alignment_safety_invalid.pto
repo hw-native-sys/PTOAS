@@ -13,9 +13,9 @@ module {
       %src: !pto.ptr<f32, ub>, %dst: !pto.ptr<f32, ub>, %offset: index) {
     %c0 = arith.constant 0 : index
     %value = pto.vmi.vload %src[%offset]
-        : !pto.ptr<f32, ub> -> !pto.vmi.vreg<64xf32>
+        : !pto.ptr<f32, ub>, index -> !pto.vmi.vreg<64xf32>
     pto.vmi.vstore %value, %dst[%c0]
-        : !pto.vmi.vreg<64xf32>, !pto.ptr<f32, ub>
+        : !pto.vmi.vreg<64xf32>, !pto.ptr<f32, ub>, index
     return
   }
 }
@@ -29,9 +29,9 @@ module {
     %c0 = arith.constant 0 : index
     %c1 = arith.constant 1 : index
     %value = pto.vmi.vload %src[%c1]
-        : memref<65xf32, #pto.address_space<vec>> -> !pto.vmi.vreg<64xf32>
+        : memref<65xf32, #pto.address_space<vec>>, index -> !pto.vmi.vreg<64xf32>
     pto.vmi.vstore %value, %dst[%c0]
-        : !pto.vmi.vreg<64xf32>, !pto.ptr<f32, ub>
+        : !pto.vmi.vreg<64xf32>, !pto.ptr<f32, ub>, index
     return
   }
 }
@@ -44,7 +44,7 @@ module {
       %mask: !pto.vmi.mask<64xb32>,
       %dst: !pto.ptr<f32, ub>, %offset: index) {
     pto.vmi.vstore %value, %dst[%offset], %mask
-        : !pto.vmi.vreg<64xf32>, !pto.ptr<f32, ub>, !pto.vmi.mask<64xb32>
+        : !pto.vmi.vreg<64xf32>, !pto.ptr<f32, ub>, index, !pto.vmi.mask<64xb32>
     return
   }
 }
@@ -62,7 +62,7 @@ module {
         : !pto.vmi.vreg<64xf16,
               #pto.vmi.layout<contiguous, lane_stride = 2>>,
           !pto.ptr<f16, ub>,
-          !pto.vmi.mask<64xb16,
+          index, !pto.vmi.mask<64xb16,
               #pto.vmi.layout<contiguous, lane_stride = 2>>
     return
   }

@@ -19,7 +19,7 @@ module attributes {pto.target_arch = "a5", pto.backend = "vpto"} {
     %c1 = arith.constant 1 : index
     %c2 = arith.constant 2 : index
     %c64 = arith.constant 64 : index
-    %x = pto.vmi.vload %src[%c0] : !pto.ptr<si32, ub> -> !pto.vmi.vreg<64xsi32>
+    %x = pto.vmi.vload %src[%c0] : !pto.ptr<si32, ub>, index -> !pto.vmi.vreg<64xsi32>
     %m = pto.vmi.create_mask %c64 : index -> !pto.vmi.mask<64xpred>
     %r = pto.vmi.vcadd %x, %m {group = 1 : i64, pmode = "zero"} : !pto.vmi.vreg<64xsi32>, !pto.vmi.mask<64xpred> -> !pto.vmi.vreg<1xsi32>
     %b = pto.vmi.vbrc %r : !pto.vmi.vreg<1xsi32> -> !pto.vmi.vreg<64xsi32>
@@ -28,7 +28,7 @@ module attributes {pto.target_arch = "a5", pto.backend = "vpto"} {
       %b2 = pto.vmi.vbrc %r2 : !pto.vmi.vreg<1xsi32> -> !pto.vmi.vreg<64xsi32>
       scf.yield %b2 : !pto.vmi.vreg<64xsi32>
     }
-    pto.vmi.vstore %out, %dst[%c0] : !pto.vmi.vreg<64xsi32>, !pto.ptr<si32, ub>
+    pto.vmi.vstore %out, %dst[%c0] : !pto.vmi.vreg<64xsi32>, !pto.ptr<si32, ub>, index
     return
   }
 
@@ -46,7 +46,7 @@ module attributes {pto.target_arch = "a5", pto.backend = "vpto"} {
     %c1 = arith.constant 1 : index
     %c2 = arith.constant 2 : index
     %c64 = arith.constant 64 : index
-    %x = pto.vmi.vload %src[%c0] : !pto.ptr<si32, ub> -> !pto.vmi.vreg<64xsi32>
+    %x = pto.vmi.vload %src[%c0] : !pto.ptr<si32, ub>, index -> !pto.vmi.vreg<64xsi32>
     %m = pto.vmi.create_mask %c64 : index -> !pto.vmi.mask<64xpred>
     %r = pto.vmi.vcmax %x, %m {group = 1 : i64, pmode = "zero"} : !pto.vmi.vreg<64xsi32>, !pto.vmi.mask<64xpred> -> !pto.vmi.vreg<1xsi32>
     %b = pto.vmi.vbrc %r : !pto.vmi.vreg<1xsi32> -> !pto.vmi.vreg<64xsi32>
@@ -55,7 +55,7 @@ module attributes {pto.target_arch = "a5", pto.backend = "vpto"} {
       %b2 = pto.vmi.vbrc %r2 : !pto.vmi.vreg<1xsi32> -> !pto.vmi.vreg<64xsi32>
       scf.yield %b2 : !pto.vmi.vreg<64xsi32>
     }
-    pto.vmi.vstore %out, %dst[%c0] : !pto.vmi.vreg<64xsi32>, !pto.ptr<si32, ub>
+    pto.vmi.vstore %out, %dst[%c0] : !pto.vmi.vreg<64xsi32>, !pto.ptr<si32, ub>, index
     return
   }
 
@@ -73,7 +73,7 @@ module attributes {pto.target_arch = "a5", pto.backend = "vpto"} {
     %c1 = arith.constant 1 : index
     %c2 = arith.constant 2 : index
     %c64 = arith.constant 64 : index
-    %x = pto.vmi.vload %src[%c0] : !pto.ptr<si32, ub> -> !pto.vmi.vreg<64xsi32>
+    %x = pto.vmi.vload %src[%c0] : !pto.ptr<si32, ub>, index -> !pto.vmi.vreg<64xsi32>
     %m = pto.vmi.create_mask %c64 : index -> !pto.vmi.mask<64xpred>
     %r = pto.vmi.vcmin %x, %m {group = 1 : i64, pmode = "zero"} : !pto.vmi.vreg<64xsi32>, !pto.vmi.mask<64xpred> -> !pto.vmi.vreg<1xsi32>
     %b = pto.vmi.vbrc %r : !pto.vmi.vreg<1xsi32> -> !pto.vmi.vreg<64xsi32>
@@ -82,7 +82,7 @@ module attributes {pto.target_arch = "a5", pto.backend = "vpto"} {
       %b2 = pto.vmi.vbrc %r2 : !pto.vmi.vreg<1xsi32> -> !pto.vmi.vreg<64xsi32>
       scf.yield %b2 : !pto.vmi.vreg<64xsi32>
     }
-    pto.vmi.vstore %out, %dst[%c0] : !pto.vmi.vreg<64xsi32>, !pto.ptr<si32, ub>
+    pto.vmi.vstore %out, %dst[%c0] : !pto.vmi.vreg<64xsi32>, !pto.ptr<si32, ub>, index
     return
   }
 
@@ -100,7 +100,7 @@ module attributes {pto.target_arch = "a5", pto.backend = "vpto"} {
     %c1 = arith.constant 1 : index
     %c2 = arith.constant 2 : index
     %c64 = arith.constant 64 : index
-    %x = pto.vmi.vload %src[%c0] : !pto.ptr<ui32, ub> -> !pto.vmi.vreg<64xui32>
+    %x = pto.vmi.vload %src[%c0] : !pto.ptr<ui32, ub>, index -> !pto.vmi.vreg<64xui32>
     %m = pto.vmi.create_mask %c64 : index -> !pto.vmi.mask<64xpred>
     %r = pto.vmi.vcadd %x, %m {group = 1 : i64, pmode = "zero"} : !pto.vmi.vreg<64xui32>, !pto.vmi.mask<64xpred> -> !pto.vmi.vreg<1xui32>
     %b = pto.vmi.vbrc %r : !pto.vmi.vreg<1xui32> -> !pto.vmi.vreg<64xui32>
@@ -109,7 +109,7 @@ module attributes {pto.target_arch = "a5", pto.backend = "vpto"} {
       %b2 = pto.vmi.vbrc %r2 : !pto.vmi.vreg<1xui32> -> !pto.vmi.vreg<64xui32>
       scf.yield %b2 : !pto.vmi.vreg<64xui32>
     }
-    pto.vmi.vstore %out, %dst[%c0] : !pto.vmi.vreg<64xui32>, !pto.ptr<ui32, ub>
+    pto.vmi.vstore %out, %dst[%c0] : !pto.vmi.vreg<64xui32>, !pto.ptr<ui32, ub>, index
     return
   }
 
@@ -127,7 +127,7 @@ module attributes {pto.target_arch = "a5", pto.backend = "vpto"} {
     %c1 = arith.constant 1 : index
     %c2 = arith.constant 2 : index
     %c64 = arith.constant 64 : index
-    %x = pto.vmi.vload %src[%c0] : !pto.ptr<ui32, ub> -> !pto.vmi.vreg<64xui32>
+    %x = pto.vmi.vload %src[%c0] : !pto.ptr<ui32, ub>, index -> !pto.vmi.vreg<64xui32>
     %m = pto.vmi.create_mask %c64 : index -> !pto.vmi.mask<64xpred>
     %r = pto.vmi.vcmax %x, %m {group = 1 : i64, pmode = "zero"} : !pto.vmi.vreg<64xui32>, !pto.vmi.mask<64xpred> -> !pto.vmi.vreg<1xui32>
     %b = pto.vmi.vbrc %r : !pto.vmi.vreg<1xui32> -> !pto.vmi.vreg<64xui32>
@@ -136,7 +136,7 @@ module attributes {pto.target_arch = "a5", pto.backend = "vpto"} {
       %b2 = pto.vmi.vbrc %r2 : !pto.vmi.vreg<1xui32> -> !pto.vmi.vreg<64xui32>
       scf.yield %b2 : !pto.vmi.vreg<64xui32>
     }
-    pto.vmi.vstore %out, %dst[%c0] : !pto.vmi.vreg<64xui32>, !pto.ptr<ui32, ub>
+    pto.vmi.vstore %out, %dst[%c0] : !pto.vmi.vreg<64xui32>, !pto.ptr<ui32, ub>, index
     return
   }
 
@@ -154,7 +154,7 @@ module attributes {pto.target_arch = "a5", pto.backend = "vpto"} {
     %c1 = arith.constant 1 : index
     %c2 = arith.constant 2 : index
     %c64 = arith.constant 64 : index
-    %x = pto.vmi.vload %src[%c0] : !pto.ptr<ui32, ub> -> !pto.vmi.vreg<64xui32>
+    %x = pto.vmi.vload %src[%c0] : !pto.ptr<ui32, ub>, index -> !pto.vmi.vreg<64xui32>
     %m = pto.vmi.create_mask %c64 : index -> !pto.vmi.mask<64xpred>
     %r = pto.vmi.vcmin %x, %m {group = 1 : i64, pmode = "zero"} : !pto.vmi.vreg<64xui32>, !pto.vmi.mask<64xpred> -> !pto.vmi.vreg<1xui32>
     %b = pto.vmi.vbrc %r : !pto.vmi.vreg<1xui32> -> !pto.vmi.vreg<64xui32>
@@ -163,7 +163,7 @@ module attributes {pto.target_arch = "a5", pto.backend = "vpto"} {
       %b2 = pto.vmi.vbrc %r2 : !pto.vmi.vreg<1xui32> -> !pto.vmi.vreg<64xui32>
       scf.yield %b2 : !pto.vmi.vreg<64xui32>
     }
-    pto.vmi.vstore %out, %dst[%c0] : !pto.vmi.vreg<64xui32>, !pto.ptr<ui32, ub>
+    pto.vmi.vstore %out, %dst[%c0] : !pto.vmi.vreg<64xui32>, !pto.ptr<ui32, ub>, index
     return
   }
 
@@ -181,7 +181,7 @@ module attributes {pto.target_arch = "a5", pto.backend = "vpto"} {
     %c1 = arith.constant 1 : index
     %c2 = arith.constant 2 : index
     %c64 = arith.constant 64 : index
-    %x = pto.vmi.vload %src[%c0] : !pto.ptr<si32, ub> -> !pto.vmi.vreg<64xsi32>
+    %x = pto.vmi.vload %src[%c0] : !pto.ptr<si32, ub>, index -> !pto.vmi.vreg<64xsi32>
     %m = pto.vmi.create_mask %c64 : index -> !pto.vmi.mask<64xpred>
     %r = pto.vmi.vcadd %x, %m {group = 1 : i64, pmode = "zero"} : !pto.vmi.vreg<64xsi32>, !pto.vmi.mask<64xpred> -> !pto.vmi.vreg<1xsi32>
     %b = pto.vmi.vbrc %r : !pto.vmi.vreg<1xsi32> -> !pto.vmi.vreg<64xsi32>
@@ -190,7 +190,7 @@ module attributes {pto.target_arch = "a5", pto.backend = "vpto"} {
       %b2 = pto.vmi.vbrc %r2 : !pto.vmi.vreg<1xsi32> -> !pto.vmi.vreg<64xsi32>
       scf.yield %b2 : !pto.vmi.vreg<64xsi32>
     }
-    pto.vmi.vstore %out, %dst[%c0] : !pto.vmi.vreg<64xsi32>, !pto.ptr<si32, ub>
+    pto.vmi.vstore %out, %dst[%c0] : !pto.vmi.vreg<64xsi32>, !pto.ptr<si32, ub>, index
     return
   }
 

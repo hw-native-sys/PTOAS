@@ -13,7 +13,7 @@ module {
       %value: !pto.vmi.vreg<129xf32, #pto.vmi.layout<deinterleaved = 2>>,
       %dst: !pto.ptr<f32, ub>, %offset: index) {
     pto.vmi.vstore %value, %dst[%offset]
-        : !pto.vmi.vreg<129xf32, #pto.vmi.layout<deinterleaved = 2>>, !pto.ptr<f32, ub>
+        : !pto.vmi.vreg<129xf32, #pto.vmi.layout<deinterleaved = 2>>, !pto.ptr<f32, ub>, index
     return
   }
 }

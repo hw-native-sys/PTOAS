@@ -22,11 +22,11 @@ module {
   func.func @gbl_scalar_short_i8(%src: !pto.ptr<i8, ub>, %dst: !pto.ptr<i8, ub>) {
     %c0 = arith.constant 0 : index
     %lane = pto.vmi.vload %src[%c0]
-        : !pto.ptr<i8, ub> -> !pto.vmi.vreg<1xi8>
+        : !pto.ptr<i8, ub>, index -> !pto.vmi.vreg<1xi8>
     %r = pto.vmi.vbrc %lane
         : !pto.vmi.vreg<1xi8> -> !pto.vmi.vreg<8xi8>
     pto.vmi.vstore %r, %dst[%c0]
-        : !pto.vmi.vreg<8xi8>, !pto.ptr<i8, ub>
+        : !pto.vmi.vreg<8xi8>, !pto.ptr<i8, ub>, index
     return
   }
 
@@ -34,11 +34,11 @@ module {
   func.func @gbl_scalar_short_i16(%src: !pto.ptr<i16, ub>, %dst: !pto.ptr<i16, ub>) {
     %c0 = arith.constant 0 : index
     %lane = pto.vmi.vload %src[%c0]
-        : !pto.ptr<i16, ub> -> !pto.vmi.vreg<1xi16>
+        : !pto.ptr<i16, ub>, index -> !pto.vmi.vreg<1xi16>
     %r = pto.vmi.vbrc %lane
         : !pto.vmi.vreg<1xi16> -> !pto.vmi.vreg<8xi16>
     pto.vmi.vstore %r, %dst[%c0]
-        : !pto.vmi.vreg<8xi16>, !pto.ptr<i16, ub>
+        : !pto.vmi.vreg<8xi16>, !pto.ptr<i16, ub>, index
     return
   }
 
@@ -47,11 +47,11 @@ module {
   func.func @gbl_scalar_short_i32(%src: !pto.ptr<i32, ub>, %dst: !pto.ptr<i32, ub>) {
     %c0 = arith.constant 0 : index
     %lane = pto.vmi.vload %src[%c0]
-        : !pto.ptr<i32, ub> -> !pto.vmi.vreg<1xi32>
+        : !pto.ptr<i32, ub>, index -> !pto.vmi.vreg<1xi32>
     %r = pto.vmi.vbrc %lane
         : !pto.vmi.vreg<1xi32> -> !pto.vmi.vreg<8xi32>
     pto.vmi.vstore %r, %dst[%c0]
-        : !pto.vmi.vreg<8xi32>, !pto.ptr<i32, ub>
+        : !pto.vmi.vreg<8xi32>, !pto.ptr<i32, ub>, index
     return
   }
 
@@ -61,11 +61,11 @@ module {
   func.func @gbl_scalar_i8_half_part(%src: !pto.ptr<i8, ub>, %dst: !pto.ptr<i8, ub>) {
     %c0 = arith.constant 0 : index
     %lane = pto.vmi.vload %src[%c0]
-        : !pto.ptr<i8, ub> -> !pto.vmi.vreg<1xi8>
+        : !pto.ptr<i8, ub>, index -> !pto.vmi.vreg<1xi8>
     %r = pto.vmi.vbrc %lane
         : !pto.vmi.vreg<1xi8> -> !pto.vmi.vreg<128xi8>
     pto.vmi.vstore %r, %dst[%c0]
-        : !pto.vmi.vreg<128xi8>, !pto.ptr<i8, ub>
+        : !pto.vmi.vreg<128xi8>, !pto.ptr<i8, ub>, index
     return
   }
 
@@ -77,9 +77,9 @@ module {
                                        %stride: index) {
     %c0 = arith.constant 0 : index
     %r = pto.vmi.group_broadcast_load %src[%c0], %stride {num_groups = 1 : i64}
-        : !pto.ptr<i16, ub> -> !pto.vmi.vreg<8xi16>
+        : !pto.ptr<i16, ub>, index -> !pto.vmi.vreg<8xi16>
     pto.vmi.vstore %r, %dst[%c0]
-        : !pto.vmi.vreg<8xi16>, !pto.ptr<i16, ub>
+        : !pto.vmi.vreg<8xi16>, !pto.ptr<i16, ub>, index
     return
   }
 }

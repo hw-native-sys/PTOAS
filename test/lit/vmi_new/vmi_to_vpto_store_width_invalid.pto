@@ -14,7 +14,7 @@ module {
       %dst: memref<32xf64, #pto.address_space<vec>>,
       %offset: index) {
     pto.vmi.vstore %value, %dst[%offset]
-        : !pto.vmi.vreg<32xf64>, memref<32xf64, #pto.address_space<vec>>
+        : !pto.vmi.vreg<32xf64>, memref<32xf64, #pto.address_space<vec>>, index
     return
   }
 }

@@ -20,13 +20,13 @@ module attributes {pto.target_arch = "a5", pto.kernel_kind = #pto.kernel_kind<ve
     %c0 = arith.constant 0 : index
     %c42 = arith.constant 42 : index
     pto.vecscope {
-      %a = pto.vmi.vload %src[%c0] : !pto.ptr<f16, ub> -> !pto.vmi.vreg<64xf16>
-      %b = pto.vmi.vload %src[%c0] : !pto.ptr<f16, ub> -> !pto.vmi.vreg<64xf16>
+      %a = pto.vmi.vload %src[%c0] : !pto.ptr<f16, ub>, index -> !pto.vmi.vreg<64xf16>
+      %b = pto.vmi.vload %src[%c0] : !pto.ptr<f16, ub>, index -> !pto.vmi.vreg<64xf16>
       %mask = pto.vmi.create_mask %c42 : index -> !pto.vmi.mask<64xpred>
       %r = pto.vmi.vsel %mask, %a, %b
           : !pto.vmi.mask<64xpred>, !pto.vmi.vreg<64xf16>, !pto.vmi.vreg<64xf16>
           -> !pto.vmi.vreg<64xf16>
-      pto.vmi.vstore %r, %dst[%c0] : !pto.vmi.vreg<64xf16>, !pto.ptr<f16, ub>
+      pto.vmi.vstore %r, %dst[%c0] : !pto.vmi.vreg<64xf16>, !pto.ptr<f16, ub>, index
     }
     return
   }
@@ -34,13 +34,13 @@ module attributes {pto.target_arch = "a5", pto.kernel_kind = #pto.kernel_kind<ve
     %c0 = arith.constant 0 : index
     %c42 = arith.constant 42 : index
     pto.vecscope {
-      %a = pto.vmi.vload %src[%c0] : !pto.ptr<si16, ub> -> !pto.vmi.vreg<64xsi16>
-      %b = pto.vmi.vload %src[%c0] : !pto.ptr<si16, ub> -> !pto.vmi.vreg<64xsi16>
+      %a = pto.vmi.vload %src[%c0] : !pto.ptr<si16, ub>, index -> !pto.vmi.vreg<64xsi16>
+      %b = pto.vmi.vload %src[%c0] : !pto.ptr<si16, ub>, index -> !pto.vmi.vreg<64xsi16>
       %mask = pto.vmi.create_mask %c42 : index -> !pto.vmi.mask<64xpred>
       %r = pto.vmi.vsel %mask, %a, %b
           : !pto.vmi.mask<64xpred>, !pto.vmi.vreg<64xsi16>, !pto.vmi.vreg<64xsi16>
           -> !pto.vmi.vreg<64xsi16>
-      pto.vmi.vstore %r, %dst[%c0] : !pto.vmi.vreg<64xsi16>, !pto.ptr<si16, ub>
+      pto.vmi.vstore %r, %dst[%c0] : !pto.vmi.vreg<64xsi16>, !pto.ptr<si16, ub>, index
     }
     return
   }
@@ -48,13 +48,13 @@ module attributes {pto.target_arch = "a5", pto.kernel_kind = #pto.kernel_kind<ve
     %c0 = arith.constant 0 : index
     %c42 = arith.constant 42 : index
     pto.vecscope {
-      %a = pto.vmi.vload %src[%c0] : !pto.ptr<si8, ub> -> !pto.vmi.vreg<64xsi8>
-      %b = pto.vmi.vload %src[%c0] : !pto.ptr<si8, ub> -> !pto.vmi.vreg<64xsi8>
+      %a = pto.vmi.vload %src[%c0] : !pto.ptr<si8, ub>, index -> !pto.vmi.vreg<64xsi8>
+      %b = pto.vmi.vload %src[%c0] : !pto.ptr<si8, ub>, index -> !pto.vmi.vreg<64xsi8>
       %mask = pto.vmi.create_mask %c42 : index -> !pto.vmi.mask<64xpred>
       %r = pto.vmi.vsel %mask, %a, %b
           : !pto.vmi.mask<64xpred>, !pto.vmi.vreg<64xsi8>, !pto.vmi.vreg<64xsi8>
           -> !pto.vmi.vreg<64xsi8>
-      pto.vmi.vstore %r, %dst[%c0] : !pto.vmi.vreg<64xsi8>, !pto.ptr<si8, ub>
+      pto.vmi.vstore %r, %dst[%c0] : !pto.vmi.vreg<64xsi8>, !pto.ptr<si8, ub>, index
     }
     return
   }
@@ -62,13 +62,13 @@ module attributes {pto.target_arch = "a5", pto.kernel_kind = #pto.kernel_kind<ve
     %c0 = arith.constant 0 : index
     %c90 = arith.constant 90 : index
     pto.vecscope {
-      %a = pto.vmi.vload %src[%c0] : !pto.ptr<si8, ub> -> !pto.vmi.vreg<128xsi8>
-      %b = pto.vmi.vload %src[%c0] : !pto.ptr<si8, ub> -> !pto.vmi.vreg<128xsi8>
+      %a = pto.vmi.vload %src[%c0] : !pto.ptr<si8, ub>, index -> !pto.vmi.vreg<128xsi8>
+      %b = pto.vmi.vload %src[%c0] : !pto.ptr<si8, ub>, index -> !pto.vmi.vreg<128xsi8>
       %mask = pto.vmi.create_mask %c90 : index -> !pto.vmi.mask<128xpred>
       %r = pto.vmi.vsel %mask, %a, %b
           : !pto.vmi.mask<128xpred>, !pto.vmi.vreg<128xsi8>, !pto.vmi.vreg<128xsi8>
           -> !pto.vmi.vreg<128xsi8>
-      pto.vmi.vstore %r, %dst[%c0] : !pto.vmi.vreg<128xsi8>, !pto.ptr<si8, ub>
+      pto.vmi.vstore %r, %dst[%c0] : !pto.vmi.vreg<128xsi8>, !pto.ptr<si8, ub>, index
     }
     return
   }
@@ -76,13 +76,13 @@ module attributes {pto.target_arch = "a5", pto.kernel_kind = #pto.kernel_kind<ve
     %c0 = arith.constant 0 : index
     %c90 = arith.constant 90 : index
     pto.vecscope {
-      %a = pto.vmi.vload %src[%c0] : !pto.ptr<f16, ub> -> !pto.vmi.vreg<128xf16>
-      %b = pto.vmi.vload %src[%c0] : !pto.ptr<f16, ub> -> !pto.vmi.vreg<128xf16>
+      %a = pto.vmi.vload %src[%c0] : !pto.ptr<f16, ub>, index -> !pto.vmi.vreg<128xf16>
+      %b = pto.vmi.vload %src[%c0] : !pto.ptr<f16, ub>, index -> !pto.vmi.vreg<128xf16>
       %mask = pto.vmi.create_mask %c90 : index -> !pto.vmi.mask<128xpred>
       %r = pto.vmi.vsel %mask, %a, %b
           : !pto.vmi.mask<128xpred>, !pto.vmi.vreg<128xf16>, !pto.vmi.vreg<128xf16>
           -> !pto.vmi.vreg<128xf16>
-      pto.vmi.vstore %r, %dst[%c0] : !pto.vmi.vreg<128xf16>, !pto.ptr<f16, ub>
+      pto.vmi.vstore %r, %dst[%c0] : !pto.vmi.vreg<128xf16>, !pto.ptr<f16, ub>, index
     }
     return
   }
@@ -90,15 +90,15 @@ module attributes {pto.target_arch = "a5", pto.kernel_kind = #pto.kernel_kind<ve
     %c0 = arith.constant 0 : index
     %c42 = arith.constant 42 : index
     pto.vecscope {
-      %s = pto.vmi.vload %src[%c0] : !pto.ptr<si8, ub> -> !pto.vmi.vreg<64xsi8>
-      %f = pto.vmi.vload %src[%c0] : !pto.ptr<si8, ub> -> !pto.vmi.vreg<64xsi8>
+      %s = pto.vmi.vload %src[%c0] : !pto.ptr<si8, ub>, index -> !pto.vmi.vreg<64xsi8>
+      %f = pto.vmi.vload %src[%c0] : !pto.ptr<si8, ub>, index -> !pto.vmi.vreg<64xsi8>
       %seed = pto.vmi.create_mask %c42 : index -> !pto.vmi.mask<64xpred>
       %mask = pto.vmi.vcmps %s, %scalar, %seed {cmp = "eq"}
           : !pto.vmi.vreg<64xsi8>, si8, !pto.vmi.mask<64xpred> -> !pto.vmi.mask<64xpred>
       %r = pto.vmi.vsel %mask, %s, %f
           : !pto.vmi.mask<64xpred>, !pto.vmi.vreg<64xsi8>, !pto.vmi.vreg<64xsi8>
           -> !pto.vmi.vreg<64xsi8>
-      pto.vmi.vstore %r, %dst[%c0] : !pto.vmi.vreg<64xsi8>, !pto.ptr<si8, ub>
+      pto.vmi.vstore %r, %dst[%c0] : !pto.vmi.vreg<64xsi8>, !pto.ptr<si8, ub>, index
     }
     return
   }
@@ -106,15 +106,15 @@ module attributes {pto.target_arch = "a5", pto.kernel_kind = #pto.kernel_kind<ve
     %c0 = arith.constant 0 : index
     %c42 = arith.constant 42 : index
     pto.vecscope {
-      %s = pto.vmi.vload %src[%c0] : !pto.ptr<si16, ub> -> !pto.vmi.vreg<64xsi16>
-      %f = pto.vmi.vload %src[%c0] : !pto.ptr<si16, ub> -> !pto.vmi.vreg<64xsi16>
+      %s = pto.vmi.vload %src[%c0] : !pto.ptr<si16, ub>, index -> !pto.vmi.vreg<64xsi16>
+      %f = pto.vmi.vload %src[%c0] : !pto.ptr<si16, ub>, index -> !pto.vmi.vreg<64xsi16>
       %seed = pto.vmi.create_mask %c42 : index -> !pto.vmi.mask<64xpred>
       %mask = pto.vmi.vcmps %s, %scalar, %seed {cmp = "eq"}
           : !pto.vmi.vreg<64xsi16>, si16, !pto.vmi.mask<64xpred> -> !pto.vmi.mask<64xpred>
       %r = pto.vmi.vsel %mask, %s, %f
           : !pto.vmi.mask<64xpred>, !pto.vmi.vreg<64xsi16>, !pto.vmi.vreg<64xsi16>
           -> !pto.vmi.vreg<64xsi16>
-      pto.vmi.vstore %r, %dst[%c0] : !pto.vmi.vreg<64xsi16>, !pto.ptr<si16, ub>
+      pto.vmi.vstore %r, %dst[%c0] : !pto.vmi.vreg<64xsi16>, !pto.ptr<si16, ub>, index
     }
     return
   }
@@ -122,15 +122,15 @@ module attributes {pto.target_arch = "a5", pto.kernel_kind = #pto.kernel_kind<ve
     %c0 = arith.constant 0 : index
     %c42 = arith.constant 42 : index
     pto.vecscope {
-      %s = pto.vmi.vload %src[%c0] : !pto.ptr<bf16, ub> -> !pto.vmi.vreg<64xbf16>
-      %f = pto.vmi.vload %src[%c0] : !pto.ptr<bf16, ub> -> !pto.vmi.vreg<64xbf16>
+      %s = pto.vmi.vload %src[%c0] : !pto.ptr<bf16, ub>, index -> !pto.vmi.vreg<64xbf16>
+      %f = pto.vmi.vload %src[%c0] : !pto.ptr<bf16, ub>, index -> !pto.vmi.vreg<64xbf16>
       %seed = pto.vmi.create_mask %c42 : index -> !pto.vmi.mask<64xpred>
       %mask = pto.vmi.vcmps %s, %scalar, %seed {cmp = "eq"}
           : !pto.vmi.vreg<64xbf16>, bf16, !pto.vmi.mask<64xpred> -> !pto.vmi.mask<64xpred>
       %r = pto.vmi.vsel %mask, %s, %f
           : !pto.vmi.mask<64xpred>, !pto.vmi.vreg<64xbf16>, !pto.vmi.vreg<64xbf16>
           -> !pto.vmi.vreg<64xbf16>
-      pto.vmi.vstore %r, %dst[%c0] : !pto.vmi.vreg<64xbf16>, !pto.ptr<bf16, ub>
+      pto.vmi.vstore %r, %dst[%c0] : !pto.vmi.vreg<64xbf16>, !pto.ptr<bf16, ub>, index
     }
     return
   }
@@ -138,8 +138,8 @@ module attributes {pto.target_arch = "a5", pto.kernel_kind = #pto.kernel_kind<ve
     %c0 = arith.constant 0 : index
     %c42 = arith.constant 42 : index
     pto.vecscope {
-      %s = pto.vmi.vload %src[%c0] : !pto.ptr<si8, ub> -> !pto.vmi.vreg<64xsi8>
-      %f = pto.vmi.vload %src[%c0] : !pto.ptr<si8, ub> -> !pto.vmi.vreg<64xsi8>
+      %s = pto.vmi.vload %src[%c0] : !pto.ptr<si8, ub>, index -> !pto.vmi.vreg<64xsi8>
+      %f = pto.vmi.vload %src[%c0] : !pto.ptr<si8, ub>, index -> !pto.vmi.vreg<64xsi8>
       %seed = pto.vmi.create_mask %c42 : index -> !pto.vmi.mask<64xpred>
       %mask = pto.vmi.vcmp %s, %f, %seed {cmp = "eq"}
           : !pto.vmi.vreg<64xsi8>, !pto.vmi.vreg<64xsi8>, !pto.vmi.mask<64xpred>
@@ -147,7 +147,7 @@ module attributes {pto.target_arch = "a5", pto.kernel_kind = #pto.kernel_kind<ve
       %r = pto.vmi.vsel %mask, %s, %f
           : !pto.vmi.mask<64xpred>, !pto.vmi.vreg<64xsi8>, !pto.vmi.vreg<64xsi8>
           -> !pto.vmi.vreg<64xsi8>
-      pto.vmi.vstore %r, %dst[%c0] : !pto.vmi.vreg<64xsi8>, !pto.ptr<si8, ub>
+      pto.vmi.vstore %r, %dst[%c0] : !pto.vmi.vreg<64xsi8>, !pto.ptr<si8, ub>, index
     }
     return
   }
@@ -155,8 +155,8 @@ module attributes {pto.target_arch = "a5", pto.kernel_kind = #pto.kernel_kind<ve
     %c0 = arith.constant 0 : index
     %c42 = arith.constant 42 : index
     pto.vecscope {
-      %s = pto.vmi.vload %src[%c0] : !pto.ptr<ui16, ub> -> !pto.vmi.vreg<64xui16>
-      %f = pto.vmi.vload %src[%c0] : !pto.ptr<ui16, ub> -> !pto.vmi.vreg<64xui16>
+      %s = pto.vmi.vload %src[%c0] : !pto.ptr<ui16, ub>, index -> !pto.vmi.vreg<64xui16>
+      %f = pto.vmi.vload %src[%c0] : !pto.ptr<ui16, ub>, index -> !pto.vmi.vreg<64xui16>
       %seed = pto.vmi.create_mask %c42 : index -> !pto.vmi.mask<64xpred>
       %mask = pto.vmi.vcmp %s, %f, %seed {cmp = "eq"}
           : !pto.vmi.vreg<64xui16>, !pto.vmi.vreg<64xui16>, !pto.vmi.mask<64xpred>
@@ -164,7 +164,7 @@ module attributes {pto.target_arch = "a5", pto.kernel_kind = #pto.kernel_kind<ve
       %r = pto.vmi.vsel %mask, %s, %f
           : !pto.vmi.mask<64xpred>, !pto.vmi.vreg<64xui16>, !pto.vmi.vreg<64xui16>
           -> !pto.vmi.vreg<64xui16>
-      pto.vmi.vstore %r, %dst[%c0] : !pto.vmi.vreg<64xui16>, !pto.ptr<ui16, ub>
+      pto.vmi.vstore %r, %dst[%c0] : !pto.vmi.vreg<64xui16>, !pto.ptr<ui16, ub>, index
     }
     return
   }
@@ -172,15 +172,15 @@ module attributes {pto.target_arch = "a5", pto.kernel_kind = #pto.kernel_kind<ve
     %c0 = arith.constant 0 : index
     %c42 = arith.constant 42 : index
     pto.vecscope {
-      %s = pto.vmi.vload %src[%c0] : !pto.ptr<si32, ub> -> !pto.vmi.vreg<64xsi32>
-      %f = pto.vmi.vload %src[%c0] : !pto.ptr<si32, ub> -> !pto.vmi.vreg<64xsi32>
+      %s = pto.vmi.vload %src[%c0] : !pto.ptr<si32, ub>, index -> !pto.vmi.vreg<64xsi32>
+      %f = pto.vmi.vload %src[%c0] : !pto.ptr<si32, ub>, index -> !pto.vmi.vreg<64xsi32>
       %seed = pto.vmi.create_mask %c42 : index -> !pto.vmi.mask<64xpred>
       %mask = pto.vmi.vcmps %s, %scalar, %seed {cmp = "eq"}
           : !pto.vmi.vreg<64xsi32>, si32, !pto.vmi.mask<64xpred> -> !pto.vmi.mask<64xpred>
       %r = pto.vmi.vsel %mask, %s, %f
           : !pto.vmi.mask<64xpred>, !pto.vmi.vreg<64xsi32>, !pto.vmi.vreg<64xsi32>
           -> !pto.vmi.vreg<64xsi32>
-      pto.vmi.vstore %r, %dst[%c0] : !pto.vmi.vreg<64xsi32>, !pto.ptr<si32, ub>
+      pto.vmi.vstore %r, %dst[%c0] : !pto.vmi.vreg<64xsi32>, !pto.ptr<si32, ub>, index
     }
     return
   }

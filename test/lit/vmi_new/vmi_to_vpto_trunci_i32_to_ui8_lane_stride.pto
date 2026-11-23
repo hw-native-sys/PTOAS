@@ -30,7 +30,7 @@ module {
         : !pto.vmi.vreg<128xui32, #pto.vmi.layout<deinterleaved = 2>>
         -> !pto.vmi.vreg<128xui8>
     pto.vmi.vstore %packed, %dst[%aligned_off]
-        : !pto.vmi.vreg<128xui8>, !pto.ptr<ui8, ub>
+        : !pto.vmi.vreg<128xui8>, !pto.ptr<ui8, ub>, index
     return
   }
 }

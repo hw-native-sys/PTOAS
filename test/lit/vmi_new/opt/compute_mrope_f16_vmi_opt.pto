@@ -68,13 +68,13 @@ module attributes {pto.target_arch = "a5", pto.kernel_kind = #pto.kernel_kind<ve
             %x2_base = arith.addi %x_base, %half_rotary : index
 
             %x1 = pto.vmi.vload %x_ub[%x_base]
-              : !pto.ptr<f16, ub> -> !pto.vmi.vreg<64xf16>
+              : !pto.ptr<f16, ub>, index -> !pto.vmi.vreg<64xf16>
             %x2 = pto.vmi.vload %x_ub[%x2_base]
-              : !pto.ptr<f16, ub> -> !pto.vmi.vreg<64xf16>
+              : !pto.ptr<f16, ub>, index -> !pto.vmi.vreg<64xf16>
             %cos = pto.vmi.vload %cs_ub[%cs_off]
-              : !pto.ptr<f16, ub> -> !pto.vmi.vreg<64xf16>
+              : !pto.ptr<f16, ub>, index -> !pto.vmi.vreg<64xf16>
             %sin = pto.vmi.vload %cs_ub[%cs_sin_base]
-              : !pto.ptr<f16, ub> -> !pto.vmi.vreg<64xf16>
+              : !pto.ptr<f16, ub>, index -> !pto.vmi.vreg<64xf16>
 
             %x1_f32 = pto.vmi.vcvt %x1
               : !pto.vmi.vreg<64xf16> -> !pto.vmi.vreg<64xf32>
@@ -94,7 +94,7 @@ module attributes {pto.target_arch = "a5", pto.kernel_kind = #pto.kernel_kind<ve
             %out1 = pto.vmi.vcvt %out1_f32 {saturate = "SAT"}
               : !pto.vmi.vreg<64xf32> -> !pto.vmi.vreg<64xf16>
             pto.vmi.vstore %out1, %y_ub[%x_base], %half_mask
-              : !pto.vmi.vreg<64xf16>, !pto.ptr<f16, ub>, !pto.vmi.mask<64xpred>
+              : !pto.vmi.vreg<64xf16>, !pto.ptr<f16, ub>, index, !pto.vmi.mask<64xpred>
 
             %x2_cos = pto.vmi.vmul %x2_f32, %cos_f32
               : !pto.vmi.vreg<64xf32>, !pto.vmi.vreg<64xf32> -> !pto.vmi.vreg<64xf32>
@@ -105,14 +105,14 @@ module attributes {pto.target_arch = "a5", pto.kernel_kind = #pto.kernel_kind<ve
             %out2 = pto.vmi.vcvt %out2_f32 {saturate = "SAT"}
               : !pto.vmi.vreg<64xf32> -> !pto.vmi.vreg<64xf16>
             pto.vmi.vstore %out2, %y_ub[%x2_base], %half_mask
-              : !pto.vmi.vreg<64xf16>, !pto.ptr<f16, ub>, !pto.vmi.mask<64xpred>
+              : !pto.vmi.vreg<64xf16>, !pto.ptr<f16, ub>, index, !pto.vmi.mask<64xpred>
 
             scf.if %has_suffix {
               %suffix_base = arith.addi %x_base, %rotary_dim_idx : index
               %suffix = pto.vmi.vload %x_ub[%suffix_base]
-                : !pto.ptr<f16, ub> -> !pto.vmi.vreg<64xf16>
+                : !pto.ptr<f16, ub>, index -> !pto.vmi.vreg<64xf16>
               pto.vmi.vstore %suffix, %y_ub[%suffix_base], %suffix_mask
-                : !pto.vmi.vreg<64xf16>, !pto.ptr<f16, ub>, !pto.vmi.mask<64xpred>
+                : !pto.vmi.vreg<64xf16>, !pto.ptr<f16, ub>, index, !pto.vmi.mask<64xpred>
             }
           }
         }

@@ -50,16 +50,16 @@ module attributes {pto.target_arch = "a5", pto.backend = "vpto"} {
       %abs_mask = pto.vmi.vbrc %u32767 : ui16 -> !pto.vmi.vreg<128xui16>
       scf.for %chunk = %c0 to %c4 step %c1 {
         %off = arith.muli %chunk, %c128 : index
-        %x = pto.vmi.vload %src[%off] : !pto.ptr<bf16, ub> -> !pto.vmi.vreg<128xbf16>
+        %x = pto.vmi.vload %src[%off] : !pto.ptr<bf16, ub>, index -> !pto.vmi.vreg<128xbf16>
         %bits = pto.vmi.vinterpret_cast %x : !pto.vmi.vreg<128xbf16> -> !pto.vmi.vreg<128xui16>
         %abs = pto.vmi.vand %bits, %abs_mask, %full128 {pmode = "zero"} : !pto.vmi.vreg<128xui16>, !pto.vmi.vreg<128xui16>, !pto.vmi.mask<128xpred> -> !pto.vmi.vreg<128xui16>
         %group = pto.vmi.group_reduce_maxi %abs, %full128 {num_groups = 8 : i64} : !pto.vmi.vreg<128xui16>, !pto.vmi.mask<128xpred> -> !pto.vmi.vreg<8xui16>
         %group_bf = pto.vmi.vinterpret_cast %group : !pto.vmi.vreg<8xui16> -> !pto.vmi.vreg<8xbf16>
         %dst_off = arith.muli %chunk, %c8 : index
-        pto.vmi.vstore %group_bf, %max[%dst_off] : !pto.vmi.vreg<8xbf16>, !pto.ptr<bf16, ub>
+        pto.vmi.vstore %group_bf, %max[%dst_off] : !pto.vmi.vreg<8xbf16>, !pto.ptr<bf16, ub>, index
       }
-      %out = pto.vmi.vload %max[%c0] : !pto.ptr<bf16, ub> -> !pto.vmi.vreg<32xbf16>
-      pto.vmi.vstore %out, %output[%c0] : !pto.vmi.vreg<32xbf16>, !pto.ptr<bf16, ub>
+      %out = pto.vmi.vload %max[%c0] : !pto.ptr<bf16, ub>, index -> !pto.vmi.vreg<32xbf16>
+      pto.vmi.vstore %out, %output[%c0] : !pto.vmi.vreg<32xbf16>, !pto.ptr<bf16, ub>, index
     }
     return
   }

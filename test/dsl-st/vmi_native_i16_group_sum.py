@@ -24,6 +24,14 @@ def build_kernel(label, lanes, groups, name):
     vector = f"!pto.vmi.vreg<{lanes}x{label}>"
     packet = f"!pto.vmi.vreg<{groups}x{label}>"
     mask = f"!pto.vmi.mask<{lanes}xpred>"
+    label_ub = f"!pto.ptr<{label}, ub>"
+    group_mask = f"!pto.vmi.mask<{groups}xpred>"
+    wide_packet = f"!pto.vmi.vreg<{groups}x{wide}>"
+    wide_ub = f"!pto.ptr<{wide}, ub>"
+    u8_packet = f"!pto.vmi.vreg<{groups}xui8>"
+    u8_vector = f"!pto.vmi.vreg<{lanes}xui8>"
+    u8_ub = "!pto.ptr<ui8, ub>"
+    one_packet = f"!pto.vmi.vreg<1x{label}>"
     # Text IR also covers VL512, beyond the Python create_mask size list.
     source = f'''module attributes {{pto.target_arch = "a5", pto.kernel_kind = #pto.kernel_kind<vector>}} {{
       func.func @{name}(%src: !pto.ptr<{label}, gm>, %gate: !pto.ptr<{label}, gm>,
@@ -65,32 +73,32 @@ def build_kernel(label, lanes, groups, name):
     source += f'''        pto.set_flag["PIPE_MTE2", "PIPE_V", "EVENT_ID0"]
         pto.wait_flag["PIPE_MTE2", "PIPE_V", "EVENT_ID0"]
         pto.vecscope {{
-          %x = pto.vmi.vload %s[%c0] : !pto.ptr<{label}, ub> -> {vector}
-          %gates = pto.vmi.vload %g[%c0] : !pto.ptr<{label}, ub> -> {vector}
+          %x = pto.vmi.vload %s[%c0] : !pto.ptr<{label}, ub>, index -> {vector}
+          %gates = pto.vmi.vload %g[%c0] : !pto.ptr<{label}, ub>, index -> {vector}
           %prefix = pto.vmi.create_mask %active_idx : index -> {mask}
           %mask = pto.vmi.vcmps %gates, %zero, %prefix {{cmp = "gt"}} : {vector}, {label}, {mask} -> {mask}
           %sum = pto.vmi.vcadd %x, %mask {{group = {groups}}} : {vector}, {mask} -> {packet}
           %max = pto.vmi.vcmax %x, %mask {{group = {groups}}} : {vector}, {mask} -> {packet}
           %min = pto.vmi.vcmin %x, %mask {{group = {groups}}} : {vector}, {mask} -> {packet}
-          pto.vmi.vstore %sum, %o[%c1], %c1 {{group = {groups}}} : {packet}, !pto.ptr<{label}, ub>
-          pto.vmi.vstore %sum, %o[%c256], %c1 {{group = {groups}}} : {packet}, !pto.ptr<{label}, ub>
+          pto.vmi.vstore %sum, %o[%c1], %c1 {{group = {groups}}} : {packet}, !pto.ptr<{label}, ub>, index
+          pto.vmi.vstore %sum, %o[%c256], %c1 {{group = {groups}}} : {packet}, !pto.ptr<{label}, ub>, index
           %brc = pto.vmi.vbrc %sum {{group = {groups}}} : {packet} -> {vector}
-          pto.vmi.vstore %brc, %o[%c512] : {vector}, !pto.ptr<{label}, ub>
-          %extended = pto.vmi.{extend} %sum : {packet} -> !pto.vmi.vreg<{groups}x{wide}>
-          pto.vmi.vstore %extended, %w[%c1], %c1 {{group = {groups}}} : !pto.vmi.vreg<{groups}x{wide}>, !pto.ptr<{wide}, ub>
-          %truncated = pto.vmi.trunci %sum {{saturate = "NOSAT"}} : {packet} -> !pto.vmi.vreg<{groups}xui8>
-          pto.vmi.vstore %truncated, %n[%c3], %c1 {{group = {groups}}} : !pto.vmi.vreg<{groups}xui8>, !pto.ptr<ui8, ub>
-          %narrow_brc = pto.vmi.vbrc %truncated {{group = {groups}}} : !pto.vmi.vreg<{groups}xui8> -> !pto.vmi.vreg<{lanes}xui8>
-          pto.vmi.vstore %narrow_brc, %n[%c512] : !pto.vmi.vreg<{lanes}xui8>, !pto.ptr<ui8, ub>
-          %saturated = pto.vmi.trunci %sum {{saturate = "SAT"}} : {packet} -> !pto.vmi.vreg<{groups}xui8>
-          pto.vmi.vstore %saturated, %n[%c256], %c1 {{group = {groups}}} : !pto.vmi.vreg<{groups}xui8>, !pto.ptr<ui8, ub>
-          %all = pto.vmi.create_mask %groups : index -> !pto.vmi.mask<{groups}xpred>
-          %double = pto.vmi.vadd %sum, %sum, %all : {packet}, {packet}, !pto.vmi.mask<{groups}xpred> -> {packet}
-          pto.vmi.vstore %double, %o[%c1280], %c1 {{group = {groups}}} : {packet}, !pto.ptr<{label}, ub>
-          %total = pto.vmi.vcadd %sum, %all {{group = 1}} : {packet}, !pto.vmi.mask<{groups}xpred> -> !pto.vmi.vreg<1x{label}>
-          pto.vmi.vstore %total, %o[%c1536] : !pto.vmi.vreg<1x{label}>, !pto.ptr<{label}, ub>
-          pto.vmi.vstore %max, %o[%c1792], %c1 {{group = {groups}}} : {packet}, !pto.ptr<{label}, ub>
-          pto.vmi.vstore %min, %o[%c1856], %c1 {{group = {groups}}} : {packet}, !pto.ptr<{label}, ub>
+          pto.vmi.vstore %brc, %o[%c512] : {vector}, !pto.ptr<{label}, ub>, index
+          %extended = pto.vmi.{extend} %sum : {packet} -> {wide_packet}
+          pto.vmi.vstore %extended, %w[%c1], %c1 {{group = {groups}}} : {wide_packet}, {wide_ub}, index
+          %truncated = pto.vmi.trunci %sum {{saturate = "NOSAT"}} : {packet} -> {u8_packet}
+          pto.vmi.vstore %truncated, %n[%c3], %c1 {{group = {groups}}} : {u8_packet}, {u8_ub}, index
+          %narrow_brc = pto.vmi.vbrc %truncated {{group = {groups}}} : {u8_packet} -> {u8_vector}
+          pto.vmi.vstore %narrow_brc, %n[%c512] : {u8_vector}, {u8_ub}, index
+          %saturated = pto.vmi.trunci %sum {{saturate = "SAT"}} : {packet} -> {u8_packet}
+          pto.vmi.vstore %saturated, %n[%c256], %c1 {{group = {groups}}} : {u8_packet}, {u8_ub}, index
+          %all = pto.vmi.create_mask %groups : index -> {group_mask}
+          %double = pto.vmi.vadd %sum, %sum, %all : {packet}, {packet}, {group_mask} -> {packet}
+          pto.vmi.vstore %double, %o[%c1280], %c1 {{group = {groups}}} : {packet}, {label_ub}, index
+          %total = pto.vmi.vcadd %sum, %all {{group = 1}} : {packet}, {group_mask} -> {one_packet}
+          pto.vmi.vstore %total, %o[%c1536] : {one_packet}, {label_ub}, index
+          pto.vmi.vstore %max, %o[%c1792], %c1 {{group = {groups}}} : {packet}, {label_ub}, index
+          pto.vmi.vstore %min, %o[%c1856], %c1 {{group = {groups}}} : {packet}, {label_ub}, index
         }}
         pto.set_flag["PIPE_V", "PIPE_MTE3", "EVENT_ID0"]
         pto.wait_flag["PIPE_V", "PIPE_MTE3", "EVENT_ID0"]

@@ -15,7 +15,7 @@ module {
       -> !pto.vmi.vreg<256xf8E4M3FN, #pto.vmi.layout<contiguous>> {
     %c0 = arith.constant 0 : index
     %x16 = pto.vmi.vload %src[%c0]
-        : memref<512xf16, #pto.address_space<vec>>
+        : memref<512xf16, #pto.address_space<vec>>, index
         -> !pto.vmi.vreg<256xf16, #pto.vmi.layout<contiguous>>
     %x32_d2 = pto.vmi.vcvt %x16
         : !pto.vmi.vreg<256xf16, #pto.vmi.layout<contiguous>>
@@ -35,10 +35,10 @@ module {
       -> !pto.vmi.vreg<256xf8E4M3FN, #pto.vmi.layout<contiguous>> {
     %c0 = arith.constant 0 : index
     %lhs16 = pto.vmi.vload %lhs[%c0]
-        : memref<512xf16, #pto.address_space<vec>>
+        : memref<512xf16, #pto.address_space<vec>>, index
         -> !pto.vmi.vreg<256xf16, #pto.vmi.layout<contiguous>>
     %rhs16 = pto.vmi.vload %rhs[%c0]
-        : memref<512xf16, #pto.address_space<vec>>
+        : memref<512xf16, #pto.address_space<vec>>, index
         -> !pto.vmi.vreg<256xf16, #pto.vmi.layout<contiguous>>
     %lhs32_d2 = pto.vmi.vcvt %lhs16
         : !pto.vmi.vreg<256xf16, #pto.vmi.layout<contiguous>>
@@ -65,7 +65,7 @@ module {
           !pto.vmi.vreg<256xf8E4M3FN, #pto.vmi.layout<contiguous>>) {
     %c0 = arith.constant 0 : index
     %x16 = pto.vmi.vload %src[%c0]
-        : memref<512xf16, #pto.address_space<vec>>
+        : memref<512xf16, #pto.address_space<vec>>, index
         -> !pto.vmi.vreg<256xf16, #pto.vmi.layout<contiguous>>
     %x32_d2 = pto.vmi.vcvt %x16
         : !pto.vmi.vreg<256xf16, #pto.vmi.layout<contiguous>>
@@ -89,7 +89,7 @@ module {
       -> !pto.vmi.vreg<128xf32, #pto.vmi.layout<contiguous>> {
     %c0 = arith.constant 0 : index
     %x16 = pto.vmi.vload %src[%c0]
-        : memref<256xf16, #pto.address_space<vec>>
+        : memref<256xf16, #pto.address_space<vec>>, index
         -> !pto.vmi.vreg<128xf16, #pto.vmi.layout<contiguous>>
     %x32_d2 = pto.vmi.vcvt %x16
         : !pto.vmi.vreg<128xf16, #pto.vmi.layout<contiguous>>

@@ -107,7 +107,7 @@ module {
         -> !pto.vmi.vreg<8xui8, #pto.vmi.layout<num_groups = 8, slots = 1>>
     pto.vmi.vstore %narrow, %dst[%aligned_off], %c1 {group = 8}
         : !pto.vmi.vreg<8xui8, #pto.vmi.layout<num_groups = 8, slots = 1>>,
-          !pto.ptr<ui8, ub>
+          !pto.ptr<ui8, ub>, index
     return
   }
 
@@ -124,7 +124,7 @@ module {
         -> !pto.vmi.vreg<8xui8, #pto.vmi.layout<num_groups = 8, slots = 8, lane_stride = 4>>
     pto.vmi.vstore %narrow, %dst[%aligned_off], %c1 {group = 8}
         : !pto.vmi.vreg<8xui8, #pto.vmi.layout<num_groups = 8, slots = 8, lane_stride = 4>>,
-          !pto.ptr<ui8, ub>
+          !pto.ptr<ui8, ub>, index
     return
   }
 
@@ -163,7 +163,7 @@ module {
         -> !pto.vmi.vreg<8xui32, #pto.vmi.layout<num_groups = 8, slots = 1>>
     pto.vmi.vstore %wide, %dst[%aligned_off], %c1 {group = 8}
         : !pto.vmi.vreg<8xui32, #pto.vmi.layout<num_groups = 8, slots = 1>>,
-          !pto.ptr<ui32, ub>
+          !pto.ptr<ui32, ub>, index
     return
   }
 
@@ -180,7 +180,7 @@ module {
         -> !pto.vmi.vreg<8xui32, #pto.vmi.layout<num_groups = 8, slots = 1>>
     pto.vmi.vstore %wide, %dst[%aligned_off], %c1 {group = 8}
         : !pto.vmi.vreg<8xui32, #pto.vmi.layout<num_groups = 8, slots = 1>>,
-          !pto.ptr<ui32, ub>
+          !pto.ptr<ui32, ub>, index
     return
   }
 
@@ -255,7 +255,7 @@ module {
         -> !pto.vmi.vreg<8xui16, #pto.vmi.layout<num_groups = 8, slots = 1>>
     pto.vmi.vstore %narrow, %dst[%aligned_off], %c1 {group = 8}
         : !pto.vmi.vreg<8xui16, #pto.vmi.layout<num_groups = 8, slots = 1>>,
-          !pto.ptr<ui16, ub>
+          !pto.ptr<ui16, ub>, index
     return
   }
 
@@ -272,7 +272,7 @@ module {
         -> !pto.vmi.vreg<8xui16, #pto.vmi.layout<num_groups = 8, slots = 8, lane_stride = 2>>
     pto.vmi.vstore %narrow, %dst[%aligned_off], %c1 {group = 8}
         : !pto.vmi.vreg<8xui16, #pto.vmi.layout<num_groups = 8, slots = 8, lane_stride = 2>>,
-          !pto.ptr<ui16, ub>
+          !pto.ptr<ui16, ub>, index
     return
   }
 
@@ -289,7 +289,7 @@ module {
         -> !pto.vmi.vreg<8xui8, #pto.vmi.layout<num_groups = 8, slots = 8, lane_stride = 4>>
     pto.vmi.vstore %narrow, %dst[%aligned_off], %c1 {group = 8}
         : !pto.vmi.vreg<8xui8, #pto.vmi.layout<num_groups = 8, slots = 8, lane_stride = 4>>,
-          !pto.ptr<ui8, ub>
+          !pto.ptr<ui8, ub>, index
     return
   }
 
@@ -306,7 +306,7 @@ module {
         -> !pto.vmi.vreg<8xui8, #pto.vmi.layout<num_groups = 8, slots = 8, lane_stride = 2>>
     pto.vmi.vstore %narrow, %dst[%aligned_off], %c1 {group = 8}
         : !pto.vmi.vreg<8xui8, #pto.vmi.layout<num_groups = 8, slots = 8, lane_stride = 2>>,
-          !pto.ptr<ui8, ub>
+          !pto.ptr<ui8, ub>, index
     return
   }
 }

@@ -54,15 +54,15 @@ def build_kernel(factor):
     vector_type = f"!pto.vmi.vreg<{lanes}xf32>"
     body = f"""
       %all = pto.vmi.create_mask %active : index -> {mask_type}
-      %gates = pto.vmi.vload %ub[%c0] : !pto.ptr<f32, ub> -> {vector_type}
+      %gates = pto.vmi.vload %ub[%c0] : !pto.ptr<f32, ub>, index -> {vector_type}
       %mask = pto.vmi.vcmps %gates, %zero, %all {{cmp = "gt"}} : {vector_type}, f32, {mask_type} -> {mask_type}
     """
     result = "!pto.vmi.vreg<8xf32>"
     body += f"""
-      %data = pto.vmi.group_load %ub[%c0], %stride {{num_groups = 8}} : !pto.ptr<f32, ub> -> {vector_type}
+      %data = pto.vmi.group_load %ub[%c0], %stride {{num_groups = 8}} : !pto.ptr<f32, ub>, index -> {vector_type}
       %sum = pto.vmi.group_reduce_addf %data, %mask {{num_groups = 8, reassoc}}
         : {vector_type}, {mask_type} -> {result}
-      pto.vmi.group_store %sum, %out[%c0], %c1 {{num_groups = 8}} : {result}, !pto.ptr<f32, ub>
+      pto.vmi.group_store %sum, %out[%c0], %c1 {{num_groups = 8}} : {result}, !pto.ptr<f32, ub>, index
     """
     name = f"block_mask_f{factor}_from_c"
     source = PREFIX.replace("ENTRY", name).replace("STRIDE", str(stride)).replace("ACTIVE", str(lanes - 13))

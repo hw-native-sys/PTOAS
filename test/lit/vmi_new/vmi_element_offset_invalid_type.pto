@@ -1,0 +1,146 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+
+// A VMI element offset must be the index type or a 32/64-bit signless integer.
+// Floats, signed/unsigned integers, narrow widths (i1/i8/i16) and widths above
+// 64 bits are rejected, and the offset type is required.
+//
+// The narrow-width cases are the silent-wrap repros: derived per-group and
+// per-chunk offsets are computed in the offset's own type, so an i16 offset
+// would wrap (group 4 at stride 8192 becomes -32768; a 65536-element carrier
+// advance becomes 0) instead of addressing the requested element.
+
+// RUN: not pto-test-opt %s --split-input-file 2>&1 | FileCheck %s
+
+// Float offset.
+module {
+  func.func @float_offset(%src: !pto.ptr<f32, ub>, %off: f32) {
+    %x = pto.vmi.load %src[%off]
+        : !pto.ptr<f32, ub>, f32 -> !pto.vmi.vreg<64xf32>
+    return
+  }
+}
+
+// -----
+
+// Signed integer offset: the element offset contract is signless-integer only.
+module {
+  func.func @signed_offset(%src: !pto.ptr<f32, ub>, %off: si32) {
+    %x = pto.vmi.load %src[%off]
+        : !pto.ptr<f32, ub>, si32 -> !pto.vmi.vreg<64xf32>
+    return
+  }
+}
+
+// -----
+
+// Unsigned integer offset.
+module {
+  func.func @unsigned_offset(%src: !pto.ptr<f32, ub>, %off: ui32) {
+    %x = pto.vmi.load %src[%off]
+        : !pto.ptr<f32, ub>, ui32 -> !pto.vmi.vreg<64xf32>
+    return
+  }
+}
+
+// -----
+
+// Narrow offset: a 16-bit offset wraps in derived group arithmetic (group 4 at
+// stride 8192 would become -32768), so the width is rejected outright.
+module {
+  func.func @i16_group_store_offset(
+      %v: !pto.vmi.vreg<8xf32, #pto.vmi.layout<num_groups = 8, slots = 1>>,
+      %dst: !pto.ptr<f32, ub>, %off: i16) {
+    %c8192 = arith.constant 8192 : index
+    pto.vmi.group_store %v, %dst[%off], %c8192 {num_groups = 8 : i64}
+        : !pto.vmi.vreg<8xf32, #pto.vmi.layout<num_groups = 8, slots = 1>>, !pto.ptr<f32, ub>, i16
+    return
+  }
+}
+
+// -----
+
+// Narrow offset: the derived carrier advance (block_stride * lanesPerPart,
+// 65536 elements here) truncates to 0 in i16, so both carriers would read the
+// same address.
+module {
+  func.func @i16_stride_load_offset(%src: !pto.ptr<f32, ub>, %off: i16,
+                                    %mask: !pto.vmi.mask<64xpred>) {
+    %c1024 = arith.constant 1024 : i16
+    %out = pto.vmi.stride_load %src[%off], %c1024, %mask
+        : !pto.ptr<f32, ub>, i16, i16, !pto.vmi.mask<64xpred> -> !pto.vmi.vreg<64xf32>
+    return
+  }
+}
+
+// -----
+
+// 8-bit offset.
+module {
+  func.func @i8_offset(%src: !pto.ptr<f32, ub>, %off: i8) {
+    %x = pto.vmi.load %src[%off]
+        : !pto.ptr<f32, ub>, i8 -> !pto.vmi.vreg<64xf32>
+    return
+  }
+}
+
+// -----
+
+// 1-bit offset.
+module {
+  func.func @i1_offset(%src: !pto.ptr<f32, ub>, %off: i1) {
+    %x = pto.vmi.load %src[%off]
+        : !pto.ptr<f32, ub>, i1 -> !pto.vmi.vreg<64xf32>
+    return
+  }
+}
+
+// -----
+
+// Wider than 64 bits.
+module {
+  func.func @i128_offset(%src: !pto.ptr<f32, ub>, %off: i128) {
+    %x = pto.vmi.load %src[%off]
+        : !pto.ptr<f32, ub>, i128 -> !pto.vmi.vreg<64xf32>
+    return
+  }
+}
+
+// -----
+
+// The offset type is required: the pre-widening form without it no longer
+// parses.
+module {
+  func.func @missing_offset_type(%src: !pto.ptr<f32, ub>, %off: index) {
+    %x = pto.vmi.load %src[%off]
+        : !pto.ptr<f32, ub> -> !pto.vmi.vreg<64xf32>
+    return
+  }
+}
+
+// -----
+
+// The declared offset type must match the operand.
+module {
+  func.func @offset_type_mismatch(%src: !pto.ptr<f32, ub>, %off: i64) {
+    %x = pto.vmi.load %src[%off]
+        : !pto.ptr<f32, ub>, i32 -> !pto.vmi.vreg<64xf32>
+    return
+  }
+}
+
+// CHECK: 'pto.vmi.load' op operand #1 must be index, i32 or i64 element offset, but got 'f32'
+// CHECK: 'pto.vmi.load' op operand #1 must be index, i32 or i64 element offset, but got 'si32'
+// CHECK: 'pto.vmi.load' op operand #1 must be index, i32 or i64 element offset, but got 'ui32'
+// CHECK: 'pto.vmi.group_store' op operand #2 must be index, i32 or i64 element offset, but got 'i16'
+// CHECK: 'pto.vmi.stride_load' op operand #1 must be index, i32 or i64 element offset, but got 'i16'
+// CHECK: 'pto.vmi.load' op operand #1 must be index, i32 or i64 element offset, but got 'i8'
+// CHECK: 'pto.vmi.load' op operand #1 must be index, i32 or i64 element offset, but got 'i1'
+// CHECK: 'pto.vmi.load' op operand #1 must be index, i32 or i64 element offset, but got 'i128'
+// CHECK: expected ','
+// CHECK: use of value '%{{.*}}' expects different type than prior uses

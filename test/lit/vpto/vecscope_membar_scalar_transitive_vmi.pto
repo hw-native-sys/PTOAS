@@ -37,7 +37,7 @@ module attributes {pto.target_arch = "a5"} {
           %19 = arith.muli %arg2, %c128_18 : index
           %20 = pto.addptr %18, %19 : <f32, ub>, index -> <f32, ub>
           %c0_19 = arith.constant 0 : index
-          %21 = pto.vmi.vload %20[%c0_19] : !pto.ptr<f32, ub> -> !pto.vmi.vreg<128xf32>
+          %21 = pto.vmi.vload %20[%c0_19] : !pto.ptr<f32, ub>, index -> !pto.vmi.vreg<128xf32>
           %cst = arith.constant 2.000000e+00 : f32
           %22 = pto.vmi.vbrc %cst : f32 -> !pto.vmi.vreg<128xf32>
           %23 = pto.vmi.vmul %21, %22, %3 : !pto.vmi.vreg<128xf32>, !pto.vmi.vreg<128xf32>, !pto.vmi.mask<128xpred> -> !pto.vmi.vreg<128xf32>
@@ -46,16 +46,16 @@ module attributes {pto.target_arch = "a5"} {
           %25 = arith.muli %arg2, %c128_20 : index
           %26 = pto.addptr %24, %25 : <f32, ub>, index -> <f32, ub>
           %c0_21 = arith.constant 0 : index
-          pto.vmi.vstore %23, %26[%c0_21], %3 : !pto.vmi.vreg<128xf32>, !pto.ptr<f32, ub>, !pto.vmi.mask<128xpred>
+          pto.vmi.vstore %23, %26[%c0_21], %3 : !pto.vmi.vreg<128xf32>, !pto.ptr<f32, ub>, index, !pto.vmi.mask<128xpred>
         }
         %c128_8 = arith.constant 128 : index
         %4 = pto.vmi.create_mask %c128_8 : index -> !pto.vmi.mask<128xpred>
         %5 = pto.castptr %0 : !pto.ptr<ui8, ub> -> !pto.ptr<f32, ub>
         %c0_9 = arith.constant 0 : index
-        %6 = pto.vmi.vload %5[%c0_9] : !pto.ptr<f32, ub> -> !pto.vmi.vreg<128xf32>
+        %6 = pto.vmi.vload %5[%c0_9] : !pto.ptr<f32, ub>, index -> !pto.vmi.vreg<128xf32>
         %7 = pto.castptr %0 : !pto.ptr<ui8, ub> -> !pto.ptr<f32, ub>
         %c128_10 = arith.constant 128 : index
-        %8 = pto.vmi.vload %7[%c128_10] : !pto.ptr<f32, ub> -> !pto.vmi.vreg<128xf32>
+        %8 = pto.vmi.vload %7[%c128_10] : !pto.ptr<f32, ub>, index -> !pto.vmi.vreg<128xf32>
         %c128_11 = arith.constant 128 : index
         %9 = pto.vmi.create_mask %c128_11 : index -> !pto.vmi.mask<128xpred>
         %10 = pto.vmi.vmax %6, %8, %9 : !pto.vmi.vreg<128xf32>, !pto.vmi.vreg<128xf32>, !pto.vmi.mask<128xpred> -> !pto.vmi.vreg<128xf32>
@@ -65,7 +65,7 @@ module attributes {pto.target_arch = "a5"} {
         %c256 = arith.constant 256 : index
         %14 = pto.addptr %13, %c256 : <f32, ub>, index -> <f32, ub>
         %c0_12 = arith.constant 0 : index
-        pto.vmi.vstore %12, %14[%c0_12] : !pto.vmi.vreg<1xf32>, !pto.ptr<f32, ub>
+        pto.vmi.vstore %12, %14[%c0_12] : !pto.vmi.vreg<1xf32>, !pto.ptr<f32, ub>, index
         %15 = pto.castptr %0 : !pto.ptr<ui8, ub> -> !pto.ptr<f32, ub>
         %c0_13 = arith.constant 0 : index
         %16 = pto.load %15[%c0_13] : !pto.ptr<f32, ub>, index -> f32
@@ -81,7 +81,7 @@ module attributes {pto.target_arch = "a5"} {
           %19 = arith.muli %arg2, %c128_18 : index
           %20 = pto.addptr %18, %19 : <f32, ub>, index -> <f32, ub>
           %c0_19 = arith.constant 0 : index
-          %21 = pto.vmi.vload %20[%c0_19] : !pto.ptr<f32, ub> -> !pto.vmi.vreg<128xf32>
+          %21 = pto.vmi.vload %20[%c0_19] : !pto.ptr<f32, ub>, index -> !pto.vmi.vreg<128xf32>
           %22 = pto.castptr %0 : !pto.ptr<ui8, ub> -> !pto.ptr<f32, ub>
           %c256_20 = arith.constant 256 : index
           %23 = pto.load %22[%c256_20] : !pto.ptr<f32, ub>, index -> f32
@@ -92,7 +92,7 @@ module attributes {pto.target_arch = "a5"} {
           %27 = arith.muli %arg2, %c128_21 : index
           %28 = pto.addptr %26, %27 : <f32, ub>, index -> <f32, ub>
           %c0_22 = arith.constant 0 : index
-          pto.vmi.vstore %25, %28[%c0_22], %3 : !pto.vmi.vreg<128xf32>, !pto.ptr<f32, ub>, !pto.vmi.mask<128xpred>
+          pto.vmi.vstore %25, %28[%c0_22], %3 : !pto.vmi.vreg<128xf32>, !pto.ptr<f32, ub>, index, !pto.vmi.mask<128xpred>
         }
       }
       pto.set_flag[<PIPE_V>, <PIPE_MTE3>, <EVENT_ID0>]

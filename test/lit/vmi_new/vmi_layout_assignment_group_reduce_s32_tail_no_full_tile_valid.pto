@@ -28,7 +28,7 @@ module {
         : !pto.vmi.vreg<192xf32>, !pto.vmi.mask<192xpred>
         -> !pto.vmi.vreg<6xf32>
     pto.vmi.vstore %sum, %dst[%off], %c1 {group = 6}
-        : !pto.vmi.vreg<6xf32>, !pto.ptr<f32, ub>
+        : !pto.vmi.vreg<6xf32>, !pto.ptr<f32, ub>, index
     return
   }
 }

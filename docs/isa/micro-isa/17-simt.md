@@ -29,10 +29,13 @@ not by themselves read lane or thread state or select SIMT execution.
 - SIMT scalar memory offsets are element offsets, not byte offsets. They are
   **signed element displacements**: positive values advance the base pointer and
   negative values move it toward lower addresses. An offset is written either
-  with the platform `index` type or with a signless integer of explicit width
+  with the platform `index` type or with a 32/64-bit signless integer
   (`i32`, `i64`), declared in the type list right after the base pointer type,
-  as in `%p[%off] : !pto.ptr<i32, ub>, index -> i32`. These ops perform no
-  bounds checking.
+  as in `%p[%off] : !pto.ptr<i32, ub>, index -> i32`. Narrower widths
+  (`i1`/`i8`/`i16`) are rejected because that is the width contract the offset
+  shares with `pto.vmi`, which derives per-chunk and per-group offsets in the
+  offset's own type; these SIMT ops themselves widen the offset once and derive
+  nothing from it. These ops perform no bounds checking.
 - Vector-register ops such as `pto.vlds`, `pto.vadd`, and `pto.vsts` belong to
   normal vector code, not to the SIMT body.
 

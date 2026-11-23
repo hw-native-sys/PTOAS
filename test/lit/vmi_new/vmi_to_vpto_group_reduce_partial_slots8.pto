@@ -30,7 +30,7 @@ module {
         -> !pto.vmi.vreg<8xf16, #pto.vmi.layout<num_groups = 8, slots = 8>>
     pto.vmi.vstore %out, %dst[%aligned_off], %c1 {group = 8}
         : !pto.vmi.vreg<8xf16, #pto.vmi.layout<num_groups = 8, slots = 8>>,
-          !pto.ptr<f16, ub>
+          !pto.ptr<f16, ub>, index
     return
   }
 
@@ -50,7 +50,7 @@ module {
         -> !pto.vmi.vreg<12xf16, #pto.vmi.layout<num_groups = 12, slots = 8>>
     pto.vmi.vstore %out, %dst[%aligned_off], %c1 {group = 12}
         : !pto.vmi.vreg<12xf16, #pto.vmi.layout<num_groups = 12, slots = 8>>,
-          !pto.ptr<f16, ub>
+          !pto.ptr<f16, ub>, index
     return
   }
 }

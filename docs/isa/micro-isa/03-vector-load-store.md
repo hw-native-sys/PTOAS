@@ -19,11 +19,16 @@ Vector loads move data from Unified Buffer (UB) to vector registers (`vreg`). Ve
   - `pto.vstas` and `pto.vstus` take an **unsigned** byte count: a length in
     bytes to write, never a displacement toward lower addresses.
   - **Type:** an offset is written either with the platform `index` type or
-    with a signless integer of explicit width (`i32`, `i64`), declared in the
-    type list right after the base operand's type, as in
+    with a 32/64-bit signless integer (`i32`, `i64`), declared in the type
+    list right after the base operand's type, as in
     `%src[%off] : !pto.ptr<f32, ub>, index -> !pto.vreg<64xf32>`. The declared
     type selects the interpretation, so an unsigned instruction takes an
-    unsigned integer offset.
+    unsigned integer offset. Narrower widths (`i1`/`i8`/`i16`) and widths
+    above 64 bits are rejected because this is the width contract the offset
+    shares with `pto.vmi`: VMI memory operations derive per-chunk and per-group
+    offsets in the offset's own type, so a narrow offset would wrap silently
+    there. VPTO itself widens the offset once when it forms the address and
+    derives nothing from it, so the hazard is VMI-specific.
   - **Post-update:** the updated base advances by the displacement the
     instruction applied, in the same unit and sign.
   - **Bounds:** these ops perform no bounds checking. A displacement that

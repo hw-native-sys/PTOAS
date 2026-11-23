@@ -21,11 +21,11 @@ module {
     %c16 = arith.constant 16 : index
     %aligned_off = arith.muli %off, %c16 : index
     %a = pto.vmi.vload %src[%aligned_off]
-        : !pto.ptr<f16, ub> -> !pto.vmi.vreg<128xf16>
+        : !pto.ptr<f16, ub>, index -> !pto.vmi.vreg<128xf16>
     %w = pto.vmi.vcvt %a
         : !pto.vmi.vreg<128xf16> -> !pto.vmi.vreg<128xf32>
     %k1 = pto.vmi.vload %rhs[%aligned_off]
-        : !pto.ptr<f32, ub> -> !pto.vmi.vreg<128xf32>
+        : !pto.ptr<f32, ub>, index -> !pto.vmi.vreg<128xf32>
     %t1 = pto.vmi.vmul %w, %k1
         : !pto.vmi.vreg<128xf32>, !pto.vmi.vreg<128xf32>
         -> !pto.vmi.vreg<128xf32>
@@ -34,12 +34,12 @@ module {
         : !pto.vmi.vreg<128xf32>, !pto.vmi.mask<128xpred>
         -> !pto.vmi.vreg<1xf32>
     pto.vmi.vstore %r0, %out0[%c0]
-        : !pto.vmi.vreg<1xf32>, !pto.ptr<f32, ub>
+        : !pto.vmi.vreg<1xf32>, !pto.ptr<f32, ub>, index
     %r = pto.vmi.vcadd %w, %mask {reassoc}
         : !pto.vmi.vreg<128xf32>, !pto.vmi.mask<128xpred>
         -> !pto.vmi.vreg<1xf32>
     pto.vmi.vstore %r, %out1[%c0]
-        : !pto.vmi.vreg<1xf32>, !pto.ptr<f32, ub>
+        : !pto.vmi.vreg<1xf32>, !pto.ptr<f32, ub>, index
     return
   }
 }
