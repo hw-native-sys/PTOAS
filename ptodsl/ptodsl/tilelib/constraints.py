@@ -583,10 +583,9 @@ def require_predicate_compare_1d(
 
     ``flattened_destination`` models operations such as ``tcmps`` whose 1D
     form writes the packed predicate into one continuous destination prefix.
-    It accepts either an exact packed row stride or a destination row with one
-    predicate container element per physical data element. The latter is an
-    explicit logical-range capacity contract, not a packed-byte requirement;
-    arbitrary intermediate predicate-row padding remains a 2D fallback.
+    It accepts only an exact packed row stride. A destination row padded to a
+    different physical stride stays on the 2D fallback, so the predicate image
+    keeps the same row layout a 2D consumer reads.
     """
 
     allowed_memory_spaces = frozenset(memory_spaces)
@@ -614,10 +613,13 @@ def require_predicate_compare_1d(
         if valid_rows == 1:
             return _single_row_has_capacity(data_shapes, storage, valid_cols)
         data_rows_are_contiguous = _data_rows_contiguous(data_shapes, data_valid_shapes)
-        destination_holds_logical_range = storage.row_bytes >= max(
-            shape[1] for shape in data_shapes
-        ) * _dtype_bytewidth(context.get(f"{predicate_operand}_dtype"))
-        if flattened_destination and destination_holds_logical_range:
+        row_store_count = _ceil_div(valid_cols, storage.elements_per_store)
+        row_store_bytes = row_store_count * storage.bytes_per_store
+        if (
+            flattened_destination
+            and storage.row_bytes == row_store_bytes
+            and valid_cols % storage.elements_per_store == 0
+        ):
             total_elements = valid_rows * valid_cols
             total_store_count = _ceil_div(total_elements, storage.elements_per_store)
             required_total_bytes = total_store_count * storage.bytes_per_store

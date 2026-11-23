@@ -101,6 +101,8 @@ CASES = [
         "out_dtype": np.uint8,
         "shape": (256, 16),
         "valid_shape": (256, 16),
+        "dst_shape": (256, 32),
+        "dst_valid_shape": (256, 32),
         "eps": 0,
     },
     {

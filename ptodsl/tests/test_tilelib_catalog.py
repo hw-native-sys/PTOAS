@@ -93,7 +93,12 @@ CATALOG = {
         ("lhs", "lhs_scale", "rhs", "rhs_scale", "bias", "dst"),
         "f8e4m3",
     ),
-    "pto.tinsert": ("template_tinsert_vec_to_vec_nd_basic", "pto.vsts", ("src", "index_row", "index_col", "dst"), "f32"),
+    "pto.tinsert": (
+        "template_tinsert_vec_to_vec_nd_basic",
+        "pto.vsts",
+        ("src", "index_row", "index_col", "dst"),
+        "f32",
+    ),
     "pto.tload": (
         "template_tload_nd2nd",
         "pto.mte_gm_ub",
@@ -134,7 +139,20 @@ CATALOG = {
     "pto.tpartmin": ("template_tpartmin", "pto.vmin", ("src0", "src1", "dst"), "f32"),
     "pto.tpartmul": ("template_tpartmul", "pto.vmul", ("src0", "src1", "dst"), "f32"),
     "pto.tprelu": ("template_tprelu_1d", "pto.vprelu", ("src0", "src1", "tmp", "dst"), "f32"),
-    "pto.trandom": ("template_trandom", "pto.vmull", ("key0", "key1", "counter0", "counter1", "counter2", "counter3", "dst"), "ui32"),
+    "pto.trandom": (
+        "template_trandom",
+        "pto.vmull",
+        (
+            "key0",
+            "key1",
+            "counter0",
+            "counter1",
+            "counter2",
+            "counter3",
+            "dst",
+        ),
+        "ui32",
+    ),
     "pto.trelu": ("template_trelu_1d", "pto.vrelu", ("src", "dst"), "f32"),
     "pto.trecip": ("template_trecip_1d", "pto.vdiv", ("src", "dst"), "f32"),
     "pto.trem": ("template_trem_1d", "pto.vtrc", ("src0", "src1", "tmp", "dst"), "f32"),
@@ -222,7 +240,15 @@ ROW_REDUCTIONS = {
     "pto.trowsum",
 }
 ARG_ROW_REDUCTIONS = {"pto.trowargmax", "pto.trowargmin"}
+SPECIAL_TILE_SHAPES = {
+    # 256 source columns fill two predicate stores, so a 32-byte destination
+    # row is the exact packed stride the 1D tcmps template requires.
+    ("pto.tcmps", "src"): (8, 256),
+    ("pto.tcmps", "dst"): (8, 32),
+}
 SPECIAL_VALID_SHAPES = {
+    ("pto.tcmps", "src"): (8, 256),
+    ("pto.tcmps", "dst"): (8, 32),
     ("pto.tcolexpand", "src"): (1, 64),
     ("pto.trowexpand", "src"): (8, 1),
     ("pto.tdequant", "scale"): (8, 1),
@@ -264,7 +290,12 @@ OPS_WITHOUT_VECTOR_STORE = OPS_WITHOUT_VECTOR_STORE | {"pto.tload", "pto.tstore"
 OPS_WITHOUT_VECTOR_STORE = OPS_WITHOUT_VECTOR_STORE | CUBE_OPS
 OPS_WITHOUT_MEMREF_SUBVIEW = {"pto.tcmps", "pto.tsort32"}
 OPS_WITHOUT_MEMREF_SUBVIEW = OPS_WITHOUT_MEMREF_SUBVIEW | {"pto.texpands", "pto.tdivs", "pto.tfillpad_inplace"}
-OPS_WITHOUT_MEMREF_SUBVIEW = OPS_WITHOUT_MEMREF_SUBVIEW | {"pto.tload", "pto.tstore", "pto.tstore_fp", "pto.textract_fp"}
+OPS_WITHOUT_MEMREF_SUBVIEW = OPS_WITHOUT_MEMREF_SUBVIEW | {
+    "pto.tload",
+    "pto.tstore",
+    "pto.tstore_fp",
+    "pto.textract_fp",
+}
 OPS_WITHOUT_MEMREF_SUBVIEW = OPS_WITHOUT_MEMREF_SUBVIEW | ROW_REDUCTIONS
 OPS_WITHOUT_MEMREF_SUBVIEW = OPS_WITHOUT_MEMREF_SUBVIEW | ARG_COLUMN_REDUCTIONS
 OPS_WITHOUT_MEMREF_SUBVIEW = OPS_WITHOUT_MEMREF_SUBVIEW | CUBE_OPS
@@ -412,9 +443,10 @@ def _entry_parts(entry):
 
 
 def _tile_spec_for(op, operand, dtype_name):
-    valid_shape = SPECIAL_VALID_SHAPES.get((op, operand), (8, 64))
+    shape = SPECIAL_TILE_SHAPES.get((op, operand), (8, 64))
+    valid_shape = SPECIAL_VALID_SHAPES.get((op, operand), shape)
     return TileSpec(
-        shape=(8, 64),
+        shape=shape,
         dtype=ScalarType(dtype_name),
         memory_space=SPECIAL_MEMORY_SPACES.get((op, operand), "ub"),
         valid_shape=valid_shape,
@@ -898,13 +930,13 @@ class TileLibCatalogTest(unittest.TestCase):
             with self.subTest(dtype=dtype_name):
                 specs = {
                     "src": TileSpec(
-                        shape=(8, 64),
+                        shape=(8, 256),
                         dtype=ScalarType(dtype_name),
                         memory_space="vec",
                     ),
                     "scalar": ScalarSpec(dtype=ScalarType(dtype_name), value=1),
                     "dst": TileSpec(
-                        shape=(8, 64),
+                        shape=(8, 32),
                         dtype=ScalarType("ui8"),
                         memory_space="vec",
                     ),

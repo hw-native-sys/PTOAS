@@ -1794,7 +1794,7 @@ class TileLibElementwiseTest(unittest.TestCase):
         self.assertEqual(selected.metadata.loop_depth, 2)
         self.assertEqual(mlir.count("scf.for"), 2)
 
-    def test_tcmps_fallback_keeps_flat_packed_predicate_rows(self):
+    def test_tcmps_fallback_uses_destination_physical_row_stride(self):
         specs = _compare_specs(
             "pto.tcmps",
             "f16",
@@ -1808,7 +1808,41 @@ class TileLibElementwiseTest(unittest.TestCase):
         self.assertEqual(selected.name, "template_tcmps")
         self.assertEqual(selected.metadata.loop_depth, 2)
         self.assertIn("pto.constant 16 : index", mlir)
-        self.assertNotIn("pto.constant 64 : index", mlir)
+        self.assertIn("pto.constant 64 : index", mlir)
+
+    def test_tcmps_fallback_stride_ignores_narrow_valid_width(self):
+        specs = _compare_specs(
+            "pto.tcmps",
+            "f16",
+            src_shape=(4, 128),
+            dst_shape=(4, 32),
+            dst_valid_shape=(4, 16),
+        )
+        selected = select("pto.tcmps", "a5", specs)
+        mlir = selected.specialize(**specs).mlir_text()
+
+        self.assertEqual(selected.name, "template_tcmps")
+        self.assertEqual(selected.metadata.loop_depth, 2)
+        # The next row starts at the destination's physical 32-byte width,
+        # not at the 16 packed predicate bytes this row produces.
+        self.assertIn("pto.constant 32 : index", mlir)
+
+    def test_tcmps_padded_flat_destination_falls_back_to_2d(self):
+        specs = _compare_specs(
+            "pto.tcmps",
+            "bf16",
+            src_shape=(4, 128),
+            dst_shape=(4, 128),
+            dst_valid_shape=(4, 128),
+        )
+        selected = select("pto.tcmps", "a5", specs)
+
+        # A destination with one predicate container per data element has a
+        # 128-byte row stride but only 16 packed predicate bytes per row. The
+        # 1D writer would pack the rows contiguously, which a 2D tsels reader
+        # cannot consume, so selection must stay on the 2D template.
+        self.assertEqual(selected.name, "template_tcmps")
+        self.assertEqual(selected.metadata.loop_depth, 2)
 
     def test_select_family_registers_preferred_1d_and_fallback_2d(self):
         cases = (

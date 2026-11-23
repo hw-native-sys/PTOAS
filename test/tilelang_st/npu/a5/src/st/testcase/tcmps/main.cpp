@@ -12,6 +12,7 @@
 
 #include "acl/acl.h"
 #include "test_common.h"
+#include <algorithm>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
@@ -48,16 +49,9 @@ struct TestCase {
 };
 
 static size_t GetDstElemCount(const TestCase &tc) {
-    if (tc.srcElemSize == sizeof(float) || tc.srcElemSize == sizeof(int32_t)) {
-        const size_t logicalElems = tc.validRows * tc.validCols;
-        const size_t repeatElm = 256 / tc.srcElemSize;
-        const size_t repeatTimes = (logicalElems + repeatElm - 1) / repeatElm + 1;
-        return (repeatTimes / 2) * 16;
-    }
-    const size_t repeatElm = 256 / tc.srcElemSize;
-    const size_t repeatTimes = (tc.validCols + repeatElm - 1) / repeatElm;
-    const size_t bytesPerIter = (tc.srcElemSize == sizeof(uint8_t)) ? 32 : 16;
-    return tc.validRows * repeatTimes * bytesPerIter;
+    // Match the GM destination views in tcmps.pto, including 256x16 -> 256x32.
+    constexpr size_t kMinDstCols = 32;
+    return tc.rows * std::max(tc.cols, kMinDstCols);
 }
 
 static const TestCase kCases[] = {

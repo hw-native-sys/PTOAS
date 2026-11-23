@@ -42,68 +42,16 @@ for case in CASES:
     # Using "lt" mode to match the template
     cmp_result = (input1[:vr, :vc] < scalar_val).astype(np.uint8, copy=False)
 
-    # tcmps output uses psts:
-    # - 32B: 64 elements -> 32 bytes (NORM mode, sequential, bit_pos = col_in_iter * 4)
-    # - 16B: 128 elements -> 16 bytes (PK mode, bit_pos = col_in_iter)
-    # - 8B: 256 elements -> 32 bytes (NORM mode, sequential, bit_pos = col_in_iter)
-    elem_size = np.dtype(dtype).itemsize
-    lanes = 256 // elem_size
-    if elem_size == 4:  # 32B: 2 vcmps + dintlv_b8 -> PK mode (16 bytes per iteration)
-        bytes_per_iter = 16
-        bit_multiplier = 1
-        # For 32B, each iteration processes 2 repeats (128 elements)
-        # Element linear index maps to bit position after dintlv_b8
-    elif elem_size == 2:  # 16B: PK mode (16 bytes per iteration)
-        bytes_per_iter = 16
-        bit_multiplier = 1
-    else:  # 8B: NORM mode (32 bytes per iteration)
-        bytes_per_iter = 32
-        bit_multiplier = 1
-    
-    # Calculate iterations (total)
-    total_elm = vr * vc
-    if elem_size == 4:  # 32B: special handling for linear offset
-        repeat_times = (total_elm + lanes - 1) // lanes + 1
-        total_iters = repeat_times // 2
-    else:
-        iters_per_row = (vc + lanes - 1) // lanes
-
-    total_elm = vr * vc
-    if elem_size == 4:  # 32B: special handling for linear offset
-        repeat_times = (total_elm + lanes - 1) // lanes + 1
-        total_iters = repeat_times // 2
-        total_output_bytes = total_iters * bytes_per_iter
-    else:
-        iters_per_row = (vc + lanes - 1) // lanes
-        total_iters = vr * iters_per_row
-        total_output_bytes = total_iters * bytes_per_iter
-    
-    # Output buffer size matches actual output
-    golden = np.zeros(total_output_bytes, dtype=np.uint8)
-
+    # The 2D tcmps templates store each row at the destination tile's physical
+    # row stride, with one predicate bit per compared element. Pack the valid
+    # bits of each row into ceil(valid_cols / 8) bytes; the compare side gathers
+    # those bytes from the physical destination rows.
+    row_bytes = (vc + 7) // 8
+    golden = np.zeros(vr * row_bytes, dtype=np.uint8)
     for row in range(vr):
         for col in range(vc):
             if cmp_result[row, col]:
-                if elem_size == 4:  # 32B: PK mode after dintlv_b8 with linear offset
-                    # Linear element index
-                    linear_idx = row * vc + col
-                    # Each iteration processes 128 elements (2 repeats of 64)
-                    iter_idx = linear_idx // (2 * lanes)
-                    # Position within the 128-element block
-                    pos_in_block = linear_idx % (2 * lanes)
-                    # PK mode: bit position = pos_in_block
-                    bit_pos = pos_in_block
-                    # Byte offset (linear)
-                    byte_idx = iter_idx * bytes_per_iter + (bit_pos // 8)
-                    bit_idx = bit_pos % 8
-                else:  # 16B and 8B
-                    col_in_iter = col % lanes
-                    bit_pos = col_in_iter * bit_multiplier
-                    byte_idx = (row * iters_per_row + col // lanes) * bytes_per_iter + (bit_pos // 8)
-                    bit_idx = bit_pos % 8
-                
-                if byte_idx < total_output_bytes:
-                    golden[byte_idx] |= (1 << bit_idx)
+                golden[row * row_bytes + col // 8] |= 1 << (col % 8)
 
     save_case_data(case["name"], {"input1": input1, "golden": golden})
     print(f"[INFO] gen_data: {case['name']} shape={shape} valid_shape={valid_shape} dtype={dtype.__name__} out_dtype={out_dtype.__name__} scalar={SCALAR}")

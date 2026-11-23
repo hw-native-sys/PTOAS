@@ -42,10 +42,30 @@ _DTYPES = [
     ("i8", "bf16", "bf16", "bf16", "bf16"),
     ("i16", "bf16", "bf16", "bf16", "bf16"),
     ("i32", "bf16", "bf16", "bf16", "bf16"),
+    ("i8", "ui8", "ui8", "ui8", "ui8"),
+    ("i16", "ui8", "ui8", "ui8", "ui8"),
+    ("i32", "ui8", "ui8", "ui8", "ui8"),
+    ("i8", "ui16", "ui16", "ui16", "ui16"),
+    ("i16", "ui16", "ui16", "ui16", "ui16"),
+    ("i32", "ui16", "ui16", "ui16", "ui16"),
+    ("i8", "ui32", "ui32", "ui32", "ui32"),
+    ("i16", "ui32", "ui32", "ui32", "ui32"),
+    ("i32", "ui32", "ui32", "ui32", "ui32"),
+    # ``pto.tcmps`` produces its predicate tile as ui8. Register the ui8 mask
+    # column as well so tcmps -> tsels chaining does not need a bitcast tile.
+    ("ui8", "i8", "i8", "i8", "i8"),
+    ("ui8", "i16", "i16", "i16", "i16"),
+    ("ui8", "i32", "i32", "i32", "i32"),
+    ("ui8", "f32", "f32", "f32", "f32"),
+    ("ui8", "f16", "f16", "f16", "f16"),
+    ("ui8", "bf16", "bf16", "bf16", "bf16"),
+    ("ui8", "ui8", "ui8", "ui8", "ui8"),
+    ("ui8", "ui16", "ui16", "ui16", "ui16"),
+    ("ui8", "ui32", "ui32", "ui32", "ui32"),
 ]
 
 # 16-bit payloads use the packed predicate distribution and a b16 mask.
-_PACKED_16BIT_DTYPES = frozenset({"f16", "bf16", "i16"})
+_PACKED_16BIT_DTYPES = frozenset({"f16", "bf16", "i16", "ui16"})
 
 
 def _tsels_shapes(
@@ -66,6 +86,14 @@ def _scalar_vector(dtype, scalar):
     lanes = pto.elements_per_vreg(dtype)
     full_mask, _ = pto.make_mask(dtype, lanes)
     return pto.vdup(scalar, full_mask)
+
+
+def _mask_byte_ptr(mask):
+    """Return a ui8 predicate pointer, avoiding a redundant same-type cast."""
+    pointer = mask.as_ptr()
+    if str(mask.dtype) == "ui8":
+        return pointer
+    return pto.castptr(pointer, pto.ptr(pto.ui8, "ub"))
 
 
 @dataclass(frozen=True)
@@ -108,12 +136,12 @@ def _emit_tsels_1d(mask, src, scalar, dst):
     valid_rows, valid_cols = dst.valid_shape
     lanes = pto.elements_per_vreg(dtype)
     total_elements = valid_rows * valid_cols
-    mask_ptr = pto.castptr(mask.as_ptr(), pto.ptr(pto.ui8, "ub"))
+    mask_ptr = _mask_byte_ptr(mask)
     src_ptr = src.as_ptr()
     dst_ptr = dst.as_ptr()
     scalar_vec = _scalar_vector(dtype, scalar)
 
-    if str(dtype) in {"f32", "i32"}:
+    if str(dtype) in {"f32", "i32", "ui32"}:
         full_mask_b16 = pto.pset_b16(pto.PAT.ALL)
         remained = total_elements
         for offset in range(0, total_elements, lanes * 2):
@@ -151,7 +179,7 @@ def _emit_tsels_2d_f32(mask, src, scalar, dst):
     dtype = dst.dtype
     valid_rows, valid_cols = dst.valid_shape
     lanes = pto.elements_per_vreg(dtype)
-    mask_ptr = pto.castptr(mask.as_ptr(), pto.ptr(pto.ui8, "ub"))
+    mask_ptr = _mask_byte_ptr(mask)
     mask_stride = mask.shape[1] * pto.bytewidth(mask.dtype)
     scalar_vec = _scalar_vector(dtype, scalar)
     full_mask_b16 = pto.pset_b16(pto.PAT.ALL)
@@ -193,7 +221,7 @@ def _emit_tsels_2d_narrow(mask, src, scalar, dst):
     packed = str(dtype) in _PACKED_16BIT_DTYPES
     valid_rows, valid_cols = dst.valid_shape
     lanes = pto.elements_per_vreg(dtype)
-    mask_ptr = pto.castptr(mask.as_ptr(), pto.ptr(pto.ui8, "ub"))
+    mask_ptr = _mask_byte_ptr(mask)
     mask_stride = mask.shape[1] * pto.bytewidth(mask.dtype)
     scalar_vec = _scalar_vector(dtype, scalar)
     dist = pto.PredicateDist.US if packed else pto.PredicateDist.NORM
@@ -217,7 +245,7 @@ def _emit_tsels_2d_narrow(mask, src, scalar, dst):
 @rewrite_jit_function
 def _emit_tsels_2d(mask, src, scalar, dst):
     dtype = dst.dtype
-    if str(dtype) in {"f32", "i32"}:
+    if str(dtype) in {"f32", "i32", "ui32"}:
         _emit_tsels_2d_f32(mask, src, scalar, dst)
     else:
         _emit_tsels_2d_narrow(mask, src, scalar, dst)
