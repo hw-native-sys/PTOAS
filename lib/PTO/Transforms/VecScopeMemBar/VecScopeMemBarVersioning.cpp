@@ -39,7 +39,7 @@ static std::optional<uint64_t> synchronizationCost(Operation* scope)
     }
     uint64_t cost = plan->barriers.size();
     scope->walk([&](VstasOp flush) {
-        cost += flush->getParentOfType<scf::ForOp>() ? 2 : 1;
+        cost += flush->getParentOfType<scf::ForOp>() ? kValue2 : 1;
     });
     return cost;
 }
@@ -117,7 +117,7 @@ static int64_t largestProbe(scf::ForOp loop)
     auto integer = dyn_cast<IntegerType>(loop.getUpperBound().getType());
     unsigned width = integer ? integer.getWidth() : 64;
     int64_t largest = kLargestProbe;
-    if (width > 0 && width < 16) {
+    if (width > 0 && width < kValue16) {
         largest = std::min(largest, (int64_t{1} << (width - 1)) - 1);
     }
     auto envelope = integer_range::getLoopEnvelope(loop);
@@ -149,7 +149,7 @@ static bool tryVersion(scf::ForOp loop)
     int64_t selected = 0;
     uint64_t bestCost = *baseline;
     int64_t largest = largestProbe(loop);
-    for (int64_t bound = 2; bound <= largest; bound *= 2) {
+    for (int64_t bound = kValue2; bound <= largest; bound *= kValue2) {
         auto candidate = buildCandidate(loop, bound, builder);
         runVPTOStatefulStreamFusion(candidate.fastScope);
         auto cost = synchronizationCost(candidate.fastScope);

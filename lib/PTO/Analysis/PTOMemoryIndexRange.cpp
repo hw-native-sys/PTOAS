@@ -201,7 +201,7 @@ std::optional<ScalarIndexEnvelope> mlir::pto::integer_range::scalarIndexEnvelope
     auto type = dyn_cast<pto::VRegType>(offsets.getType());
     if (
         !add || !elem || !elem.isUnsigned() || !indexMaskMatches(mask, elem) ||
-        !allIntegerLanes(add->getOperand(2), type.getElementCount(), elem.getWidth())) {
+        !allIntegerLanes(add->getOperand(mlir::pto::kValue2), type.getElementCount(), elem.getWidth())) {
         return std::nullopt;
     }
     unsigned budget = 64;
