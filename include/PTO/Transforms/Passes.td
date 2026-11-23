@@ -129,6 +129,8 @@ def PTOA5NormalizeTMov : Pass<"pto-a5-normalize-tmov", "func::FuncOp"> {
       dst(col_major) -> pto.treshape(row_major)
     This avoids unsupported A5 PTO-ISA vec->vec col_major TMOV paths while
     preserving alias semantics via SSA treshape (no real data movement).
+    Also establishes L0 scale addresses before matching MAT-to-scale TMOV or
+    TEXTRACT operations when the binding can be moved safely.
   }];
   let constructor = "mlir::pto::createPTOA5NormalizeTMovPass()";
   let dependentDialects = ["pto::PTODialect", "func::FuncDialect"];

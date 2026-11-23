@@ -1,0 +1,212 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+
+// RUN: ptoas --pto-arch=a5 --pto-level=level3 %s -o - | FileCheck %s
+// RUN: pto-test-opt --pass-pipeline="builtin.module(func.func(pto-a5-normalize-tmov,pto-a5-normalize-tmov))" %s | FileCheck %s --check-prefix=BIND
+
+!a_full = !pto.tile_buf<mat, 128x128x!pto.f8E8M0, slayout=row_major, fractal=32>
+!a_scale = !pto.tile_buf<scaling, 128x4x!pto.f8E8M0, slayout=row_major, fractal=32>
+!b_full = !pto.tile_buf<mat, 128x256x!pto.f8E8M0, blayout=col_major, slayout=col_major, fractal=32>
+!b_scale = !pto.tile_buf<scaling, 4x256x!pto.f8E8M0, blayout=col_major, slayout=col_major, fractal=32>
+!a_mat = !pto.tile_buf<mat, 128x256xf8E4M3FN, blayout=col_major, slayout=row_major>
+!a_data = !pto.tile_buf<left, 128x128xf8E4M3FN, blayout=col_major, slayout=row_major>
+!b_mat = !pto.tile_buf<mat, 256x256xf8E4M3FN, blayout=col_major, slayout=row_major>
+!b_data = !pto.tile_buf<right, 128x256xf8E4M3FN, slayout=col_major>
+
+!acc = !pto.tile_buf<acc, 128x256xf32, blayout=col_major, slayout=row_major, fractal=1024>
+!a_mat_fragment = !pto.tile_buf<mat, 128x4x!pto.f8E8M0, slayout=row_major, fractal=32>
+!a_compact_src = !pto.tile_buf<mat, 32x8x!pto.f8E8M0, slayout=row_major, fractal=32>
+!a_compact_dst = !pto.tile_buf<scaling, 48x8x!pto.f8E8M0, valid=17x4, slayout=row_major, fractal=32, compact=1>
+!a_single_src = !pto.tile_buf<mat, 1x64x!pto.f8E8M0, slayout=row_major, fractal=32>
+!a_single_dst = !pto.tile_buf<scaling, 1x32x!pto.f8E8M0, valid=1x4, slayout=row_major, fractal=32>
+
+module attributes {pto.target_arch = "a5", pto.kernel_kind = #pto.kernel_kind<cube>} {
+  // CHECK-LABEL: AICORE void extract_a(
+  // CHECK-SAME: Tile<TileType::Mat, float8_e8m0_t, 128, 128, BLayout::RowMajor, 128, 128, SLayout::RowMajor, 32{{.*}}> [[ASRC:v[0-9]+]]
+  // CHECK-DAG: Tile<TileType::ScaleLeft, float8_e8m0_t, 128, 4, BLayout::RowMajor, 128, 4, SLayout::RowMajor, 32{{.*}}> [[ADST:v[0-9]+]]
+  // CHECK-DAG: [[AZ:v[0-9]+]] = 0;
+  // CHECK-DAG: [[AK:v[0-9]+]] = 4;
+  // CHECK-DAG: [[SLOT:v[0-9]+]] = 1024;
+  // CHECK: uint64_t [[INITIAL_ADDR:v[0-9]+]] = (uint64_t) [[SLOT]];
+  // CHECK-NEXT: TASSIGN([[ADST]], [[INITIAL_ADDR]]);
+  // CHECK-NOT: GetScaleAddr
+  // CHECK: uint16_t [[AR:v[0-9]+]] = static_cast<uint16_t>([[AZ]]);
+  // CHECK: uint16_t [[AC:v[0-9]+]] = static_cast<uint16_t>([[AZ]]);
+  // CHECK: TEXTRACT([[ADST]], [[ASRC]], [[AR]], [[AC]]);
+  // CHECK: uint64_t [[NEW_ADDR:v[0-9]+]] = GetScaleAddr(
+  // CHECK-NEXT: TASSIGN([[ADST]], [[NEW_ADDR]]);
+  // CHECK: uint16_t [[AC4:v[0-9]+]] = static_cast<uint16_t>([[AK]]);
+  // CHECK: TEXTRACT([[ADST]], [[ASRC]], {{v[0-9]+}}, [[AC4]]);
+  // BIND-LABEL: func.func @extract_a(
+  // BIND: pto.alloc_tile addr = %c1024_i64
+  // BIND-NEXT: pto.textract
+  // BIND-NEXT: pto.alloc_tile addr = %c4096_i64
+  // BIND-NEXT: pto.tget_scale_addr
+  // BIND-NEXT: pto.textract
+  // BIND-NEXT: pto.tget_scale_addr
+  // BIND-NEXT: return
+  func.func @extract_a(%src: !a_full) {
+    %addr = arith.constant 4096 : i64
+    %zero = arith.constant 0 : index
+    %four = arith.constant 4 : index
+    %scale_addr = arith.constant 1024 : i64
+    %dst = pto.alloc_tile addr = %scale_addr : !a_scale
+    pto.textract ins(%src, %zero, %zero : !a_full, index, index) outs(%dst : !a_scale)
+    %data = pto.alloc_tile addr = %addr : !a_data
+    pto.tget_scale_addr ins(%data : !a_data) outs(%dst : !a_scale)
+    pto.textract ins(%src, %zero, %four : !a_full, index, index) outs(%dst : !a_scale)
+    pto.tget_scale_addr ins(%data : !a_data) outs(%dst : !a_scale)
+    return
+  }
+
+  // CHECK-LABEL: AICORE void extract_b(
+  // CHECK-SAME: Tile<TileType::Mat, float8_e8m0_t, 128, 256, BLayout::ColMajor, 128, 256, SLayout::ColMajor, 32{{.*}}> [[BSRC:v[0-9]+]]
+  // CHECK-DAG: Tile<TileType::ScaleRight, float8_e8m0_t, 4, 256, BLayout::ColMajor, 4, 256, SLayout::ColMajor, 32{{.*}}> [[BDST:v[0-9]+]]
+  // CHECK-DAG: [[BZ:v[0-9]+]] = 0;
+  // CHECK-DAG: [[BK:v[0-9]+]] = 4;
+  // CHECK: GetScaleAddr
+  // CHECK: TASSIGN([[BDST]],
+  // CHECK: uint16_t [[BR:v[0-9]+]] = static_cast<uint16_t>([[BZ]]);
+  // CHECK: uint16_t [[BC:v[0-9]+]] = static_cast<uint16_t>([[BZ]]);
+  // CHECK: TEXTRACT([[BDST]], [[BSRC]], [[BR]], [[BC]]);
+  // CHECK: uint16_t [[BR4:v[0-9]+]] = static_cast<uint16_t>([[BK]]);
+  // CHECK: TEXTRACT([[BDST]], [[BSRC]], [[BR4]], {{v[0-9]+}});
+  func.func @extract_b(%src: !b_full) {
+    %addr = arith.constant 8192 : i64
+    %zero = arith.constant 0 : index
+    %four = arith.constant 4 : index
+    %scale_addr = arith.constant 0 : i64
+    %dst = pto.alloc_tile addr = %scale_addr : !b_scale
+    %data = pto.alloc_tile addr = %addr : !b_data
+    pto.tget_scale_addr ins(%data : !b_data) outs(%dst : !b_scale)
+    pto.textract ins(%src, %zero, %zero : !b_full, index, index) outs(%dst : !b_scale)
+    pto.textract ins(%src, %four, %zero : !b_full, index, index) outs(%dst : !b_scale)
+    return
+  }
+
+  // CHECK-LABEL: AICORE void extract_payload(
+  // CHECK-SAME: Tile<TileType::Left,
+  // CHECK-SAME: Tile<TileType::Right,
+  // CHECK-COUNT-2: TEXTRACT(
+  func.func @extract_payload(%a_src: !a_mat, %a_dst: !a_data, %b_src: !b_mat, %b_dst: !b_data) {
+    %zero = arith.constant 0 : index
+    %step = arith.constant 128 : index
+    pto.textract ins(%a_src, %zero, %step : !a_mat, index, index) outs(%a_dst : !a_data)
+    pto.textract ins(%b_src, %step, %zero : !b_mat, index, index) outs(%b_dst : !b_data)
+    return
+  }
+
+  // In compact mode a 17-row valid extent copies 32 rows, even though the
+  // destination can hold 48. Forward the dynamic K-group offset unchanged.
+  // CHECK-LABEL: AICORE void extract_compact(
+  // CHECK-SAME: CompactMode::Normal
+  // CHECK-SAME: [[DYNAMIC:v[0-9]+]])
+  // CHECK: uint16_t [[DYN16:v[0-9]+]] = static_cast<uint16_t>([[DYNAMIC]]);
+  // CHECK: TEXTRACT({{.*}}, [[DYN16]]);
+  func.func @extract_compact(%src: !a_compact_src, %dst: !a_compact_dst, %k: index) {
+    %zero = arith.constant 0 : index
+    pto.textract ins(%src, %zero, %k : !a_compact_src, index, index) outs(%dst : !a_compact_dst)
+    return
+  }
+
+  // CHECK-LABEL: AICORE void extract_single_row(
+  // CHECK-SAME: Tile<TileType::ScaleLeft, float8_e8m0_t, 1, 32,
+  // CHECK: TEXTRACT(
+  func.func @extract_single_row(%src: !a_single_src, %dst: !a_single_dst) {
+    %zero = arith.constant 0 : index
+    pto.textract ins(%src, %zero, %zero : !a_single_src, index, index) outs(%dst : !a_single_dst)
+    return
+  }
+
+  // The handles are allocated outside the loop. Both steps bind each scale
+  // before its extract, with explicit synchronization between the steps.
+  // BIND-LABEL: func.func @extract_ordered_with_flags(
+  // BIND: scf.for
+  // BIND-NEXT: pto.tget_scale_addr
+  // BIND-NEXT: pto.tget_scale_addr
+  // BIND-NEXT: pto.textract
+  // BIND-NEXT: pto.textract
+  // BIND-NEXT: pto.set_flag
+  // BIND-NEXT: pto.wait_flag
+  // BIND-NEXT: pto.tmatmul.mx
+  // BIND-NEXT: pto.set_flag
+  // BIND-NEXT: pto.wait_flag
+  // BIND-NEXT: pto.tget_scale_addr
+  // BIND-NEXT: pto.tget_scale_addr
+  // BIND-NEXT: pto.textract
+  // BIND-NEXT: pto.textract
+  func.func @extract_ordered_with_flags(%src_a: !a_full, %src_b: !b_full) {
+    %addr = arith.constant 0 : i64
+    %zero = arith.constant 0 : index
+    %one = arith.constant 1 : index
+    %four = arith.constant 4 : index
+    %lhs = pto.alloc_tile addr = %addr : !a_data
+    %rhs = pto.alloc_tile addr = %addr : !b_data
+    %lhs_scale = pto.alloc_tile addr = %addr : !a_scale
+    %rhs_scale = pto.alloc_tile addr = %addr : !b_scale
+    %out = pto.alloc_tile addr = %addr : !acc
+    scf.for %i = %zero to %one step %one {
+      pto.tget_scale_addr ins(%lhs : !a_data) outs(%lhs_scale : !a_scale)
+      pto.tget_scale_addr ins(%rhs : !b_data) outs(%rhs_scale : !b_scale)
+      pto.textract ins(%src_a, %zero, %zero : !a_full, index, index) outs(%lhs_scale : !a_scale)
+      pto.textract ins(%src_b, %zero, %zero : !b_full, index, index) outs(%rhs_scale : !b_scale)
+      pto.set_flag[<PIPE_MTE1>, <PIPE_M>, <EVENT_ID0>]
+      pto.wait_flag[<PIPE_MTE1>, <PIPE_M>, <EVENT_ID0>]
+      pto.tmatmul.mx ins(%lhs, %lhs_scale, %rhs, %rhs_scale : !a_data, !a_scale, !b_data, !b_scale)
+                     outs(%out : !acc)
+      pto.set_flag[<PIPE_M>, <PIPE_MTE1>, <EVENT_ID0>]
+      pto.wait_flag[<PIPE_M>, <PIPE_MTE1>, <EVENT_ID0>]
+      pto.tget_scale_addr ins(%lhs : !a_data) outs(%lhs_scale : !a_scale)
+      pto.tget_scale_addr ins(%rhs : !b_data) outs(%rhs_scale : !b_scale)
+      pto.textract ins(%src_a, %zero, %four : !a_full, index, index) outs(%lhs_scale : !a_scale)
+      pto.textract ins(%src_b, %four, %zero : !b_full, index, index) outs(%rhs_scale : !b_scale)
+    }
+    return
+  }
+
+  // No use of the first fragment separates the writes. Hoisting the second
+  // binding would send both fragments to the second slot.
+  // BIND-LABEL: func.func @extract_ping_pong_prefetch(
+  // BIND: %[[A0:[a-zA-Z0-9_]+]] = pto.alloc_tile
+  // BIND: %[[A1:[a-zA-Z0-9_]+]] = pto.alloc_tile
+  // BIND: pto.tget_scale_addr ins(%[[A0]]
+  // BIND-NEXT: pto.textract
+  // BIND-NEXT: pto.tget_scale_addr ins(%[[A1]]
+  // BIND-NEXT: pto.textract
+  func.func @extract_ping_pong_prefetch(%src: !a_full) {
+    %slot0 = arith.constant 0 : i64
+    %slot1 = arith.constant 16384 : i64
+    %zero = arith.constant 0 : index
+    %four = arith.constant 4 : index
+    %a0 = pto.alloc_tile addr = %slot0 : !a_data
+    %a1 = pto.alloc_tile addr = %slot1 : !a_data
+    %scale = pto.alloc_tile addr = %slot0 : !a_scale
+    pto.tget_scale_addr ins(%a0 : !a_data) outs(%scale : !a_scale)
+    pto.textract ins(%src, %zero, %zero : !a_full, index, index) outs(%scale : !a_scale)
+    pto.tget_scale_addr ins(%a1 : !a_data) outs(%scale : !a_scale)
+    pto.textract ins(%src, %zero, %four : !a_full, index, index) outs(%scale : !a_scale)
+    return
+  }
+
+  // In mixed sequences an ordered binding still belongs to the next extract.
+  // BIND-LABEL: func.func @extract_after_bound_move(
+  // BIND: pto.tget_scale_addr ins(%arg2
+  // BIND-NEXT: pto.tmov
+  // BIND-NEXT: pto.tget_scale_addr ins(%arg3
+  // BIND-NEXT: pto.textract
+  func.func @extract_after_bound_move(%src: !a_full, %part: !a_mat_fragment,
+                                     %a0: !a_data, %a1: !a_data, %scale: !a_scale) {
+    %zero = arith.constant 0 : index
+    %four = arith.constant 4 : index
+    pto.tget_scale_addr ins(%a0 : !a_data) outs(%scale : !a_scale)
+    pto.tmov ins(%part : !a_mat_fragment) outs(%scale : !a_scale)
+    pto.tget_scale_addr ins(%a1 : !a_data) outs(%scale : !a_scale)
+    pto.textract ins(%src, %zero, %four : !a_full, index, index) outs(%scale : !a_scale)
+    return
+  }
+}

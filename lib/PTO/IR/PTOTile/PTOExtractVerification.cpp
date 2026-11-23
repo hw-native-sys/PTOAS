@@ -340,12 +340,146 @@ static bool isTExtractA5SupportedPair(pto::AddressSpace srcSpace, pto::AddressSp
             (dstSpace == pto::AddressSpace::MAT || dstSpace == pto::AddressSpace::VEC));
 }
 
+// The MX transfer encodes the outer axis in blocks of 16 and the K axis
+// in pairs of E8M0 elements. Its step fields are eight bits.
+template <int64_t Alignment>
+static LogicalResult verifyMxExtractAxis(TExtractOp op, Value index, StringRef name, int64_t source,
+                                         int64_t capacity, int64_t extent)
+{
+    static_assert(Alignment > 0);
+    constexpr int64_t maxSteps = std::numeric_limits<uint8_t>::max();
+    constexpr int64_t maxIndex = std::numeric_limits<uint16_t>::max();
+    const auto offset = mlir::getConstantIntValue(index);
+    if (offset && (*offset < 0 || *offset > maxIndex || *offset % Alignment != 0)) {
+        return op.emitOpError() << "expects E8M0 scale textract " << name
+                                << " to fit in uint16_t and be aligned to " << Alignment;
+    }
+    if (extent <= 0 || extent > maxSteps * Alignment || extent > capacity) {
+        return op.emitOpError("expects E8M0 scale destination physical capacity and step to cover the copy footprint");
+    }
+    if (extent > source || (offset && *offset > source - extent)) {
+        return op.emitOpError("expects E8M0 scale source physical capacity to cover the copy footprint");
+    }
+    return success();
+}
+
+static int64_t getMxExtractExtent(int64_t physical, int64_t valid, bool useValid)
+{
+    return useValid && !ShapedType::isDynamic(valid) ? valid : physical;
+}
+
+static LogicalResult verifyMxExtractSingleRow(TExtractOp op, const TExtractCommon& c)
+{
+    const auto src = c.srcTb.getShape();
+    const auto dst = c.dstTb.getShape();
+    const auto cols = getMxExtractExtent(dst[1], c.dstTb.getValidShape()[1], true);
+    constexpr int64_t maxSingleRow = std::numeric_limits<uint8_t>::max() / pto::kValue2 * pto::kValue32;
+    if (cols <= 0 || cols > maxSingleRow) {
+        return op.emitOpError("expects a positive single-row E8M0 scale K extent fitting in the copy step");
+    }
+    const auto row = mlir::getConstantIntValue(op.getIndexRow());
+    const auto col = mlir::getConstantIntValue(op.getIndexCol());
+    if (src[0] != 1 || row != 0 || col != 0) {
+        return op.emitOpError("expects single-row E8M0 ScaleLeft textract to use a single-row source "
+                              "and constant zero offsets");
+    }
+    // The single-row intrinsic transfers whole 32-element blocks.
+    const int64_t roundedCols = ((cols - 1) / pto::kValue32 + 1) * pto::kValue32;
+    return verifyMxExtractAxis<pto::kValue32>(op, op.getIndexCol(), "indexCol", src[1], dst[1], roundedCols);
+}
+
+static LogicalResult verifyMxExtractMatrix(TExtractOp op, const TExtractCommon& c, bool left)
+{
+    const unsigned kAxis = left ? 1 : 0;
+    const unsigned outerAxis = left ? 0 : 1;
+    const auto src = c.srcTb.getShape();
+    const auto dst = c.dstTb.getShape();
+    const auto valid = c.dstTb.getValidShape();
+    const bool compact = c.dstTb.getCompactModeI32() == static_cast<int32_t>(pto::CompactMode::Normal);
+    const int64_t k = getMxExtractExtent(dst[kAxis], valid[kAxis], compact);
+    if (k % pto::kValue2 != 0) {
+        return op.emitOpError("expects E8M0 scale textract K extents to be aligned to 2");
+    }
+    if (src[outerAxis] % pto::kValue16 != 0 || dst[outerAxis] % pto::kValue16 != 0 ||
+        src[kAxis] / pto::kValue2 > std::numeric_limits<uint16_t>::max()) {
+        return op.emitOpError("expects E8M0 scale outer extents aligned to 16 and source K stride fitting in uint16_t");
+    }
+    const int64_t outer = getMxExtractExtent(dst[outerAxis], valid[outerAxis], compact);
+    if (outer <= 0) {
+        return op.emitOpError("expects a positive E8M0 scale textract outer extent");
+    }
+    // The aligned physical extent bounds the rounded compact footprint.
+    const int64_t roundedOuter = ((outer - 1) / pto::kValue16 + 1) * pto::kValue16;
+    const Value kIndex = left ? op.getIndexCol() : op.getIndexRow();
+    const Value outerIndex = left ? op.getIndexRow() : op.getIndexCol();
+    const auto kBounds = verifyMxExtractAxis<pto::kValue2>(
+        op, kIndex, left ? "indexCol" : "indexRow", src[kAxis], dst[kAxis], k);
+    if (failed(kBounds)) {
+        return failure();
+    }
+    return verifyMxExtractAxis<pto::kValue16>(
+        op, outerIndex, left ? "indexRow" : "indexCol", src[outerAxis], dst[outerAxis], roundedOuter);
+}
+
+static LogicalResult verifyMxExtractShape(TExtractOp op, const TExtractCommon& c, bool left)
+{
+    const auto src = c.srcTb.getShape();
+    const auto dst = c.dstTb.getShape();
+    const bool hasDynamicShape = llvm::any_of(src, ShapedType::isDynamic) || llvm::any_of(dst, ShapedType::isDynamic);
+    if (hasDynamicShape) {
+        return op.emitOpError("expects E8M0 scale textract to use static physical shapes");
+    }
+    const unsigned kAxis = left ? 1 : 0;
+    if (src[kAxis] % pto::kValue2 != 0 || dst[kAxis] % pto::kValue2 != 0) {
+        return op.emitOpError("expects E8M0 scale textract K extents to be aligned to 2");
+    }
+    if (left && dst[0] == 1) {
+        return verifyMxExtractSingleRow(op, c);
+    }
+    return verifyMxExtractMatrix(op, c, left);
+}
+
+static LogicalResult verifyTExtractA5MxScale(TExtractOp op, const TExtractCommon& c)
+{
+    if (!isPTOF8E8M0Type(c.dstElem)) {
+        return op.emitOpError("expects A5 mat->scaling textract to use !pto.f8E8M0");
+    }
+    const int32_t bl = c.dstTb.getBLayoutValueI32();
+    const int32_t sl = c.dstTb.getSLayoutValueI32();
+    const bool left = bl == static_cast<int32_t>(pto::BLayout::RowMajor) &&
+                      sl == static_cast<int32_t>(pto::SLayout::RowMajor);
+    const bool right = bl == static_cast<int32_t>(pto::BLayout::ColMajor) &&
+                       sl == static_cast<int32_t>(pto::SLayout::ColMajor);
+    const bool matchingLayout = c.srcTb.getBLayoutValueI32() == bl && c.srcTb.getSLayoutValueI32() == sl;
+    const bool supportedLayout = left || right;
+    if (!supportedLayout || !matchingLayout) {
+        return op.emitOpError("expects E8M0 scale textract src and dst to use matching ZZ or NN layouts");
+    }
+    const bool mxFractal = c.srcTb.getSFractalSizeI32() == pto::kValue32 &&
+                           c.dstTb.getSFractalSizeI32() == pto::kValue32;
+    if (!mxFractal) {
+        return op.emitOpError("expects E8M0 scale textract to use fractal=32");
+    }
+    const auto srcCompact = c.srcTb.getCompactModeI32();
+    const auto dstCompact = c.dstTb.getCompactModeI32();
+    const auto noCompact = static_cast<int32_t>(pto::CompactMode::Null);
+    const auto normalCompact = static_cast<int32_t>(pto::CompactMode::Normal);
+    const bool supportedCompact = srcCompact == noCompact && (dstCompact == noCompact || dstCompact == normalCompact);
+    if (!supportedCompact) {
+        return op.emitOpError("expects E8M0 scale textract compact mode Null on src and Null or Normal on dst");
+    }
+    return verifyMxExtractShape(op, c, left);
+}
+
 static LogicalResult verifyTExtractA5Mat(TExtractOp op, const TExtractCommon& c)
 {
     const bool hasPreQuantScalar = static_cast<bool>(op.getPreQuantScalar());
     const bool hasRelu = op.getReluPreMode() != pto::ReluPreMode::NoRelu;
     if (hasPreQuantScalar || hasRelu) {
         return op.emitOpError("expects mat-source textract to use the base form without preQuantScalar or reluPreMode");
+    }
+    if (*c.dstSpace == pto::AddressSpace::SCALING) {
+        return verifyTExtractA5MxScale(op, c);
     }
     if (!hasMatExtractSourceLayoutA5(c.srcTb, *c.dstSpace)) {
         return op.emitOpError("expects A5 textract src to use a supported mat blayout/slayout combination");
@@ -412,7 +546,8 @@ static LogicalResult verifyTExtractA5(TExtractOp op)
     const TExtractCommon& c = *common;
     const bool hasPreQuantScalar = static_cast<bool>(op.getPreQuantScalar());
     const bool hasRelu = op.getReluPreMode() != pto::ReluPreMode::NoRelu;
-    if (!isA5ExtractElemType(c.dstElem)) {
+    const bool isScaleExtract = c.srcSpace == pto::AddressSpace::MAT && c.dstSpace == pto::AddressSpace::SCALING;
+    if (!isScaleExtract && !isA5ExtractElemType(c.dstElem)) {
         return op.emitOpError("expects A5 textract element type to be an fp8/f16/bf16/f32 or int8 family type");
     }
     if (failed(verifyTExtractFpFormLoc(op, c.srcSpace))) {

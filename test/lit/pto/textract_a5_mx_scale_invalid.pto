@@ -1,0 +1,181 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+
+// RUN: pto-test-opt --split-input-file --verify-diagnostics %s
+
+// bad_layout
+!src = !pto.tile_buf<mat, 32x8x!pto.f8E8M0, slayout=row_major, fractal=32>
+!dst = !pto.tile_buf<scaling, 4x16x!pto.f8E8M0, blayout=col_major, slayout=col_major, fractal=32>
+module attributes {pto.target_arch = "a5"} {
+  func.func @bad_layout(%src: !src, %dst: !dst) {
+    %row = arith.constant 0 : index
+    %col = arith.constant 0 : index
+    // expected-error@+1 {{matching ZZ or NN}}
+    pto.textract ins(%src, %row, %col : !src, index, index) outs(%dst : !dst)
+    return
+  }
+}
+
+// -----
+
+// bad_fractal
+!src = !pto.tile_buf<mat, 32x64x!pto.f8E8M0, slayout=row_major, fractal=512>
+!dst = !pto.tile_buf<scaling, 32x4x!pto.f8E8M0, slayout=row_major, fractal=32>
+module attributes {pto.target_arch = "a5"} {
+  func.func @bad_fractal(%src: !src, %dst: !dst) {
+    %row = arith.constant 0 : index
+    %col = arith.constant 0 : index
+    // expected-error@+1 {{use fractal=32}}
+    pto.textract ins(%src, %row, %col : !src, index, index) outs(%dst : !dst)
+    return
+  }
+}
+
+// -----
+
+// scale_to_data
+!src = !pto.tile_buf<mat, 32x64x!pto.f8E8M0, slayout=row_major, fractal=32>
+!dst = !pto.tile_buf<left, 32x32x!pto.f8E8M0, blayout=col_major, slayout=row_major>
+module attributes {pto.target_arch = "a5"} {
+  func.func @scale_to_data(%src: !src, %dst: !dst) {
+    %row = arith.constant 0 : index
+    %col = arith.constant 0 : index
+    // expected-error@+1 {{textract element type}}
+    pto.textract ins(%src, %row, %col : !src, index, index) outs(%dst : !dst)
+    return
+  }
+}
+
+// -----
+
+// data_to_scale
+!src = !pto.tile_buf<mat, 32x64xf16, slayout=row_major>
+!dst = !pto.tile_buf<scaling, 32x16xf16, slayout=row_major, fractal=32>
+module attributes {pto.target_arch = "a5"} {
+  func.func @data_to_scale(%src: !src, %dst: !dst) {
+    %row = arith.constant 0 : index
+    %col = arith.constant 0 : index
+    // expected-error@+1 {{mat->scaling textract to use !pto.f8E8M0}}
+    pto.textract ins(%src, %row, %col : !src, index, index) outs(%dst : !dst)
+    return
+  }
+}
+
+// -----
+
+// misaligned_a
+!src = !pto.tile_buf<mat, 32x8x!pto.f8E8M0, slayout=row_major, fractal=32>
+!dst = !pto.tile_buf<scaling, 32x4x!pto.f8E8M0, slayout=row_major, fractal=32>
+module attributes {pto.target_arch = "a5"} {
+  func.func @misaligned_a(%src: !src, %dst: !dst) {
+    %row = arith.constant 0 : index
+    %col = arith.constant 1 : index
+    // expected-error@+1 {{indexCol to fit in uint16_t and be aligned to 2}}
+    pto.textract ins(%src, %row, %col : !src, index, index) outs(%dst : !dst)
+    return
+  }
+}
+
+// -----
+
+// misaligned_b
+!src = !pto.tile_buf<mat, 8x32x!pto.f8E8M0, blayout=col_major, slayout=col_major, fractal=32>
+!dst = !pto.tile_buf<scaling, 4x16x!pto.f8E8M0, blayout=col_major, slayout=col_major, fractal=32>
+module attributes {pto.target_arch = "a5"} {
+  func.func @misaligned_b(%src: !src, %dst: !dst) {
+    %row = arith.constant 4 : index
+    %col = arith.constant 8 : index
+    // expected-error@+1 {{indexCol to fit in uint16_t and be aligned to 16}}
+    pto.textract ins(%src, %row, %col : !src, index, index) outs(%dst : !dst)
+    return
+  }
+}
+
+// -----
+
+// physical_bounds
+!src = !pto.tile_buf<mat, 32x8x!pto.f8E8M0, slayout=row_major, fractal=32>
+!dst = !pto.tile_buf<scaling, 32x4x!pto.f8E8M0, valid=16x4, slayout=row_major, fractal=32>
+module attributes {pto.target_arch = "a5"} {
+  func.func @physical_bounds(%src: !src, %dst: !dst) {
+    %row = arith.constant 16 : index
+    %col = arith.constant 4 : index
+    // expected-error@+1 {{source physical capacity}}
+    pto.textract ins(%src, %row, %col : !src, index, index) outs(%dst : !dst)
+    return
+  }
+}
+
+// -----
+
+// offset_overflow
+!src = !pto.tile_buf<mat, 32x8x!pto.f8E8M0, slayout=row_major, fractal=32>
+!dst = !pto.tile_buf<scaling, 32x4x!pto.f8E8M0, slayout=row_major, fractal=32>
+module attributes {pto.target_arch = "a5"} {
+  func.func @offset_overflow(%src: !src, %dst: !dst) {
+    %row = arith.constant 0 : index
+    %col = arith.constant 65536 : index
+    // expected-error@+1 {{indexCol to fit in uint16_t}}
+    pto.textract ins(%src, %row, %col : !src, index, index) outs(%dst : !dst)
+    return
+  }
+}
+
+// -----
+
+// single_row_capacity
+!src = !pto.tile_buf<mat, 1x64x!pto.f8E8M0, slayout=row_major, fractal=32>
+!dst = !pto.tile_buf<scaling, 1x4x!pto.f8E8M0, slayout=row_major, fractal=32>
+module attributes {pto.target_arch = "a5"} {
+  func.func @single_row_capacity(%src: !src, %dst: !dst) {
+    %row = arith.constant 0 : index
+    %col = arith.constant 0 : index
+    // expected-error@+1 {{destination physical capacity}}
+    pto.textract ins(%src, %row, %col : !src, index, index) outs(%dst : !dst)
+    return
+  }
+}
+
+// -----
+
+!src = !pto.tile_buf<mat, 32x8x!pto.f8E8M0, slayout=row_major, fractal=32, compact=1>
+!dst = !pto.tile_buf<scaling, 32x4x!pto.f8E8M0, slayout=row_major, fractal=32>
+module attributes {pto.target_arch = "a5"} {
+  func.func @compact_source(%src: !src, %dst: !dst) {
+    %zero = arith.constant 0 : index
+    // expected-error@+1 {{expects E8M0 scale textract compact mode Null on src and Null or Normal on dst}}
+    pto.textract ins(%src, %zero, %zero : !src, index, index) outs(%dst : !dst)
+    return
+  }
+}
+
+// -----
+
+!src = !pto.tile_buf<mat, 32x8x!pto.f8E8M0, slayout=row_major, fractal=32>
+!dst = !pto.tile_buf<scaling, 32x4x!pto.f8E8M0, slayout=row_major, fractal=32, compact=2>
+module attributes {pto.target_arch = "a5"} {
+  func.func @row_plus_one_destination(%src: !src, %dst: !dst) {
+    %zero = arith.constant 0 : index
+    // expected-error@+1 {{expects E8M0 scale textract compact mode Null on src and Null or Normal on dst}}
+    pto.textract ins(%src, %zero, %zero : !src, index, index) outs(%dst : !dst)
+    return
+  }
+}
+
+// -----
+
+!src = !pto.tile_buf<mat, 32x8x!pto.f8E8M0, slayout=row_major, fractal=32>
+!dst = !pto.tile_buf<scaling, 48x8x!pto.f8E8M0, slayout=row_major, fractal=32, valid=?x4, compact=1>
+module attributes {pto.target_arch = "a5"} {
+  func.func @dynamic_compact_capacity(%src: !src, %dst: !dst) {
+    %zero = arith.constant 0 : index
+    // expected-error@+1 {{expects E8M0 scale source physical capacity to cover the copy footprint}}
+    pto.textract ins(%src, %zero, %zero : !src, index, index) outs(%dst : !dst)
+    return
+  }
+}

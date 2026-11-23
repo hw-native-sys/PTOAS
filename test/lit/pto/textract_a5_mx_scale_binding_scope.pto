@@ -1,0 +1,113 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+
+// RUN: pto-test-opt --pass-pipeline="builtin.module(func.func(pto-a5-normalize-tmov,pto-a5-normalize-tmov))" %s | FileCheck %s --check-prefix=BIND
+// RUN: ptoas --pto-arch=a5 --pto-level=level3 %s -o - | FileCheck %s --check-prefix=CPP
+
+!full = !pto.tile_buf<mat, 128x128x!pto.f8E8M0, slayout=row_major, fractal=32>
+!fragment = !pto.tile_buf<mat, 128x4x!pto.f8E8M0, slayout=row_major, fractal=32>
+!scale = !pto.tile_buf<scaling, 128x4x!pto.f8E8M0, slayout=row_major, fractal=32>
+!data = !pto.tile_buf<left, 128x128xf8E4M3FN, blayout=col_major, slayout=row_major>
+
+module attributes {pto.target_arch = "a5", pto.kernel_kind = #pto.kernel_kind<cube>} {
+  // Both extracts use the same descriptor, which starts the branch in slot A.
+  // BIND-LABEL: func.func @extract_with_outer_binding(
+  // BIND: %[[A:[a-zA-Z0-9_]+]] = pto.alloc_tile
+  // BIND: %[[B:[a-zA-Z0-9_]+]] = pto.alloc_tile
+  // BIND: pto.tget_scale_addr ins(%[[A]] {{.*}} outs(%[[SCALE:[a-zA-Z0-9_]+]]
+  // BIND-NEXT: scf.if
+  // BIND-NEXT: pto.textract {{.*}} outs(%[[SCALE]]
+  // BIND-NEXT: pto.tget_scale_addr ins(%[[B]] {{.*}} outs(%[[SCALE]]
+  // BIND-NEXT: pto.textract {{.*}} outs(%[[SCALE]]
+  // CPP-LABEL: AICORE void extract_with_outer_binding(
+  // CPP: uint64_t [[ADDR_A:v[0-9]+]] = GetScaleAddr(
+  // CPP-NEXT: TASSIGN([[OUTER:v[0-9]+]], [[ADDR_A]]);
+  // CPP-NEXT: if (
+  // CPP-NOT: TASSIGN([[OUTER]],
+  // CPP: TEXTRACT([[OUTER]],
+  // CPP: uint64_t [[ADDR_B:v[0-9]+]] = GetScaleAddr(
+  // CPP-NEXT: TASSIGN([[OUTER]], [[ADDR_B]]);
+  // CPP: TEXTRACT([[OUTER]],
+  func.func @extract_with_outer_binding(%src: !full, %cond: i1) {
+    %slot_a = arith.constant 4096 : i64
+    %slot_b = arith.constant 20480 : i64
+    %addr = arith.constant 0 : i64
+    %zero = arith.constant 0 : index
+    %four = arith.constant 4 : index
+    %a = pto.alloc_tile addr = %slot_a : !data
+    %b = pto.alloc_tile addr = %slot_b : !data
+    %scale = pto.alloc_tile addr = %addr : !scale
+    pto.tget_scale_addr ins(%a : !data) outs(%scale : !scale)
+    scf.if %cond {
+      pto.textract ins(%src, %zero, %zero : !full, index, index) outs(%scale : !scale)
+      pto.tget_scale_addr ins(%b : !data) outs(%scale : !scale)
+      pto.textract ins(%src, %zero, %four : !full, index, index) outs(%scale : !scale)
+    }
+    return
+  }
+
+  // The result of tassign still carries the address set by that operation.
+  // BIND-LABEL: func.func @extract_with_assigned_handle(
+  // BIND: %[[PAYLOAD:[a-zA-Z0-9_]+]] = pto.alloc_tile
+  // BIND: %[[ASSIGNED:[a-zA-Z0-9_]+]] = pto.tassign
+  // BIND-NEXT: pto.textract {{.*}} outs(%[[ASSIGNED]]
+  // BIND-NEXT: pto.tget_scale_addr ins(%[[PAYLOAD]] {{.*}} outs(%[[ASSIGNED]]
+  // BIND-NEXT: pto.textract {{.*}} outs(%[[ASSIGNED]]
+  // CPP-LABEL: AICORE void extract_with_assigned_handle(
+  // CPP: const int64_t [[SLOT_A:v[0-9]+]] = 4096;
+  // CPP: uint64_t [[ASSIGNED_ADDR:v[0-9]+]] = (uint64_t) [[SLOT_A]];
+  // CPP-NEXT: TASSIGN([[ALIAS:v[0-9]+]], [[ASSIGNED_ADDR]]);
+  // CPP-NOT: TASSIGN([[ALIAS]],
+  // CPP: TEXTRACT([[ALIAS]],
+  // CPP: uint64_t [[SCALE_ADDR:v[0-9]+]] = GetScaleAddr(
+  // CPP-NEXT: TASSIGN([[ALIAS]], [[SCALE_ADDR]]);
+  // CPP: TEXTRACT([[ALIAS]],
+  func.func @extract_with_assigned_handle(%src: !full) {
+    %slot_a = arith.constant 4096 : i64
+    %slot_b = arith.constant 20480 : i64
+    %addr = arith.constant 0 : i64
+    %zero = arith.constant 0 : index
+    %four = arith.constant 4 : index
+    %b = pto.alloc_tile addr = %slot_b : !data
+    %scale = pto.alloc_tile addr = %addr : !scale
+    %assigned = pto.tassign %scale, %slot_a : !scale -> !scale
+    pto.textract ins(%src, %zero, %zero : !full, index, index) outs(%assigned : !scale)
+    pto.tget_scale_addr ins(%b : !data) outs(%assigned : !scale)
+    pto.textract ins(%src, %zero, %four : !full, index, index) outs(%assigned : !scale)
+    return
+  }
+
+  // The move always writes slot A, even when the branch using slot B is skipped.
+  // BIND-LABEL: func.func @extract_nested_after_bound_move(
+  // BIND: pto.tget_scale_addr ins(%arg2 {{.*}} outs(%arg4
+  // BIND-NEXT: pto.tmov {{.*}} outs(%arg4
+  // BIND-NEXT: pto.tget_scale_addr ins(%arg3 {{.*}} outs(%arg4
+  // BIND-NEXT: scf.if %arg5
+  // BIND-NEXT: pto.textract {{.*}} outs(%arg4
+  // CPP-LABEL: AICORE void extract_nested_after_bound_move(
+  // CPP: uint64_t [[MOVE_ADDR:v[0-9]+]] = GetScaleAddr(
+  // CPP-NEXT: TASSIGN([[MIX_SCALE:v[0-9]+]], [[MOVE_ADDR]]);
+  // CPP-NOT: TASSIGN([[MIX_SCALE]],
+  // CPP: TMOV([[MIX_SCALE]],
+  // CPP: uint64_t [[EXTRACT_ADDR:v[0-9]+]] = GetScaleAddr(
+  // CPP-NEXT: TASSIGN([[MIX_SCALE]], [[EXTRACT_ADDR]]);
+  // CPP-NEXT: if (
+  // CPP: TEXTRACT([[MIX_SCALE]],
+  func.func @extract_nested_after_bound_move(%src: !full, %part: !fragment,
+                                             %a: !data, %b: !data, %scale: !scale, %cond: i1) {
+    %zero = arith.constant 0 : index
+    %four = arith.constant 4 : index
+    pto.tget_scale_addr ins(%a : !data) outs(%scale : !scale)
+    pto.tmov ins(%part : !fragment) outs(%scale : !scale)
+    pto.tget_scale_addr ins(%b : !data) outs(%scale : !scale)
+    scf.if %cond {
+      pto.textract ins(%src, %zero, %four : !full, index, index) outs(%scale : !scale)
+    }
+    return
+  }
+}

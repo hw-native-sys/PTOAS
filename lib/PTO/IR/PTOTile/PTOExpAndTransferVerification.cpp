@@ -196,68 +196,74 @@ struct TileTransferCommon {
 };
 
 static FailureOr<TileTransferCommon> verifyTileTransferCommon(
-    Operation *op, Value src, Value dst, Value indexRow, Value indexCol,
-    bool allowLowPrecision, bool includeIndexAndIntOpsInConstFold,
-    bool insert) {
-  Type srcTy = src.getType();
-  Type dstTy = dst.getType();
-  auto srcTb = dyn_cast<pto::TileBufType>(srcTy);
-  auto dstTb = dyn_cast<pto::TileBufType>(dstTy);
-  if (!srcTb || !dstTb)
-    return op->emitOpError("expects src and dst to be !pto.tile_buf");
-  if (failed(verifyTileBufCommon(op, srcTy, "src", allowLowPrecision)) ||
-      failed(verifyTileBufCommon(op, dstTy, "dst", allowLowPrecision)) ||
-      failed(verifyNonNegativeIndexRowCol(
-          *op, indexRow, indexCol, includeIndexAndIntOpsInConstFold)))
-    return failure();
-  LogicalResult bounds =
-      insert ? verifyInsertStaticBoundsCommon(
-                   *op, indexRow, indexCol, srcTy, dstTy,
-                   includeIndexAndIntOpsInConstFold)
-             : verifyExtractStaticBoundsCommon(
-                   *op, indexRow, indexCol, srcTy, dstTy,
-                   includeIndexAndIntOpsInConstFold);
-  if (failed(bounds))
-    return failure();
-  return TileTransferCommon{srcTy,
-                            dstTy,
-                            srcTb,
-                            dstTb,
-                            getElemTy(srcTy),
-                            getElemTy(dstTy),
-                            getPTOMemorySpaceEnum(srcTy),
-                            getPTOMemorySpaceEnum(dstTy)};
+    Operation* op, Value src, Value dst, Value indexRow, Value indexCol, bool allowLowPrecision,
+    bool includeIndexAndIntOpsInConstFold, bool insert, bool verifyStaticBounds = true)
+{
+    Type srcTy = src.getType();
+    Type dstTy = dst.getType();
+    auto srcTb = dyn_cast<pto::TileBufType>(srcTy);
+    auto dstTb = dyn_cast<pto::TileBufType>(dstTy);
+    if (!srcTb || !dstTb) {
+        return op->emitOpError("expects src and dst to be !pto.tile_buf");
+    }
+    const bool invalidOperands =
+        failed(verifyTileBufCommon(op, srcTy, "src", allowLowPrecision)) ||
+        failed(verifyTileBufCommon(op, dstTy, "dst", allowLowPrecision)) ||
+        failed(verifyNonNegativeIndexRowCol(*op, indexRow, indexCol, includeIndexAndIntOpsInConstFold));
+    if (invalidOperands) {
+        return failure();
+    }
+    if (verifyStaticBounds) {
+        const auto checkBounds = insert ? verifyInsertStaticBoundsCommon : verifyExtractStaticBoundsCommon;
+        const auto bounds = checkBounds(*op, indexRow, indexCol, srcTy, dstTy, includeIndexAndIntOpsInConstFold);
+        if (failed(bounds)) {
+            return failure();
+        }
+    }
+    return TileTransferCommon{
+        srcTy,
+        dstTy,
+        srcTb,
+        dstTb,
+        getElemTy(srcTy),
+        getElemTy(dstTy),
+        getPTOMemorySpaceEnum(srcTy),
+        getPTOMemorySpaceEnum(dstTy)};
 }
 
 using TExtractCommon = TileTransferCommon;
 
-static FailureOr<TExtractCommon> verifyTExtractCommon(TExtractOp op,
-                                                      bool allowLowPrecision) {
-  const bool hasFp = static_cast<bool>(op.getFp());
-  auto common = verifyTileTransferCommon(
-      op, op.getSrc(), op.getDst(), op.getIndexRow(), op.getIndexCol(),
-      allowLowPrecision, /*includeIndexAndIntOpsInConstFold=*/hasFp,
-      /*insert=*/false);
-  if (failed(common))
-    return failure();
-  if (hasFp) {
-    Type fpTy = op.getFp().getType();
-    if (failed(verifyTileBufCommon(op, fpTy, "fp", allowLowPrecision))) {
-      return failure();
+static FailureOr<TExtractCommon> verifyTExtractCommon(TExtractOp op, bool allowLowPrecision)
+{
+    const bool hasFp = static_cast<bool>(op.getFp());
+    const bool isA5ScaleExtract = allowLowPrecision &&
+                                  getPTOMemorySpaceEnum(op.getSrc().getType()) == pto::AddressSpace::MAT &&
+                                  getPTOMemorySpaceEnum(op.getDst().getType()) == pto::AddressSpace::SCALING;
+    // A5 MX extraction checks the native copy footprint separately.
+    auto common = verifyTileTransferCommon(
+        op, op.getSrc(), op.getDst(), op.getIndexRow(), op.getIndexCol(), allowLowPrecision, hasFp, false,
+        !isA5ScaleExtract);
+    if (failed(common)) {
+        return failure();
     }
-    auto fpSpace = getPTOMemorySpaceEnum(fpTy);
-    if (!fpSpace || *fpSpace != pto::AddressSpace::SCALING) {
-      return op.emitOpError("expects fp to use loc=scaling");
+    if (hasFp) {
+        Type fpTy = op.getFp().getType();
+        if (failed(verifyTileBufCommon(op, fpTy, "fp", allowLowPrecision))) {
+            return failure();
+        }
+        auto fpSpace = getPTOMemorySpaceEnum(fpTy);
+        if (!fpSpace || *fpSpace != pto::AddressSpace::SCALING) {
+            return op.emitOpError("expects fp to use loc=scaling");
+        }
     }
-  }
-  if (!common->srcElem || !common->dstElem) {
-    return op.emitOpError("expects src and dst to have element types");
-  }
-  if ((!common->srcSpace || *common->srcSpace != pto::AddressSpace::ACC) &&
-      common->srcElem != common->dstElem) {
-    return op.emitOpError("expects src and dst to have the same element type");
-  }
-  return *common;
+    if (!common->srcElem || !common->dstElem) {
+        return op.emitOpError("expects src and dst to have element types");
+    }
+    const bool requiresMatchingTypes = !common->srcSpace || *common->srcSpace != pto::AddressSpace::ACC;
+    if (requiresMatchingTypes && common->srcElem != common->dstElem) {
+        return op.emitOpError("expects src and dst to have the same element type");
+    }
+    return *common;
 }
 
 static LogicalResult

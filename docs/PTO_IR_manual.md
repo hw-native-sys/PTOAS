@@ -8418,9 +8418,19 @@ dst[i, j] = src[i + indexRow, j + indexCol]
     - `indexCol + dst.cols <= src.cols`
   - `dst` must use `loc=left` or `loc=right` with a target-supported fractal configuration.
 - **Implementation checks (A5)**
-  - `dst` element type must match `src` element type and must be one of the target-supported low-precision/fp16/bf16/f32 families (`f8E4M3*`, `f8E5M2*`, `!pto.hif8`, `!pto.f4E2M1x2`, `f16`, `bf16`, `f32`, `i8`).
+  - `dst` element type must match `src` element type and must be one of the target-supported low-precision/fp16/bf16/f32 families (`f8E4M3*`, `f8E5M2*`, `!pto.hif8`, `!pto.f4E2M1x2`, `f16`, `bf16`, `f32`, `i8`). MX `Mat -> Scaling` uses `!pto.f8E8M0`.
   - Source layout/fractal must satisfy the target-supported combinations for `left`/`right`/scaling destinations; in PTO IR terms this is expressed through the `blayout`/`slayout`/`fractal` tuple.
-  - Destination supports `Mat -> Left/Right/Scale` and also supports `Vec -> Mat` for specific tile locations.
+  - A5 EmitC `Mat -> Scaling` extracts MX scale fragments. Both tiles must use `!pto.f8E8M0` and `fractal=32`, with matching layouts:
+    - ScaleLeft uses ZZ (row-major/row-major), with offsets aligned to 16 rows and 2 columns.
+    - ScaleRight uses NN (column-major/column-major), with offsets aligned to 2 rows and 16 columns.
+  - MX offsets are in scale elements. A K offset of 128 payload elements corresponds to a scale offset of 4.
+    The source must use compact mode `Null`. The destination may use `Null` or `Normal`.
+    The hardware copy footprint must fit within the physical source and destination shapes.
+    For a dynamic valid dimension, static bounds checks use the destination's physical capacity.
+    Dynamic indices and valid extents must satisfy the hardware bounds and alignment at runtime.
+    For single-row ScaleLeft, use a single-row source and constant zero offsets with storage padded for 32-element transfers.
+  - Use `pto.tget_scale_addr` to bind the L0 scale tile to its corresponding payload tile before extracting a fragment for MX matmul.
+  - Payload destinations include `Mat -> Left/Right` and `Vec -> Mat` for supported layouts.
 
 **Hardware Mapping:**
 
