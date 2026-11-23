@@ -326,7 +326,7 @@ buildFusionRegionPredicateContext(pto::FusionRegionOp fusionRegion,
   FusionRegionPredicateContext context;
   context.fusionRegion = fusionRegion;
 
-  fusionRegion.walk(
+  fusionRegion.walk<WalkOrder::PreOrder>(
       [fusionRegion, &context](Operation *op) mutable -> WalkResult {
         const bool isNestedFusionRegion =
             op != fusionRegion.getOperation() && isa<pto::FusionRegionOp>(op);

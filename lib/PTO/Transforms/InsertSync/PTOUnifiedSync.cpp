@@ -196,7 +196,7 @@ public:
         if (failed(analyzeHazards())) {
             return failure();
         }
-        if (syncIR.size() <= 1) {
+        if (sourceSyncNodeCount <= 1) {
             return success();
         }
         buildModel();
@@ -258,6 +258,7 @@ private:
     unsigned feCount = 0, invCount = 0, nHazards = 0, synthPairs = 0, compCount = 0;
     unsigned routedHazards = 0, hiddenReserved = 0, nShareReuse = 0, nShareAlias = 0;
     bool emissionFailed = false;
+    size_t sourceSyncNodeCount = 0;
     llvm::DenseMap<int, llvm::SmallVector<const BaseMemInfo*>> clusterMemInfos;
     unsigned keptGet = 0, keptRls = 0, bracketedHazards = 0, unbracketedHazards = 0, suppressed = 0, leaked = 0;
     LogicalResult analyzeHazards()
@@ -266,8 +267,9 @@ private:
 
         PTOIRTranslator translator(
             syncIR, memAnalyzer, buffer2MemInfoMap, opAccessMemInfos, func, SyncAnalysisMode::NORMALSYNC);
-        translator.Build();
-        if (syncIR.size() <= 1) {
+        translator.Build(PTOIRTranslator::FusionRegionModel::AtomicVector);
+        sourceSyncNodeCount = translator.getUnaggregatedSyncIRSize();
+        if (sourceSyncNodeCount <= 1) {
             return success();
         }
 

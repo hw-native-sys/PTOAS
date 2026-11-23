@@ -13,7 +13,7 @@
 
 #ifndef MLIR_DIALECT_PTO_TRANSFORMS_INJECTSYNC_PTOIRTRANSLATOR_H
 #define MLIR_DIALECT_PTO_TRANSFORMS_INJECTSYNC_PTOIRTRANSLATOR_H
- 
+
 #include "PTO/IR/PTO.h"
 #include "PTO/Transforms/InsertSync/SyncCommon.h"
 #include "PTO/Transforms/InsertSync/SyncMacroModel.h"
@@ -24,133 +24,149 @@
 #include "llvm/Support/raw_ostream.h"
 
 #include <optional>
- 
+
 namespace mlir {
 namespace pto {
- 
+
 class PTOIRTranslator {
 public:
-  PTOIRTranslator(SyncIRs &syncIR,
-                  MemoryDependentAnalyzer &memDepAnalyzer,
-                  Buffer2MemInfoMap &buffer2MemInfoMap,
-                  OpAccessMemInfos &opAccessMemInfos,
-                  func::FuncOp func,
-                  SyncAnalysisMode syncAnalysisMode)
-    : func_(func), 
-      index(0),
-      syncIR_(syncIR), 
-      buffer2MemInfoMap_(buffer2MemInfoMap),
-      opAccessMemInfos_(opAccessMemInfos),
-      memAnalyzer_(memDepAnalyzer),
-      mode_(syncAnalysisMode) {
-    (void)memAnalyzer_;
-    (void)mode_;
-  };
- 
-  // 核心入口：执行 IR 分析和转换
-  void Build();
- 
-  // 获取生成的 SyncIR (指令序列)
-  SyncIRs &getSyncIR() { return syncIR_; }
- 
-  // 获取 Buffer 分析结果 (别名映射)
-  Buffer2MemInfoMap &getBuffer2MemInfoMap() { return buffer2MemInfoMap_; }
- 
-  // 打印调试信息 (Buffer Map 和 SyncIR)
-  void print();
- 
+    // Keep individual access anchors for dependency audits. Sync emission may
+    // instead treat an eligible vector group as one indivisible instruction.
+    enum class FusionRegionModel {
+        PerOperation,
+        AtomicVector
+    };
+
+    PTOIRTranslator(
+        SyncIRs& syncIR, MemoryDependentAnalyzer& memDepAnalyzer, Buffer2MemInfoMap& buffer2MemInfoMap,
+        OpAccessMemInfos& opAccessMemInfos, func::FuncOp func, SyncAnalysisMode syncAnalysisMode)
+        : func_(func),
+          index(0),
+          syncIR_(syncIR),
+          buffer2MemInfoMap_(buffer2MemInfoMap),
+          opAccessMemInfos_(opAccessMemInfos),
+          memAnalyzer_(memDepAnalyzer),
+          mode_(syncAnalysisMode)
+    {
+        (void)memAnalyzer_;
+        (void)mode_;
+    };
+
+    // 核心入口：执行 IR 分析和转换
+    void Build(FusionRegionModel fusionRegionModel = FusionRegionModel::PerOperation);
+
+    // Preserve the emitters' simple-function policy across fusion aggregation.
+    size_t getUnaggregatedSyncIRSize() const
+    {
+        return syncIR_.size() + foldedFusionNodeCount_;
+    }
+
+    // 获取生成的 SyncIR (指令序列)
+    SyncIRs& getSyncIR()
+    {
+        return syncIR_;
+    }
+
+    // 获取 Buffer 分析结果 (别名映射)
+    Buffer2MemInfoMap& getBuffer2MemInfoMap()
+    {
+        return buffer2MemInfoMap_;
+    }
+
+    // 打印调试信息 (Buffer Map 和 SyncIR)
+    void print();
+
 private:
-  func::FuncOp func_;
-  unsigned index; // 当前 SyncIR 节点的索引计数器
-  
-  // 核心数据结构 (定义在 SyncCommon.h 中)
-  SyncIRs &syncIR_;
-  Buffer2MemInfoMap &buffer2MemInfoMap_;
-  // Owner of instruction-specific access ranges referenced from compound
-  // def/use lists. Supplied by the caller so it outlives this translator.
-  OpAccessMemInfos &opAccessMemInfos_;
-  MemoryDependentAnalyzer &memAnalyzer_;
-  SyncAnalysisMode mode_;
- 
-  // --- 递归遍历逻辑 ---
-  void RecursionIR(Region *region);
-  // RecursionIR 的按类别分发器：返回 nullopt 表示 op 不属于该类别，
-  // 需继续尝试后续类别；返回 WalkResult 表示已匹配处理完毕。
-  std::optional<WalkResult> dispatchAllocOp(Operation *op);
-  std::optional<WalkResult> dispatchAliasViewOp(Operation *op);
-  std::optional<WalkResult> dispatchControlAndComputeOp(Operation *op);
- 
-  // --- 内存/Alias 分析 ---
-  void UpdateKernelArgMemInfo();
-  LogicalResult UpdateAllocTileOpMemInfo(pto::AllocTileOp op);
-  LogicalResult UpdateAllocMultiTileOpMemInfo(pto::AllocMultiTileOp op);
-  LogicalResult UpdateDeclareTileOpMemInfo(pto::DeclareTileOp op);
-  LogicalResult UpdateDeclareGlobalOpMemInfo(pto::DeclareGlobalOp op);
-  
-  // 处理 View/Alias (MakeTensorView, Subview, Mov)
-  void UpdateAliasBufferInfo(Value result, Value source);
-  void UpdateConservativeAliasBufferInfo(Value result, Value source);
+    func::FuncOp func_;
+    unsigned index; // 当前 SyncIR 节点的索引计数器
 
-  // GM view 别名，并记录视图选中的跨步字节范围 (GMWindow)，供
-  // MemoryDependentAnalyzer 证明同根的两次访问不相交 (issue #1624)。
-  void UpdateMakeTensorViewAliasBufferInfo(pto::MakeTensorViewOp op);
-  void UpdatePartitionViewAliasBufferInfo(pto::PartitionViewOp op);
+    // 核心数据结构 (定义在 SyncCommon.h 中)
+    SyncIRs& syncIR_;
+    Buffer2MemInfoMap& buffer2MemInfoMap_;
+    // Owner of instruction-specific access ranges referenced from compound
+    // def/use lists. Supplied by the caller so it outlives this translator.
+    OpAccessMemInfos& opAccessMemInfos_;
+    MemoryDependentAnalyzer& memAnalyzer_;
+    SyncAnalysisMode mode_;
+    FusionRegionModel fusionRegionModel_ = FusionRegionModel::PerOperation;
+    size_t foldedFusionNodeCount_ = 0;
 
-  // 清除 value 上的 GMWindow：窗口只描述首次迭代，跨循环边界后不再成立。
-  void DropCarriedGMWindows(Value value);
+    // --- 递归遍历逻辑 ---
+    void RecursionIR(Region* region);
+    bool isAtomicVectorFusion(pto::FusionRegionOp region) const;
+    void UpdateFusionRegionOpInfo(pto::FusionRegionOp region);
+    // RecursionIR 的按类别分发器：返回 nullopt 表示 op 不属于该类别，
+    // 需继续尝试后续类别；返回 WalkResult 表示已匹配处理完毕。
+    std::optional<WalkResult> dispatchAllocOp(Operation* op);
+    std::optional<WalkResult> dispatchAliasViewOp(Operation* op);
+    std::optional<WalkResult> dispatchControlAndComputeOp(Operation* op);
 
-  void UpdateTileSubViewAliasBufferInfo(pto::SubViewOp op);
-  LogicalResult UpdateIntegerToPtrCastMemInfo(pto::CastPtrOp op);
-  void UpdateMultiTileGetAliasBufferInfo(pto::MultiTileGetOp op);
-  void UpdateSlotSelectedAliasBufferInfo(Value result, Value source,
-                                         Value slot);
- 
-  // --- 控制流处理 (SCF) ---
-  void UpdateForOpInfo(scf::ForOp forOp);
-  void UpdateWhileOpInfo(scf::WhileOp whileOp);
-  void UpdateIfOpInfo(scf::IfOp ifOp);
-  void UpdateYieldOpInfo(scf::YieldOp yieldOp);
+    // --- 内存/Alias 分析 ---
+    void UpdateKernelArgMemInfo();
+    LogicalResult UpdateAllocTileOpMemInfo(pto::AllocTileOp op);
+    LogicalResult UpdateAllocMultiTileOpMemInfo(pto::AllocMultiTileOp op);
+    LogicalResult UpdateDeclareTileOpMemInfo(pto::DeclareTileOp op);
+    LogicalResult UpdateDeclareGlobalOpMemInfo(pto::DeclareGlobalOp op);
 
-  // --- 核心：处理计算/搬运指令 (生成 Compound 节点) ---
-  void UpdatePTOOpInfo(Operation *op);
-  void UpdatePTOOpInfoWithPipeline(Operation *op, PipelineType pipe,
-                                   bool skipIfNoMemInfo = false);
-  void UpdateMacroOpInfo(Operation *op);
+    // 处理 View/Alias (MakeTensorView, Subview, Mov)
+    void UpdateAliasBufferInfo(Value result, Value source);
+    void UpdateConservativeAliasBufferInfo(Value result, Value source);
+
+    // GM view 别名，并记录视图选中的跨步字节范围 (GMWindow)，供
+    // MemoryDependentAnalyzer 证明同根的两次访问不相交 (issue #1624)。
+    void UpdateMakeTensorViewAliasBufferInfo(pto::MakeTensorViewOp op);
+    void UpdatePartitionViewAliasBufferInfo(pto::PartitionViewOp op);
+
+    // 清除 value 上的 GMWindow：窗口只描述首次迭代，跨循环边界后不再成立。
+    void DropCarriedGMWindows(Value value);
+
+    void UpdateTileSubViewAliasBufferInfo(pto::SubViewOp op);
+    LogicalResult UpdateIntegerToPtrCastMemInfo(pto::CastPtrOp op);
+    void UpdateMultiTileGetAliasBufferInfo(pto::MultiTileGetOp op);
+    void UpdateSlotSelectedAliasBufferInfo(Value result, Value source, Value slot);
+
+    // --- 控制流处理 (SCF) ---
+    void UpdateForOpInfo(scf::ForOp forOp);
+    void UpdateWhileOpInfo(scf::WhileOp whileOp);
+    void UpdateIfOpInfo(scf::IfOp ifOp);
+    void UpdateYieldOpInfo(scf::YieldOp yieldOp);
+
+    // --- 核心：处理计算/搬运指令 (生成 Compound 节点) ---
+    void UpdatePTOOpInfo(Operation* op);
+    void UpdatePTOOpInfoWithPipeline(Operation* op, PipelineType pipe, bool skipIfNoMemInfo = false);
+    void UpdateMacroOpInfo(Operation* op);
     void MakeMacroCompound(
         Operation* op, PipelineType pipe, ValueRange defValues, ValueRange useValues,
         ArrayRef<SyncMacroRange> defRanges, ArrayRef<SyncMacroRange> useRanges, int macroPhaseId);
-  bool UpdateHelperCallInfo(func::CallOp callOp);
+    bool UpdateHelperCallInfo(func::CallOp callOp);
 
-  // --- 辅助函数 ---
+    // --- 辅助函数 ---
 
-  // 获取 PTO Op 对应的硬件流水线类型
-  PipelineType getOpPipeline(Operation *op) const;
+    // 获取 PTO Op 对应的硬件流水线类型
+    PipelineType getOpPipeline(Operation* op) const;
 
-  // 把宏模型声明的锚定字节范围解析为指令专属 BaseMemInfo：锚点的每条
-  // 候选基址平移 offsetBytes，allocateSize 置为范围大小。sizeBytes 为 0
-  // 或平移溢出时不产生有限区间，而是退回零尺寸的"未知范围"编码，让
-  // MemAlias 保守判定可能别名（见 SyncMacroRange）。
+    // 把宏模型声明的锚定字节范围解析为指令专属 BaseMemInfo：锚点的每条
+    // 候选基址平移 offsetBytes，allocateSize 置为范围大小。sizeBytes 为 0
+    // 或平移溢出时不产生有限区间，而是退回零尺寸的"未知范围"编码，让
+    // MemAlias 保守判定可能别名（见 SyncMacroRange）。
     void AppendMacroRangeInfos(ArrayRef<SyncMacroRange> ranges, SmallVector<const BaseMemInfo*>& vec);
 
-  // 根据 Values 填充 Def/Use 列表。`accessOp` 是发起访问的指令：GMWindow 只描述
-  // 视图的选框，只有按框密集寻址的搬运算（tload/tstore/tprefetch/comm DMA 家族）
-  // 的访问范围才必然落在框内；索引寻址的 gather/scatter 等不遵循视图 stride，
-  // 必须清除窗口，否则会把真实重叠误判为不相交（见 test 中 issue1624 的
-  // mgather/mscatter 回归用例）。
+    // 根据 Values 填充 Def/Use 列表。`accessOp` 是发起访问的指令：GMWindow 只描述
+    // 视图的选框，只有按框密集寻址的搬运算（tload/tstore/tprefetch/comm DMA 家族）
+    // 的访问范围才必然落在框内；索引寻址的 gather/scatter 等不遵循视图 stride，
+    // 必须清除窗口，否则会把真实重叠误判为不相交（见 test 中 issue1624 的
+    // mgather/mscatter 回归用例）。
     void UpdateDefUseVec(ValueRange values, SmallVector<const BaseMemInfo*>& vec, Operation* accessOp = nullptr);
-  // 为 MAT->LEFT/RIGHT 的 TEXTRACT 记录源 Tile 实际读取的物理窗口；
-  // 无法证明时返回 false，由调用方回退为整个源 Tile。
-  bool UpdateTExtractReadRegion(Operation *op, Value source,
-                                SmallVector<const BaseMemInfo *> &vec);
+    // 为 MAT->LEFT/RIGHT 的 TEXTRACT 记录源 Tile 实际读取的物理窗口；
+    // 无法证明时返回 false，由调用方回退为整个源 Tile。
+    bool UpdateTExtractReadRegion(Operation* op, Value source, SmallVector<const BaseMemInfo*>& vec);
 
-  // 调试辅助
-  std::string getPipelineName(PipelineType pipe) const;
-  void printMemInfoList(llvm::raw_ostream &os,
-                        const SmallVector<const BaseMemInfo *> &list,
-                        AsmState &state) const;
+    // 调试辅助
+    std::string getPipelineName(PipelineType pipe) const;
+    void printMemInfoList(llvm::raw_ostream& os, const SmallVector<const BaseMemInfo*>& list, AsmState& state) const;
 };
- 
+
 } // namespace pto
 } // namespace mlir
- 
+
 #endif // MLIR_DIALECT_PTO_TRANSFORMS_INJECTSYNC_PTOIRTRANSLATOR_H

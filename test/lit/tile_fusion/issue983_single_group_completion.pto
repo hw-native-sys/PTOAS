@@ -1,0 +1,45 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+
+// Preserve completion through the full A5 fusion pipeline, including nested
+// regions produced when an already formed group is planned again.
+// RUN: ptoas --pto-backend=vpto --pto-arch=a5 --pto-level=level3 --enable-op-fusion --enable-insert-sync --emit-vpto-llvm-ir --mlir-print-ir-after=pto-insert-sync %s -o %t.ll 2> %t.log
+// RUN: FileCheck %s --check-prefix=SYNC --input-file=%t.log
+// RUN: FileCheck %s --check-prefix=LLVM --input-file=%t.ll
+// RUN: pto-test-opt --pto-unified-sync %s -o %t.unified.pto
+// RUN: ptoas --pto-backend=vpto --pto-arch=a5 --pto-level=level3 --enable-op-fusion --emit-vpto-llvm-ir %t.unified.pto -o %t.unified.ll
+// RUN: FileCheck %s --check-prefix=LLVM --input-file=%t.unified.ll
+
+!full = !pto.tile_buf<vec, 8x512xf32>
+!col = !pto.tile_buf<vec, 1x512xf32>
+module attributes {pto.target_arch = "a5"} {
+  func.func @single_group() {
+    %one = arith.constant 1.0 : f32
+    %a0 = arith.constant 0 : i64
+    %a1 = arith.constant 16384 : i64
+    %r = pto.fusion_region {
+      %tmp = pto.alloc_tile addr = %a0 : !full
+      %out = pto.alloc_tile addr = %a1 : !full
+      pto.texpands ins(%one : f32) outs(%tmp : !full)
+      pto.tadd ins(%tmp, %tmp : !full, !full) outs(%out : !full)
+      pto.yield(%out) : (!full) -> ()
+    } : !full
+    return
+  }
+}
+
+// SYNC-LABEL: func.func @single_group(
+// SYNC: pto.fusion_region {
+// SYNC: pto.texpands
+// SYNC-NEXT: pto.tadd
+// SYNC: pto.barrier <PIPE_ALL> {pto.auto_sync_tail_barrier}
+// SYNC-NEXT: return
+// LLVM-LABEL: define void @single_group(
+// LLVM-NOT: call void @llvm.hivm.BARRIER
+// LLVM: call void @llvm.hivm.BARRIER(i64 6)
+// LLVM-NEXT: ret void

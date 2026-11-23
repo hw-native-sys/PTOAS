@@ -104,10 +104,10 @@ struct PTOInsertSyncPass : public mlir::pto::impl::PTOInsertSyncBase<PTOInsertSy
         // 1. Translator: 构建 SyncIR
         PTOIRTranslator translator(
             syncIR, memAnalyzer, buffer2MemInfoMap, opAccessMemInfos, func, SyncAnalysisMode::NORMALSYNC);
-        translator.Build();
+        translator.Build(PTOIRTranslator::FusionRegionModel::AtomicVector);
 
         // 如果 IR 太简单，直接跳过
-        if (syncIR.size() <= 1) {
+        if (translator.getUnaggregatedSyncIRSize() <= 1) {
             return;
         }
 

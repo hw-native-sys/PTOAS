@@ -11,7 +11,7 @@ module {
     %loop = scf.for %i = %c0 to %end step %c1 iter_args(%carry = %vec) -> (!pto.vreg<64xf32>) {
       scf.yield %carry : !pto.vreg<64xf32>
     }
-    pto.vsts %loop, %dst[%c0], %mask : !pto.vreg<64xf32>, !pto.ptr<f32, ub>, !pto.mask<b32>
+    pto.vsts %loop, %dst[%c0], %mask : !pto.vreg<64xf32>, !pto.ptr<f32, ub>, index, !pto.mask<b32>
     return
   }
 
@@ -35,7 +35,7 @@ module {
     } else {
       scf.yield %vec : !pto.vreg<64xf32>
     }
-    pto.vsts %result, %dst[%c0], %mask : !pto.vreg<64xf32>, !pto.ptr<f32, ub>, !pto.mask<b32>
+    pto.vsts %result, %dst[%c0], %mask : !pto.vreg<64xf32>, !pto.ptr<f32, ub>, index, !pto.mask<b32>
     return
   }
 
@@ -61,7 +61,7 @@ module {
     ^bb0(%after: !pto.vreg<64xf32>):
       scf.yield %after : !pto.vreg<64xf32>
     }
-    pto.vsts %result, %dst[%c0], %mask : !pto.vreg<64xf32>, !pto.ptr<f32, ub>, !pto.mask<b32>
+    pto.vsts %result, %dst[%c0], %mask : !pto.vreg<64xf32>, !pto.ptr<f32, ub>, index, !pto.mask<b32>
     return
   }
 
@@ -84,7 +84,7 @@ module {
       scf.yield %carry : !pto.mask<b32>
     }
     %vec = pto.vdup %value, %loop : f32, !pto.mask<b32> -> !pto.vreg<64xf32>
-    pto.vsts %vec, %dst[%c0], %loop : !pto.vreg<64xf32>, !pto.ptr<f32, ub>, !pto.mask<b32>
+    pto.vsts %vec, %dst[%c0], %loop : !pto.vreg<64xf32>, !pto.ptr<f32, ub>, index, !pto.mask<b32>
     return
   }
 

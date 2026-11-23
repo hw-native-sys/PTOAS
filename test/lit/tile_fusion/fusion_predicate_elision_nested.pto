@@ -1,0 +1,86 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+
+// Each region owns its candidates: visiting a nested body twice used to
+// delete the same plt twice, or reuse masks across region boundaries.
+// RUN: pto-test-opt --pto-fusion-predicate-elision %s | FileCheck %s
+
+!tile = !pto.tile_buf<vec, 1x64xf32>
+module {
+  func.func @nested(%count: i32, %value: f32) {
+    %zero = arith.constant 0 : index
+    %r = pto.fusion_region {
+      %s = pto.fusion_region {
+        %tile = pto.alloc_tile : !tile
+        %ptr = pto.tile_buf_addr %tile : !tile -> !pto.ptr<f32, ub>
+        %m0, %n0 = pto.plt_b32 %count : i32 -> !pto.mask<b32>, i32
+        %m1, %n1 = pto.plt_b32 %count : i32 -> !pto.mask<b32>, i32
+        %v0 = pto.vdup %value, %m0 : f32, !pto.mask<b32> -> !pto.vreg<64xf32>
+        %v1 = pto.vdup %value, %m1 : f32, !pto.mask<b32> -> !pto.vreg<64xf32>
+        pto.vsts %v0, %ptr[%zero], %m0 : !pto.vreg<64xf32>, !pto.ptr<f32, ub>, index, !pto.mask<b32>
+        pto.vsts %v1, %ptr[%zero], %m1 : !pto.vreg<64xf32>, !pto.ptr<f32, ub>, index, !pto.mask<b32>
+        pto.yield(%tile) : (!tile) -> ()
+      } : !tile
+      pto.yield(%s) : (!tile) -> ()
+    } : !tile
+    return
+  }
+  func.func @separate_scopes(%count: i32, %value: f32) {
+    %zero = arith.constant 0 : index
+    %r = pto.fusion_region {
+      %outerTile = pto.alloc_tile : !tile
+      %outerPtr = pto.tile_buf_addr %outerTile : !tile -> !pto.ptr<f32, ub>
+      %outer0, %outerN0 = pto.plt_b32 %count : i32 -> !pto.mask<b32>, i32
+      %outer1, %outerN1 = pto.plt_b32 %count : i32 -> !pto.mask<b32>, i32
+      %outerV0 = pto.vdup %value, %outer0 : f32, !pto.mask<b32> -> !pto.vreg<64xf32>
+      %outerV1 = pto.vdup %value, %outer1 : f32, !pto.mask<b32> -> !pto.vreg<64xf32>
+      pto.vsts %outerV0, %outerPtr[%zero], %outer0 : !pto.vreg<64xf32>, !pto.ptr<f32, ub>, index, !pto.mask<b32>
+      pto.vsts %outerV1, %outerPtr[%zero], %outer1 : !pto.vreg<64xf32>, !pto.ptr<f32, ub>, index, !pto.mask<b32>
+      %s = pto.fusion_region {
+        %tile = pto.alloc_tile : !tile
+        %ptr = pto.tile_buf_addr %tile : !tile -> !pto.ptr<f32, ub>
+        %m0, %n0 = pto.plt_b32 %count : i32 -> !pto.mask<b32>, i32
+        %m1, %n1 = pto.plt_b32 %count : i32 -> !pto.mask<b32>, i32
+        %v0 = pto.vdup %value, %m0 : f32, !pto.mask<b32> -> !pto.vreg<64xf32>
+        %v1 = pto.vdup %value, %m1 : f32, !pto.mask<b32> -> !pto.vreg<64xf32>
+        pto.vsts %v0, %ptr[%zero], %m0 : !pto.vreg<64xf32>, !pto.ptr<f32, ub>, index, !pto.mask<b32>
+        pto.vsts %v1, %ptr[%zero], %m1 : !pto.vreg<64xf32>, !pto.ptr<f32, ub>, index, !pto.mask<b32>
+        pto.yield(%tile) : (!tile) -> ()
+      } : !tile
+      pto.yield(%s) : (!tile) -> ()
+    } : !tile
+    return
+  }
+}
+
+// CHECK-LABEL: func.func @nested(
+// CHECK: pto.fusion_region {
+// CHECK: pto.fusion_region {
+// CHECK: %[[INNER:[^ ,]+]], %{{.*}} = pto.plt_b32
+// CHECK-NOT: pto.plt_b32
+// CHECK: pto.vdup %{{.*}}, %[[INNER]]
+// CHECK-NEXT: {{.*}}pto.vdup %{{.*}}, %[[INNER]]
+// CHECK: pto.vsts {{.*}} %[[INNER]]
+// CHECK-NEXT: pto.vsts {{.*}} %[[INNER]]
+// CHECK-NOT: pto.plt_b32
+// CHECK: return
+// CHECK-LABEL: func.func @separate_scopes(
+// CHECK: pto.fusion_region {
+// CHECK: %[[OUTER:[^ ,]+]], %{{.*}} = pto.plt_b32
+// CHECK-NOT: pto.plt_b32
+// CHECK: pto.vdup %{{.*}}, %[[OUTER]]
+// CHECK-NEXT: {{.*}}pto.vdup %{{.*}}, %[[OUTER]]
+// CHECK: pto.fusion_region {
+// CHECK: %[[INNER2:[^ ,]+]], %{{.*}} = pto.plt_b32
+// CHECK-NOT: pto.plt_b32
+// CHECK: pto.vdup %{{.*}}, %[[INNER2]]
+// CHECK-NEXT: {{.*}}pto.vdup %{{.*}}, %[[INNER2]]
+// CHECK: pto.vsts {{.*}} %[[INNER2]]
+// CHECK-NEXT: pto.vsts {{.*}} %[[INNER2]]
+// CHECK-NOT: pto.plt_b32
+// CHECK: return
