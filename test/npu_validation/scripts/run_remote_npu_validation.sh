@@ -777,6 +777,17 @@ while IFS= read -r -d '' cpp; do
     log "SKIP: ${testcase} (SKIP_CASES)"
     continue
   fi
+
+  # print_passthrough lowers pto.TPrintOp to TPRINT, but pto-isa declares
+  # TPRINT only under `_DEBUG` or `__CPU_SIM`. Board builds are release builds,
+  # so the case cannot compile on either board. Record it instead of counting a
+  # compile error as a regression.
+  if [[ "${testcase}" == "print_passthrough" ]]; then
+    skip_count=$((skip_count + 1))
+    printf "%s\tSKIP\t%s\tTPRINT is declared only under _DEBUG/__CPU_SIM in pto-isa\n" "${case_id}" "${STAGE}" >> "${RESULTS_TSV}"
+    log "SKIP: ${testcase} (TPRINT is debug-only in pto-isa)"
+    continue
+  fi
   if [[ "${STAGE}" == "run" && "${RUN_MODE}" == "npu" ]] && case_requires_multicard_comm "${cpp}"; then
     skip_count=$((skip_count + 1))
     printf "%s\tSKIP\t%s\trequires multi-card communication harness\n" "${case_id}" "${STAGE}" >> "${RESULTS_TSV}"
@@ -789,7 +800,11 @@ while IFS= read -r -d '' cpp; do
     log "SKIP: ${testcase} (pto-isa missing TPARTARG intrinsics)"
     continue
   fi
-  if [[ "${testcase}" == "gemvmx" ]]; then
+  # A5-only samples. ci.yml already gates these by SOC_VERSION; the board
+  # driver needs the same gate because the A3 nightly enumerates the whole
+  # manifest. matmul_mx_low_precision uses FP8 e8m0/e5m2 forms that the A3
+  # compiler rejects.
+  if [[ "${testcase}" == "gemvmx" || "${testcase}" == "matmul_mx_low_precision" ]]; then
     soc_lc="$(printf '%s' "${SOC_VERSION:-}" | tr '[:upper:]' '[:lower:]')"
     if [[ "$soc_lc" != *"a5"* && "$soc_lc" != *"950"* ]]; then
       skip_count=$((skip_count + 1))
