@@ -976,7 +976,7 @@ value = ptr[offset];
 - **inputs:**
   `%ptr` is a typed PTO pointer `!pto.ptr<T, space>` or a memref operand that
   will be normalized to a PTO pointer before LLVM emission. `%offset` is an
-  `index` displacement counted in elements.
+  element displacement (`index`, `i32` or `i64`) counted in elements.
 - **outputs:**
   `%value` is the loaded scalar or contiguous packed element.
 - **constraints and limitations:**
@@ -995,8 +995,8 @@ ptr[offset] = value;
 - **inputs:**
   `%value` is the scalar value to store. `%ptr` is a typed PTO pointer
   `!pto.ptr<T, space>` or a memref operand that will be normalized to a PTO
-  pointer before LLVM emission. `%offset` is an `index` displacement counted in
-  elements.
+  pointer before LLVM emission. `%offset` is an element displacement (`index`,
+  `i32` or `i64`) counted in elements.
 - **constraints and limitations:**
   The stored value type MUST match the element type of `%ptr`. This is the
   ordinary typed memory op for PTO-pointer access in either AICore or SIMT
@@ -1154,8 +1154,8 @@ All PTO micro Instruction operations follow standard MLIR syntax. The common pat
 **Store (register to memory):**
 
 ```mlir
-pto.vsts %value, %destination[%offset] {dist = "DIST"} : !pto.vreg<NxT>, !pto.ptr<T, ub>
-%updated_base = pto.vsts %value, %destination[%offset] {dist = "DIST"} : !pto.vreg<NxT>, !pto.ptr<T, ub> -> !pto.ptr<T, ub>
+pto.vsts %value, %destination[%offset], %mask {dist = "DIST"} : !pto.vreg<NxT>, !pto.ptr<T, ub>, index, !pto.mask<G>
+%updated_base = pto.vsts %value, %destination[%offset], %mask {dist = "DIST"} : !pto.vreg<NxT>, !pto.ptr<T, ub>, index, !pto.mask<G> -> !pto.ptr<T, ub>
 ```
 
 **Dual Load (one load, two results — deinterleave):**

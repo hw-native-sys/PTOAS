@@ -520,8 +520,8 @@ support. For ordinary typed access without SIMT scope or cache controls, use
 
 - **semantics:** Load one element from GM at `%ptr + %offset` using the
   selected cache controls.
-- **inputs:** `%ptr` is a `!pto.ptr<T, gm>`. `%offset` is an `index` element
-  offset, not a byte offset.  For ``!pto.ptr<vector<2xf32>, gm>``, offset 1
+- **inputs:** `%ptr` is a `!pto.ptr<T, gm>`. `%offset` is an element offset
+  (`index`, `i32` or `i64`), not a byte offset.  For ``!pto.ptr<vector<2xf32>, gm>``, offset 1
   advances by 8 bytes (2 × sizeof(f32)).
 - **attributes:** `l1cache` may be `l1cache(cache)` or `l1cache(uncache)` and
   defaults to `cache`. `l2cache(...)` uses the load L2 cache table and defaults
@@ -558,7 +558,7 @@ pto.stg %value, %gm[%offset] l1cache(uncache) l2cache(wtsred) : !pto.ptr<T, gm>,
 - **semantics:** Store one element to GM at `%ptr + %offset` using the
   selected cache controls.
 - **inputs:** `%value` is the element to write. `%ptr` is a
-  `!pto.ptr<T, gm>`. `%offset` is an `index` element offset
+  `!pto.ptr<T, gm>`. `%offset` is an element offset (`index`, `i32` or `i64`)
   (same element-level semantics as `pto.ldg`).
 - **attributes:** `l1cache` may be `l1cache(cache)` or `l1cache(uncache)` and
   defaults to `cache`. `l2cache(...)` uses the store/atomic L2 cache table and

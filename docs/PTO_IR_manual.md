@@ -609,7 +609,7 @@ result = ptr + offset   // offset is in elements, not bytes
 | Name | Type | Description |
 |------|------|-------------|
 | `ptr` | `!pto.ptr<elementType>` | Base pointer |
-| `offset` | `index` | Element offset (not byte offset) |
+| `offset` | `index`, `i32` or `i64` | Element offset (not byte offset) |
 
 **Results:** `!pto.ptr<elementType>` — the same pointer type as the input.
 
@@ -617,6 +617,16 @@ result = ptr + offset   // offset is in elements, not bytes
 
 - result type must match the input pointer type
 - The operation is pure (no side effects)
+- `offset` uses the shared `PTO_ElementOffset` constraint: the offset type is
+  part of the operand type list, immediately after the base pointer type, and is
+  required, as in `%ptr_off = pto.addptr %base, %offset : !pto.ptr<f32>, i32 ->
+  !pto.ptr<f32>`
+- `index`, `i32` and `i64` are accepted. Narrower widths (`i1`/`i8`/`i16`),
+  signed and unsigned integer types (`si32`, `ui32`) and widths above 64 bits are
+  rejected, because the offset is a signed element displacement and every
+  narrowing step makes an in-bounds access ambiguous
+- an integer offset keeps its IR type; the backend forms the address from it.
+  See the ISA chapters for the per-operation unit and sign
 
 **Hardware Mapping:**
 
@@ -626,6 +636,7 @@ result = ptr + offset   // offset is in elements, not bytes
 
 ```mlir
 %ptr_off = pto.addptr %base, %offset : !pto.ptr<f32>, index -> !pto.ptr<f32>
+%ptr_off32 = pto.addptr %base, %off32 : !pto.ptr<f32>, i32 -> !pto.ptr<f32>
 ```
 
 ##### `pto.castptr` - Explicit Pointer Cast
@@ -1599,7 +1610,7 @@ value = ptr[offset]
 | Name | Type | Description |
 |------|------|-------------|
 | `ptr` | `!pto.ptr<...>` | Source pointer |
-| `offset` | `index` | Element offset |
+| `offset` | `index`, `i32` or `i64` | Element offset |
 
 **Results:** `AnyType` — the element type of the pointed-to memory.
 
@@ -1607,6 +1618,8 @@ value = ptr[offset]
 
 - The operation has a custom verifier
 - `ptr` element type must match the result type
+- the offset type follows the base pointer type in the type list and is required;
+  it accepts `index`, `i32` or `i64` (see `pto.addptr` for the width contract)
 
 **Hardware Mapping:**
 
@@ -1636,7 +1649,7 @@ ptr[offset] = value
 |------|------|-------------|
 | `value` | `AnyType` | Value to store |
 | `ptr` | `!pto.ptr<...>` | Destination pointer |
-| `offset` | `index` | Element offset |
+| `offset` | `index`, `i32` or `i64` | Element offset |
 
 **Results:** None.
 
@@ -1644,6 +1657,8 @@ ptr[offset] = value
 
 - The operation has a custom verifier
 - `value` type must match the element type of `ptr`
+- the offset type follows the base pointer type in the type list and is required;
+  it accepts `index`, `i32` or `i64` (see `pto.addptr` for the width contract)
 
 **Hardware Mapping:**
 

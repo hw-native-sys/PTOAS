@@ -39,8 +39,8 @@ vector length in bytes; on A5, `VL = 256 bytes`:
 - **syntax:** `%result [, %updated_base] = pto.plds %source[%offset], "DIST" : !pto.ptr<T, ub>, index -> !pto.mask<G> [, !pto.ptr<T, ub>]`
 - **semantics:** Load predicate register with runtime offset. This is the
   dynamic-offset form of `pto.pldi`: the predicate payload interpretation is
-  the same, but `%offset` is supplied as an SSA `index` instead of a constant
-  `index` immediate.
+  the same, but `%offset` is supplied as an SSA value (`index`, `i32` or `i64`)
+  instead of a constant immediate.
 - **DIST:** mandatory string token, one of `NORM`, `US`, `DS`.
   - `NORM`: load a normal packed predicate payload of size `VL/8`.
   - `US`: load a packed predicate payload of size `VL/16`, then duplicate each
@@ -64,7 +64,8 @@ advanced by `%offset` bytes.
 ### `pto.pldi`
 
 - **syntax:** `%result [, %updated_base] = pto.pldi %source[%offset], "DIST" : !pto.ptr<T, ub>, index -> !pto.mask<G> [, !pto.ptr<T, ub>]`
-- **offset:** must be a constant `index` immediate in PTO surface form.
+- **offset:** must be a constant element offset (an `index`, `i32` or `i64`
+  constant) in PTO surface form.
 - **offset unit:** the `DIST`-selected alignment unit from the table above.
 - **semantics:** Load predicate register with immediate offset.
 - **DIST:** mandatory string token, one of `NORM`, `US`, `DS`.
@@ -97,8 +98,8 @@ bytes` as `%next`:
 - **syntax:** `[%updated_base =] pto.psts %value, %dest[%offset], "DIST" : !pto.mask<G>, !pto.ptr<T, ub>, index [-> !pto.ptr<T, ub>]`
 - **semantics:** Store predicate register with runtime offset. This is the
   dynamic-offset form of `pto.psti`: the predicate payload interpretation is
-  the same, but `%offset` is supplied as an SSA `index` instead of a constant
-  `index` immediate.
+  the same, but `%offset` is supplied as an SSA value (`index`, `i32` or `i64`)
+  instead of a constant immediate.
 - **DIST:** mandatory string token, one of `NORM`, `PK`.
   - `NORM`: store the packed predicate payload into a normal destination space
     of size `VL/8`.
@@ -120,7 +121,8 @@ pto.psts %mask, %ub[%c0], "NORM" : !pto.mask<G>, !pto.ptr<T, ub>, index
 ### `pto.psti`
 
 - **syntax:** `[%updated_base =] pto.psti %value, %dest[%offset], "DIST" : !pto.mask<G>, !pto.ptr<T, ub>, index [-> !pto.ptr<T, ub>]`
-- **offset:** must be a constant `index` immediate in PTO surface form.
+- **offset:** must be a constant element offset (an `index`, `i32` or `i64`
+  constant) in PTO surface form.
 - **offset unit:** the `DIST`-selected alignment unit from the table above.
 - **semantics:** Store predicate register with immediate offset.
 - **DIST:** mandatory string token, one of `NORM`, `PK`.
