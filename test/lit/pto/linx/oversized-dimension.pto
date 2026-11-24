@@ -1,0 +1,8 @@
+// RUN: not ptoas --pto-arch=linx %s -o - 2>&1 | FileCheck %s
+module attributes {pto.target_arch = "linx"} {
+  func.func @oversized_dimension() {
+    %tile = pto.alloc_tile : !pto.tile_buf<local, 9223372036854775807x2xf32>
+    return
+  }
+}
+// CHECK: Linx requires positive rank-2 f32 shapes with capacity at most 256 KiB

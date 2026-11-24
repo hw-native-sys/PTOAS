@@ -1,0 +1,83 @@
+// RUN: ptoas --pto-arch=linx %s -o - | FileCheck %s
+// RUN: ptoas --pto-arch=linx --emit-pto-ir %s -o %t.pto
+// RUN: ptoas --pto-arch=linx %t.pto -o - | FileCheck %s
+!X_softmax = !pto.tile_buf<local, 16x128xf32, blayout=row_major>
+!R_softmax = !pto.tile_buf<local, 16x1xf32, blayout=row_major>
+!X_softmax_tail = !pto.tile_buf<local, 7x13xf32, blayout=row_major>
+!R_softmax_tail = !pto.tile_buf<local, 7x1xf32, blayout=row_major>
+!X_softmax_cube = !pto.tile_buf<local, 16x16xf32, blayout=m16>
+!R_softmax_cube = !pto.tile_buf<local, 16x1xf32, blayout=m16>
+module attributes {pto.target_arch = "linx"} {
+  func.func @softmax(%gx: !pto.partition_tensor_view<16x128xf32>, %gy: !pto.partition_tensor_view<16x128xf32>) {
+    %x = pto.alloc_tile : !X_softmax
+    %max = pto.alloc_tile : !R_softmax
+    %y = pto.alloc_tile : !X_softmax
+    %e = pto.alloc_tile : !X_softmax
+    %sum = pto.alloc_tile : !R_softmax
+    %out = pto.alloc_tile : !X_softmax
+    pto.tload ins(%gx : !pto.partition_tensor_view<16x128xf32>) outs(%x : !X_softmax)
+    pto.trowmax ins(%x : !X_softmax) outs(%max : !R_softmax)
+    pto.trowexpandsub ins(%x, %max : !X_softmax, !R_softmax) outs(%y : !X_softmax)
+    pto.texp ins(%y : !X_softmax) outs(%e : !X_softmax)
+    pto.trowsum ins(%e : !X_softmax) outs(%sum : !R_softmax)
+    pto.trowexpanddiv ins(%e, %sum : !X_softmax, !R_softmax) outs(%out : !X_softmax)
+    pto.tstore ins(%out : !X_softmax) outs(%gy : !pto.partition_tensor_view<16x128xf32>)
+    return
+  }
+  func.func @softmax_tail(%gx: !pto.partition_tensor_view<7x13xf32>, %gy: !pto.partition_tensor_view<7x13xf32>) {
+    %x = pto.alloc_tile : !X_softmax_tail
+    %max = pto.alloc_tile : !R_softmax_tail
+    %y = pto.alloc_tile : !X_softmax_tail
+    %e = pto.alloc_tile : !X_softmax_tail
+    %sum = pto.alloc_tile : !R_softmax_tail
+    %out = pto.alloc_tile : !X_softmax_tail
+    pto.tload ins(%gx : !pto.partition_tensor_view<7x13xf32>) outs(%x : !X_softmax_tail)
+    pto.trowmax ins(%x : !X_softmax_tail) outs(%max : !R_softmax_tail)
+    pto.trowexpandsub ins(%x, %max : !X_softmax_tail, !R_softmax_tail) outs(%y : !X_softmax_tail)
+    pto.texp ins(%y : !X_softmax_tail) outs(%e : !X_softmax_tail)
+    pto.trowsum ins(%e : !X_softmax_tail) outs(%sum : !R_softmax_tail)
+    pto.trowexpanddiv ins(%e, %sum : !X_softmax_tail, !R_softmax_tail) outs(%out : !X_softmax_tail)
+    pto.tstore ins(%out : !X_softmax_tail) outs(%gy : !pto.partition_tensor_view<7x13xf32>)
+    return
+  }
+  func.func @softmax_cube(%gx: !pto.partition_tensor_view<16x16xf32>, %gy: !pto.partition_tensor_view<16x16xf32>) {
+    %x = pto.alloc_tile : !X_softmax_cube
+    %max = pto.alloc_tile : !R_softmax_cube
+    %y = pto.alloc_tile : !X_softmax_cube
+    %e = pto.alloc_tile : !X_softmax_cube
+    %sum = pto.alloc_tile : !R_softmax_cube
+    %out = pto.alloc_tile : !X_softmax_cube
+    pto.tload ins(%gx : !pto.partition_tensor_view<16x16xf32>) outs(%x : !X_softmax_cube)
+    pto.trowmax ins(%x : !X_softmax_cube) outs(%max : !R_softmax_cube)
+    pto.trowexpandsub ins(%x, %max : !X_softmax_cube, !R_softmax_cube) outs(%y : !X_softmax_cube)
+    pto.texp ins(%y : !X_softmax_cube) outs(%e : !X_softmax_cube)
+    pto.trowsum ins(%e : !X_softmax_cube) outs(%sum : !R_softmax_cube)
+    pto.trowexpanddiv ins(%e, %sum : !X_softmax_cube, !R_softmax_cube) outs(%out : !X_softmax_cube)
+    pto.tstore ins(%out : !X_softmax_cube) outs(%gy : !pto.partition_tensor_view<16x16xf32>)
+    return
+  }
+}
+// CHECK-LABEL: extern "C" void softmax(
+// CHECK: ::TLOAD(
+// CHECK: ::TROWMAX(
+// CHECK: ::TROWEXPANDSUB(
+// CHECK: ::TEXP(
+// CHECK: ::TROWSUM(
+// CHECK: ::TROWEXPANDDIV(
+// CHECK: ::TSTORE(
+// CHECK-LABEL: extern "C" void softmax_tail(
+// CHECK: ::TLOAD(
+// CHECK: ::TROWMAX(
+// CHECK: ::TROWEXPANDSUB(
+// CHECK: ::TEXP(
+// CHECK: ::TROWSUM(
+// CHECK: ::TROWEXPANDDIV(
+// CHECK: ::TSTORE(
+// CHECK-LABEL: extern "C" void softmax_cube(
+// CHECK: ::TLOAD(
+// CHECK: ::TROWMAX(
+// CHECK: ::TROWEXPANDSUB(
+// CHECK: ::TEXP(
+// CHECK: ::TROWSUM(
+// CHECK: ::TROWEXPANDDIV(
+// CHECK: ::TSTORE(

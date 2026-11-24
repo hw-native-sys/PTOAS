@@ -1,0 +1,57 @@
+// RUN: split-file %s %t
+// RUN: not ptoas --pto-arch=linx %t/trowmax.pto -o - 2>&1 | FileCheck %s
+// RUN: not ptoas --pto-arch=linx %t/trowsum.pto -o - 2>&1 | FileCheck %s
+// RUN: not ptoas --pto-arch=linx %t/texp.pto -o - 2>&1 | FileCheck %s
+// RUN: not ptoas --pto-arch=linx %t/trowexpandsub.pto -o - 2>&1 | FileCheck %s
+// RUN: not ptoas --pto-arch=linx %t/trowexpanddiv.pto -o - 2>&1 | FileCheck %s
+// CHECK: reads an uninitialized Linx tile
+//--- trowmax.pto
+module attributes {pto.target_arch = "linx"} {
+  func.func @bad() {
+    %a = pto.alloc_tile : !pto.tile_buf<local, 16x128xf32>
+    %r = pto.alloc_tile : !pto.tile_buf<local, 16x1xf32>
+    %d = pto.alloc_tile : !pto.tile_buf<local, 16x128xf32>
+    pto.trowmax ins(%a : !pto.tile_buf<local, 16x128xf32>) outs(%r : !pto.tile_buf<local, 16x1xf32>)
+    return
+  }
+}
+//--- trowsum.pto
+module attributes {pto.target_arch = "linx"} {
+  func.func @bad() {
+    %a = pto.alloc_tile : !pto.tile_buf<local, 16x128xf32>
+    %r = pto.alloc_tile : !pto.tile_buf<local, 16x1xf32>
+    %d = pto.alloc_tile : !pto.tile_buf<local, 16x128xf32>
+    pto.trowsum ins(%a : !pto.tile_buf<local, 16x128xf32>) outs(%r : !pto.tile_buf<local, 16x1xf32>)
+    return
+  }
+}
+//--- texp.pto
+module attributes {pto.target_arch = "linx"} {
+  func.func @bad() {
+    %a = pto.alloc_tile : !pto.tile_buf<local, 16x128xf32>
+    %r = pto.alloc_tile : !pto.tile_buf<local, 16x1xf32>
+    %d = pto.alloc_tile : !pto.tile_buf<local, 16x128xf32>
+    pto.texp ins(%a : !pto.tile_buf<local, 16x128xf32>) outs(%d : !pto.tile_buf<local, 16x128xf32>)
+    return
+  }
+}
+//--- trowexpandsub.pto
+module attributes {pto.target_arch = "linx"} {
+  func.func @bad() {
+    %a = pto.alloc_tile : !pto.tile_buf<local, 16x128xf32>
+    %r = pto.alloc_tile : !pto.tile_buf<local, 16x1xf32>
+    %d = pto.alloc_tile : !pto.tile_buf<local, 16x128xf32>
+    pto.trowexpandsub ins(%a, %r : !pto.tile_buf<local, 16x128xf32>, !pto.tile_buf<local, 16x1xf32>) outs(%d : !pto.tile_buf<local, 16x128xf32>)
+    return
+  }
+}
+//--- trowexpanddiv.pto
+module attributes {pto.target_arch = "linx"} {
+  func.func @bad() {
+    %a = pto.alloc_tile : !pto.tile_buf<local, 16x128xf32>
+    %r = pto.alloc_tile : !pto.tile_buf<local, 16x1xf32>
+    %d = pto.alloc_tile : !pto.tile_buf<local, 16x128xf32>
+    pto.trowexpanddiv ins(%a, %r : !pto.tile_buf<local, 16x128xf32>, !pto.tile_buf<local, 16x1xf32>) outs(%d : !pto.tile_buf<local, 16x128xf32>)
+    return
+  }
+}

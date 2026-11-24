@@ -54,3 +54,5 @@ target_include_directories(PTOAnalysis INTERFACE
   $<BUILD_INTERFACE:${PROJECT_BINARY_DIR}/include>
   $<INSTALL_INTERFACE:include>
 )
+
+add_subdirectory(Linx)

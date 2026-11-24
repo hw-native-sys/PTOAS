@@ -1,0 +1,11 @@
+// RUN: not ptoas --pto-arch=linx %s -o - 2>&1 | FileCheck %s
+!T = !pto.tile_buf<local, 16x128xf32>
+module attributes {pto.target_arch = "linx"} {
+  func.func @bad() {
+    %a = pto.alloc_tile : !T
+    %b = pto.alloc_tile : !T
+    "pto.tload"(%a, %b) : (!T, !T) -> ()
+    return
+  }
+}
+// CHECK: 'pto.tload' op operand #0 must be Linx static two-dimensional external memory view

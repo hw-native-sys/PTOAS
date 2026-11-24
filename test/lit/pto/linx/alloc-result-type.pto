@@ -1,0 +1,8 @@
+// RUN: not ptoas --pto-arch=linx %s -o - 2>&1 | FileCheck %s
+module attributes {pto.target_arch = "linx"} {
+  func.func @bad() {
+    %a = "pto.alloc_tile"() : () -> !pto.partition_tensor_view<16x128xf32>
+    return
+  }
+}
+// CHECK: 'pto.alloc_tile' op result #0 must be Linx static tile buffer handle

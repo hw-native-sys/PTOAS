@@ -1,0 +1,9 @@
+// RUN: not ptoas --pto-arch=linx %s -o - 2>&1 | FileCheck %s
+module attributes {pto.target_arch = "linx"} {
+  func.func @bad(%in: !pto.partition_tensor_view<16x128xf32>) {
+    %t = pto.alloc_tile : !pto.tile_buf<local, 8x128xf32>
+    pto.tload ins(%in : !pto.partition_tensor_view<16x128xf32>) outs(%t : !pto.tile_buf<local, 8x128xf32>)
+    return
+  }
+}
+// CHECK: requires matching Linx tile and GM view shapes

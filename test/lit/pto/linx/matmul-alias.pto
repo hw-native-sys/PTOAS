@@ -1,0 +1,11 @@
+// RUN: not ptoas --pto-arch=linx %s -o - 2>&1 | FileCheck %s
+module attributes {pto.target_arch = "linx"} {
+  func.func @bad() {
+    %a = pto.alloc_tile : !pto.tile_buf<local, 16x8xf32, blayout=m16>
+    %b = pto.alloc_tile : !pto.tile_buf<local, 8x8xf32, blayout=n8>
+    %d = pto.alloc_tile : !pto.tile_buf<local, 16x8xf32, blayout=m16>
+    pto.tmatmul ins(%a, %b : !pto.tile_buf<local, 16x8xf32, blayout=m16>, !pto.tile_buf<local, 8x8xf32, blayout=n8>) outs(%a : !pto.tile_buf<local, 16x8xf32, blayout=m16>)
+    return
+  }
+}
+// CHECK: destination must not alias either matrix input

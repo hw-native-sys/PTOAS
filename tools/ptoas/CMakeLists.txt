@@ -92,6 +92,7 @@ function(ptoas_configure_runtime_compile_target target_name)
 endfunction()
 
 set(PTOAS_RUNTIME_LINK_LIBS
+  LinxPTOToEmitC
   PTOIR
   PTOTransforms
   PTOASVFSIMTSizePatcher

@@ -1,0 +1,96 @@
+// RUN: ptoas --pto-arch=linx %s -o - | FileCheck %s
+// RUN: ptoas --pto-arch=linx --emit-pto-ir %s -o %t.pto
+// RUN: ptoas --pto-arch=linx %t.pto -o - | FileCheck %s
+!A_matmul_m16 = !pto.tile_buf<local, 16x8xf32, blayout=m16>
+!B_matmul_m16 = !pto.tile_buf<local, 8x8xf32, blayout=n8>
+!D_matmul_m16 = !pto.tile_buf<local, 16x8xf32, blayout=m16>
+!A_matmul_m32 = !pto.tile_buf<local, 32x12xf32, blayout=m32>
+!B_matmul_m32 = !pto.tile_buf<local, 12x16xf32, blayout=n8>
+!D_matmul_m32 = !pto.tile_buf<local, 32x16xf32, blayout=m32>
+!A_matmul_tail = !pto.tile_buf<local, 7x5xf32, blayout=m16>
+!B_matmul_tail = !pto.tile_buf<local, 5x11xf32, blayout=n8>
+!D_matmul_tail = !pto.tile_buf<local, 7x11xf32, blayout=m16>
+!A_role = !pto.tile_buf<local, 16x8xf32, blayout=m16>
+!B_role = !pto.tile_buf<local, 8x8xf32, blayout=n8>
+module attributes {pto.target_arch = "linx"} {
+  func.func @matmul_m16(%ga: !pto.partition_tensor_view<16x8xf32>,
+                           %gb: !pto.partition_tensor_view<8x8xf32>,
+                           %gd: !pto.partition_tensor_view<16x8xf32>) {
+    %a = pto.alloc_tile : !A_matmul_m16
+    %b = pto.alloc_tile : !B_matmul_m16
+    %d = pto.alloc_tile : !D_matmul_m16
+    pto.tload ins(%ga : !pto.partition_tensor_view<16x8xf32>) outs(%a : !A_matmul_m16)
+    pto.tload ins(%gb : !pto.partition_tensor_view<8x8xf32>) outs(%b : !B_matmul_m16)
+    pto.tmatmul ins(%a, %b : !A_matmul_m16, !B_matmul_m16) outs(%d : !D_matmul_m16)
+    pto.tstore ins(%d : !D_matmul_m16) outs(%gd : !pto.partition_tensor_view<16x8xf32>)
+    return
+  }
+  func.func @matmul_m32(%ga: !pto.partition_tensor_view<32x12xf32>,
+                           %gb: !pto.partition_tensor_view<12x16xf32>,
+                           %gd: !pto.partition_tensor_view<32x16xf32>) {
+    %a = pto.alloc_tile : !A_matmul_m32
+    %b = pto.alloc_tile : !B_matmul_m32
+    %d = pto.alloc_tile : !D_matmul_m32
+    pto.tload ins(%ga : !pto.partition_tensor_view<32x12xf32>) outs(%a : !A_matmul_m32)
+    pto.tload ins(%gb : !pto.partition_tensor_view<12x16xf32>) outs(%b : !B_matmul_m32)
+    pto.tmatmul ins(%a, %b : !A_matmul_m32, !B_matmul_m32) outs(%d : !D_matmul_m32)
+    pto.tstore ins(%d : !D_matmul_m32) outs(%gd : !pto.partition_tensor_view<32x16xf32>)
+    return
+  }
+  func.func @matmul_tail(%ga: !pto.partition_tensor_view<7x5xf32>,
+                           %gb: !pto.partition_tensor_view<5x11xf32>,
+                           %gd: !pto.partition_tensor_view<7x11xf32>) {
+    %a = pto.alloc_tile : !A_matmul_tail
+    %b = pto.alloc_tile : !B_matmul_tail
+    %d = pto.alloc_tile : !D_matmul_tail
+    pto.tload ins(%ga : !pto.partition_tensor_view<7x5xf32>) outs(%a : !A_matmul_tail)
+    pto.tload ins(%gb : !pto.partition_tensor_view<5x11xf32>) outs(%b : !B_matmul_tail)
+    pto.tmatmul ins(%a, %b : !A_matmul_tail, !B_matmul_tail) outs(%d : !D_matmul_tail)
+    pto.tstore ins(%d : !D_matmul_tail) outs(%gd : !pto.partition_tensor_view<7x11xf32>)
+    return
+  }
+  func.func @role_propagation(%ga: !pto.partition_tensor_view<16x8xf32>,
+                             %gb: !pto.partition_tensor_view<8x8xf32>,
+                             %gd: !pto.partition_tensor_view<16x8xf32>) {
+    %a = pto.alloc_tile : !A_role
+    %b = pto.alloc_tile : !B_role
+    %sum = pto.alloc_tile : !A_role
+    %d = pto.alloc_tile : !A_role
+    pto.tload ins(%ga : !pto.partition_tensor_view<16x8xf32>) outs(%a : !A_role)
+    pto.tload ins(%gb : !pto.partition_tensor_view<8x8xf32>) outs(%b : !B_role)
+    pto.tadd ins(%a, %a : !A_role, !A_role) outs(%sum : !A_role)
+    pto.tmatmul ins(%sum, %b : !A_role, !B_role) outs(%d : !A_role)
+    pto.tstore ins(%d : !A_role) outs(%gd : !pto.partition_tensor_view<16x8xf32>)
+    return
+  }
+}
+// CHECK-LABEL: extern "C" void matmul_m16(
+// CHECK: pto::Tile<pto::TileType::Left, float, 16, 8, pto::BLayout::CubeM16
+// CHECK: pto::Tile<pto::TileType::Right, float, 8, 8, pto::BLayout::CubeN8
+// CHECK: pto::Tile<pto::TileType::Vec, float, 16, 8, pto::BLayout::CubeM16
+// CHECK: ::TLOAD(
+// CHECK: ::TLOAD(
+// CHECK: ::TMATMUL(
+// CHECK: ::TSTORE(
+// CHECK-LABEL: extern "C" void matmul_m32(
+// CHECK: pto::Tile<pto::TileType::Left, float, 32, 12, pto::BLayout::CubeM32
+// CHECK: pto::Tile<pto::TileType::Right, float, 12, 16, pto::BLayout::CubeN8
+// CHECK: pto::Tile<pto::TileType::Vec, float, 32, 16, pto::BLayout::CubeM32
+// CHECK: ::TLOAD(
+// CHECK: ::TLOAD(
+// CHECK: ::TMATMUL(
+// CHECK: ::TSTORE(
+// CHECK-LABEL: extern "C" void matmul_tail(
+// CHECK: pto::Tile<pto::TileType::Left, float, 7, 5, pto::BLayout::CubeM16
+// CHECK: pto::Tile<pto::TileType::Right, float, 5, 11, pto::BLayout::CubeN8
+// CHECK: pto::Tile<pto::TileType::Vec, float, 7, 11, pto::BLayout::CubeM16
+// CHECK: ::TLOAD(
+// CHECK: ::TLOAD(
+// CHECK: ::TMATMUL(
+// CHECK: ::TSTORE(
+// CHECK-LABEL: extern "C" void role_propagation(
+// CHECK: pto::Tile<pto::TileType::Left, float, 16, 8, pto::BLayout::CubeM16
+// CHECK: pto::Tile<pto::TileType::Right, float, 8, 8, pto::BLayout::CubeN8
+// CHECK: pto::Tile<pto::TileType::Left, float, 16, 8, pto::BLayout::CubeM16
+// CHECK: ::TADD(
+// CHECK: ::TMATMUL(

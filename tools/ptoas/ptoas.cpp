@@ -400,8 +400,8 @@ llvm::cl::opt<bool> mlir::pto::emitMlirIR(
 
 llvm::cl::opt<std::string> mlir::pto::ptoTargetArch(
     "pto-arch",
-    llvm::cl::desc("Target Ascend architecture for codegen: a2, a3, or a5 (default: a3)"),
-    llvm::cl::value_desc("a2|a3|a5"),
+    llvm::cl::desc("Target architecture: a2, a3, a5, or linx (default: a3)"),
+    llvm::cl::value_desc("a2|a3|a5|linx"),
     llvm::cl::init("a3"));
 
 llvm::cl::opt<std::string> ptoBuildLevel(

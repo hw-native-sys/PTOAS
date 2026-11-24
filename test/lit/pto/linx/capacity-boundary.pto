@@ -1,0 +1,12 @@
+// RUN: ptoas --pto-arch=linx --emit-pto-ir %s -o - | FileCheck %s
+module attributes {pto.target_arch = "linx"} {
+  func.func @capacity_boundary() {
+    %row = pto.alloc_tile : !pto.tile_buf<local, 1x65536xf32>
+    %column = pto.alloc_tile : !pto.tile_buf<local, 65536x1xf32>
+    %square = pto.alloc_tile : !pto.tile_buf<local, 256x256xf32>
+    return
+  }
+}
+// CHECK: 1x65536xf32
+// CHECK: 65536x1xf32
+// CHECK: 256x256xf32

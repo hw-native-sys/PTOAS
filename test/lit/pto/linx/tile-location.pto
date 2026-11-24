@@ -1,0 +1,24 @@
+// RUN: ptoas --pto-arch=linx --emit-pto-ir %s -o %t.pto
+// RUN: FileCheck %s --check-prefix=IR < %t.pto
+// RUN: ptoas --pto-arch=linx --emit-pto-ir %t.pto -o - | FileCheck %s --check-prefix=IR
+// RUN: not ptoas --pto-arch=linx %s -o - 2>&1 | FileCheck %s --check-prefix=CPP
+!L = !pto.tile_buf<local, 16x128xf32>
+!S = !pto.tile_buf<shared, 16x128xf32>
+!G = !pto.partition_tensor_view<16x128xf32>
+module attributes {pto.target_arch = "linx"} {
+  func.func @locations(%a: !G, %b: !G, %c: !G) {
+    %local = pto.alloc_tile : !L
+    %a_tile = pto.alloc_tile : !S
+    %b_tile = pto.alloc_tile : !S
+    %c_tile = pto.alloc_tile : !S
+    pto.tload ins(%a : !G) outs(%local : !L)
+    pto.tload ins(%a : !G) outs(%a_tile : !S)
+    pto.tload ins(%b : !G) outs(%b_tile : !S)
+    pto.tadd ins(%a_tile, %b_tile : !S, !S) outs(%c_tile : !S)
+    pto.tstore ins(%c_tile : !S) outs(%c : !G)
+    return
+  }
+}
+// IR: pto.alloc_tile : <local, 16x128xf32>
+// IR: pto.alloc_tile : <shared, 16x128xf32>
+// CPP: shared tile C++ lowering is not implemented

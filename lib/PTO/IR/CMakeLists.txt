@@ -318,3 +318,5 @@ target_include_directories(PTOIR INTERFACE
 target_include_directories(PTOIR PRIVATE
   ${CMAKE_CURRENT_SOURCE_DIR}
 )
+
+add_subdirectory(Linx)

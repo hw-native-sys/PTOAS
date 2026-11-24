@@ -1,0 +1,36 @@
+// RUN: split-file %s %t
+// RUN: not ptoas --pto-arch=linx %t/reduce.pto -o - 2>&1 | FileCheck %s --check-prefix=ROW
+// RUN: not ptoas --pto-arch=linx %t/expand.pto -o - 2>&1 | FileCheck %s --check-prefix=FULL
+// RUN: not ptoas --pto-arch=linx %t/exp.pto -o - 2>&1 | FileCheck %s --check-prefix=EXP
+// ROW: requires matching layouts and rows, with a one-column row tile
+// FULL: requires identical full input and output tile types
+// EXP: requires identical input and output tile types
+//--- reduce.pto
+module attributes {pto.target_arch = "linx"} {
+  func.func @bad() {
+    %a = pto.alloc_tile : !pto.tile_buf<local, 16x128xf32>
+    %r = pto.alloc_tile : !pto.tile_buf<local, 16x2xf32>
+    pto.trowmax ins(%a : !pto.tile_buf<local, 16x128xf32>) outs(%r : !pto.tile_buf<local, 16x2xf32>)
+    return
+  }
+}
+//--- expand.pto
+module attributes {pto.target_arch = "linx"} {
+  func.func @bad() {
+    %a = pto.alloc_tile : !pto.tile_buf<local, 16x128xf32>
+    %r = pto.alloc_tile : !pto.tile_buf<local, 16x1xf32>
+    %d = pto.alloc_tile : !pto.tile_buf<local, 16x64xf32>
+    pto.trowexpanddiv ins(%a, %r : !pto.tile_buf<local, 16x128xf32>, !pto.tile_buf<local, 16x1xf32>)
+                     outs(%d : !pto.tile_buf<local, 16x64xf32>)
+    return
+  }
+}
+//--- exp.pto
+module attributes {pto.target_arch = "linx"} {
+  func.func @bad() {
+    %a = pto.alloc_tile : !pto.tile_buf<local, 16x128xf32>
+    %d = pto.alloc_tile : !pto.tile_buf<local, 16x64xf32>
+    pto.texp ins(%a : !pto.tile_buf<local, 16x128xf32>) outs(%d : !pto.tile_buf<local, 16x64xf32>)
+    return
+  }
+}
