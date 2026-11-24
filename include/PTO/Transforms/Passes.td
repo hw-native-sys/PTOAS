@@ -1252,6 +1252,11 @@ def VMIPreAssignmentCombine
     logical group size into an ordinary contiguous `load`. It also rewrites
     the semantic pattern `group_broadcast(group_slot_load(...))` into the
     equivalent `group_broadcast_load` operation.
+
+    With VMI fastmath enabled, a single-use FP32 `vmul` followed by `vadd`
+    becomes `vmula`. Both operations must have identical masks and zero
+    inactive-lane behavior. Contraction uses one rounding instead of two;
+    `--vmi-fastmath=false` disables it.
   }];
   let constructor = "mlir::pto::createVMIPreAssignmentCombinePass()";
   let dependentDialects = ["mlir::func::FuncDialect",

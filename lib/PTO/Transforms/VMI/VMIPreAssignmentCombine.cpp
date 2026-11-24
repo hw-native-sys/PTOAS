@@ -17,6 +17,7 @@
 #include "VMIPackedOutputCombine.h"
 #include "PTO/Analysis/PTOScalarOps.h"
 #include "PTO/Transforms/Passes.h"
+#include "PTO/Transforms/VMIFastmathState.h"
 
 #include "mlir/Analysis/AliasAnalysis.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
@@ -41,6 +42,47 @@ using namespace mlir;
 using namespace mlir::pto;
 
 namespace {
+
+static void fuseMultiplyAdds(ModuleOp module)
+{
+    if (!getVMIFastmathState(module)) {
+        return;
+    }
+
+    SmallVector<VMIVaddOp> adds;
+    module.walk([&](VMIVaddOp add) { adds.push_back(add); });
+    for (VMIVaddOp add : adds) {
+        auto resultType = cast<VMIVRegType>(add.getResult().getType());
+        if (!resultType.getElementType().isF32()) {
+            continue;
+        }
+
+        for (unsigned productIndex = 0; productIndex < 2; ++productIndex) {
+            auto multiply = add->getOperand(productIndex).getDefiningOp<VMIVmulOp>();
+            if (!multiply || !multiply.getResult().hasOneUse() ||
+                multiply.getResult().getType() != resultType ||
+                multiply.getLhs().getType() != resultType || multiply.getRhs().getType() != resultType ||
+                add->getOperand(1 - productIndex).getType() != resultType ||
+                multiply.getMask() != add.getMask()) {
+                continue;
+            }
+            // Both operations must zero inactive lanes. A matching predicate
+            // keeps every lane read by the fused instruction defined.
+            if (multiply.getPmode().value_or("zero") != "zero" || add.getPmode().value_or("zero") != "zero") {
+                continue;
+            }
+
+            OpBuilder builder(add);
+            auto fused = builder.create<VMIVmulaOp>(
+                add.getLoc(), resultType, add->getOperand(1 - productIndex), multiply.getLhs(), multiply.getRhs(),
+                add.getMask(), add.getPmodeAttr());
+            add.getResult().replaceAllUsesWith(fused.getResult());
+            add.erase();
+            multiply.erase();
+            break;
+        }
+    }
+}
 
 static LogicalResult canonicalizeContiguousGroupLoads(ModuleOp module)
 {
@@ -697,6 +739,7 @@ static void combineInterleavedMemoryOps(ModuleOp module)
 struct VMIPreAssignmentCombinePass : pto::impl::VMIPreAssignmentCombineBase<VMIPreAssignmentCombinePass> {
     void runOnOperation() override
     {
+        fuseMultiplyAdds(getOperation());
         fuseDeinterleaveExtf(getOperation());
         fuseDeinterleaveExtfFromIntlv(getOperation());
         combineInterleavedMemoryOps(getOperation());

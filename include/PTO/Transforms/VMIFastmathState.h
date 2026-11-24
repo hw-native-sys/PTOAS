@@ -10,8 +10,8 @@
 //===----------------------------------------------------------------------===//
 //
 // The VMI conversion state is pipeline configuration, not an IR property: it
-// says whether the NaN-relaxed fast paths (which may change NaN results) may be
-// emitted for this compilation.  It is recorded once on the module as an
+// enables NaN-relaxed conversion fast paths and FP32 multiply-add contraction
+// (which changes rounding) for this compilation. It is recorded once as an
 // attribute and read back by every pass that has to qualify a layout relation by
 // the lowering state, so two passes can never disagree about which lowering is
 // legal.

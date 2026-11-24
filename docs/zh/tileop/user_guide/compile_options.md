@@ -48,13 +48,15 @@
 | `-mllvm` | 后端参数（可重复） | 无 | 按 `-mllvm <arg>` 配对把下一个参数透传给设备端编译（bisheng 自身也用这个配对） |
 | `-Xbisheng` | 后端参数（可重复） | 无 | 按 clang `-Xclang` 约定把下一个 token 透传给设备端编译 |
 | `--bisheng-arg` | 后端参数（可重复） | 无 | 上面两个的显式长别名，每个 occurrence 透传一个 token |
-| `--vmi-fastmath` | 无 | 开启 | 记录整条 VMI 流水线的转换状态，同时选择布局关系与可能改变 NaN 结果的转换快速路径 |
+| `--vmi-fastmath` | 无 | 开启 | 记录整条 VMI 流水线的转换状态，选择布局关系、可能改变 NaN 结果的转换快速路径及 FP32 乘加融合 |
 | `--vmi-layout-max-frontier-entries` | 正整数 | `288` | 每个 VMI 布局子图的搜索状态数上限 |
 | `--vmi-layout-max-transitions` | 正整数 | `16384` | 每个 VMI 布局子图的搜索转移次数上限 |
 
 上表中的两个自动同步选项互斥：`--enable-insert-sync` 和 `--enable-inject-barrier-all-sync` 一次只能启用一个，同时指定会直接报错。
 
 `--vmi-fastmath` 默认开启。它是整条 VMI 流水线的转换状态：`vmi-layout-assignment` 与 `vmi-to-vpto` 读取同一个值，因此该开关同时决定布局关系。单源分片（K=1）的 `f32` 到 `bf16` 窄化在 `Z` 舍入且不饱和时，只有开启才允许使用稠密 `c -> c` 关系；否则使用 `lane_stride = 2` 关系，并在稠密消费者前插入一次打包。开启时这类转换会使用位级截断；例如 `f32` 位模式 `0x7F800001` 可能变为表示正无穷的 `bf16` 位模式 `0x7F80`。如果程序要求保留这类 NaN 结果，请显式传入 `--vmi-fastmath=false`。
+
+开启时，布局分配前的合并阶段还会将 FP32 `vmul` 与 `vadd` 融合为 `vmula`。乘积必须只有一个使用者，两条指令的 mask 必须相同，且未激活 lane 均采用置零语义。融合后乘加只舍入一次。需要保留乘法与加法各自的舍入结果时，传入 `--vmi-fastmath=false`。
 
 遇到 VMI 布局搜索预算耗尽时，可仅对当前编译增大预算，例如同时传入
 `--vmi-layout-max-frontier-entries=1024 --vmi-layout-max-transitions=32768`。

@@ -268,7 +268,8 @@ llvm::cl::opt<bool> enableVmiFastmath(
                    "enables the conversion fast paths that may change NaN "
                    "results, including f32-to-bf16 narrowing, and lets layout "
                    "assignment offer the dense same-layout relation for those "
-                   "casts. Enabled by default; pass --vmi-fastmath=false to "
+                   "casts. Also contracts FP32 vmul + vadd into fused vmula, "
+                   "using a single rounding. Enabled by default; pass --vmi-fastmath=false to "
                    "disable"),
     llvm::cl::init(true));
 
