@@ -345,7 +345,10 @@ addImplicitReadEdge(const VPTOSchedulingEffect &effect, VPTOSUnit &unit,
                     llvm::StringMap<SmallVector<VPTOSUnit *>> &readsSinceWrite,
                     AddEdge &&addEdge) {
   if (VPTOSUnit *writer = lastWrite.lookup(effect.resource)) {
-    if (failed(addEdge(*writer, unit, VPTOSchedEdgeKind::Data, 1,
+    // A single operation may read and write the same implicit resource (for
+    // example VSTUR advances AR). Its own write is not a real predecessor.
+    if (writer != &unit &&
+        failed(addEdge(*writer, unit, VPTOSchedEdgeKind::Data, 1,
                        Twine("implicit read of ") + effect.resource))) {
       return mlir::failure();
     }
@@ -367,6 +370,10 @@ static LogicalResult addImplicitWriteEdges(
     }
   }
   for (VPTOSUnit *reader : readsSinceWrite[effect.resource]) {
+    // Skip the reading unit itself: a read-modify-write closes its own read
+    // with the write and must not create a self anti-dependence.
+    if (reader == &unit)
+      continue;
     if (failed(
             addEdge(*reader, unit, VPTOSchedEdgeKind::Anti, 0,
                     Twine("implicit anti-dependence on ") + effect.resource))) {

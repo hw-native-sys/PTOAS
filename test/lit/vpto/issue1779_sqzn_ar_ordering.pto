@@ -1,0 +1,102 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+
+// Regression test for issue #1779 (A5 VPTO):
+//   1. pto.vsqz writes the implicit SQZN register, so CSE must not merge two
+//      VSQZ with equal operands; each pto.vstur needs its own SQZN producer.
+//   2. pto.vstur/pto.vstar read and write the implicit AR register, so the
+//      scheduler must not hoist a later pto.sprclr "AR" above the pto.vstar
+//      that flushes the previous AR state.
+//
+// RUN: ptoas --pto-arch=a5 --pto-backend=vpto --emit-vpto --vmi-fastmath=false --enable-vecscope-mem-bar=true %s -o - 2>&1 | FileCheck %s
+
+module attributes {pto.target_arch = "a5", pto.backend = "vpto"} {
+  func.func @duplicate_load(%arg0: !pto.ptr<ui32, ub>) attributes {pto.aiv} {
+    %c128_index = arith.constant 128 : index
+    %c0_index = arith.constant 0 : index
+    %c9_index = arith.constant 9 : index
+    %c7_index = arith.constant 7 : index
+    %capture1 = pto.addptr %arg0, %c128_index : <ui32, ub>, index -> <ui32, ub>
+    pto.vecscope {
+      %squeeze_base = pto.addptr %arg0, %c0_index : <ui32, ub>, index -> <ui32, ub>
+      %first__ssa_v0 = pto.vlds %squeeze_base[%c0_index] : !pto.ptr<ui32, ub>, index -> !pto.vreg<64xui32>
+      %0 = pto.addptr %arg0, %c0_index : <ui32, ub>, index -> <ui32, ub>
+      %again__ssa_v0 = pto.vlds %0[%c0_index] : !pto.ptr<ui32, ub>, index -> !pto.vreg<64xui32>
+      %squeeze_count = arith.index_cast %c9_index : index to i32
+      %keep__ssa_v0, %squeeze_unused_count = pto.plt_b32 %squeeze_count : i32 -> !pto.mask<b32>, i32
+      %1 = pto.addptr %capture1, %c7_index : <ui32, ub>, index -> <ui32, ub>
+      pto.sprclr "AR"
+      %initial__ssa_v0 = pto.init_align : !pto.align
+      %squeeze_packed = pto.vsqz %first__ssa_v0, %keep__ssa_v0 : !pto.vreg<64xui32>, !pto.mask<b32> -> !pto.vreg<64xui32>
+      %partial__ssa_v0 = pto.vstur %initial__ssa_v0, %squeeze_packed, %1, "POST_UPDATE" : !pto.align, !pto.vreg<64xui32>, !pto.ptr<ui32, ub> -> !pto.align
+      %2 = pto.vsqz %again__ssa_v0, %keep__ssa_v0 : !pto.vreg<64xui32>, !pto.mask<b32> -> !pto.vreg<64xui32>
+      %final__ssa_v0 = pto.vstur %partial__ssa_v0, %2, %1, "POST_UPDATE" : !pto.align, !pto.vreg<64xui32>, !pto.ptr<ui32, ub> -> !pto.align
+      pto.vstar %final__ssa_v0, %1 : !pto.align, !pto.ptr<ui32, ub>
+    }
+    return
+  }
+
+  func.func @sequential_chains(%arg0: !pto.ptr<ui32, ub>) attributes {pto.aiv} {
+    %c128_index = arith.constant 128 : index
+    %c256_index = arith.constant 256 : index
+    %c0_index = arith.constant 0 : index
+    %c64_index = arith.constant 64 : index
+    %c5_index = arith.constant 5 : index
+    %c9_index = arith.constant 9 : index
+    %c7_index = arith.constant 7 : index
+    %capture1 = pto.addptr %arg0, %c128_index : <ui32, ub>, index -> <ui32, ub>
+    %capture2 = pto.addptr %arg0, %c256_index : <ui32, ub>, index -> <ui32, ub>
+    pto.vecscope {
+      %squeeze_base = pto.addptr %arg0, %c0_index : <ui32, ub>, index -> <ui32, ub>
+      %first__ssa_v0 = pto.vlds %squeeze_base[%c0_index] : !pto.ptr<ui32, ub>, index -> !pto.vreg<64xui32>
+      %0 = pto.addptr %arg0, %c64_index : <ui32, ub>, index -> <ui32, ub>
+      %second__ssa_v0 = pto.vlds %0[%c0_index] : !pto.ptr<ui32, ub>, index -> !pto.vreg<64xui32>
+      %squeeze_count = arith.index_cast %c5_index : index to i32
+      %keep0__ssa_v0, %squeeze_unused_count = pto.plt_b32 %squeeze_count : i32 -> !pto.mask<b32>, i32
+      %1 = arith.index_cast %c9_index : index to i32
+      %keep1__ssa_v0, %2 = pto.plt_b32 %1 : i32 -> !pto.mask<b32>, i32
+      %3 = pto.addptr %capture1, %c7_index : <ui32, ub>, index -> <ui32, ub>
+      pto.sprclr "AR"
+      %initial0__ssa_v0 = pto.init_align : !pto.align
+      %squeeze_packed = pto.vsqz %first__ssa_v0, %keep0__ssa_v0 : !pto.vreg<64xui32>, !pto.mask<b32> -> !pto.vreg<64xui32>
+      %final0__ssa_v0 = pto.vstur %initial0__ssa_v0, %squeeze_packed, %3, "POST_UPDATE" : !pto.align, !pto.vreg<64xui32>, !pto.ptr<ui32, ub> -> !pto.align
+      pto.vstar %final0__ssa_v0, %3 : !pto.align, !pto.ptr<ui32, ub>
+      %4 = pto.addptr %capture2, %c7_index : <ui32, ub>, index -> <ui32, ub>
+      pto.sprclr "AR"
+      %initial1__ssa_v0 = pto.init_align : !pto.align
+      %5 = pto.vsqz %second__ssa_v0, %keep1__ssa_v0 : !pto.vreg<64xui32>, !pto.mask<b32> -> !pto.vreg<64xui32>
+      %final1__ssa_v0 = pto.vstur %initial1__ssa_v0, %5, %4, "POST_UPDATE" : !pto.align, !pto.vreg<64xui32>, !pto.ptr<ui32, ub> -> !pto.align
+      pto.vstar %final1__ssa_v0, %4 : !pto.align, !pto.ptr<ui32, ub>
+    }
+    return
+  }
+}
+
+// duplicate_load: two stored squeezes, each with its own SQZN write before the
+// VSTUR that consumes it. Pre-fix CSE collapses both VSTUR onto one VSQZ.
+// CHECK-LABEL: func.func @duplicate_load
+// CHECK: pto.vsqz
+// CHECK: pto.vstur
+// CHECK: pto.vsqz
+// CHECK: pto.vstur
+// CHECK-NOT: pto.vsqz
+
+// sequential_chains: the second SPRCLR "AR" must stay after the first VSTAR
+// that drains the AR state produced by the first stream. Pre-fix the scheduler
+// hoisted that clear above the first VSTAR (sprclr -> vstur -> sprclr -> vstar).
+// The assertion deliberately does not require the second VSQZ to precede the
+// first VSTAR: that order is a legal schedule once the AR dependency exists.
+// What must hold is the flush/clear pairing below.
+// CHECK-LABEL: func.func @sequential_chains
+// CHECK: pto.sprclr "AR"
+// CHECK: pto.vsqz
+// CHECK: pto.vstur
+// CHECK: pto.vstar
+// CHECK: pto.sprclr "AR"
+// CHECK: pto.vstur
+// CHECK: pto.vstar

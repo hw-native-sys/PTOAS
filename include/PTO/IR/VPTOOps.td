@@ -3766,7 +3766,25 @@ def PTO_VselrOp : PTO_VectorMicroOp<"vselr", [Pure]> {
   }];
 }
 
-def PTO_VsqzOp : PTO_UnaryVecOp<"vsqz">;
+// VSQZ writes the implicit hardware register SQZN: VSTUR derives its store
+// length from SQZN. It is therefore NOT a pure operation. Marking it `Pure`
+// lets CSE merge two VSQZ with equal operands into one, which silently feeds
+// two VSTUR from a single SQZN write and drops a stored squeeze (issue 1779).
+// Keep the operand/result/verifier/assembly contract of PTO_UnaryVecOp but
+// carry no [Pure] trait.
+def PTO_VsqzOp : PTO_VectorMicroOp<"vsqz", []> {
+  let arguments = (ins
+    PTO_VectorType:$input,
+    PTO_MaskTypeConstraint:$mask
+  );
+  let results = (outs PTO_VectorType:$result);
+
+  let hasVerifier = 1;
+
+  let assemblyFormat = [{
+    $input `,` $mask attr-dict `:` type($input) `,` type($mask) `->` type($result)
+  }];
+}
 
 def PTO_VusqzOp : PTO_VectorMicroOp<"vusqz", [Pure]> {
   let arguments = (ins
