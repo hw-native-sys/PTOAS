@@ -118,9 +118,19 @@ For `G.CNS.02-CPP`, remove an unexplained literal only after identifying its dom
   paths. Place the guard where it dominates the operation and follow the
   function's existing diagnostic or failure convention. Do not silently
   substitute another divisor or result.
-- Preserve operator precedence with explicit parentheses when a rewrite could
-  be ambiguous. Never move side effects across short-circuit operators or
-  change evaluation count to satisfy formatting.
+- `G.EXP.30-CPP`: add parentheses around the smallest complete subexpression
+  whose intended evaluation order would otherwise rely on default operator
+  precedence. In a stream insertion chain, for example, write
+  `<< (numBaseTypes + 1)` without enclosing or restructuring the surrounding
+  `<<` operations.
+- Confirm the intended expression tree from the surrounding types and behavior
+  before adding parentheses. Clarify the existing semantics without changing
+  associativity, short-circuit behavior, overload resolution, implicit
+  conversions, or evaluation order and count.
+- Do not parenthesize every operand or the entire statement merely to silence
+  `G.EXP.30-CPP`. Keep the edit local to the mixed-operator subexpression, then
+  re-run formatting and check wrapped operator placement against
+  `G.FMT.06-CPP`.
 - For bounds, narrowing, or signedness findings, use the types established by
   surrounding APIs and prove the valid range. Avoid casts that merely suppress
   diagnostics.

@@ -68,7 +68,8 @@ MemoryRole classifyMemoryRole(mlir::Type type);
 // bytes, alignment units), the signedness and the addressable range are
 // operation-specific and documented per op.
 [[maybe_unused]] inline bool isElementOffsetType(mlir::Type type) {
-    return type.isIndex() || type.isSignlessInteger(32) || type.isSignlessInteger(64);
+    return type.isIndex() || type.isSignlessInteger(mlir::pto::kValue32) ||
+           type.isSignlessInteger(mlir::pto::kValue64);
 }
 
 bool isForbiddenSynchronizationInsideVecScope(mlir::Operation *op);

@@ -707,7 +707,7 @@ static ParseResult parseVStoreTypeList(OpAsmParser &parser,
     const size_t numTypes = types.size();
     if (numTypes != numBaseTypes && numTypes != numBaseTypes + 1) {
         return parser.emitError(parser.getCurrentLocation())
-            << "expected " << numBaseTypes << " or " << numBaseTypes + 1
+            << "expected " << numBaseTypes << " or " << (numBaseTypes + 1)
             << " types (" << nValues
             << " value(s), 1 destination, 1 element offset"
             << ", optional 1 mask), got " << numTypes;
