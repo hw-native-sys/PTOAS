@@ -40,7 +40,8 @@ from .._ops_common import (
 )
 
 _CTRL_KEEP_MASK = 0x1000000000000
-_CTRL_PRESET_BITS = 0x1000000000000008
+# CTRL[60] must stay clear so global saturation cannot override SAT/NOSAT.
+_CTRL_PRESET_BITS = 0x8
 _DEFAULT_ST_ATOMIC_CFG = 0b00100100
 _DEFAULT_DMA_LOOP_COUNT = 1
 _PAD_VALUE = 0
