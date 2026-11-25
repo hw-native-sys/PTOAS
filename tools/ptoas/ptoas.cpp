@@ -285,13 +285,8 @@ llvm::cl::opt<unsigned> vmiLayoutMaxTransitions(
                    "(must be positive)"),
     llvm::cl::init(VMILayoutPlannerOptions{}.maxTransitionsPerComponent));
 
-llvm::cl::opt<bool> planMemoryOrderBySize(
-    "plan-memory-order-by-size",
-    llvm::cl::desc("Plan larger local buffers first inside one AddressSpace "
-                   "before applying the basic SPEC_LEVEL_0 reuse strategy. "
-                   "Defaults to false to match the previous default pipeline "
-                   "(largest-first ordering is opt-in)"),
-    llvm::cl::init(false));
+llvm::cl::opt<std::string> planMemoryAllocator(
+    "plan-memory-allocator", llvm::cl::desc("Local memory allocator: interval"), llvm::cl::init("interval"));
 
 llvm::cl::opt<bool> enablePlanMemory(
     "enable-plan-memory",

@@ -1,0 +1,36 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+
+// RUN: ptoas --pto-arch=a3 --pto-level=level2 --emit-pto-ir --mlir-print-ir-after=pto-plan-memory %s -o /dev/null 2>&1 | FileCheck %s
+
+!small = !pto.tile_buf<vec, 64x256xf32>
+!large = !pto.tile_buf<vec, 128x256xf32>
+module {
+  func.func @reserved_fifo(%s: !pto.partition_tensor_view<64x256xf32>,
+                           %l: !pto.partition_tensor_view<128x256xf32>) {
+    %fifo = pto.reserve_buffer {name = "fifo", size = 65536, location = #pto.address_space<vec>, auto = true} -> i32
+    %a = pto.alloc_tile : !small
+    %b = pto.alloc_tile : !small
+    pto.tload ins(%s : !pto.partition_tensor_view<64x256xf32>) outs(%a : !small)
+    pto.tload ins(%s : !pto.partition_tensor_view<64x256xf32>) outs(%b : !small)
+    pto.tstore ins(%a : !small) outs(%s : !pto.partition_tensor_view<64x256xf32>)
+    pto.tstore ins(%b : !small) outs(%s : !pto.partition_tensor_view<64x256xf32>)
+    %c = pto.alloc_tile : !large
+    pto.tload ins(%l : !pto.partition_tensor_view<128x256xf32>) outs(%c : !large)
+    pto.tstore ins(%c : !large) outs(%l : !pto.partition_tensor_view<128x256xf32>)
+    return
+  }
+}
+// CHECK-LABEL: func.func @reserved_fifo
+// CHECK-DAG: %[[A:.*]] = arith.constant 65536 : i64
+// CHECK-DAG: %[[B:.*]] = arith.constant 131072 : i64
+// CHECK: pto.reserve_buffer
+// CHECK-SAME: base = 0
+// CHECK: pto.alloc_tile addr = %[[A]] : !pto.tile_buf<vec, 64x256xf32>
+// CHECK: pto.alloc_tile addr = %[[B]] : !pto.tile_buf<vec, 64x256xf32>
+// CHECK: pto.alloc_tile addr = %[[A]] : !pto.tile_buf<vec, 128x256xf32>

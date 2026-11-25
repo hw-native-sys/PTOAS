@@ -22,7 +22,7 @@
 
 如果你正在排查编译或结果问题，再看：
 
-- 自动内存规划：`--enable-plan-memory`（默认开启，当前不支持关闭）；`--plan-memory-order-by-size` 只调整同一地址空间内的规划顺序（默认按 Tile 的声明顺序规划）
+- 自动内存规划：`--enable-plan-memory`（默认开启，当前不支持关闭）；默认使用区间规划，将预留缓冲区与 Tile 一起纳入容量预算
 
 以上选项的取值和默认值见[选项总表](#选项总表)。
 
@@ -42,7 +42,7 @@
 | `-o` | 路径 | `-` | 输出文件名；未指定时输出到标准输出（mixed fatobj 模式要求显式指定 `-o`） |
 | `--pto-arch` | `a3` \| `a5` | `a3` | 指定目标架构 |
 | `--enable-plan-memory` | 无 | 开启 | 自动内存规划总开关；当前只支持开启，为未显式给出地址的 `pto.alloc_tile` 规划地址 |
-| `--plan-memory-order-by-size` | 无 | 关闭 | 同一地址空间内优先规划较大的本地 buffer，再套用基础复用策略 |
+| `--plan-memory-allocator` | `interval` | `interval` | 区间规划统一预算预留缓冲区，支持跨多个小 Tile 的空间复用 |
 | `--enable-insert-sync` | 无 | 关闭 | 启用常规自动同步插入 |
 | `--enable-inject-barrier-all-sync` | 无 | 关闭 | 启用更保守的同步插入策略 |
 | `-mllvm` | 后端参数（可重复） | 无 | 按 `-mllvm <arg>` 配对把下一个参数透传给设备端编译（bisheng 自身也用这个配对） |

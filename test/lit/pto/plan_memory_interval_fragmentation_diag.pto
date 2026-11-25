@@ -1,0 +1,45 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+
+// RUN: not ptoas --pto-arch=a3 --pto-level=level2 --plan-memory-allocator=interval --emit-pto-ir %s -o /dev/null 2>&1 | FileCheck %s
+// Five simultaneously live buffers fill 512 KiB. After A/C/E die, the
+// remaining B/D split free memory into 128 KiB holes, too small for F.
+!small = !pto.tile_buf<mat, 64x512xbf16>
+!medium = !pto.tile_buf<mat, 128x512xbf16>
+!large = !pto.tile_buf<mat, 192x512xbf16>
+module {
+  func.func @fragmented(%s: !pto.partition_tensor_view<64x512xbf16>,
+                        %m: !pto.partition_tensor_view<128x512xbf16>,
+                        %l: !pto.partition_tensor_view<192x512xbf16>) {
+    %a = pto.alloc_tile : !medium
+    pto.tload ins(%m : !pto.partition_tensor_view<128x512xbf16>) outs(%a : !medium)
+    %b = pto.alloc_tile : !small
+    pto.tload ins(%s : !pto.partition_tensor_view<64x512xbf16>) outs(%b : !small)
+    %c = pto.alloc_tile : !medium
+    pto.tload ins(%m : !pto.partition_tensor_view<128x512xbf16>) outs(%c : !medium)
+    %d = pto.alloc_tile : !small
+    pto.tload ins(%s : !pto.partition_tensor_view<64x512xbf16>) outs(%d : !small)
+    %e = pto.alloc_tile : !medium
+    pto.tload ins(%m : !pto.partition_tensor_view<128x512xbf16>) outs(%e : !medium)
+    pto.tstore ins(%a : !medium) outs(%m : !pto.partition_tensor_view<128x512xbf16>)
+    pto.tstore ins(%c : !medium) outs(%m : !pto.partition_tensor_view<128x512xbf16>)
+    pto.tstore ins(%e : !medium) outs(%m : !pto.partition_tensor_view<128x512xbf16>)
+    %f = pto.alloc_tile : !large
+    pto.tload ins(%l : !pto.partition_tensor_view<192x512xbf16>) outs(%f : !large)
+    pto.tstore ins(%b : !small) outs(%s : !pto.partition_tensor_view<64x512xbf16>)
+    pto.tstore ins(%d : !small) outs(%s : !pto.partition_tensor_view<64x512xbf16>)
+    pto.tstore ins(%f : !large) outs(%l : !pto.partition_tensor_view<192x512xbf16>)
+    return
+  }
+}
+// CHECK: mat overflow: cannot place a 196608-byte buffer
+// CHECK: capacity: 524288 bytes
+// CHECK: already planned: 524288 bytes
+// CHECK: largest free hole: 131072 bytes
+// CHECK: peak live (linear lifetime estimate): 524288 bytes
+// CHECK: note: allocation may be limited by fragmentation or additional alias constraints

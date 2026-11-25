@@ -44,4 +44,4 @@ module {
 // CHECK: Tile<TileType::Vec, float, 16, 256, BLayout::RowMajor, -1, -1, SLayout::NoneBox, 512, PadValue::Null, CompactMode::Null> [[DST:[_A-Za-z][_A-Za-z0-9]*]] = Tile<TileType::Vec, float, 16, 256, BLayout::RowMajor, -1, -1, SLayout::NoneBox, 512, PadValue::Null, CompactMode::Null>([[ROW]], [[FULL_COL]]);
 // CHECK: TROWEXPANDMUL([[DST]],
 // CHECK: [[DST]].SetValidShape([[ROW]], [[ROW]]);
-// CHECK: TFILLPAD({{[_A-Za-z][_A-Za-z0-9]*}}, [[DST]]);
+// CHECK: TFILLPAD<pto::TFillPadMode::InPlace>({{[_A-Za-z][_A-Za-z0-9]*}}, [[DST]]);

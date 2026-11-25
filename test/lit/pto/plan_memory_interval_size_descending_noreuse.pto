@@ -1,14 +1,13 @@
-// Heterogeneous NO-reuse case: three UB tiles of different sizes (src 8KB,
-// idx 8KB, dst 32KB) whose total (48KB) fits the UB budget, so PlanMemory takes
-// the fast no-reuse path (PlanBuffersWithoutReuse) rather than the reuse path.
-// The peak is the same either way here, but --plan-memory-order-by-size must
-// still give a deterministic largest-first layout on this path too: without it
-// the first-generated (small) input tile lands at offset 0; with it the largest
-// tile (dst) is placed first at offset 0. This is the regression guard for the
-// contract that the option means the same thing whether or not reuse kicks in.
-//
-// RUN: ptoas --pto-arch=a3 --plan-memory-order-by-size=false --mlir-print-ir-after=pto-plan-memory %s 2>&1 1>/dev/null | FileCheck %s --check-prefix=DEFAULT
-// RUN: ptoas --pto-arch=a3 --plan-memory-order-by-size --mlir-print-ir-after=pto-plan-memory %s 2>&1 1>/dev/null | FileCheck %s --check-prefix=BYSIZE
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+
+// Largest-first interval placement assigns the largest Vec tile offset zero.
+// RUN: ptoas --pto-arch=a3 --mlir-print-ir-after=pto-plan-memory %s 2>&1 1>/dev/null | FileCheck %s
 
 module {
   func.func @order_by_size_noreuse(%src_ptr: !pto.ptr<f32>, %idx_ptr: !pto.ptr<ui32>, %dst_ptr: !pto.ptr<f32>) attributes {pto.kernel} {
@@ -62,8 +61,4 @@ module {
   }
 }
 
-// On the no-reuse fast path the largest tile (dst, 1x8192xf32) gets offset 0
-// ONLY with order-by-size; the default order leaves offset 0 to the smaller
-// first-generated input tile.
-// BYSIZE: pto.alloc_tile addr = %c0_i64 : !pto.tile_buf<vec, 1x8192xf32>
-// DEFAULT-NOT: pto.alloc_tile addr = %c0_i64 : !pto.tile_buf<vec, 1x8192xf32>
+// CHECK: pto.alloc_tile addr = %c0_i64 : !pto.tile_buf<vec, 1x8192xf32>

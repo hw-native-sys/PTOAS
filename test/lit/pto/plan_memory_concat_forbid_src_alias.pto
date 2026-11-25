@@ -44,19 +44,19 @@ module attributes {"pto.target_arch" = "a3"} {
 }
 
 // CHECK-LABEL: func.func @plan_memory_tconcat_forbid_src_alias
-// CHECK-DAG: %[[A0:.*]] = arith.constant 0 : i64
-// CHECK-DAG: %[[A512:.*]] = arith.constant 512 : i64
-// CHECK-DAG: %[[A1024:.*]] = arith.constant 1024 : i64
+// CHECK-DAG: %[[A0:.*]] = arith.constant 1024 : i64
+// CHECK-DAG: %[[A512:.*]] = arith.constant 1536 : i64
+// CHECK-DAG: %[[A1024:.*]] = arith.constant 0 : i64
 // CHECK: pto.alloc_tile addr = %[[A0]]
 // CHECK: pto.alloc_tile addr = %[[A512]]
 // CHECK: pto.alloc_tile addr = %[[A1024]]
 
 // CHECK-LABEL: func.func @plan_memory_tconcatidx_forbid_src_alias
-// CHECK-DAG: %[[B0:.*]] = arith.constant 0 : i64
-// CHECK-DAG: %[[B512:.*]] = arith.constant 512 : i64
-// CHECK-DAG: %[[B1024:.*]] = arith.constant 1024 : i64
-// CHECK-DAG: %[[B2048:.*]] = arith.constant 2048 : i64
-// CHECK-DAG: %[[B3072:.*]] = arith.constant 3072 : i64
+// CHECK-DAG: %[[B0:.*]] = arith.constant 3072 : i64
+// CHECK-DAG: %[[B512:.*]] = arith.constant 3584 : i64
+// CHECK-DAG: %[[B1024:.*]] = arith.constant 0 : i64
+// CHECK-DAG: %[[B2048:.*]] = arith.constant 1024 : i64
+// CHECK-DAG: %[[B3072:.*]] = arith.constant 2048 : i64
 // CHECK: pto.alloc_tile addr = %[[B0]]
 // CHECK: pto.alloc_tile addr = %[[B512]]
 // CHECK: pto.alloc_tile addr = %[[B1024]]

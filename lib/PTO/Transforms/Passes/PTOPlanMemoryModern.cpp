@@ -7,6 +7,9 @@
 // See LICENSE in the root of the software repository for the full text of the License.
 
 //===- PTOPlanMemoryModern.cpp - modern static local memory planner -------===//
+// Interval placement jointly budgets tiles and pinned reservations. Liveness
+// and alias analysis define conflicts; all byte ranges are verified before
+// addresses are materialized.
 
 #include <limits>
 #include <tuple>
@@ -16,6 +19,7 @@
 #include "PTO/Support/CodeConstants.h"
 #include "PTO/Transforms/Passes.h"
 #include "Utils.h"
+#include "IntervalMemoryAllocator.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/SCF/IR/SCF.h"
 #include "mlir/Interfaces/ControlFlowInterfaces.h"
@@ -82,14 +86,6 @@ struct ConflictFacts {
 struct InplacePolicy {
   bool notInplaceSafe = false;
   SmallVector<unsigned> forbidOutputAliasOperands;
-};
-
-struct ReuseGroup {
-  AddressSpace space = AddressSpace::Zero;
-  uint64_t sizeBytes = 0;
-  uint64_t alignmentBytes = 1;
-  uint64_t offsetBytes = 0;
-  SmallVector<RootInfo *> members;
 };
 
 static uint64_t alignUp(uint64_t value, uint64_t align) {
@@ -1237,19 +1233,6 @@ static bool canShare(const RootInfo &lhs, const RootInfo &rhs,
          gateSemanticNoAlias(lhs, rhs, analysis);
 }
 
-static bool canJoinReuseGroup(const RootInfo &info, const ReuseGroup &group,
-                              const PlannerAnalysis &analysis) {
-  if (info.space != group.space) {
-    return false;
-  }
-  for (const RootInfo *member : group.members) {
-    if (!canShare(info, *member, analysis)) {
-      return false;
-    }
-  }
-  return true;
-}
-
 static bool containsRoot(ArrayRef<Value> roots, Value root) {
   return llvm::is_contained(roots, root);
 }
@@ -1338,16 +1321,6 @@ static uint64_t getRootPairReuseCost(Value lhsRoot, Value rhsRoot,
   return cost;
 }
 
-static uint64_t getGroupReuseCost(const RootInfo &info,
-                                  const ReuseGroup &group,
-                                  const ConflictFacts &facts) {
-  uint64_t cost = 0;
-  for (const RootInfo *member : group.members) {
-    cost += getRootPairReuseCost(info.root, member->root, facts);
-  }
-  return cost;
-}
-
 static bool isHotRoot(const RootInfo &info) {
   if (info.loopAccessCount > 0 &&
       (info.accessCount >= mlir::pto::kValue2 || info.pipeVAccessCount > 0 ||
@@ -1371,143 +1344,24 @@ static uint64_t getRootHotness(const RootInfo &info) {
   return hotness;
 }
 
-static uint64_t getHotClusterReuseCost(const RootInfo &info,
-                                       const ReuseGroup &group) {
-  if (!isHotRoot(info)) {
-    return 0;
-  }
+static constexpr uint64_t kBankConflictModuloBytes = 8192;
+static constexpr uint64_t kBankConflictPenalty = 4;
 
-  constexpr uint64_t kHotClusterPenalty = 6;
-  constexpr uint64_t kLoopHotClusterPenalty = 12;
-  constexpr uint64_t kBankConflictPenalty = 4;
-  constexpr uint64_t kBankConflictModuloBytes = 8192;
-
-  uint64_t cost = 0;
-  uint64_t infoHotness = getRootHotness(info);
-  for (const RootInfo *member : group.members) {
-    if (!isHotRoot(*member)) {
-      continue;
+static uint64_t getPairHotReuseCost(const RootInfo& info, const RootInfo& other, uint64_t offset, uint64_t otherOffset)
+{
+    if (!isHotRoot(info) || !isHotRoot(other)) {
+        return 0;
     }
-
-    uint64_t pairHotness =
-        std::min<uint64_t>(infoHotness, getRootHotness(*member));
-    cost += kHotClusterPenalty + pairHotness;
-    if (info.loopAccessCount > 0 && member->loopAccessCount > 0) {
-      cost += kLoopHotClusterPenalty;
+    constexpr uint64_t kHotClusterPenalty = 6;
+    constexpr uint64_t kLoopHotClusterPenalty = 12;
+    uint64_t cost = kHotClusterPenalty + std::min(getRootHotness(info), getRootHotness(other));
+    if (info.loopAccessCount > 0 && other.loopAccessCount > 0) {
+        cost += kLoopHotClusterPenalty;
     }
-
-    // Exact co-location is the strongest possible same-bank signal. The
-    // planner does not materialize final byte intervals yet, so only model the
-    // bank pattern that is known for a reuse candidate: the new root would
-    // start at the same offset as every member in this group.
-    if (info.alignmentBytes <= kBankConflictModuloBytes &&
-        member->alignmentBytes <= kBankConflictModuloBytes) {
-      cost += kBankConflictPenalty;
+    if (offset % kBankConflictModuloBytes == otherOffset % kBankConflictModuloBytes) {
+        cost += kBankConflictPenalty;
     }
-  }
-  return cost;
-}
-
-static uint64_t getProjectedPackedBytes(ArrayRef<ReuseGroup> groups,
-                                        const RootInfo &info,
-                                        std::optional<unsigned> joinGroup) {
-  uint64_t cursor = 0;
-  for (auto [index, group] : llvm::enumerate(groups)) {
-    uint64_t sizeBytes = group.sizeBytes;
-    uint64_t alignmentBytes = group.alignmentBytes;
-    if (joinGroup && *joinGroup == index) {
-      sizeBytes = std::max(sizeBytes, info.totalBytes);
-      alignmentBytes = std::max(alignmentBytes, info.alignmentBytes);
-    }
-    cursor = alignUp(cursor, alignmentBytes);
-    cursor += sizeBytes;
-  }
-
-  if (!joinGroup) {
-    cursor = alignUp(cursor, info.alignmentBytes);
-    cursor += info.totalBytes;
-  }
-  return cursor;
-}
-
-// Whether the best reuse group should be preferred over a fresh group.
-static bool preferReuseOverFresh(RootInfo &info, const MemSpec &spec,
-                                 SmallVectorImpl<ReuseGroup> &groups,
-                                 bool bestFits, uint64_t bestCost,
-                                 uint64_t bestProjectedBytes,
-                                 unsigned bestOrder) {
-  uint64_t freshProjectedBytes = getProjectedPackedBytes(groups, info,
-                                                         std::nullopt);
-  bool freshFits = freshProjectedBytes <= spec.capacityBytes;
-  uint64_t freshSlack =
-      freshFits ? spec.capacityBytes - freshProjectedBytes : 0;
-  uint64_t pressureReserve =
-      std::max(info.totalBytes, info.alignmentBytes);
-  // The cost model is a performance hint, not a correctness gate. When local
-  // memory is already tight, do not let a fresh address outrank a legal reuse
-  // group; future roots may still need the remaining tail bytes.
-  if (bestFits && freshFits && freshSlack < pressureReserve) {
-    return true;
-  }
-
-  // Fresh groups are not free: cost 1 lets true zero-cost reuse keep the old
-  // compact layout, while still avoiding positive-cost PIPE/MTE co-location
-  // when local capacity is available.
-  uint64_t freshCost = groups.empty() ? 0 : 1;
-  unsigned freshOrder = groups.size();
-
-  auto isBetter = [](bool lhsFits, uint64_t lhsCost, uint64_t lhsBytes,
-                     unsigned lhsOrder, bool rhsFits, uint64_t rhsCost,
-                     uint64_t rhsBytes, unsigned rhsOrder) {
-    if (lhsFits != rhsFits) {
-      return lhsFits;
-    }
-    return std::tie(lhsCost, lhsBytes, lhsOrder) <
-           std::tie(rhsCost, rhsBytes, rhsOrder);
-  };
-  return !isBetter(freshFits, freshCost, freshProjectedBytes, freshOrder,
-                   bestFits, bestCost, bestProjectedBytes, bestOrder);
-}
-
-static ReuseGroup *chooseReuseGroupByCost(
-    RootInfo &info, SmallVectorImpl<ReuseGroup> &groups,
-    const PlannerAnalysis &analysis, const MemSpec &spec) {
-  ReuseGroup *bestGroup = nullptr;
-  uint64_t bestCost = std::numeric_limits<uint64_t>::max();
-  uint64_t bestProjectedBytes = std::numeric_limits<uint64_t>::max();
-  unsigned bestOrder = std::numeric_limits<unsigned>::max();
-  bool bestFits = false;
-
-  for (auto [index, group] : llvm::enumerate(groups)) {
-    if (!canJoinReuseGroup(info, group, analysis)) {
-      continue;
-    }
-
-    uint64_t projectedBytes =
-        getProjectedPackedBytes(groups, info, static_cast<unsigned>(index));
-    bool fits = projectedBytes <= spec.capacityBytes;
-    uint64_t cost = getGroupReuseCost(info, group, analysis.facts) +
-                    getHotClusterReuseCost(info, group);
-    if ((!bestGroup && !bestFits) || (fits != bestFits && fits) ||
-        (fits == bestFits &&
-         std::tie(cost, projectedBytes, index) <
-             std::tie(bestCost, bestProjectedBytes, bestOrder))) {
-      bestGroup = &group;
-      bestCost = cost;
-      bestProjectedBytes = projectedBytes;
-      bestOrder = static_cast<unsigned>(index);
-      bestFits = fits;
-    }
-  }
-
-  if (!bestGroup) {
-    return nullptr;
-  }
-  if (preferReuseOverFresh(info, spec, groups, bestFits, bestCost,
-                           bestProjectedBytes, bestOrder)) {
-    return bestGroup;
-  }
-  return nullptr;
+    return cost;
 }
 
 static SmallVector<uint64_t> buildSlotOffsets(uint64_t base, uint64_t slotBytes,
@@ -1518,40 +1372,6 @@ static SmallVector<uint64_t> buildSlotOffsets(uint64_t base, uint64_t slotBytes,
     offsets.push_back(base + slot * slotBytes);
   }
   return offsets;
-}
-
-static FailureOr<uint64_t> planReserveBufferBase(
-    pto::ReserveBufferOp reserveOp, const MemSpec &spec,
-    SmallVectorImpl<std::pair<uint64_t, uint64_t>> &occupied) {
-  uint64_t sizeBytes =
-      alignUp(static_cast<uint64_t>(reserveOp.getSize()), spec.alignmentBytes);
-  llvm::sort(occupied, [](const auto &lhs, const auto &rhs) {
-    return lhs.first < rhs.first;
-  });
-
-  SmallVector<std::pair<uint64_t, uint64_t>> merged;
-  for (const auto &interval : occupied) {
-    if (merged.empty() || interval.first > merged.back().second) {
-      merged.push_back(interval);
-      continue;
-    }
-    merged.back().second = std::max(merged.back().second, interval.second);
-  }
-
-  uint64_t cursor = 0;
-  for (const auto &interval : merged) {
-    cursor = alignUp(cursor, spec.alignmentBytes);
-    if (cursor + sizeBytes <= interval.first) {
-      return cursor;
-    }
-    cursor = std::max(cursor, interval.second);
-  }
-  cursor = alignUp(cursor, spec.alignmentBytes);
-  if (cursor + sizeBytes > spec.capacityBytes) {
-    return failure();
-  }
-  occupied.push_back({cursor, cursor + sizeBytes});
-  return cursor;
 }
 
 static LogicalResult
@@ -1715,124 +1535,117 @@ static LogicalResult materializePlannedOffsets(
 
 } // namespace
 
-// Assign every root in `roots` to a reuse group (creating fresh groups as
-// needed) and lay the groups out consecutively. Returns the total bytes
-// required for the space.
-static uint64_t assignReuseGroupsAndLayout(
-    SmallVectorImpl<RootInfo *> &roots, AddressSpace space,
-    const PlannerAnalysis &analysis, const MemSpec &spec,
-    SmallVectorImpl<ReuseGroup> &groups) {
-  for (RootInfo *info : roots) {
-    ReuseGroup *chosen = chooseReuseGroupByCost(*info, groups, analysis, spec);
-    if (!chosen) {
-      ReuseGroup group;
-      group.space = space;
-      group.alignmentBytes = info->alignmentBytes;
-      groups.push_back(std::move(group));
-      chosen = &groups.back();
-    }
-
-    chosen->members.push_back(info);
-    chosen->sizeBytes = std::max(chosen->sizeBytes, info->totalBytes);
-    chosen->alignmentBytes =
-        std::max(chosen->alignmentBytes, info->alignmentBytes);
-  }
-
-  uint64_t scopeRequiredBytes = 0;
-  uint64_t cursor = 0;
-  for (ReuseGroup &group : groups) {
-    cursor = alignUp(cursor, group.alignmentBytes);
-    group.offsetBytes = cursor;
-    if (group.offsetBytes + group.sizeBytes > spec.capacityBytes) {
-      scopeRequiredBytes = group.offsetBytes + group.sizeBytes;
-      break;
-    }
-
-    for (RootInfo *member : group.members) {
-      member->offsets = buildSlotOffsets(group.offsetBytes, member->slotBytes,
-                                         member->slotCount);
-    }
-    scopeRequiredBytes =
-        std::max(scopeRequiredBytes, group.offsetBytes + group.sizeBytes);
-    cursor = group.offsetBytes + group.sizeBytes;
-  }
-  return scopeRequiredBytes;
+// Interval planning owns the complete space budget, including reservations.
+// Pinned roots live for the entire function and never share storage.
+static LogicalResult collectPinnedRoots(func::FuncOp func, SmallVectorImpl<RootInfo>& pinned)
+{
+    bool invalid = false;
+    func.walk([&](pto::ReserveBufferOp op) {
+        if (failed(validateReserveBufferForPlanMemory(op, getTargetArch(func)))) {
+            invalid = true;
+            return;
+        }
+        MemSpec spec = getMemSpec(getTargetArch(func), op.getLocation().getAddressSpace());
+        uint64_t size = static_cast<uint64_t>(op.getSize());
+        uint64_t padding = (spec.alignmentBytes - size % spec.alignmentBytes) % spec.alignmentBytes;
+        if (size > std::numeric_limits<uint64_t>::max() - padding) {
+            op.emitError("reserved buffer size overflows after alignment");
+            invalid = true;
+            return;
+        }
+        RootInfo info;
+        info.root = op.getResult();
+        info.defOp = op;
+        info.space = op.getLocation().getAddressSpace();
+        info.totalBytes = size + padding;
+        info.slotBytes = info.totalBytes;
+        info.alignmentBytes = spec.alignmentBytes;
+        info.freeIndex = std::numeric_limits<unsigned>::max();
+        info.stableOrder = pinned.size();
+        pinned.push_back(info);
+    });
+    return failure(invalid);
 }
 
-// Plan all roots of one address space into `buffer2Offsets`. Fails (with a
-// diagnostic) when the space overflows its capacity.
-static LogicalResult planOneAddressSpace(
-    func::FuncOp func, AddressSpace space, SmallVectorImpl<RootInfo *> &roots,
-    const PlannerAnalysis &analysis, bool orderBySize,
-    DenseMap<Value, SmallVector<uint64_t>> &buffer2Offsets) {
-  MemSpec spec = getMemSpec(getTargetArch(func), space);
-
-  bool sizeFirstForSpace = orderBySize && !isCubeLocalSpace(space);
-  llvm::stable_sort(roots, [sizeFirstForSpace](const RootInfo *lhs, const RootInfo *rhs) {
-    if (sizeFirstForSpace && lhs->totalBytes != rhs->totalBytes) {
-      return lhs->totalBytes > rhs->totalBytes;
+// This linear-lifetime estimate is diagnostic only. Branch-exclusive values
+// may overlap in the linear walk, so it is not a proven runtime lower bound.
+static uint64_t estimatePeakLiveBytes(ArrayRef<RootInfo*> roots)
+{
+    SmallVector<std::tuple<unsigned, bool, uint64_t>> events;
+    for (const RootInfo* info : roots) {
+        if (info->allocIndex < info->freeIndex) {
+            events.emplace_back(info->allocIndex, true, info->totalBytes);
+            events.emplace_back(info->freeIndex, false, info->totalBytes);
+        }
     }
-    if (lhs->allocIndex != rhs->allocIndex) {
-      return lhs->allocIndex < rhs->allocIndex;
+    llvm::sort(events);
+    uint64_t current = 0;
+    uint64_t peak = 0;
+    for (auto [index, starts, size] : events) {
+        (void)index;
+        if (starts) {
+            current += std::min(size, std::numeric_limits<uint64_t>::max() - current);
+            peak = std::max(peak, current);
+        } else {
+            current -= std::min(current, size);
+        }
     }
-    return lhs->stableOrder < rhs->stableOrder;
-  });
+    return peak;
+}
 
-  SmallVector<ReuseGroup> groups;
-  uint64_t scopeRequiredBytes =
-      assignReuseGroupsAndLayout(roots, space, analysis, spec, groups);
-  if (scopeRequiredBytes > spec.capacityBytes) {
-    func.emitError() << stringifyEnum(space) << " overflow, requires "
-                     << (scopeRequiredBytes * mlir::pto::kValue8) << " bits while "
-                     << (spec.capacityBytes * mlir::pto::kValue8) << " bits available";
+static LogicalResult reportIntervalOverflow(
+    func::FuncOp func, AddressSpace space, ArrayRef<RootInfo*> roots, const AllocFailure& allocationFailure,
+    uint64_t capacity)
+{
+    auto diagnostic = func.emitError();
+    diagnostic << stringifyEnum(space) << " overflow: cannot place a " << allocationFailure.requestedBytes
+               << "-byte buffer"
+               << "\n  capacity: " << capacity << " bytes"
+               << "\n  already planned: " << allocationFailure.plannedBytes << " bytes"
+               << "\n  largest free hole: " << allocationFailure.largestFreeGapBytes << " bytes"
+               << "\n  peak live (linear lifetime estimate): " << estimatePeakLiveBytes(roots) << " bytes";
+    if (estimatePeakLiveBytes(roots) <= capacity && allocationFailure.requestedBytes <= capacity) {
+        diagnostic << "\n  note: allocation may be limited by fragmentation or additional alias constraints; "
+                      "please attach the IR to an issue";
+    }
     return failure();
-  }
-
-  for (RootInfo *info : roots) {
-    buffer2Offsets[info->root] = info->offsets;
-  }
-  return success();
 }
 
-// Reserve base addresses for every reserve_buffer, placing them in free
-// holes left by the planned roots. Sets `failedFlag` when a reserve cannot
-// be satisfied.
-static void planReserveBuffers(func::FuncOp func,
-                               const SmallVectorImpl<RootInfo> &roots,
-                               bool &failedFlag) {
-  DenseMap<AddressSpace, SmallVector<std::pair<uint64_t, uint64_t>>>
-      occupiedBySpace;
-  for (const RootInfo &info : roots) {
-    if (info.offsets.empty()) {
-      continue;
+static LogicalResult planIntervalAddressSpace(
+    func::FuncOp func, AddressSpace space, ArrayRef<RootInfo*> roots, const PlannerAnalysis& analysis,
+    DenseMap<Value, SmallVector<uint64_t>>& buffer2Offsets)
+{
+    MemSpec spec = getMemSpec(getTargetArch(func), space);
+    SmallVector<AllocRequest> requests;
+    for (auto [index, info] : llvm::enumerate(roots)) {
+        requests.push_back(
+            {static_cast<unsigned>(index), info->totalBytes, info->alignmentBytes, info->allocIndex,
+             isa<pto::ReserveBufferOp>(info->defOp)});
     }
-    occupiedBySpace[info.space].push_back(
-        {info.offsets.front(), info.offsets.front() + info.totalBytes});
-  }
-
-  MLIRContext *ctx = func.getContext();
-  PTOArch arch = getTargetArch(func);
-  func.walk([&failedFlag, &occupiedBySpace, ctx, arch](pto::ReserveBufferOp reserveOp) -> WalkResult {
-    if (mlir::failed(validateReserveBufferForPlanMemory(reserveOp, arch))) {
-      failedFlag = true;
-      return WalkResult::interrupt();
+    auto conflict = [&](unsigned lhs, unsigned rhs) { return !canShare(*roots[lhs], *roots[rhs], analysis); };
+    auto cost = [&](unsigned lhs, uint64_t offset, unsigned rhs, uint64_t otherOffset) {
+        return getRootPairReuseCost(roots[lhs]->root, roots[rhs]->root, analysis.facts) +
+               getPairHotReuseCost(*roots[lhs], *roots[rhs], offset, otherOffset);
+    };
+    OrderPolicy policy = isCubeLocalSpace(space) ? OrderPolicy::ProgramOrder : OrderPolicy::SizeDescending;
+    AllocFailure allocationFailure;
+    auto result = allocateIntervals(requests, spec.capacityBytes, policy, conflict, cost, allocationFailure);
+    if (!result) {
+        return reportIntervalOverflow(func, space, roots, allocationFailure, spec.capacityBytes);
     }
-
-    AddressSpace space = reserveOp.getLocation().getAddressSpace();
-    MemSpec spec = getMemSpec(arch, space);
-    auto baseOr =
-        planReserveBufferBase(reserveOp, spec, occupiedBySpace[space]);
-    if (mlir::failed(baseOr)) {
-      reserveOp.emitError("failed to reserve a local memory hole for "
-                          "reserve_buffer");
-      failedFlag = true;
-      return WalkResult::interrupt();
+    if (!verifyAllocationInvariants(requests, *result, spec.capacityBytes, conflict)) {
+        return func.emitError("internal error: interval memory allocation invariant violated");
     }
-
-    reserveOp->setAttr("base", IntegerAttr::get(IntegerType::get(ctx, mlir::pto::kValue32),
-                                                static_cast<int32_t>(*baseOr)));
-    return WalkResult::advance();
-  });
+    for (auto [index, info] : llvm::enumerate(roots)) {
+        uint64_t offset = result->offsets[index];
+        if (auto reserve = dyn_cast<pto::ReserveBufferOp>(info->defOp)) {
+            reserve->setAttr("base", IntegerAttr::get(IntegerType::get(func.getContext(), 32), offset));
+        } else {
+            info->offsets = buildSlotOffsets(offset, info->slotBytes, info->slotCount);
+            buffer2Offsets[info->root] = info->offsets;
+        }
+    }
+    return success();
 }
 
 // Reject any live alloc_tile that still has no planned address.
@@ -1858,108 +1671,108 @@ static LogicalResult verifyNoUnplannedAllocTile(func::FuncOp func) {
   return success();
 }
 
-static LogicalResult runModernPlanMemory(func::FuncOp func,
-                                         llvm::StringRef memMode,
-                                         bool orderBySize) {
-  if (!memMode.equals_insensitive("local")) {
-    func.emitError("unsupported mem-mode '")
-        << memMode << "'; only 'local' is currently implemented";
-    return failure();
-  }
-
-  PlannerAnalysis analysis(func);
-  analysis.walkRegion(func.getBody());
-  if (analysis.failed) {
-    return failure();
-  }
-
-  DenseMap<Value, SmallVector<uint64_t>> buffer2Offsets;
-  llvm::MapVector<AddressSpace, SmallVector<RootInfo *>> rootsBySpace;
-  for (RootInfo &info : analysis.roots) {
-    rootsBySpace[info.space].push_back(&info);
-  }
-
-  for (auto &entry : rootsBySpace) {
-    if (failed(planOneAddressSpace(func, entry.first, entry.second, analysis,
-                                   orderBySize, buffer2Offsets))) {
-      return failure();
+static LogicalResult runModernPlanMemory(
+    func::FuncOp func, llvm::StringRef memMode, StringRef allocator)
+{
+    if (!memMode.equals_insensitive("local")) {
+        func.emitError("unsupported mem-mode '") << memMode << "'; only 'local' is currently implemented";
+        return failure();
     }
-  }
 
-  planReserveBuffers(func, analysis.roots, analysis.failed);
+    if (allocator != "interval") {
+        return func.emitError("unsupported memory allocator '") << allocator << "'; expected interval";
+    }
+    PlannerAnalysis analysis(func);
+    analysis.walkRegion(func.getBody());
+    if (analysis.failed) {
+        return failure();
+    }
 
-  if (analysis.failed ||
-      mlir::failed(materializePlannedOffsets(func, buffer2Offsets))) {
-    return failure();
-  }
-  if (failed(verifySemanticNoAliasRanges(func))) {
-    return failure();
-  }
+    DenseMap<Value, SmallVector<uint64_t>> buffer2Offsets;
+    llvm::MapVector<AddressSpace, SmallVector<RootInfo*>> rootsBySpace;
+    for (RootInfo& info : analysis.roots) {
+        rootsBySpace[info.space].push_back(&info);
+    }
 
-  return verifyNoUnplannedAllocTile(func);
+    SmallVector<RootInfo> pinned;
+    if (failed(collectPinnedRoots(func, pinned))) {
+        return failure();
+    }
+    for (RootInfo& info : pinned) {
+        rootsBySpace[info.space].push_back(&info);
+    }
+    for (auto& entry : rootsBySpace) {
+        if (failed(planIntervalAddressSpace(func, entry.first, entry.second, analysis, buffer2Offsets))) {
+            return failure();
+        }
+    }
+
+    if (analysis.failed || mlir::failed(materializePlannedOffsets(func, buffer2Offsets))) {
+        return failure();
+    }
+    if (failed(verifySemanticNoAliasRanges(func))) {
+        return failure();
+    }
+
+    return verifyNoUnplannedAllocTile(func);
 }
 
+namespace mlir::pto {
+#define GEN_PASS_DEF_PLANMEMORY
+#include "PTO/Transforms/Passes.h.inc"
+} // namespace mlir::pto
+
 namespace {
-struct PlanMemoryModernPass
-    : public PassWrapper<PlanMemoryModernPass, OperationPass<ModuleOp>> {
-  MLIR_DEFINE_EXPLICIT_INTERNAL_INLINE_TYPE_ID(PlanMemoryModernPass)
+struct PlanMemoryModernPass : public mlir::pto::impl::PlanMemoryBase<PlanMemoryModernPass> {
+    MLIR_DEFINE_EXPLICIT_INTERNAL_INLINE_TYPE_ID(PlanMemoryModernPass)
 
-  PlanMemoryModernPass() = default;
-  explicit PlanMemoryModernPass(const PlanMemoryOptions &options)
-      : memMode(options.memMode), orderBySize(options.orderBySize),
-        enabled(options.enabled) {}
+    using Base::Base;
 
-  StringRef getArgument() const final { return "pto-plan-memory"; }
-  StringRef getDescription() const final {
-    return "Plan local memory using the modern PTO planner";
-  }
-  StringRef getName() const final { return "PlanMemoryModern"; }
+    StringRef getArgument() const final { return "pto-plan-memory"; }
+    StringRef getDescription() const final { return "Plan local memory using the modern PTO planner"; }
+    StringRef getName() const final { return "PlanMemoryModern"; }
 
-  void getDependentDialects(DialectRegistry &registry) const override {
-    registry.insert<mlir::pto::PTODialect>();
-    registry.insert<mlir::arith::ArithDialect>();
-    registry.insert<mlir::func::FuncDialect>();
-    registry.insert<mlir::scf::SCFDialect>();
-  }
+    void getDependentDialects(DialectRegistry& registry) const override
+    {
+        registry.insert<mlir::pto::PTODialect>();
+        registry.insert<mlir::arith::ArithDialect>();
+        registry.insert<mlir::func::FuncDialect>();
+        registry.insert<mlir::scf::SCFDialect>();
+    }
 
-  void runOnOperation() override {
-    ModuleOp moduleOp = getOperation();
-    SmallVector<func::FuncOp> funcs;
-    moduleOp.walk([&funcs](func::FuncOp funcOp) {
-      // `pto.tileop.helper` identifies compute-only helpers, not whether a
-      // child module needs memory planning.  Skip those helpers themselves,
-      // while planning every ordinary function in nested backend modules.
-      if (!funcOp->hasAttr("pto.tileop.helper")) {
-        funcs.push_back(funcOp);
-      }
-    });
+    void runOnOperation() override
+    {
+        ModuleOp moduleOp = getOperation();
+        SmallVector<func::FuncOp> funcs;
+        moduleOp.walk([&funcs](func::FuncOp funcOp) {
+            // `pto.tileop.helper` identifies compute-only helpers, not whether a
+            // child module needs memory planning.  Skip those helpers themselves,
+            // while planning every ordinary function in nested backend modules.
+            if (!funcOp->hasAttr("pto.tileop.helper")) {
+                funcs.push_back(funcOp);
+            }
+        });
 
-    if (!enabled) {
-      // Automatic planning was explicitly disabled: assign no address, but
-      // still verify that every live alloc_tile already carries an addr, so we
-      // never emit code in which all buffers alias address 0.
-      for (func::FuncOp funcOp : funcs) {
-        if (failed(verifyNoUnplannedAllocTile(funcOp))) {
-          signalPassFailure();
-          return;
+        if (!enabled) {
+            // Automatic planning was explicitly disabled: assign no address, but
+            // still verify that every live alloc_tile already carries an addr, so we
+            // never emit code in which all buffers alias address 0.
+            for (func::FuncOp funcOp : funcs) {
+                if (failed(verifyNoUnplannedAllocTile(funcOp))) {
+                    signalPassFailure();
+                    return;
+                }
+            }
+            return;
         }
-      }
-      return;
-    }
 
-    for (func::FuncOp funcOp : funcs) {
-      if (failed(
-              runModernPlanMemory(funcOp, memMode, orderBySize))) {
-        signalPassFailure();
-        return;
-      }
+        for (func::FuncOp funcOp : funcs) {
+            if (failed(runModernPlanMemory(funcOp, memMode, allocator))) {
+                signalPassFailure();
+                return;
+            }
+        }
     }
-  }
-
-private:
-  std::string memMode = "local";
-  bool orderBySize = false;
-  bool enabled = true;
 };
 } // namespace
 
@@ -1967,13 +1780,3 @@ std::unique_ptr<Pass>
 mlir::pto::createPlanMemoryModernPass(const PlanMemoryOptions &options) {
   return std::make_unique<PlanMemoryModernPass>(options);
 }
-
-// Anchor the generated pass base registration used by pto-test-opt and the
-// textual pass pipeline (`-pass-pipeline=...`), replacing the removed legacy
-// planner under the same `pto-plan-memory` argument.
-namespace mlir {
-namespace pto {
-#define GEN_PASS_DEF_PLANMEMORY
-#include "PTO/Transforms/Passes.h.inc"
-} // namespace pto
-} // namespace mlir

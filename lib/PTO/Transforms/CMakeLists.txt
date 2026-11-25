@@ -276,6 +276,7 @@ add_mlir_dialect_library(PTOTransforms
   PTOToEmitC/Memref/MemrefSupport.cpp
   PTOToEmitC/Memref/MemrefPatterns.cpp
   Lowering/CppPostprocess.cpp
+  Support/IntervalMemoryAllocator.cpp
   Support/Utils.cpp
   Passes/OptMemPlanForPipeline.cpp
   Passes/InferPTOMemScope.cpp

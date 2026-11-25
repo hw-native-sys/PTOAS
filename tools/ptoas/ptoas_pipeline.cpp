@@ -1588,7 +1588,7 @@ static LogicalResult appendPlanMemoryPasses(PassManager& pm, PTOBuildLevel effec
     }
     pto::PlanMemoryOptions planMemoryOptions;
     planMemoryOptions.memMode = "local";
-    planMemoryOptions.orderBySize = planMemoryOrderBySize;
+    planMemoryOptions.allocator = planMemoryAllocator;
     // Whether addresses are assigned is controlled by --enable-plan-memory
     // (on by default). When planning is off the pass is still added so that it
     // verifies no live pto.alloc_tile is left without an address.

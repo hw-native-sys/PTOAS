@@ -1,12 +1,13 @@
-// Heterogeneous forced-reuse case (extracted from the TileLang tsort32 suite):
-// three UB tiles of different sizes (src 32KB, idx 32KB, dst 128KB) whose total
-// exceeds the UB budget, so PlanMemory takes the reuse path where allocation
-// ORDER matters. With the default (DMA/gen) order the largest tile (dst) is
-// allocated last and lands at a high offset. With --plan-memory-order-by-size
-// (first-fit-decreasing) the largest tile is allocated first and gets offset 0.
-//
-// RUN: ptoas --pto-arch=a3 --plan-memory-order-by-size=false --mlir-print-ir-after=pto-plan-memory %s 2>&1 1>/dev/null | FileCheck %s --check-prefix=DEFAULT
-// RUN: ptoas --pto-arch=a3 --plan-memory-order-by-size --mlir-print-ir-after=pto-plan-memory %s 2>&1 1>/dev/null | FileCheck %s --check-prefix=BYSIZE
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+
+// Largest-first interval placement assigns the largest Vec tile offset zero.
+// RUN: ptoas --pto-arch=a3 --mlir-print-ir-after=pto-plan-memory %s 2>&1 1>/dev/null | FileCheck %s
 
 module {
   func.func @order_by_size_reuse(%src_ptr: !pto.ptr<f32>, %idx_ptr: !pto.ptr<ui32>, %dst_ptr: !pto.ptr<f32>) attributes {pto.kernel} {
@@ -60,7 +61,4 @@ module {
   }
 }
 
-// The largest tile (dst, 1x32768xf32) is placed at offset 0 ONLY with
-// order-by-size; the default order leaves offset 0 to a smaller input tile.
-// BYSIZE: pto.alloc_tile addr = %c0_i64 : !pto.tile_buf<vec, 1x32768xf32>
-// DEFAULT-NOT: pto.alloc_tile addr = %c0_i64 : !pto.tile_buf<vec, 1x32768xf32>
+// CHECK: pto.alloc_tile addr = %c0_i64 : !pto.tile_buf<vec, 1x32768xf32>

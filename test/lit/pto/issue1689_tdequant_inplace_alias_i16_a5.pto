@@ -33,10 +33,10 @@ module attributes {"pto.target_arch" = "a5"} {
 // The four addresses are intentionally pinned to the current packed layout
 // (house style of plan_memory_inplace_forbid_alias.pto): exact constants both
 // keep dst from aliasing an operand and pin the exact-capacity packing.
-// CHECK-DAG: %[[SRC:.*]] = arith.constant 0 : i64
-// CHECK-DAG: %[[SCALE:.*]] = arith.constant 63488 : i64
-// CHECK-DAG: %[[OFFSET:.*]] = arith.constant 95232 : i64
-// CHECK-DAG: %[[DST:.*]] = arith.constant 126976 : i64
+// CHECK-DAG: %[[SRC:.*]] = arith.constant 126976 : i64
+// CHECK-DAG: %[[SCALE:.*]] = arith.constant 190464 : i64
+// CHECK-DAG: %[[OFFSET:.*]] = arith.constant 222208 : i64
+// CHECK-DAG: %[[DST:.*]] = arith.constant 0 : i64
 // CHECK: pto.alloc_tile addr = %[[SRC]] : !pto.tile_buf<vec, 992x32xi16>
 // CHECK: pto.alloc_tile addr = %[[SCALE]] : !pto.tile_buf<vec, 992x8xf32>
 // CHECK: pto.alloc_tile addr = %[[OFFSET]] : !pto.tile_buf<vec, 992x8xf32>

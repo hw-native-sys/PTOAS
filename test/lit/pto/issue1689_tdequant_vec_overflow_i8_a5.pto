@@ -29,4 +29,7 @@ module attributes {"pto.target_arch" = "a5"} {
   }
 }
 
-// CHECK: vec overflow, requires 2033664 bits while 2031616 bits available
+// CHECK: vec overflow: cannot place a 36352-byte buffer
+// CHECK: capacity: 253952 bytes
+// CHECK: already planned: 217856 bytes
+// CHECK: largest free hole: 36096 bytes

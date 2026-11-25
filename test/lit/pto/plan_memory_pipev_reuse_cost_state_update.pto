@@ -25,9 +25,10 @@ module attributes {pto.target_arch = "a3"} {
   }
 }
 
+// The second output reuses src0 at its last use; the first output remains separate.
 // CHECK-LABEL: func.func @pipev_reuse_cost_state_update
 // CHECK-DAG: %[[TMP0_ADDR:.*]] = arith.constant 8192 : i64
-// CHECK-DAG: %[[TMP1_ADDR:.*]] = arith.constant 12288 : i64
+// CHECK-DAG: %[[TMP1_ADDR:.*]] = arith.constant 0 : i64
 // CHECK: pto.alloc_tile addr = {{.*}} : !pto.tile_buf<vec, 32x32xf32>
 // CHECK: pto.alloc_tile addr = {{.*}} : !pto.tile_buf<vec, 32x32xf32>
 // CHECK: %[[TMP0:.*]] = pto.alloc_tile addr = %[[TMP0_ADDR]] : !pto.tile_buf<vec, 32x32xf32>

@@ -1,13 +1,25 @@
-// RUN: ptoas --pto-arch=a3 --enable-insert-sync --pto-insert-sync-debug=2 %s -o - 2>&1 | FileCheck %s
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+
+// RUN: ptoas --pto-arch=a3 --pto-level=level3 --enable-insert-sync --pto-insert-sync-debug=2 %s -o - 2>&1 | FileCheck %s
 
 module {
   func.func @tscatter_indexed_macro_model(
       %src_gm: !pto.partition_tensor_view<1x32xf16>,
       %idx_gm: !pto.partition_tensor_view<1x32xi16>) {
-    %src = pto.alloc_tile : !pto.tile_buf<vec, 1x32xf16>
-    %idx = pto.alloc_tile : !pto.tile_buf<vec, 1x32xi16>
-    %dst = pto.alloc_tile : !pto.tile_buf<vec, 1x32xf16>
-    %out = pto.alloc_tile : !pto.tile_buf<vec, 1x32xf16>
+    %c0 = arith.constant 0 : i64
+    %c256 = arith.constant 256 : i64
+    %c512 = arith.constant 512 : i64
+    %c768 = arith.constant 768 : i64
+    %src = pto.alloc_tile addr = %c0 : !pto.tile_buf<vec, 1x32xf16>
+    %idx = pto.alloc_tile addr = %c256 : !pto.tile_buf<vec, 1x32xi16>
+    %dst = pto.alloc_tile addr = %c512 : !pto.tile_buf<vec, 1x32xf16>
+    %out = pto.alloc_tile addr = %c768 : !pto.tile_buf<vec, 1x32xf16>
 
     pto.tload ins(%src_gm : !pto.partition_tensor_view<1x32xf16>)
               outs(%src : !pto.tile_buf<vec, 1x32xf16>) {layout = #pto.layout<nd>}

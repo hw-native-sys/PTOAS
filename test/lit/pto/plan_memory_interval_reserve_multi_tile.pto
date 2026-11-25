@@ -1,0 +1,35 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+
+// RUN: ptoas --pto-arch=a3 --pto-level=level2 --plan-memory-allocator=interval --emit-pto-ir --mlir-print-ir-after=pto-plan-memory %s -o /dev/null 2>&1 | FileCheck %s
+// RUN: pto-test-opt --pto-plan-memory="allocator=interval" %s | FileCheck %s
+
+module {
+  func.func @slots(%gm: !pto.partition_tensor_view<16x16xf16>) {
+    %fifo = pto.reserve_buffer {name = "fifo", size = 4096, location = #pto.address_space<vec>, auto = true} -> i32
+    %other = pto.reserve_buffer {name = "other", size = 256, location = #pto.address_space<vec>, auto = true} -> i32
+    %mb = pto.alloc_multi_tile : !pto.multi_tile_buf<vec, 16x16xf16, count=3>
+    %zero = arith.constant 0 : index
+    %tile = pto.multi_tile_get %mb[%zero] : !pto.multi_tile_buf<vec, 16x16xf16, count=3> -> !pto.tile_buf<vec, 16x16xf16>
+    pto.tload ins(%gm : !pto.partition_tensor_view<16x16xf16>) outs(%tile : !pto.tile_buf<vec, 16x16xf16>)
+    return
+  }
+  func.func @reserve_only() {
+    %fifo = pto.reserve_buffer {name = "only", size = 256, location = #pto.address_space<vec>, auto = true} -> i32
+    return
+  }
+}
+// CHECK-LABEL: func.func @slots
+// CHECK: pto.reserve_buffer
+// CHECK-SAME: base = 0
+// CHECK: pto.reserve_buffer
+// CHECK-SAME: base = 4096
+// CHECK: pto.alloc_multi_tile {pto.multi_buffer_addrs = array<i64: 4352, 4864, 5376>}
+// CHECK-LABEL: func.func @reserve_only
+// CHECK: pto.reserve_buffer
+// CHECK-SAME: base = 0

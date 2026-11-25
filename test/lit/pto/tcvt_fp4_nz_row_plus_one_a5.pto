@@ -44,11 +44,11 @@ module {
 
 // The existing RowPlusOne allocator reserves the conservative 33023-byte
 // envelope ((256 - 1) * (128 + 1) + 128) aligned up to 33024 bytes. A dense
-// product(shape) footprint would start the overlapping-live tail at 49152,
+// product(shape) footprint would start the following source at 32768 and tail at 49152,
 // inside the last padded NZ panel.
 // PLAN-LABEL: func.func @tcvt_fp4_nz_row_plus_one
-// PLAN-DAG: %[[SRC:.*]] = arith.constant 0 : i64
-// PLAN-DAG: %[[DST:.*]] = arith.constant 16384 : i64
+// PLAN-DAG: %[[SRC:.*]] = arith.constant 33024 : i64
+// PLAN-DAG: %[[DST:.*]] = arith.constant 0 : i64
 // PLAN-DAG: %[[TAIL:.*]] = arith.constant 49408 : i64
 // PLAN: pto.alloc_tile addr = %[[SRC]]
 // PLAN: pto.alloc_tile addr = %[[DST]]
@@ -60,8 +60,8 @@ module {
 
 // Capacity stays at the maximum shape, independently of the valid region.
 // PLAN-LABEL: func.func @tcvt_fp4_nz_row_plus_one_partial
-// PLAN-DAG: %[[SRC_partial:.*]] = arith.constant 0 : i64
-// PLAN-DAG: %[[DST_partial:.*]] = arith.constant 16384 : i64
+// PLAN-DAG: %[[SRC_partial:.*]] = arith.constant 33024 : i64
+// PLAN-DAG: %[[DST_partial:.*]] = arith.constant 0 : i64
 // PLAN-DAG: %[[TAIL_partial:.*]] = arith.constant 49408 : i64
 // PLAN: pto.alloc_tile addr = %[[SRC_partial]]
 // PLAN: pto.alloc_tile addr = %[[DST_partial]]
@@ -73,8 +73,8 @@ module {
 
 // Capacity stays at the maximum shape, independently of the valid region.
 // PLAN-LABEL: func.func @tcvt_fp4_nz_row_plus_one_dynamic
-// PLAN-DAG: %[[SRC_dynamic:.*]] = arith.constant 0 : i64
-// PLAN-DAG: %[[DST_dynamic:.*]] = arith.constant 16384 : i64
+// PLAN-DAG: %[[SRC_dynamic:.*]] = arith.constant 33024 : i64
+// PLAN-DAG: %[[DST_dynamic:.*]] = arith.constant 0 : i64
 // PLAN-DAG: %[[TAIL_dynamic:.*]] = arith.constant 49408 : i64
 // PLAN: pto.alloc_tile addr = %[[SRC_dynamic]]
 // PLAN: pto.alloc_tile addr = %[[DST_dynamic]]

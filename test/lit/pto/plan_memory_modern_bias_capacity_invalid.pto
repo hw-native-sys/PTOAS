@@ -16,4 +16,6 @@ module {
   }
 }
 
-// CHECK: bias overflow, requires 8388608 bits while 524288 bits available
+// CHECK: bias overflow: cannot place a 1048576-byte buffer
+// CHECK: capacity: 65536 bytes
+// CHECK: largest free hole: 65536 bytes

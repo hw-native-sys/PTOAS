@@ -13,8 +13,14 @@
 - `--enable-plan-memory`
   自动内存规划总开关，当前只接受开启。
 
-- `--plan-memory-order-by-size`
-  默认关闭，只影响同一地址空间内的规划顺序：关闭时按 Tile 的**声明顺序**（`pto.alloc_tile` 在源程序中的先后）依次规划；开启后 `ptoas` 会在同一地址空间内优先规划较大的本地 buffer，再应用基础的内存复用策略。
+- `--plan-memory-allocator=interval`
+  默认且唯一支持的规划方式。自动预留缓冲区与 Tile 一起纳入容量预算，生命周期不冲突的大 Tile 可以复用多个小 Tile 腾出的连续空间。Vec 等非 Cube 本地空间优先规划较大的缓冲区；Mat、Left、Right、Acc 保持程序顺序。所有空间均遵守对齐、生命周期和禁止别名约束，多 slot 缓冲区的各 slot 地址连续。
+
+例如：
+
+```bash
+ptoas --pto-arch=a3 --pto-level=level2 input.pto -o output.cpp
+```
 
 ## 默认建议
 

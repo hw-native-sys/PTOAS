@@ -1,0 +1,23 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+
+// RUN: not ptoas --pto-arch=a3 --pto-level=level2 --plan-memory-allocator=interval --emit-pto-ir --mlir-print-ir-after=pto-plan-memory %s -o /dev/null 2>&1 | FileCheck %s
+module {
+  func.func @overflow(%gm: !pto.partition_tensor_view<128x256xf32>) {
+    %fifo = pto.reserve_buffer {name = "fifo", size = 131072, location = #pto.address_space<vec>, auto = true} -> i32
+    %tile = pto.alloc_tile : !pto.tile_buf<vec, 128x256xf32>
+    pto.tload ins(%gm : !pto.partition_tensor_view<128x256xf32>) outs(%tile : !pto.tile_buf<vec, 128x256xf32>)
+    pto.tstore ins(%tile : !pto.tile_buf<vec, 128x256xf32>) outs(%gm : !pto.partition_tensor_view<128x256xf32>)
+    return
+  }
+}
+// CHECK: vec overflow: cannot place a 131072-byte buffer
+// CHECK: capacity: 196608 bytes
+// CHECK: already planned: 131072 bytes
+// CHECK: largest free hole: 65536 bytes
+// CHECK: peak live (linear lifetime estimate): 262144 bytes

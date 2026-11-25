@@ -46,16 +46,16 @@
 
 // MODERN-LABEL: func.func @dn_x2zz_src_last_use_dst_first_write
 // MODERN-DAG: %[[DN0:.*]] = arith.constant 0 : i64
-// MODERN-DAG: %[[DN768:.*]] = arith.constant 768 : i64
+// MODERN-DAG: %[[DN512:.*]] = arith.constant 512 : i64
 // MODERN: pto.alloc_tile addr = %[[DN0]] : !pto.tile_buf<vec, 16x32xui8>
 // MODERN: pto.alloc_tile addr = %{{.*}} : !pto.tile_buf<vec, 1x32xui8, valid=1x1>
-// MODERN: pto.alloc_tile addr = %[[DN768]] : !pto.tile_buf<vec, 16x32xui8, slayout=row_major>
+// MODERN: pto.alloc_tile addr = %[[DN512]] : !pto.tile_buf<vec, 16x32xui8, slayout=row_major>
 // MODERN-LABEL: func.func @nd_x2zz_src_last_use_dst_first_write
 // MODERN-DAG: %[[ND0:.*]] = arith.constant 0 : i64
-// MODERN-DAG: %[[ND1280:.*]] = arith.constant 1280 : i64
+// MODERN-DAG: %[[ND1024:.*]] = arith.constant 1024 : i64
 // MODERN: pto.alloc_tile addr = %[[ND0]] : !pto.tile_buf<vec, 32x32xui8, valid=20x32>
 // MODERN: pto.alloc_tile addr = %{{.*}} : !pto.tile_buf<vec, 1x128xui8, valid=1x32>
-// MODERN: pto.alloc_tile addr = %[[ND1280]] : !pto.tile_buf<vec, 32x32xui8, valid=20x32, slayout=row_major>
+// MODERN: pto.alloc_tile addr = %[[ND1024]] : !pto.tile_buf<vec, 32x32xui8, valid=20x32, slayout=row_major>
 // MODERN-LABEL: func.func @tquant_src_vs_each_output
 // MODERN-DAG: %[[TQ_SRC:.*]] = arith.constant 0 : i64
 // MODERN-DAG: %[[TQ_DST:.*]] = arith.constant 2048 : i64
@@ -197,7 +197,7 @@ module attributes {pto.target_arch = "a5"} {
   func.func @x2zz_src_tmp_explicit_overlap() {
     %c0 = arith.constant 0 : i64
     %c256 = arith.constant 256 : i64
-    %c768 = arith.constant 768 : i64
+    %c768 = arith.constant 512 : i64
     %src = pto.alloc_tile addr = %c0 : !pto.tile_buf<vec, 16x32xui8>
     %tmp = pto.alloc_tile addr = %c256 : !pto.tile_buf<vec, 1x96xui8, valid=1x32>
     %dst = pto.alloc_tile addr = %c768 : !pto.tile_buf<vec, 16x32xui8, slayout=row_major>
@@ -212,7 +212,7 @@ module attributes {pto.target_arch = "a5"} {
   func.func @x2zz_tmp_dst_explicit_overlap() {
     %c0 = arith.constant 0 : i64
     %c512 = arith.constant 512 : i64
-    %c768 = arith.constant 768 : i64
+    %c768 = arith.constant 512 : i64
     %src = pto.alloc_tile addr = %c0 : !pto.tile_buf<vec, 16x32xui8>
     %tmp = pto.alloc_tile addr = %c768 : !pto.tile_buf<vec, 1x96xui8, valid=1x32>
     %dst = pto.alloc_tile addr = %c512 : !pto.tile_buf<vec, 16x32xui8, slayout=row_major>
