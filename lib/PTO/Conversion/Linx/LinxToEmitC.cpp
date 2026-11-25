@@ -21,6 +21,8 @@
 using namespace mlir;
 using namespace mlir::pto::linx;
 
+constexpr unsigned kLoweredArgumentsPerSourceArgument = 2;
+
 static std::string tileName(TileBufType type, TileRole role)
 {
     StringRef roleName = role == TileRole::Left ? "Left" : role == TileRole::Right ? "Right" : "Vec";
@@ -116,8 +118,9 @@ static void lowerFunction(func::FuncOp source, OpBuilder& b, const LinxTileRoleA
     llvm::DenseMap<Value, Value> values;
     for (auto item : llvm::enumerate(source.getArguments())) {
         values[item.value()] = buildGM(
-            b, loc, cast<GMViewType>(item.value().getType()), body->getArgument(2 * item.index()),
-            body->getArgument(2 * item.index() + 1));
+            b, loc, cast<GMViewType>(item.value().getType()),
+            body->getArgument(kLoweredArgumentsPerSourceArgument * item.index()),
+            body->getArgument(kLoweredArgumentsPerSourceArgument * item.index() + 1));
     }
     for (Operation& op : source.getBody().front()) {
         lowerOperation(op, b, values, roles);

@@ -43,6 +43,8 @@ using namespace mlir::pto;
 
 namespace {
 
+constexpr unsigned kMultiplyOperandCount = 2;
+
 static void fuseMultiplyAdds(ModuleOp module)
 {
     if (!getVMIFastmathState(module)) {
@@ -57,7 +59,7 @@ static void fuseMultiplyAdds(ModuleOp module)
             continue;
         }
 
-        for (unsigned productIndex = 0; productIndex < 2; ++productIndex) {
+        for (unsigned productIndex = 0; productIndex < kMultiplyOperandCount; ++productIndex) {
             auto multiply = add->getOperand(productIndex).getDefiningOp<VMIVmulOp>();
             if (!multiply || !multiply.getResult().hasOneUse() ||
                 multiply.getResult().getType() != resultType ||

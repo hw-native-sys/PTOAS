@@ -19,6 +19,10 @@
 
 namespace mlir::pto::linx {
 
+constexpr size_t kLinxShapeRank = 2;
+constexpr int64_t kN8RowAlignment = 4;
+constexpr int64_t kN8ColumnAlignment = 8;
+
 void PTODialect::initializeTypes()
 {
     addTypes<
@@ -69,8 +73,8 @@ LogicalResult TileBufType::verify(function_ref<InFlightDiagnostic()> emitError,
         physicalRows = height;
         physicalCols = ((cols + width - 1) / width) * width;
     } else if (layout == TileLayout::N8) {
-        physicalRows = ((rows + 3) / 4) * 4;
-        physicalCols = ((cols + 7) / 8) * 8;
+        physicalRows = ((rows + kN8RowAlignment - 1) / kN8RowAlignment) * kN8RowAlignment;
+        physicalCols = ((cols + kN8ColumnAlignment - 1) / kN8ColumnAlignment) * kN8ColumnAlignment;
     } else if (layout != TileLayout::RowMajor) {
         return emitError() << "invalid Linx tile layout";
     }
@@ -133,7 +137,7 @@ static Type parseShapedType(AsmParser& parser, bool tile)
     if (parser.parseGreater()) {
         return {};
     }
-    if (shape.size() != 2) {
+    if (shape.size() != kLinxShapeRank) {
         parser.emitError(parser.getCurrentLocation(), "Linx requires a rank-2 shape");
         return {};
     }
