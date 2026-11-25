@@ -43,15 +43,19 @@ log "start run test case, please wait ..."
 export ASCEND_GLOBAL_LOG_LEVEL=2
 export ASCEND_SLOG_PRINT_TO_STDOUT=0
 
-# devtoolset-7 only exists on the CentOS based A2 image. The A5 image is Ubuntu 24.04,
-# which ships gcc 13 and has no /opt/rh tree; sourcing it unconditionally aborts the
-# whole smoke under `set -e`. build.sh already decides on its own whether the
-# devtoolset sysroot is usable, so skipping the activation there is safe.
+# devtoolset-7 lowers the GLIBC floor on the CentOS based A2 image. Some A5 images
+# ship the same SCL tree with gcc 7.3.1: LLVM refuses that compiler (it requires
+# gcc >= 7.4), its libstdc++ headers break the A5 kernel builds, and build.sh
+# would also select that sysroot on a host with a newer glibc. Activate the tree
+# on CentOS images only and drop it elsewhere.
 TOOLCHAIN_ENV=/opt/rh/devtoolset-7/enable
-if [ -f "${TOOLCHAIN_ENV}" ]; then
+if [ -f "${TOOLCHAIN_ENV}" ] && [ -f /etc/redhat-release ]; then
   echo "using devtoolset-7 from ${TOOLCHAIN_ENV}"
+elif [ -d /opt/rh/devtoolset-7 ]; then
+  echo "removing devtoolset-7 on the A5 image, using the image default toolchain"
+  sudo -n rm -rf /opt/rh/devtoolset-7 2>/dev/null || rm -rf /opt/rh/devtoolset-7
 else
-  echo "devtoolset-7 not present (non-CentOS image), using the image default toolchain"
+  echo "devtoolset-7 not present, using the image default toolchain"
 fi
 
 # /usr/bin/python3.10 is what the PTODSL Python bindings are built against on the A2
@@ -85,7 +89,7 @@ command -v ld.lld >/dev/null 2>&1 && ld.lld --version | head -1
 
 sudo pip3 install ninja
 (
-if [ -f "${TOOLCHAIN_ENV}" ]; then
+if [ -f "${TOOLCHAIN_ENV}" ] && [ -f /etc/redhat-release ]; then
   source "${TOOLCHAIN_ENV}"
 fi
 mkdir -p /tmp/py310shim
