@@ -550,6 +550,201 @@ def _declared_signature_specs(op, parameter_names, signature):
     return specs
 
 
+# Shared destination of the two GM -> MAT tload variants: only the source
+# strides distinguish the ND and DN inputs.
+_GM_TO_MAT_DST = TileSpec(
+    shape=(8, 64),
+    dtype=ScalarType("f16"),
+    memory_space="mat",
+    b_layout="col_major",
+    s_layout="row_major",
+)
+
+_TLOAD_VERSION_CASES = (
+    (
+        "template_tload_dn2dn",
+        {
+            "src": ViewSpec(
+                shape=(1, 1, 1, 8, 64),
+                dtype=ScalarType("f32"),
+                strides=(512, 512, 512, 1, 8),
+            ),
+            "dst": TileSpec(
+                shape=(8, 64),
+                dtype=ScalarType("f32"),
+                b_layout="col_major",
+            ),
+        },
+        "pto.mte_gm_ub",
+    ),
+    (
+        "template_tload_nz2nz",
+        {
+            "src": ViewSpec(
+                shape=(1, 1, 8, 1, 64),
+                dtype=ScalarType("f32"),
+                strides=(512, 512, 64, 64, 1),
+            ),
+            "dst": TileSpec(
+                shape=(8, 64),
+                dtype=ScalarType("f32"),
+                b_layout="col_major",
+                s_layout="row_major",
+            ),
+        },
+        "pto.mte_gm_ub",
+    ),
+    # #1768: a canonical NZ view multiplies g3 into the logical rows
+    # (g2 * g3 = 32) and bounds the columns by g0 * g1 * g4 = 16.
+    (
+        "template_tload_nz2nz",
+        {
+            "src": ViewSpec(
+                shape=(2, 1, 2, 16, 8),
+                dtype=ScalarType("f32"),
+                strides=(256, 256, 128, 8, 1),
+                layout="nz",
+            ),
+            "dst": TileSpec(
+                shape=(32, 16),
+                dtype=ScalarType("f32"),
+                b_layout="col_major",
+                s_layout="row_major",
+            ),
+        },
+        "pto.mte_gm_ub",
+    ),
+    (
+        "template_tload_gm_to_mat_nd2nz",
+        {
+            "src": ViewSpec(
+                shape=(1, 1, 1, 8, 64),
+                dtype=ScalarType("f16"),
+                strides=(512, 512, 512, 64, 1),
+            ),
+            "dst": _GM_TO_MAT_DST,
+        },
+        "pto.mte_gm_l1_frac",
+    ),
+    (
+        "template_tload_gm_to_mat_dn2nz",
+        {
+            "src": ViewSpec(
+                shape=(1, 1, 1, 8, 64),
+                dtype=ScalarType("f16"),
+                strides=(512, 512, 512, 1, 8),
+            ),
+            "dst": _GM_TO_MAT_DST,
+        },
+        "pto.mte_gm_l1_frac",
+    ),
+)
+
+_TSTORE_VERSION_CASES = (
+    (
+        "template_tstore_dn",
+        {
+            "src": TileSpec(
+                shape=(8, 64),
+                dtype=ScalarType("f32"),
+                b_layout="col_major",
+            ),
+            "dst": ViewSpec(
+                shape=(1, 1, 1, 8, 64),
+                dtype=ScalarType("f32"),
+                strides=(512, 512, 512, 1, 8),
+            ),
+        },
+        "pto.mte_ub_gm",
+    ),
+    (
+        "template_tstore_nz",
+        {
+            "src": TileSpec(
+                shape=(8, 64),
+                dtype=ScalarType("f32"),
+                b_layout="col_major",
+                s_layout="row_major",
+            ),
+            "dst": ViewSpec(
+                shape=(1, 1, 8, 1, 64),
+                dtype=ScalarType("f32"),
+                strides=(512, 512, 64, 64, 1),
+            ),
+        },
+        "pto.mte_ub_gm",
+    ),
+    # #1768: symmetric store path -- the tile's valid shape must fit
+    # the canonical NZ view geometry g2 * g3 rows by g0 * g1 * g4 cols.
+    (
+        "template_tstore_nz",
+        {
+            "src": TileSpec(
+                shape=(32, 16),
+                dtype=ScalarType("f32"),
+                b_layout="col_major",
+                s_layout="row_major",
+            ),
+            "dst": ViewSpec(
+                shape=(2, 1, 2, 16, 8),
+                dtype=ScalarType("f32"),
+                strides=(256, 256, 128, 8, 1),
+                layout="nz",
+            ),
+        },
+        "pto.mte_ub_gm",
+    ),
+    (
+        "template_tstore_acc_to_gm_nz2nd",
+        {
+            "src": TileSpec(
+                shape=(8, 64),
+                dtype=ScalarType("f32"),
+                memory_space="acc",
+            ),
+            "dst": ViewSpec(
+                shape=(1, 1, 1, 8, 64),
+                dtype=ScalarType("f32"),
+                layout="nd",
+            ),
+        },
+        "pto.mte_l0c_gm",
+    ),
+    (
+        "template_tstore_acc_to_gm_nz2dn",
+        {
+            "src": TileSpec(
+                shape=(8, 64),
+                dtype=ScalarType("f32"),
+                memory_space="acc",
+            ),
+            "dst": ViewSpec(
+                shape=(1, 1, 1, 8, 64),
+                dtype=ScalarType("f32"),
+                layout="dn",
+            ),
+        },
+        "pto.mte_l0c_gm",
+    ),
+    (
+        "template_tstore_acc_to_gm_nz2nz",
+        {
+            "src": TileSpec(
+                shape=(8, 64),
+                dtype=ScalarType("f32"),
+                memory_space="acc",
+            ),
+            "dst": ViewSpec(
+                shape=(1, 1, 1, 8, 64),
+                dtype=ScalarType("f32"),
+                layout="nz",
+            ),
+        },
+        "pto.mte_l0c_gm",
+    ),
+)
+
+
 class TileLibCatalogTest(unittest.TestCase):
     def test_tilelib_does_not_duplicate_the_public_ptodsl_surface(self):
         for name in (
@@ -1118,79 +1313,8 @@ class TileLibCatalogTest(unittest.TestCase):
                 self._assert_colarg_value_output_case(op, src_dtype, index_dtype)
 
     def test_tload_versions_render(self):
-        cases = (
-            (
-                "template_tload_dn2dn",
-                {
-                    "src": ViewSpec(
-                        shape=(1, 1, 1, 8, 64),
-                        dtype=ScalarType("f32"),
-                        strides=(512, 512, 512, 1, 8),
-                    ),
-                    "dst": TileSpec(
-                        shape=(8, 64),
-                        dtype=ScalarType("f32"),
-                        b_layout="col_major",
-                    ),
-                },
-                "pto.mte_gm_ub",
-            ),
-            (
-                "template_tload_nz2nz",
-                {
-                    "src": ViewSpec(
-                        shape=(1, 1, 8, 1, 64),
-                        dtype=ScalarType("f32"),
-                        strides=(512, 512, 64, 64, 1),
-                    ),
-                    "dst": TileSpec(
-                        shape=(8, 64),
-                        dtype=ScalarType("f32"),
-                        b_layout="col_major",
-                        s_layout="row_major",
-                    ),
-                },
-                "pto.mte_gm_ub",
-            ),
-            (
-                "template_tload_gm_to_mat_nd2nz",
-                {
-                    "src": ViewSpec(
-                        shape=(1, 1, 1, 8, 64),
-                        dtype=ScalarType("f16"),
-                        strides=(512, 512, 512, 64, 1),
-                    ),
-                    "dst": TileSpec(
-                        shape=(8, 64),
-                        dtype=ScalarType("f16"),
-                        memory_space="mat",
-                        b_layout="col_major",
-                        s_layout="row_major",
-                    ),
-                },
-                "pto.mte_gm_l1_frac",
-            ),
-            (
-                "template_tload_gm_to_mat_dn2nz",
-                {
-                    "src": ViewSpec(
-                        shape=(1, 1, 1, 8, 64),
-                        dtype=ScalarType("f16"),
-                        strides=(512, 512, 512, 1, 8),
-                    ),
-                    "dst": TileSpec(
-                        shape=(8, 64),
-                        dtype=ScalarType("f16"),
-                        memory_space="mat",
-                        b_layout="col_major",
-                        s_layout="row_major",
-                    ),
-                },
-                "pto.mte_gm_l1_frac",
-            ),
-        )
-        for expected_name, specs, expected_op in cases:
-            with self.subTest(expected_name=expected_name):
+        for expected_name, specs, expected_op in _TLOAD_VERSION_CASES:
+            with self.subTest(expected_name=expected_name, shape=specs["src"].shape):
                 selected = select("pto.tload", "a5", specs)
                 self.assertEqual(selected.name, expected_name)
                 self.assertIn(expected_op, selected.specialize(**specs).mlir_text())
@@ -1460,91 +1584,8 @@ class TileLibCatalogTest(unittest.TestCase):
                 self.assertIn("pto.mte_ub_gm", store.specialize(**store_specs).mlir_text())
 
     def test_tstore_versions_render(self):
-        cases = (
-            (
-                "template_tstore_dn",
-                {
-                    "src": TileSpec(
-                        shape=(8, 64),
-                        dtype=ScalarType("f32"),
-                        b_layout="col_major",
-                    ),
-                    "dst": ViewSpec(
-                        shape=(1, 1, 1, 8, 64),
-                        dtype=ScalarType("f32"),
-                        strides=(512, 512, 512, 1, 8),
-                    ),
-                },
-                "pto.mte_ub_gm",
-            ),
-            (
-                "template_tstore_nz",
-                {
-                    "src": TileSpec(
-                        shape=(8, 64),
-                        dtype=ScalarType("f32"),
-                        b_layout="col_major",
-                        s_layout="row_major",
-                    ),
-                    "dst": ViewSpec(
-                        shape=(1, 1, 8, 1, 64),
-                        dtype=ScalarType("f32"),
-                        strides=(512, 512, 64, 64, 1),
-                    ),
-                },
-                "pto.mte_ub_gm",
-            ),
-            (
-                "template_tstore_acc_to_gm_nz2nd",
-                {
-                    "src": TileSpec(
-                        shape=(8, 64),
-                        dtype=ScalarType("f32"),
-                        memory_space="acc",
-                    ),
-                    "dst": ViewSpec(
-                        shape=(1, 1, 1, 8, 64),
-                        dtype=ScalarType("f32"),
-                        layout="nd",
-                    ),
-                },
-                "pto.mte_l0c_gm",
-            ),
-            (
-                "template_tstore_acc_to_gm_nz2dn",
-                {
-                    "src": TileSpec(
-                        shape=(8, 64),
-                        dtype=ScalarType("f32"),
-                        memory_space="acc",
-                    ),
-                    "dst": ViewSpec(
-                        shape=(1, 1, 1, 8, 64),
-                        dtype=ScalarType("f32"),
-                        layout="dn",
-                    ),
-                },
-                "pto.mte_l0c_gm",
-            ),
-            (
-                "template_tstore_acc_to_gm_nz2nz",
-                {
-                    "src": TileSpec(
-                        shape=(8, 64),
-                        dtype=ScalarType("f32"),
-                        memory_space="acc",
-                    ),
-                    "dst": ViewSpec(
-                        shape=(1, 1, 1, 8, 64),
-                        dtype=ScalarType("f32"),
-                        layout="nz",
-                    ),
-                },
-                "pto.mte_l0c_gm",
-            ),
-        )
-        for expected_name, specs, expected_op in cases:
-            with self.subTest(expected_name=expected_name):
+        for expected_name, specs, expected_op in _TSTORE_VERSION_CASES:
+            with self.subTest(expected_name=expected_name, shape=specs["dst"].shape):
                 selected = select("pto.tstore", "a5", specs)
                 self.assertEqual(selected.name, expected_name)
                 self.assertIn(expected_op, selected.specialize(**specs).mlir_text())
