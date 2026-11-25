@@ -6,7 +6,7 @@
 
 ## 1. 目标与边界
 
-新增 Linx 专用的 PTO dialect 实现，独立定义类型、属性、操作、verify、分析和到 EmitC 的转换，最终调用 pto-isa 的 Linx C++ API。**文本命名继续使用 `pto.txxx`、`!pto.tile_buf` 等 `pto` 命名；内部实现与 A3/A5 隔离。** A3/A5 继续使用已有 PTO dialect 和编译链。
+新增 Linx 专用的 PTO dialect 实现，独立定义类型、属性、操作、verify、分析和到 EmitC 的转换，最终调用 pto-isa 的 Linx C++ API。**Linx 文本命名使用 `pto.linx.txxx`、`!pto.linx.tile_buf` 等 `pto.linx` 命名；内部实现与 A3/A5 隔离。** A3/A5 继续使用已有 PTO dialect 和编译链。
 
 这里的“独立”指目标语义和转换实现独立，不要求复制 MLIR、另写 C++ 打印器或另造命令行程序。`func`、`arith`、`scf`、PassManager、诊断和通用 EmitC C++ 翻译设施可以复用；复用前提是它们不包含 Ascend 地址空间、布局、同步或 TileLib 规则。
 
@@ -18,7 +18,7 @@
 - `linx-tile-ir-op-reference.md`：操作清单、逐 op 约束与待确认问题。
 - pto-isa Linx C++ API：作为版本固定的 lowering 契约和编译运行验证后端。
 
-前两份手册使用的 `pto.*` 和 `!pto.*` 拼写保持不变。本方案继承其中经确认的 **Linx 语义**，不承诺直接接受原文全部参数组合，也不把手册中的待确认项当成已确定规范。同名操作在不同目标下可以有独立签名和限制，文本名称相同不意味着共用 ODS、C++ 类或 verifier。
+前两份手册中的 Linx 操作和类型统一迁移为 `pto.linx.*` 和 `!pto.linx.*` 拼写。本方案继承其中经确认的 **Linx 语义**，不承诺直接接受原文全部参数组合，也不把手册中的待确认项当成已确定规范。相同计算在不同目标下可以有独立签名和限制，不共用 ODS、C++ 类或 verifier。
 
 ## 2. 为什么独立建模
 
@@ -54,32 +54,32 @@ test/linx/
   IR/  Verify/  Analysis/  Conversion/  Driver/  Runtime/
 ```
 
-`LinxIR` 不依赖 `PTOIR`；Linx 转换库不依赖 `PTOToEmitC`、ExpandTileOp、PlanMemory、Ascend 同步或 PTODSL TileLib。工具可同时链接两套实现的库，但必须按目标为每个 MLIRContext 选择其中一套注册；不能把两套同名 `pto` dialect 同时加入同一个 registry/context。
+`LinxIR` 不依赖 `PTOIR`；Linx 转换库不依赖 `PTOToEmitC`、ExpandTileOp、PlanMemory、Ascend 同步或 PTODSL TileLib。两套 dialect 的dialect namespace 都是 `pto`，Linx 的操作名和类型 mnemonic 使用 `linx.` 前缀；两套实现必须按目标在独立 context 中互斥注册。
 
 不得在已有 PTO op 的 verifier、PTO 类型、地址空间枚举或逐 op lowering 中新增 Linx 分支。若当前 EmitC 文本翻译入口夹带 PTO 特定逻辑，只抽取与目标无关的打印功能，Linx 的 include、类型别名和 API 调用构造仍归 Linx 转换库。
 
-### 3.1 同名语法与独立内部实现
+### 3.1 独立文本命名与内部实现
 
 | 项目 | A3/A5 | Linx |
 |---|---|---|
-| 文本 dialect namespace | `pto` | `pto` |
-| 文本操作名 | `pto.tadd` 等 | `pto.tadd` 等，保持命名 |
+| 文本 dialect namespace | `pto` | `pto`（操作和类型增加 `linx.` 前缀） |
+| 文本操作名 | `pto.tadd` 等 | `pto.linx.tadd` 等 |
 | C++ namespace | 保留现有命名空间 | 独立 `mlir::pto::linx` |
 | C++ dialect/op/type 类 | 现有类 | 独立类与 TypeID，例如 `linx::PTODialect`、`linx::TAddOp` |
 | ODS 与生成文件 | 现有 PTO 定义 | 独立 TableGen 记录名、生成目标及 include 路径 |
 | verify/分析/lowering | 现有编译链 | Linx 专用编译链 |
 
-Linx 的 ODS dialect 设置文本名称 `pto`，C++ namespace 设置 `::mlir::pto::linx`。TableGen 记录、生成文件、库符号和 pass 注册名均需隔离；例如 lowering pass 使用 `linx-pto-to-emitc`，不能重复注册原 pass 名。patterns 通过 Linx C++ Op 类型匹配，不通过字符串 `pto.tadd` 猜测目标。
+Linx 的 ODS dialect 设置文本名称 `pto`，操作名与类型 mnemonic 增加 `linx.` 前缀，C++ namespace 设置 `::mlir::pto::linx`。TableGen 记录、生成文件、库符号和 pass 注册名均需隔离；例如 lowering pass 使用 `linx-pto-to-emitc`，不能重复注册原 pass 名。patterns 通过 Linx C++ Op 类型匹配，不通过字符串 `pto.linx.tadd` 猜测目标。
 
 C++ 类完整名称使用 `mlir::pto::linx::PTODialect`、`mlir::pto::linx::TAddOp` 和 `mlir::pto::linx::TileBufType`。类的短名可以与原 PTO 实现相同，靠命名空间和独立 TypeID 区分；不另建大小写不同的 `PTO::Linx` 命名空间。若调用方需要短写，可在局部使用 namespace alias；作用域分隔符始终为 `::`。
 
 ### 3.2 Context、前端范围与序列化边界
 
-一个 context 只加载一种 PTO 实现。需要在同一进程处理两个目标时，使用两个独立 context 和 pipeline；不能把两套 IR 对象跨 context 直接传递。首阶段不支持一个 module 混合两种目标，即使函数分别带有 target 属性也不支持。
+两套 dialect 的 namespace 相同，不能同时注册到同一 context。当前 CLI 仍为 Linx 使用独立 context 和 pipeline；不能把 IR 对象跨 context 直接传递。首阶段不支持一个 module 混合两种目标，即使函数分别带有 target 属性也不支持。
 
-第一阶段不实现 Python bindings 和 CAPI 前端。测试直接编写 MLIR 层级的文本 IR 文件（扩展名规定为 `.pto`），由原生工具选择 Linx 实现后解析、verify、lowering，再对生成的 C++ 进行远端 CPU-sim 验证。后续如扩展 bindings/CAPI，必须显式选择 context 对应的目标实现，禁止自动注册两套同名 dialect。
+第一阶段不实现 Python bindings 和 CAPI 前端。测试直接编写 MLIR 层级的文本 IR 文件（扩展名规定为 `.pto`），由原生工具选择 Linx 实现后解析、verify、lowering，再对生成的 C++ 进行远端 CPU-sim 验证。后续如扩展 bindings/CAPI，必须显式选择 context 对应的目标实现，按目标接入各自独立的编译 pipeline。
 
-同名 dialect 的文本名称和 bytecode 中的 namespace 均不足以区分实现。文本输入依靠解析前的目标选择，module target 用于解析后的交叉检查；工具日志与复现命令必须携带目标。已有 PTOBC 不自动兼容 Linx；定义 dialect 版本、编码和解析前可读取的目标标识之前，Linx 路径明确拒绝该输入。所有独立 opt/翻译工具也遵循同样的注册规则。
+文本操作和类型通过 `pto.linx.*` 名称区分目标语义，module target 用于交叉检查。已有 PTOBC 不自动兼容 Linx；实现相应编码和版本支持之前，Linx 路径明确拒绝 bytecode 输入。
 
 ## 4. 前端 IR
 
@@ -88,9 +88,9 @@ C++ 类完整名称使用 `mlir::pto::linx::PTODialect`、`mlir::pto::linx::TAdd
 初始静态 local f32 类型形式如下；当前 vadd 路径支持这些类型和文件头类型别名。
 
 ```mlir
-!X = !pto.tile_buf<local, 16x128xf32, blayout=row_major>
-!R = !pto.tile_buf<local, 16x1xf32, blayout=row_major>
-!G = !pto.partition_tensor_view<16x128xf32>
+!X = !pto.linx.tile_buf<local, 16x128xf32, blayout=row_major>
+!R = !pto.linx.tile_buf<local, 16x1xf32, blayout=row_major>
+!G = !pto.linx.partition_tensor_view<16x128xf32>
 ```
 
 - `tile_buf` 描述存储类、静态物理形状、元素类型、布局、有效区域及必要的填充语义；没有 addr、Ascend slayout/fractal 和 Left/Right location。
@@ -102,7 +102,7 @@ C++ 类完整名称使用 `mlir::pto::linx::PTODialect`、`mlir::pto::linx::TAdd
 
 MLIR builtin 的 `f32/f16/bf16` 等基础类型可复用，但合法 dtype 组合、signedness、packing、C++ 名称与数值语义必须独立映射。不能认为双方都写 `i8` 就可直接无条件复用转换：需明确 signless 整数的有符号解释、无符号类型和标量扩展规则。packed FP4 等还需区分逻辑元素数量、存储字节数和 GM 索引单位。
 
-特殊格式优先使用语义准确的 MLIR builtin 类型；确实无法表达时新增 Linx 自有类型，使用独立 Linx C++ 类型实现，文本仍归属 `!pto.*`，不依赖 A3/A5 的类型类。TF32 等可能属于运算精度模式，必须按后端契约判断，不能一概定义成存储类型。首批只开放经验证的 f32 组合。
+特殊格式优先使用语义准确的 MLIR builtin 类型；确实无法表达时新增 Linx 自有类型，使用独立 Linx C++ 类型实现，文本仍归属 `!pto.linx.*`，不依赖 A3/A5 的类型类。TF32 等可能属于运算精度模式，必须按后端契约判断，不能一概定义成存储类型。首批只开放经验证的 f32 组合。
 
 ### 4.2 操作与状态模型
 
@@ -112,13 +112,13 @@ MLIR builtin 的 `f32/f16/bf16` 等基础类型可复用，但合法 dtype 组�
 ```mlir
 module attributes {pto.target_arch = "linx", pto.linx_profile = "cpu-sim"} {
   func.func @vadd(%ga: !G, %gb: !G, %gc: !G) {
-    %a = pto.alloc_tile : !X
-    %b = pto.alloc_tile : !X
-    %c = pto.alloc_tile : !X
-    pto.tload ins(%ga : !G) outs(%a : !X)
-    pto.tload ins(%gb : !G) outs(%b : !X)
-    pto.tadd ins(%a, %b : !X, !X) outs(%c : !X)
-    pto.tstore ins(%c : !X) outs(%gc : !G)
+    %a = pto.linx.alloc_tile : !X
+    %b = pto.linx.alloc_tile : !X
+    %c = pto.linx.alloc_tile : !X
+    pto.linx.tload ins(%ga : !G) outs(%a : !X)
+    pto.linx.tload ins(%gb : !G) outs(%b : !X)
+    pto.linx.tadd ins(%a, %b : !X, !X) outs(%c : !X)
+    pto.linx.tstore ins(%c : !X) outs(%gc : !G)
     return
   }
 }
@@ -171,7 +171,7 @@ PTOAS 负责表达并保留 PE mask、参与一致性、读写窗口、generatio
 
 ```text
 CLI 选择 Linx 输入模式
-  → 创建只注册 Linx PTO 实现的 context（文本 namespace 为 pto）
+  → 创建只注册 Linx PTO 实现的 context（文本 namespace 为 pto，操作/类型前缀为 pto.linx）
   → 解析 Linx PTO + 允许的通用 dialect
   → 类型/op verify + module 边界检查
   → Linx 初始化/别名/生命周期校验
@@ -194,9 +194,9 @@ CLI 选择 Linx 输入模式
 选择 Linx  → Linx PTO dialect/context → Linx verifier → Linx pipeline
 ```
 
-工具入口的目标分派是允许的；每个 op 的定义、verify 和 lowering 不再按架构分支。未显式选择架构时保持现有 A3/A5 CLI 默认行为，Linx 输入必须显式选择 Linx；不能仅凭 `pto.*` 名称自动识别。
+工具入口的目标分派是允许的；每个 op 的定义、verify 和 lowering 不再按架构分支。未显式选择架构时保持现有 A3/A5 CLI 默认行为，Linx 输入必须显式选择 Linx；当前不根据 `pto.linx.*` 名称自动选择目标。
 
-保留 module 的 `pto.target_arch = "linx"` 作为交叉检查，profile 可用 `pto.linx_profile = "cpu-sim"` 字符串属性描述。module 属性与 CLI 显式值冲突时报错。目标一经用于构造 context 就不可切换；module 属性不驱动第二轮解析。Linx context 按自己的定义拒绝 Ascend 地址、同步和其他不支持的 op/类型组合，不能因为名字都叫 `pto.*` 就放行。`func/arith/scf` 是否允许由阶段支持清单确定。
+保留 module 的 `pto.target_arch = "linx"` 作为交叉检查，profile 可用 `pto.linx_profile = "cpu-sim"` 字符串属性描述。module 属性与 CLI 显式值冲突时报错。目标一经用于构造 context 就不可切换；module 属性不驱动第二轮解析。Linx context 按自己的定义拒绝 Ascend 地址、同步和其他不支持的 op/类型组合，不能接受其他 dialect 的 op/类型组合。`func/arith/scf` 是否允许由阶段支持清单确定。
 
 ### 7.2 C++ 类型角色
 
@@ -226,18 +226,18 @@ local 角色要求冲突时诊断两个使用点，不通过字符串替换、�
 
 ## 8. 迁移与兼容
 
-用户继续使用 `pto.txxx`、`!pto.tile_buf`、`!pto.partition_tensor_view` 和已有类型别名写法，无需进行 `pto` 到 `linx` 的名称迁移。已有 A3/A5 文件继续走原编译链。
+Linx 用户将操作和类型前缀从 `pto.xxx` 迁移为 `pto.linx.xxx`，保留已有类型别名写法。已有 A3/A5 文件继续走原编译链。
 
-| 既有 Linx 表示 | 新链路处理 |
+| 新 Linx 表示 | 新链路处理 |
 |---|---|
-| `!pto.tile_buf<local,...>` | 保留拼写，由 Linx 自有类型 parser/verifier 处理 |
-| `!pto.partition_tensor_view<...>` | 保留拼写，按 Linx 二维与 stride 契约检查 |
-| `pto.alloc_tile/tadd/...` | 保留名称，由独立 Linx Op 定义与 lowering 处理 |
+| `!pto.linx.tile_buf<local,...>` | 使用独立前缀，由 Linx 自有类型 parser/verifier 处理 |
+| `!pto.linx.partition_tensor_view<...>` | 使用独立前缀，按 Linx 二维与 stride 契约检查 |
+| `pto.linx.alloc_tile/tadd/...` | 使用独立前缀，由独立 Linx Op 定义与 lowering 处理 |
 | `pto.target_arch="linx"` | 保留属性；命令行必须在解析前选择 Linx 实现 |
 
-保持名称不代表全部旧输入天然兼容。需要逐项核对参数、默认值、类型语法和状态语义；例如归约的无 tmp 签名由 Linx 独立定义。确需转换的旧参数提供显式迁移工具和诊断，不通过全局文本替换或复用 Ascend verifier 放行。
+前缀迁移不代表全部旧输入天然兼容。需要逐项核对参数、默认值、类型语法和状态语义；例如归约的无 tmp 签名由 Linx 独立定义。确需转换的旧参数提供显式迁移工具和诊断，不通过全局文本替换或复用 Ascend verifier 放行。
 
-新旧 Linx 路径不能在同一 context 同时注册。在新链路达到验收条件之前，如需保留原路径，应通过明确的实验性入口/配置选择不同 context；切换默认入口、弃用/删除旧共享路径另做明确变更。
+两套 PTO dialect 使用相同 namespace，必须互斥注册；当前不支持混合编译。在新链路达到验收条件之前，如需保留原路径，应通过明确的实验性入口/配置选择不同 context；切换默认入口、弃用/删除旧共享路径另做明确变更。
 
 ## 9. 分批实施与验收
 
@@ -263,7 +263,7 @@ P4 内部先接入固定后端已有完整实现和 CPU-sim 入口的 API，再�
 - vadd：非恒定输入、非连续行 stride、输出 guard 与输入不变性。
 - matmul：M16/M32 与 N8 的布局敏感输入，独立标量参考、非对称矩阵；误差标准按实际运算精度制定。
 - softmax：减行最大值的稳定算法；大正负值、重复最大值、随机数据，与 f64 参考逐元素比较，同时检查行和、非负性、越界写。NaN/Inf 单列 API 语义测试，不能默认与有限输入同一标准。
-- 隔离：远端检查构建依赖和 pipeline，运行既有 A3/A5 回归，确认默认 CLI 和公开 PTO IR 未改变。补充同名 op 在两种 context 下的签名差异、CLI/module 目标冲突、同一进程双 context、不支持 bytecode 输入的负例；bindings/CAPI 的注册测试留到对应前端实现阶段。
+- 隔离：远端检查构建依赖和 pipeline，运行既有 A3/A5 回归，确认默认 CLI 和公开 PTO IR 未改变。补充Linx namespace 的解析、打印和旧前缀拒绝、CLI/module 目标冲突、同一进程双 context、不支持 bytecode 输入的负例；bindings/CAPI 的注册测试留到对应前端实现阶段。
 - 多 PE：单 PE 的 CPU 数值通过不能证明 collective/可见性正确；需要具有匹配执行模型的仿真或目标验证，另设验收门禁。
 
 首批验收应同时交付三套 MLIR 文本输入（`.pto`）、生成 C++、host harness、固定依赖信息、远端复现命令和结果日志。只有这三条路径在新 dialect/new pipeline 下重新通过，才能视为独立架构的首个可用版本。
@@ -282,7 +282,7 @@ SSH 主机、端口、本地后端 checkout 和工具链绝对路径属于机器
 
 ## 11. 需要先确认的事项
 
-1. 已确认：公开命名保留 `pto.*`，内部实现独立；实施前核对 CLI 解析时序、各原生工具的 registry，保证同名 dialect 的互斥注册。
+1. 已确认：公开命名使用 `pto.linx.*`，内部实现独立；CLI 仍按目标选择 pipeline。
 2. pto-isa 哪个 commit 作为实施基线，以及 CPU-sim/真实 Linx 目标的能力差异；不能只依赖一个不断变化的 PR 编号。
 3. 特殊 dtype、取模符号和 gather/scatter 索引单位：参考文档已提示冲突，须逐项裁定，不从 A3/A5 继承默认行为。
 4. Shared 发布与 assemble 的规范、wrapper 和副作用契约：契约确定前保持未开放。
@@ -293,7 +293,7 @@ SSH 主机、端口、本地后端 checkout 和工具链绝对路径属于机器
 
 新增独立 `LinxPTOIR` 和 `LinxPTOToEmitC` 库；dialect、类型和操作分别定义在 `LinxDialect.td`、`LinxTypes.td`、`LinxOps.td`；类型存储、构造器与访问器由 ODS TypeDef 生成，op 直接使用类型约束，不使用 `AnyType`。保留现有语法的类型 parser/printer 和类型参数校验位于 `LinxTypes.cpp`，op 关系校验位于 `LinxDialect.cpp`，状态检查位于 `LinxVerification.cpp`。这些库不依赖 Ascend `PTOIR` 或 `PTOToEmitC`。后续功能增多时再按第 3 节拆分类型、分析和 pass 文件。
 
-`ptoas --pto-arch=linx` 在解析前选择独立 context，保留 `pto.*` 名称。当前 CLI 启动器仍复用已有 Python 包，但 Linx 文本解析和编译使用自己的原生 context，不新增 Linx Python bindings/CAPI。
+`ptoas --pto-arch=linx` 在解析前选择独立 context，使用 `pto.linx.*` 名称。当前 CLI 启动器仍复用已有 Python 包，但 Linx 文本解析和编译使用自己的原生 context，不新增 Linx Python bindings/CAPI。
 
 当前开放 `alloc_tile → tload → tadd/tmatmul → tstore`，静态二维、local、f32、full-valid、直线函数。TADD 支持相同类型的 row-major/CUBE tile；TMATMUL 的 A 为 M×K（m16/m32），B 为 K×N（n8），D 为 M×N，D 与 A 布局相同且不得与输入别名。m16 的 M≤16，m32 的 M≤32。输入输出 GM shape 必须与 tile 匹配；读取前必须初始化。其他属性、dtype、布局、函数调用及 in-place TADD 均拒绝。GM ABI 为每个参数对应 `(float *base, int32_t row_stride_elements)`，内维连续；buffer 有效范围和 GM 输入输出不重叠由调用方保证。
 
@@ -305,11 +305,11 @@ SSH 主机、端口、本地后端 checkout 和工具链绝对路径属于机器
 布局由 Linx 独立 ODS 枚举 `TileLayout` 保存，支持 `row_major/m16/m32/n8`；默认 row-major。类型校验按 f32 CELL 几何计算物理包络（M16=16×2、M32=32×1、N8=4×8），容量不超过 256 KiB。
 
 ```mlir
-!A = !pto.tile_buf<local, 16x8xf32, blayout=m16>
-!B = !pto.tile_buf<local, 8x8xf32, blayout=n8>
-!D = !pto.tile_buf<local, 16x8xf32, blayout=m16>
+!A = !pto.linx.tile_buf<local, 16x8xf32, blayout=m16>
+!B = !pto.linx.tile_buf<local, 8x8xf32, blayout=n8>
+!D = !pto.linx.tile_buf<local, 16x8xf32, blayout=m16>
 // a/b/d 来自独立 alloc_tile，a/b 已通过 tload 初始化。
-pto.tmatmul ins(%a, %b : !A, !B) outs(%d : !D)
+pto.linx.tmatmul ins(%a, %b : !A, !B) outs(%d : !D)
 ```
 
 `LinxPTOAnalysis` 从 TMATMUL 使用点收集 Left/Right 约束，并沿 TADD 的单一 C++ 类型约束传播；未约束的 allocation 默认为 Vec。结果仅用于 C++ 类型选择，不写回 IR、不改变 local/shared，也不插入隐式复制。不同 allocation 即使 IR 类型相同，也可具有不同 C++ 角色。TMATMUL 的 D 没有固定角色要求，允许后续用途推导它的角色。

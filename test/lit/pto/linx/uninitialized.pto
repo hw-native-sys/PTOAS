@@ -1,10 +1,10 @@
 // RUN: not ptoas --pto-arch=linx %s -o - 2>&1 | FileCheck %s
-!T = !pto.tile_buf<local, 16x128xf32>
-!G = !pto.partition_tensor_view<16x128xf32>
+!T = !pto.linx.tile_buf<local, 16x128xf32>
+!G = !pto.linx.partition_tensor_view<16x128xf32>
 module attributes {pto.target_arch = "linx"} {
   func.func @bad(%out: !G) {
-    %t = pto.alloc_tile : !T
-    pto.tstore ins(%t : !T) outs(%out : !G)
+    %t = pto.linx.alloc_tile : !T
+    pto.linx.tstore ins(%t : !T) outs(%out : !G)
     return
   }
 }

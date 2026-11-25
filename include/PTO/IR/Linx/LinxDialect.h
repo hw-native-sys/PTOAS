@@ -6,7 +6,7 @@
 // INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
 // See LICENSE in the root of the software repository for the full text of the License.
 
-// Independent Linx implementation of the textual pto dialect.
+// Independent Linx implementation of the textual pto.linx operations and types.
 #ifndef PTO_IR_LINX_DIALECT_H
 #define PTO_IR_LINX_DIALECT_H
 #include "mlir/IR/Dialect.h"

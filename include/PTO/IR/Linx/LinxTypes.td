@@ -12,7 +12,7 @@ include "PTO/IR/Linx/LinxDialect.td"
 include "mlir/IR/AttrTypeBase.td"
 include "PTO/IR/Linx/LinxEnums.td"
 class LinxPTO_ShapedType<string name, string spelling> : TypeDef<PTO_Dialect, name> {
-  let mnemonic = spelling;
+  let mnemonic = "linx." # spelling;
   let parameters = (ins "int64_t":$rows, "int64_t":$cols, "::mlir::Type":$elementType);
   let hasCustomAssemblyFormat = 1;
   let genVerifyDecl = 1;
