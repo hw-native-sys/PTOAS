@@ -8,7 +8,7 @@
 # INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
 # See LICENSE in the root of the software repository for the full text of the License.
 
-"""Unsigned SoftLib ABI and full-range quotient decomposition regressions."""
+"""Unsigned SoftLib ABI and tile restoring-division regressions."""
 
 import json
 from types import SimpleNamespace
@@ -103,13 +103,12 @@ class UnsignedSoftLibTest(unittest.TestCase):
                 text = str(module)
                 self.assertEqual(entry, "div_" + dtype + "_soft")
                 self.assertIn("-> !pto.vreg<" + str(lanes) + "x" + dtype + ">", text)
-                self.assertIn("pto.vshrs", text)
+                self.assertIn("pto.vdiv", text)
                 self.assertIn("pto.softlib.instance", text)
 
-    def test_full_unsigned_domain_boundaries_and_sparse_masks(self):
+    def test_tile_restoring_division_full_range_and_sparse_masks(self):
         rng = np.random.default_rng(1607)
-        for bits, dtype, helper in ((16, np.uint16, div_uint.div_ui16_soft),
-                                    (32, np.uint32, div_uint.div_ui32_soft)):
+        for bits, dtype in ((16, np.uint16), (32, np.uint32)):
             top = 1 << (bits - 1)
             edges = np.array([0, 1, 2, 3, top - 2, top - 1, top, top + 1,
                               2 * top - 2, 2 * top - 1], dtype=dtype)
@@ -126,7 +125,8 @@ class UnsignedSoftLibTest(unittest.TestCase):
                 expected[mask & (rhs == 0)] = 2 * top - 1
                 with self.subTest(bits=bits, sparse=sparse), \
                         patch.object(div_uint, "pto", _ArrayOps()):
-                    np.testing.assert_array_equal(helper(lhs, rhs, mask), expected)
+                    result = div_uint.div_uint_soft(lhs, rhs, mask, f"ui{bits}")
+                    np.testing.assert_array_equal(result, expected)
 
 
 if __name__ == "__main__":

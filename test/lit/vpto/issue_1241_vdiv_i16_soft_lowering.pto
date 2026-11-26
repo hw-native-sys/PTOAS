@@ -31,10 +31,8 @@ module attributes {pto.target_arch = "a5", pto.kernel_kind = #pto.kernel_kind<ve
 // The integer HiVM VDIV intrinsic must never be emitted for i16.
 // CHECK-NOT: @llvm.hivm.vdiv.s.x.v128s16
 // CHECK-NOT: @llvm.hivm.vdiv.u.x.v128s16
-// The active mask is re-interleaved with the data (pintlv.b16) so the
-// vintlv/vcvt half-split gates the original lane order (partial masks).
-// CHECK: @llvm.hivm.pintlv.b16
-// The software fallback works in the u32 domain through an f32 reciprocal...
+// The signed path uses the unsigned halfword reciprocal sequence on its magnitudes.
+// CHECK: call {{.*}} @llvm.hivm.vintlv.v128i16
 // CHECK: call <64 x float> @llvm.hivm.vdiv.s.x.v64f32
 // CHECK: call <128 x i16> @llvm.hivm.vsel.v128i16
 // CHECK-NOT: @llvm.hivm.vdiv.s.x.v128s16

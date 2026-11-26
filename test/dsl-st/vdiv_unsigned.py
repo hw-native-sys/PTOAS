@@ -36,12 +36,11 @@ def _build_kernel(dtype, cols, sparse, name):
             full, _ = pto.make_mask(dtype, cols)
             x = pto.vlds(lhs[0, 0:])
             y = pto.vlds(rhs[0, 0:])
-            pto.vsts(pto.vbr(dtype(0)), dst[0, 0:], full)
             mask = full
             if sparse:
                 mask = pto.vcmps(pto.vands(x, dtype(1), full), dtype(0), full, pto.CmpMode.NE)
             quotient = pto.vdiv(x, y, mask)
-            pto.vsts(quotient, dst[0, 0:], mask)
+            pto.vsts(quotient, dst[0, 0:], full)
         pto.set_flag("V", "MTE3", event_id=0)
         pto.wait_flag("V", "MTE3", event_id=0)
         pto.tile.store(dst, out_view)
@@ -60,6 +59,15 @@ def _inputs(bits, cols):
     rhs = rng.integers(1, 2 * top, size=cols, dtype=dtype)
     lhs[:x.size] = x.ravel()
     rhs[:y.size] = y.ravel()
+    if bits == 32:
+        # The rounded reciprocal for this divisor can overshoot. Check
+        # both sides of the first two quotient boundaries.
+        divisor = 45_210_183
+        boundary_lhs = [divisor - 2, divisor - 1, divisor, divisor + 1,
+                        2 * divisor - 1, 2 * divisor, 2 * divisor + 1]
+        end = x.size + len(boundary_lhs)
+        lhs[x.size:end] = boundary_lhs
+        rhs[x.size:end] = divisor
     return [lhs.reshape(1, cols), rhs.reshape(1, cols)]
 
 
