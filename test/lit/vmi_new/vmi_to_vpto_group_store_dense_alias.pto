@@ -20,9 +20,9 @@ module {
     %c0 = arith.constant 0 : index
     %c8 = arith.constant 8 : index
     %v = pto.vmi.vload %src[%c0]
-        : !pto.ptr<ui8, ub> -> !pto.vmi.vreg<64xui8>
+        : !pto.ptr<ui8, ub>, index -> !pto.vmi.vreg<64xui8>
     pto.vmi.vstore %v, %dst[%c0], %c8 {group = 8}
-        : !pto.vmi.vreg<64xui8>, !pto.ptr<ui8, ub>
+        : !pto.vmi.vreg<64xui8>, !pto.ptr<ui8, ub>, index
     return
   }
 
@@ -33,9 +33,9 @@ module {
     %c0 = arith.constant 0 : index
     %c16 = arith.constant 16 : index
     %v = pto.vmi.vload %src[%c0]
-        : !pto.ptr<i32, ub> -> !pto.vmi.vreg<64xi32>
+        : !pto.ptr<i32, ub>, index -> !pto.vmi.vreg<64xi32>
     pto.vmi.vstore %v, %dst[%c0], %c16 {group = 8}
-        : !pto.vmi.vreg<64xi32>, !pto.ptr<i32, ub>
+        : !pto.vmi.vreg<64xi32>, !pto.ptr<i32, ub>, index
     return
   }
 
@@ -44,9 +44,9 @@ module {
     %c0 = arith.constant 0 : index
     %c1 = arith.constant 1 : index
     %v = pto.vmi.vload %src[%c0]
-        : !pto.ptr<ui8, ub> -> !pto.vmi.vreg<8xui8>
+        : !pto.ptr<ui8, ub>, index -> !pto.vmi.vreg<8xui8>
     pto.vmi.vstore %v, %dst[%c0], %c1 {group = 8}
-        : !pto.vmi.vreg<8xui8>, !pto.ptr<ui8, ub>
+        : !pto.vmi.vreg<8xui8>, !pto.ptr<ui8, ub>, index
     return
   }
 }

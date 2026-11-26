@@ -1,0 +1,93 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+
+// A5 level3 sample. Explicit pipe flags also support direct ptoas invocation.
+!a_mat = !pto.tile_buf<mat, 32x128xf8E4M3FN, blayout=col_major, slayout=row_major>
+!b_mat = !pto.tile_buf<mat, 128x32xf8E4M3FN, blayout=col_major, slayout=row_major>
+!a_full = !pto.tile_buf<mat, 32x8x!pto.f8E8M0, slayout=row_major, fractal=32>
+!b_full = !pto.tile_buf<mat, 8x32x!pto.f8E8M0, blayout=col_major, slayout=col_major, fractal=32>
+!a_data = !pto.tile_buf<left, 32x128xf8E4M3FN, blayout=col_major, slayout=row_major>
+!b_data = !pto.tile_buf<right, 128x32xf8E4M3FN, slayout=col_major>
+!a_scale = !pto.tile_buf<scaling, 32x4x!pto.f8E8M0, slayout=row_major, fractal=32>
+!b_scale = !pto.tile_buf<scaling, 4x32x!pto.f8E8M0, blayout=col_major, slayout=col_major, fractal=32>
+!acc = !pto.tile_buf<acc, 32x32xf32, blayout=col_major, slayout=row_major, fractal=1024>
+
+module attributes {pto.target_arch = "a5", pto.kernel_kind = #pto.kernel_kind<cube>} {
+  func.func @matmul_mx_scale_extract(%a: !pto.ptr<f8E4M3FN, gm>, %b: !pto.ptr<f8E4M3FN, gm>,
+                                    %as: !pto.ptr<!pto.f8E8M0, gm>, %bs: !pto.ptr<!pto.f8E8M0, gm>,
+                                    %out: !pto.ptr<f32, gm>) attributes {pto.kernel} {
+    %c0 = arith.constant 0 : index
+    %c1 = arith.constant 1 : index
+    %c4 = arith.constant 4 : index
+    %c8 = arith.constant 8 : index
+    %c32 = arith.constant 32 : index
+    %c128 = arith.constant 128 : index
+    %addr0 = arith.constant 0 : i64
+    %addr4096 = arith.constant 4096 : i64
+    %addr8192 = arith.constant 8192 : i64
+    %addr8448 = arith.constant 8448 : i64
+
+    %av = pto.make_tensor_view %a, shape = [%c32, %c128], strides = [%c128, %c1] : !pto.tensor_view<?x?xf8E4M3FN>
+    %bv = pto.make_tensor_view %b, shape = [%c128, %c32], strides = [%c32, %c1] : !pto.tensor_view<?x?xf8E4M3FN>
+    %asv = pto.make_tensor_view %as, shape = [%c32, %c8], strides = [%c8, %c1] : !pto.tensor_view<?x?x!pto.f8E8M0>
+    %bsv = pto.make_tensor_view %bs, shape = [%c8, %c32], strides = [%c32, %c1] : !pto.tensor_view<?x?x!pto.f8E8M0>
+    %ov = pto.make_tensor_view %out, shape = [%c32, %c32], strides = [%c32, %c1] : !pto.tensor_view<?x?xf32>
+    %ap = pto.partition_view %av, offsets = [%c0, %c0], sizes = [%c32, %c128] : !pto.tensor_view<?x?xf8E4M3FN>
+    %bp = pto.partition_view %bv, offsets = [%c0, %c0], sizes = [%c128, %c32] : !pto.tensor_view<?x?xf8E4M3FN>
+    %asp = pto.partition_view %asv, offsets = [%c0, %c0], sizes = [%c32, %c8] : !pto.tensor_view<?x?x!pto.f8E8M0>
+    %bsp = pto.partition_view %bsv, offsets = [%c0, %c0], sizes = [%c8, %c32] : !pto.tensor_view<?x?x!pto.f8E8M0>
+    %op = pto.partition_view %ov, offsets = [%c0, %c0], sizes = [%c32, %c32] : !pto.tensor_view<?x?xf32>
+    %am = pto.alloc_tile addr = %addr0 : !a_mat
+    %bm = pto.alloc_tile addr = %addr4096 : !b_mat
+    %af = pto.alloc_tile addr = %addr8192 : !a_full
+    %bf = pto.alloc_tile addr = %addr8448 : !b_full
+    %lhs = pto.alloc_tile addr = %addr4096 : !a_data
+    %rhs = pto.alloc_tile addr = %addr8192 : !b_data
+    %lhs_scale = pto.alloc_tile addr = %addr0 : !a_scale
+    %rhs_scale = pto.alloc_tile addr = %addr0 : !b_scale
+    %c = pto.alloc_tile addr = %addr0 : !acc
+
+    pto.tload ins(%ap : !pto.partition_tensor_view<32x128xf8E4M3FN>) outs(%am : !a_mat)
+    pto.tload ins(%bp : !pto.partition_tensor_view<128x32xf8E4M3FN>) outs(%bm : !b_mat)
+    pto.tload ins(%asp : !pto.partition_tensor_view<32x8x!pto.f8E8M0>) outs(%af : !a_full)
+    pto.tload ins(%bsp : !pto.partition_tensor_view<8x32x!pto.f8E8M0>) outs(%bf : !b_full)
+    pto.set_flag[<PIPE_MTE2>, <PIPE_MTE1>, <EVENT_ID0>]
+    pto.wait_flag[<PIPE_MTE2>, <PIPE_MTE1>, <EVENT_ID0>]
+    pto.tmov ins(%am : !a_mat) outs(%lhs : !a_data)
+    pto.tmov ins(%bm : !b_mat) outs(%rhs : !b_data)
+    pto.set_flag[<PIPE_MTE1>, <PIPE_S>, <EVENT_ID0>]
+    pto.wait_flag[<PIPE_MTE1>, <PIPE_S>, <EVENT_ID0>]
+
+    pto.tget_scale_addr ins(%lhs : !a_data) outs(%lhs_scale : !a_scale)
+    pto.tget_scale_addr ins(%rhs : !b_data) outs(%rhs_scale : !b_scale)
+    pto.set_flag[<PIPE_S>, <PIPE_MTE1>, <EVENT_ID0>]
+    pto.wait_flag[<PIPE_S>, <PIPE_MTE1>, <EVENT_ID0>]
+    pto.textract ins(%af, %c0, %c0 : !a_full, index, index) outs(%lhs_scale : !a_scale)
+    pto.textract ins(%bf, %c0, %c0 : !b_full, index, index) outs(%rhs_scale : !b_scale)
+    pto.set_flag[<PIPE_MTE1>, <PIPE_M>, <EVENT_ID0>]
+    pto.wait_flag[<PIPE_MTE1>, <PIPE_M>, <EVENT_ID0>]
+    pto.tmatmul.mx ins(%lhs, %lhs_scale, %rhs, %rhs_scale : !a_data, !a_scale, !b_data, !b_scale) outs(%c : !acc)
+    pto.set_flag[<PIPE_M>, <PIPE_MTE1>, <EVENT_ID0>]
+    pto.wait_flag[<PIPE_M>, <PIPE_MTE1>, <EVENT_ID0>]
+
+    pto.tget_scale_addr ins(%lhs : !a_data) outs(%lhs_scale : !a_scale)
+    pto.tget_scale_addr ins(%rhs : !b_data) outs(%rhs_scale : !b_scale)
+    pto.set_flag[<PIPE_S>, <PIPE_MTE1>, <EVENT_ID0>]
+    pto.wait_flag[<PIPE_S>, <PIPE_MTE1>, <EVENT_ID0>]
+    pto.textract ins(%af, %c0, %c4 : !a_full, index, index) outs(%lhs_scale : !a_scale)
+    pto.textract ins(%bf, %c4, %c0 : !b_full, index, index) outs(%rhs_scale : !b_scale)
+    pto.set_flag[<PIPE_MTE1>, <PIPE_M>, <EVENT_ID0>]
+    pto.wait_flag[<PIPE_MTE1>, <PIPE_M>, <EVENT_ID0>]
+    pto.tmatmul.mx.acc ins(%c, %lhs, %lhs_scale, %rhs, %rhs_scale : !acc, !a_data, !a_scale, !b_data, !b_scale)
+                       outs(%c : !acc)
+    pto.set_flag[<PIPE_M>, <PIPE_FIX>, <EVENT_ID0>]
+    pto.wait_flag[<PIPE_M>, <PIPE_FIX>, <EVENT_ID0>]
+    pto.tstore ins(%c : !acc) outs(%op : !pto.partition_tensor_view<32x32xf32>)
+    return
+  }
+}

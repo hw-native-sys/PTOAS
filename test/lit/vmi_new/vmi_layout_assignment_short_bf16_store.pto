@@ -9,20 +9,20 @@
 
 module attributes {pto.target_arch = "a5"} {
   func.func @round_a_store(%src: !pto.ptr<f32, ub>, %dst: !pto.ptr<bf16, ub>, %off: index) {
-    %source = pto.vmi.vload %src[%off] : !pto.ptr<f32, ub> -> !pto.vmi.vreg<4xf32>
+    %source = pto.vmi.vload %src[%off] : !pto.ptr<f32, ub>, index -> !pto.vmi.vreg<4xf32>
     %result = pto.vmi.vcvt %source {rounding = "A", saturate = "NOSAT"}
       : !pto.vmi.vreg<4xf32> -> !pto.vmi.vreg<4xbf16>
     pto.vmi.vstore %result, %dst[%off]
-      : !pto.vmi.vreg<4xbf16>, !pto.ptr<bf16, ub>
+      : !pto.vmi.vreg<4xbf16>, !pto.ptr<bf16, ub>, index
     return
   }
 
   func.func @round_z_store(%src: !pto.ptr<f32, ub>, %dst: !pto.ptr<bf16, ub>, %off: index) {
-    %source = pto.vmi.vload %src[%off] : !pto.ptr<f32, ub> -> !pto.vmi.vreg<4xf32>
+    %source = pto.vmi.vload %src[%off] : !pto.ptr<f32, ub>, index -> !pto.vmi.vreg<4xf32>
     %result = pto.vmi.vcvt %source {rounding = "Z", saturate = "NOSAT"}
       : !pto.vmi.vreg<4xf32> -> !pto.vmi.vreg<4xbf16>
     pto.vmi.vstore %result, %dst[%off]
-      : !pto.vmi.vreg<4xbf16>, !pto.ptr<bf16, ub>
+      : !pto.vmi.vreg<4xbf16>, !pto.ptr<bf16, ub>, index
     return
   }
 }

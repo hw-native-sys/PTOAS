@@ -28,12 +28,12 @@ module {
     %narrow = pto.vmi.vcvt %sum {saturate = "SAT"}
         : !pto.vmi.vreg<64xf32> -> !pto.vmi.vreg<64xbf16>
     pto.vmi.vstore %narrow, %dst_bf16[%aligned_offset], %mask64
-        : !pto.vmi.vreg<64xbf16>, !pto.ptr<bf16, ub>, !pto.vmi.mask<64xpred>
+        : !pto.vmi.vreg<64xbf16>, !pto.ptr<bf16, ub>, index, !pto.vmi.mask<64xpred>
     %reduce = pto.vmi.vcadd %sum, %mask64 {reassoc}
         : !pto.vmi.vreg<64xf32>, !pto.vmi.mask<64xpred>
         -> !pto.vmi.vreg<1xf32>
     pto.vmi.vstore %reduce, %dst[%aligned_offset], %mask1
-        : !pto.vmi.vreg<1xf32>, !pto.ptr<f32, ub>, !pto.vmi.mask<1xpred>
+        : !pto.vmi.vreg<1xf32>, !pto.ptr<f32, ub>, index, !pto.vmi.mask<1xpred>
     return
   }
 }

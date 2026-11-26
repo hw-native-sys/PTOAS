@@ -13,6 +13,7 @@
 
 #include "PTO/Support/CodeConstants.h"
 #include "PTO/Transforms/InsertSync/PTOIRTranslator.h"
+#include "ColumnBroadcastSyncUtils.h"
 #include "PTO/IR/PTOMultiBuffer.h"
 #include "PTO/IR/TileProvenance.h"
 #include "PTO/IR/PTOTypeUtils.h"
@@ -23,6 +24,7 @@
 #include "mlir/IR/Matchers.h"
 #include "mlir/Interfaces/LoopLikeInterface.h"
 #include "mlir/Interfaces/CallInterfaces.h"
+#include "llvm/ADT/STLExtras.h"
 #include "llvm/ADT/StringSwitch.h"
 #include "llvm/Support/Debug.h"
 #include "llvm/Support/FormatVariadic.h"
@@ -747,10 +749,12 @@ static pto::TCoreType getSyncHelperCoreType(pto::PipelineType pipe) {
 // ============================================================================
 // 1. 构建入口
 // ============================================================================
-void PTOIRTranslator::Build() {
-  Region &funcRegion = func_.getBody();
-  UpdateKernelArgMemInfo();
-  RecursionIR(&funcRegion);
+void PTOIRTranslator::Build(FusionRegionModel fusionRegionModel)
+{
+    fusionRegionModel_ = fusionRegionModel;
+    Region& funcRegion = func_.getBody();
+    UpdateKernelArgMemInfo();
+    RecursionIR(&funcRegion);
 }
 
 // ============================================================================
@@ -914,24 +918,103 @@ PTOIRTranslator::dispatchControlAndComputeOp(Operation *op) {
   return WalkResult::advance();
 }
 
-void PTOIRTranslator::RecursionIR(Region *region) {
-  auto result = region->walk<WalkOrder::PreOrder>([this](Operation *op) {
-    // 保持原有 if/else-if 链的互斥匹配顺序：A 内存分配 → B 别名/视图 →
-    // C/D 控制流与计算指令，任一类别命中后不再尝试后续类别。
-    if (auto allocResult = dispatchAllocOp(op)) {
-      return *allocResult;
+bool PTOIRTranslator::isAtomicVectorFusion(pto::FusionRegionOp region) const
+{
+    if (!pto::isTargetArchA5(region.getOperation())) {
+        return false;
     }
-    if (auto aliasResult = dispatchAliasViewOp(op)) {
-      return *aliasResult;
+    bool hasVectorOp = false;
+    for (Operation& member : region.getBody().front()) {
+        if (isa<pto::YieldOp, pto::AllocTileOp>(&member)) {
+            continue;
+        }
+        // A locally computed slot would not dominate a boundary flag. Calls,
+        // control flow and macro phases require their original internal order.
+        if (member.getNumRegions() != 0 || isa<CallOpInterface, pto::MultiTileGetOp>(&member) ||
+            getSyncMacroModel(&member)) {
+            return false;
+        }
+        PipelineType pipe = getOpPipeline(&member);
+        if (pipe == PipelineType::PIPE_V) {
+            if (!isa<pto::PTO_DpsInitOpInterface>(&member) || !isa<MemoryEffectOpInterface>(&member)) {
+                return false;
+            }
+            hasVectorOp = true;
+        } else if (pipe != PipelineType::PIPE_UNASSIGNED || !isMemoryEffectFree(&member)) {
+            return false;
+        }
     }
-    if (auto controlResult = dispatchControlAndComputeOp(op)) {
-      return *controlResult;
+    return hasVectorOp;
+}
+
+void PTOIRTranslator::UpdateFusionRegionOpInfo(pto::FusionRegionOp region)
+{
+    unsigned firstIndex = index;
+    size_t first = syncIR_.size();
+    bool atomic = fusionRegionModel_ == FusionRegionModel::AtomicVector && isAtomicVectorFusion(region);
+    RecursionIR(&region.getBody());
+    auto yield = cast<pto::YieldOp>(region.getBody().front().getTerminator());
+    for (auto [result, source] : llvm::zip(region.getOutputs(), yield.getValues())) {
+        UpdateAliasBufferInfo(result, source);
     }
-    return WalkResult::advance();
-  });
-  if (result == WalkResult::interrupt()) {
-    llvm_unreachable("PTO InjectSync Traverse IR Failed!");
-  }
+    if (!atomic || first == syncIR_.size()) {
+        return;
+    }
+
+    SmallVector<const BaseMemInfo*> defs;
+    SmallVector<const BaseMemInfo*> uses;
+    SmallVector<const BaseMemInfo*> columnBroadcastReads;
+    for (size_t i = first; i < syncIR_.size(); ++i) {
+        auto* compound = dyn_cast<CompoundInstanceElement>(syncIR_[i].get());
+        if (!compound || compound->kPipeValue != PipelineType::PIPE_V || compound->macroOpInstanceId != -1 ||
+            compound->ufInfo.role != UFRole::None) {
+            return;
+        }
+        DepBaseMemInfoPairVec dependencies;
+        if (memAnalyzer_.DepBetween(compound->defVec, columnBroadcastReads, dependencies)) {
+            // This group needs an internal PIPE_ALL before storage reuse, so
+            // keep the member anchors where that barrier must be emitted.
+            return;
+        }
+        sync_detail::collectColumnBroadcastReads(compound, columnBroadcastReads);
+        // Keep internal temporaries too: their planned storage may alias an
+        // access outside this group even when the SSA value does not escape.
+        llvm::append_range(defs, compound->defVec);
+        llvm::append_range(uses, compound->useVec);
+    }
+    auto compound = std::make_unique<CompoundInstanceElement>(
+        firstIndex, std::move(defs), std::move(uses), PipelineType::PIPE_V, region->getName());
+    compound->elementOp = region.getOperation();
+    compound->compoundCoreType = TCoreType::VECTOR;
+    foldedFusionNodeCount_ += syncIR_.size() - first - 1;
+    syncIR_.resize(first);
+    syncIR_.push_back(std::move(compound));
+    index = firstIndex + 1;
+}
+
+void PTOIRTranslator::RecursionIR(Region* region)
+{
+    auto result = region->walk<WalkOrder::PreOrder>([this](Operation* op) {
+        if (auto fusion = dyn_cast<pto::FusionRegionOp>(op)) {
+            UpdateFusionRegionOpInfo(fusion);
+            return WalkResult::skip();
+        }
+        // 保持原有 if/else-if 链的互斥匹配顺序：A 内存分配 → B 别名/视图 →
+        // C/D 控制流与计算指令，任一类别命中后不再尝试后续类别。
+        if (auto allocResult = dispatchAllocOp(op)) {
+            return *allocResult;
+        }
+        if (auto aliasResult = dispatchAliasViewOp(op)) {
+            return *aliasResult;
+        }
+        if (auto controlResult = dispatchControlAndComputeOp(op)) {
+            return *controlResult;
+        }
+        return WalkResult::advance();
+    });
+    if (result == WalkResult::interrupt()) {
+        llvm_unreachable("PTO InjectSync Traverse IR Failed!");
+    }
 }
 
 // ============================================================================

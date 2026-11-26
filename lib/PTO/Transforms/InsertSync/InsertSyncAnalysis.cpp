@@ -13,6 +13,7 @@
 
 #include "PTO/Transforms/InsertSync/InsertSyncAnalysis.h"
 #include "PTO/Transforms/InsertSync/InsertSyncDebug.h"
+#include "ColumnBroadcastSyncUtils.h"
 #include "PTO/IR/PTO.h"
 #include "PTO/IR/PTOMultiBuffer.h"
 #include "PTO/IR/PTOSyncUtils.h"
@@ -27,7 +28,6 @@
 #include "mlir/Interfaces/LoopLikeInterface.h"
 #include "llvm/ADT/DenseSet.h"
 #include "llvm/ADT/STLExtras.h"
-#include "llvm/ADT/TypeSwitch.h"
 #include "llvm/Support/Casting.h"
 #include "llvm/Support/ErrorHandling.h"
 #include <algorithm>
@@ -214,32 +214,6 @@ static bool containsExactAccess(const SmallVector<const BaseMemInfo *> &infos,
   return llvm::any_of(infos, [&access](const BaseMemInfo *info) {
     return isSameExactAccess(info, access);
   });
-}
-
-static bool overwritesColumnBroadcastInput(
-    const CompoundInstanceElement *writer,
-    const CompoundInstanceElement *reader,
-    MemoryDependentAnalyzer &memAnalyzer) {
-  if (!reader->elementOp) {
-    return false;
-  }
-  Value broadcast = llvm::TypeSwitch<Operation *, Value>(reader->elementOp)
-      .Case<TColExpandOp>([](auto op) { return op.getSrc(); })
-      .Case<TColExpandAddOp, TColExpandMulOp, TColExpandDivOp,
-            TColExpandSubOp, TColExpandExpdifOp, TColExpandMaxOp,
-            TColExpandMinOp>([](auto op) { return op.getSrc1(); })
-      .Default([](Operation *) { return Value{}; });
-  if (!broadcast) {
-    return false;
-  }
-  SmallVector<const BaseMemInfo *> broadcastReads;
-  for (const BaseMemInfo *info : reader->useVec) {
-    if (info->baseBuffer == broadcast) {
-      broadcastReads.push_back(info);
-    }
-  }
-  DepBaseMemInfoPairVec dependencies;
-  return memAnalyzer.DepBetween(writer->defVec, broadcastReads, dependencies);
 }
 
 static bool isErasedA5VectorBarrier(func::FuncOp func,
@@ -1396,7 +1370,7 @@ void InsertSyncAnalysis::InsertPipeBarrierSync(
   PipelineType barrierPipe = frontCompound->kPipeValue;
   if (barrierPipe == PipelineType::PIPE_V &&
       isTargetArchA5(func_) &&
-      overwritesColumnBroadcastInput(nowCompound, frontCompound, memAnalyzer_)) {
+      sync_detail::overwritesColumnBroadcastInput(nowCompound, frontCompound, memAnalyzer_)) {
     // A5 broadcasts reread the column vector for every output row. Reusing
     // that storage through a differently shaped tile can overwrite later
     // reads even when the elementwise output dependency is ordered. PIPE_V

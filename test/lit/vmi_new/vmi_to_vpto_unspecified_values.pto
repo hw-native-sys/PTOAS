@@ -21,9 +21,9 @@ module {
     %c64 = arith.constant 64 : index
     %aligned_offset = arith.muli %offset, %c64 : index
     pto.vmi.vstore %f32_value, %f32_destination[%aligned_offset], %mask
-        : !pto.vmi.vreg<64xf32>, !pto.ptr<f32, ub>, !pto.vmi.mask<64xpred>
+        : !pto.vmi.vreg<64xf32>, !pto.ptr<f32, ub>, index, !pto.vmi.mask<64xpred>
     pto.vmi.vstore %f16_value, %f16_destination[%aligned_offset], %mask
-        : !pto.vmi.vreg<64xf16>, !pto.ptr<f16, ub>, !pto.vmi.mask<64xpred>
+        : !pto.vmi.vreg<64xf16>, !pto.ptr<f16, ub>, index, !pto.vmi.mask<64xpred>
     pto.vsts %physical_value, %i32_destination[%aligned_offset], %physical_mask
         : !pto.vreg<64xi32>, !pto.ptr<i32, ub>, index, !pto.mask<b32>
     return

@@ -37,8 +37,10 @@ Memory operations in this chapter use the typed pointer form
 - `space` identifies the memory space, such as `gm` or `ub`;
 - a pointer carries an address, element type, and memory-space interpretation,
   but no tensor shape or stride metadata;
-- every `%offset` operand in this chapter has type `index` and is measured in
-  elements of `T`, not bytes.
+- every `%offset` operand in this chapter is an element displacement measured in
+  elements of `T`, not bytes.  It accepts `index`, `i32` or `i64` (the shared
+  `PTO_ElementOffset` constraint): narrower widths (`i1`/`i8`/`i16`), signed and
+  unsigned integer types (`si32`, `ui32`) and widths above 64 bits are rejected.
 
 For a base address `base`, element type `T`, and element offset `offset`, the
 effective byte address is:
@@ -229,8 +231,8 @@ Examples:
   ```
 
 - **Operands:** `%ptr` is `!pto.ptr<T, space>` and `%offset` is `index` or
-  a signless integer (`i32`, `i64`), declared in the type list right after the
-  pointer type, as in
+  a 32/64-bit signless integer (`i32`, `i64`), declared in the type list right
+  after the pointer type, as in
   `pto.addptr %ptr, %offset : !pto.ptr<T, space>, index -> !pto.ptr<T, space>`.
 - **Result:** A pointer with exactly the same element type and memory space as
   `%ptr`.
@@ -277,7 +279,8 @@ SIMT body, and their presence does not by itself select SIMT execution.
   ```
 
 - **Operands:** `%ptr` is `!pto.ptr<T, space>` or a memref with element type
-  `T`. `%offset` is an `index` displacement measured in elements of `T`, not
+  `T`. `%offset` is an element displacement (`index`, `i32` or `i64`) measured in
+  elements of `T`, not
   bytes.
 - **Result:** One value of type `T`, which must exactly match the pointer or
   memref element type.
@@ -302,7 +305,8 @@ SIMT body, and their presence does not by itself select SIMT execution.
   ```
 
 - **Operands:** `%value` has type `T`; `%ptr` is `!pto.ptr<T, space>` or a
-  memref with element type `T`; `%offset` is an `index` displacement measured
+  memref with element type `T`; `%offset` is an element displacement (`index`,
+  `i32` or `i64`) measured
   in elements of `T`.
 - **Results:** None.
 - **Semantics:**
@@ -340,7 +344,8 @@ execution scope and cache-control contract are different.
 
 - the pointer must be `!pto.ptr<T, gm>`;
 - `T` must be one of `i8`, `i16`, `i32`, or `i64`;
-- `%offset` has type `index` and is measured in elements of `T`;
+- `%offset` is an element displacement (`index`, `i32` or `i64`) measured in
+  elements of `T`;
 - load result and store value types must exactly match `T`;
 - no `l1cache` or `l2cache` policy attribute is accepted;
 - the op must appear in an ordinary AICore entry function, outside both a
@@ -365,7 +370,7 @@ local L1 data cache is target-defined.
   ```
 
 - **Operands:** `%ptr` is `!pto.ptr<T, gm>` and `%offset` is an element offset
-  of type `index`.
+  of type `index`, `i32` or `i64`.
 - **Result:** One value of type `T` containing exactly the bytes read from GM.
 - **Attributes:** None.
 - **Semantics:** Read `sizeof(T)` bytes from the selected GM element. No sign
@@ -388,7 +393,7 @@ value = GM[address : address + sizeof(T)] as T
   ```
 
 - **Operands:** `%value` has type `T`, `%ptr` is `!pto.ptr<T, gm>`, and
-  `%offset` is an element offset of type `index`.
+  `%offset` is an element offset of type `index`, `i32` or `i64`.
 - **Results:** None.
 - **Attributes:** None.
 - **Semantics:** Write exactly `sizeof(T)` bytes from `%value` to the selected

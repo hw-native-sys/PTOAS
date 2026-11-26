@@ -26,9 +26,9 @@ module {
         : !pto.vmi.vreg<128xf32>, !pto.vmi.vreg<128xf32>
         -> !pto.vmi.vreg<128xf32>
     pto.vmi.vstore %prod, %out1[%aligned_offset]
-        : !pto.vmi.vreg<128xf32>, !pto.ptr<f32, ub>
+        : !pto.vmi.vreg<128xf32>, !pto.ptr<f32, ub>, index
     pto.vmi.vstore %wide, %out2[%aligned_offset]
-        : !pto.vmi.vreg<128xf32>, !pto.ptr<f32, ub>
+        : !pto.vmi.vreg<128xf32>, !pto.ptr<f32, ub>, index
     return
   }
 

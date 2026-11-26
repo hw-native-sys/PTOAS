@@ -1,0 +1,410 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+
+// Issue #1607 round 2: the A5 verifiers accept additional element types for
+// tcmps/tfmods/trems/tsels, but TileLib had no template for those signatures,
+// so legal kernels failed with NoMatchingTemplate. Each function feeds one
+// missing signature through template selection and reaches LLVM emission.
+
+// RUN: ptoas --pto-arch=a5 --pto-backend=vpto --emit-vpto --enable-tile-op-expand %s -o - | FileCheck %s --check-prefix=SELECT
+// RUN: ptoas --pto-arch=a5 --pto-backend=vpto --vpto-scheduler=off --emit-vpto-llvm-ir %s -o - | FileCheck %s --check-prefix=LLVM --implicit-check-not='llvm.hivm.vdiv.s.x.v128bf16'
+
+module attributes {pto.target_arch = "a5", pto.kernel_kind = #pto.kernel_kind<vector>} {
+  func.func @TCMPS_UI16() {
+    %src = pto.alloc_tile
+      : !pto.tile_buf<loc=vec, dtype=ui16, rows=2, cols=256, v_row=2, v_col=256,
+                      blayout=row_major, slayout=none_box, fractal=512, pad=0>
+    %dst = pto.alloc_tile
+      : !pto.tile_buf<loc=vec, dtype=ui8, rows=2, cols=32, v_row=2, v_col=32,
+                      blayout=row_major, slayout=none_box, fractal=512, pad=0>
+    %scalar_raw = arith.constant 2 : i16
+    %scalar = "builtin.unrealized_conversion_cast"(%scalar_raw) : (i16) -> ui16
+    pto.tcmps ins(%src, %scalar {cmpMode = #pto<cmp lt>}
+        : !pto.tile_buf<loc=vec, dtype=ui16, rows=2, cols=256, v_row=2, v_col=256,
+                        blayout=row_major, slayout=none_box, fractal=512, pad=0>, ui16)
+      outs(%dst
+        : !pto.tile_buf<loc=vec, dtype=ui8, rows=2, cols=32, v_row=2, v_col=32,
+                        blayout=row_major, slayout=none_box, fractal=512, pad=0>)
+    return
+  }
+
+  func.func @TCMPS_UI32() {
+    %src = pto.alloc_tile
+      : !pto.tile_buf<loc=vec, dtype=ui32, rows=2, cols=256, v_row=2, v_col=256,
+                      blayout=row_major, slayout=none_box, fractal=512, pad=0>
+    %dst = pto.alloc_tile
+      : !pto.tile_buf<loc=vec, dtype=ui8, rows=2, cols=32, v_row=2, v_col=32,
+                      blayout=row_major, slayout=none_box, fractal=512, pad=0>
+    %scalar_raw = arith.constant 2 : i32
+    %scalar = "builtin.unrealized_conversion_cast"(%scalar_raw) : (i32) -> ui32
+    pto.tcmps ins(%src, %scalar {cmpMode = #pto<cmp gt>}
+        : !pto.tile_buf<loc=vec, dtype=ui32, rows=2, cols=256, v_row=2, v_col=256,
+                        blayout=row_major, slayout=none_box, fractal=512, pad=0>, ui32)
+      outs(%dst
+        : !pto.tile_buf<loc=vec, dtype=ui8, rows=2, cols=32, v_row=2, v_col=32,
+                        blayout=row_major, slayout=none_box, fractal=512, pad=0>)
+    return
+  }
+
+  func.func @TFMODS_UI16() {
+    %src = pto.alloc_tile
+      : !pto.tile_buf<loc=vec, dtype=ui16, rows=2, cols=64, v_row=2, v_col=64,
+                      blayout=row_major, slayout=none_box, fractal=512, pad=0>
+    %dst = pto.alloc_tile
+      : !pto.tile_buf<loc=vec, dtype=ui16, rows=2, cols=64, v_row=2, v_col=64,
+                      blayout=row_major, slayout=none_box, fractal=512, pad=0>
+    %scalar_raw = arith.constant 3 : i16
+    %scalar = "builtin.unrealized_conversion_cast"(%scalar_raw) : (i16) -> ui16
+    pto.tfmods ins(%src, %scalar
+        : !pto.tile_buf<loc=vec, dtype=ui16, rows=2, cols=64, v_row=2, v_col=64,
+                        blayout=row_major, slayout=none_box, fractal=512, pad=0>, ui16)
+      outs(%dst
+        : !pto.tile_buf<loc=vec, dtype=ui16, rows=2, cols=64, v_row=2, v_col=64,
+                        blayout=row_major, slayout=none_box, fractal=512, pad=0>)
+    return
+  }
+
+  func.func @TFMODS_UI32() {
+    %src = pto.alloc_tile
+      : !pto.tile_buf<loc=vec, dtype=ui32, rows=2, cols=64, v_row=2, v_col=64,
+                      blayout=row_major, slayout=none_box, fractal=512, pad=0>
+    %dst = pto.alloc_tile
+      : !pto.tile_buf<loc=vec, dtype=ui32, rows=2, cols=64, v_row=2, v_col=64,
+                      blayout=row_major, slayout=none_box, fractal=512, pad=0>
+    %scalar_raw = arith.constant 3 : i32
+    %scalar = "builtin.unrealized_conversion_cast"(%scalar_raw) : (i32) -> ui32
+    pto.tfmods ins(%src, %scalar
+        : !pto.tile_buf<loc=vec, dtype=ui32, rows=2, cols=64, v_row=2, v_col=64,
+                        blayout=row_major, slayout=none_box, fractal=512, pad=0>, ui32)
+      outs(%dst
+        : !pto.tile_buf<loc=vec, dtype=ui32, rows=2, cols=64, v_row=2, v_col=64,
+                        blayout=row_major, slayout=none_box, fractal=512, pad=0>)
+    return
+  }
+
+  func.func @REMS_UI16() {
+    %src = pto.alloc_tile
+      : !pto.tile_buf<loc=vec, dtype=ui16, rows=2, cols=64, v_row=2, v_col=64,
+                      blayout=row_major, slayout=none_box, fractal=512, pad=0>
+    %tmp = pto.alloc_tile
+      : !pto.tile_buf<loc=vec, dtype=ui16, rows=2, cols=64, v_row=2, v_col=64,
+                      blayout=row_major, slayout=none_box, fractal=512, pad=0>
+    %dst = pto.alloc_tile
+      : !pto.tile_buf<loc=vec, dtype=ui16, rows=2, cols=64, v_row=2, v_col=64,
+                      blayout=row_major, slayout=none_box, fractal=512, pad=0>
+    %scalar_raw = arith.constant 3 : i16
+    %scalar = "builtin.unrealized_conversion_cast"(%scalar_raw) : (i16) -> ui16
+    pto.trems ins(%src, %scalar, %tmp
+        : !pto.tile_buf<loc=vec, dtype=ui16, rows=2, cols=64, v_row=2, v_col=64,
+                        blayout=row_major, slayout=none_box, fractal=512, pad=0>, ui16,
+          !pto.tile_buf<loc=vec, dtype=ui16, rows=2, cols=64, v_row=2, v_col=64,
+                        blayout=row_major, slayout=none_box, fractal=512, pad=0>)
+      outs(%dst
+        : !pto.tile_buf<loc=vec, dtype=ui16, rows=2, cols=64, v_row=2, v_col=64,
+                        blayout=row_major, slayout=none_box, fractal=512, pad=0>)
+    return
+  }
+
+  func.func @REMS_UI32() {
+    %src = pto.alloc_tile
+      : !pto.tile_buf<loc=vec, dtype=ui32, rows=2, cols=64, v_row=2, v_col=64,
+                      blayout=row_major, slayout=none_box, fractal=512, pad=0>
+    %tmp = pto.alloc_tile
+      : !pto.tile_buf<loc=vec, dtype=ui32, rows=2, cols=64, v_row=2, v_col=64,
+                      blayout=row_major, slayout=none_box, fractal=512, pad=0>
+    %dst = pto.alloc_tile
+      : !pto.tile_buf<loc=vec, dtype=ui32, rows=2, cols=64, v_row=2, v_col=64,
+                      blayout=row_major, slayout=none_box, fractal=512, pad=0>
+    %scalar_raw = arith.constant 3 : i32
+    %scalar = "builtin.unrealized_conversion_cast"(%scalar_raw) : (i32) -> ui32
+    pto.trems ins(%src, %scalar, %tmp
+        : !pto.tile_buf<loc=vec, dtype=ui32, rows=2, cols=64, v_row=2, v_col=64,
+                        blayout=row_major, slayout=none_box, fractal=512, pad=0>, ui32,
+          !pto.tile_buf<loc=vec, dtype=ui32, rows=2, cols=64, v_row=2, v_col=64,
+                        blayout=row_major, slayout=none_box, fractal=512, pad=0>)
+      outs(%dst
+        : !pto.tile_buf<loc=vec, dtype=ui32, rows=2, cols=64, v_row=2, v_col=64,
+                        blayout=row_major, slayout=none_box, fractal=512, pad=0>)
+    return
+  }
+
+  func.func @TSELS_UI8() {
+    %mask = pto.alloc_tile
+      : !pto.tile_buf<loc=vec, dtype=i8, rows=2, cols=64, v_row=2, v_col=64,
+                      blayout=row_major, slayout=none_box, fractal=512, pad=0>
+    %src = pto.alloc_tile
+      : !pto.tile_buf<loc=vec, dtype=ui8, rows=2, cols=64, v_row=2, v_col=64,
+                      blayout=row_major, slayout=none_box, fractal=512, pad=0>
+    %tmp = pto.alloc_tile
+      : !pto.tile_buf<loc=vec, dtype=ui8, rows=1, cols=64, v_row=1, v_col=64,
+                      blayout=row_major, slayout=none_box, fractal=512, pad=0>
+    %dst = pto.alloc_tile
+      : !pto.tile_buf<loc=vec, dtype=ui8, rows=2, cols=64, v_row=2, v_col=64,
+                      blayout=row_major, slayout=none_box, fractal=512, pad=0>
+    %scalar_raw = arith.constant 42 : i8
+    %scalar = "builtin.unrealized_conversion_cast"(%scalar_raw) : (i8) -> ui8
+    pto.tsels ins(%mask, %src, %tmp, %scalar
+        : !pto.tile_buf<loc=vec, dtype=i8, rows=2, cols=64, v_row=2, v_col=64,
+                        blayout=row_major, slayout=none_box, fractal=512, pad=0>,
+          !pto.tile_buf<loc=vec, dtype=ui8, rows=2, cols=64, v_row=2, v_col=64,
+                        blayout=row_major, slayout=none_box, fractal=512, pad=0>,
+          !pto.tile_buf<loc=vec, dtype=ui8, rows=1, cols=64, v_row=1, v_col=64,
+                        blayout=row_major, slayout=none_box, fractal=512, pad=0>, ui8)
+      outs(%dst
+        : !pto.tile_buf<loc=vec, dtype=ui8, rows=2, cols=64, v_row=2, v_col=64,
+                        blayout=row_major, slayout=none_box, fractal=512, pad=0>)
+    return
+  }
+
+  func.func @TSELS_UI16() {
+    %mask = pto.alloc_tile
+      : !pto.tile_buf<loc=vec, dtype=i8, rows=2, cols=64, v_row=2, v_col=64,
+                      blayout=row_major, slayout=none_box, fractal=512, pad=0>
+    %src = pto.alloc_tile
+      : !pto.tile_buf<loc=vec, dtype=ui16, rows=2, cols=64, v_row=2, v_col=64,
+                      blayout=row_major, slayout=none_box, fractal=512, pad=0>
+    %tmp = pto.alloc_tile
+      : !pto.tile_buf<loc=vec, dtype=ui16, rows=1, cols=64, v_row=1, v_col=64,
+                      blayout=row_major, slayout=none_box, fractal=512, pad=0>
+    %dst = pto.alloc_tile
+      : !pto.tile_buf<loc=vec, dtype=ui16, rows=2, cols=64, v_row=2, v_col=64,
+                      blayout=row_major, slayout=none_box, fractal=512, pad=0>
+    %scalar_raw = arith.constant 42 : i16
+    %scalar = "builtin.unrealized_conversion_cast"(%scalar_raw) : (i16) -> ui16
+    pto.tsels ins(%mask, %src, %tmp, %scalar
+        : !pto.tile_buf<loc=vec, dtype=i8, rows=2, cols=64, v_row=2, v_col=64,
+                        blayout=row_major, slayout=none_box, fractal=512, pad=0>,
+          !pto.tile_buf<loc=vec, dtype=ui16, rows=2, cols=64, v_row=2, v_col=64,
+                        blayout=row_major, slayout=none_box, fractal=512, pad=0>,
+          !pto.tile_buf<loc=vec, dtype=ui16, rows=1, cols=64, v_row=1, v_col=64,
+                        blayout=row_major, slayout=none_box, fractal=512, pad=0>, ui16)
+      outs(%dst
+        : !pto.tile_buf<loc=vec, dtype=ui16, rows=2, cols=64, v_row=2, v_col=64,
+                        blayout=row_major, slayout=none_box, fractal=512, pad=0>)
+    return
+  }
+
+  func.func @TSELS_UI32() {
+    %mask = pto.alloc_tile
+      : !pto.tile_buf<loc=vec, dtype=i8, rows=2, cols=64, v_row=2, v_col=64,
+                      blayout=row_major, slayout=none_box, fractal=512, pad=0>
+    %src = pto.alloc_tile
+      : !pto.tile_buf<loc=vec, dtype=ui32, rows=2, cols=64, v_row=2, v_col=64,
+                      blayout=row_major, slayout=none_box, fractal=512, pad=0>
+    %tmp = pto.alloc_tile
+      : !pto.tile_buf<loc=vec, dtype=ui32, rows=1, cols=64, v_row=1, v_col=64,
+                      blayout=row_major, slayout=none_box, fractal=512, pad=0>
+    %dst = pto.alloc_tile
+      : !pto.tile_buf<loc=vec, dtype=ui32, rows=2, cols=64, v_row=2, v_col=64,
+                      blayout=row_major, slayout=none_box, fractal=512, pad=0>
+    %scalar_raw = arith.constant 42 : i32
+    %scalar = "builtin.unrealized_conversion_cast"(%scalar_raw) : (i32) -> ui32
+    pto.tsels ins(%mask, %src, %tmp, %scalar
+        : !pto.tile_buf<loc=vec, dtype=i8, rows=2, cols=64, v_row=2, v_col=64,
+                        blayout=row_major, slayout=none_box, fractal=512, pad=0>,
+          !pto.tile_buf<loc=vec, dtype=ui32, rows=2, cols=64, v_row=2, v_col=64,
+                        blayout=row_major, slayout=none_box, fractal=512, pad=0>,
+          !pto.tile_buf<loc=vec, dtype=ui32, rows=1, cols=64, v_row=1, v_col=64,
+                        blayout=row_major, slayout=none_box, fractal=512, pad=0>, ui32)
+      outs(%dst
+        : !pto.tile_buf<loc=vec, dtype=ui32, rows=2, cols=64, v_row=2, v_col=64,
+                        blayout=row_major, slayout=none_box, fractal=512, pad=0>)
+    return
+  }
+
+  func.func @TCMPS_BF16() {
+    %src = pto.alloc_tile
+      : !pto.tile_buf<loc=vec, dtype=bf16, rows=2, cols=256, v_row=2, v_col=256,
+                      blayout=row_major, slayout=none_box, fractal=512, pad=0>
+    %dst = pto.alloc_tile
+      : !pto.tile_buf<loc=vec, dtype=ui8, rows=2, cols=32, v_row=2, v_col=32,
+                      blayout=row_major, slayout=none_box, fractal=512, pad=0>
+    %scalar = arith.constant 0.0 : bf16
+    pto.tcmps ins(%src, %scalar {cmpMode = #pto<cmp lt>}
+        : !pto.tile_buf<loc=vec, dtype=bf16, rows=2, cols=256, v_row=2, v_col=256,
+                        blayout=row_major, slayout=none_box, fractal=512, pad=0>, bf16)
+      outs(%dst
+        : !pto.tile_buf<loc=vec, dtype=ui8, rows=2, cols=32, v_row=2, v_col=32,
+                        blayout=row_major, slayout=none_box, fractal=512, pad=0>)
+    return
+  }
+
+  func.func @TFMODS_BF16() {
+    %src = pto.alloc_tile
+      : !pto.tile_buf<loc=vec, dtype=bf16, rows=2, cols=64, v_row=2, v_col=64,
+                      blayout=row_major, slayout=none_box, fractal=512, pad=0>
+    %dst = pto.alloc_tile
+      : !pto.tile_buf<loc=vec, dtype=bf16, rows=2, cols=64, v_row=2, v_col=64,
+                      blayout=row_major, slayout=none_box, fractal=512, pad=0>
+    %scalar = arith.constant 3.0 : bf16
+    pto.tfmods ins(%src, %scalar
+        : !pto.tile_buf<loc=vec, dtype=bf16, rows=2, cols=64, v_row=2, v_col=64,
+                        blayout=row_major, slayout=none_box, fractal=512, pad=0>, bf16)
+      outs(%dst
+        : !pto.tile_buf<loc=vec, dtype=bf16, rows=2, cols=64, v_row=2, v_col=64,
+                        blayout=row_major, slayout=none_box, fractal=512, pad=0>)
+    return
+  }
+
+  func.func @TABS_I8() {
+    %src = pto.alloc_tile
+      : !pto.tile_buf<loc=vec, dtype=i8, rows=2, cols=64, v_row=2, v_col=64,
+                      blayout=row_major, slayout=none_box, fractal=512, pad=0>
+    %dst = pto.alloc_tile
+      : !pto.tile_buf<loc=vec, dtype=i8, rows=2, cols=64, v_row=2, v_col=64,
+                      blayout=row_major, slayout=none_box, fractal=512, pad=0>
+    pto.tabs ins(%src
+        : !pto.tile_buf<loc=vec, dtype=i8, rows=2, cols=64, v_row=2, v_col=64,
+                        blayout=row_major, slayout=none_box, fractal=512, pad=0>)
+      outs(%dst
+        : !pto.tile_buf<loc=vec, dtype=i8, rows=2, cols=64, v_row=2, v_col=64,
+                        blayout=row_major, slayout=none_box, fractal=512, pad=0>)
+    return
+  }
+
+  func.func @TABS_I16() {
+    %src = pto.alloc_tile
+      : !pto.tile_buf<loc=vec, dtype=i16, rows=2, cols=64, v_row=2, v_col=64,
+                      blayout=row_major, slayout=none_box, fractal=512, pad=0>
+    %dst = pto.alloc_tile
+      : !pto.tile_buf<loc=vec, dtype=i16, rows=2, cols=64, v_row=2, v_col=64,
+                      blayout=row_major, slayout=none_box, fractal=512, pad=0>
+    pto.tabs ins(%src
+        : !pto.tile_buf<loc=vec, dtype=i16, rows=2, cols=64, v_row=2, v_col=64,
+                        blayout=row_major, slayout=none_box, fractal=512, pad=0>)
+      outs(%dst
+        : !pto.tile_buf<loc=vec, dtype=i16, rows=2, cols=64, v_row=2, v_col=64,
+                        blayout=row_major, slayout=none_box, fractal=512, pad=0>)
+    return
+  }
+
+  func.func @TABS_I32() {
+    %src = pto.alloc_tile
+      : !pto.tile_buf<loc=vec, dtype=i32, rows=2, cols=64, v_row=2, v_col=64,
+                      blayout=row_major, slayout=none_box, fractal=512, pad=0>
+    %dst = pto.alloc_tile
+      : !pto.tile_buf<loc=vec, dtype=i32, rows=2, cols=64, v_row=2, v_col=64,
+                      blayout=row_major, slayout=none_box, fractal=512, pad=0>
+    pto.tabs ins(%src
+        : !pto.tile_buf<loc=vec, dtype=i32, rows=2, cols=64, v_row=2, v_col=64,
+                        blayout=row_major, slayout=none_box, fractal=512, pad=0>)
+      outs(%dst
+        : !pto.tile_buf<loc=vec, dtype=i32, rows=2, cols=64, v_row=2, v_col=64,
+                        blayout=row_major, slayout=none_box, fractal=512, pad=0>)
+    return
+  }
+
+  func.func @TSELS_UI8_MASK_UI16() {
+    %mask = pto.alloc_tile
+      : !pto.tile_buf<loc=vec, dtype=ui8, rows=2, cols=64, v_row=2, v_col=64,
+                      blayout=row_major, slayout=none_box, fractal=512, pad=0>
+    %src = pto.alloc_tile
+      : !pto.tile_buf<loc=vec, dtype=ui16, rows=2, cols=64, v_row=2, v_col=64,
+                      blayout=row_major, slayout=none_box, fractal=512, pad=0>
+    %tmp = pto.alloc_tile
+      : !pto.tile_buf<loc=vec, dtype=ui16, rows=1, cols=64, v_row=1, v_col=64,
+                      blayout=row_major, slayout=none_box, fractal=512, pad=0>
+    %dst = pto.alloc_tile
+      : !pto.tile_buf<loc=vec, dtype=ui16, rows=2, cols=64, v_row=2, v_col=64,
+                      blayout=row_major, slayout=none_box, fractal=512, pad=0>
+    %scalar_raw = arith.constant 42 : i16
+    %scalar = "builtin.unrealized_conversion_cast"(%scalar_raw) : (i16) -> ui16
+    pto.tsels ins(%mask, %src, %tmp, %scalar
+        : !pto.tile_buf<loc=vec, dtype=ui8, rows=2, cols=64, v_row=2, v_col=64,
+                        blayout=row_major, slayout=none_box, fractal=512, pad=0>,
+          !pto.tile_buf<loc=vec, dtype=ui16, rows=2, cols=64, v_row=2, v_col=64,
+                        blayout=row_major, slayout=none_box, fractal=512, pad=0>,
+          !pto.tile_buf<loc=vec, dtype=ui16, rows=1, cols=64, v_row=1, v_col=64,
+                        blayout=row_major, slayout=none_box, fractal=512, pad=0>, ui16)
+      outs(%dst
+        : !pto.tile_buf<loc=vec, dtype=ui16, rows=2, cols=64, v_row=2, v_col=64,
+                        blayout=row_major, slayout=none_box, fractal=512, pad=0>)
+    return
+  }
+}
+
+// SELECT-LABEL: func.func @TCMPS_UI16
+// SELECT-NOT: pto.tcmps ins
+// SELECT: pto.vcmps
+// SELECT-LABEL: func.func @TCMPS_UI32
+// SELECT-NOT: pto.tcmps ins
+// SELECT: pto.vcmps
+// SELECT-LABEL: func.func @TFMODS_UI16
+// SELECT-NOT: pto.tfmods ins
+// SELECT: pto.vshrs
+// SELECT-LABEL: func.func @TFMODS_UI32
+// SELECT-NOT: pto.tfmods ins
+// SELECT: pto.vshrs
+// SELECT-LABEL: func.func @REMS_UI16
+// SELECT-NOT: pto.trems ins
+// SELECT: pto.vshrs
+// SELECT-LABEL: func.func @REMS_UI32
+// SELECT-NOT: pto.trems ins
+// SELECT: pto.vshrs
+// SELECT-LABEL: func.func @TSELS_UI8
+// SELECT-NOT: pto.tsels ins
+// SELECT: pto.vsel
+// SELECT-LABEL: func.func @TSELS_UI16
+// SELECT-NOT: pto.tsels ins
+// SELECT: pto.vsel
+// SELECT-LABEL: func.func @TSELS_UI32
+// SELECT-NOT: pto.tsels ins
+// SELECT: pto.vsel
+
+// LLVM-LABEL: define void @TCMPS_UI16
+// LLVM: llvm.hivm.vcmps
+// LLVM-LABEL: define void @TCMPS_UI32
+// LLVM: llvm.hivm.vcmps
+// LLVM-LABEL: define void @TFMODS_UI16
+// LLVM-LABEL: define void @TFMODS_UI32
+// LLVM-LABEL: define void @REMS_UI16
+// LLVM-LABEL: define void @REMS_UI32
+// LLVM-LABEL: define void @TSELS_UI8
+// LLVM: llvm.hivm.vsel
+// LLVM-LABEL: define void @TSELS_UI16
+// LLVM: llvm.hivm.vsel
+// LLVM-LABEL: define void @TSELS_UI32
+// LLVM: llvm.hivm.vsel
+// SELECT-LABEL: func.func @TCMPS_BF16
+// SELECT-NOT: pto.tcmps ins
+// SELECT: pto.vcmps
+// SELECT-LABEL: func.func @TFMODS_BF16
+// SELECT-NOT: pto.tfmods ins
+// SELECT: pto.vcvt
+// SELECT: pto.vdiv
+// SELECT: pto.vtrc
+// SELECT: pto.vcvt
+// SELECT: pto.vor
+// SELECT-LABEL: func.func @TABS_I8
+// SELECT-NOT: pto.tabs ins
+// SELECT: pto.vabs
+// SELECT-LABEL: func.func @TABS_I16
+// SELECT-NOT: pto.tabs ins
+// SELECT: pto.vabs
+// SELECT-LABEL: func.func @TABS_I32
+// SELECT-NOT: pto.tabs ins
+// SELECT: pto.vabs
+// SELECT-LABEL: func.func @TSELS_UI8_MASK_UI16
+// SELECT-NOT: pto.tsels ins
+// SELECT: pto.vsel
+
+// LLVM-LABEL: define void @TCMPS_BF16
+// LLVM: llvm.hivm.vcmps
+// LLVM-LABEL: define void @TFMODS_BF16
+// LLVM: llvm.hivm.vcvtff.bf162f32
+// LLVM: llvm.hivm.vdiv
+// LLVM: llvm.hivm.vcvtff.f322bf16
+// LLVM: llvm.hivm.vor
+// LLVM-LABEL: define void @TABS_I8
+// LLVM: llvm.hivm.vabs
+// LLVM-LABEL: define void @TABS_I16
+// LLVM: llvm.hivm.vabs
+// LLVM-LABEL: define void @TABS_I32
+// LLVM: llvm.hivm.vabs
+// LLVM-LABEL: define void @TSELS_UI8_MASK_UI16
+// LLVM: llvm.hivm.vsel

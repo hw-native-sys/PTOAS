@@ -15,12 +15,12 @@ module {
       %src: !pto.ptr<f32, ub>, %dst: !pto.ptr<bf16, ub>, %off: index) {
     %c1024 = arith.constant 1024 : index
     %value = pto.vmi.load %src[%off]
-        : !pto.ptr<f32, ub> -> !pto.vmi.vreg<128xf32>
+        : !pto.ptr<f32, ub>, index -> !pto.vmi.vreg<128xf32>
     %narrow = pto.vmi.truncf %value {saturate = "SAT"}
         : !pto.vmi.vreg<128xf32> -> !pto.vmi.vreg<128xbf16>
     pto.vmi.group_store %narrow, %dst[%off], %c1024
         {num_groups = 8 : i64}
-        : !pto.vmi.vreg<128xbf16>, !pto.ptr<bf16, ub>
+        : !pto.vmi.vreg<128xbf16>, !pto.ptr<bf16, ub>, index
     return
   }
 
@@ -31,7 +31,7 @@ module {
     pto.vmi.group_store %value, %dst[%off], %c512
         {num_groups = 2 : i64}
         : !pto.vmi.vreg<512xf32, #pto.vmi.layout<deinterleaved = 4>>,
-          !pto.ptr<f32, ub>
+          !pto.ptr<f32, ub>, index
     return
   }
 }
@@ -41,9 +41,9 @@ module {
 // CHECK-SAME: %[[VAL_1:[a-zA-Z0-9_.$-]+]]: !pto.ptr<bf16, ub>,
 // CHECK-SAME: %[[VAL_2:[a-zA-Z0-9_.$-]+]]: index) {
 // CHECK-NEXT: %[[VAL_3:[a-zA-Z0-9_.$-]+]] = arith.constant 1024 : index
-// CHECK-NEXT: %[[VAL_4:[a-zA-Z0-9_.$-]+]] = pto.vmi.load %[[VAL_0]]{{\[}}%[[VAL_2]]] : !pto.ptr<f32, ub> -> !pto.vmi.vreg<128xf32, #pto.vmi.layout<deinterleaved = 2>>
+// CHECK-NEXT: %[[VAL_4:[a-zA-Z0-9_.$-]+]] = pto.vmi.load %[[VAL_0]]{{\[}}%[[VAL_2]]] : !pto.ptr<f32, ub>, index -> !pto.vmi.vreg<128xf32, #pto.vmi.layout<deinterleaved = 2>>
 // CHECK-NEXT: %[[VAL_5:[a-zA-Z0-9_.$-]+]] = pto.vmi.truncf %[[VAL_4]] {saturate = "SAT"} : !pto.vmi.vreg<128xf32, #pto.vmi.layout<deinterleaved = 2>> -> !pto.vmi.vreg<128xbf16, #pto.vmi.layout<contiguous>>
-// CHECK-NEXT: pto.vmi.group_store %[[VAL_5]], %[[VAL_1]]{{\[}}%[[VAL_2]]], %[[VAL_3]] {num_groups = 8 : i64} : !pto.vmi.vreg<128xbf16, #pto.vmi.layout<contiguous>>, !pto.ptr<bf16, ub>
+// CHECK-NEXT: pto.vmi.group_store %[[VAL_5]], %[[VAL_1]]{{\[}}%[[VAL_2]]], %[[VAL_3]] {num_groups = 8 : i64} : !pto.vmi.vreg<128xbf16, #pto.vmi.layout<contiguous>>, !pto.ptr<bf16, ub>, index
 // CHECK-NEXT: return
 // CHECK-NEXT: }
 // CHECK-LABEL: func.func @vmi_layout_assignment_group_store_d4_to_d2(
@@ -52,6 +52,6 @@ module {
 // CHECK-SAME: %[[VAL_2:[a-zA-Z0-9_.$-]+]]: index) {
 // CHECK-NEXT: %[[VAL_3:[a-zA-Z0-9_.$-]+]] = arith.constant 512 : index
 // CHECK-NEXT: %[[VAL_4:[a-zA-Z0-9_.$-]+]] = pto.vmi.ensure_layout %[[VAL_0]] : !pto.vmi.vreg<512xf32, #pto.vmi.layout<deinterleaved = 4>> -> !pto.vmi.vreg<512xf32, #pto.vmi.layout<deinterleaved = 2>>
-// CHECK-NEXT: pto.vmi.group_store %[[VAL_4]], %[[VAL_1]]{{\[}}%[[VAL_2]]], %[[VAL_3]] {num_groups = 2 : i64} : !pto.vmi.vreg<512xf32, #pto.vmi.layout<deinterleaved = 2>>, !pto.ptr<f32, ub>
+// CHECK-NEXT: pto.vmi.group_store %[[VAL_4]], %[[VAL_1]]{{\[}}%[[VAL_2]]], %[[VAL_3]] {num_groups = 2 : i64} : !pto.vmi.vreg<512xf32, #pto.vmi.layout<deinterleaved = 2>>, !pto.ptr<f32, ub>, index
 // CHECK-NEXT: return
 // CHECK-NEXT: }

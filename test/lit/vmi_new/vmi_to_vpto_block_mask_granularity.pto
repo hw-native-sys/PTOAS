@@ -21,9 +21,9 @@ module {
     %c0 = arith.constant 0 : index
     %bs = arith.constant 8 : i16
     %v = pto.vmi.vload %src[%c0]
-        : !pto.ptr<i32, ub> -> !pto.vmi.vreg<256xi32>
+        : !pto.ptr<i32, ub>, index -> !pto.vmi.vreg<256xi32>
     pto.vmi.vstore %v, %dst[%off], %bs
-        : !pto.vmi.vreg<256xi32>, !pto.ptr<i32, ub>
+        : !pto.vmi.vreg<256xi32>, !pto.ptr<i32, ub>, index
     return
   }
 
@@ -32,9 +32,9 @@ module {
     %c0 = arith.constant 0 : index
     %bs = arith.constant 8 : i16
     %v = pto.vmi.vload %src[%c0], %bs
-        : !pto.ptr<i32, ub> -> !pto.vmi.vreg<256xi32>
+        : !pto.ptr<i32, ub>, index -> !pto.vmi.vreg<256xi32>
     pto.vmi.vstore %v, %dst[%off]
-        : !pto.vmi.vreg<256xi32>, !pto.ptr<i32, ub>
+        : !pto.vmi.vreg<256xi32>, !pto.ptr<i32, ub>, index
     return
   }
 }

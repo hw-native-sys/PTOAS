@@ -171,7 +171,7 @@ mem_bar(barrier_type);
 
 **Example:** Ensure vector stores are visible before subsequent vector loads to the same UB region:
 ```mlir
-pto.vsts %v0, %ub[%c0] : !pto.vreg<64xf32>, !pto.ptr<f32, ub>
+pto.vsts %v0, %ub[%c0], %mask : !pto.vreg<64xf32>, !pto.ptr<f32, ub>, index, !pto.mask<b32>
 pto.mem_bar "VST_VLD"
 %v1 = pto.vlds %ub[%c0] : !pto.ptr<f32, ub>, index -> !pto.vreg<64xf32>
 ```

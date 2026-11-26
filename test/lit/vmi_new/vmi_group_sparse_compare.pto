@@ -15,12 +15,12 @@ module {
   // CHECK: pto.vcgadd
   func.func @half_block_compare_ui16(%src: !pto.ptr<ui16, ub>, %dst: !pto.ptr<ui16, ub>, %limit: ui16, %active: index) {
     %zero = arith.constant 0 : index
-    %x = pto.vmi.vload %src[%zero] : !pto.ptr<ui16, ub> -> !pto.vmi.vreg<64xui16>
+    %x = pto.vmi.vload %src[%zero] : !pto.ptr<ui16, ub>, index -> !pto.vmi.vreg<64xui16>
     %prefix = pto.vmi.create_mask %active : index -> !pto.vmi.mask<64xpred>
     %m = pto.vmi.vcmps %x, %limit, %prefix {cmp = "gt"} : !pto.vmi.vreg<64xui16>, ui16, !pto.vmi.mask<64xpred> -> !pto.vmi.mask<64xpred>
     %r = pto.vmi.vcadd %x, %m {group = 8, reassoc} : !pto.vmi.vreg<64xui16>, !pto.vmi.mask<64xpred> -> !pto.vmi.vreg<8xui16>
     %b = pto.vmi.vbrc %r {group = 8} : !pto.vmi.vreg<8xui16> -> !pto.vmi.vreg<64xui16>
-    pto.vmi.vstore %b, %dst[%zero] : !pto.vmi.vreg<64xui16>, !pto.ptr<ui16, ub>
+    pto.vmi.vstore %b, %dst[%zero] : !pto.vmi.vreg<64xui16>, !pto.ptr<ui16, ub>, index
     return
   }
   // CHECK-LABEL: func.func @half_block_compare_f16
@@ -29,12 +29,12 @@ module {
   // CHECK: pto.vcgmax
   func.func @half_block_compare_f16(%src: !pto.ptr<f16, ub>, %dst: !pto.ptr<f16, ub>, %limit: f16, %active: index) {
     %zero = arith.constant 0 : index
-    %x = pto.vmi.vload %src[%zero] : !pto.ptr<f16, ub> -> !pto.vmi.vreg<64xf16>
+    %x = pto.vmi.vload %src[%zero] : !pto.ptr<f16, ub>, index -> !pto.vmi.vreg<64xf16>
     %prefix = pto.vmi.create_mask %active : index -> !pto.vmi.mask<64xpred>
     %m = pto.vmi.vcmps %x, %limit, %prefix {cmp = "gt"} : !pto.vmi.vreg<64xf16>, f16, !pto.vmi.mask<64xpred> -> !pto.vmi.mask<64xpred>
     %r = pto.vmi.vcmax %x, %m {group = 8, reassoc} : !pto.vmi.vreg<64xf16>, !pto.vmi.mask<64xpred> -> !pto.vmi.vreg<8xf16>
     %b = pto.vmi.vbrc %r {group = 8} : !pto.vmi.vreg<8xf16> -> !pto.vmi.vreg<64xf16>
-    pto.vmi.vstore %b, %dst[%zero] : !pto.vmi.vreg<64xf16>, !pto.ptr<f16, ub>
+    pto.vmi.vstore %b, %dst[%zero] : !pto.vmi.vreg<64xf16>, !pto.ptr<f16, ub>, index
     return
   }
 }

@@ -14,7 +14,7 @@ module {
     %idx = pto.vmi.vci %base
         : f16 -> !pto.vmi.vreg<8xf16>
     pto.vmi.vstore %idx, %dst[%c0]
-        : !pto.vmi.vreg<8xf16>, !pto.ptr<f16, ub>
+        : !pto.vmi.vreg<8xf16>, !pto.ptr<f16, ub>, index
     return
   }
 }

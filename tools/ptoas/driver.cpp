@@ -14,6 +14,8 @@
 #include <vector>
 #include "ObjectEmission.h"
 #include "PTO/IR/PTO.h"
+#include "PTO/IR/Linx/LinxDialect.h"
+#include "PTO/Conversion/Linx/LinxToEmitC.h"
 #include "PTO/Support/CodeConstants.h"
 #include "PTO/Transforms/Passes.h"
 #include "VPTOHostStubEmission.h"
@@ -1401,10 +1403,6 @@ struct DriverInvocationOptions {
 static FailureOr<DriverInvocationOptions> parseDriverInvocation(
     const std::vector<std::string>& args, DialectRegistry& registry, MLIRContext* borrowedContext)
 {
-    mlir::pto::registerPTOASDialects(registry);
-    if (borrowedContext) {
-        borrowedContext->appendDialectRegistry(registry);
-    }
     mlir::pto::registerPTOASPassesAndCLOptions();
     llvm::cl::SetVersionPrinter(printPTOASVersion);
 
@@ -1428,6 +1426,12 @@ static FailureOr<DriverInvocationOptions> parseDriverInvocation(
         llvm::errs() << "Error: --bisheng-vec-misched and "
                         "--enable-bisheng-vec-misched cannot be combined.\n";
         return failure();
+    }
+    if (mlir::pto::ptoTargetArch != "linx") {
+        mlir::pto::registerPTOASDialects(registry);
+        if (borrowedContext) {
+            borrowedContext->appendDialectRegistry(registry);
+        }
     }
     return options;
 }
@@ -1728,6 +1732,52 @@ static void installCrashBacktraceHandlerOnce()
     });
 }
 
+// Linx text compilation owns a separate context even when the CLI supplies a
+// Python-owned context. No Linx bindings are installed into that context.
+static int runLinxDriver()
+{
+    if (mlir::pto::ptoBackend != "emitc" || mlir::pto::emitVPTO ||
+        mlir::pto::emitVPTOLLVMDialect || mlir::pto::emitVPTODeviceObject) {
+        llvm::errs() << "Linx requires --pto-backend=emitc\n";
+        return 1;
+    }
+    DialectRegistry registry;
+    registry.insert<mlir::pto::linx::PTODialect, func::FuncDialect>();
+    MLIRContext context(registry);
+    auto buffer = readInputBuffer();
+    if (!buffer) {
+        return 1;
+    }
+    if (isPTOBCBuffer(buffer->getBuffer()) || buffer->getBuffer().starts_with("ML\xefR")) {
+        llvm::errs() << "Linx currently accepts textual .pto input only; bytecode is unsupported\n";
+        return 1;
+    }
+    llvm::SourceMgr source;
+    source.AddNewSourceBuffer(std::move(buffer), llvm::SMLoc());
+    auto module = parseSourceFile<ModuleOp>(source, &context);
+    if (!module || failed(mlir::pto::linx::verifyModule(*module))) {
+        return 1;
+    }
+    std::string text;
+    llvm::raw_string_ostream output(text);
+    if (mlir::pto::emitMlirIR) {
+        module->print(output);
+        output << "\n";
+    } else if (failed(mlir::pto::linx::emitCpp(*module, output))) {
+        return 1;
+    }
+    output.flush();
+    std::error_code ec;
+    llvm::ToolOutputFile file(outputFilename, ec, llvm::sys::fs::OF_None);
+    if (ec) {
+        llvm::errs() << ec.message() << "\n";
+        return 1;
+    }
+    file.os() << text;
+    file.keep();
+    return 0;
+}
+
 static int runPTOASDriver(const std::vector<std::string>& args, MLIRContext* borrowedContext = nullptr)
 {
     installCrashBacktraceHandlerOnce();
@@ -1735,6 +1785,9 @@ static int runPTOASDriver(const std::vector<std::string>& args, MLIRContext* bor
     FailureOr<DriverInvocationOptions> options = parseDriverInvocation(args, registry, borrowedContext);
     if (failed(options)) {
         return 1;
+    }
+    if (mlir::pto::ptoTargetArch == "linx") {
+        return runLinxDriver();
     }
     std::unique_ptr<PTOASContext> context = createDriverContext(registry, borrowedContext, *options);
     OwningOpRef<ModuleOp> module = loadDriverModule(*context, options->cliArchSpecified);

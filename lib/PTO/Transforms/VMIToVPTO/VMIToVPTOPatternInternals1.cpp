@@ -1265,16 +1265,8 @@ static LogicalResult emitGroupSlotLoadSlots1Chunk(
   }
   Value groupOffset = offset;
   if (group != 0) {
-    Value groupIndex =
-        rewriter.create<arith::ConstantIndexOp>(op->getLoc(), group);
-    Value rowOffset = rewriter
-                          .create<arith::MulIOp>(op->getLoc(),
-                                                 sourceGroupStride, groupIndex)
-                          .getResult();
-    groupOffset = rewriter
-                      .create<arith::AddIOp>(op->getLoc(), groupOffset,
-                                             rowOffset)
-                      .getResult();
+    groupOffset = addScaledStrideToElementOffset(
+        op->getLoc(), groupOffset, sourceGroupStride, group, rewriter);
   }
   // Only lane zero of the part is semantically live, so a lane-zero BRC load
   // reads the group element at its own effective address and broadcasts it.

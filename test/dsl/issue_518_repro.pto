@@ -47,8 +47,8 @@ module attributes {pto.target_arch = "a5"} {
           %14 = arith.muli %13, %c2 : index
           %c256 = arith.constant 256 : index
           %second_offset = arith.addi %14, %c256 : index
-          %first = pto.vmi.vload %3[%14] : !pto.ptr<ui32, ub> -> !pto.vmi.vreg<256xui32>
-          %second = pto.vmi.vload %3[%second_offset] : !pto.ptr<ui32, ub> -> !pto.vmi.vreg<256xui32>
+          %first = pto.vmi.vload %3[%14] : !pto.ptr<ui32, ub>, index -> !pto.vmi.vreg<256xui32>
+          %second = pto.vmi.vload %3[%second_offset] : !pto.ptr<ui32, ub>, index -> !pto.vmi.vreg<256xui32>
           %all = pto.vmi.pset "PAT_ALL" : !pto.vmi.mask<256xpred>
           %15_low, %15_high = pto.vmi.vdintlv %first, %second, %all : !pto.vmi.vreg<256xui32>, !pto.vmi.vreg<256xui32>, !pto.vmi.mask<256xpred> -> !pto.vmi.vreg<256xui32>, !pto.vmi.vreg<256xui32>
           %c9_i32 = arith.constant 9 : i32
@@ -61,7 +61,7 @@ module attributes {pto.target_arch = "a5"} {
           scf.yield %21 : !pto.vmi.vreg<256xui32>
         }
         %c0_8 = arith.constant 0 : index
-        pto.vmi.vstore %12, %5[%c0_8], %7 : !pto.vmi.vreg<256xui32>, !pto.ptr<ui32, ub>, !pto.vmi.mask<256xpred>
+        pto.vmi.vstore %12, %5[%c0_8], %7 : !pto.vmi.vreg<256xui32>, !pto.ptr<ui32, ub>, index, !pto.vmi.mask<256xpred>
       }
       pto.set_flag[<PIPE_V>, <PIPE_MTE3>, <EVENT_ID1>]
       pto.wait_flag[<PIPE_V>, <PIPE_MTE3>, <EVENT_ID1>]

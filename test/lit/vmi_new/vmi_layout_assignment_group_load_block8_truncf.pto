@@ -19,17 +19,17 @@ module {
     %c128 = arith.constant 128 : index
     %mask = pto.vmi.create_mask %c128 : index -> !pto.vmi.mask<128xpred>
     %x = pto.vmi.vload %src[%off], %stride24 {group = 8}
-        : !pto.ptr<f32, ub> -> !pto.vmi.vreg<128xf32>
+        : !pto.ptr<f32, ub>, index -> !pto.vmi.vreg<128xf32>
     %sum = pto.vmi.vcadd %x, %mask
         {group = 8, reassoc}
         : !pto.vmi.vreg<128xf32>, !pto.vmi.mask<128xpred>
         -> !pto.vmi.vreg<8xf32>
     pto.vmi.vstore %sum, %sum_dst[%off], %c1 {group = 8}
-        : !pto.vmi.vreg<8xf32>, !pto.ptr<f32, ub>
+        : !pto.vmi.vreg<8xf32>, !pto.ptr<f32, ub>, index
     %h = pto.vmi.vcvt %x {saturate = "SAT"}
         : !pto.vmi.vreg<128xf32> -> !pto.vmi.vreg<128xf16>
     pto.vmi.vstore %h, %dense_dst[%off]
-        : !pto.vmi.vreg<128xf16>, !pto.ptr<f16, ub>
+        : !pto.vmi.vreg<128xf16>, !pto.ptr<f16, ub>, index
     return
   }
 }

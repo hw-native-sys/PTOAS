@@ -66,7 +66,7 @@ module {
     %flipped = pto.vmi.vnot %cmp16
         : !pto.vmi.mask<64xpred> -> !pto.vmi.mask<64xpred>
     pto.vmi.masked_store %v32, %d32[%off], %flipped
-        : !pto.vmi.vreg<64xf32>, !pto.ptr<f32, ub>, !pto.vmi.mask<64xpred>
+        : !pto.vmi.vreg<64xf32>, !pto.ptr<f32, ub>, index, !pto.vmi.mask<64xpred>
     %both = pto.vmi.vand %flipped, %cmp32
         : !pto.vmi.mask<64xpred>, !pto.vmi.mask<64xpred> -> !pto.vmi.mask<64xpred>
     return %both : !pto.vmi.mask<64xpred>
@@ -103,7 +103,7 @@ module {
 // CHECK: %[[NOT16:.*]] = pto.vmi.cmpf "olt", {{.*}} -> !pto.vmi.mask<64xb16>
 // CHECK: %[[NOT:.*]] = pto.vmi.vnot %[[NOT16]] : !pto.vmi.mask<64xb16> -> !pto.vmi.mask<64xb16>
 // CHECK: %[[NOT_STORE:.*]] = pto.vmi.ensure_mask_granularity %[[NOT]] : !pto.vmi.mask<64xb16> -> !pto.vmi.mask<64xb32>
-// CHECK: pto.vmi.masked_store {{.*}}{{\[}}%{{.*}}], %[[NOT_STORE]] : !pto.vmi.vreg<64xf32>, !pto.ptr<f32, ub>, !pto.vmi.mask<64xb32>
+// CHECK: pto.vmi.masked_store {{.*}}{{\[}}%{{.*}}], %[[NOT_STORE]] : !pto.vmi.vreg<64xf32>, !pto.ptr<f32, ub>, index, !pto.vmi.mask<64xb32>
 // CHECK: %[[NOT_LOGIC:.*]] = pto.vmi.ensure_mask_granularity %[[NOT]] : !pto.vmi.mask<64xb16> -> !pto.vmi.mask<64xb32>
 // CHECK: %[[NOT_BOTH:.*]] = pto.vmi.vand %[[NOT_LOGIC]], %[[NOT32]] : !pto.vmi.mask<64xb32>, !pto.vmi.mask<64xb32> -> !pto.vmi.mask<64xb32>
 // CHECK: return %[[NOT_BOTH]] : !pto.vmi.mask<64xb32>

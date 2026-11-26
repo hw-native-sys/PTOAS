@@ -22,11 +22,10 @@ void PstsOp::getEffects(
 }
 
 LogicalResult PstsOp::verify() {
-  return verifyPredicateStoreOp(
-      *this, [&]() -> LogicalResult {
+    return verifyPredicateStoreOp(*this, [&]() -> LogicalResult {
         if (!isElementOffsetType(getOffset().getType())) {
-          return emitOpError("requires an index or signless integer element offset");
+            return emitOpError("requires an index, i32 or i64 element offset");
         }
         return success();
-      });
+    });
 }

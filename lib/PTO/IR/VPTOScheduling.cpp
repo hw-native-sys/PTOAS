@@ -192,7 +192,11 @@ static void setStaticAccessRange(Operation *op, VPTOMemoryAccess &access) {
 /// Pure: vector-memory barriers and register-state effects must remain visible
 /// to the scheduler and to general IR transformations.
 static bool hasKnownNoOrdinaryMemoryAccess(Operation *op) {
-  return isa<MemBarOp, SprclrOp, GetCtrlOp, SetCtrlOp>(op);
+    // VSQZ only writes the implicit SQZN register; its state effects are
+    // modeled in getDefaultVPTOSchedulingSemantics below. It must not degrade
+    // into the conservative unknown ordinary memory write classification
+    // just because it is no longer Pure.
+    return isa<MemBarOp, SprclrOp, GetCtrlOp, SetCtrlOp, VsqzOp>(op);
 }
 
 // Handle ops that lack a MemoryEffectOpInterface: memory-effect-free ops have
@@ -342,6 +346,32 @@ static void collectCtrlStateEffects(Operation *op,
   }
 }
 
+/// Record the implicit hardware-register effects the scheduler cannot see
+/// through SSA: VSQZ writes SQZN and VSTUR consumes it, and VSTUR/VSTAR both
+/// advance the AR read-modify-write counter that SPRCLR resets.
+static void collectImplicitRegisterEffects(
+    Operation *op, SmallVectorImpl<VPTOSchedulingEffect> &effects)
+{
+    if (isa<VsqzOp>(op)) {
+        effects.push_back(
+            {VPTOSchedulingEffectKind::ImplicitWrite, "SQZN", Value()});
+    }
+    if (isa<VsturOp>(op)) {
+        effects.push_back(
+            {VPTOSchedulingEffectKind::ImplicitRead, "SQZN", Value()});
+        effects.push_back(
+            {VPTOSchedulingEffectKind::ImplicitRead, "AR", Value()});
+        effects.push_back(
+            {VPTOSchedulingEffectKind::ImplicitWrite, "AR", Value()});
+    }
+    if (isa<VstarOp>(op)) {
+        effects.push_back(
+            {VPTOSchedulingEffectKind::ImplicitRead, "AR", Value()});
+        effects.push_back(
+            {VPTOSchedulingEffectKind::ImplicitWrite, "AR", Value()});
+    }
+}
+
 VPTOSchedulingSemantics
 mlir::pto::getDefaultVPTOSchedulingSemantics(Operation *op) {
   VPTOSchedulingSemantics semantics;
@@ -350,6 +380,8 @@ mlir::pto::getDefaultVPTOSchedulingSemantics(Operation *op) {
     effects.push_back(
         {VPTOSchedulingEffectKind::Barrier, "memory-order", Value()});
   }
+    // Implicit hardware registers the scheduler cannot see through SSA.
+    collectImplicitRegisterEffects(op, effects);
   if (isa<AtomicCasOp, AtomicExchOp, AtomicAddOp, AtomicSubOp, AtomicMinOp,
           AtomicMaxOp, AtomicAndOp, AtomicOrOp, AtomicXorOp>(op))
     effects.push_back(
@@ -367,6 +399,13 @@ mlir::pto::getDefaultVPTOSchedulingSemantics(Operation *op) {
   if (auto sprsts = dyn_cast<SprstsOp>(op))
     effects.push_back(
         {VPTOSchedulingEffectKind::ImplicitRead, sprsts.getSpr(), Value()});
+  // SQZN is written only by VSQZ and consumed by VSTUR, whose store length is
+  // not an SSA operand. Without this dependency the scheduler may hoist a later
+  // VSQZ above the VSTUR that still has to read the previous SQZN value, which
+  // drops a stored squeeze (issue 1779). The AR register is a read-modify-write
+  // counter: VSTUR advances it, VSTAR drains it, and SPRCLR "AR" resets it.
+  // Modeling the AR effects on VSTUR/VSTAR keeps a later clear after the VSTAR
+  // that must flush the previous AR state.
   collectCtrlStateEffects(op, effects);
 
   collectMemoryAccesses(op, semantics);

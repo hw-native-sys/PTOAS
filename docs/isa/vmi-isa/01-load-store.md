@@ -4,6 +4,46 @@
 >
 > `vload` and `vstore` access one contiguous vector.
 
+## Element offset type
+
+The element offset of every VMI memory operation is written in the operand type
+list, immediately after the base pointer type, exactly like the other operand
+types:
+
+```mlir
+%r = pto.vmi.vload %src[%off] : !pto.ptr<f32, ub>, index -> !pto.vmi.vreg<64xf32>
+pto.vmi.vstore %v, %dst[%off] : !pto.vmi.vreg<64xf32>, !pto.ptr<f32, ub>, index
+```
+
+The offset type is either the platform `index` type or a **32/64-bit signless
+integer** (`i32` or `i64`) — the shared `PTO_ElementOffset` constraint, see
+`pto.load`/`pto.store`/`pto.addptr`. The unit is always elements, the
+displacement is signed, and the same value is used unchanged for every derived
+address (per-chunk and per-group offsets): an integer offset keeps its own width
+instead of being widened to `index`, so a 32-bit address chain stays 32-bit
+from the front end down to the VPTO memory operations. A signless integer offset
+is not implicitly truncated or extended by VMI; the arithmetic on it is
+performed in its own type.
+
+Narrower widths (`i1`/`i8`/`i16`) and wider-than-64-bit offsets are
+**rejected**. The lowerings derive per-chunk and per-group offsets from the
+element offset and evaluate that arithmetic in the offset's own type, so a
+16-bit offset would wrap silently and address the wrong element for an access
+that is still in bounds; `i32` is the narrowest width that cannot wrap for an
+in-bounds access (the unit is elements, so it spans 2^31 elements) and it is the
+width the A5 scalar unit computes in. `i64` and `index` cover the rest.
+
+```mlir
+// i32 offset stays i32 through VMI lowering
+%r = pto.vmi.vload %src[%off] : !pto.ptr<f32, ub>, i32 -> !pto.vmi.vreg<64xf32>
+```
+
+> **Syntax change:** the offset type is part of the operand type list and is
+> required. IR that predates this contract (for example
+> `pto.vmi.vload %src[%off] : !pto.ptr<f32, ub> -> !pto.vmi.vreg<64xf32>`)
+> no longer parses; add the offset type (`index`, `i32` or `i64`)
+> after the base pointer type.
+
 
 ---
 
@@ -20,7 +60,7 @@
 
 - **syntax:**
   ```mlir
-  %result = pto.vmi.vload %source[%offset] : !pto.ptr<T, ub> -> !pto.vmi.vreg<L×T>
+  %result = pto.vmi.vload %source[%offset] : !pto.ptr<T, ub>, index -> !pto.vmi.vreg<L×T>
   ```
 - **syntax (`group`):**
   ```mlir
@@ -32,14 +72,14 @@
   ```mlir
   // block-strided load: %block_stride is a dynamic i16 operand (no mask)
   %result = pto.vmi.vload %source[%offset], %block_stride
-      : !pto.ptr<T, ub>, i16 -> !pto.vmi.vreg<L×T>
+      : !pto.ptr<T, ub>, index -> !pto.vmi.vreg<L×T>
   ```
 - **operands:**
 
   | Operand | Type | Description |
   |---|---|---|
   | `source` | `!pto.ptr<T, ub>` | UB base pointer |
-  | `offset` | `index` | Element offset from base |
+  | `offset` | `index` or signless integer | Element offset from base; an integer offset keeps its own width |
   | `stride` | `index` | Per-row stride (element units); required with `{group}`, invalid otherwise |
   | `block_stride` | `i16` | 32B-block stride between scattered blocks (block-stride mode); mutually exclusive with `{group}` |
 
@@ -108,14 +148,14 @@
 
   ```mlir
   // Contiguous load: UB → vreg
-  %v = pto.vmi.vload %ub[%offset] : !pto.ptr<f32, ub> -> !pto.vmi.vreg<64×f32>
+  %v = pto.vmi.vload %ub[%offset] : !pto.ptr<f32, ub>, index -> !pto.vmi.vreg<64×f32>
   // Slot load: 1 scalar per group → compact V<8×f32> (reads back reduce output)
   %s = pto.vmi.vload %ub[%off], %stride {group = 8}
       : !pto.ptr<f32, ub>, index -> !pto.vmi.vreg<8×f32>
   // → each of 8 groups loads 1 scalar into its slot
   // Broadcast one loaded scalar across the result lanes
   %scalar = pto.vmi.vload %ub[%offset]
-      : !pto.ptr<f32, ub> -> !pto.vmi.vreg<1×f32>
+      : !pto.ptr<f32, ub>, index -> !pto.vmi.vreg<1×f32>
   %vb = pto.vmi.vbrc %scalar
       : !pto.vmi.vreg<1×f32> -> !pto.vmi.vreg<64×f32>
   // Broadcast one loaded scalar per group
@@ -129,7 +169,7 @@
   // → 8 rows of 8 elements, row g at base + g*stride
   // Block-strided load: block_stride = 8 (dynamic i16 operand, no mask)
   %vb = pto.vmi.vload %ub[%off], %c8_i16
-      : !pto.ptr<f32, ub>, i16 -> !pto.vmi.vreg<64×f32>
+      : !pto.ptr<f32, ub>, index -> !pto.vmi.vreg<64×f32>
   // → block-strided load (block=8), all lanes active
 
   ```
@@ -175,7 +215,7 @@
 
 - **syntax:**
   ```mlir
-  pto.vmi.vstore %value, %dest[%offset], %mask : !pto.vmi.vreg<L×T>, !pto.ptr<T, ub>, !pto.vmi.mask<L>
+  pto.vmi.vstore %value, %dest[%offset], %mask : !pto.vmi.vreg<L×T>, !pto.ptr<T, ub>, index, !pto.vmi.mask<L>
   ```
 - **syntax (`group`):**
   ```mlir
@@ -187,7 +227,7 @@
   ```mlir
   // block-strided store: %block_stride is a dynamic i16 operand (mask required)
   pto.vmi.vstore %value, %dest[%offset], %block_stride, %mask
-      : !pto.vmi.vreg<L×T>, !pto.ptr<T, ub>, i16, !pto.vmi.mask<L>
+      : !pto.vmi.vreg<L×T>, !pto.ptr<T, ub>, index, !pto.vmi.mask<L>
   ```
 - **operands:**
 
@@ -195,7 +235,7 @@
  |---|---|---|
   | `value` | `!pto.vmi.vreg<L×T>` | Vector value to store |
   | `dest` | `!pto.ptr<T, ub>` | UB destination base pointer |
-  | `offset` | `index` | Element offset from base |
+  | `offset` | `index` or signless integer | Element offset from base; an integer offset keeps its own width |
   | `stride` | `index` | Per-row stride (element units); required with `{group}`, invalid otherwise |
   | `block_stride` | `i16` | 32B-block stride between scattered blocks (block-stride mode); mutually exclusive with `{group}` |
   | `mask` | `!pto.vmi.mask<L>` | Governing predicate (variadic: 0 or 1) |
@@ -230,7 +270,7 @@
 
   ```mlir
   // Contiguous store: vreg → UB, masked
-  pto.vmi.vstore %v, %ub_out[%offset], %mask : !pto.vmi.vreg<64×f32>, !pto.ptr<f32, ub>, !pto.vmi.mask<64>
+  pto.vmi.vstore %v, %ub_out[%offset], %mask : !pto.vmi.vreg<64×f32>, !pto.ptr<f32, ub>, index, !pto.vmi.mask<64>
   ```
 
   ```mlir
@@ -240,7 +280,7 @@
   // → 8 rows of 8 elements, row g at base + g*stride
   // Block-strided store: block_stride = 8 (dynamic i16 operand + mask)
   pto.vmi.vstore %v, %ub_out[%off], %c8_i16, %mask
-      : !pto.vmi.vreg<64×f32>, !pto.ptr<f32, ub>, i16, !pto.vmi.mask<64>
+      : !pto.vmi.vreg<64×f32>, !pto.ptr<f32, ub>, index, !pto.vmi.mask<64>
   // → block-strided store (block=8), governed by mask
   ```
 

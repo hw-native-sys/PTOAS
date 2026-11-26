@@ -18,25 +18,25 @@ module {
     %c32 = arith.constant 32 : index
     %aligned_off = arith.muli %off, %c32 : index
     %a = pto.vmi.load %src8[%aligned_off]
-        : !pto.ptr<ui8, ub> -> !pto.vmi.vreg<128xui8>
+        : !pto.ptr<ui8, ub>, index -> !pto.vmi.vreg<128xui8>
     %aw = pto.vmi.extui %a
         : !pto.vmi.vreg<128xui8> -> !pto.vmi.vreg<128xui16>
     pto.vmi.store %aw, %dst16[%aligned_off]
-        : !pto.vmi.vreg<128xui16>, !pto.ptr<ui16, ub>
+        : !pto.vmi.vreg<128xui16>, !pto.ptr<ui16, ub>, index
 
     %b = pto.vmi.load %src8[%aligned_off]
-        : !pto.ptr<ui8, ub> -> !pto.vmi.vreg<64xui8>
+        : !pto.ptr<ui8, ub>, index -> !pto.vmi.vreg<64xui8>
     %bw = pto.vmi.extui %b
         : !pto.vmi.vreg<64xui8> -> !pto.vmi.vreg<64xui32>
     pto.vmi.store %bw, %dst32a[%aligned_off]
-        : !pto.vmi.vreg<64xui32>, !pto.ptr<ui32, ub>
+        : !pto.vmi.vreg<64xui32>, !pto.ptr<ui32, ub>, index
 
     %c = pto.vmi.load %src16[%aligned_off]
-        : !pto.ptr<ui16, ub> -> !pto.vmi.vreg<64xui16>
+        : !pto.ptr<ui16, ub>, index -> !pto.vmi.vreg<64xui16>
     %cw = pto.vmi.extui %c
         : !pto.vmi.vreg<64xui16> -> !pto.vmi.vreg<64xui32>
     pto.vmi.store %cw, %dst32b[%aligned_off]
-        : !pto.vmi.vreg<64xui32>, !pto.ptr<ui32, ub>
+        : !pto.vmi.vreg<64xui32>, !pto.ptr<ui32, ub>, index
     return
   }
 }

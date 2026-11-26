@@ -1,0 +1,4 @@
+interface:
+  display_name: "PTOAS Style Fix"
+  short_description: "Fix PTOAS style findings without regressions"
+  default_prompt: "Use $ptoas-style-fix to resolve PTOAS style findings with a minimal semantics-preserving patch."

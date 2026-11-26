@@ -1,0 +1,150 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+
+// An integer element offset keeps its own width all the way from the VMI op to
+// the VPTO memory op:
+//   * the VMI op hands the offset to `pto.addptr` or to the VPTO memory op as
+//     is, and the VPTO ops accept an i32/i64 element offset;
+//   * derived per-chunk / per-group offsets (the ones VMI lowering computes
+//     itself) are materialized and added in the offset's type, so an i32 offset
+//     never reintroduces index arithmetic.
+
+// RUN: pto-test-opt %s -vmi-lower-unified-to-legacy | FileCheck %s --check-prefix=LEGACY
+// RUN: pto-test-opt %s -vmi-lower-unified-to-legacy -vmi-mask-granularity-assignment -vmi-layout-assignment -vmi-to-vpto | FileCheck %s --check-prefix=LOWER
+// RUN: pto-test-opt %s -vmi-lower-unified-to-legacy -vmi-mask-granularity-assignment -vmi-layout-assignment -vmi-to-vpto | FileCheck %s --check-prefix=NO-WIDEN
+
+module {
+  // Continuous access: the offset reaches `pto.addptr` (unaligned path) and
+  // the VPTO store offset as i32.
+  func.func @contig_i32(%src: !pto.ptr<f32, ub>, %dst: !pto.ptr<f32, ub>,
+                        %off: i32) {
+    %x = pto.vmi.vload %src[%off]
+        : !pto.ptr<f32, ub>, i32 -> !pto.vmi.vreg<64xf32>
+    pto.vmi.vstore %x, %dst[%off]
+        : !pto.vmi.vreg<64xf32>, !pto.ptr<f32, ub>, i32
+    return
+  }
+
+  // Degenerate group (row stride == group size): dense access whose VPTO
+  // `pto.vlds` keeps the i32 offset in its own operand slot.
+  func.func @group_i32(%src: !pto.ptr<f32, ub>, %dst: !pto.ptr<f32, ub>,
+                       %off: i32) {
+    %c8 = arith.constant 8 : index
+    %x = pto.vmi.group_load %src[%off], %c8 {num_groups = 8 : i64}
+        : !pto.ptr<f32, ub>, i32 -> !pto.vmi.vreg<64xf32>
+    pto.vmi.group_store %x, %dst[%off], %c8 {num_groups = 8 : i64}
+        : !pto.vmi.vreg<64xf32>, !pto.ptr<f32, ub>, i32
+    return
+  }
+
+  // Multi-carrier block-strided access: VMI lowering derives the second
+  // carrier offset itself (`block_stride * lanesPerPart` = 512 elements).
+  // That add is i32, not index, and the addptr built from it is i32 as well.
+  func.func @stride_multichunk_i32(
+      %src: !pto.ptr<f32, ub>, %dst: !pto.ptr<f32, ub>, %off: i32,
+      %mask: !pto.vmi.mask<128xb32, #pto.vmi.layout<contiguous>>) {
+    %c0 = arith.constant 0 : i32
+    %c8 = arith.constant 8 : i16
+    %out = pto.vmi.stride_load %src[%off], %c8, %mask
+        : !pto.ptr<f32, ub>, i32, i16,
+          !pto.vmi.mask<128xb32, #pto.vmi.layout<contiguous>>
+        -> !pto.vmi.vreg<128xf32, #pto.vmi.layout<contiguous>>
+    pto.vmi.store %out, %dst[%c0]
+        : !pto.vmi.vreg<128xf32, #pto.vmi.layout<contiguous>>, !pto.ptr<f32, ub>, i32
+    return
+  }
+
+  // Masked / compaction shapes pass the i32 offset through unchanged.
+  func.func @masked_i32(%src: !pto.ptr<f32, ub>, %dst: !pto.ptr<f32, ub>,
+                        %off: i32, %passthru: !pto.vmi.vreg<64xf32>,
+                        %mask: !pto.vmi.mask<64xpred>) {
+    %x = pto.vmi.masked_load %src[%off], %mask, %passthru
+        : !pto.ptr<f32, ub>, i32, !pto.vmi.mask<64xpred>, !pto.vmi.vreg<64xf32>
+        -> !pto.vmi.vreg<64xf32>
+    %c0 = arith.constant 0 : i32
+    pto.vmi.store %x, %dst[%c0]
+        : !pto.vmi.vreg<64xf32>, !pto.ptr<f32, ub>, i32
+    return
+  }
+
+  // Group slots: one element per group, 8 groups, row stride 8192. VMI lowering
+  // derives one offset per group (group * stride), so this exercises
+  // createGroupChunkOffset / addScaledStrideToElementOffset: group 4 must be
+  // +32768, not the i16-wrapped -32768.
+  func.func @group_slots_i32(
+      %v: !pto.vmi.vreg<8xf32, #pto.vmi.layout<num_groups = 8, slots = 1>>,
+      %dst: !pto.ptr<f32, ub>, %off: i32) {
+    %c8192 = arith.constant 8192 : index
+    pto.vmi.group_store %v, %dst[%off], %c8192 {num_groups = 8 : i64}
+        : !pto.vmi.vreg<8xf32, #pto.vmi.layout<num_groups = 8, slots = 1>>,
+          !pto.ptr<f32, ub>, i32
+    return
+  }
+
+  // A dynamic index row stride is cast into the offset width, not the other way
+  // round: the stride becomes i32 and the offset stays i32.
+  func.func @group_slots_i32_dynamic_stride(
+      %v: !pto.vmi.vreg<8xf32, #pto.vmi.layout<num_groups = 8, slots = 1>>,
+      %dst: !pto.ptr<f32, ub>, %off: i32, %stride: index) {
+    pto.vmi.group_store %v, %dst[%off], %stride {num_groups = 8 : i64}
+        : !pto.vmi.vreg<8xf32, #pto.vmi.layout<num_groups = 8, slots = 1>>,
+          !pto.ptr<f32, ub>, i32
+    return
+  }
+}
+
+// LEGACY-LABEL: func.func @contig_i32
+// LEGACY: pto.vmi.load %{{.*}}[%{{.*}}] : !pto.ptr<f32, ub>, i32 -> !pto.vmi.vreg<64xf32>
+// LEGACY: pto.vmi.store %{{.*}}, %{{.*}}[%{{.*}}] : !pto.vmi.vreg<64xf32>, !pto.ptr<f32, ub>, i32
+// LEGACY-LABEL: func.func @stride_multichunk_i32
+// LEGACY: pto.vmi.stride_load %{{.*}}[%{{.*}}], %{{.*}}, %{{.*}} : !pto.ptr<f32, ub>, i32, i16,
+// LEGACY-LABEL: func.func @masked_i32
+// LEGACY: pto.vmi.masked_load %{{.*}}[%{{.*}}], %{{.*}}, %{{.*}} : !pto.ptr<f32, ub>, i32,
+
+// LOWER-LABEL: func.func @contig_i32
+// LOWER: %[[BASE:.*]] = pto.addptr %{{.*}}, %{{.*}} : <f32, ub>, i32 -> <f32, ub>
+// LOWER: pto.vstus {{.*}} : !pto.align, i32,
+// LOWER-LABEL: func.func @group_i32
+// LOWER: pto.vlds %{{.*}}[%{{.*}}] : !pto.ptr<f32, ub>, i32 -> !pto.vreg<64xf32>
+// LOWER-LABEL: func.func @stride_multichunk_i32
+// LOWER: pto.addptr %{{.*}}, %{{.*}} : <f32, ub>, i32 -> <f32, ub>
+// LOWER: pto.vsldb
+// LOWER: %[[ADV:.*]] = arith.addi %{{.*}}, %{{.*}} : i32
+// LOWER: pto.addptr %{{.*}}, %[[ADV]] : <f32, ub>, i32 -> <f32, ub>
+// LOWER: pto.vsldb
+// LOWER-LABEL: func.func @masked_i32
+// LOWER: pto.vlds %{{.*}}[%{{.*}}] : !pto.ptr<f32, ub>, i32 -> !pto.vreg<64xf32>
+// LOWER: pto.vsel
+// LOWER-LABEL: func.func @group_slots_i32
+// LOWER: %[[G32768:.*]] = arith.constant 32768 : i32
+// LOWER: %[[G4:.*]] = arith.addi %{{.*}}, %[[G32768]] : i32
+// LOWER: pto.vsts %{{.*}}, %{{.*}}[%[[G4]]], %{{.*}} : !pto.vreg<64xf32>, !pto.ptr<f32, ub>, i32, !pto.mask<b32>
+// LOWER-LABEL: func.func @group_slots_i32_dynamic_stride
+// LOWER: %[[S1:.*]] = arith.index_cast %{{.*}} : index to i32
+// LOWER: %[[A1:.*]] = arith.addi %{{.*}}, %[[S1]] : i32
+// LOWER: pto.vsts %{{.*}}, %{{.*}}[%[[A1]]], %{{.*}} : !pto.vreg<64xf32>, !pto.ptr<f32, ub>, i32, !pto.mask<b32>
+// LOWER: %[[S2:.*]] = arith.index_cast %{{.*}} : index to i32
+// LOWER: %[[M2:.*]] = arith.muli %[[S2]], %{{.*}} : i32
+// LOWER: %[[A2:.*]] = arith.addi %{{.*}}, %[[M2]] : i32
+// LOWER: pto.vsts %{{.*}}, %{{.*}}[%[[A2]]], %{{.*}} : !pto.vreg<64xf32>, !pto.ptr<f32, ub>, i32, !pto.mask<b32>
+
+// The element offset is never widened in this module: every VMI/VPTO memory op
+// keeps i32 in its operand type list and the derived per-chunk/per-group adds are
+// i32, including for the dynamic index row stride (all pinned above).
+//
+// These negatives are scoped to the offset, not to casts in general, because both
+// directions of cast are legitimate for *other* operands: a dynamic index row
+// stride is cast into the offset width (`arith.index_cast ... : index to i32`)
+// before the i32 stride arithmetic, and a dynamic i16 block stride is
+// sign-extended (`arith.extsi`).  What must never appear is the widening
+// direction for the offset - `arith.index_cast ... : i32 to index` - or an
+// unsigned extension of it.  The one `index` value here that is not an offset is
+// the pto.vldus increment count (`%c64`).
+// NO-WIDEN: module {
+// NO-WIDEN-NOT: : i32 to index
+// NO-WIDEN-NOT: arith.extui

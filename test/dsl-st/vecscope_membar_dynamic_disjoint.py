@@ -18,9 +18,11 @@ import numpy as np
 from common import auto_main
 from ptodsl import pto
 
-SOURCE = r"""
-module attributes {pto.target_arch = "a5", pto.kernel_kind = #pto.kernel_kind<vector>} {
-  func.func @bounded_copy(%input: !pto.ptr<f32, gm>, %output: !pto.ptr<f32, gm>, %n32: i32) attributes {pto.aicore} {
+MASK_TY = "!pto.vmi.mask<64xpred>"
+
+SOURCE = rf"""
+module attributes {{pto.target_arch = "a5", pto.kernel_kind = #pto.kernel_kind<vector>}} {{
+  func.func @bounded_copy(%input: !pto.ptr<f32, gm>, %output: !pto.ptr<f32, gm>, %n32: i32) attributes {{pto.aicore}} {{
     %zero = arith.constant 0 : i64
     %ub = pto.castptr %zero : i64 -> !pto.ptr<f32, ub>
     %c0 = arith.constant 0 : index
@@ -40,22 +42,22 @@ module attributes {pto.target_arch = "a5", pto.kernel_kind = #pto.kernel_kind<ve
       : !pto.ptr<f32, gm>, !pto.ptr<f32, ub>, i64, i64, i64, i64, i64
     pto.set_flag["PIPE_MTE2", "PIPE_V", "EVENT_ID0"]
     pto.wait_flag["PIPE_MTE2", "PIPE_V", "EVENT_ID0"]
-    pto.vecscope {
+    pto.vecscope {{
       %mask = pto.vmi.create_mask %c64 : index -> !pto.vmi.mask<64xpred>
-      scf.for %i = %c0 to %bound step %c1 {
+      scf.for %i = %c0 to %bound step %c1 {{
         %offset = arith.muli %i, %c64 : index
-        %v = pto.vmi.vload %src[%offset] : !pto.ptr<f32, ub> -> !pto.vmi.vreg<64xf32>
-        pto.vmi.vstore %v, %dst[%offset], %mask : !pto.vmi.vreg<64xf32>, !pto.ptr<f32, ub>, !pto.vmi.mask<64xpred>
-      }
-    }
+        %v = pto.vmi.vload %src[%offset] : !pto.ptr<f32, ub>, index -> !pto.vmi.vreg<64xf32>
+        pto.vmi.vstore %v, %dst[%offset], %mask : !pto.vmi.vreg<64xf32>, !pto.ptr<f32, ub>, index, {MASK_TY}
+      }}
+    }}
     pto.set_flag["PIPE_V", "PIPE_MTE3", "EVENT_ID0"]
     pto.wait_flag["PIPE_V", "PIPE_MTE3", "EVENT_ID0"]
     pto.mte_ub_gm %dst, %output, %bytes nburst(%one, %zero64, %zero64)
       : !pto.ptr<f32, ub>, !pto.ptr<f32, gm>, i64, i64, i64, i64
     pto.barrier #pto.pipe<PIPE_ALL>
     return
-  }
-}
+  }}
+}}
 """
 
 

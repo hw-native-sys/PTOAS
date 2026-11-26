@@ -1,0 +1,20 @@
+// RUN: split-file %s %t
+// RUN: not ptoas --pto-arch=linx %t/op.pto -o - 2>&1 | FileCheck %s --check-prefix=OP
+// RUN: not ptoas --pto-arch=linx %t/type.pto -o - 2>&1 | FileCheck %s --check-prefix=TYPE
+
+//--- op.pto
+module attributes {pto.target_arch = "linx"} {
+  func.func @legacy() {
+    %a = "linx.alloc_tile"() : () -> !pto.linx.tile_buf<local, 16x128xf32>
+    return
+  }
+}
+// OP: operation being parsed with an unregistered dialect
+
+//--- type.pto
+module attributes {pto.target_arch = "linx"} {
+  func.func @legacy(%a: !linx.partition_tensor_view<16x128xf32>) {
+    return
+  }
+}
+// TYPE: type created with unregistered dialect

@@ -1,0 +1,294 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+
+// Both automatic emitters must retain the broadcast-reuse drain and the
+// completion barrier after a multi-operation group. A safe group still stays
+// atomic, and ordinary one-operation functions keep their existing policy.
+// RUN: pto-test-opt --pto-insert-sync %s -o %t.insert.pto
+// RUN: FileCheck %s --input-file=%t.insert.pto
+// RUN: pto-test-opt --pto-unified-sync %s -o %t.unified.pto
+// RUN: FileCheck %s --input-file=%t.unified.pto
+// RUN: pto-test-opt --pto-flatten-fusion-region %t.insert.pto -o %t.insert.flat.pto
+// RUN: ptoas --pto-arch=a5 --pto-level=level3 %t.insert.flat.pto | FileCheck %s --check-prefix=CPP
+// RUN: pto-test-opt --pto-flatten-fusion-region %t.unified.pto -o %t.unified.flat.pto
+// RUN: ptoas --pto-arch=a5 --pto-level=level3 %t.unified.flat.pto | FileCheck %s --check-prefix=CPP
+
+!full = !pto.tile_buf<vec, 8x512xf32>
+!col = !pto.tile_buf<vec, 1x512xf32>
+module attributes {pto.target_arch = "a5"} {
+  func.func @outside_reuse() {
+    %one = arith.constant 1.0 : f32
+    %a0 = arith.constant 0 : i64
+    %as = arith.constant 16384 : i64
+    %ao = arith.constant 32768 : i64
+    %data = pto.alloc_tile addr = %a0 : !full
+    %scale = pto.alloc_tile addr = %as : !col
+    %square = pto.alloc_tile addr = %as : !full
+    %r = pto.fusion_region {
+      pto.tcolexpandmul ins(%data, %scale : !full, !col) outs(%data : !full)
+      pto.tmuls ins(%data, %one : !full, f32) outs(%data : !full)
+      pto.yield(%data) : (!full) -> ()
+    } : !full
+    pto.tmul ins(%r, %r : !full, !full) outs(%square : !full)
+    return
+  }
+  func.func @outside_no_reuse() {
+    %one = arith.constant 1.0 : f32
+    %a0 = arith.constant 0 : i64
+    %as = arith.constant 16384 : i64
+    %ao = arith.constant 32768 : i64
+    %data = pto.alloc_tile addr = %a0 : !full
+    %scale = pto.alloc_tile addr = %as : !col
+    %square = pto.alloc_tile addr = %ao : !full
+    %r = pto.fusion_region {
+      pto.tcolexpandmul ins(%data, %scale : !full, !col) outs(%data : !full)
+      pto.tmuls ins(%data, %one : !full, f32) outs(%data : !full)
+      pto.yield(%data) : (!full) -> ()
+    } : !full
+    pto.tmul ins(%r, %r : !full, !full) outs(%square : !full)
+    return
+  }
+  func.func @inside_reuse() {
+    %one = arith.constant 1.0 : f32
+    %a0 = arith.constant 0 : i64
+    %as = arith.constant 16384 : i64
+    %ao = arith.constant 32768 : i64
+    %data = pto.alloc_tile addr = %a0 : !full
+    %scale = pto.alloc_tile addr = %as : !col
+    %square = pto.alloc_tile addr = %as : !full
+    %r = pto.fusion_region {
+      pto.tcolexpandmul ins(%data, %scale : !full, !col) outs(%data : !full)
+      pto.tmul ins(%data, %data : !full, !full) outs(%square : !full)
+      pto.yield(%square) : (!full) -> ()
+    } : !full
+    return
+  }
+  func.func @delayed_outside_reuse() {
+    %one = arith.constant 1.0 : f32
+    %a0 = arith.constant 0 : i64
+    %as = arith.constant 16384 : i64
+    %ao = arith.constant 32768 : i64
+    %data = pto.alloc_tile addr = %a0 : !full
+    %scale = pto.alloc_tile addr = %as : !col
+    %square = pto.alloc_tile addr = %as : !full
+    %r = pto.fusion_region {
+      pto.tcolexpandmul ins(%data, %scale : !full, !col) outs(%data : !full)
+      pto.tmuls ins(%data, %one : !full, f32) outs(%data : !full)
+      pto.yield(%data) : (!full) -> ()
+    } : !full
+    pto.tmuls ins(%r, %one : !full, f32) outs(%r : !full)
+    pto.tmul ins(%r, %r : !full, !full) outs(%square : !full)
+    return
+  }
+  func.func @inside_no_reuse() {
+    %one = arith.constant 1.0 : f32
+    %a0 = arith.constant 0 : i64
+    %as = arith.constant 16384 : i64
+    %ao = arith.constant 32768 : i64
+    %data = pto.alloc_tile addr = %a0 : !full
+    %scale = pto.alloc_tile addr = %as : !col
+    %square = pto.alloc_tile addr = %ao : !full
+    %r = pto.fusion_region {
+      pto.tcolexpandmul ins(%data, %scale : !full, !col) outs(%data : !full)
+      pto.tmul ins(%data, %data : !full, !full) outs(%square : !full)
+      pto.yield(%square) : (!full) -> ()
+    } : !full
+    return
+  }
+  func.func @plain_broadcast_reuse() {
+    %one = arith.constant 1.0 : f32
+    %a0 = arith.constant 0 : i64
+    %as = arith.constant 16384 : i64
+    %ao = arith.constant 32768 : i64
+    %data = pto.alloc_tile addr = %a0 : !full
+    %scale = pto.alloc_tile addr = %as : !col
+    %square = pto.alloc_tile addr = %as : !full
+    %r = pto.fusion_region {
+      pto.tcolexpand ins(%scale : !col) outs(%data : !full)
+      pto.tmuls ins(%data, %one : !full, f32) outs(%data : !full)
+      pto.yield(%data) : (!full) -> ()
+    } : !full
+    pto.tmul ins(%r, %r : !full, !full) outs(%square : !full)
+    return
+  }
+  func.func @single_group() {
+    %one = arith.constant 1.0 : f32
+    %a0 = arith.constant 0 : i64
+    %a1 = arith.constant 16384 : i64
+    %r = pto.fusion_region {
+      %tmp = pto.alloc_tile addr = %a0 : !full
+      %out = pto.alloc_tile addr = %a1 : !full
+      pto.texpands ins(%one : f32) outs(%tmp : !full)
+      pto.tadd ins(%tmp, %tmp : !full, !full) outs(%out : !full)
+      pto.yield(%out) : (!full) -> ()
+    } : !full
+    return
+  }
+  func.func @single_op_group() {
+    %one = arith.constant 1.0 : f32
+    %a0 = arith.constant 0 : i64
+    %r = pto.fusion_region {
+      %out = pto.alloc_tile addr = %a0 : !full
+      pto.texpands ins(%one : f32) outs(%out : !full)
+      pto.yield(%out) : (!full) -> ()
+    } : !full
+    return
+  }
+  func.func @single_op() {
+    %one = arith.constant 1.0 : f32
+    %a0 = arith.constant 0 : i64
+    %out = pto.alloc_tile addr = %a0 : !full
+    pto.texpands ins(%one : f32) outs(%out : !full)
+    return
+  }
+  func.func @empty() {
+    return
+  }
+}
+
+// CHECK-LABEL: func.func @outside_reuse(
+// CHECK: pto.fusion_region {
+// CHECK: pto.tcolexpandmul
+// CHECK-NEXT: pto.tmuls
+// CHECK-NEXT: pto.yield
+// CHECK-NEXT: }
+// CHECK-NEXT: pto.barrier <PIPE_ALL>
+// CHECK-NEXT: pto.tmul
+// CHECK-NEXT: pto.barrier <PIPE_ALL> {pto.auto_sync_tail_barrier}
+// CHECK-NEXT: return
+// CHECK-LABEL: func.func @outside_no_reuse(
+// CHECK: pto.fusion_region {
+// CHECK: pto.tcolexpandmul
+// CHECK-NEXT: pto.tmuls
+// CHECK-NEXT: pto.yield
+// CHECK-NEXT: }
+// CHECK-NEXT: pto.tmul
+// CHECK-NEXT: pto.barrier <PIPE_ALL> {pto.auto_sync_tail_barrier}
+// CHECK-NEXT: return
+// CHECK-LABEL: func.func @inside_reuse(
+// CHECK: pto.fusion_region {
+// CHECK: pto.tcolexpandmul
+// CHECK-NEXT: pto.barrier <PIPE_ALL>
+// CHECK-NEXT: pto.tmul
+// CHECK-NEXT: pto.yield
+// CHECK-NEXT: }
+// CHECK-NEXT: pto.barrier <PIPE_ALL> {pto.auto_sync_tail_barrier}
+// CHECK-NEXT: return
+// CHECK-LABEL: func.func @delayed_outside_reuse(
+// CHECK: pto.fusion_region {
+// CHECK: pto.tcolexpandmul
+// CHECK-NEXT: pto.tmuls
+// CHECK-NEXT: pto.yield
+// CHECK-NEXT: }
+// CHECK-NEXT: pto.tmuls
+// CHECK-NEXT: pto.barrier <PIPE_ALL>
+// CHECK-NEXT: pto.tmul
+// CHECK-NEXT: pto.barrier <PIPE_ALL> {pto.auto_sync_tail_barrier}
+// CHECK-NEXT: return
+// CHECK-LABEL: func.func @inside_no_reuse(
+// CHECK: pto.fusion_region {
+// CHECK: pto.tcolexpandmul
+// CHECK-NEXT: pto.tmul
+// CHECK-NEXT: pto.yield
+// CHECK-NEXT: }
+// CHECK-NEXT: pto.barrier <PIPE_ALL> {pto.auto_sync_tail_barrier}
+// CHECK-NEXT: return
+// CHECK-LABEL: func.func @plain_broadcast_reuse(
+// CHECK: pto.fusion_region {
+// CHECK: pto.tcolexpand ins
+// CHECK-NEXT: pto.tmuls
+// CHECK-NEXT: pto.yield
+// CHECK-NEXT: }
+// CHECK-NEXT: pto.barrier <PIPE_ALL>
+// CHECK-NEXT: pto.tmul
+// CHECK-NEXT: pto.barrier <PIPE_ALL> {pto.auto_sync_tail_barrier}
+// CHECK-NEXT: return
+// CHECK-LABEL: func.func @single_group(
+// CHECK: pto.fusion_region {
+// CHECK: pto.texpands
+// CHECK-NEXT: pto.tadd
+// CHECK-NEXT: pto.yield
+// CHECK-NEXT: }
+// CHECK-NEXT: pto.barrier <PIPE_ALL> {pto.auto_sync_tail_barrier}
+// CHECK-NEXT: return
+// CHECK-LABEL: func.func @single_op_group(
+// CHECK: pto.texpands
+// CHECK-NEXT: pto.yield
+// CHECK-NEXT: }
+// CHECK-NEXT: return
+// CHECK-LABEL: func.func @single_op(
+// CHECK: pto.texpands
+// CHECK-NEXT: return
+// CHECK-LABEL: func.func @empty(
+// CHECK-NEXT: return
+
+// CPP-LABEL: AICORE void outside_reuse(
+// CPP: TCOLEXPANDMUL(
+// CPP-NEXT: TMULS(
+// CPP-NEXT: pipe_barrier(PIPE_ALL);
+// CPP-NEXT: TMUL(
+// CPP-NOT: pipe_barrier(PIPE_ALL);
+// CPP: ptoas_auto_sync_tail(PTOAutoSyncTailMode::kBarrierAll);
+// CPP-NEXT: return;
+// CPP-LABEL: AICORE void outside_no_reuse(
+// CPP: TCOLEXPANDMUL(
+// CPP-NEXT: TMULS(
+// CPP-NEXT: TMUL(
+// CPP-NOT: pipe_barrier(PIPE_ALL);
+// CPP: ptoas_auto_sync_tail(PTOAutoSyncTailMode::kBarrierAll);
+// CPP-NEXT: return;
+// CPP-LABEL: AICORE void inside_reuse(
+// CPP: TCOLEXPANDMUL(
+// CPP-NEXT: pipe_barrier(PIPE_ALL);
+// CPP-NEXT: TMUL(
+// CPP-NOT: pipe_barrier(PIPE_ALL);
+// CPP: ptoas_auto_sync_tail(PTOAutoSyncTailMode::kBarrierAll);
+// CPP-NEXT: return;
+// CPP-LABEL: AICORE void delayed_outside_reuse(
+// CPP: TCOLEXPANDMUL(
+// CPP-NEXT: TMULS(
+// CPP-NEXT: TMULS(
+// CPP-NEXT: pipe_barrier(PIPE_ALL);
+// CPP-NEXT: TMUL(
+// CPP-NOT: pipe_barrier(PIPE_ALL);
+// CPP: ptoas_auto_sync_tail(PTOAutoSyncTailMode::kBarrierAll);
+// CPP-NEXT: return;
+// CPP-LABEL: AICORE void inside_no_reuse(
+// CPP: TCOLEXPANDMUL(
+// CPP-NEXT: TMUL(
+// CPP-NOT: pipe_barrier(PIPE_ALL);
+// CPP: ptoas_auto_sync_tail(PTOAutoSyncTailMode::kBarrierAll);
+// CPP-NEXT: return;
+// CPP-LABEL: AICORE void plain_broadcast_reuse(
+// CPP: TCOLEXPAND(
+// CPP-NEXT: TMULS(
+// CPP-NEXT: pipe_barrier(PIPE_ALL);
+// CPP-NEXT: TMUL(
+// CPP-NOT: pipe_barrier(PIPE_ALL);
+// CPP: ptoas_auto_sync_tail(PTOAutoSyncTailMode::kBarrierAll);
+// CPP-NEXT: return;
+// CPP-LABEL: AICORE void single_group(
+// CPP: TEXPANDS(
+// CPP-NEXT: TADD(
+// CPP-NOT: pipe_barrier(PIPE_ALL);
+// CPP: ptoas_auto_sync_tail(PTOAutoSyncTailMode::kBarrierAll);
+// CPP-NEXT: return;
+// CPP-LABEL: AICORE void single_op_group(
+// CPP: TEXPANDS(
+// CPP-NOT: pipe_barrier
+// CPP-NOT: ptoas_auto_sync_tail
+// CPP: return;
+// CPP-LABEL: AICORE void single_op(
+// CPP: TEXPANDS(
+// CPP-NOT: pipe_barrier
+// CPP-NOT: ptoas_auto_sync_tail
+// CPP: return;
+// CPP-LABEL: AICORE void empty(
+// CPP-NOT: pipe_barrier
+// CPP-NOT: ptoas_auto_sync_tail
+// CPP: return;

@@ -24,7 +24,7 @@ static bool dependsOn(Value value, Value target, llvm::DenseSet<Value>& visited,
     }
     Operation* op = value.getDefiningOp();
     if (
-        !op || depth == 32 || !visited.insert(value).second || op->getNumRegions() != 0 ||
+        !op || depth == kValue32 || !visited.insert(value).second || op->getNumRegions() != 0 ||
         !isMemoryEffectFree(op)) {
         return false;
     }

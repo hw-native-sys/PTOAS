@@ -1,0 +1,9 @@
+{
+  "backend": "pto-isa",
+  "revision": "03de93151775d584cf452ad66d29a935776c1f75",
+  "cxx_standard": "c++20",
+  "defines": ["__CPU_SIM", "PTO_CPU_SIM_TARGET_LINX"],
+  "compile_flags": ["-O2", "-ffp-contract=off", "-pthread"],
+  "include_dirs": ["include"],
+  "absolute_tolerance": 0.000001
+}

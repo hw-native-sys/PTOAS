@@ -41,7 +41,7 @@ module attributes {pto.target_arch = "a5", pto.kernel_kind = #pto.kernel_kind<ve
 
       %mask128 = pto.vmi.create_mask %c128 : index -> !pto.vmi.mask<128xpred>
       %x16 = pto.vmi.vload %inUb[%c0]
-          : !pto.ptr<f16, ub> -> !pto.vmi.vreg<128xf16>
+          : !pto.ptr<f16, ub>, index -> !pto.vmi.vreg<128xf16>
       %x = pto.vmi.vcvt %x16
           : !pto.vmi.vreg<128xf16> -> !pto.vmi.vreg<128xf32>
       %abs = pto.vmi.vabs %x
@@ -68,7 +68,7 @@ module attributes {pto.target_arch = "a5", pto.kernel_kind = #pto.kernel_kind<ve
           -> !pto.vmi.vreg<1xf32>
 
       pto.vmi.vstore %scale, %scaleUb[%c0], %c1 {group = 1}
-          : !pto.vmi.vreg<1xf32>, !pto.ptr<f32, ub>
+          : !pto.vmi.vreg<1xf32>, !pto.ptr<f32, ub>, index
       %q = pto.vmi.vdiv %x, %scale_vec
           : !pto.vmi.vreg<128xf32>, !pto.vmi.vreg<128xf32>
           -> !pto.vmi.vreg<128xf32>
@@ -76,7 +76,7 @@ module attributes {pto.target_arch = "a5", pto.kernel_kind = #pto.kernel_kind<ve
           : !pto.vmi.vreg<128xf32> -> !pto.vmi.vreg<128xf8E4M3FN>
       pto.vmi.vstore %q8, %outUbFp[%c0], %mask128
           : !pto.vmi.vreg<128xf8E4M3FN>, !pto.ptr<f8E4M3FN, ub>,
-            !pto.vmi.mask<128xpred>
+            index, !pto.vmi.mask<128xpred>
     }
     return
   }

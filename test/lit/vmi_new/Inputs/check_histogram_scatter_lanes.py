@@ -66,7 +66,7 @@ for n in LANES:
             out = compile_ir(f"{op}_{bins}_{n}", f"""module {{
   func.func @probe(%p: !pto.ptr<ui8, ub>, %a: {acc}, %m: {mask}) -> {acc} {{
     %c0 = arith.constant 0 : index
-    %s = pto.vmi.vload %p[%c0] : !pto.ptr<ui8, ub> -> {src}
+    %s = pto.vmi.vload %p[%c0] : !pto.ptr<ui8, ub>, index -> {src}
     %r = pto.vmi.{op} %a, %s, %m : {acc}, {src}, {mask} -> {acc}
     return %r : {acc}
   }}
@@ -88,7 +88,7 @@ for n in LANES:
 compile_ir("unsafe_load_33_0", """module {
   func.func @probe(%p: !pto.ptr<ui8, ub>) -> !pto.vmi.vreg<33xui8> {
     %off = arith.constant 0 : index
-    %s = pto.vmi.vload %p[%off] : !pto.ptr<ui8, ub> -> !pto.vmi.vreg<33xui8>
+    %s = pto.vmi.vload %p[%off] : !pto.ptr<ui8, ub>, index -> !pto.vmi.vreg<33xui8>
     return %s : !pto.vmi.vreg<33xui8>
   }
 }""", succeeds=False, load_safety="error")
@@ -102,7 +102,7 @@ for n, offset in ((64, "1"), (128, "16"), (64, None)):
     compile_ir(f"unsafe_load_{n}_{offset}", f"""module {{
   func.func @probe(%p: !pto.ptr<ui8, ub>{arg}) -> !pto.vmi.vreg<{n}xui8> {{
     {offset_ir}
-    %s = pto.vmi.vload %p[%off] : !pto.ptr<ui8, ub> -> !pto.vmi.vreg<{n}xui8>
+    %s = pto.vmi.vload %p[%off] : !pto.ptr<ui8, ub>, index -> !pto.vmi.vreg<{n}xui8>
     return %s : !pto.vmi.vreg<{n}xui8>
   }}
 }}""")

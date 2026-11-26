@@ -22,7 +22,7 @@ module {
     %sum16 = pto.vmi.vcvt %sum32 {saturate = "SAT"}
         : !pto.vmi.vreg<8xf32> -> !pto.vmi.vreg<8xf16>
     pto.vmi.vstore %sum16, %dst[%off], %c16 {group = 8}
-        : !pto.vmi.vreg<8xf16>, !pto.ptr<f16, ub>
+        : !pto.vmi.vreg<8xf16>, !pto.ptr<f16, ub>, index
     return
   }
 }

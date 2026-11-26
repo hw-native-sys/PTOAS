@@ -44,8 +44,8 @@ KERNEL_SOURCE = (
     ' : i8 -> !pto.vmi.vreg<128xi8>\n      // vadds(+0) acts as a transparent layout sink; the base=0 keeps value'
     's\n      // as pure logical indices.\n      %result = pto.vmi.vadds %iota, %c0_i8, %mask\n          : !pto.v'
     'mi.vreg<128xi8>, i8, !pto.vmi.mask<128xpred>\n          -> !pto.vmi.vreg<128xi8>\n      pto.vmi.vstore %resu'
-    'lt, %ub_dst[%c0]\n          : !pto.vmi.vreg<128xi8>, !pto.ptr<i8, ub>\n    }\n\n    pto.set_flag["PIPE_V", "'
-    'PIPE_MTE3", "EVENT_ID0"]\n    pto.wait_flag["PIPE_V", "PIPE_MTE3", "EVENT_ID0"]\n    pto.mte_ub_gm %ub_dst, '
+    'lt, %ub_dst[%c0]\n          : !pto.vmi.vreg<128xi8>, !pto.ptr<i8, ub>, index\n    }\n\n    pto.set_flag["PIPE_V", '
+    '"PIPE_MTE3", "EVENT_ID0"]\n    pto.wait_flag["PIPE_V", "PIPE_MTE3", "EVENT_ID0"]\n    pto.mte_ub_gm %ub_dst, '
     '%dst_gm, %c128_i64\n      nburst(%c1_i64, %c128_i64, %c128_i64)\n      : !pto.ptr<i8, ub>, !pto.ptr<i8, gm>,'
     ' i64, i64, i64, i64\n    pto.barrier #pto.pipe<PIPE_ALL>\n    return\n  }\n}\n'
 )

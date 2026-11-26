@@ -21,11 +21,11 @@ module attributes {pto.target_arch = "a5"} {
         scf.for %i = %c0 to %count step %c1 {
           %aligned_i = arith.muli %i, %c16 : index
           %x16 = pto.vmi.vload %src[%aligned_i]
-              : !pto.ptr<f16, ub> -> !pto.vmi.vreg<128xf16>
+              : !pto.ptr<f16, ub>, index -> !pto.vmi.vreg<128xf16>
           %x32 = pto.vmi.vcvt %x16
               : !pto.vmi.vreg<128xf16> -> !pto.vmi.vreg<128xf32>
           pto.vmi.vstore %x32, %dst[%aligned_i]
-              : !pto.vmi.vreg<128xf32>, !pto.ptr<f32, ub>
+              : !pto.vmi.vreg<128xf32>, !pto.ptr<f32, ub>, index
         }
       }
       return

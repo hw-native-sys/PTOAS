@@ -1,0 +1,28 @@
+// RUN: ptoas --pto-arch=linx %s -o - | FileCheck %s
+// RUN: ptoas --pto-arch=linx --emit-pto-ir %s -o %t.pto
+// RUN: FileCheck %s --check-prefix=IR < %t.pto
+// RUN: ptoas --pto-arch=linx %t.pto -o - | FileCheck %s
+!T = !pto.linx.tile_buf<local, 16x128xf32>
+!G = !pto.linx.partition_tensor_view<16x128xf32>
+module attributes {pto.target_arch = "linx", pto.linx_profile = "cpu-sim"} {
+  func.func @vadd(%a: !G, %b: !G, %c: !G) {
+    %ta = pto.linx.alloc_tile : !T
+    %tb = pto.linx.alloc_tile : !T
+    %tc = pto.linx.alloc_tile : !T
+    pto.linx.tload ins(%a : !G) outs(%ta : !T)
+    pto.linx.tload ins(%b : !G) outs(%tb : !T)
+    pto.linx.tadd ins(%ta, %tb : !T, !T) outs(%tc : !T)
+    pto.linx.tstore ins(%tc : !T) outs(%c : !G)
+    return
+  }
+}
+// CHECK: extern "C" void vadd(float*
+// CHECK: pto::Tile<pto::TileType::Vec, float, 16, 128
+// CHECK: ::TLOAD(
+// CHECK: ::TLOAD(
+// CHECK: ::TADD(
+// CHECK: ::TSTORE(
+
+// IR: !pto.linx.partition_tensor_view<16x128xf32>
+// IR: pto.linx.alloc_tile
+// IR: pto.linx.tadd

@@ -29,10 +29,13 @@ not by themselves read lane or thread state or select SIMT execution.
 - SIMT scalar memory offsets are element offsets, not byte offsets. They are
   **signed element displacements**: positive values advance the base pointer and
   negative values move it toward lower addresses. An offset is written either
-  with the platform `index` type or with a signless integer of explicit width
+  with the platform `index` type or with a 32/64-bit signless integer
   (`i32`, `i64`), declared in the type list right after the base pointer type,
-  as in `%p[%off] : !pto.ptr<i32, ub>, index -> i32`. These ops perform no
-  bounds checking.
+  as in `%p[%off] : !pto.ptr<i32, ub>, index -> i32`. Narrower widths
+  (`i1`/`i8`/`i16`) are rejected because that is the width contract the offset
+  shares with `pto.vmi`, which derives per-chunk and per-group offsets in the
+  offset's own type; these SIMT ops themselves widen the offset once and derive
+  nothing from it. These ops perform no bounds checking.
 - Vector-register ops such as `pto.vlds`, `pto.vadd`, and `pto.vsts` belong to
   normal vector code, not to the SIMT body.
 
@@ -517,8 +520,8 @@ support. For ordinary typed access without SIMT scope or cache controls, use
 
 - **semantics:** Load one element from GM at `%ptr + %offset` using the
   selected cache controls.
-- **inputs:** `%ptr` is a `!pto.ptr<T, gm>`. `%offset` is an `index` element
-  offset, not a byte offset.  For ``!pto.ptr<vector<2xf32>, gm>``, offset 1
+- **inputs:** `%ptr` is a `!pto.ptr<T, gm>`. `%offset` is an element offset
+  (`index`, `i32` or `i64`), not a byte offset.  For ``!pto.ptr<vector<2xf32>, gm>``, offset 1
   advances by 8 bytes (2 × sizeof(f32)).
 - **attributes:** `l1cache` may be `l1cache(cache)` or `l1cache(uncache)` and
   defaults to `cache`. `l2cache(...)` uses the load L2 cache table and defaults
@@ -555,7 +558,7 @@ pto.stg %value, %gm[%offset] l1cache(uncache) l2cache(wtsred) : !pto.ptr<T, gm>,
 - **semantics:** Store one element to GM at `%ptr + %offset` using the
   selected cache controls.
 - **inputs:** `%value` is the element to write. `%ptr` is a
-  `!pto.ptr<T, gm>`. `%offset` is an `index` element offset
+  `!pto.ptr<T, gm>`. `%offset` is an element offset (`index`, `i32` or `i64`)
   (same element-level semantics as `pto.ldg`).
 - **attributes:** `l1cache` may be `l1cache(cache)` or `l1cache(uncache)` and
   defaults to `cache`. `l2cache(...)` uses the store/atomic L2 cache table and

@@ -19,7 +19,7 @@ module {
         : index -> !pto.vmi.mask<128xb32, #pto.vmi.layout<contiguous>>
     %out = pto.vmi.expand_load %src[%offset], %mask, %passthru
         : !pto.ptr<f32, ub>,
-          !pto.vmi.mask<128xb32, #pto.vmi.layout<contiguous>>,
+          index, !pto.vmi.mask<128xb32, #pto.vmi.layout<contiguous>>,
           !pto.vmi.vreg<128xf32, #pto.vmi.layout<contiguous>>
         -> !pto.vmi.vreg<128xf32, #pto.vmi.layout<contiguous>>
     %part0, %part1 = "pto.vmi.unpack"(%out)

@@ -21,7 +21,7 @@ module {
     %aligned_off = arith.muli %off, %c32 : index
     pto.vmi.vstore %value, %dst[%aligned_off], %c1 {group = 8}
         : !pto.vmi.vreg<8xui8, #pto.vmi.layout<num_groups = 8, slots = 8, lane_stride = 2>>,
-          !pto.ptr<ui8, ub>
+          !pto.ptr<ui8, ub>, index
     return
   }
 }

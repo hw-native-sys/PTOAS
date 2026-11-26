@@ -22,9 +22,9 @@ module {
     %step = arith.constant 1 : index
     %ub = arith.constant 0 : index
     scf.for %i = %lb to %ub step %step {
-      %x = pto.vmi.vload %src[%c0] : !pto.ptr<bf16, ub> -> !pto.vmi.vreg<64xbf16>
+      %x = pto.vmi.vload %src[%c0] : !pto.ptr<bf16, ub>, index -> !pto.vmi.vreg<64xbf16>
       %y = pto.vmi.vcvt %x : !pto.vmi.vreg<64xbf16> -> !pto.vmi.vreg<64xf32>
-      pto.vmi.vstore %y, %out[%c0] : !pto.vmi.vreg<64xf32>, !pto.ptr<f32, ub>
+      pto.vmi.vstore %y, %out[%c0] : !pto.vmi.vreg<64xf32>, !pto.ptr<f32, ub>, index
     }
     return
   }
@@ -34,9 +34,9 @@ module {
     %step = arith.constant 1 : index
     %ub = arith.constant 0 : index
     scf.for %i = %lb to %ub step %step {
-      %x = pto.vmi.vload %src[%c0] : !pto.ptr<bf16, ub> -> !pto.vmi.vreg<64xbf16>
+      %x = pto.vmi.vload %src[%c0] : !pto.ptr<bf16, ub>, index -> !pto.vmi.vreg<64xbf16>
       %y = pto.vmi.vcvt %x : !pto.vmi.vreg<64xbf16> -> !pto.vmi.vreg<64xf32>
-      pto.vmi.vstore %y, %out[%c0] : !pto.vmi.vreg<64xf32>, !pto.ptr<f32, ub>
+      pto.vmi.vstore %y, %out[%c0] : !pto.vmi.vreg<64xf32>, !pto.ptr<f32, ub>, index
     }
     return
   }
@@ -46,9 +46,9 @@ module {
     %step = arith.constant 2 : index
     %ub = arith.constant 15 : index
     scf.for %i = %lb to %ub step %step {
-      %x = pto.vmi.vload %src[%c0] : !pto.ptr<bf16, ub> -> !pto.vmi.vreg<64xbf16>
+      %x = pto.vmi.vload %src[%c0] : !pto.ptr<bf16, ub>, index -> !pto.vmi.vreg<64xbf16>
       %y = pto.vmi.vcvt %x : !pto.vmi.vreg<64xbf16> -> !pto.vmi.vreg<64xf32>
-      pto.vmi.vstore %y, %out[%c0] : !pto.vmi.vreg<64xf32>, !pto.ptr<f32, ub>
+      pto.vmi.vstore %y, %out[%c0] : !pto.vmi.vreg<64xf32>, !pto.ptr<f32, ub>, index
     }
     return
   }
@@ -58,9 +58,9 @@ module {
     %step = arith.constant 1 : index
     %ub = arith.constant 9223372036854775807 : index
     scf.for %i = %lb to %ub step %step {
-      %x = pto.vmi.vload %src[%c0] : !pto.ptr<bf16, ub> -> !pto.vmi.vreg<64xbf16>
+      %x = pto.vmi.vload %src[%c0] : !pto.ptr<bf16, ub>, index -> !pto.vmi.vreg<64xbf16>
       %y = pto.vmi.vcvt %x : !pto.vmi.vreg<64xbf16> -> !pto.vmi.vreg<64xf32>
-      pto.vmi.vstore %y, %out[%c0] : !pto.vmi.vreg<64xf32>, !pto.ptr<f32, ub>
+      pto.vmi.vstore %y, %out[%c0] : !pto.vmi.vreg<64xf32>, !pto.ptr<f32, ub>, index
     }
     return
   }  func.func @bf16_nested_huge(%src: !pto.ptr<bf16, ub>, %out: !pto.ptr<f32, ub>, %n: index) {
@@ -70,9 +70,9 @@ module {
     %ub = arith.constant 9223372036854775807 : index
     scf.for %outer = %lb to %ub step %step {
     scf.for %i = %lb to %ub step %step {
-      %x = pto.vmi.vload %src[%c0] : !pto.ptr<bf16, ub> -> !pto.vmi.vreg<64xbf16>
+      %x = pto.vmi.vload %src[%c0] : !pto.ptr<bf16, ub>, index -> !pto.vmi.vreg<64xbf16>
       %y = pto.vmi.vcvt %x : !pto.vmi.vreg<64xbf16> -> !pto.vmi.vreg<64xf32>
-      pto.vmi.vstore %y, %out[%c0] : !pto.vmi.vreg<64xf32>, !pto.ptr<f32, ub>
+      pto.vmi.vstore %y, %out[%c0] : !pto.vmi.vreg<64xf32>, !pto.ptr<f32, ub>, index
     }
     }
     return
@@ -82,9 +82,9 @@ module {
     %lb = arith.constant 0 : index
     %step = arith.constant 1 : index
     scf.for %i = %lb to %n step %step {
-      %x = pto.vmi.vload %src[%c0] : !pto.ptr<bf16, ub> -> !pto.vmi.vreg<64xbf16>
+      %x = pto.vmi.vload %src[%c0] : !pto.ptr<bf16, ub>, index -> !pto.vmi.vreg<64xbf16>
       %y = pto.vmi.vcvt %x : !pto.vmi.vreg<64xbf16> -> !pto.vmi.vreg<64xf32>
-      pto.vmi.vstore %y, %out[%c0] : !pto.vmi.vreg<64xf32>, !pto.ptr<f32, ub>
+      pto.vmi.vstore %y, %out[%c0] : !pto.vmi.vreg<64xf32>, !pto.ptr<f32, ub>, index
     }
     return
   }

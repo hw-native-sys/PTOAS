@@ -32,7 +32,7 @@ module {
     pto.vmi.vstore %packed, %dst[%aligned_off], %mask
         : !pto.vmi.vreg<256x!pto.f4E1M2x2>,
           !pto.ptr<!pto.f4E1M2x2, ub>,
-          !pto.vmi.mask<256xpred>
+          index, !pto.vmi.mask<256xpred>
     return
   }
 }

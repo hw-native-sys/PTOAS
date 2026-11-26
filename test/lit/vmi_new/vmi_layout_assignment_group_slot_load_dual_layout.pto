@@ -22,7 +22,7 @@ module {
     %c1 = arith.constant 1 : index
     %c8 = arith.constant 8 : index
     %rhs16 = pto.vmi.vload %rhs_base[%off], %c1 {group = 8}
-        : !pto.ptr<f32, ub> -> !pto.vmi.vreg<8xf32>
+        : !pto.ptr<f32, ub>, index -> !pto.vmi.vreg<8xf32>
     %sum16 = pto.vmi.vcadd %source16, %mask16
         {group = 8, reassoc}
         : !pto.vmi.vreg<128xf32>, !pto.vmi.mask<128xpred>
@@ -31,10 +31,10 @@ module {
         : !pto.vmi.vreg<8xf32>, !pto.vmi.vreg<8xf32>
         -> !pto.vmi.vreg<8xf32>
     pto.vmi.vstore %outv16, %out16[%off], %c1 {group = 8}
-        : !pto.vmi.vreg<8xf32>, !pto.ptr<f32, ub>
+        : !pto.vmi.vreg<8xf32>, !pto.ptr<f32, ub>, index
 
     %rhs64 = pto.vmi.vload %rhs_base[%off], %c8 {group = 8}
-        : !pto.ptr<f32, ub> -> !pto.vmi.vreg<8xf32>
+        : !pto.ptr<f32, ub>, index -> !pto.vmi.vreg<8xf32>
     %sum64 = pto.vmi.vcadd %source64, %mask64
         {group = 8, reassoc}
         : !pto.vmi.vreg<512xf32>, !pto.vmi.mask<512xpred>
@@ -43,7 +43,7 @@ module {
         : !pto.vmi.vreg<8xf32>, !pto.vmi.vreg<8xf32>
         -> !pto.vmi.vreg<8xf32>
     pto.vmi.vstore %outv64, %out64[%off], %c8 {group = 8}
-        : !pto.vmi.vreg<8xf32>, !pto.ptr<f32, ub>
+        : !pto.vmi.vreg<8xf32>, !pto.ptr<f32, ub>, index
     return
   }
 }

@@ -268,7 +268,8 @@ llvm::cl::opt<bool> enableVmiFastmath(
                    "enables the conversion fast paths that may change NaN "
                    "results, including f32-to-bf16 narrowing, and lets layout "
                    "assignment offer the dense same-layout relation for those "
-                   "casts. Enabled by default; pass --vmi-fastmath=false to "
+                   "casts. Also contracts FP32 vmul + vadd into fused vmula, "
+                   "using a single rounding. Enabled by default; pass --vmi-fastmath=false to "
                    "disable"),
     llvm::cl::init(true));
 
@@ -399,8 +400,8 @@ llvm::cl::opt<bool> mlir::pto::emitMlirIR(
 
 llvm::cl::opt<std::string> mlir::pto::ptoTargetArch(
     "pto-arch",
-    llvm::cl::desc("Target Ascend architecture for codegen: a2, a3, or a5 (default: a3)"),
-    llvm::cl::value_desc("a2|a3|a5"),
+    llvm::cl::desc("Target architecture: a2, a3, a5, or linx (default: a3)"),
+    llvm::cl::value_desc("a2|a3|a5|linx"),
     llvm::cl::init("a3"));
 
 llvm::cl::opt<std::string> ptoBuildLevel(

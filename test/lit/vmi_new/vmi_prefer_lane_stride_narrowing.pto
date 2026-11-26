@@ -20,11 +20,11 @@ module attributes {pto.target_arch = "a5"} {
       %c32 = arith.constant 32 : index
       %aligned_offset = arith.muli %offset, %c32 : index
       %value = pto.vmi.vload %src[%aligned_offset]
-          : !pto.ptr<f32, ub> -> !pto.vmi.vreg<256xf32>
+          : !pto.ptr<f32, ub>, index -> !pto.vmi.vreg<256xf32>
       %narrow = pto.vmi.vcvt %value {rounding = "R", saturate = "SAT"}
           : !pto.vmi.vreg<256xf32> -> !pto.vmi.vreg<256xf8E4M3FN>
       pto.vmi.vstore %narrow, %dst[%aligned_offset]
-          : !pto.vmi.vreg<256xf8E4M3FN>, !pto.ptr<f8E4M3FN, ub>
+          : !pto.vmi.vreg<256xf8E4M3FN>, !pto.ptr<f8E4M3FN, ub>, index
       return
     }
 
@@ -35,12 +35,12 @@ module attributes {pto.target_arch = "a5"} {
       %aligned_offset = arith.muli %offset, %c32 : index
       %mask = pto.vmi.create_mask %active : index -> !pto.vmi.mask<256xpred>
       %value = pto.vmi.vload %src[%aligned_offset]
-          : !pto.ptr<ui32, ub> -> !pto.vmi.vreg<256xui32>
+          : !pto.ptr<ui32, ub>, index -> !pto.vmi.vreg<256xui32>
       %narrow = pto.vmi.vcvt %value {saturate = "SAT"}
           : !pto.vmi.vreg<256xui32> -> !pto.vmi.vreg<256xui8>
       pto.vmi.vstore %narrow, %dst[%aligned_offset], %mask
           : !pto.vmi.vreg<256xui8>, !pto.ptr<ui8, ub>,
-            !pto.vmi.mask<256xpred>
+            index, !pto.vmi.mask<256xpred>
       return
     }
   }

@@ -14,29 +14,29 @@
 module {
  func.func @si8_vl128_g1_add(%src: !pto.ptr<si8, ub>, %dst: !pto.ptr<si8, ub>, %active: index) {
  %zero = arith.constant 0 : index
- %x = pto.vmi.vload %src[%zero] : !pto.ptr<si8, ub> -> !pto.vmi.vreg<128xsi8>
+ %x = pto.vmi.vload %src[%zero] : !pto.ptr<si8, ub>, index -> !pto.vmi.vreg<128xsi8>
  %mask = pto.vmi.create_mask %active : index -> !pto.vmi.mask<128xpred>
  %wide = pto.vmi.extsi %x : !pto.vmi.vreg<128xsi8> -> !pto.vmi.vreg<128xsi16>
  %wide_r = pto.vmi.vcadd %wide, %mask {group = 1} : !pto.vmi.vreg<128xsi16>, !pto.vmi.mask<128xpred> -> !pto.vmi.vreg<1xsi16>
  %r = pto.vmi.trunci %wide_r {saturate = "NOSAT"} : !pto.vmi.vreg<1xsi16> -> !pto.vmi.vreg<1xsi8>
  %b = pto.vmi.vbrc %r {group = 1} : !pto.vmi.vreg<1xsi8> -> !pto.vmi.vreg<128xsi8>
- pto.vmi.vstore %b, %dst[%zero] : !pto.vmi.vreg<128xsi8>, !pto.ptr<si8, ub>
+ pto.vmi.vstore %b, %dst[%zero] : !pto.vmi.vreg<128xsi8>, !pto.ptr<si8, ub>, index
  return
  }
  func.func @ui8_vl64_g2_add(%src: !pto.ptr<ui8, ub>, %dst: !pto.ptr<ui8, ub>, %active: index) {
  %zero = arith.constant 0 : index
- %x = pto.vmi.vload %src[%zero] : !pto.ptr<ui8, ub> -> !pto.vmi.vreg<64xui8>
+ %x = pto.vmi.vload %src[%zero] : !pto.ptr<ui8, ub>, index -> !pto.vmi.vreg<64xui8>
  %mask = pto.vmi.create_mask %active : index -> !pto.vmi.mask<64xpred>
  %wide = pto.vmi.extui %x : !pto.vmi.vreg<64xui8> -> !pto.vmi.vreg<64xui16>
  %wide_r = pto.vmi.vcadd %wide, %mask {group = 2} : !pto.vmi.vreg<64xui16>, !pto.vmi.mask<64xpred> -> !pto.vmi.vreg<2xui16>
  %r = pto.vmi.trunci %wide_r {saturate = "NOSAT"} : !pto.vmi.vreg<2xui16> -> !pto.vmi.vreg<2xui8>
  %b = pto.vmi.vbrc %r {group = 2} : !pto.vmi.vreg<2xui8> -> !pto.vmi.vreg<64xui8>
- pto.vmi.vstore %b, %dst[%zero] : !pto.vmi.vreg<64xui8>, !pto.ptr<ui8, ub>
+ pto.vmi.vstore %b, %dst[%zero] : !pto.vmi.vreg<64xui8>, !pto.ptr<ui8, ub>, index
  return
  }
  func.func @ui8_vl64_g8_max(%src: !pto.ptr<ui8, ub>, %dst: !pto.ptr<ui8, ub>, %active: index) {
  %zero = arith.constant 0 : index
- %x = pto.vmi.vload %src[%zero] : !pto.ptr<ui8, ub> -> !pto.vmi.vreg<64xui8>
+ %x = pto.vmi.vload %src[%zero] : !pto.ptr<ui8, ub>, index -> !pto.vmi.vreg<64xui8>
  %mask = pto.vmi.create_mask %active : index -> !pto.vmi.mask<64xpred>
  %wide = pto.vmi.extui %x : !pto.vmi.vreg<64xui8> -> !pto.vmi.vreg<64xui16>
  %neutral = "pto.vmi.constant"() {value = dense<0> : vector<64xui16>} : () -> !pto.vmi.vreg<64xui16>
@@ -46,29 +46,29 @@ module {
  %wide_r = pto.vmi.vcmax %selected, %all {group = 8} : !pto.vmi.vreg<64xui16>, !pto.vmi.mask<64xpred> -> !pto.vmi.vreg<8xui16>
  %r = pto.vmi.trunci %wide_r {saturate = "NOSAT"} : !pto.vmi.vreg<8xui16> -> !pto.vmi.vreg<8xui8>
  %b = pto.vmi.vbrc %r {group = 8} : !pto.vmi.vreg<8xui8> -> !pto.vmi.vreg<64xui8>
- pto.vmi.vstore %b, %dst[%zero] : !pto.vmi.vreg<64xui8>, !pto.ptr<ui8, ub>
+ pto.vmi.vstore %b, %dst[%zero] : !pto.vmi.vreg<64xui8>, !pto.ptr<ui8, ub>, index
  return
  }
  func.func @ui8_vl256_g8_explicit_add(%src: !pto.ptr<ui8, ub>, %dst: !pto.ptr<ui8, ub>, %active: index) {
  %zero = arith.constant 0 : index
- %x = pto.vmi.vload %src[%zero] : !pto.ptr<ui8, ub> -> !pto.vmi.vreg<256xui8>
+ %x = pto.vmi.vload %src[%zero] : !pto.ptr<ui8, ub>, index -> !pto.vmi.vreg<256xui8>
  %mask = pto.vmi.create_mask %active : index -> !pto.vmi.mask<256xpred>
  %wide = pto.vmi.extui %x : !pto.vmi.vreg<256xui8> -> !pto.vmi.vreg<256xui16>
  %wide_r = pto.vmi.vcadd %wide, %mask {group = 8} : !pto.vmi.vreg<256xui16>, !pto.vmi.mask<256xpred> -> !pto.vmi.vreg<8xui16>
  %r = pto.vmi.trunci %wide_r {saturate = "NOSAT"} : !pto.vmi.vreg<8xui16> -> !pto.vmi.vreg<8xui8>
  %b = pto.vmi.vbrc %r {group = 8} : !pto.vmi.vreg<8xui8> -> !pto.vmi.vreg<256xui8>
- pto.vmi.vstore %b, %dst[%zero] : !pto.vmi.vreg<256xui8>, !pto.ptr<ui8, ub>
+ pto.vmi.vstore %b, %dst[%zero] : !pto.vmi.vreg<256xui8>, !pto.ptr<ui8, ub>, index
  return
  }
  func.func @ui8_vl128_g8_explicit_add(%src: !pto.ptr<ui8, ub>, %dst: !pto.ptr<ui8, ub>, %active: index) {
  %zero = arith.constant 0 : index
- %x = pto.vmi.vload %src[%zero] : !pto.ptr<ui8, ub> -> !pto.vmi.vreg<128xui8>
+ %x = pto.vmi.vload %src[%zero] : !pto.ptr<ui8, ub>, index -> !pto.vmi.vreg<128xui8>
  %mask = pto.vmi.create_mask %active : index -> !pto.vmi.mask<128xpred>
  %wide = pto.vmi.extui %x : !pto.vmi.vreg<128xui8> -> !pto.vmi.vreg<128xui16>
  %wide_r = pto.vmi.vcadd %wide, %mask {group = 8} : !pto.vmi.vreg<128xui16>, !pto.vmi.mask<128xpred> -> !pto.vmi.vreg<8xui16>
  %r = pto.vmi.trunci %wide_r {saturate = "NOSAT"} : !pto.vmi.vreg<8xui16> -> !pto.vmi.vreg<8xui8>
  %b = pto.vmi.vbrc %r {group = 8} : !pto.vmi.vreg<8xui8> -> !pto.vmi.vreg<128xui8>
- pto.vmi.vstore %b, %dst[%zero] : !pto.vmi.vreg<128xui8>, !pto.ptr<ui8, ub>
+ pto.vmi.vstore %b, %dst[%zero] : !pto.vmi.vreg<128xui8>, !pto.ptr<ui8, ub>, index
  return
  }
 }

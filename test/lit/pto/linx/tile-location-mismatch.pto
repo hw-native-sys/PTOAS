@@ -1,0 +1,13 @@
+// RUN: not ptoas --pto-arch=linx --emit-pto-ir %s -o - 2>&1 | FileCheck %s
+!L = !pto.linx.tile_buf<local, 16x128xf32>
+!S = !pto.linx.tile_buf<shared, 16x128xf32>
+module attributes {pto.target_arch = "linx"} {
+  func.func @mismatch() {
+    %a = pto.linx.alloc_tile : !L
+    %b = pto.linx.alloc_tile : !S
+    %c = pto.linx.alloc_tile : !L
+    pto.linx.tadd ins(%a, %b : !L, !S) outs(%c : !L)
+    return
+  }
+}
+// CHECK: requires identical Linx tile types for inputs and output

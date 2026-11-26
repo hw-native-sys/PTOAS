@@ -16,7 +16,7 @@ module {
     // CHECK-SAME: value layout does not match a supported dense store table row
     pto.vmi.vstore %value, %dst[%offset]
         : !pto.vmi.vreg<128xf32, #pto.vmi.layout<block_deinterleaved = 2>>,
-          !pto.ptr<f32, ub>
+          !pto.ptr<f32, ub>, index
     return
   }
 }

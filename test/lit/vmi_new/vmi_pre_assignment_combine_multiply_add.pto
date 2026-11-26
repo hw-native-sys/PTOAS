@@ -1,0 +1,147 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software; you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+
+// RUN: pto-test-opt %s -vmi-pre-assignment-combine | FileCheck %s
+// RUN: pto-test-opt %s -vmi-set-fastmath=vmi-fastmath=false -vmi-pre-assignment-combine | FileCheck %s --check-prefix=STRICT
+
+module {
+  func.func @product_rhs(%acc: !pto.vmi.vreg<128xf32>, %a: !pto.vmi.vreg<128xf32>, %b: !pto.vmi.vreg<128xf32>, %m: !pto.vmi.mask<128xpred>, %n: !pto.vmi.mask<128xpred>) -> !pto.vmi.vreg<128xf32> {
+    %p = pto.vmi.vmul %a, %b : !pto.vmi.vreg<128xf32>, !pto.vmi.vreg<128xf32> -> !pto.vmi.vreg<128xf32>
+    %r = pto.vmi.vadd %acc, %p : !pto.vmi.vreg<128xf32>, !pto.vmi.vreg<128xf32> -> !pto.vmi.vreg<128xf32>
+    return %r : !pto.vmi.vreg<128xf32>
+  }
+  // CHECK-LABEL: func.func @product_rhs(
+  // CHECK-NOT: pto.vmi.vmul{{ }}
+  // CHECK: pto.vmi.vmula %arg0, %arg1, %arg2
+  // CHECK-NOT: pto.vmi.vadd
+  // CHECK: return
+  // STRICT-LABEL: func.func @product_rhs(
+  // STRICT: pto.vmi.vmul{{ }}
+  // STRICT: pto.vmi.vadd
+  // STRICT: return
+  func.func @product_lhs(%acc: !pto.vmi.vreg<128xf32>, %a: !pto.vmi.vreg<128xf32>, %b: !pto.vmi.vreg<128xf32>, %m: !pto.vmi.mask<128xpred>, %n: !pto.vmi.mask<128xpred>) -> !pto.vmi.vreg<128xf32> {
+    %p = pto.vmi.vmul %a, %b : !pto.vmi.vreg<128xf32>, !pto.vmi.vreg<128xf32> -> !pto.vmi.vreg<128xf32>
+    %r = pto.vmi.vadd %p, %acc : !pto.vmi.vreg<128xf32>, !pto.vmi.vreg<128xf32> -> !pto.vmi.vreg<128xf32>
+    return %r : !pto.vmi.vreg<128xf32>
+  }
+  // CHECK-LABEL: func.func @product_lhs(
+  // CHECK-NOT: pto.vmi.vmul{{ }}
+  // CHECK: pto.vmi.vmula %arg0, %arg1, %arg2
+  // CHECK-NOT: pto.vmi.vadd
+  // CHECK: return
+  // STRICT-LABEL: func.func @product_lhs(
+  // STRICT: pto.vmi.vmul{{ }}
+  // STRICT: pto.vmi.vadd
+  // STRICT: return
+  func.func @matching_mask(%acc: !pto.vmi.vreg<128xf32>, %a: !pto.vmi.vreg<128xf32>, %b: !pto.vmi.vreg<128xf32>, %m: !pto.vmi.mask<128xpred>, %n: !pto.vmi.mask<128xpred>) -> !pto.vmi.vreg<128xf32> {
+    %p = pto.vmi.vmul %a, %b, %m : !pto.vmi.vreg<128xf32>, !pto.vmi.vreg<128xf32>, !pto.vmi.mask<128xpred> -> !pto.vmi.vreg<128xf32>
+    %r = pto.vmi.vadd %acc, %p, %m : !pto.vmi.vreg<128xf32>, !pto.vmi.vreg<128xf32>, !pto.vmi.mask<128xpred> -> !pto.vmi.vreg<128xf32>
+    return %r : !pto.vmi.vreg<128xf32>
+  }
+  // CHECK-LABEL: func.func @matching_mask(
+  // CHECK-NOT: pto.vmi.vmul{{ }}
+  // CHECK: pto.vmi.vmula %arg0, %arg1, %arg2, %arg3
+  // CHECK-NOT: pto.vmi.vadd
+  // CHECK: return
+  // STRICT-LABEL: func.func @matching_mask(
+  // STRICT: pto.vmi.vmul{{ }}
+  // STRICT: pto.vmi.vadd
+  // STRICT: return
+  func.func @different_masks(%acc: !pto.vmi.vreg<128xf32>, %a: !pto.vmi.vreg<128xf32>, %b: !pto.vmi.vreg<128xf32>, %m: !pto.vmi.mask<128xpred>, %n: !pto.vmi.mask<128xpred>) -> !pto.vmi.vreg<128xf32> {
+    %p = pto.vmi.vmul %a, %b, %m : !pto.vmi.vreg<128xf32>, !pto.vmi.vreg<128xf32>, !pto.vmi.mask<128xpred> -> !pto.vmi.vreg<128xf32>
+    %r = pto.vmi.vadd %acc, %p, %n : !pto.vmi.vreg<128xf32>, !pto.vmi.vreg<128xf32>, !pto.vmi.mask<128xpred> -> !pto.vmi.vreg<128xf32>
+    return %r : !pto.vmi.vreg<128xf32>
+  }
+  // CHECK-LABEL: func.func @different_masks(
+  // CHECK: pto.vmi.vmul{{ }}
+  // CHECK: pto.vmi.vadd
+  // CHECK: return
+  // STRICT-LABEL: func.func @different_masks(
+  // STRICT: pto.vmi.vmul{{ }}
+  // STRICT: pto.vmi.vadd
+  // STRICT: return
+  func.func @unmasked_product(%acc: !pto.vmi.vreg<128xf32>, %a: !pto.vmi.vreg<128xf32>, %b: !pto.vmi.vreg<128xf32>, %m: !pto.vmi.mask<128xpred>, %n: !pto.vmi.mask<128xpred>) -> !pto.vmi.vreg<128xf32> {
+    %p = pto.vmi.vmul %a, %b : !pto.vmi.vreg<128xf32>, !pto.vmi.vreg<128xf32> -> !pto.vmi.vreg<128xf32>
+    %r = pto.vmi.vadd %acc, %p, %m : !pto.vmi.vreg<128xf32>, !pto.vmi.vreg<128xf32>, !pto.vmi.mask<128xpred> -> !pto.vmi.vreg<128xf32>
+    return %r : !pto.vmi.vreg<128xf32>
+  }
+  // CHECK-LABEL: func.func @unmasked_product(
+  // CHECK: pto.vmi.vmul{{ }}
+  // CHECK: pto.vmi.vadd
+  // CHECK: return
+  // STRICT-LABEL: func.func @unmasked_product(
+  // STRICT: pto.vmi.vmul{{ }}
+  // STRICT: pto.vmi.vadd
+  // STRICT: return
+  func.func @masked_product(%acc: !pto.vmi.vreg<128xf32>, %a: !pto.vmi.vreg<128xf32>, %b: !pto.vmi.vreg<128xf32>, %m: !pto.vmi.mask<128xpred>, %n: !pto.vmi.mask<128xpred>) -> !pto.vmi.vreg<128xf32> {
+    %p = pto.vmi.vmul %a, %b, %m : !pto.vmi.vreg<128xf32>, !pto.vmi.vreg<128xf32>, !pto.vmi.mask<128xpred> -> !pto.vmi.vreg<128xf32>
+    %r = pto.vmi.vadd %acc, %p : !pto.vmi.vreg<128xf32>, !pto.vmi.vreg<128xf32> -> !pto.vmi.vreg<128xf32>
+    return %r : !pto.vmi.vreg<128xf32>
+  }
+  // CHECK-LABEL: func.func @masked_product(
+  // CHECK: pto.vmi.vmul{{ }}
+  // CHECK: pto.vmi.vadd
+  // CHECK: return
+  // STRICT-LABEL: func.func @masked_product(
+  // STRICT: pto.vmi.vmul{{ }}
+  // STRICT: pto.vmi.vadd
+  // STRICT: return
+  func.func @multiple_uses(%acc: !pto.vmi.vreg<128xf32>, %a: !pto.vmi.vreg<128xf32>, %b: !pto.vmi.vreg<128xf32>, %m: !pto.vmi.mask<128xpred>, %n: !pto.vmi.mask<128xpred>) -> (!pto.vmi.vreg<128xf32>, !pto.vmi.vreg<128xf32>) {
+    %p = pto.vmi.vmul %a, %b : !pto.vmi.vreg<128xf32>, !pto.vmi.vreg<128xf32> -> !pto.vmi.vreg<128xf32>
+    %r = pto.vmi.vadd %acc, %p : !pto.vmi.vreg<128xf32>, !pto.vmi.vreg<128xf32> -> !pto.vmi.vreg<128xf32>
+    return %r, %p : !pto.vmi.vreg<128xf32>, !pto.vmi.vreg<128xf32>
+  }
+  // CHECK-LABEL: func.func @multiple_uses(
+  // CHECK: pto.vmi.vmul{{ }}
+  // CHECK: pto.vmi.vadd
+  // CHECK: return
+  // STRICT-LABEL: func.func @multiple_uses(
+  // STRICT: pto.vmi.vmul{{ }}
+  // STRICT: pto.vmi.vadd
+  // STRICT: return
+  func.func @half_precision(%acc: !pto.vmi.vreg<128xf16>, %a: !pto.vmi.vreg<128xf16>, %b: !pto.vmi.vreg<128xf16>, %m: !pto.vmi.mask<128xpred>, %n: !pto.vmi.mask<128xpred>) -> !pto.vmi.vreg<128xf16> {
+    %p = pto.vmi.vmul %a, %b : !pto.vmi.vreg<128xf16>, !pto.vmi.vreg<128xf16> -> !pto.vmi.vreg<128xf16>
+    %r = pto.vmi.vadd %acc, %p : !pto.vmi.vreg<128xf16>, !pto.vmi.vreg<128xf16> -> !pto.vmi.vreg<128xf16>
+    return %r : !pto.vmi.vreg<128xf16>
+  }
+  // CHECK-LABEL: func.func @half_precision(
+  // CHECK: pto.vmi.vmul{{ }}
+  // CHECK: pto.vmi.vadd
+  // CHECK: return
+  // STRICT-LABEL: func.func @half_precision(
+  // STRICT: pto.vmi.vmul{{ }}
+  // STRICT: pto.vmi.vadd
+  // STRICT: return
+  func.func @integer(%acc: !pto.vmi.vreg<128xi32>, %a: !pto.vmi.vreg<128xi32>, %b: !pto.vmi.vreg<128xi32>, %m: !pto.vmi.mask<128xpred>, %n: !pto.vmi.mask<128xpred>) -> !pto.vmi.vreg<128xi32> {
+    %p = pto.vmi.vmul %a, %b : !pto.vmi.vreg<128xi32>, !pto.vmi.vreg<128xi32> -> !pto.vmi.vreg<128xi32>
+    %r = pto.vmi.vadd %acc, %p : !pto.vmi.vreg<128xi32>, !pto.vmi.vreg<128xi32> -> !pto.vmi.vreg<128xi32>
+    return %r : !pto.vmi.vreg<128xi32>
+  }
+  // CHECK-LABEL: func.func @integer(
+  // CHECK: pto.vmi.vmul{{ }}
+  // CHECK: pto.vmi.vadd
+  // CHECK: return
+  // STRICT-LABEL: func.func @integer(
+  // STRICT: pto.vmi.vmul{{ }}
+  // STRICT: pto.vmi.vadd
+  // STRICT: return
+  func.func @explicit_zero(%acc: !pto.vmi.vreg<128xf32>, %a: !pto.vmi.vreg<128xf32>, %b: !pto.vmi.vreg<128xf32>, %m: !pto.vmi.mask<128xpred>, %n: !pto.vmi.mask<128xpred>) -> !pto.vmi.vreg<128xf32> {
+    %p = pto.vmi.vmul %a, %b, %m {pmode = "zero"} : !pto.vmi.vreg<128xf32>, !pto.vmi.vreg<128xf32>, !pto.vmi.mask<128xpred> -> !pto.vmi.vreg<128xf32>
+    %r = pto.vmi.vadd %acc, %p, %m {pmode = "zero"} : !pto.vmi.vreg<128xf32>, !pto.vmi.vreg<128xf32>, !pto.vmi.mask<128xpred> -> !pto.vmi.vreg<128xf32>
+    return %r : !pto.vmi.vreg<128xf32>
+  }
+  // CHECK-LABEL: func.func @explicit_zero(
+  // CHECK-NOT: pto.vmi.vmul{{ }}
+  // CHECK: pto.vmi.vmula %arg0, %arg1, %arg2, %arg3
+  // CHECK-NOT: pto.vmi.vadd
+  // CHECK: return
+  // STRICT-LABEL: func.func @explicit_zero(
+  // STRICT: pto.vmi.vmul{{ }}
+  // STRICT: pto.vmi.vadd
+  // STRICT: return
+}

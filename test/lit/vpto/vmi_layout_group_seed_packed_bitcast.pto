@@ -18,8 +18,8 @@ module {
     %c1 = arith.constant 1 : index
     %c128 = arith.constant 128 : index
     %mask = pto.vmi.create_mask %c128 : index -> !pto.vmi.mask<128xpred>
-    %x = pto.vmi.vload %src[%c0] : !pto.ptr<f32, ub> -> !pto.vmi.vreg<128xf32>
-    %groups = pto.vmi.vload %src[%c0], %c1 {group = 4} : !pto.ptr<f32, ub> -> !pto.vmi.vreg<4xf32>
+    %x = pto.vmi.vload %src[%c0] : !pto.ptr<f32, ub>, index -> !pto.vmi.vreg<128xf32>
+    %groups = pto.vmi.vload %src[%c0], %c1 {group = 4} : !pto.ptr<f32, ub>, index -> !pto.vmi.vreg<4xf32>
     %brc = pto.vmi.vbrc %groups {group = 4} : !pto.vmi.vreg<4xf32> -> !pto.vmi.vreg<128xf32>
     %scaled = pto.vmi.vmul %x, %brc, %mask : !pto.vmi.vreg<128xf32>, !pto.vmi.vreg<128xf32>, !pto.vmi.mask<128xpred> -> !pto.vmi.vreg<128xf32>
     %low, %high = pto.vmi.vunzip %scaled : !pto.vmi.vreg<128xf32> -> !pto.vmi.vreg<128xui16>, !pto.vmi.vreg<128xui16>
@@ -27,7 +27,7 @@ module {
     %bf16 = pto.vmi.vinterpret_cast %bits : !pto.vmi.vreg<128xui16> -> !pto.vmi.vreg<128xbf16>
     %pairs = pto.vmi.vinterpret_cast %bf16 : !pto.vmi.vreg<128xbf16> -> !pto.vmi.vreg<64x!pto.bf16x2>
     %out = pto.vmi.vcvt %pairs {rounding = "R"} : !pto.vmi.vreg<64x!pto.bf16x2> -> !pto.vmi.vreg<64x!pto.f4E2M1x2>
-    pto.vmi.vstore %out, %dst[%c0] : !pto.vmi.vreg<64x!pto.f4E2M1x2>, !pto.ptr<!pto.f4E2M1x2, ub>
+    pto.vmi.vstore %out, %dst[%c0] : !pto.vmi.vreg<64x!pto.f4E2M1x2>, !pto.ptr<!pto.f4E2M1x2, ub>, index
     return
   }
 }

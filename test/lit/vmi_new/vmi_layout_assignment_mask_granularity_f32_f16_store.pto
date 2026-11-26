@@ -18,13 +18,13 @@ module {
     %c16 = arith.constant 16 : index
     %c96 = arith.constant 96 : index
     %aligned_off = arith.muli %off, %c16 : index
-    %x = pto.vmi.vload %src[%aligned_off] : !pto.ptr<f32, ub> -> !pto.vmi.vreg<128xf32>
+    %x = pto.vmi.vload %src[%aligned_off] : !pto.ptr<f32, ub>, index -> !pto.vmi.vreg<128xf32>
     %mask = pto.vmi.create_mask %c96 : index -> !pto.vmi.mask<128xpred>
     pto.vmi.vstore %x, %out32[%aligned_off], %mask
-        : !pto.vmi.vreg<128xf32>, !pto.ptr<f32, ub>, !pto.vmi.mask<128xpred>
+        : !pto.vmi.vreg<128xf32>, !pto.ptr<f32, ub>, index, !pto.vmi.mask<128xpred>
     %h = pto.vmi.vcvt %x {saturate = "SAT"} : !pto.vmi.vreg<128xf32> -> !pto.vmi.vreg<128xf16>
     pto.vmi.vstore %h, %out16[%aligned_off], %mask
-        : !pto.vmi.vreg<128xf16>, !pto.ptr<f16, ub>, !pto.vmi.mask<128xpred>
+        : !pto.vmi.vreg<128xf16>, !pto.ptr<f16, ub>, index, !pto.vmi.mask<128xpred>
     return
   }
 }

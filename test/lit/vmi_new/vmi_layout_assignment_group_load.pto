@@ -14,7 +14,7 @@ module {
       %row_stride: index) -> !pto.vmi.vreg<512xf32> {
     %c0 = arith.constant 0 : index
     %out = pto.vmi.vload %source[%c0], %row_stride {group = 2}
-        : !pto.ptr<f32, ub> -> !pto.vmi.vreg<512xf32>
+        : !pto.ptr<f32, ub>, index -> !pto.vmi.vreg<512xf32>
     return %out : !pto.vmi.vreg<512xf32>
   }
 }

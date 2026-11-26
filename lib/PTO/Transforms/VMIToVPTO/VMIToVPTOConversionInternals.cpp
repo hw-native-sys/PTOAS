@@ -21,6 +21,102 @@ constexpr unsigned kMaxUnsignedBoundBits = 63;
 constexpr unsigned kBoundSignBitWidth = 64;
 constexpr int64_t kSupportedPatVLLanes[] = {1, 2, 3, 4, 8, 16, 32, 64, 128};
 
+//===----------------------------------------------------------------------===//
+// Element-offset arithmetic
+//===----------------------------------------------------------------------===//
+// A VMI element offset is either `index` or a signless integer of explicit
+// width (PTO_ElementOffset).  Derived offsets - per-chunk and per-group
+// addresses - are therefore materialized in the offset's own type: creating an
+// `index` constant and adding it to the offset would widen an integer offset
+// back to index, which is exactly the widening this contract exists to avoid.
+
+/// Materialize `value` as a constant of `offsetType`.
+static Value createElementOffsetConstant(Location loc, Type offsetType,
+    int64_t value, PatternRewriter &rewriter)
+{
+    if (offsetType.isIndex()) {
+        return rewriter.create<arith::ConstantIndexOp>(loc, value).getResult();
+    }
+    auto intType = dyn_cast<IntegerType>(offsetType);
+    if (!intType) {
+        return Value();
+    }
+    // arith.constant only accepts signless integer result types.
+    Type signlessType = rewriter.getIntegerType(intType.getWidth());
+    Value constant = rewriter.create<arith::ConstantOp>(
+        loc, IntegerAttr::get(signlessType, value));
+    if (intType.isSignless()) {
+        return constant;
+    }
+    return rewriter
+        .create<UnrealizedConversionCastOp>(loc, TypeRange{offsetType}, constant)
+        .getResult(0);
+}
+
+/// `baseOffset + value`, evaluated in the offset's own type.
+static Value addToElementOffset(Location loc, Value baseOffset, int64_t value,
+    PatternRewriter &rewriter)
+{
+    if (value == 0) {
+        return baseOffset;
+    }
+    Value delta =
+        createElementOffsetConstant(loc, baseOffset.getType(), value, rewriter);
+    if (!delta) {
+        return baseOffset;
+    }
+    return rewriter.create<arith::AddIOp>(loc, baseOffset, delta).getResult();
+}
+
+/// Reinterpret a stride operand in the offset type so that stride arithmetic
+/// runs in the offset's width.  index <-> integer conversions stay explicit and
+/// integer widths follow the sign of the element displacement: widening is a
+/// sign extension, exactly like the index cast it replaces.
+static Value castToElementOffsetType(Location loc, Value value, Type offsetType,
+    PatternRewriter &rewriter)
+{
+    if (offsetType == value.getType()) {
+        return value;
+    }
+    bool indexOffset = offsetType.isIndex();
+    bool indexValue = value.getType().isIndex();
+    if (indexOffset || indexValue) {
+        return rewriter.create<arith::IndexCastOp>(loc, offsetType, value)
+            .getResult();
+    }
+    auto targetInt = dyn_cast<IntegerType>(offsetType);
+    auto sourceInt = dyn_cast<IntegerType>(value.getType());
+    if (!targetInt || !sourceInt) {
+        return value;
+    }
+    unsigned targetWidth = targetInt.getWidth();
+    unsigned sourceWidth = sourceInt.getWidth();
+    if (targetWidth > sourceWidth) {
+        return rewriter.create<arith::ExtSIOp>(loc, offsetType, value).getResult();
+    }
+    return rewriter.create<arith::TruncIOp>(loc, offsetType, value).getResult();
+}
+
+/// `baseOffset + stride * factor`, evaluated in the offset's own type.
+static Value addScaledStrideToElementOffset(Location loc, Value baseOffset,
+    Value stride, int64_t factor, PatternRewriter &rewriter)
+{
+    if (factor == 0) {
+        return baseOffset;
+    }
+    Value strideInOffset =
+        castToElementOffsetType(loc, stride, baseOffset.getType(), rewriter);
+    Value factorValue =
+        createElementOffsetConstant(loc, baseOffset.getType(), factor, rewriter);
+    if (!factorValue) {
+        return baseOffset;
+    }
+    Value advance =
+        rewriter.create<arith::MulIOp>(loc, strideInOffset, factorValue)
+            .getResult();
+    return rewriter.create<arith::AddIOp>(loc, baseOffset, advance).getResult();
+}
+
 std::optional<std::string> getX2MemoryDistToken(Type elementType,
                                                 StringRef prefix);
 std::optional<std::string> getDenseLaneStrideLoadDistToken(VMIVRegType type);

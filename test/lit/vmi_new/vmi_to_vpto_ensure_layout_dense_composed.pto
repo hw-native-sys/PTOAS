@@ -17,7 +17,7 @@ module {
         -> !pto.vmi.vreg<256xf16, #pto.vmi.layout<contiguous, lane_stride = 2>>
     pto.vmi.vstore %r, %dst[%off]
         : !pto.vmi.vreg<256xf16, #pto.vmi.layout<contiguous, lane_stride = 2>>,
-          !pto.ptr<f16, ub>
+          !pto.ptr<f16, ub>, index
     return
   }
 
@@ -29,7 +29,7 @@ module {
         -> !pto.vmi.vreg<256xf8E4M3FN, #pto.vmi.layout<contiguous, lane_stride = 4>>
     pto.vmi.vstore %r, %dst[%off]
         : !pto.vmi.vreg<256xf8E4M3FN, #pto.vmi.layout<contiguous, lane_stride = 4>>,
-          !pto.ptr<f8E4M3FN, ub>
+          !pto.ptr<f8E4M3FN, ub>, index
     return
   }
 }

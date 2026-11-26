@@ -33,7 +33,7 @@ module {
       scf.yield %seed : !pto.vmi.mask<64xpred>
     }
     pto.vmi.masked_store %v16, %d16[%off], %joined
-        : !pto.vmi.vreg<64xf16>, !pto.ptr<f16, ub>, !pto.vmi.mask<64xpred>
+        : !pto.vmi.vreg<64xf16>, !pto.ptr<f16, ub>, index, !pto.vmi.mask<64xpred>
     return
   }
 
@@ -56,7 +56,7 @@ module {
       scf.yield %next : !pto.vmi.mask<64xpred>
     }
     pto.vmi.masked_store %v16, %d16[%off], %carried
-        : !pto.vmi.vreg<64xf16>, !pto.ptr<f16, ub>, !pto.vmi.mask<64xpred>
+        : !pto.vmi.vreg<64xf16>, !pto.ptr<f16, ub>, index, !pto.vmi.mask<64xpred>
     return
   }
 }
@@ -75,7 +75,7 @@ module {
 // CHECK: %[[THEN:.*]] = pto.vmi.mask_and %[[THEN_ROOT]], %[[CMP]] : !pto.vmi.mask<64xb16>, !pto.vmi.mask<64xb16> -> !pto.vmi.mask<64xb16>
 // CHECK: scf.yield %[[THEN]] : !pto.vmi.mask<64xb16>
 // CHECK: scf.yield %[[SEED]] : !pto.vmi.mask<64xb16>
-// CHECK: pto.vmi.masked_store {{.*}}{{\[}}%{{.*}}], %[[JOIN]] : !pto.vmi.vreg<64xf16>, !pto.ptr<f16, ub>, !pto.vmi.mask<64xb16>
+// CHECK: pto.vmi.masked_store {{.*}}{{\[}}%{{.*}}], %[[JOIN]] : !pto.vmi.vreg<64xf16>, !pto.ptr<f16, ub>, index, !pto.vmi.mask<64xb16>
 
 // CHECK-LABEL: func.func @vmi_mask_granularity_for_iter_arg(
 // CHECK: pto.vmi.create_mask %{{.*}} : index -> !pto.vmi.mask<64xb32>
@@ -87,4 +87,4 @@ module {
 // CHECK: %[[FOR_CMP:.*]] = pto.vmi.cmpf "olt", {{.*}} -> !pto.vmi.mask<64xb16>
 // CHECK: %[[NEXT:.*]] = pto.vmi.mask_and %[[CARRY]], %[[FOR_CMP]] : !pto.vmi.mask<64xb16>, !pto.vmi.mask<64xb16> -> !pto.vmi.mask<64xb16>
 // CHECK: scf.yield %[[NEXT]] : !pto.vmi.mask<64xb16>
-// CHECK: pto.vmi.masked_store {{.*}}{{\[}}%{{.*}}], %[[LOOP]] : !pto.vmi.vreg<64xf16>, !pto.ptr<f16, ub>, !pto.vmi.mask<64xb16>
+// CHECK: pto.vmi.masked_store {{.*}}{{\[}}%{{.*}}], %[[LOOP]] : !pto.vmi.vreg<64xf16>, !pto.ptr<f16, ub>, index, !pto.vmi.mask<64xb16>

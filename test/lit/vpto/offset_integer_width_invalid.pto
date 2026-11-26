@@ -1,0 +1,60 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+
+// The VPTO element offset shares the PTO_ElementOffset contract with VMI: the
+// index type, i32 or i64. Narrow widths would wrap when a lowering derives an
+// offset from the element offset, so they are rejected here as well.
+
+// RUN: not pto-test-opt %s --split-input-file 2>&1 | FileCheck %s
+
+// 16-bit offset on a vector load.
+module {
+  func.func @vlds_i16_offset(%src: !pto.ptr<f32, ub>, %off: i16) {
+    %v = pto.vlds %src[%off] {dist = "NORM"}
+        : !pto.ptr<f32, ub>, i16 -> !pto.vreg<64xf32>
+    return
+  }
+}
+
+// -----
+
+// 8-bit offset on pto.addptr.
+module {
+  func.func @addptr_i8_offset(%src: !pto.ptr<f32, ub>, %off: i8) {
+    %p = pto.addptr %src, %off
+        : !pto.ptr<f32, ub>, i8 -> !pto.ptr<f32, ub>
+    return
+  }
+}
+
+// -----
+
+// 16-bit offset on a scalar load.
+module {
+  func.func @load_i16_offset(%src: !pto.ptr<f32, ub>, %off: i16) {
+    %v = pto.load %src[%off]
+        : !pto.ptr<f32, ub>, i16 -> f32
+    return
+  }
+}
+
+// -----
+
+// Wider than 64 bits.
+module {
+  func.func @store_i128_offset(%dst: !pto.ptr<f32, ub>, %off: i128, %v: f32) {
+    pto.store %v, %dst[%off]
+        : !pto.ptr<f32, ub>, i128, f32
+    return
+  }
+}
+
+// CHECK: 'pto.vlds' op operand #1 must be index, i32 or i64 element offset, but got 'i16'
+// CHECK: 'pto.addptr' op operand #1 must be index, i32 or i64 element offset, but got 'i8'
+// CHECK: 'pto.load' op operand #1 must be index, i32 or i64 element offset, but got 'i16'
+// CHECK: 'pto.store' op operand #1 must be index, i32 or i64 element offset, but got 'i128'

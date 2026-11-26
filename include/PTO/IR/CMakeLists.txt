@@ -51,3 +51,5 @@ endif()
 # 3. 注册聚合目标
 # ============================================================
 add_public_tablegen_target(PTOOpsIncGen)
+
+add_subdirectory(Linx)

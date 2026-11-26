@@ -44,7 +44,7 @@ module {
       %src: !pto.ptr<f32, ub>, %off: index)
       -> !pto.vmi.vreg<128xf32, #pto.vmi.layout<deinterleaved = 2>> {
     %load = pto.vmi.vload %src[%off]
-        : !pto.ptr<f32, ub> -> !pto.vmi.vreg<128xf32, #pto.vmi.layout<contiguous>>
+        : !pto.ptr<f32, ub>, index -> !pto.vmi.vreg<128xf32, #pto.vmi.layout<contiguous>>
     %load_deint = pto.vmi.ensure_layout %load
         : !pto.vmi.vreg<128xf32, #pto.vmi.layout<contiguous>>
         -> !pto.vmi.vreg<128xf32, #pto.vmi.layout<deinterleaved = 2>>

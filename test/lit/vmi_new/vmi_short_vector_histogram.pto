@@ -18,7 +18,7 @@ module {
       -> !pto.vmi.vreg<128xui16> {
     %c0 = arith.constant 0 : index
     %n = arith.constant 1 : index
-    %s = pto.vmi.vload %src[%c0] : !pto.ptr<ui8, ub> -> !pto.vmi.vreg<1xui8>
+    %s = pto.vmi.vload %src[%c0] : !pto.ptr<ui8, ub>, index -> !pto.vmi.vreg<1xui8>
     %m = pto.vmi.create_mask %n : index -> !pto.vmi.mask<1xpred>
     %h = pto.vmi.vchist %acc, %s, %m
         : !pto.vmi.vreg<128xui16>, !pto.vmi.vreg<1xui8>,
@@ -31,7 +31,7 @@ module {
       -> !pto.vmi.vreg<256xui16> {
     %c0 = arith.constant 0 : index
     %n = arith.constant 8 : index
-    %s = pto.vmi.vload %src[%c0] : !pto.ptr<ui8, ub> -> !pto.vmi.vreg<8xui8>
+    %s = pto.vmi.vload %src[%c0] : !pto.ptr<ui8, ub>, index -> !pto.vmi.vreg<8xui8>
     %m = pto.vmi.create_mask %n : index -> !pto.vmi.mask<8xpred>
     %h = pto.vmi.vdhist %acc, %s, %m
         : !pto.vmi.vreg<256xui16>, !pto.vmi.vreg<8xui8>,
@@ -46,7 +46,7 @@ module {
       -> !pto.vmi.vreg<256xui16> {
     %c0 = arith.constant 0 : index
     %n = arith.constant 32 : index
-    %s = pto.vmi.vload %src[%c0] : !pto.ptr<ui8, ub> -> !pto.vmi.vreg<32xui8>
+    %s = pto.vmi.vload %src[%c0] : !pto.ptr<ui8, ub>, index -> !pto.vmi.vreg<32xui8>
     %m = pto.vmi.create_mask %n : index -> !pto.vmi.mask<32xpred>
     %h = pto.vmi.vchist %acc, %s, %m
         : !pto.vmi.vreg<256xui16>, !pto.vmi.vreg<32xui8>,

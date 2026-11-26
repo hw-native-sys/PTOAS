@@ -21,7 +21,7 @@ module {
         -> !pto.vmi.vreg<256xf32, #pto.vmi.layout<contiguous>>
     pto.vmi.vstore %value_c, %dst[%aligned_offset]
         : !pto.vmi.vreg<256xf32, #pto.vmi.layout<contiguous>>,
-          !pto.ptr<f32, ub>
+          !pto.ptr<f32, ub>, index
     return
   }
 
@@ -41,7 +41,7 @@ module {
     pto.vmi.vstore %value_c, %dst[%aligned_offset], %mask_c
         : !pto.vmi.vreg<256xf32, #pto.vmi.layout<contiguous>>,
           !pto.ptr<f32, ub>,
-          !pto.vmi.mask<256xb32, #pto.vmi.layout<contiguous>>
+          index, !pto.vmi.mask<256xb32, #pto.vmi.layout<contiguous>>
     return
   }
 }

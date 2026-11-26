@@ -129,6 +129,8 @@ def PTOA5NormalizeTMov : Pass<"pto-a5-normalize-tmov", "func::FuncOp"> {
       dst(col_major) -> pto.treshape(row_major)
     This avoids unsupported A5 PTO-ISA vec->vec col_major TMOV paths while
     preserving alias semantics via SSA treshape (no real data movement).
+    Also establishes L0 scale addresses before matching MAT-to-scale TMOV or
+    TEXTRACT operations when the binding can be moved safely.
   }];
   let constructor = "mlir::pto::createPTOA5NormalizeTMovPass()";
   let dependentDialects = ["pto::PTODialect", "func::FuncDialect"];
@@ -1250,6 +1252,11 @@ def VMIPreAssignmentCombine
     logical group size into an ordinary contiguous `load`. It also rewrites
     the semantic pattern `group_broadcast(group_slot_load(...))` into the
     equivalent `group_broadcast_load` operation.
+
+    With VMI fastmath enabled, a single-use FP32 `vmul` followed by `vadd`
+    becomes `vmula`. Both operations must have identical masks and zero
+    inactive-lane behavior. Contraction uses one rounding instead of two;
+    `--vmi-fastmath=false` disables it.
   }];
   let constructor = "mlir::pto::createVMIPreAssignmentCombinePass()";
   let dependentDialects = ["mlir::func::FuncDialect",

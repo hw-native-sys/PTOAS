@@ -1,0 +1,14 @@
+!T = !pto.linx.tile_buf<local, 16x128xf32>
+!G = !pto.linx.partition_tensor_view<16x128xf32>
+module attributes {pto.target_arch = "linx", pto.linx_profile = "cpu-sim"} {
+  func.func @vadd(%a: !G, %b: !G, %c: !G) {
+    %ta = pto.linx.alloc_tile : !T
+    %tb = pto.linx.alloc_tile : !T
+    %tc = pto.linx.alloc_tile : !T
+    pto.linx.tload ins(%a : !G) outs(%ta : !T)
+    pto.linx.tload ins(%b : !G) outs(%tb : !T)
+    pto.linx.tadd ins(%ta, %tb : !T, !T) outs(%tc : !T)
+    pto.linx.tstore ins(%tc : !T) outs(%c : !G)
+    return
+  }
+}

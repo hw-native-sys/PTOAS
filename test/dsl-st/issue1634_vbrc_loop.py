@@ -36,7 +36,7 @@ SOURCE = """module attributes {pto.target_arch = "a5", pto.kernel_kind = #pto.ke
     pto.set_flag["PIPE_MTE2", "PIPE_V", "EVENT_ID0"]
     pto.wait_flag["PIPE_MTE2", "PIPE_V", "EVENT_ID0"]
 
-    %x = pto.vmi.vload %src[%c0] : !pto.ptr<DTYPE, ub> -> !pto.vmi.vreg<64xDTYPE>
+    %x = pto.vmi.vload %src[%c0] : !pto.ptr<DTYPE, ub>, index -> !pto.vmi.vreg<64xDTYPE>
     %mask = pto.vmi.create_mask %c64 : index -> !pto.vmi.mask<64xpred>
     %reduced = pto.vmi.REDUCE %x, %mask {group = 1 : i64, pmode = "zero"}
       : !pto.vmi.vreg<64xDTYPE>, !pto.vmi.mask<64xpred> -> !pto.vmi.vreg<1xDTYPE>
@@ -48,7 +48,7 @@ SOURCE = """module attributes {pto.target_arch = "a5", pto.kernel_kind = #pto.ke
       %again = pto.vmi.vbrc %repeated : !pto.vmi.vreg<1xDTYPE> -> !pto.vmi.vreg<64xDTYPE>
       scf.yield %again : !pto.vmi.vreg<64xDTYPE>
     }
-    pto.vmi.vstore %result, %dst[%c0] : !pto.vmi.vreg<64xDTYPE>, !pto.ptr<DTYPE, ub>
+    pto.vmi.vstore %result, %dst[%c0] : !pto.vmi.vreg<64xDTYPE>, !pto.ptr<DTYPE, ub>, index
 
     pto.set_flag["PIPE_V", "PIPE_MTE3", "EVENT_ID0"]
     pto.wait_flag["PIPE_V", "PIPE_MTE3", "EVENT_ID0"]

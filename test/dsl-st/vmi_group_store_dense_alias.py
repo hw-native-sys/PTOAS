@@ -63,10 +63,10 @@ SRC = """module attributes {pto.target_arch = "a5", pto.kernel_kind = #pto.kerne
 
     pto.vecscope {
       %v = pto.vmi.vload %ub_in[%c0]
-          : !pto.ptr<ui8, ub> -> !pto.vmi.vreg<64xui8>
+          : !pto.ptr<ui8, ub>, index -> !pto.vmi.vreg<64xui8>
       %stride = arith.constant 8 : index
       pto.vmi.vstore %v, %ub_dst[%c0], %stride {group = 8 : i64}
-          : !pto.vmi.vreg<64xui8>, !pto.ptr<ui8, ub>
+          : !pto.vmi.vreg<64xui8>, !pto.ptr<ui8, ub>, index
     }
 
     pto.set_flag["PIPE_V", "PIPE_MTE3", "EVENT_ID0"]

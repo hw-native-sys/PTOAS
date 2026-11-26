@@ -16,7 +16,7 @@ module attributes {pto.target_arch = "a5", pto.kernel_kind = #pto.kernel_kind<ve
         : !pto.vmi.vreg<256xf32>, !pto.vmi.mask<256xpred>
         -> !pto.vmi.vreg<8xf32>
     pto.vmi.vstore %sum, %out[%off], %c1 {group = 8}
-        : !pto.vmi.vreg<8xf32>, !pto.ptr<f32, ub>
+        : !pto.vmi.vreg<8xf32>, !pto.ptr<f32, ub>, index
     return
   }
 
@@ -46,9 +46,9 @@ module attributes {pto.target_arch = "a5", pto.kernel_kind = #pto.kernel_kind<ve
 
     pto.vecscope {
       %x = pto.vmi.vload %ub_src[%c0]
-          : !pto.ptr<f32, ub> -> !pto.vmi.vreg<256xf32>
+          : !pto.ptr<f32, ub>, index -> !pto.vmi.vreg<256xf32>
       pto.vmi.vstore %x, %ub_copy[%c0]
-          : !pto.vmi.vreg<256xf32>, !pto.ptr<f32, ub>
+          : !pto.vmi.vreg<256xf32>, !pto.ptr<f32, ub>, index
       %mask = pto.vmi.create_group_mask %c32 {num_groups = 8, group_size = 32} : index -> !pto.vmi.mask<256xpred>
       func.call @consume(%x, %mask, %ub_sum, %c0)
           : (!pto.vmi.vreg<256xf32>, !pto.vmi.mask<256xpred>,

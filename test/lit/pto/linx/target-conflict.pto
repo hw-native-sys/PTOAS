@@ -1,0 +1,5 @@
+// RUN: not ptoas --pto-arch=linx %s -o - 2>&1 | FileCheck %s
+module attributes {pto.target_arch = "a3"} {
+  func.func @bad() { return }
+}
+// CHECK: expected pto.target_arch = linx

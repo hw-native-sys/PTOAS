@@ -32,7 +32,7 @@ module {
         %src_offset = arith.addi %src_row, %block_offset : index
         %dst_offset = arith.addi %dst_row, %block_offset : index
         %packed = pto.vmi.vload %src[%src_offset]
-            : !pto.ptr<f16, ub> -> !pto.vmi.vreg<128xf16>
+            : !pto.ptr<f16, ub>, index -> !pto.vmi.vreg<128xf16>
         %wide = pto.vmi.vcvt %packed
             : !pto.vmi.vreg<128xf16> -> !pto.vmi.vreg<128xf32>
         %scale_vec = pto.vmi.vbrc %scale
@@ -41,7 +41,7 @@ module {
             : !pto.vmi.vreg<128xf32>, !pto.vmi.vreg<128xf32>
             -> !pto.vmi.vreg<128xf32>
         pto.vmi.vstore %dequant, %dst[%dst_offset]
-            : !pto.vmi.vreg<128xf32>, !pto.ptr<f32, ub>
+            : !pto.vmi.vreg<128xf32>, !pto.ptr<f32, ub>, index
       }
       scf.if %has_tail {
         %tail_offset = arith.muli %full_blocks, %c128 : index
@@ -50,7 +50,7 @@ module {
         %tail_mask = pto.vmi.create_mask %tail
             : index -> !pto.vmi.mask<128xpred>
         %packed = pto.vmi.vload %src[%src_offset]
-            : !pto.ptr<f16, ub> -> !pto.vmi.vreg<128xf16>
+            : !pto.ptr<f16, ub>, index -> !pto.vmi.vreg<128xf16>
         %wide = pto.vmi.vcvt %packed
             : !pto.vmi.vreg<128xf16> -> !pto.vmi.vreg<128xf32>
         %scale_vec = pto.vmi.vbrc %scale
@@ -60,7 +60,7 @@ module {
             -> !pto.vmi.vreg<128xf32>
         pto.vmi.vstore %dequant, %dst[%dst_offset], %tail_mask
             : !pto.vmi.vreg<128xf32>, !pto.ptr<f32, ub>,
-              !pto.vmi.mask<128xpred>
+              index, !pto.vmi.mask<128xpred>
       }
     }
     return
@@ -89,7 +89,7 @@ module {
         %src_offset = arith.addi %src_row, %block_offset : index
         %dst_offset = arith.addi %dst_row, %block_offset : index
         %wide = pto.vmi.vload %src[%src_offset]
-            : !pto.ptr<f32, ub> -> !pto.vmi.vreg<128xf32>
+            : !pto.ptr<f32, ub>, index -> !pto.vmi.vreg<128xf32>
         %scale_vec = pto.vmi.vbrc %inv_scale
             : f32 -> !pto.vmi.vreg<128xf32>
         %scaled = pto.vmi.vmul %wide, %scale_vec
@@ -98,7 +98,7 @@ module {
         %packed = pto.vmi.vcvt %scaled {saturate = "SAT"}
             : !pto.vmi.vreg<128xf32> -> !pto.vmi.vreg<128xf16>
         pto.vmi.vstore %packed, %dst[%dst_offset]
-            : !pto.vmi.vreg<128xf16>, !pto.ptr<f16, ub>
+            : !pto.vmi.vreg<128xf16>, !pto.ptr<f16, ub>, index
       }
       scf.if %has_tail {
         %tail_offset = arith.muli %full_blocks, %c128 : index
@@ -107,7 +107,7 @@ module {
         %tail_mask = pto.vmi.create_mask %tail
             : index -> !pto.vmi.mask<128xpred>
         %wide = pto.vmi.vload %src[%src_offset]
-            : !pto.ptr<f32, ub> -> !pto.vmi.vreg<128xf32>
+            : !pto.ptr<f32, ub>, index -> !pto.vmi.vreg<128xf32>
         %scale_vec = pto.vmi.vbrc %inv_scale
             : f32 -> !pto.vmi.vreg<128xf32>
         %scaled = pto.vmi.vmul %wide, %scale_vec
@@ -117,7 +117,7 @@ module {
             : !pto.vmi.vreg<128xf32> -> !pto.vmi.vreg<128xf16>
         pto.vmi.vstore %packed, %dst[%dst_offset], %tail_mask
             : !pto.vmi.vreg<128xf16>, !pto.ptr<f16, ub>,
-              !pto.vmi.mask<128xpred>
+              index, !pto.vmi.mask<128xpred>
       }
     }
     return
@@ -146,7 +146,7 @@ module {
         %src_offset = arith.addi %src_row, %block_offset : index
         %dst_offset = arith.addi %dst_row, %block_offset : index
         %packed = pto.vmi.vload %src[%src_offset]
-            : !pto.ptr<f8E4M3FN, ub> -> !pto.vmi.vreg<256xf8E4M3FN>
+            : !pto.ptr<f8E4M3FN, ub>, index -> !pto.vmi.vreg<256xf8E4M3FN>
         %wide = pto.vmi.vcvt %packed
             : !pto.vmi.vreg<256xf8E4M3FN> -> !pto.vmi.vreg<256xf32>
         %scale_vec = pto.vmi.vbrc %scale
@@ -155,7 +155,7 @@ module {
             : !pto.vmi.vreg<256xf32>, !pto.vmi.vreg<256xf32>
             -> !pto.vmi.vreg<256xf32>
         pto.vmi.vstore %dequant, %dst[%dst_offset]
-            : !pto.vmi.vreg<256xf32>, !pto.ptr<f32, ub>
+            : !pto.vmi.vreg<256xf32>, !pto.ptr<f32, ub>, index
       }
       scf.if %has_tail {
         %tail_offset = arith.muli %full_blocks, %c256 : index
@@ -164,7 +164,7 @@ module {
         %tail_mask = pto.vmi.create_mask %tail
             : index -> !pto.vmi.mask<256xpred>
         %packed = pto.vmi.vload %src[%src_offset]
-            : !pto.ptr<f8E4M3FN, ub> -> !pto.vmi.vreg<256xf8E4M3FN>
+            : !pto.ptr<f8E4M3FN, ub>, index -> !pto.vmi.vreg<256xf8E4M3FN>
         %wide = pto.vmi.vcvt %packed
             : !pto.vmi.vreg<256xf8E4M3FN> -> !pto.vmi.vreg<256xf32>
         %scale_vec = pto.vmi.vbrc %scale
@@ -174,7 +174,7 @@ module {
             -> !pto.vmi.vreg<256xf32>
         pto.vmi.vstore %dequant, %dst[%dst_offset], %tail_mask
             : !pto.vmi.vreg<256xf32>, !pto.ptr<f32, ub>,
-              !pto.vmi.mask<256xpred>
+              index, !pto.vmi.mask<256xpred>
       }
     }
     return
@@ -203,7 +203,7 @@ module {
         %src_offset = arith.addi %src_row, %block_offset : index
         %dst_offset = arith.addi %dst_row, %block_offset : index
         %wide = pto.vmi.vload %src[%src_offset]
-            : !pto.ptr<f32, ub> -> !pto.vmi.vreg<256xf32>
+            : !pto.ptr<f32, ub>, index -> !pto.vmi.vreg<256xf32>
         %scale_vec = pto.vmi.vbrc %inv_scale
             : f32 -> !pto.vmi.vreg<256xf32>
         %scaled = pto.vmi.vmul %wide, %scale_vec
@@ -212,7 +212,7 @@ module {
         %packed = pto.vmi.vcvt %scaled {saturate = "SAT"}
             : !pto.vmi.vreg<256xf32> -> !pto.vmi.vreg<256xf8E4M3FN>
         pto.vmi.vstore %packed, %dst[%dst_offset]
-            : !pto.vmi.vreg<256xf8E4M3FN>, !pto.ptr<f8E4M3FN, ub>
+            : !pto.vmi.vreg<256xf8E4M3FN>, !pto.ptr<f8E4M3FN, ub>, index
       }
       scf.if %has_tail {
         %tail_offset = arith.muli %full_blocks, %c256 : index
@@ -221,7 +221,7 @@ module {
         %tail_mask = pto.vmi.create_mask %tail
             : index -> !pto.vmi.mask<256xpred>
         %wide = pto.vmi.vload %src[%src_offset]
-            : !pto.ptr<f32, ub> -> !pto.vmi.vreg<256xf32>
+            : !pto.ptr<f32, ub>, index -> !pto.vmi.vreg<256xf32>
         %scale_vec = pto.vmi.vbrc %inv_scale
             : f32 -> !pto.vmi.vreg<256xf32>
         %scaled = pto.vmi.vmul %wide, %scale_vec
@@ -231,7 +231,7 @@ module {
             : !pto.vmi.vreg<256xf32> -> !pto.vmi.vreg<256xf8E4M3FN>
         pto.vmi.vstore %packed, %dst[%dst_offset], %tail_mask
             : !pto.vmi.vreg<256xf8E4M3FN>, !pto.ptr<f8E4M3FN, ub>,
-              !pto.vmi.mask<256xpred>
+              index, !pto.vmi.mask<256xpred>
       }
     }
     return

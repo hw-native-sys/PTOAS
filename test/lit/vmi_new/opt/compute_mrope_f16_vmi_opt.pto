@@ -6,7 +6,8 @@
 // INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
 // See LICENSE in the root of the software repository for the full text of the License.
 
-// RUN: ptoas --pto-arch=a5 --pto-backend=vpto --vpto-scheduler=off --emit-vpto %s | FileCheck %s --implicit-check-not=pto.vdintlv --implicit-check-not=pto.vintlv --implicit-check-not=pto.vpack --implicit-check-not='part = "ODD"'
+// RUN: ptoas --pto-arch=a5 --pto-backend=vpto --vpto-scheduler=off --emit-vpto %s | FileCheck %s --check-prefixes=CHECK,FAST --implicit-check-not=pto.vdintlv --implicit-check-not=pto.vintlv --implicit-check-not=pto.vpack --implicit-check-not='part = "ODD"'
+// RUN: ptoas --pto-arch=a5 --pto-backend=vpto --vpto-scheduler=off --vmi-fastmath=false --emit-vpto %s | FileCheck %s --check-prefixes=CHECK,STRICT --implicit-check-not=pto.vdintlv --implicit-check-not=pto.vintlv --implicit-check-not=pto.vpack --implicit-check-not='part = "ODD"'
 
 // This is an optimization capability guard for the VMI ComputeMropeF16 path.
 // Do not weaken the checks when the output shape regresses. The intended shape is:
@@ -68,13 +69,13 @@ module attributes {pto.target_arch = "a5", pto.kernel_kind = #pto.kernel_kind<ve
             %x2_base = arith.addi %x_base, %half_rotary : index
 
             %x1 = pto.vmi.vload %x_ub[%x_base]
-              : !pto.ptr<f16, ub> -> !pto.vmi.vreg<64xf16>
+              : !pto.ptr<f16, ub>, index -> !pto.vmi.vreg<64xf16>
             %x2 = pto.vmi.vload %x_ub[%x2_base]
-              : !pto.ptr<f16, ub> -> !pto.vmi.vreg<64xf16>
+              : !pto.ptr<f16, ub>, index -> !pto.vmi.vreg<64xf16>
             %cos = pto.vmi.vload %cs_ub[%cs_off]
-              : !pto.ptr<f16, ub> -> !pto.vmi.vreg<64xf16>
+              : !pto.ptr<f16, ub>, index -> !pto.vmi.vreg<64xf16>
             %sin = pto.vmi.vload %cs_ub[%cs_sin_base]
-              : !pto.ptr<f16, ub> -> !pto.vmi.vreg<64xf16>
+              : !pto.ptr<f16, ub>, index -> !pto.vmi.vreg<64xf16>
 
             %x1_f32 = pto.vmi.vcvt %x1
               : !pto.vmi.vreg<64xf16> -> !pto.vmi.vreg<64xf32>
@@ -94,7 +95,7 @@ module attributes {pto.target_arch = "a5", pto.kernel_kind = #pto.kernel_kind<ve
             %out1 = pto.vmi.vcvt %out1_f32 {saturate = "SAT"}
               : !pto.vmi.vreg<64xf32> -> !pto.vmi.vreg<64xf16>
             pto.vmi.vstore %out1, %y_ub[%x_base], %half_mask
-              : !pto.vmi.vreg<64xf16>, !pto.ptr<f16, ub>, !pto.vmi.mask<64xpred>
+              : !pto.vmi.vreg<64xf16>, !pto.ptr<f16, ub>, index, !pto.vmi.mask<64xpred>
 
             %x2_cos = pto.vmi.vmul %x2_f32, %cos_f32
               : !pto.vmi.vreg<64xf32>, !pto.vmi.vreg<64xf32> -> !pto.vmi.vreg<64xf32>
@@ -105,14 +106,14 @@ module attributes {pto.target_arch = "a5", pto.kernel_kind = #pto.kernel_kind<ve
             %out2 = pto.vmi.vcvt %out2_f32 {saturate = "SAT"}
               : !pto.vmi.vreg<64xf32> -> !pto.vmi.vreg<64xf16>
             pto.vmi.vstore %out2, %y_ub[%x2_base], %half_mask
-              : !pto.vmi.vreg<64xf16>, !pto.ptr<f16, ub>, !pto.vmi.mask<64xpred>
+              : !pto.vmi.vreg<64xf16>, !pto.ptr<f16, ub>, index, !pto.vmi.mask<64xpred>
 
             scf.if %has_suffix {
               %suffix_base = arith.addi %x_base, %rotary_dim_idx : index
               %suffix = pto.vmi.vload %x_ub[%suffix_base]
-                : !pto.ptr<f16, ub> -> !pto.vmi.vreg<64xf16>
+                : !pto.ptr<f16, ub>, index -> !pto.vmi.vreg<64xf16>
               pto.vmi.vstore %suffix, %y_ub[%suffix_base], %suffix_mask
-                : !pto.vmi.vreg<64xf16>, !pto.ptr<f16, ub>, !pto.vmi.mask<64xpred>
+                : !pto.vmi.vreg<64xf16>, !pto.ptr<f16, ub>, index, !pto.vmi.mask<64xpred>
             }
           }
         }
@@ -129,7 +130,8 @@ module attributes {pto.target_arch = "a5", pto.kernel_kind = #pto.kernel_kind<ve
 // CHECK: pto.vsub
 // CHECK: pto.vcvt {{.*}} {part = "EVEN", rnd = "R", sat = "SAT"} : !pto.vreg<64xf32>, !pto.mask<b32> -> !pto.vreg<128xf16>
 // CHECK: pto.vsts {{.*}} {dist = "PK_B32"} : !pto.vreg<128xf16>, !pto.ptr<f16, ub>, index, !pto.mask<b32>
-// CHECK: pto.vadd
+// FAST: pto.vmula
+// STRICT: pto.vadd
 // CHECK: pto.vcvt {{.*}} {part = "EVEN", rnd = "R", sat = "SAT"} : !pto.vreg<64xf32>, !pto.mask<b32> -> !pto.vreg<128xf16>
 // CHECK: pto.vsts {{.*}} {dist = "PK_B32"} : !pto.vreg<128xf16>, !pto.ptr<f16, ub>, index, !pto.mask<b32>
 // CHECK: pto.vlds {{.*}} : !pto.ptr<f16, ub>, index -> !pto.vreg<128xf16>

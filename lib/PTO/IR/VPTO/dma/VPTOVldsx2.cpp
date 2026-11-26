@@ -33,7 +33,7 @@ LogicalResult Vldsx2Op::verify() {
     return emitOpError("requires a UB-backed source");
   }
   if (!isElementOffsetType(getOffset().getType())) {
-    return emitOpError("requires an index or signless integer element offset");
+    return emitOpError("requires an index, i32 or i64 element offset");
   }
   if (failed(verifyVRegTypeLike(*this, getLow().getType(), "low result type")) ||
       failed(verifyVRegTypeLike(*this, getHigh().getType(), "high result type"))) {

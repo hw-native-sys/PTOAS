@@ -14,7 +14,16 @@ from ptodsl import pto
 from .._elementwise import register_unary
 
 
-_DTYPES = [("f16", "f16"), ("f32", "f32")]
+# The A5 pto.tabs verifier and ISA accept the signed integer widths next to
+# the float types. Unsigned element types are not registered: the A5 ISA list
+# for tabs has no unsigned entry.
+_DTYPES = [
+    ("f16", "f16"),
+    ("f32", "f32"),
+    ("i8", "i8"),
+    ("i16", "i16"),
+    ("i32", "i32"),
+]
 
 
 template_tabs = register_unary(

@@ -25,7 +25,7 @@ module {
         : !pto.vmi.vreg<128xf32>, !pto.vmi.vreg<128xf32>
         -> !pto.vmi.vreg<128xf32>
     pto.vmi.vstore %constant, %dst[%aligned_offset]
-        : !pto.vmi.vreg<128xf32>, !pto.ptr<f32, ub>
+        : !pto.vmi.vreg<128xf32>, !pto.ptr<f32, ub>, index
     return %sum : !pto.vmi.vreg<128xf32>
   }
 }

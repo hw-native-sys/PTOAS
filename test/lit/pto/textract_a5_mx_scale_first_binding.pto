@@ -1,0 +1,31 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+
+// RUN: pto-test-opt --pass-pipeline="builtin.module(func.func(pto-a5-normalize-tmov,pto-a5-normalize-tmov))" %s | FileCheck %s
+
+!mat = !pto.tile_buf<mat, 128x128x!pto.f8E8M0, slayout=row_major, fractal=32>
+!scale = !pto.tile_buf<scaling, 128x4x!pto.f8E8M0, slayout=row_major, fractal=32>
+!data = !pto.tile_buf<left, 128x128xf8E4M3FN, blayout=col_major, slayout=row_major>
+
+module attributes {pto.target_arch = "a5", pto.kernel_kind = #pto.kernel_kind<cube>} {
+  // CHECK-LABEL: func.func @extract_first_binding(
+  // CHECK: %[[SCALE:[0-9]+]] = pto.alloc_tile :
+  // CHECK-NEXT: %[[DATA:[0-9]+]] = pto.alloc_tile addr =
+  // CHECK-NEXT: pto.tget_scale_addr ins(%[[DATA]] {{.*}} outs(%[[SCALE]]
+  // CHECK-NEXT: pto.textract {{.*}} outs(%[[SCALE]]
+  // CHECK-NEXT: return
+  func.func @extract_first_binding(%src: !mat) {
+    %addr = arith.constant 4096 : i64
+    %zero = arith.constant 0 : index
+    %scale = pto.alloc_tile : !scale
+    pto.textract ins(%src, %zero, %zero : !mat, index, index) outs(%scale : !scale)
+    %data = pto.alloc_tile addr = %addr : !data
+    pto.tget_scale_addr ins(%data : !data) outs(%scale : !scale)
+    return
+  }
+}

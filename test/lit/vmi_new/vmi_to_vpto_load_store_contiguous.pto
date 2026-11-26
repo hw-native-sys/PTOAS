@@ -13,9 +13,9 @@ module {
       %src: !pto.ptr<f32, ub>, %dst: !pto.ptr<f32, ub>, %offset: index) {
     %c0 = arith.constant 0 : index
     %value = pto.vmi.vload %src[%c0]
-        : !pto.ptr<f32, ub> -> !pto.vmi.vreg<128xf32>
+        : !pto.ptr<f32, ub>, index -> !pto.vmi.vreg<128xf32>
     pto.vmi.vstore %value, %dst[%offset]
-        : !pto.vmi.vreg<128xf32>, !pto.ptr<f32, ub>
+        : !pto.vmi.vreg<128xf32>, !pto.ptr<f32, ub>, index
     return
   }
 
@@ -25,10 +25,10 @@ module {
     %c0 = arith.constant 0 : index
     %c4 = arith.constant 4 : index
     %value = pto.vmi.vload %src[%c4]
-        : memref<136xf32, #pto.address_space<vec>>
+        : memref<136xf32, #pto.address_space<vec>>, index
         -> !pto.vmi.vreg<128xf32>
     pto.vmi.vstore %value, %dst[%c0]
-        : !pto.vmi.vreg<128xf32>, !pto.ptr<f32, ub>
+        : !pto.vmi.vreg<128xf32>, !pto.ptr<f32, ub>, index
     return
   }
 
@@ -36,9 +36,9 @@ module {
       %src: !pto.ptr<f32, ub>, %dst: !pto.ptr<f32, ub>) {
     %c0 = arith.constant 0 : index
     %value = pto.vmi.vload %src[%c0]
-        : !pto.ptr<f32, ub> -> !pto.vmi.vreg<64xf32>
+        : !pto.ptr<f32, ub>, index -> !pto.vmi.vreg<64xf32>
     pto.vmi.vstore %value, %dst[%c0]
-        : !pto.vmi.vreg<64xf32>, !pto.ptr<f32, ub>
+        : !pto.vmi.vreg<64xf32>, !pto.ptr<f32, ub>, index
     return
   }
 
@@ -49,9 +49,9 @@ module {
     %c64 = arith.constant 64 : index
     scf.for %offset = %c0 to %c64 step %c8 {
       %value = pto.vmi.vload %src[%offset]
-          : !pto.ptr<f32, ub> -> !pto.vmi.vreg<64xf32>
+          : !pto.ptr<f32, ub>, index -> !pto.vmi.vreg<64xf32>
       pto.vmi.vstore %value, %dst[%offset]
-          : !pto.vmi.vreg<64xf32>, !pto.ptr<f32, ub>
+          : !pto.vmi.vreg<64xf32>, !pto.ptr<f32, ub>, index
     }
     return
   }
@@ -61,10 +61,10 @@ module {
       %dst: memref<272xf16, #pto.address_space<vec>>) {
     %c1 = arith.constant 1 : index
     %value = pto.vmi.vload %src[%c1]
-        : memref<272xf16, #pto.address_space<vec>> -> !pto.vmi.vreg<130xf16>
+        : memref<272xf16, #pto.address_space<vec>>, index -> !pto.vmi.vreg<130xf16>
     pto.vmi.vstore %value, %dst[%c1]
         : !pto.vmi.vreg<130xf16>,
-          memref<272xf16, #pto.address_space<vec>>
+          memref<272xf16, #pto.address_space<vec>>, index
     return
   }
 

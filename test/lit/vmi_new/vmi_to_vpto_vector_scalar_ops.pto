@@ -31,7 +31,7 @@ module attributes {pto.target_arch = "a5", pto.kernel_kind = #pto.kernel_kind<ve
           : !pto.vmi.vreg<256xf32>, f32, !pto.vmi.mask<256xpred>
           -> !pto.vmi.vreg<256xf32>
       pto.vmi.vstore %result, %dst[%c0]
-          : !pto.vmi.vreg<256xf32>, !pto.ptr<f32, ub>
+          : !pto.vmi.vreg<256xf32>, !pto.ptr<f32, ub>, index
     }
     return
   }
@@ -50,7 +50,7 @@ module attributes {pto.target_arch = "a5", pto.kernel_kind = #pto.kernel_kind<ve
           : !pto.vmi.vreg<256xi16>, i16, !pto.vmi.mask<256xpred>
           -> !pto.vmi.vreg<256xi16>
       pto.vmi.vstore %result, %dst[%c0]
-          : !pto.vmi.vreg<256xi16>, !pto.ptr<i16, ub>
+          : !pto.vmi.vreg<256xi16>, !pto.ptr<i16, ub>, index
     }
     return
   }

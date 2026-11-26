@@ -27,7 +27,7 @@ module {
        -> !pto.vmi.vreg<256x!pto.f4E2M1x2>
     pto.vmi.vstore %packed, %dst[%aligned_off]
         : !pto.vmi.vreg<256x!pto.f4E2M1x2>,
-          !pto.ptr<!pto.f4E2M1x2, ub>
+          !pto.ptr<!pto.f4E2M1x2, ub>, index
     return
   }
 }

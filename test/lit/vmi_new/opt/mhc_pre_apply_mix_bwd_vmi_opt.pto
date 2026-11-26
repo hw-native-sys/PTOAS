@@ -45,13 +45,13 @@ module attributes {pto.target_arch = "a5", pto.kernel_kind = #pto.kernel_kind<ve
 
     pto.vecscope {
       %mix0_slot = pto.vmi.vload %mix_ub[%c0], %c1 {group = 1}
-          : !pto.ptr<f32, ub> -> !pto.vmi.vreg<1xf32>
+          : !pto.ptr<f32, ub>, index -> !pto.vmi.vreg<1xf32>
       %mix1_slot = pto.vmi.vload %mix_ub[%c1], %c1 {group = 1}
-          : !pto.ptr<f32, ub> -> !pto.vmi.vreg<1xf32>
+          : !pto.ptr<f32, ub>, index -> !pto.vmi.vreg<1xf32>
       %mix2_slot = pto.vmi.vload %mix_ub[%c2], %c1 {group = 1}
-          : !pto.ptr<f32, ub> -> !pto.vmi.vreg<1xf32>
+          : !pto.ptr<f32, ub>, index -> !pto.vmi.vreg<1xf32>
       %mix3_slot = pto.vmi.vload %mix_ub[%c3], %c1 {group = 1}
-          : !pto.ptr<f32, ub> -> !pto.vmi.vreg<1xf32>
+          : !pto.ptr<f32, ub>, index -> !pto.vmi.vreg<1xf32>
 
       %mix0 = pto.vmi.vbrc %mix0_slot {group = 1}
           : !pto.vmi.vreg<1xf32> -> !pto.vmi.vreg<64xf32>
@@ -71,20 +71,20 @@ module attributes {pto.target_arch = "a5", pto.kernel_kind = #pto.kernel_kind<ve
         %row3_base = arith.addi %h3, %chunk_base : index
 
         %o_grad16 = pto.vmi.vload %o_grad_ub[%chunk_base]
-            : !pto.ptr<bf16, ub> -> !pto.vmi.vreg<64xbf16>
+            : !pto.ptr<bf16, ub>, index -> !pto.vmi.vreg<64xbf16>
         %o_grad = pto.vmi.vcvt %o_grad16
             : !pto.vmi.vreg<64xbf16> -> !pto.vmi.vreg<64xf32>
 
         %x0_16 = pto.vmi.vload %x_ub[%chunk_base]
-            : !pto.ptr<bf16, ub> -> !pto.vmi.vreg<64xbf16>
+            : !pto.ptr<bf16, ub>, index -> !pto.vmi.vreg<64xbf16>
         %xg0_16 = pto.vmi.vload %x_grad_ub[%chunk_base]
-            : !pto.ptr<bf16, ub> -> !pto.vmi.vreg<64xbf16>
+            : !pto.ptr<bf16, ub>, index -> !pto.vmi.vreg<64xbf16>
         %x0 = pto.vmi.vcvt %x0_16
             : !pto.vmi.vreg<64xbf16> -> !pto.vmi.vreg<64xf32>
         %xg0 = pto.vmi.vcvt %xg0_16
             : !pto.vmi.vreg<64xbf16> -> !pto.vmi.vreg<64xf32>
         %mix_acc0_old = pto.vmi.vload %mix_grad_acc_ub[%c0]
-            : !pto.ptr<f32, ub> -> !pto.vmi.vreg<64xf32>
+            : !pto.ptr<f32, ub>, index -> !pto.vmi.vreg<64xf32>
         %xg0_new = pto.vmi.vmula %xg0, %o_grad, %mix0
             : !pto.vmi.vreg<64xf32>, !pto.vmi.vreg<64xf32>, !pto.vmi.vreg<64xf32>
               -> !pto.vmi.vreg<64xf32>
@@ -94,20 +94,20 @@ module attributes {pto.target_arch = "a5", pto.kernel_kind = #pto.kernel_kind<ve
         %xg0_out16 = pto.vmi.vcvt %xg0_new {saturate = "SAT"}
             : !pto.vmi.vreg<64xf32> -> !pto.vmi.vreg<64xbf16>
         pto.vmi.vstore %xg0_out16, %x_grad_ub[%chunk_base]
-            : !pto.vmi.vreg<64xbf16>, !pto.ptr<bf16, ub>
+            : !pto.vmi.vreg<64xbf16>, !pto.ptr<bf16, ub>, index
         pto.vmi.vstore %mix_acc0, %mix_grad_acc_ub[%c0]
-            : !pto.vmi.vreg<64xf32>, !pto.ptr<f32, ub>
+            : !pto.vmi.vreg<64xf32>, !pto.ptr<f32, ub>, index
 
         %x1_16 = pto.vmi.vload %x_ub[%row1_base]
-            : !pto.ptr<bf16, ub> -> !pto.vmi.vreg<64xbf16>
+            : !pto.ptr<bf16, ub>, index -> !pto.vmi.vreg<64xbf16>
         %xg1_16 = pto.vmi.vload %x_grad_ub[%row1_base]
-            : !pto.ptr<bf16, ub> -> !pto.vmi.vreg<64xbf16>
+            : !pto.ptr<bf16, ub>, index -> !pto.vmi.vreg<64xbf16>
         %x1 = pto.vmi.vcvt %x1_16
             : !pto.vmi.vreg<64xbf16> -> !pto.vmi.vreg<64xf32>
         %xg1 = pto.vmi.vcvt %xg1_16
             : !pto.vmi.vreg<64xbf16> -> !pto.vmi.vreg<64xf32>
         %mix_acc1_old = pto.vmi.vload %mix_grad_acc_ub[%c64]
-            : !pto.ptr<f32, ub> -> !pto.vmi.vreg<64xf32>
+            : !pto.ptr<f32, ub>, index -> !pto.vmi.vreg<64xf32>
         %xg1_new = pto.vmi.vmula %xg1, %o_grad, %mix1
             : !pto.vmi.vreg<64xf32>, !pto.vmi.vreg<64xf32>, !pto.vmi.vreg<64xf32>
               -> !pto.vmi.vreg<64xf32>
@@ -117,20 +117,20 @@ module attributes {pto.target_arch = "a5", pto.kernel_kind = #pto.kernel_kind<ve
         %xg1_out16 = pto.vmi.vcvt %xg1_new {saturate = "SAT"}
             : !pto.vmi.vreg<64xf32> -> !pto.vmi.vreg<64xbf16>
         pto.vmi.vstore %xg1_out16, %x_grad_ub[%row1_base]
-            : !pto.vmi.vreg<64xbf16>, !pto.ptr<bf16, ub>
+            : !pto.vmi.vreg<64xbf16>, !pto.ptr<bf16, ub>, index
         pto.vmi.vstore %mix_acc1, %mix_grad_acc_ub[%c64]
-            : !pto.vmi.vreg<64xf32>, !pto.ptr<f32, ub>
+            : !pto.vmi.vreg<64xf32>, !pto.ptr<f32, ub>, index
 
         %x2_16 = pto.vmi.vload %x_ub[%row2_base]
-            : !pto.ptr<bf16, ub> -> !pto.vmi.vreg<64xbf16>
+            : !pto.ptr<bf16, ub>, index -> !pto.vmi.vreg<64xbf16>
         %xg2_16 = pto.vmi.vload %x_grad_ub[%row2_base]
-            : !pto.ptr<bf16, ub> -> !pto.vmi.vreg<64xbf16>
+            : !pto.ptr<bf16, ub>, index -> !pto.vmi.vreg<64xbf16>
         %x2 = pto.vmi.vcvt %x2_16
             : !pto.vmi.vreg<64xbf16> -> !pto.vmi.vreg<64xf32>
         %xg2 = pto.vmi.vcvt %xg2_16
             : !pto.vmi.vreg<64xbf16> -> !pto.vmi.vreg<64xf32>
         %mix_acc2_old = pto.vmi.vload %mix_grad_acc_ub[%c128]
-            : !pto.ptr<f32, ub> -> !pto.vmi.vreg<64xf32>
+            : !pto.ptr<f32, ub>, index -> !pto.vmi.vreg<64xf32>
         %xg2_new = pto.vmi.vmula %xg2, %o_grad, %mix2
             : !pto.vmi.vreg<64xf32>, !pto.vmi.vreg<64xf32>, !pto.vmi.vreg<64xf32>
               -> !pto.vmi.vreg<64xf32>
@@ -140,20 +140,20 @@ module attributes {pto.target_arch = "a5", pto.kernel_kind = #pto.kernel_kind<ve
         %xg2_out16 = pto.vmi.vcvt %xg2_new {saturate = "SAT"}
             : !pto.vmi.vreg<64xf32> -> !pto.vmi.vreg<64xbf16>
         pto.vmi.vstore %xg2_out16, %x_grad_ub[%row2_base]
-            : !pto.vmi.vreg<64xbf16>, !pto.ptr<bf16, ub>
+            : !pto.vmi.vreg<64xbf16>, !pto.ptr<bf16, ub>, index
         pto.vmi.vstore %mix_acc2, %mix_grad_acc_ub[%c128]
-            : !pto.vmi.vreg<64xf32>, !pto.ptr<f32, ub>
+            : !pto.vmi.vreg<64xf32>, !pto.ptr<f32, ub>, index
 
         %x3_16 = pto.vmi.vload %x_ub[%row3_base]
-            : !pto.ptr<bf16, ub> -> !pto.vmi.vreg<64xbf16>
+            : !pto.ptr<bf16, ub>, index -> !pto.vmi.vreg<64xbf16>
         %xg3_16 = pto.vmi.vload %x_grad_ub[%row3_base]
-            : !pto.ptr<bf16, ub> -> !pto.vmi.vreg<64xbf16>
+            : !pto.ptr<bf16, ub>, index -> !pto.vmi.vreg<64xbf16>
         %x3 = pto.vmi.vcvt %x3_16
             : !pto.vmi.vreg<64xbf16> -> !pto.vmi.vreg<64xf32>
         %xg3 = pto.vmi.vcvt %xg3_16
             : !pto.vmi.vreg<64xbf16> -> !pto.vmi.vreg<64xf32>
         %mix_acc3_old = pto.vmi.vload %mix_grad_acc_ub[%c192]
-            : !pto.ptr<f32, ub> -> !pto.vmi.vreg<64xf32>
+            : !pto.ptr<f32, ub>, index -> !pto.vmi.vreg<64xf32>
         %xg3_new = pto.vmi.vmula %xg3, %o_grad, %mix3
             : !pto.vmi.vreg<64xf32>, !pto.vmi.vreg<64xf32>, !pto.vmi.vreg<64xf32>
               -> !pto.vmi.vreg<64xf32>
@@ -163,9 +163,9 @@ module attributes {pto.target_arch = "a5", pto.kernel_kind = #pto.kernel_kind<ve
         %xg3_out16 = pto.vmi.vcvt %xg3_new {saturate = "SAT"}
             : !pto.vmi.vreg<64xf32> -> !pto.vmi.vreg<64xbf16>
         pto.vmi.vstore %xg3_out16, %x_grad_ub[%row3_base]
-            : !pto.vmi.vreg<64xbf16>, !pto.ptr<bf16, ub>
+            : !pto.vmi.vreg<64xbf16>, !pto.ptr<bf16, ub>, index
         pto.vmi.vstore %mix_acc3, %mix_grad_acc_ub[%c192]
-            : !pto.vmi.vreg<64xf32>, !pto.ptr<f32, ub>
+            : !pto.vmi.vreg<64xf32>, !pto.ptr<f32, ub>, index
       }
     }
 
@@ -186,11 +186,11 @@ module attributes {pto.target_arch = "a5", pto.kernel_kind = #pto.kernel_kind<ve
       scf.for %row = %c0 to %c4 step %c1 {
         %in_off = arith.muli %row, %c64 : index
         %acc = pto.vmi.vload %mix_grad_acc_ub[%in_off]
-            : !pto.ptr<f32, ub> -> !pto.vmi.vreg<64xf32>
+            : !pto.ptr<f32, ub>, index -> !pto.vmi.vreg<64xf32>
         %sum = pto.vmi.vcadd %acc, %full_mask {group = 1, reassoc}
             : !pto.vmi.vreg<64xf32>, !pto.vmi.mask<64xpred> -> !pto.vmi.vreg<1xf32>
         pto.vmi.vstore %sum, %mix_grad_ub[%row], %c1 {group = 1}
-            : !pto.vmi.vreg<1xf32>, !pto.ptr<f32, ub>
+            : !pto.vmi.vreg<1xf32>, !pto.ptr<f32, ub>, index
       }
     }
 

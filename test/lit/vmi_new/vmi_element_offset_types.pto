@@ -1,0 +1,172 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+
+// The element offset of a VMI memory op is either the platform index type or a
+// signless integer with an explicit width (PTO_ElementOffset).  The offset type
+// is part of the operand type list, right after the base pointer type, and an
+// integer offset keeps its own width: nothing in VMI lowering widens it to
+// index, so an i32 address chain stays 32-bit.
+
+// RUN: pto-test-opt %s | FileCheck %s
+
+module {
+  // Legacy memory ops: an i32 offset is printed as i32, never index.
+  func.func @legacy_i32(%src: !pto.ptr<f32, ub>, %dst: !pto.ptr<f32, ub>,
+                        %off: i32) {
+    %x = pto.vmi.load %src[%off]
+        : !pto.ptr<f32, ub>, i32 -> !pto.vmi.vreg<64xf32>
+    pto.vmi.store %x, %dst[%off]
+        : !pto.vmi.vreg<64xf32>, !pto.ptr<f32, ub>, i32
+    return
+  }
+
+  // The platform index offset is first-class and still works on every op.
+  func.func @legacy_index(%src: !pto.ptr<f32, ub>, %dst: !pto.ptr<f32, ub>,
+                          %off: index) {
+    %x = pto.vmi.load %src[%off]
+        : !pto.ptr<f32, ub>, index -> !pto.vmi.vreg<64xf32>
+    pto.vmi.store %x, %dst[%off]
+        : !pto.vmi.vreg<64xf32>, !pto.ptr<f32, ub>, index
+    return
+  }
+
+  // Grouped ops: the offset type precedes the (implicit) row stride.
+  func.func @group_i32(%src: !pto.ptr<f32, ub>, %dst: !pto.ptr<f32, ub>,
+                       %off: i32, %stride: index) {
+    %x = pto.vmi.group_load %src[%off], %stride {num_groups = 8 : i64}
+        : !pto.ptr<f32, ub>, i32 -> !pto.vmi.vreg<64xf32>
+    pto.vmi.group_store %x, %dst[%off], %stride {num_groups = 8 : i64}
+        : !pto.vmi.vreg<64xf32>, !pto.ptr<f32, ub>, i32
+    return
+  }
+
+  // Block-strided ops: the offset type precedes the i16 block stride type.
+  func.func @stride_i32(%src: !pto.ptr<f32, ub>, %dst: !pto.ptr<f32, ub>,
+                        %off: i32, %block_stride: i16,
+                        %mask: !pto.vmi.mask<64xpred>) {
+    %x = pto.vmi.stride_load %src[%off], %block_stride, %mask
+        : !pto.ptr<f32, ub>, i32, i16,
+          !pto.vmi.mask<64xpred>
+        -> !pto.vmi.vreg<64xf32>
+    pto.vmi.stride_store %x, %dst[%off], %block_stride, %mask
+        : !pto.vmi.vreg<64xf32>, !pto.ptr<f32, ub>,
+          i32, i16, !pto.vmi.mask<64xpred>
+    return
+  }
+
+  // Masked / compaction / interleave / deinterleave shapes keep the offset type
+  // right after the base pointer type.
+  func.func @masked_i32(%src: !pto.ptr<f32, ub>, %dst: !pto.ptr<f32, ub>,
+                        %off: i32, %passthru: !pto.vmi.vreg<64xf32>,
+                        %mask: !pto.vmi.mask<64xpred>) {
+    %x = pto.vmi.masked_load %src[%off], %mask, %passthru
+        : !pto.ptr<f32, ub>, i32,
+          !pto.vmi.mask<64xpred>,
+          !pto.vmi.vreg<64xf32> -> !pto.vmi.vreg<64xf32>
+    pto.vmi.masked_store %x, %dst[%off], %mask
+        : !pto.vmi.vreg<64xf32>, !pto.ptr<f32, ub>, i32,
+          !pto.vmi.mask<64xpred>
+    %y = pto.vmi.expand_load %src[%off], %mask, %passthru
+        : !pto.ptr<f32, ub>, i32,
+          !pto.vmi.mask<64xpred>,
+          !pto.vmi.vreg<64xf32> -> !pto.vmi.vreg<64xf32>
+    pto.vmi.compress_store %y, %dst[%off], %mask
+        : !pto.vmi.vreg<64xf32>, !pto.ptr<f32, ub>, i32,
+          !pto.vmi.mask<64xpred>
+    return
+  }
+
+  func.func @interleave_i32(%low: !pto.vmi.vreg<64xf32>,
+                            %high: !pto.vmi.vreg<64xf32>,
+                            %dst: !pto.ptr<f32, ub>, %off: i32) {
+    pto.vmi.interleave_store %low, %high, %dst[%off]
+        : !pto.vmi.vreg<64xf32>, !pto.vmi.vreg<64xf32>, !pto.ptr<f32, ub>, i32
+    return
+  }
+
+  func.func @deinterleave_i32(%src: !pto.ptr<f32, ub>, %off: i32) {
+    %low, %high = pto.vmi.deinterleave_load %src[%off]
+        : !pto.ptr<f32, ub>, i32 -> !pto.vmi.vreg<64xf32>, !pto.vmi.vreg<64xf32>
+    return
+  }
+
+  func.func @group_slot_i32(%src: !pto.ptr<f32, ub>, %off: i32,
+                            %stride: index) {
+    %x = pto.vmi.group_slot_load %src[%off], %stride {num_groups = 8 : i64}
+        : !pto.ptr<f32, ub>, i32 -> !pto.vmi.vreg<8xf32>
+    %y = pto.vmi.group_broadcast_load %src[%off], %stride {num_groups = 8 : i64}
+        : !pto.ptr<f32, ub>, i32 -> !pto.vmi.vreg<64xf32>
+    return
+  }
+
+  // Unified ops: same position in the type list.
+  func.func @unified_i32(%src: !pto.ptr<f32, ub>, %dst: !pto.ptr<f32, ub>,
+                         %off: i32,
+                         %mask: !pto.vmi.mask<64xpred>, %block_stride: i16) {
+    %x = pto.vmi.vload %src[%off]
+        : !pto.ptr<f32, ub>, i32 -> !pto.vmi.vreg<64xf32>
+    pto.vmi.vstore %x, %dst[%off]
+        : !pto.vmi.vreg<64xf32>, !pto.ptr<f32, ub>, i32
+    pto.vmi.vsstb %x, %dst[%off], %block_stride, %mask
+        : !pto.vmi.vreg<64xf32>, !pto.ptr<f32, ub>, i32, !pto.vmi.mask<64xpred>
+    return
+  }
+
+  func.func @unified_index(%src: !pto.ptr<f32, ub>, %dst: !pto.ptr<f32, ub>,
+                           %off: index) {
+    %x = pto.vmi.vload %src[%off]
+        : !pto.ptr<f32, ub>, index -> !pto.vmi.vreg<64xf32>
+    pto.vmi.vstore %x, %dst[%off]
+        : !pto.vmi.vreg<64xf32>, !pto.ptr<f32, ub>, index
+    return
+  }
+
+  // The i64 offset is accepted as well and also keeps its width.
+  func.func @legacy_i64(%src: !pto.ptr<f32, ub>, %dst: !pto.ptr<f32, ub>,
+                        %off: i64) {
+    %x = pto.vmi.load %src[%off]
+        : !pto.ptr<f32, ub>, i64 -> !pto.vmi.vreg<64xf32>
+    pto.vmi.store %x, %dst[%off]
+        : !pto.vmi.vreg<64xf32>, !pto.ptr<f32, ub>, i64
+    return
+  }
+}
+
+// CHECK-LABEL: func.func @legacy_i32
+// CHECK: pto.vmi.load %{{.*}}[%{{.*}}] : !pto.ptr<f32, ub>, i32 -> !pto.vmi.vreg<64xf32>
+// CHECK: pto.vmi.store %{{.*}}, %{{.*}}[%{{.*}}] : !pto.vmi.vreg<64xf32>, !pto.ptr<f32, ub>, i32
+// CHECK-NOT: index
+// CHECK-LABEL: func.func @legacy_index
+// CHECK: pto.vmi.load %{{.*}}[%{{.*}}] : !pto.ptr<f32, ub>, index -> !pto.vmi.vreg<64xf32>
+// CHECK-LABEL: func.func @group_i32
+// CHECK: pto.vmi.group_load %{{.*}}[%{{.*}}], %{{.*}} {num_groups = 8 : i64} : !pto.ptr<f32, ub>, i32 -> !pto.vmi.vreg<64xf32>
+// CHECK: pto.vmi.group_store %{{.*}}, %{{.*}}[%{{.*}}], %{{.*}} {num_groups = 8 : i64} : !pto.vmi.vreg<64xf32>, !pto.ptr<f32, ub>, i32
+// CHECK-LABEL: func.func @stride_i32
+// CHECK: pto.vmi.stride_load %{{.*}}[%{{.*}}], %{{.*}}, %{{.*}} : !pto.ptr<f32, ub>, i32, i16, !pto.vmi.mask<64xpred> -> !pto.vmi.vreg<64xf32>
+// CHECK: pto.vmi.stride_store %{{.*}}, %{{.*}}[%{{.*}}], %{{.*}}, %{{.*}} : !pto.vmi.vreg<64xf32>, !pto.ptr<f32, ub>, i32, i16, !pto.vmi.mask<64xpred>
+// CHECK-LABEL: func.func @masked_i32
+// CHECK: pto.vmi.masked_load %{{.*}}[%{{.*}}], %{{.*}}, %{{.*}} : !pto.ptr<f32, ub>, i32, !pto.vmi.mask<64xpred>, !pto.vmi.vreg<64xf32> -> !pto.vmi.vreg<64xf32>
+// CHECK: pto.vmi.masked_store %{{.*}}, %{{.*}}[%{{.*}}], %{{.*}} : !pto.vmi.vreg<64xf32>, !pto.ptr<f32, ub>, i32, !pto.vmi.mask<64xpred>
+// CHECK: pto.vmi.expand_load %{{.*}}[%{{.*}}], %{{.*}}, %{{.*}} : !pto.ptr<f32, ub>, i32, !pto.vmi.mask<64xpred>, !pto.vmi.vreg<64xf32> -> !pto.vmi.vreg<64xf32>
+// CHECK: pto.vmi.compress_store %{{.*}}, %{{.*}}[%{{.*}}], %{{.*}} : !pto.vmi.vreg<64xf32>, !pto.ptr<f32, ub>, i32, !pto.vmi.mask<64xpred>
+// CHECK-LABEL: func.func @interleave_i32
+// CHECK: pto.vmi.interleave_store %{{.*}}, %{{.*}}, %{{.*}}[%{{.*}}] : !pto.vmi.vreg<64xf32>, !pto.vmi.vreg<64xf32>, !pto.ptr<f32, ub>, i32
+// CHECK-LABEL: func.func @deinterleave_i32
+// CHECK: pto.vmi.deinterleave_load %{{.*}}[%{{.*}}] : !pto.ptr<f32, ub>, i32 -> !pto.vmi.vreg<64xf32>, !pto.vmi.vreg<64xf32>
+// CHECK-LABEL: func.func @group_slot_i32
+// CHECK: pto.vmi.group_slot_load %{{.*}}[%{{.*}}], %{{.*}} {num_groups = 8 : i64} : !pto.ptr<f32, ub>, i32 -> !pto.vmi.vreg<8xf32>
+// CHECK: pto.vmi.group_broadcast_load %{{.*}}[%{{.*}}], %{{.*}} {num_groups = 8 : i64} : !pto.ptr<f32, ub>, i32 -> !pto.vmi.vreg<64xf32>
+// CHECK-LABEL: func.func @unified_i32
+// CHECK: pto.vmi.vload %{{.*}}[%{{.*}}] : !pto.ptr<f32, ub>, i32 -> !pto.vmi.vreg<64xf32>
+// CHECK: pto.vmi.vstore %{{.*}}, %{{.*}}[%{{.*}}] : !pto.vmi.vreg<64xf32>, !pto.ptr<f32, ub>, i32
+// CHECK: pto.vmi.vsstb %{{.*}}, %{{.*}}[%{{.*}}], %{{.*}}, %{{.*}} : !pto.vmi.vreg<64xf32>, !pto.ptr<f32, ub>, i32, !pto.vmi.mask<64xpred>
+// CHECK-LABEL: func.func @unified_index
+// CHECK: pto.vmi.vload %{{.*}}[%{{.*}}] : !pto.ptr<f32, ub>, index -> !pto.vmi.vreg<64xf32>
+// CHECK-LABEL: func.func @legacy_i64
+// CHECK: pto.vmi.load %{{.*}}[%{{.*}}] : !pto.ptr<f32, ub>, i64 -> !pto.vmi.vreg<64xf32>
+// CHECK: pto.vmi.store %{{.*}}, %{{.*}}[%{{.*}}] : !pto.vmi.vreg<64xf32>, !pto.ptr<f32, ub>, i64

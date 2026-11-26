@@ -48,7 +48,7 @@ for model_path in "${BASE_DIR}"/Qwen* "${BASE_DIR}"/Deepseek*; do
   esac
 done
 PTO_PTO_DIRS="${PTO_PTO_DIRS:-Sync${MODEL_PTO_DIRS} CommSync Img2col ConvPipeline \
-Prelu Rem Rems Gemvmx MatmulMxLowPrecision TquantMx TquantMxDn Movfp \
+Prelu Rem Rems Gemvmx MatmulMxLowPrecision MatmulMxScaleExtract TquantMx TquantMxDn Movfp \
 Interleave DeInterleave PairReduceSum}"
 ENABLE_BC=0
 
@@ -96,7 +96,7 @@ sample_dir_arch() {
   case "$1" in
     TPipe|TAxpy|TColArgMax|TColArgMin|TConcatIdx|\
       TRowArgMax|TRowArgMin|Qwen*A3|Deepseek*A3) printf 'a3\n' ;;
-    Qwen*A5|Deepseek*A5|Img2col|ConvPipeline|TquantMx|TquantMxDn|Interleave|DeInterleave|\
+    Qwen*A5|Deepseek*A5|MatmulMxScaleExtract|Img2col|ConvPipeline|TquantMx|TquantMxDn|Interleave|DeInterleave|\
       PairReduceSum|Histogram|Random) printf 'a5\n' ;;
   esac
 }
@@ -266,7 +266,7 @@ process_one_dir() {
       ptoas_flags+=(--pto-arch a5)
       target_arch="a5"
     fi
-    if [[ "${model_arch}" == "a5" && $has_pto_level_override -eq 0 ]]; then
+    if [[ ( "${model_arch}" == "a5" || "${A}" == "MatmulMxScaleExtract" ) && $has_pto_level_override -eq 0 ]]; then
       ptoas_flags+=(--pto-level=level3)
     fi
   elif [[ "${required_arch}" == "a3" ]]; then

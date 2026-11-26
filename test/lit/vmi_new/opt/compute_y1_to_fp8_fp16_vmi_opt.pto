@@ -29,7 +29,7 @@ module attributes {pto.target_arch = "a5", pto.kernel_kind = #pto.kernel_kind<ve
 
     pto.vecscope {
       %scale_f16 = pto.vmi.vload %mxScale1ReciprocalAddr[%c0], %c1 {group = 8}
-        : !pto.ptr<f16, ub> -> !pto.vmi.vreg<8xf16>
+        : !pto.ptr<f16, ub>, index -> !pto.vmi.vreg<8xf16>
       %scale_f16_vec = pto.vmi.vbrc %scale_f16 {group = 8}
         : !pto.vmi.vreg<8xf16> -> !pto.vmi.vreg<256xf16>
       %scale_fp32 = pto.vmi.vcvt %scale_f16_vec
@@ -40,7 +40,7 @@ module attributes {pto.target_arch = "a5", pto.kernel_kind = #pto.kernel_kind<ve
         %y_off = arith.muli %i, %c256 : index
 
         %x_f16 = pto.vmi.vload %xAddr[%x_off]
-          : !pto.ptr<f16, ub> -> !pto.vmi.vreg<256xf16>
+          : !pto.ptr<f16, ub>, index -> !pto.vmi.vreg<256xf16>
         %x_fp32 = pto.vmi.vcvt %x_f16
           : !pto.vmi.vreg<256xf16> -> !pto.vmi.vreg<256xf32>
         %res_fp32 = pto.vmi.vmul %x_fp32, %scale_fp32
@@ -51,7 +51,7 @@ module attributes {pto.target_arch = "a5", pto.kernel_kind = #pto.kernel_kind<ve
           : !pto.vmi.vreg<256xf32> -> !pto.vmi.vreg<256xf8E4M3FN>
 
         pto.vmi.vstore %res_fp8, %y1Addr[%y_off]
-          : !pto.vmi.vreg<256xf8E4M3FN>, !pto.ptr<f8E4M3FN, ub>
+          : !pto.vmi.vreg<256xf8E4M3FN>, !pto.ptr<f8E4M3FN, ub>, index
       }
     }
     return
@@ -74,7 +74,7 @@ module attributes {pto.target_arch = "a5", pto.kernel_kind = #pto.kernel_kind<ve
 
     pto.vecscope {
       %scale_f16 = pto.vmi.vload %mxScale1ReciprocalAddr[%c0], %c1 {group = 8}
-        : !pto.ptr<f16, ub> -> !pto.vmi.vreg<8xf16>
+        : !pto.ptr<f16, ub>, index -> !pto.vmi.vreg<8xf16>
       %scale_f16_vec = pto.vmi.vbrc %scale_f16 {group = 8}
         : !pto.vmi.vreg<8xf16> -> !pto.vmi.vreg<256xf16>
       %scale_fp32 = pto.vmi.vcvt %scale_f16_vec
@@ -85,7 +85,7 @@ module attributes {pto.target_arch = "a5", pto.kernel_kind = #pto.kernel_kind<ve
         %y_off = arith.muli %i, %c256 : index
 
         %x_f16 = pto.vmi.vload %xAddr[%x_off]
-          : !pto.ptr<f16, ub> -> !pto.vmi.vreg<256xf16>
+          : !pto.ptr<f16, ub>, index -> !pto.vmi.vreg<256xf16>
         %x_fp32 = pto.vmi.vcvt %x_f16
           : !pto.vmi.vreg<256xf16> -> !pto.vmi.vreg<256xf32>
         %res_fp32 = pto.vmi.vmul %x_fp32, %scale_fp32
@@ -96,7 +96,7 @@ module attributes {pto.target_arch = "a5", pto.kernel_kind = #pto.kernel_kind<ve
           : !pto.vmi.vreg<256xf32> -> !pto.vmi.vreg<256xf8E5M2>
 
         pto.vmi.vstore %res_fp8, %y1Addr[%y_off]
-          : !pto.vmi.vreg<256xf8E5M2>, !pto.ptr<f8E5M2, ub>
+          : !pto.vmi.vreg<256xf8E5M2>, !pto.ptr<f8E5M2, ub>, index
       }
     }
     return

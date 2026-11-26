@@ -20,11 +20,11 @@ module {
     %c2 = arith.constant 2 : index
     %c16 = arith.constant 16 : index
     %acc0 = pto.vmi.vload %init[%off], %c1 {group = 8}
-        : !pto.ptr<f32, ub> -> !pto.vmi.vreg<8xf32>
+        : !pto.ptr<f32, ub>, index -> !pto.vmi.vreg<8xf32>
     %acc = scf.for %i = %c0 to %c2 step %c1
         iter_args(%arg = %acc0) -> (!pto.vmi.vreg<8xf32>) {
       %x = pto.vmi.vload %base[%off], %c16 {group = 8}
-          : !pto.ptr<f32, ub> -> !pto.vmi.vreg<128xf32>
+          : !pto.ptr<f32, ub>, index -> !pto.vmi.vreg<128xf32>
       %mask = pto.vmi.create_group_mask %c16
           {num_groups = 8, group_size = 16}
           : index -> !pto.vmi.mask<128xpred>
@@ -38,7 +38,7 @@ module {
       scf.yield %next : !pto.vmi.vreg<8xf32>
     }
     pto.vmi.vstore %acc, %out[%off], %c1 {group = 8}
-        : !pto.vmi.vreg<8xf32>, !pto.ptr<f32, ub>
+        : !pto.vmi.vreg<8xf32>, !pto.ptr<f32, ub>, index
     return
   }
 }
@@ -52,15 +52,15 @@ module {
 // ASSIGN-NEXT: %[[VAL_5:[a-zA-Z0-9_.$-]+]] = arith.constant 1 : index
 // ASSIGN-NEXT: %[[VAL_6:[a-zA-Z0-9_.$-]+]] = arith.constant 2 : index
 // ASSIGN-NEXT: %[[VAL_7:[a-zA-Z0-9_.$-]+]] = arith.constant 16 : index
-// ASSIGN-NEXT: %[[VAL_8:[a-zA-Z0-9_.$-]+]] = pto.vmi.group_slot_load %[[VAL_0]]{{\[}}%[[VAL_3]]], %[[VAL_5]] {num_groups = 8 : i64} : !pto.ptr<f32, ub> -> !pto.vmi.vreg<8xf32, #pto.vmi.layout<num_groups = 8, slots = 8>>
+// ASSIGN-NEXT: %[[VAL_8:[a-zA-Z0-9_.$-]+]] = pto.vmi.group_slot_load %[[VAL_0]]{{\[}}%[[VAL_3]]], %[[VAL_5]] {num_groups = 8 : i64} : !pto.ptr<f32, ub>, index -> !pto.vmi.vreg<8xf32, #pto.vmi.layout<num_groups = 8, slots = 8>>
 // ASSIGN-NEXT: %[[VAL_9:[a-zA-Z0-9_.$-]+]] = scf.for %[[VAL_10:[a-zA-Z0-9_.$-]+]] = %[[VAL_4]] to %[[VAL_6]] step %[[VAL_5]] iter_args(%[[VAL_11:[a-zA-Z0-9_.$-]+]] = %[[VAL_8]]) -> (!pto.vmi.vreg<8xf32, #pto.vmi.layout<num_groups = 8, slots = 8>>) {
-// ASSIGN-NEXT: %[[VAL_12:[a-zA-Z0-9_.$-]+]] = pto.vmi.group_load %[[VAL_1]]{{\[}}%[[VAL_3]]], %[[VAL_7]] {num_groups = 8 : i64} : !pto.ptr<f32, ub> -> !pto.vmi.vreg<128xf32, #pto.vmi.layout<block_deinterleaved = 2>>
+// ASSIGN-NEXT: %[[VAL_12:[a-zA-Z0-9_.$-]+]] = pto.vmi.group_load %[[VAL_1]]{{\[}}%[[VAL_3]]], %[[VAL_7]] {num_groups = 8 : i64} : !pto.ptr<f32, ub>, index -> !pto.vmi.vreg<128xf32, #pto.vmi.layout<block_deinterleaved = 2>>
 // ASSIGN-NEXT: %[[VAL_13:[a-zA-Z0-9_.$-]+]] = pto.vmi.create_group_mask %[[VAL_7]] {group_size = 16 : i64, num_groups = 8 : i64} : index -> !pto.vmi.mask<128xb32, #pto.vmi.layout<block_deinterleaved = 2>>
 // ASSIGN-NEXT: %[[VAL_14:[a-zA-Z0-9_.$-]+]] = pto.vmi.group_reduce_addf %[[VAL_12]], %[[VAL_13]] {num_groups = 8 : i64, reassoc} : !pto.vmi.vreg<128xf32, #pto.vmi.layout<block_deinterleaved = 2>>, !pto.vmi.mask<128xb32, #pto.vmi.layout<block_deinterleaved = 2>> -> !pto.vmi.vreg<8xf32, #pto.vmi.layout<num_groups = 8, slots = 8>>
 // ASSIGN-NEXT: %[[VAL_15:[a-zA-Z0-9_.$-]+]] = pto.vmi.vadd %[[VAL_11]], %[[VAL_14]] : !pto.vmi.vreg<8xf32, #pto.vmi.layout<num_groups = 8, slots = 8>>, !pto.vmi.vreg<8xf32, #pto.vmi.layout<num_groups = 8, slots = 8>> -> !pto.vmi.vreg<8xf32, #pto.vmi.layout<num_groups = 8, slots = 8>>
 // ASSIGN-NEXT: scf.yield %[[VAL_15]] : !pto.vmi.vreg<8xf32, #pto.vmi.layout<num_groups = 8, slots = 8>>
 // ASSIGN-NEXT: }
-// ASSIGN-NEXT: pto.vmi.group_store %[[VAL_9]], %[[VAL_2]]{{\[}}%[[VAL_3]]], %[[VAL_5]] {num_groups = 8 : i64} : !pto.vmi.vreg<8xf32, #pto.vmi.layout<num_groups = 8, slots = 8>>, !pto.ptr<f32, ub>
+// ASSIGN-NEXT: pto.vmi.group_store %[[VAL_9]], %[[VAL_2]]{{\[}}%[[VAL_3]]], %[[VAL_5]] {num_groups = 8 : i64} : !pto.vmi.vreg<8xf32, #pto.vmi.layout<num_groups = 8, slots = 8>>, !pto.ptr<f32, ub>, index
 // ASSIGN-NEXT: return
 // ASSIGN-NEXT: }
 

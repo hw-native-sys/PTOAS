@@ -1,0 +1,83 @@
+// RUN: ptoas --pto-arch=linx %s -o - | FileCheck %s
+// RUN: ptoas --pto-arch=linx --emit-pto-ir %s -o %t.pto
+// RUN: ptoas --pto-arch=linx %t.pto -o - | FileCheck %s
+!X_softmax = !pto.linx.tile_buf<local, 16x128xf32, blayout=row_major>
+!R_softmax = !pto.linx.tile_buf<local, 16x1xf32, blayout=row_major>
+!X_softmax_tail = !pto.linx.tile_buf<local, 7x13xf32, blayout=row_major>
+!R_softmax_tail = !pto.linx.tile_buf<local, 7x1xf32, blayout=row_major>
+!X_softmax_cube = !pto.linx.tile_buf<local, 16x16xf32, blayout=m16>
+!R_softmax_cube = !pto.linx.tile_buf<local, 16x1xf32, blayout=m16>
+module attributes {pto.target_arch = "linx"} {
+  func.func @softmax(%gx: !pto.linx.partition_tensor_view<16x128xf32>, %gy: !pto.linx.partition_tensor_view<16x128xf32>) {
+    %x = pto.linx.alloc_tile : !X_softmax
+    %max = pto.linx.alloc_tile : !R_softmax
+    %y = pto.linx.alloc_tile : !X_softmax
+    %e = pto.linx.alloc_tile : !X_softmax
+    %sum = pto.linx.alloc_tile : !R_softmax
+    %out = pto.linx.alloc_tile : !X_softmax
+    pto.linx.tload ins(%gx : !pto.linx.partition_tensor_view<16x128xf32>) outs(%x : !X_softmax)
+    pto.linx.trowmax ins(%x : !X_softmax) outs(%max : !R_softmax)
+    pto.linx.trowexpandsub ins(%x, %max : !X_softmax, !R_softmax) outs(%y : !X_softmax)
+    pto.linx.texp ins(%y : !X_softmax) outs(%e : !X_softmax)
+    pto.linx.trowsum ins(%e : !X_softmax) outs(%sum : !R_softmax)
+    pto.linx.trowexpanddiv ins(%e, %sum : !X_softmax, !R_softmax) outs(%out : !X_softmax)
+    pto.linx.tstore ins(%out : !X_softmax) outs(%gy : !pto.linx.partition_tensor_view<16x128xf32>)
+    return
+  }
+  func.func @softmax_tail(%gx: !pto.linx.partition_tensor_view<7x13xf32>, %gy: !pto.linx.partition_tensor_view<7x13xf32>) {
+    %x = pto.linx.alloc_tile : !X_softmax_tail
+    %max = pto.linx.alloc_tile : !R_softmax_tail
+    %y = pto.linx.alloc_tile : !X_softmax_tail
+    %e = pto.linx.alloc_tile : !X_softmax_tail
+    %sum = pto.linx.alloc_tile : !R_softmax_tail
+    %out = pto.linx.alloc_tile : !X_softmax_tail
+    pto.linx.tload ins(%gx : !pto.linx.partition_tensor_view<7x13xf32>) outs(%x : !X_softmax_tail)
+    pto.linx.trowmax ins(%x : !X_softmax_tail) outs(%max : !R_softmax_tail)
+    pto.linx.trowexpandsub ins(%x, %max : !X_softmax_tail, !R_softmax_tail) outs(%y : !X_softmax_tail)
+    pto.linx.texp ins(%y : !X_softmax_tail) outs(%e : !X_softmax_tail)
+    pto.linx.trowsum ins(%e : !X_softmax_tail) outs(%sum : !R_softmax_tail)
+    pto.linx.trowexpanddiv ins(%e, %sum : !X_softmax_tail, !R_softmax_tail) outs(%out : !X_softmax_tail)
+    pto.linx.tstore ins(%out : !X_softmax_tail) outs(%gy : !pto.linx.partition_tensor_view<7x13xf32>)
+    return
+  }
+  func.func @softmax_cube(%gx: !pto.linx.partition_tensor_view<16x16xf32>, %gy: !pto.linx.partition_tensor_view<16x16xf32>) {
+    %x = pto.linx.alloc_tile : !X_softmax_cube
+    %max = pto.linx.alloc_tile : !R_softmax_cube
+    %y = pto.linx.alloc_tile : !X_softmax_cube
+    %e = pto.linx.alloc_tile : !X_softmax_cube
+    %sum = pto.linx.alloc_tile : !R_softmax_cube
+    %out = pto.linx.alloc_tile : !X_softmax_cube
+    pto.linx.tload ins(%gx : !pto.linx.partition_tensor_view<16x16xf32>) outs(%x : !X_softmax_cube)
+    pto.linx.trowmax ins(%x : !X_softmax_cube) outs(%max : !R_softmax_cube)
+    pto.linx.trowexpandsub ins(%x, %max : !X_softmax_cube, !R_softmax_cube) outs(%y : !X_softmax_cube)
+    pto.linx.texp ins(%y : !X_softmax_cube) outs(%e : !X_softmax_cube)
+    pto.linx.trowsum ins(%e : !X_softmax_cube) outs(%sum : !R_softmax_cube)
+    pto.linx.trowexpanddiv ins(%e, %sum : !X_softmax_cube, !R_softmax_cube) outs(%out : !X_softmax_cube)
+    pto.linx.tstore ins(%out : !X_softmax_cube) outs(%gy : !pto.linx.partition_tensor_view<16x16xf32>)
+    return
+  }
+}
+// CHECK-LABEL: extern "C" void softmax(
+// CHECK: ::TLOAD(
+// CHECK: ::TROWMAX(
+// CHECK: ::TROWEXPANDSUB(
+// CHECK: ::TEXP(
+// CHECK: ::TROWSUM(
+// CHECK: ::TROWEXPANDDIV(
+// CHECK: ::TSTORE(
+// CHECK-LABEL: extern "C" void softmax_tail(
+// CHECK: ::TLOAD(
+// CHECK: ::TROWMAX(
+// CHECK: ::TROWEXPANDSUB(
+// CHECK: ::TEXP(
+// CHECK: ::TROWSUM(
+// CHECK: ::TROWEXPANDDIV(
+// CHECK: ::TSTORE(
+// CHECK-LABEL: extern "C" void softmax_cube(
+// CHECK: ::TLOAD(
+// CHECK: ::TROWMAX(
+// CHECK: ::TROWEXPANDSUB(
+// CHECK: ::TEXP(
+// CHECK: ::TROWSUM(
+// CHECK: ::TROWEXPANDDIV(
+// CHECK: ::TSTORE(

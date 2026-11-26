@@ -21,12 +21,12 @@ module {
       %src: !pto.ptr<f32, ub>, %dst: !pto.ptr<f32, ub>, %off: index) {
     %c256 = arith.constant 256 : index
     %mask = pto.vmi.create_mask %c256 : index -> !pto.vmi.mask<256xpred>
-    %x = pto.vmi.vload %src[%off] : !pto.ptr<f32, ub> -> !pto.vmi.vreg<256xf32>
+    %x = pto.vmi.vload %src[%off] : !pto.ptr<f32, ub>, index -> !pto.vmi.vreg<256xf32>
     %a = pto.vmi.vcmax %x, %mask {group = 4}
         : !pto.vmi.vreg<256xf32>, !pto.vmi.mask<256xpred> -> !pto.vmi.vreg<4xf32>
     %b = pto.vmi.vbrc %a {group = 4}
         : !pto.vmi.vreg<4xf32> -> !pto.vmi.vreg<128xf32>
-    pto.vmi.vstore %b, %dst[%off] : !pto.vmi.vreg<128xf32>, !pto.ptr<f32, ub>
+    pto.vmi.vstore %b, %dst[%off] : !pto.vmi.vreg<128xf32>, !pto.ptr<f32, ub>, index
     return
   }
 
@@ -35,13 +35,13 @@ module {
     %c256 = arith.constant 256 : index
     %c1 = arith.constant 1 : index
     %mask = pto.vmi.create_mask %c256 : index -> !pto.vmi.mask<256xpred>
-    %x = pto.vmi.vload %src[%off] : !pto.ptr<f32, ub> -> !pto.vmi.vreg<256xf32>
+    %x = pto.vmi.vload %src[%off] : !pto.ptr<f32, ub>, index -> !pto.vmi.vreg<256xf32>
     %a = pto.vmi.vcmax %x, %mask {group = 4}
         : !pto.vmi.vreg<256xf32>, !pto.vmi.mask<256xpred> -> !pto.vmi.vreg<4xf32>
     %c = pto.vmi.vcvt %a {saturate = "SAT"}
         : !pto.vmi.vreg<4xf32> -> !pto.vmi.vreg<4xbf16>
     pto.vmi.vstore %c, %dst[%off], %c1 {group = 4}
-        : !pto.vmi.vreg<4xbf16>, !pto.ptr<bf16, ub>
+        : !pto.vmi.vreg<4xbf16>, !pto.ptr<bf16, ub>, index
     return
   }
 
@@ -52,15 +52,15 @@ module {
     %c32 = arith.constant 32 : index
     %c1 = arith.constant 1 : index
     %mask = pto.vmi.create_mask %c256 : index -> !pto.vmi.mask<256xpred>
-    %x = pto.vmi.vload %src[%off] : !pto.ptr<f32, ub> -> !pto.vmi.vreg<256xf32>
+    %x = pto.vmi.vload %src[%off] : !pto.ptr<f32, ub>, index -> !pto.vmi.vreg<256xf32>
     %a = pto.vmi.vcmax %x, %mask {group = 4}
         : !pto.vmi.vreg<256xf32>, !pto.vmi.mask<256xpred> -> !pto.vmi.vreg<4xf32>
     %kk = pto.vmi.vload %k[%off], %c32 {group = 4}
-        : !pto.ptr<f32, ub> -> !pto.vmi.vreg<4xf32>
+        : !pto.ptr<f32, ub>, index -> !pto.vmi.vreg<4xf32>
     %m = pto.vmi.vmul %a, %kk
         : !pto.vmi.vreg<4xf32>, !pto.vmi.vreg<4xf32> -> !pto.vmi.vreg<4xf32>
     pto.vmi.vstore %m, %dst[%off], %c1 {group = 4}
-        : !pto.vmi.vreg<4xf32>, !pto.ptr<f32, ub>
+        : !pto.vmi.vreg<4xf32>, !pto.ptr<f32, ub>, index
     return
   }
 }

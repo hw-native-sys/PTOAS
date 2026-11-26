@@ -163,13 +163,13 @@ module attributes {pto.target_arch = "a5", pto.kernel_kind = #pto.kernel_kind<ve
             //   后续 vcvt {part = "EVEN"} 才能取到有效数据。
             // VMI 屏蔽了这个隐含协议：load → extf 直接表达"加载并提升精度"。
             %cos1_16 = pto.vmi.load %cos_ub[%cos1_off]
-                : !pto.ptr<f16, ub> -> !pto.vmi.vreg<64xf16>
+                : !pto.ptr<f16, ub>, index -> !pto.vmi.vreg<64xf16>
             %cos2_16 = pto.vmi.load %cos_ub[%cos2_off]
-                : !pto.ptr<f16, ub> -> !pto.vmi.vreg<64xf16>
+                : !pto.ptr<f16, ub>, index -> !pto.vmi.vreg<64xf16>
             %sin1_16 = pto.vmi.load %sin_ub[%sin1_off]
-                : !pto.ptr<f16, ub> -> !pto.vmi.vreg<64xf16>
+                : !pto.ptr<f16, ub>, index -> !pto.vmi.vreg<64xf16>
             %sin2_16 = pto.vmi.load %sin_ub[%sin2_off]
-                : !pto.ptr<f16, ub> -> !pto.vmi.vreg<64xf16>
+                : !pto.ptr<f16, ub>, index -> !pto.vmi.vreg<64xf16>
 
             // VMI: extf 将 f16/bf16 语义提升为 f32——无需 part 选择。
             // MI 对应: pto.vcvt %cos_lo_16, %mask16_all {part = "EVEN"}
@@ -202,9 +202,9 @@ module attributes {pto.target_arch = "a5", pto.kernel_kind = #pto.kernel_kind<ve
               // MI 对应: pto.vlds %x[%off] {dist = "UNPK_B16"}
               //   → !pto.vreg<128xbf16>，64 个 bf16 解包到 128 宽的 EVEN 位置。
               %x1_16 = pto.vmi.load %x_ub[%x1_off]
-                  : !pto.ptr<bf16, ub> -> !pto.vmi.vreg<64xbf16>
+                  : !pto.ptr<bf16, ub>, index -> !pto.vmi.vreg<64xbf16>
               %x2_16 = pto.vmi.load %x_ub[%x2_off]
-                  : !pto.ptr<bf16, ub> -> !pto.vmi.vreg<64xbf16>
+                  : !pto.ptr<bf16, ub>, index -> !pto.vmi.vreg<64xbf16>
 
               // VMI: extf 语义提升 bf16 → f32，无需 part。
               // MI 对应: pto.vcvt %x_lo_16, %mask16_all {part = "EVEN"}
@@ -259,9 +259,9 @@ module attributes {pto.target_arch = "a5", pto.kernel_kind = #pto.kernel_kind<ve
               //   连续的 32 个元素——开发者需要理解何时用 PK、何时不用。
               // VMI 编译器根据数据布局自动选择打包策略。
               pto.vmi.masked_store %out1, %y_ub[%y1_off], %mask
-                  : !pto.vmi.vreg<64xbf16>, !pto.ptr<bf16, ub>, !pto.vmi.mask<64xpred>
+                  : !pto.vmi.vreg<64xbf16>, !pto.ptr<bf16, ub>, index, !pto.vmi.mask<64xpred>
               pto.vmi.masked_store %out2, %y_ub[%y2_off], %mask
-                  : !pto.vmi.vreg<64xbf16>, !pto.ptr<bf16, ub>, !pto.vmi.mask<64xpred>
+                  : !pto.vmi.vreg<64xbf16>, !pto.ptr<bf16, ub>, index, !pto.vmi.mask<64xpred>
             }
           }
         }
@@ -286,9 +286,9 @@ module attributes {pto.target_arch = "a5", pto.kernel_kind = #pto.kernel_kind<ve
           // MI 对应: vlds + UNPK_B16 → vcvt + PART_EVEN（隐式协议），
           //   VMI 中 load + extf 直接表达"加载并提升"。
           %cos16 = pto.vmi.load %cos_ub[%cs_off]
-              : !pto.ptr<f16, ub> -> !pto.vmi.vreg<128xf16>
+              : !pto.ptr<f16, ub>, index -> !pto.vmi.vreg<128xf16>
           %sin16 = pto.vmi.load %sin_ub[%cs_off]
-              : !pto.ptr<f16, ub> -> !pto.vmi.vreg<128xf16>
+              : !pto.ptr<f16, ub>, index -> !pto.vmi.vreg<128xf16>
 
           %cos = pto.vmi.extf %cos16
               : !pto.vmi.vreg<128xf16> -> !pto.vmi.vreg<128xf32>
@@ -304,7 +304,7 @@ module attributes {pto.target_arch = "a5", pto.kernel_kind = #pto.kernel_kind<ve
             %y_off = arith.addi %y_s_off, %y_n_off : index
 
             %x16 = pto.vmi.load %x_ub[%x_off]
-                : !pto.ptr<bf16, ub> -> !pto.vmi.vreg<128xbf16>
+                : !pto.ptr<bf16, ub>, index -> !pto.vmi.vreg<128xbf16>
             %x = pto.vmi.extf %x16
                 : !pto.vmi.vreg<128xbf16> -> !pto.vmi.vreg<128xf32>
 
@@ -346,7 +346,7 @@ module attributes {pto.target_arch = "a5", pto.kernel_kind = #pto.kernel_kind<ve
                 : !pto.vmi.vreg<128xf32> -> !pto.vmi.vreg<128xbf16>
 
             pto.vmi.masked_store %y16, %y_ub[%y_off], %mask
-                : !pto.vmi.vreg<128xbf16>, !pto.ptr<bf16, ub>, !pto.vmi.mask<128xpred>
+                : !pto.vmi.vreg<128xbf16>, !pto.ptr<bf16, ub>, index, !pto.vmi.mask<128xpred>
           }
         }
       }

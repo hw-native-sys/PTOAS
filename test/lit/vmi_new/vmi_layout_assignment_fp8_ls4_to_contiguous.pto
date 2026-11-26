@@ -19,11 +19,11 @@ module {
       %dst: !pto.ptr<f32, ub>,
       %off: index) {
     %x = pto.vmi.vload %src[%off]
-        : !pto.ptr<f8E4M3FN, ub> -> !pto.vmi.vreg<128xf8E4M3FN>
+        : !pto.ptr<f8E4M3FN, ub>, index -> !pto.vmi.vreg<128xf8E4M3FN>
     %y = pto.vmi.vcvt %x
         : !pto.vmi.vreg<128xf8E4M3FN> -> !pto.vmi.vreg<128xf32>
     pto.vmi.vstore %y, %dst[%off]
-        : !pto.vmi.vreg<128xf32>, !pto.ptr<f32, ub>
+        : !pto.vmi.vreg<128xf32>, !pto.ptr<f32, ub>, index
     return
   }
 }

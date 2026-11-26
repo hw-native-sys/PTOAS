@@ -1,0 +1,119 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+
+// Reproducer from https://github.com/hw-native-sys/PTOAS/issues/983.
+// Automatic synchronization must preserve the complete (x + y) - z chain.
+// RUN: ptoas --pto-backend=vpto --pto-arch=a5 --pto-level=level2 --enable-op-fusion --enable-insert-sync --check-sync-ids --check-sync-interference --check-sync-self-coverage --emit-vpto --mlir-print-ir-after=pto-insert-sync %s -o %t.vpto 2> %t.log
+// RUN: FileCheck %s --check-prefix=SYNC --input-file=%t.log
+// RUN: FileCheck %s --check-prefix=VPTO --input-file=%t.vpto
+// RUN: ptoas --pto-backend=vpto --pto-arch=a5 --pto-level=level2 --enable-op-fusion --enable-insert-sync --emit-vpto-llvm-ir %s -o %t.ll
+// RUN: FileCheck %s --check-prefix=LLVM --input-file=%t.ll
+
+module attributes {pto.target_arch = "a5", pto.kernel_kind = #pto.kernel_kind<vector>} {
+  func.func @vfsim_unroll_tadd_tsub_32x128(
+      %x_ptr: !pto.ptr<f32>, %y_ptr: !pto.ptr<f32>,
+      %z_ptr: !pto.ptr<f32>, %out_ptr: !pto.ptr<f32>) attributes {pto.kernel} {
+    %c0 = arith.constant 0 : index
+    %c1 = arith.constant 1 : index
+    %c32 = arith.constant 32 : index
+    %c128 = arith.constant 128 : index
+    %c4096 = arith.constant 4096 : index
+
+    %x_view = pto.make_tensor_view %x_ptr,
+      shape = [%c1, %c1, %c1, %c32, %c128],
+      strides = [%c4096, %c4096, %c4096, %c128, %c1]
+      : !pto.tensor_view<1x1x1x32x128xf32>
+    %y_view = pto.make_tensor_view %y_ptr,
+      shape = [%c1, %c1, %c1, %c32, %c128],
+      strides = [%c4096, %c4096, %c4096, %c128, %c1]
+      : !pto.tensor_view<1x1x1x32x128xf32>
+    %z_view = pto.make_tensor_view %z_ptr,
+      shape = [%c1, %c1, %c1, %c32, %c128],
+      strides = [%c4096, %c4096, %c4096, %c128, %c1]
+      : !pto.tensor_view<1x1x1x32x128xf32>
+    %out_view = pto.make_tensor_view %out_ptr,
+      shape = [%c1, %c1, %c1, %c32, %c128],
+      strides = [%c4096, %c4096, %c4096, %c128, %c1]
+      : !pto.tensor_view<1x1x1x32x128xf32>
+
+    %x_part = pto.partition_view %x_view,
+      offsets = [%c0, %c0, %c0, %c0, %c0],
+      sizes = [%c1, %c1, %c1, %c32, %c128]
+      : !pto.tensor_view<1x1x1x32x128xf32> -> !pto.partition_tensor_view<1x1x1x32x128xf32>
+    %y_part = pto.partition_view %y_view,
+      offsets = [%c0, %c0, %c0, %c0, %c0],
+      sizes = [%c1, %c1, %c1, %c32, %c128]
+      : !pto.tensor_view<1x1x1x32x128xf32> -> !pto.partition_tensor_view<1x1x1x32x128xf32>
+    %z_part = pto.partition_view %z_view,
+      offsets = [%c0, %c0, %c0, %c0, %c0],
+      sizes = [%c1, %c1, %c1, %c32, %c128]
+      : !pto.tensor_view<1x1x1x32x128xf32> -> !pto.partition_tensor_view<1x1x1x32x128xf32>
+    %out_part = pto.partition_view %out_view,
+      offsets = [%c0, %c0, %c0, %c0, %c0],
+      sizes = [%c1, %c1, %c1, %c32, %c128]
+      : !pto.tensor_view<1x1x1x32x128xf32> -> !pto.partition_tensor_view<1x1x1x32x128xf32>
+
+    %vx = pto.alloc_tile : !pto.tile_buf<vec, 32x128xf32>
+    %vy = pto.alloc_tile : !pto.tile_buf<vec, 32x128xf32>
+    %vz = pto.alloc_tile : !pto.tile_buf<vec, 32x128xf32>
+    %vadd = pto.alloc_tile : !pto.tile_buf<vec, 32x128xf32>
+    %vout = pto.alloc_tile : !pto.tile_buf<vec, 32x128xf32>
+
+    pto.tload ins(%x_part : !pto.partition_tensor_view<1x1x1x32x128xf32>)
+              outs(%vx : !pto.tile_buf<vec, 32x128xf32>)
+    pto.tload ins(%y_part : !pto.partition_tensor_view<1x1x1x32x128xf32>)
+              outs(%vy : !pto.tile_buf<vec, 32x128xf32>)
+    pto.tload ins(%z_part : !pto.partition_tensor_view<1x1x1x32x128xf32>)
+              outs(%vz : !pto.tile_buf<vec, 32x128xf32>)
+
+    pto.tadd ins(%vx, %vy : !pto.tile_buf<vec, 32x128xf32>, !pto.tile_buf<vec, 32x128xf32>)
+             outs(%vadd : !pto.tile_buf<vec, 32x128xf32>)
+    pto.tsub ins(%vadd, %vz : !pto.tile_buf<vec, 32x128xf32>, !pto.tile_buf<vec, 32x128xf32>)
+             outs(%vout : !pto.tile_buf<vec, 32x128xf32>)
+
+    pto.tstore ins(%vout : !pto.tile_buf<vec, 32x128xf32>)
+               outs(%out_part : !pto.partition_tensor_view<1x1x1x32x128xf32>)
+    return
+  }
+}
+
+// SYNC-LABEL: func.func @vfsim_unroll_tadd_tsub_32x128(
+// SYNC: pto.tload
+// SYNC: pto.tload
+// SYNC: pto.tload
+// SYNC-NEXT: pto.set_flag[<PIPE_MTE2>, <PIPE_V>, <EVENT_ID[[LOAD:[0-7]]]>]
+// SYNC-NEXT: pto.wait_flag[<PIPE_MTE2>, <PIPE_V>, <EVENT_ID[[LOAD]]>]
+// SYNC-NEXT: %[[GROUP:.*]] = pto.fusion_region {
+// SYNC-NEXT: {{.*}}pto.alloc_tile
+// SYNC-NEXT: {{.*}}pto.alloc_tile
+// SYNC-NEXT: pto.tadd
+// SYNC-NEXT: pto.tsub
+// SYNC-NEXT: pto.yield
+// SYNC-NEXT: }
+// SYNC-NEXT: pto.set_flag[<PIPE_V>, <PIPE_MTE3>, <EVENT_ID[[STORE:[0-7]]]>]
+// SYNC-NEXT: pto.wait_flag[<PIPE_V>, <PIPE_MTE3>, <EVENT_ID[[STORE]]>]
+// SYNC-NEXT: pto.tstore ins(%[[GROUP]]
+// SYNC: pto.barrier <PIPE_ALL> {pto.auto_sync_tail_barrier}
+// SYNC: [sync-gate:g1-self] func=vfsim_unroll_tadd_tsub_32x128
+// SYNC-SAME: uncovered=0
+// SYNC-SAME: unmappable=0
+
+// VPTO-LABEL: func.func @vfsim_unroll_tadd_tsub_32x128(
+// VPTO: pto.wait_flag[<PIPE_MTE2>, <PIPE_V>,
+// VPTO: pto.vecscope {
+// VPTO: scf.for
+// VPTO: %[[SUM:[a-zA-Z0-9_]+]] = pto.vadd
+// VPTO: %[[DIFF:[a-zA-Z0-9_]+]] = pto.vsub %[[SUM]],
+// VPTO: pto.vsts %[[DIFF]],
+// VPTO: pto.set_flag[<PIPE_V>, <PIPE_MTE3>,
+// VPTO-NEXT: pto.wait_flag[<PIPE_V>, <PIPE_MTE3>,
+// VPTO: pto.copy_ubuf_to_gm
+
+// LLVM: define
+// LLVM: call {{.*}}@llvm.hivm.{{.*}}vadd
+// LLVM: call {{.*}}@llvm.hivm.{{.*}}vsub

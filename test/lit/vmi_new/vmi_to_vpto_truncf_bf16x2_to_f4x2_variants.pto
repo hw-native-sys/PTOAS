@@ -25,7 +25,7 @@ module {
     %r = pto.vmi.vcvt %pair {rounding = "R"}
         : !pto.vmi.vreg<64x!pto.bf16x2> -> !pto.vmi.vreg<64x!pto.f4E1M2x2>
     pto.vmi.vstore %r, %dst[%aligned_off]
-        : !pto.vmi.vreg<64x!pto.f4E1M2x2>, !pto.ptr<!pto.f4E1M2x2, ub>
+        : !pto.vmi.vreg<64x!pto.f4E1M2x2>, !pto.ptr<!pto.f4E1M2x2, ub>, index
     return
   }
 
@@ -41,7 +41,7 @@ module {
     %r = pto.vmi.vcvt %pair {rounding = "A"}
         : !pto.vmi.vreg<128x!pto.bf16x2> -> !pto.vmi.vreg<128x!pto.f4E2M1x2>
     pto.vmi.vstore %r, %dst[%aligned_off]
-        : !pto.vmi.vreg<128x!pto.f4E2M1x2>, !pto.ptr<!pto.f4E2M1x2, ub>
+        : !pto.vmi.vreg<128x!pto.f4E2M1x2>, !pto.ptr<!pto.f4E2M1x2, ub>, index
     return
   }
 
@@ -57,7 +57,7 @@ module {
     %r = pto.vmi.vcvt %pair {rounding = "Z"}
         : !pto.vmi.vreg<64x!pto.bf16x2> -> !pto.vmi.vreg<64x!pto.f4E1M2x2>
     pto.vmi.vstore %r, %dst[%aligned_off]
-        : !pto.vmi.vreg<64x!pto.f4E1M2x2>, !pto.ptr<!pto.f4E1M2x2, ub>
+        : !pto.vmi.vreg<64x!pto.f4E1M2x2>, !pto.ptr<!pto.f4E1M2x2, ub>, index
     return
   }
 
@@ -73,7 +73,7 @@ module {
     %r = pto.vmi.vcvt %pair {rounding = "F"}
         : !pto.vmi.vreg<64x!pto.bf16x2> -> !pto.vmi.vreg<64x!pto.f4E1M2x2>
     pto.vmi.vstore %r, %dst[%aligned_off]
-        : !pto.vmi.vreg<64x!pto.f4E1M2x2>, !pto.ptr<!pto.f4E1M2x2, ub>
+        : !pto.vmi.vreg<64x!pto.f4E1M2x2>, !pto.ptr<!pto.f4E1M2x2, ub>, index
     return
   }
 
@@ -89,7 +89,7 @@ module {
     %r = pto.vmi.vcvt %pair {rounding = "C"}
         : !pto.vmi.vreg<64x!pto.bf16x2> -> !pto.vmi.vreg<64x!pto.f4E2M1x2>
     pto.vmi.vstore %r, %dst[%aligned_off]
-        : !pto.vmi.vreg<64x!pto.f4E2M1x2>, !pto.ptr<!pto.f4E2M1x2, ub>
+        : !pto.vmi.vreg<64x!pto.f4E2M1x2>, !pto.ptr<!pto.f4E2M1x2, ub>, index
     return
   }
 
@@ -105,7 +105,7 @@ module {
     %r = pto.vmi.vcvt %pair
         : !pto.vmi.vreg<64x!pto.bf16x2> -> !pto.vmi.vreg<64x!pto.f4E2M1x2>
     pto.vmi.vstore %r, %dst[%aligned_off]
-        : !pto.vmi.vreg<64x!pto.f4E2M1x2>, !pto.ptr<!pto.f4E2M1x2, ub>
+        : !pto.vmi.vreg<64x!pto.f4E2M1x2>, !pto.ptr<!pto.f4E2M1x2, ub>, index
     return
   }
 }

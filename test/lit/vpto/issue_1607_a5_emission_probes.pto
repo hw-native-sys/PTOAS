@@ -1,0 +1,92 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+
+// Issue #1607 emission probes. These bypass the TileOp layer on purpose: they
+// isolate whether the VPTO emitter can produce an intrinsic for a dtype before
+// the dtype is registered in a TileLib template. P1 is bf16 pto.vdiv (needed by
+// pto.tfmods bf16), P2 is bf16 pto.vcmps (needed by pto.tcmps bf16), and P3 is
+// integer pto.vabs (needed by pto.tabs i8/i16/i32).
+//
+// A backend that cannot select the emitted intrinsic is outside what this
+// textual-IR probe can see; the dedicated ST cases cover value correctness.
+//
+// RUN: ptoas --pto-arch=a5 --pto-backend=vpto --vpto-scheduler=off --emit-vpto %s -o - | FileCheck %s --check-prefix=SPLIT
+// RUN: ptoas --pto-arch=a5 --pto-backend=vpto --vpto-scheduler=off --emit-vpto-llvm-ir %s -o - | FileCheck %s --check-prefix=LLVM
+
+module attributes {pto.target_arch = "a5", pto.kernel_kind = #pto.kernel_kind<vector>} {
+  func.func @probe_vdiv_bf16(%lhs: !pto.vreg<128xbf16>,
+      %rhs: !pto.vreg<128xbf16>, %dst: !pto.ptr<bf16, ub>,
+      %mask: !pto.mask<b16>) attributes {pto.kernel} {
+    %c0 = arith.constant 0 : index
+    %q = pto.vdiv %lhs, %rhs, %mask :
+      !pto.vreg<128xbf16>, !pto.vreg<128xbf16>, !pto.mask<b16> -> !pto.vreg<128xbf16>
+    pto.vsts %q, %dst[%c0], %mask :
+      !pto.vreg<128xbf16>, !pto.ptr<bf16, ub>, index, !pto.mask<b16>
+    return
+  }
+
+  func.func @probe_vcmps_bf16(%lhs: !pto.vreg<128xbf16>,
+      %dst: !pto.ptr<ui8, ub>, %mask: !pto.mask<b16>) attributes {pto.kernel} {
+    %c0 = arith.constant 0 : index
+    %scalar = arith.constant 0.0 : bf16
+    %cmp = pto.vcmps %lhs, %scalar, %mask, "lt" :
+      !pto.vreg<128xbf16>, bf16, !pto.mask<b16> -> !pto.mask<b16>
+    pto.psts %cmp, %dst[%c0], "NORM" :
+      !pto.mask<b16>, !pto.ptr<ui8, ub>, index
+    return
+  }
+
+  func.func @probe_vabs_i8(%src: !pto.vreg<256xi8>,
+      %dst: !pto.ptr<i8, ub>, %mask: !pto.mask<b8>) attributes {pto.kernel} {
+    %c0 = arith.constant 0 : index
+    %r = pto.vabs %src, %mask :
+      !pto.vreg<256xi8>, !pto.mask<b8> -> !pto.vreg<256xi8>
+    pto.vsts %r, %dst[%c0], %mask : !pto.vreg<256xi8>, !pto.ptr<i8, ub>, index, !pto.mask<b8>
+    return
+  }
+
+  func.func @probe_vabs_i16(%src: !pto.vreg<128xi16>,
+      %dst: !pto.ptr<i16, ub>, %mask: !pto.mask<b16>) attributes {pto.kernel} {
+    %c0 = arith.constant 0 : index
+    %r = pto.vabs %src, %mask :
+      !pto.vreg<128xi16>, !pto.mask<b16> -> !pto.vreg<128xi16>
+    pto.vsts %r, %dst[%c0], %mask : !pto.vreg<128xi16>, !pto.ptr<i16, ub>, index, !pto.mask<b16>
+    return
+  }
+
+  func.func @probe_vabs_i32(%src: !pto.vreg<64xi32>,
+      %dst: !pto.ptr<i32, ub>, %mask: !pto.mask<b32>) attributes {pto.kernel} {
+    %c0 = arith.constant 0 : index
+    %r = pto.vabs %src, %mask :
+      !pto.vreg<64xi32>, !pto.mask<b32> -> !pto.vreg<64xi32>
+    pto.vsts %r, %dst[%c0], %mask : !pto.vreg<64xi32>, !pto.ptr<i32, ub>, index, !pto.mask<b32>
+    return
+  }
+}
+
+// SPLIT-LABEL: func.func @probe_vdiv_bf16
+// SPLIT: pto.vdiv
+// SPLIT-LABEL: func.func @probe_vcmps_bf16
+// SPLIT: pto.vcmps
+// SPLIT-LABEL: func.func @probe_vabs_i8
+// SPLIT: pto.vabs
+// SPLIT-LABEL: func.func @probe_vabs_i16
+// SPLIT: pto.vabs
+// SPLIT-LABEL: func.func @probe_vabs_i32
+// SPLIT: pto.vabs
+
+// LLVM-LABEL: define void @probe_vdiv_bf16
+// LLVM: llvm.hivm.vdiv
+// LLVM-LABEL: define void @probe_vcmps_bf16
+// LLVM: llvm.hivm.vcmps
+// LLVM-LABEL: define void @probe_vabs_i8
+// LLVM: llvm.hivm.vabs
+// LLVM-LABEL: define void @probe_vabs_i16
+// LLVM: llvm.hivm.vabs
+// LLVM-LABEL: define void @probe_vabs_i32
+// LLVM: llvm.hivm.vabs

@@ -26,13 +26,13 @@ module {
     %m32 = pto.vmi.mask_and %root, %cmp32
         : !pto.vmi.mask<64xpred>, !pto.vmi.mask<64xpred> -> !pto.vmi.mask<64xpred>
     pto.vmi.masked_store %v32, %d32[%off], %m32
-        : !pto.vmi.vreg<64xf32>, !pto.ptr<f32, ub>, !pto.vmi.mask<64xpred>
+        : !pto.vmi.vreg<64xf32>, !pto.ptr<f32, ub>, index, !pto.vmi.mask<64xpred>
     %cmp16 = pto.vmi.cmpf "olt", %a16, %a16b
         : !pto.vmi.vreg<64xf16>, !pto.vmi.vreg<64xf16> -> !pto.vmi.mask<64xpred>
     %m16 = pto.vmi.mask_and %root, %cmp16
         : !pto.vmi.mask<64xpred>, !pto.vmi.mask<64xpred> -> !pto.vmi.mask<64xpred>
     pto.vmi.masked_store %v16, %d16[%off], %m16
-        : !pto.vmi.vreg<64xf16>, !pto.ptr<f16, ub>, !pto.vmi.mask<64xpred>
+        : !pto.vmi.vreg<64xf16>, !pto.ptr<f16, ub>, index, !pto.vmi.mask<64xpred>
     return
   }
 
@@ -48,13 +48,13 @@ module {
     %m16 = pto.vmi.mask_and %root, %cmp16
         : !pto.vmi.mask<64xpred>, !pto.vmi.mask<64xpred> -> !pto.vmi.mask<64xpred>
     pto.vmi.masked_store %v16, %d16[%off], %m16
-        : !pto.vmi.vreg<64xf16>, !pto.ptr<f16, ub>, !pto.vmi.mask<64xpred>
+        : !pto.vmi.vreg<64xf16>, !pto.ptr<f16, ub>, index, !pto.vmi.mask<64xpred>
     %cmp32 = pto.vmi.cmpf "olt", %a32, %a32b
         : !pto.vmi.vreg<64xf32>, !pto.vmi.vreg<64xf32> -> !pto.vmi.mask<64xpred>
     %m32 = pto.vmi.mask_and %root, %cmp32
         : !pto.vmi.mask<64xpred>, !pto.vmi.mask<64xpred> -> !pto.vmi.mask<64xpred>
     pto.vmi.masked_store %v32, %d32[%off], %m32
-        : !pto.vmi.vreg<64xf32>, !pto.ptr<f32, ub>, !pto.vmi.mask<64xpred>
+        : !pto.vmi.vreg<64xf32>, !pto.ptr<f32, ub>, index, !pto.vmi.mask<64xpred>
     return
   }
 }
@@ -63,11 +63,11 @@ module {
 // CHECK: %[[A_ROOT:.*]] = pto.vmi.create_mask %{{.*}} : index -> !pto.vmi.mask<64xb32>
 // CHECK: %[[A_CMP32:.*]] = pto.vmi.cmpf "olt", {{.*}} -> !pto.vmi.mask<64xb32>
 // CHECK: %[[A_M32:.*]] = pto.vmi.mask_and %[[A_ROOT]], %[[A_CMP32]] : !pto.vmi.mask<64xb32>, !pto.vmi.mask<64xb32> -> !pto.vmi.mask<64xb32>
-// CHECK: pto.vmi.masked_store {{.*}}{{\[}}%{{.*}}], %[[A_M32]] : !pto.vmi.vreg<64xf32>, !pto.ptr<f32, ub>, !pto.vmi.mask<64xb32>
+// CHECK: pto.vmi.masked_store {{.*}}{{\[}}%{{.*}}], %[[A_M32]] : !pto.vmi.vreg<64xf32>, !pto.ptr<f32, ub>, index, !pto.vmi.mask<64xb32>
 // CHECK: %[[A_CMP16:.*]] = pto.vmi.cmpf "olt", {{.*}} -> !pto.vmi.mask<64xb16>
 // CHECK: %[[A_ROOT16:.*]] = pto.vmi.create_mask %{{.*}} : index -> !pto.vmi.mask<64xb16>
 // CHECK: %[[A_M16:.*]] = pto.vmi.mask_and %[[A_ROOT16]], %[[A_CMP16]] : !pto.vmi.mask<64xb16>, !pto.vmi.mask<64xb16> -> !pto.vmi.mask<64xb16>
-// CHECK: pto.vmi.masked_store {{.*}}{{\[}}%{{.*}}], %[[A_M16]] : !pto.vmi.vreg<64xf16>, !pto.ptr<f16, ub>, !pto.vmi.mask<64xb16>
+// CHECK: pto.vmi.masked_store {{.*}}{{\[}}%{{.*}}], %[[A_M16]] : !pto.vmi.vreg<64xf16>, !pto.ptr<f16, ub>, index, !pto.vmi.mask<64xb16>
 
 // The narrow use comes first here and the assignment is unchanged.
 // CHECK-LABEL: func.func @order_narrow_first(
@@ -75,7 +75,7 @@ module {
 // CHECK: %[[B_CMP16:.*]] = pto.vmi.cmpf "olt", {{.*}} -> !pto.vmi.mask<64xb16>
 // CHECK: %[[B_ROOT16:.*]] = pto.vmi.create_mask %{{.*}} : index -> !pto.vmi.mask<64xb16>
 // CHECK: %[[B_M16:.*]] = pto.vmi.mask_and %[[B_ROOT16]], %[[B_CMP16]] : !pto.vmi.mask<64xb16>, !pto.vmi.mask<64xb16> -> !pto.vmi.mask<64xb16>
-// CHECK: pto.vmi.masked_store {{.*}}{{\[}}%{{.*}}], %[[B_M16]] : !pto.vmi.vreg<64xf16>, !pto.ptr<f16, ub>, !pto.vmi.mask<64xb16>
+// CHECK: pto.vmi.masked_store {{.*}}{{\[}}%{{.*}}], %[[B_M16]] : !pto.vmi.vreg<64xf16>, !pto.ptr<f16, ub>, index, !pto.vmi.mask<64xb16>
 // CHECK: %[[B_CMP32:.*]] = pto.vmi.cmpf "olt", {{.*}} -> !pto.vmi.mask<64xb32>
 // CHECK: %[[B_M32:.*]] = pto.vmi.mask_and %[[B_ROOT]], %[[B_CMP32]] : !pto.vmi.mask<64xb32>, !pto.vmi.mask<64xb32> -> !pto.vmi.mask<64xb32>
-// CHECK: pto.vmi.masked_store {{.*}}{{\[}}%{{.*}}], %[[B_M32]] : !pto.vmi.vreg<64xf32>, !pto.ptr<f32, ub>, !pto.vmi.mask<64xb32>
+// CHECK: pto.vmi.masked_store {{.*}}{{\[}}%{{.*}}], %[[B_M32]] : !pto.vmi.vreg<64xf32>, !pto.ptr<f32, ub>, index, !pto.vmi.mask<64xb32>

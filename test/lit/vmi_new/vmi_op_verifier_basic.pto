@@ -50,12 +50,12 @@ module {
     %ext = pto.vmi.vcvt %broadcast16 : !pto.vmi.vreg<128xf16> -> !pto.vmi.vreg<128xf32>
     %trunc = pto.vmi.vcvt %ext {saturate = "SAT"} : !pto.vmi.vreg<128xf32> -> !pto.vmi.vreg<128xf16>
 
-    %loaded = pto.vmi.vload %ptr[%c0] : !pto.ptr<f32, ub> -> !pto.vmi.vreg<128xf32>
+    %loaded = pto.vmi.vload %ptr[%c0] : !pto.ptr<f32, ub>, index -> !pto.vmi.vreg<128xf32>
     %slot_loaded = pto.vmi.group_slot_load %ptr[%c0], %c1 {num_groups = 8}
-        : !pto.ptr<f32, ub> -> !pto.vmi.vreg<8xf32>
+        : !pto.ptr<f32, ub>, index -> !pto.vmi.vreg<8xf32>
     pto.vmi.vstore %slot_loaded, %ptr[%c0], %c1 {group = 8}
-        : !pto.vmi.vreg<8xf32>, !pto.ptr<f32, ub>
-    pto.vmi.vstore %loaded, %ptr[%c0] : !pto.vmi.vreg<128xf32>, !pto.ptr<f32, ub>
+        : !pto.vmi.vreg<8xf32>, !pto.ptr<f32, ub>, index
+    pto.vmi.vstore %loaded, %ptr[%c0] : !pto.vmi.vreg<128xf32>, !pto.ptr<f32, ub>, index
 
     %small = "pto.vmi.shuffle"(%broadcast) {
       indices = array<i64: 0, 1, 2, 3>

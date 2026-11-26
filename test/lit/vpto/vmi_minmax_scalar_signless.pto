@@ -17,13 +17,13 @@ module attributes {pto.target_arch = "a5", pto.kernel_kind = #pto.kernel_kind<ve
     %c0 = arith.constant 0 : index
     %count = arith.constant 256 : index
     %all_bits = arith.constant -1 : i8
-    %vec = pto.vmi.vload %src[%c0] : !pto.ptr<i8, ub> -> !pto.vmi.vreg<256xi8>
+    %vec = pto.vmi.vload %src[%c0] : !pto.ptr<i8, ub>, index -> !pto.vmi.vreg<256xi8>
     %mask = pto.vmi.create_mask %count : index -> !pto.vmi.mask<256xpred>
     %max = pto.vmi.vmaxs %vec, %scalar, %mask
         : !pto.vmi.vreg<256xi8>, i8, !pto.vmi.mask<256xpred> -> !pto.vmi.vreg<256xi8>
     %min = pto.vmi.vmins %max, %all_bits, %mask
         : !pto.vmi.vreg<256xi8>, i8, !pto.vmi.mask<256xpred> -> !pto.vmi.vreg<256xi8>
-    pto.vmi.vstore %min, %dst[%c0] : !pto.vmi.vreg<256xi8>, !pto.ptr<i8, ub>
+    pto.vmi.vstore %min, %dst[%c0] : !pto.vmi.vreg<256xi8>, !pto.ptr<i8, ub>, index
     return
   }
 
@@ -32,13 +32,13 @@ module attributes {pto.target_arch = "a5", pto.kernel_kind = #pto.kernel_kind<ve
     %c0 = arith.constant 0 : index
     %count = arith.constant 128 : index
     %all_bits = arith.constant -1 : i16
-    %vec = pto.vmi.vload %src[%c0] : !pto.ptr<i16, ub> -> !pto.vmi.vreg<128xi16>
+    %vec = pto.vmi.vload %src[%c0] : !pto.ptr<i16, ub>, index -> !pto.vmi.vreg<128xi16>
     %mask = pto.vmi.create_mask %count : index -> !pto.vmi.mask<128xpred>
     %max = pto.vmi.vmaxs %vec, %scalar, %mask
         : !pto.vmi.vreg<128xi16>, i16, !pto.vmi.mask<128xpred> -> !pto.vmi.vreg<128xi16>
     %min = pto.vmi.vmins %max, %all_bits, %mask
         : !pto.vmi.vreg<128xi16>, i16, !pto.vmi.mask<128xpred> -> !pto.vmi.vreg<128xi16>
-    pto.vmi.vstore %min, %dst[%c0] : !pto.vmi.vreg<128xi16>, !pto.ptr<i16, ub>
+    pto.vmi.vstore %min, %dst[%c0] : !pto.vmi.vreg<128xi16>, !pto.ptr<i16, ub>, index
     return
   }
 
@@ -47,13 +47,13 @@ module attributes {pto.target_arch = "a5", pto.kernel_kind = #pto.kernel_kind<ve
     %c0 = arith.constant 0 : index
     %count = arith.constant 64 : index
     %all_bits = arith.constant -1 : i32
-    %vec = pto.vmi.vload %src[%c0] : !pto.ptr<i32, ub> -> !pto.vmi.vreg<64xi32>
+    %vec = pto.vmi.vload %src[%c0] : !pto.ptr<i32, ub>, index -> !pto.vmi.vreg<64xi32>
     %mask = pto.vmi.create_mask %count : index -> !pto.vmi.mask<64xpred>
     %max = pto.vmi.vmaxs %vec, %scalar, %mask
         : !pto.vmi.vreg<64xi32>, i32, !pto.vmi.mask<64xpred> -> !pto.vmi.vreg<64xi32>
     %min = pto.vmi.vmins %max, %all_bits, %mask
         : !pto.vmi.vreg<64xi32>, i32, !pto.vmi.mask<64xpred> -> !pto.vmi.vreg<64xi32>
-    pto.vmi.vstore %min, %dst[%c0] : !pto.vmi.vreg<64xi32>, !pto.ptr<i32, ub>
+    pto.vmi.vstore %min, %dst[%c0] : !pto.vmi.vreg<64xi32>, !pto.ptr<i32, ub>, index
     return
   }
 

@@ -28,9 +28,9 @@ module {
         : !pto.vmi.vreg<64xf32>, !pto.vmi.vreg<64xf32>, !pto.vmi.mask<64xpred>
         -> !pto.vmi.vreg<64xf32>
     pto.vmi.vstore %exact, %dst[%off], %c8
-        : !pto.vmi.vreg<64xf32>, !pto.ptr<f32, ub>
+        : !pto.vmi.vreg<64xf32>, !pto.ptr<f32, ub>, index
     pto.vmi.vstore %plain, %dst[%c0], %c8
-        : !pto.vmi.vreg<64xf32>, !pto.ptr<f32, ub>
+        : !pto.vmi.vreg<64xf32>, !pto.ptr<f32, ub>, index
     return
   }
 }

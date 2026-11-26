@@ -94,8 +94,11 @@ source element together with the complete 16-byte PK or 32-byte NORM stores
 used by A5. A single logical row may flatten when its physical predicate row
 has enough capacity. Multiple rows additionally require the source row width
 to end on a predicate-store boundary and the destination row stride to equal
-the exact packed bytes produced per row. This raises the current scoped
-candidate count to 124. Select, conversion, functional execution tests, and
+the exact packed bytes produced per row. A destination with one predicate
+container per source element has padded rows and must use the 2D fallback;
+the former compatibility allowance for that layout is no longer accepted.
+This raises the current scoped candidate count to 124. Select, conversion,
+functional execution tests, and
 performance measurements remain subsequent steps.
 
 The A5 PTOAS verifier requires `tcmp` source and destination physical shapes
@@ -503,7 +506,7 @@ common-valid-range requirements as ordinary element-wise operands. The
 predicate destination is checked independently because it stores one bit per
 comparison instead of one element of the source dtype.
 
-For f32/i32 and f16/i16 comparisons, one complete predicate store represents
+For f32/i32/ui32 and f16/bf16/i16/ui16 comparisons, one complete predicate store represents
 128 source elements and occupies 16 bytes. For i8/ui8 comparisons, one store
 represents 256 source elements and occupies 32 bytes. A one-row range is legal
 when every source physical row can contain the rounded full vector loads and

@@ -15,7 +15,7 @@ module {
       %src: !pto.ptr<f32, ub>, %off: index) -> !pto.vreg<128xf16> {
     %c1 = arith.constant 1 : index
     %source = pto.vmi.group_slot_load %src[%off], %c1 {num_groups = 8}
-        : !pto.ptr<f32, ub>
+        : !pto.ptr<f32, ub>, index
         -> !pto.vmi.vreg<8xf32, #pto.vmi.layout<num_groups = 8, slots = 8>>
     %out = pto.vmi.vcvt %source {saturate = "SAT"}
         : !pto.vmi.vreg<8xf32, #pto.vmi.layout<num_groups = 8, slots = 8>>

@@ -15,7 +15,7 @@ module {
       %offset: index,
       %mask: !pto.vmi.mask<64xpred>) {
     pto.vmi.compress_store %value, %dst[%offset], %mask
-        : !pto.vmi.vreg<64xf32>, !pto.ptr<f32, ub>, !pto.vmi.mask<64xpred>
+        : !pto.vmi.vreg<64xf32>, !pto.ptr<f32, ub>, index, !pto.vmi.mask<64xpred>
     return
   }
 }

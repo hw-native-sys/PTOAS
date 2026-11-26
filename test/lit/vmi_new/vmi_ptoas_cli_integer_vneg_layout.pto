@@ -20,11 +20,11 @@ module attributes {pto.target_arch = "a5"} {
       %c32 = arith.constant 32 : index
       %aligned_offset = arith.muli %offset, %c32 : index
       %value = pto.vmi.vload %src[%aligned_offset]
-          : !pto.ptr<i8, ub> -> !pto.vmi.vreg<1xi8>
+          : !pto.ptr<i8, ub>, index -> !pto.vmi.vreg<1xi8>
       %result = pto.vmi.vneg %value
           : !pto.vmi.vreg<1xi8> -> !pto.vmi.vreg<1xi8>
       pto.vmi.vstore %result, %dst[%aligned_offset]
-          : !pto.vmi.vreg<1xi8>, !pto.ptr<i8, ub>
+          : !pto.vmi.vreg<1xi8>, !pto.ptr<i8, ub>, index
       return
     }
 
@@ -33,11 +33,11 @@ module attributes {pto.target_arch = "a5"} {
       %c32 = arith.constant 32 : index
       %aligned_offset = arith.muli %offset, %c32 : index
       %value = pto.vmi.vload %src[%aligned_offset]
-          : !pto.ptr<i8, ub> -> !pto.vmi.vreg<64xi8>
+          : !pto.ptr<i8, ub>, index -> !pto.vmi.vreg<64xi8>
       %result = pto.vmi.vneg %value
           : !pto.vmi.vreg<64xi8> -> !pto.vmi.vreg<64xi8>
       pto.vmi.vstore %result, %dst[%aligned_offset]
-          : !pto.vmi.vreg<64xi8>, !pto.ptr<i8, ub>
+          : !pto.vmi.vreg<64xi8>, !pto.ptr<i8, ub>, index
       return
     }
 
@@ -46,11 +46,11 @@ module attributes {pto.target_arch = "a5"} {
       %c32 = arith.constant 32 : index
       %aligned_offset = arith.muli %offset, %c32 : index
       %value = pto.vmi.vload %src[%aligned_offset]
-          : !pto.ptr<i8, ub> -> !pto.vmi.vreg<128xi8>
+          : !pto.ptr<i8, ub>, index -> !pto.vmi.vreg<128xi8>
       %result = pto.vmi.vneg %value
           : !pto.vmi.vreg<128xi8> -> !pto.vmi.vreg<128xi8>
       pto.vmi.vstore %result, %dst[%aligned_offset]
-          : !pto.vmi.vreg<128xi8>, !pto.ptr<i8, ub>
+          : !pto.vmi.vreg<128xi8>, !pto.ptr<i8, ub>, index
       return
     }
 
@@ -59,11 +59,11 @@ module attributes {pto.target_arch = "a5"} {
       %c16 = arith.constant 16 : index
       %aligned_offset = arith.muli %offset, %c16 : index
       %value = pto.vmi.vload %src[%aligned_offset]
-          : !pto.ptr<i16, ub> -> !pto.vmi.vreg<1xi16>
+          : !pto.ptr<i16, ub>, index -> !pto.vmi.vreg<1xi16>
       %result = pto.vmi.vneg %value
           : !pto.vmi.vreg<1xi16> -> !pto.vmi.vreg<1xi16>
       pto.vmi.vstore %result, %dst[%aligned_offset]
-          : !pto.vmi.vreg<1xi16>, !pto.ptr<i16, ub>
+          : !pto.vmi.vreg<1xi16>, !pto.ptr<i16, ub>, index
       return
     }
 
@@ -72,11 +72,11 @@ module attributes {pto.target_arch = "a5"} {
       %c16 = arith.constant 16 : index
       %aligned_offset = arith.muli %offset, %c16 : index
       %value = pto.vmi.vload %src[%aligned_offset]
-          : !pto.ptr<i16, ub> -> !pto.vmi.vreg<64xi16>
+          : !pto.ptr<i16, ub>, index -> !pto.vmi.vreg<64xi16>
       %result = pto.vmi.vneg %value
           : !pto.vmi.vreg<64xi16> -> !pto.vmi.vreg<64xi16>
       pto.vmi.vstore %result, %dst[%aligned_offset]
-          : !pto.vmi.vreg<64xi16>, !pto.ptr<i16, ub>
+          : !pto.vmi.vreg<64xi16>, !pto.ptr<i16, ub>, index
       return
     }
 
@@ -85,11 +85,11 @@ module attributes {pto.target_arch = "a5"} {
       %c8 = arith.constant 8 : index
       %aligned_offset = arith.muli %offset, %c8 : index
       %value = pto.vmi.vload %src[%aligned_offset]
-          : !pto.ptr<i32, ub> -> !pto.vmi.vreg<1xi32>
+          : !pto.ptr<i32, ub>, index -> !pto.vmi.vreg<1xi32>
       %result = pto.vmi.vneg %value
           : !pto.vmi.vreg<1xi32> -> !pto.vmi.vreg<1xi32>
       pto.vmi.vstore %result, %dst[%aligned_offset]
-          : !pto.vmi.vreg<1xi32>, !pto.ptr<i32, ub>
+          : !pto.vmi.vreg<1xi32>, !pto.ptr<i32, ub>, index
       return
     }
   }
@@ -120,55 +120,55 @@ module attributes {pto.target_arch = "a5"} {
 // ASSIGN-NEXT: func.func @vneg_i8_vl1(%[[VAL_0:[a-zA-Z0-9_.$-]+]]: !pto.ptr<i8, ub>, %[[VAL_1:[a-zA-Z0-9_.$-]+]]: !pto.ptr<i8, ub>, %[[VAL_2:[a-zA-Z0-9_.$-]+]]: index) {
 // ASSIGN-NEXT: %[[VAL_3:[a-zA-Z0-9_.$-]+]] = arith.constant 32 : index
 // ASSIGN-NEXT: %[[VAL_4:[a-zA-Z0-9_.$-]+]] = arith.muli %[[VAL_2]], %[[VAL_3]] : index
-// ASSIGN-NEXT: %[[VAL_5:[a-zA-Z0-9_.$-]+]] = pto.vmi.load %[[VAL_0]]{{\[}}%[[VAL_4]]] : !pto.ptr<i8, ub> -> !pto.vmi.vreg<1xi8, #pto.vmi.layout<contiguous>>
+// ASSIGN-NEXT: %[[VAL_5:[a-zA-Z0-9_.$-]+]] = pto.vmi.load %[[VAL_0]]{{\[}}%[[VAL_4]]] : !pto.ptr<i8, ub>, index -> !pto.vmi.vreg<1xi8, #pto.vmi.layout<contiguous>>
 // ASSIGN-NEXT: %[[VAL_6:[a-zA-Z0-9_.$-]+]] = pto.vmi.vneg %[[VAL_5]] : !pto.vmi.vreg<1xi8, #pto.vmi.layout<contiguous>> -> !pto.vmi.vreg<1xi8, #pto.vmi.layout<contiguous>>
 // ASSIGN-NEXT: %[[VAL_7:[a-zA-Z0-9_.$-]+]] = arith.constant 1 : index
 // ASSIGN-NEXT: %[[VAL_8:[a-zA-Z0-9_.$-]+]] = pto.vmi.ensure_layout %[[VAL_6]] : !pto.vmi.vreg<1xi8, #pto.vmi.layout<contiguous>> -> !pto.vmi.vreg<1xi8, #pto.vmi.layout<num_groups = 1, slots = 8>>
-// ASSIGN-NEXT: pto.vmi.group_store %[[VAL_8]], %[[VAL_1]]{{\[}}%[[VAL_4]]], %[[VAL_7]] {num_groups = 1 : i64} : !pto.vmi.vreg<1xi8, #pto.vmi.layout<num_groups = 1, slots = 8>>, !pto.ptr<i8, ub>
+// ASSIGN-NEXT: pto.vmi.group_store %[[VAL_8]], %[[VAL_1]]{{\[}}%[[VAL_4]]], %[[VAL_7]] {num_groups = 1 : i64} : !pto.vmi.vreg<1xi8, #pto.vmi.layout<num_groups = 1, slots = 8>>, !pto.ptr<i8, ub>, index
 // ASSIGN-NEXT: return
 // ASSIGN-NEXT: }
 // ASSIGN-NEXT: func.func @vneg_i8_vl64(%[[VAL_9:[a-zA-Z0-9_.$-]+]]: !pto.ptr<i8, ub>, %[[VAL_10:[a-zA-Z0-9_.$-]+]]: !pto.ptr<i8, ub>, %[[VAL_11:[a-zA-Z0-9_.$-]+]]: index) {
 // ASSIGN-NEXT: %[[VAL_12:[a-zA-Z0-9_.$-]+]] = arith.constant 32 : index
 // ASSIGN-NEXT: %[[VAL_13:[a-zA-Z0-9_.$-]+]] = arith.muli %[[VAL_11]], %[[VAL_12]] : index
-// ASSIGN-NEXT: %[[VAL_14:[a-zA-Z0-9_.$-]+]] = pto.vmi.load %[[VAL_9]]{{\[}}%[[VAL_13]]] : !pto.ptr<i8, ub> -> !pto.vmi.vreg<64xi8, #pto.vmi.layout<contiguous>>
+// ASSIGN-NEXT: %[[VAL_14:[a-zA-Z0-9_.$-]+]] = pto.vmi.load %[[VAL_9]]{{\[}}%[[VAL_13]]] : !pto.ptr<i8, ub>, index -> !pto.vmi.vreg<64xi8, #pto.vmi.layout<contiguous>>
 // ASSIGN-NEXT: %[[VAL_15:[a-zA-Z0-9_.$-]+]] = pto.vmi.vneg %[[VAL_14]] : !pto.vmi.vreg<64xi8, #pto.vmi.layout<contiguous>> -> !pto.vmi.vreg<64xi8, #pto.vmi.layout<contiguous>>
-// ASSIGN-NEXT: pto.vmi.store %[[VAL_15]], %[[VAL_10]]{{\[}}%[[VAL_13]]] : !pto.vmi.vreg<64xi8, #pto.vmi.layout<contiguous>>, !pto.ptr<i8, ub>
+// ASSIGN-NEXT: pto.vmi.store %[[VAL_15]], %[[VAL_10]]{{\[}}%[[VAL_13]]] : !pto.vmi.vreg<64xi8, #pto.vmi.layout<contiguous>>, !pto.ptr<i8, ub>, index
 // ASSIGN-NEXT: return
 // ASSIGN-NEXT: }
 // ASSIGN-NEXT: func.func @vneg_i8_vl128(%[[VAL_16:[a-zA-Z0-9_.$-]+]]: !pto.ptr<i8, ub>, %[[VAL_17:[a-zA-Z0-9_.$-]+]]: !pto.ptr<i8, ub>, %[[VAL_18:[a-zA-Z0-9_.$-]+]]: index) {
 // ASSIGN-NEXT: %[[VAL_19:[a-zA-Z0-9_.$-]+]] = arith.constant 32 : index
 // ASSIGN-NEXT: %[[VAL_20:[a-zA-Z0-9_.$-]+]] = arith.muli %[[VAL_18]], %[[VAL_19]] : index
-// ASSIGN-NEXT: %[[VAL_21:[a-zA-Z0-9_.$-]+]] = pto.vmi.load %[[VAL_16]]{{\[}}%[[VAL_20]]] : !pto.ptr<i8, ub> -> !pto.vmi.vreg<128xi8, #pto.vmi.layout<contiguous>>
+// ASSIGN-NEXT: %[[VAL_21:[a-zA-Z0-9_.$-]+]] = pto.vmi.load %[[VAL_16]]{{\[}}%[[VAL_20]]] : !pto.ptr<i8, ub>, index -> !pto.vmi.vreg<128xi8, #pto.vmi.layout<contiguous>>
 // ASSIGN-NEXT: %[[VAL_22:[a-zA-Z0-9_.$-]+]] = pto.vmi.vneg %[[VAL_21]] : !pto.vmi.vreg<128xi8, #pto.vmi.layout<contiguous>> -> !pto.vmi.vreg<128xi8, #pto.vmi.layout<contiguous>>
-// ASSIGN-NEXT: pto.vmi.store %[[VAL_22]], %[[VAL_17]]{{\[}}%[[VAL_20]]] : !pto.vmi.vreg<128xi8, #pto.vmi.layout<contiguous>>, !pto.ptr<i8, ub>
+// ASSIGN-NEXT: pto.vmi.store %[[VAL_22]], %[[VAL_17]]{{\[}}%[[VAL_20]]] : !pto.vmi.vreg<128xi8, #pto.vmi.layout<contiguous>>, !pto.ptr<i8, ub>, index
 // ASSIGN-NEXT: return
 // ASSIGN-NEXT: }
 // ASSIGN-NEXT: func.func @vneg_i16_vl1(%[[VAL_23:[a-zA-Z0-9_.$-]+]]: !pto.ptr<i16, ub>, %[[VAL_24:[a-zA-Z0-9_.$-]+]]: !pto.ptr<i16, ub>, %[[VAL_25:[a-zA-Z0-9_.$-]+]]: index) {
 // ASSIGN-NEXT: %[[VAL_26:[a-zA-Z0-9_.$-]+]] = arith.constant 16 : index
 // ASSIGN-NEXT: %[[VAL_27:[a-zA-Z0-9_.$-]+]] = arith.muli %[[VAL_25]], %[[VAL_26]] : index
-// ASSIGN-NEXT: %[[VAL_28:[a-zA-Z0-9_.$-]+]] = pto.vmi.load %[[VAL_23]]{{\[}}%[[VAL_27]]] : !pto.ptr<i16, ub> -> !pto.vmi.vreg<1xi16, #pto.vmi.layout<contiguous>>
+// ASSIGN-NEXT: %[[VAL_28:[a-zA-Z0-9_.$-]+]] = pto.vmi.load %[[VAL_23]]{{\[}}%[[VAL_27]]] : !pto.ptr<i16, ub>, index -> !pto.vmi.vreg<1xi16, #pto.vmi.layout<contiguous>>
 // ASSIGN-NEXT: %[[VAL_29:[a-zA-Z0-9_.$-]+]] = pto.vmi.vneg %[[VAL_28]] : !pto.vmi.vreg<1xi16, #pto.vmi.layout<contiguous>> -> !pto.vmi.vreg<1xi16, #pto.vmi.layout<contiguous>>
 // ASSIGN-NEXT: %[[VAL_30:[a-zA-Z0-9_.$-]+]] = arith.constant 1 : index
 // ASSIGN-NEXT: %[[VAL_31:[a-zA-Z0-9_.$-]+]] = pto.vmi.ensure_layout %[[VAL_29]] : !pto.vmi.vreg<1xi16, #pto.vmi.layout<contiguous>> -> !pto.vmi.vreg<1xi16, #pto.vmi.layout<num_groups = 1, slots = 8>>
-// ASSIGN-NEXT: pto.vmi.group_store %[[VAL_31]], %[[VAL_24]]{{\[}}%[[VAL_27]]], %[[VAL_30]] {num_groups = 1 : i64} : !pto.vmi.vreg<1xi16, #pto.vmi.layout<num_groups = 1, slots = 8>>, !pto.ptr<i16, ub>
+// ASSIGN-NEXT: pto.vmi.group_store %[[VAL_31]], %[[VAL_24]]{{\[}}%[[VAL_27]]], %[[VAL_30]] {num_groups = 1 : i64} : !pto.vmi.vreg<1xi16, #pto.vmi.layout<num_groups = 1, slots = 8>>, !pto.ptr<i16, ub>, index
 // ASSIGN-NEXT: return
 // ASSIGN-NEXT: }
 // ASSIGN-NEXT: func.func @vneg_i16_vl64(%[[VAL_32:[a-zA-Z0-9_.$-]+]]: !pto.ptr<i16, ub>, %[[VAL_33:[a-zA-Z0-9_.$-]+]]: !pto.ptr<i16, ub>, %[[VAL_34:[a-zA-Z0-9_.$-]+]]: index) {
 // ASSIGN-NEXT: %[[VAL_35:[a-zA-Z0-9_.$-]+]] = arith.constant 16 : index
 // ASSIGN-NEXT: %[[VAL_36:[a-zA-Z0-9_.$-]+]] = arith.muli %[[VAL_34]], %[[VAL_35]] : index
-// ASSIGN-NEXT: %[[VAL_37:[a-zA-Z0-9_.$-]+]] = pto.vmi.load %[[VAL_32]]{{\[}}%[[VAL_36]]] : !pto.ptr<i16, ub> -> !pto.vmi.vreg<64xi16, #pto.vmi.layout<contiguous>>
+// ASSIGN-NEXT: %[[VAL_37:[a-zA-Z0-9_.$-]+]] = pto.vmi.load %[[VAL_32]]{{\[}}%[[VAL_36]]] : !pto.ptr<i16, ub>, index -> !pto.vmi.vreg<64xi16, #pto.vmi.layout<contiguous>>
 // ASSIGN-NEXT: %[[VAL_38:[a-zA-Z0-9_.$-]+]] = pto.vmi.vneg %[[VAL_37]] : !pto.vmi.vreg<64xi16, #pto.vmi.layout<contiguous>> -> !pto.vmi.vreg<64xi16, #pto.vmi.layout<contiguous>>
-// ASSIGN-NEXT: pto.vmi.store %[[VAL_38]], %[[VAL_33]]{{\[}}%[[VAL_36]]] : !pto.vmi.vreg<64xi16, #pto.vmi.layout<contiguous>>, !pto.ptr<i16, ub>
+// ASSIGN-NEXT: pto.vmi.store %[[VAL_38]], %[[VAL_33]]{{\[}}%[[VAL_36]]] : !pto.vmi.vreg<64xi16, #pto.vmi.layout<contiguous>>, !pto.ptr<i16, ub>, index
 // ASSIGN-NEXT: return
 // ASSIGN-NEXT: }
 // ASSIGN-NEXT: func.func @vneg_i32_vl1(%[[VAL_39:[a-zA-Z0-9_.$-]+]]: !pto.ptr<i32, ub>, %[[VAL_40:[a-zA-Z0-9_.$-]+]]: !pto.ptr<i32, ub>, %[[VAL_41:[a-zA-Z0-9_.$-]+]]: index) {
 // ASSIGN-NEXT: %[[VAL_42:[a-zA-Z0-9_.$-]+]] = arith.constant 8 : index
 // ASSIGN-NEXT: %[[VAL_43:[a-zA-Z0-9_.$-]+]] = arith.muli %[[VAL_41]], %[[VAL_42]] : index
-// ASSIGN-NEXT: %[[VAL_44:[a-zA-Z0-9_.$-]+]] = pto.vmi.load %[[VAL_39]]{{\[}}%[[VAL_43]]] : !pto.ptr<i32, ub> -> !pto.vmi.vreg<1xi32, #pto.vmi.layout<contiguous>>
+// ASSIGN-NEXT: %[[VAL_44:[a-zA-Z0-9_.$-]+]] = pto.vmi.load %[[VAL_39]]{{\[}}%[[VAL_43]]] : !pto.ptr<i32, ub>, index -> !pto.vmi.vreg<1xi32, #pto.vmi.layout<contiguous>>
 // ASSIGN-NEXT: %[[VAL_45:[a-zA-Z0-9_.$-]+]] = pto.vmi.vneg %[[VAL_44]] : !pto.vmi.vreg<1xi32, #pto.vmi.layout<contiguous>> -> !pto.vmi.vreg<1xi32, #pto.vmi.layout<contiguous>>
 // ASSIGN-NEXT: %[[VAL_46:[a-zA-Z0-9_.$-]+]] = arith.constant 1 : index
 // ASSIGN-NEXT: %[[VAL_47:[a-zA-Z0-9_.$-]+]] = pto.vmi.ensure_layout %[[VAL_45]] : !pto.vmi.vreg<1xi32, #pto.vmi.layout<contiguous>> -> !pto.vmi.vreg<1xi32, #pto.vmi.layout<num_groups = 1, slots = 8>>
-// ASSIGN-NEXT: pto.vmi.group_store %[[VAL_47]], %[[VAL_40]]{{\[}}%[[VAL_43]]], %[[VAL_46]] {num_groups = 1 : i64} : !pto.vmi.vreg<1xi32, #pto.vmi.layout<num_groups = 1, slots = 8>>, !pto.ptr<i32, ub>
+// ASSIGN-NEXT: pto.vmi.group_store %[[VAL_47]], %[[VAL_40]]{{\[}}%[[VAL_43]]], %[[VAL_46]] {num_groups = 1 : i64} : !pto.vmi.vreg<1xi32, #pto.vmi.layout<num_groups = 1, slots = 8>>, !pto.ptr<i32, ub>, index
 // ASSIGN-NEXT: return
 // ASSIGN-NEXT: }
 // ASSIGN-NEXT: }

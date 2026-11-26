@@ -26,7 +26,7 @@ module {
     %r = pto.vmi.vcvt %src
         : !pto.vmi.vreg<256x!pto.f4E1M2x2> -> !pto.vmi.vreg<256x!pto.bf16x2>
     pto.vmi.vstore %r, %dst[%aligned_off]
-        : !pto.vmi.vreg<256x!pto.bf16x2>, !pto.ptr<!pto.bf16x2, ub>
+        : !pto.vmi.vreg<256x!pto.bf16x2>, !pto.ptr<!pto.bf16x2, ub>, index
     return
   }
 
@@ -40,7 +40,7 @@ module {
     %r = pto.vmi.vcvt %src
         : !pto.vmi.vreg<256x!pto.f4E2M1x2> -> !pto.vmi.vreg<256x!pto.bf16x2>
     pto.vmi.vstore %r, %dst[%aligned_off]
-        : !pto.vmi.vreg<256x!pto.bf16x2>, !pto.ptr<!pto.bf16x2, ub>
+        : !pto.vmi.vreg<256x!pto.bf16x2>, !pto.ptr<!pto.bf16x2, ub>, index
     return
   }
 }

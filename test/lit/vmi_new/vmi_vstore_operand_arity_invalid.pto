@@ -1,0 +1,58 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+
+// The vstore parser must diagnose post-bracket operands that do not map to an
+// operand slot instead of silently dropping them: only a row stride (group
+// mode), an i16 block stride and a mask are accepted, and group mode forbids a
+// mask.
+
+// RUN: not pto-test-opt %s --split-input-file 2>&1 | FileCheck %s
+
+// Group mode with a stride and an extra operand, three-type list: the block
+// stride used to be dropped silently.
+module {
+  func.func @group_extra_post_operand(%v: !pto.vmi.vreg<64xf32>,
+                                      %dst: !pto.ptr<f32, ub>, %off: index,
+                                      %stride: index, %bs: i16) {
+    pto.vmi.vstore %v, %dst[%off], %stride, %bs {group = 8 : i64}
+        : !pto.vmi.vreg<64xf32>, !pto.ptr<f32, ub>, index
+    return
+  }
+}
+
+// -----
+
+// Non-group mode with three post-bracket operands: all three used to be dropped.
+module {
+  func.func @dense_three_post_operands(%v: !pto.vmi.vreg<64xf32>,
+                                       %dst: !pto.ptr<f32, ub>, %off: index,
+                                       %a: index, %b: i16,
+                                       %mask: !pto.vmi.mask<64xpred>) {
+    pto.vmi.vstore %v, %dst[%off], %a, %b, %mask
+        : !pto.vmi.vreg<64xf32>, !pto.ptr<f32, ub>, index
+    return
+  }
+}
+
+// -----
+
+// Group mode does not take a mask.
+module {
+  func.func @group_with_mask_type(%v: !pto.vmi.vreg<64xf32>,
+                                  %dst: !pto.ptr<f32, ub>, %off: index,
+                                  %stride: index,
+                                  %mask: !pto.vmi.mask<64xpred>) {
+    pto.vmi.vstore %v, %dst[%off], %stride, %mask {group = 8 : i64}
+        : !pto.vmi.vreg<64xf32>, !pto.ptr<f32, ub>, index, !pto.vmi.mask<64xpred>
+    return
+  }
+}
+
+// CHECK: unexpected operands after the destination
+// CHECK: unexpected operands after the destination
+// CHECK: group mode does not take a mask operand

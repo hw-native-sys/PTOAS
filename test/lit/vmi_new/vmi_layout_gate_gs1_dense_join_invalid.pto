@@ -22,15 +22,15 @@ module {
     %c0 = arith.constant 0 : index
     %c1 = arith.constant 1 : index
     %mask = pto.vmi.create_mask %c256 : index -> !pto.vmi.mask<256xpred>
-    %x = pto.vmi.vload %src[%off] : !pto.ptr<f32, ub> -> !pto.vmi.vreg<256xf32>
+    %x = pto.vmi.vload %src[%off] : !pto.ptr<f32, ub>, index -> !pto.vmi.vreg<256xf32>
     %a = pto.vmi.vcmax %x, %mask {group = 4}
         : !pto.vmi.vreg<256xf32>, !pto.vmi.mask<256xpred> -> !pto.vmi.vreg<4xf32>
-    %kk = pto.vmi.vload %k[%c0] : !pto.ptr<f32, ub> -> !pto.vmi.vreg<4xf32>
+    %kk = pto.vmi.vload %k[%c0] : !pto.ptr<f32, ub>, index -> !pto.vmi.vreg<4xf32>
     // CHECK: error: VMI-LAYOUT-CONTRACT: no complete legal VMI layout plan exists for this component
     %m = pto.vmi.vmul %a, %kk
         : !pto.vmi.vreg<4xf32>, !pto.vmi.vreg<4xf32> -> !pto.vmi.vreg<4xf32>
     pto.vmi.vstore %m, %dst[%off], %c1 {group = 4}
-        : !pto.vmi.vreg<4xf32>, !pto.ptr<f32, ub>
+        : !pto.vmi.vreg<4xf32>, !pto.ptr<f32, ub>, index
     return
   }
 }

@@ -15,7 +15,7 @@ module {
       -> !pto.vmi.vreg<128xf32, #pto.vmi.layout<deinterleaved = 4>> {
     %c0 = arith.constant 0 : index
     %v = pto.vmi.load %src[%c0]
-        : !pto.ptr<f32, ub> -> !pto.vmi.vreg<128xf32, #pto.vmi.layout<deinterleaved = 4>>
+        : !pto.ptr<f32, ub>, index -> !pto.vmi.vreg<128xf32, #pto.vmi.layout<deinterleaved = 4>>
     return %v : !pto.vmi.vreg<128xf32, #pto.vmi.layout<deinterleaved = 4>>
   }
   func.func @dense_to_short_deint4(%v: !pto.vmi.vreg<128xf32, #pto.vmi.layout<contiguous>>)

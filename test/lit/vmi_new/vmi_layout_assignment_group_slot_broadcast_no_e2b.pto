@@ -13,7 +13,7 @@ module {
       %src: !pto.ptr<f32, ub>, %off: index) -> !pto.vmi.vreg<256xf32> {
     %c1 = arith.constant 1 : index
     %slots = pto.vmi.vload %src[%off], %c1 {group = 8}
-        : !pto.ptr<f32, ub> -> !pto.vmi.vreg<8xf32>
+        : !pto.ptr<f32, ub>, index -> !pto.vmi.vreg<8xf32>
     %out = pto.vmi.vbrc %slots {group = 8}
         : !pto.vmi.vreg<8xf32> -> !pto.vmi.vreg<256xf32>
     return %out : !pto.vmi.vreg<256xf32>

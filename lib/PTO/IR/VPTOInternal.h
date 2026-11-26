@@ -61,12 +61,15 @@ MemoryRole classifyMemoryRole(mlir::Type type);
 
 // Element offsets of the pointer-based memory ops and of pto.addptr are signed
 // element displacements: positive values advance the pointer and negative
-// values move it toward lower addresses. An offset may be written either with
-// the platform index type or as a signless integer of explicit width; the unit
-// (elements, bytes, alignment units), the signedness and the addressable range
-// are operation-specific and documented per op.
+// values move it toward lower addresses. An offset is written either with the
+// platform index type or as a 32/64-bit signless integer; narrower widths are
+// rejected because derived chunk/group offsets are computed in the offset's own
+// type and would wrap silently (see PTO_ElementOffset). The unit (elements,
+// bytes, alignment units), the signedness and the addressable range are
+// operation-specific and documented per op.
 [[maybe_unused]] inline bool isElementOffsetType(mlir::Type type) {
-  return type.isIndex() || type.isSignlessInteger();
+    return type.isIndex() || type.isSignlessInteger(mlir::pto::kValue32) ||
+           type.isSignlessInteger(mlir::pto::kValue64);
 }
 
 bool isForbiddenSynchronizationInsideVecScope(mlir::Operation *op);

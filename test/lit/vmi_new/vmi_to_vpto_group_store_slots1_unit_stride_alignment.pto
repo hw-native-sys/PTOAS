@@ -16,7 +16,7 @@ module {
     %c1 = arith.constant 1 : index
     pto.vmi.vstore %value, %dst[%c0], %c1 {group = 8}
         : !pto.vmi.vreg<8xf32, #pto.vmi.layout<num_groups = 8, slots = 1>>,
-          !pto.ptr<f32, ub>
+          !pto.ptr<f32, ub>, index
     return
   }
 
@@ -29,7 +29,7 @@ module {
     %off = arith.muli %row, %c2 : index
     pto.vmi.vstore %value, %dst[%off], %c1 {group = 8}
         : !pto.vmi.vreg<8xf32, #pto.vmi.layout<num_groups = 8, slots = 1>>,
-          !pto.ptr<f32, ub>
+          !pto.ptr<f32, ub>, index
     return
   }
 }

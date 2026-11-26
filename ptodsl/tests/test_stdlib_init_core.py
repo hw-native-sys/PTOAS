@@ -469,7 +469,7 @@ def constants_match_reference() -> None:
 
     text = const_probe.mlir_text()
     expect("281474976710656" in text, "ctrl keep mask 0x1000000000000 must be emitted")
-    expect("1152921504606846984" in text, "ctrl preset bits 0x1000000000000008 must be emitted")
+    expect("pto.constant 8 : i64" in text, "ctrl preset bits 0x8 must be emitted")
     expect("36" in text, "default st_atomic_cfg 0b00100100 == 36 must be emitted")
 
 

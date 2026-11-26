@@ -20,17 +20,22 @@ These instructions build the address, view, and tile-buffer metadata that later 
 | Parameter | Type | Description |
 |-----------|------|-------------|
 | `%base` | `!pto.ptr<T>` | Base pointer. |
-| `%offset` | `index` | Element offset. |
+| `%offset` | `index`, `i32` or `i64` | Element offset. |
 
 **Constraints:**
 
 - Result type must match the input pointer type.
 - The op is pure (no side effects).
+- The offset type is part of the operand type list, immediately after the base
+  pointer type, and is required; an integer offset keeps its own width and is not
+  widened to `index`.  Narrower widths (`i1`/`i8`/`i16`), signed and unsigned
+  integer types (`si32`, `ui32`) and widths above 64 bits are rejected.
 
 **Example:**
 
 ```mlir
 %ptr_off = pto.addptr %base, %offset : !pto.ptr<f32>, index -> !pto.ptr<f32>
+%ptr_off32 = pto.addptr %base, %off32 : !pto.ptr<f32>, i32 -> !pto.ptr<f32>
 ```
 
 ---

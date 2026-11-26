@@ -76,13 +76,23 @@ def PrintScalarType :
   AnyTypeOf<[AnyInteger, AnyFloat], "integer/float printable scalar">;
 
 // Element offset / displacement operand of memory access and pointer
-// arithmetic ops. Either the platform index type or a signless integer with an
-// explicit width. The unit (elements, bytes, alignment units), the signedness
-// and the addressable range are operation-specific; each op documents its own
-// contract, and the emitters must honour it (see issue #12).
+// arithmetic ops. Either the platform index type or a 32/64-bit signless
+// integer with an explicit width. The unit (elements, bytes, alignment units),
+// the signedness and the addressable range are operation-specific; each op
+// documents its own contract, and the emitters must honour it (see issue #12).
+//
+// Widths below 32 bits are rejected on purpose. The lowerings derive per-chunk
+// and per-group offsets from the element offset and evaluate that arithmetic in
+// the offset's own type (pto.vmi's group/stride/chunk arithmetic is the current
+// case), so an 8- or 16-bit offset would wrap silently and address the wrong
+// element for an access that is still in bounds. 32 bits are enough for every
+// element displacement that can be in bounds (the unit is elements, so an i32
+// offset spans 2^31 elements, far beyond any UB allocation); i64 and index cover
+// the rest. Wider than 64 bits buys nothing and is rejected too.
 def PTO_ElementOffset
-    : Type<CPred<"$_self.isSignlessIntOrIndex()">,
-           "index or signless integer element offset">,
+    : Type<CPred<"$_self.isIndex() || $_self.isSignlessInteger(32) || "
+                "$_self.isSignlessInteger(64)">,
+           "index, i32 or i64 element offset">,
       // The generated builders forward the operand Value, so an integer offset
       // supplied programmatically keeps its own type. The buildable type only
       // supplies the type that a builder (or the declarative assembly format)

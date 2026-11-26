@@ -11,46 +11,46 @@
 
 module {
   func.func @split128(%src: !pto.ptr<bf16, ub>, %a: !pto.ptr<f32, ub>, %b: !pto.ptr<f32, ub>, %off: index) {
-    %x = pto.vmi.vload %src[%off] : !pto.ptr<bf16, ub> -> !pto.vmi.vreg<128xbf16>
+    %x = pto.vmi.vload %src[%off] : !pto.ptr<bf16, ub>, index -> !pto.vmi.vreg<128xbf16>
     %w = pto.vmi.vinterpret_cast %x : !pto.vmi.vreg<128xbf16> -> !pto.vmi.vreg<64xui32>
     %lo, %hi = pto.vmi.vunzip %w : !pto.vmi.vreg<64xui32> -> !pto.vmi.vreg<64xbf16>, !pto.vmi.vreg<64xbf16>
     %even = pto.vmi.vcvt %lo : !pto.vmi.vreg<64xbf16> -> !pto.vmi.vreg<64xf32>
     %odd = pto.vmi.vcvt %hi : !pto.vmi.vreg<64xbf16> -> !pto.vmi.vreg<64xf32>
-    pto.vmi.vstore %even, %a[%off] : !pto.vmi.vreg<64xf32>, !pto.ptr<f32, ub>
-    pto.vmi.vstore %odd, %b[%off] : !pto.vmi.vreg<64xf32>, !pto.ptr<f32, ub>
+    pto.vmi.vstore %even, %a[%off] : !pto.vmi.vreg<64xf32>, !pto.ptr<f32, ub>, index
+    pto.vmi.vstore %odd, %b[%off] : !pto.vmi.vreg<64xf32>, !pto.ptr<f32, ub>, index
     return
   }
   func.func @extra_half_use(%src: !pto.ptr<bf16, ub>, %a: !pto.ptr<f32, ub>, %b: !pto.ptr<f32, ub>, %off: index) {
-    %x = pto.vmi.vload %src[%off] : !pto.ptr<bf16, ub> -> !pto.vmi.vreg<128xbf16>
+    %x = pto.vmi.vload %src[%off] : !pto.ptr<bf16, ub>, index -> !pto.vmi.vreg<128xbf16>
     %w = pto.vmi.vinterpret_cast %x : !pto.vmi.vreg<128xbf16> -> !pto.vmi.vreg<64xui32>
     %lo, %hi = pto.vmi.vunzip %w : !pto.vmi.vreg<64xui32> -> !pto.vmi.vreg<64xbf16>, !pto.vmi.vreg<64xbf16>
     %extra = pto.vmi.vcvt %lo : !pto.vmi.vreg<64xbf16> -> !pto.vmi.vreg<64xf32>
-    pto.vmi.vstore %extra, %a[%off] : !pto.vmi.vreg<64xf32>, !pto.ptr<f32, ub>
+    pto.vmi.vstore %extra, %a[%off] : !pto.vmi.vreg<64xf32>, !pto.ptr<f32, ub>, index
     %even = pto.vmi.vcvt %lo : !pto.vmi.vreg<64xbf16> -> !pto.vmi.vreg<64xf32>
     %odd = pto.vmi.vcvt %hi : !pto.vmi.vreg<64xbf16> -> !pto.vmi.vreg<64xf32>
-    pto.vmi.vstore %even, %a[%off] : !pto.vmi.vreg<64xf32>, !pto.ptr<f32, ub>
-    pto.vmi.vstore %odd, %b[%off] : !pto.vmi.vreg<64xf32>, !pto.ptr<f32, ub>
+    pto.vmi.vstore %even, %a[%off] : !pto.vmi.vreg<64xf32>, !pto.ptr<f32, ub>, index
+    pto.vmi.vstore %odd, %b[%off] : !pto.vmi.vreg<64xf32>, !pto.ptr<f32, ub>, index
     return
   }
   func.func @extra_view_use(%src: !pto.ptr<bf16, ub>, %a: !pto.ptr<f32, ub>, %b: !pto.ptr<f32, ub>, %off: index, %bits: !pto.ptr<ui32, ub>) {
-    %x = pto.vmi.vload %src[%off] : !pto.ptr<bf16, ub> -> !pto.vmi.vreg<128xbf16>
+    %x = pto.vmi.vload %src[%off] : !pto.ptr<bf16, ub>, index -> !pto.vmi.vreg<128xbf16>
     %w = pto.vmi.vinterpret_cast %x : !pto.vmi.vreg<128xbf16> -> !pto.vmi.vreg<64xui32>
-    pto.vmi.vstore %w, %bits[%off] : !pto.vmi.vreg<64xui32>, !pto.ptr<ui32, ub>
+    pto.vmi.vstore %w, %bits[%off] : !pto.vmi.vreg<64xui32>, !pto.ptr<ui32, ub>, index
     %lo, %hi = pto.vmi.vunzip %w : !pto.vmi.vreg<64xui32> -> !pto.vmi.vreg<64xbf16>, !pto.vmi.vreg<64xbf16>
     %even = pto.vmi.vcvt %lo : !pto.vmi.vreg<64xbf16> -> !pto.vmi.vreg<64xf32>
     %odd = pto.vmi.vcvt %hi : !pto.vmi.vreg<64xbf16> -> !pto.vmi.vreg<64xf32>
-    pto.vmi.vstore %even, %a[%off] : !pto.vmi.vreg<64xf32>, !pto.ptr<f32, ub>
-    pto.vmi.vstore %odd, %b[%off] : !pto.vmi.vreg<64xf32>, !pto.ptr<f32, ub>
+    pto.vmi.vstore %even, %a[%off] : !pto.vmi.vreg<64xf32>, !pto.ptr<f32, ub>, index
+    pto.vmi.vstore %odd, %b[%off] : !pto.vmi.vreg<64xf32>, !pto.ptr<f32, ub>, index
     return
   }
   func.func @explicit_layout(%src: !pto.ptr<bf16, ub>, %a: !pto.ptr<f32, ub>, %b: !pto.ptr<f32, ub>, %off: index) {
-    %x = pto.vmi.vload %src[%off] : !pto.ptr<bf16, ub> -> !pto.vmi.vreg<128xbf16, #pto.vmi.layout<contiguous>>
+    %x = pto.vmi.vload %src[%off] : !pto.ptr<bf16, ub>, index -> !pto.vmi.vreg<128xbf16, #pto.vmi.layout<contiguous>>
     %w = pto.vmi.vinterpret_cast %x : !pto.vmi.vreg<128xbf16, #pto.vmi.layout<contiguous>> -> !pto.vmi.vreg<64xui32, #pto.vmi.layout<contiguous>>
     %lo, %hi = pto.vmi.vunzip %w : !pto.vmi.vreg<64xui32, #pto.vmi.layout<contiguous>> -> !pto.vmi.vreg<64xbf16, #pto.vmi.layout<contiguous>>, !pto.vmi.vreg<64xbf16, #pto.vmi.layout<contiguous>>
     %even = pto.vmi.vcvt %lo : !pto.vmi.vreg<64xbf16, #pto.vmi.layout<contiguous>> -> !pto.vmi.vreg<64xf32, #pto.vmi.layout<contiguous>>
     %odd = pto.vmi.vcvt %hi : !pto.vmi.vreg<64xbf16, #pto.vmi.layout<contiguous>> -> !pto.vmi.vreg<64xf32, #pto.vmi.layout<contiguous>>
-    pto.vmi.vstore %even, %a[%off] : !pto.vmi.vreg<64xf32, #pto.vmi.layout<contiguous>>, !pto.ptr<f32, ub>
-    pto.vmi.vstore %odd, %b[%off] : !pto.vmi.vreg<64xf32, #pto.vmi.layout<contiguous>>, !pto.ptr<f32, ub>
+    pto.vmi.vstore %even, %a[%off] : !pto.vmi.vreg<64xf32, #pto.vmi.layout<contiguous>>, !pto.ptr<f32, ub>, index
+    pto.vmi.vstore %odd, %b[%off] : !pto.vmi.vreg<64xf32, #pto.vmi.layout<contiguous>>, !pto.ptr<f32, ub>, index
     return
   }
 

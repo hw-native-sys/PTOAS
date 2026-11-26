@@ -63,6 +63,9 @@ env:
 
 jobs:
   a3-board:
+    permissions:
+      repository: read
+      id-token: write
     name: A3 nightly board validation
     runs-on: ['self-hosted', 'npu=4', 'smoke=301']
     timeout-minutes: 600
@@ -165,14 +168,24 @@ jobs:
             exit 1
           fi
 
+      # The validation step alone may run 540 minutes, longer than the 3600s
+      # OIDC credential, so exchange it right before the upload.
+      - name: oidc_auth
+        if: ${{ always() && env.A3_BOARD_OBS_UPLOAD == 'true' }}
+        uses: huaweicloud-oidc-auth
+        with:
+          audience: ${{ secrets.audience }}
+          agency_urn: ${{ secrets.agency_urn }}
+          provider_urn: ${{ secrets.provider_urn }}
+          region: cn-north-4
+          duration: 3600
+
       - name: Upload board logs
         if: ${{ always() && env.A3_BOARD_OBS_UPLOAD == 'true' }}
         uses: obs-upload
         with:
           endpoint: "https://obs.cn-north-4.myhuaweicloud.com"
           bucket: "ascend-ci"
-          access-key: ${{ secrets.AK }}
-          secret-key: ${{ secrets.SK }}
           artifact-path: |
             ${{ steps.process_checkout.outputs.path }}/run_test.log
             ${{ steps.process_checkout.outputs.path }}/build/a3-nightly/a3-nightly.log

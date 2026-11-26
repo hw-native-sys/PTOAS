@@ -90,7 +90,7 @@ module attributes {pto.target_arch = "a5", pto.backend = "vpto"} {
   %factors_off = arith.constant 3328 : index
   %source__ssa_v0_reg_ptr = pto.addptr %bfbase, %source_off : <bf16, ub>, index -> <bf16, ub>
   %maxima__ssa_v0_reg_ptr = pto.addptr %bfbase, %maxima_off : <bf16, ub>, index -> <bf16, ub>
-  %rounded__ssa_v0_reg_ptr = pto.addptr %fbase, %rounded_off : <f32, ub>, index -> <f32, ub>
+  %rounded_ptr = pto.addptr %fbase, %rounded_off : <f32, ub>, index -> <f32, ub>
   %factors__ssa_v0_reg_ptr = pto.addptr %bfbase, %factors_off : <bf16, ub>, index -> <bf16, ub>
   pto.vecscope {
     %full__ssa_v0 = pto.vmi.pset "PAT_ALL" : !pto.vmi.mask<64xpred>
@@ -105,7 +105,7 @@ module attributes {pto.target_arch = "a5", pto.backend = "vpto"} {
         %1 = arith.muli %row__idx_v0, %c512_index : index
         %2 = arith.muli %chunk__idx_v0, %c128_index : index
         %3 = arith.addi %1, %2 : index
-        %bf__ssa_v0 = pto.vmi.vload %source__ssa_v0_reg_ptr[%3] : !pto.ptr<bf16, ub> -> !pto.vmi.vreg<128xbf16>
+        %bf__ssa_v0 = pto.vmi.vload %source__ssa_v0_reg_ptr[%3] : !pto.ptr<bf16, ub>, index -> !pto.vmi.vreg<128xbf16>
         %bits__ssa_v0 = pto.vmi.vinterpret_cast %bf__ssa_v0 : !pto.vmi.vreg<128xbf16> -> !pto.vmi.vreg<128xui16>
         %t__tmp_v0 = pto.vmi.vbrc %c32767_ui16 : ui16 -> !pto.vmi.vreg<128xui16>
         %abs_bits__ssa_v0 = pto.vmi.vand %bits__ssa_v0, %t__tmp_v0, %full16__ssa_v0 {pmode = "zero"} :
@@ -116,10 +116,10 @@ module attributes {pto.target_arch = "a5", pto.backend = "vpto"} {
         %5 = arith.muli %row__idx_v0, %c32_index : index
         %6 = arith.muli %chunk__idx_v0, %c8_index : index
         %7 = arith.addi %5, %6 : index
-        pto.vmi.vstore %bf_max__ssa_v0, %maxima__ssa_v0_reg_ptr[%7] : !pto.vmi.vreg<8xbf16>, !pto.ptr<bf16, ub>
+        pto.vmi.vstore %bf_max__ssa_v0, %maxima__ssa_v0_reg_ptr[%7] : !pto.vmi.vreg<8xbf16>, !pto.ptr<bf16, ub>, index
       }
       %8 = arith.muli %row__idx_v0, %c32_index : index
-      %t__tmp_v1 = pto.vmi.vload %maxima__ssa_v0_reg_ptr[%8] : !pto.ptr<bf16, ub> -> !pto.vmi.vreg<32xbf16>
+      %t__tmp_v1 = pto.vmi.vload %maxima__ssa_v0_reg_ptr[%8] : !pto.ptr<bf16, ub>, index -> !pto.vmi.vreg<32xbf16>
       %maximum__ssa_v0 = pto.vmi.vcvt %t__tmp_v1 : !pto.vmi.vreg<32xbf16> -> !pto.vmi.vreg<32xf32>
       %t__tmp_v2 = pto.vmi.vmuls %maximum__ssa_v0, %cst_17, %scale_mask__ssa_v0 {pmode = "zero"} :
         !pto.vmi.vreg<32xf32>, f32, !pto.vmi.mask<32xpred> -> !pto.vmi.vreg<32xf32>
@@ -128,15 +128,15 @@ module attributes {pto.target_arch = "a5", pto.backend = "vpto"} {
       %bf_scale__ssa_v0 = pto.vmi.vcvt %scale32__ssa_v0 {rounding = "R", saturate = "NOSAT"} :
         !pto.vmi.vreg<32xf32> -> !pto.vmi.vreg<32xbf16>
       %9 = arith.muli %row__idx_v0, %c64_index : index
-      pto.vmi.vstore %bf_scale__ssa_v0, %factors__ssa_v0_reg_ptr[%9] : !pto.vmi.vreg<32xbf16>, !pto.ptr<bf16, ub>
-      %rounded_scale__ssa_v0 = pto.vmi.vcvt %bf_scale__ssa_v0 : !pto.vmi.vreg<32xbf16> -> !pto.vmi.vreg<32xf32>
+      pto.vmi.vstore %bf_scale__ssa_v0, %factors__ssa_v0_reg_ptr[%9] : !pto.vmi.vreg<32xbf16>, !pto.ptr<bf16, ub>, index
+      %rscale = pto.vmi.vcvt %bf_scale__ssa_v0 : !pto.vmi.vreg<32xbf16> -> !pto.vmi.vreg<32xf32>
       %10 = arith.muli %row__idx_v0, %c64_index : index
-      pto.vmi.vstore %rounded_scale__ssa_v0, %rounded__ssa_v0_reg_ptr[%10] : !pto.vmi.vreg<32xf32>, !pto.ptr<f32, ub>
+      pto.vmi.vstore %rscale, %rounded_ptr[%10] : !pto.vmi.vreg<32xf32>, !pto.ptr<f32, ub>, index
       scf.for %segment__idx_v0 = %c0_index to %c8_index step %c1_index {
         %11 = arith.muli %row__idx_v0, %c512_index : index
         %12 = arith.muli %segment__idx_v0, %c64_index : index
         %13 = arith.addi %11, %12 : index
-        %t__tmp_v3 = pto.vmi.vload %source__ssa_v0_reg_ptr[%13] : !pto.ptr<bf16, ub> -> !pto.vmi.vreg<64xbf16>
+        %t__tmp_v3 = pto.vmi.vload %source__ssa_v0_reg_ptr[%13] : !pto.ptr<bf16, ub>, index -> !pto.vmi.vreg<64xbf16>
         %value__ssa_v0 = pto.vmi.vcvt %t__tmp_v3 : !pto.vmi.vreg<64xbf16> -> !pto.vmi.vreg<64xf32>
         %14 = arith.muli %row__idx_v0, %c64_index : index
         %15 = arith.muli %segment__idx_v0, %c4_index : index
@@ -145,7 +145,7 @@ module attributes {pto.target_arch = "a5", pto.backend = "vpto"} {
         %17 = builtin.unrealized_conversion_cast %18 : i32 to ui32
         %offsets__ssa_v0 = pto.vmi.vadds %group_indices__ssa_v0, %17, %full__ssa_v0 {pmode = "zero"} :
         !pto.vmi.vreg<64xui32>, ui32, !pto.vmi.mask<64xpred> -> !pto.vmi.vreg<64xui32>
-        %scale__ssa_v0 = pto.vmi.vgather %rounded__ssa_v0_reg_ptr, %offsets__ssa_v0, %full__ssa_v0 {pmode =
+        %scale__ssa_v0 = pto.vmi.vgather %rounded_ptr, %offsets__ssa_v0, %full__ssa_v0 {pmode =
         "zero"} : !pto.ptr<f32, ub>, !pto.vmi.vreg<64xui32>, !pto.vmi.mask<64xpred> -> !pto.vmi.vreg<64xf32>
         %normalized__ssa_v0 = pto.vmi.vdiv %value__ssa_v0, %scale__ssa_v0, %full__ssa_v0 {pmode = "zero"} :
         !pto.vmi.vreg<64xf32>, !pto.vmi.vreg<64xf32>, !pto.vmi.mask<64xpred> -> !pto.vmi.vreg<64xf32>
@@ -219,7 +219,7 @@ module attributes {pto.target_arch = "a5", pto.backend = "vpto"} {
         %28 = arith.muli %segment__idx_v0, %c32_index : index
         %29 = arith.addi %27, %28 : index
         pto.vmi.vstore %bytes8__ssa_v0, %base[%29], %lower__ssa_v0 {pmode = "merge"} : !pto.vmi.vreg<64xui8>,
-        !pto.ptr<ui8, ub>, !pto.vmi.mask<64xpred>
+        !pto.ptr<ui8, ub>, index, !pto.vmi.mask<64xpred>
       }
     }
   }

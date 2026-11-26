@@ -29,7 +29,7 @@ module attributes {pto.target_arch = "a5", pto.kernel_kind = #pto.kernel_kind<ve
         : index -> !pto.vmi.mask<256xpred>
     %zero = pto.vmi.vbrc %cst : bf16 -> !pto.vmi.vreg<256xbf16>
     %x = pto.vmi.vload %src[%off]
-        : !pto.ptr<bf16, ub> -> !pto.vmi.vreg<256xbf16>
+        : !pto.ptr<bf16, ub>, index -> !pto.vmi.vreg<256xbf16>
     %x_f32 = pto.vmi.vcvt %x
         : !pto.vmi.vreg<256xbf16> -> !pto.vmi.vreg<256xf32>
     %mask_f32 = pto.vmi.create_mask %c256
@@ -57,9 +57,9 @@ module attributes {pto.target_arch = "a5", pto.kernel_kind = #pto.kernel_kind<ve
     %high8 = pto.vmi.vcvt %high32 {rounding = "R", saturate = "SAT"}
         : !pto.vmi.vreg<128xf32> -> !pto.vmi.vreg<128xf8E4M3FN>
     pto.vmi.vstore %low8, %dst[%off]
-        : !pto.vmi.vreg<128xf8E4M3FN>, !pto.ptr<f8E4M3FN, ub>
+        : !pto.vmi.vreg<128xf8E4M3FN>, !pto.ptr<f8E4M3FN, ub>, index
     pto.vmi.vstore %high8, %dst[%off128]
-        : !pto.vmi.vreg<128xf8E4M3FN>, !pto.ptr<f8E4M3FN, ub>
+        : !pto.vmi.vreg<128xf8E4M3FN>, !pto.ptr<f8E4M3FN, ub>, index
     return
   }
 }
@@ -161,7 +161,7 @@ module attributes {pto.target_arch = "a5", pto.kernel_kind = #pto.kernel_kind<ve
 // ASSIGN-NEXT: %[[VAL_7:[a-zA-Z0-9_.$-]+]] = arith.addi %[[VAL_6]], %[[VAL_3]] : index
 // ASSIGN-NEXT: %[[VAL_8:[a-zA-Z0-9_.$-]+]] = pto.vmi.create_mask %[[VAL_4]] : index -> !pto.vmi.mask<256xb32, #pto.vmi.layout<contiguous>>
 // ASSIGN-NEXT: %[[VAL_9:[a-zA-Z0-9_.$-]+]] = pto.vmi.broadcast %[[VAL_5]] : bf16 -> !pto.vmi.vreg<256xbf16, #pto.vmi.layout<contiguous>>
-// ASSIGN-NEXT: %[[VAL_10:[a-zA-Z0-9_.$-]+]] = pto.vmi.load %[[VAL_0]]{{\[}}%[[VAL_6]]] : !pto.ptr<bf16, ub> -> !pto.vmi.vreg<256xbf16, #pto.vmi.layout<contiguous>>
+// ASSIGN-NEXT: %[[VAL_10:[a-zA-Z0-9_.$-]+]] = pto.vmi.load %[[VAL_0]]{{\[}}%[[VAL_6]]] : !pto.ptr<bf16, ub>, index -> !pto.vmi.vreg<256xbf16, #pto.vmi.layout<contiguous>>
 // ASSIGN-NEXT: %[[VAL_11:[a-zA-Z0-9_.$-]+]] = pto.vmi.extf %[[VAL_10]] : !pto.vmi.vreg<256xbf16, #pto.vmi.layout<contiguous>> -> !pto.vmi.vreg<256xf32, #pto.vmi.layout<contiguous>>
 // ASSIGN-NEXT: %[[VAL_12:[a-zA-Z0-9_.$-]+]] = pto.vmi.create_mask %[[VAL_4]] : index -> !pto.vmi.mask<256xb32, #pto.vmi.layout<contiguous>>
 // ASSIGN-NEXT: %[[VAL_13:[a-zA-Z0-9_.$-]+]] = pto.vmi.group_reduce_maxf %[[VAL_11]], %[[VAL_12]] {num_groups = 8 : i64} : !pto.vmi.vreg<256xf32, #pto.vmi.layout<contiguous>>, !pto.vmi.mask<256xb32, #pto.vmi.layout<contiguous>> -> !pto.vmi.vreg<8xf32, #pto.vmi.layout<num_groups = 8, slots = 1>>
@@ -177,7 +177,7 @@ module attributes {pto.target_arch = "a5", pto.kernel_kind = #pto.kernel_kind<ve
 // ASSIGN-NEXT: %[[VAL_24:[a-zA-Z0-9_.$-]+]] = pto.vmi.bitcast %[[VAL_23]] : !pto.vmi.vreg<256xbf16, #pto.vmi.layout<contiguous>> -> !pto.vmi.vreg<128xf32, #pto.vmi.layout<contiguous>>
 // ASSIGN-NEXT: %[[VAL_25:[a-zA-Z0-9_.$-]+]] = pto.vmi.truncf %[[VAL_22]] {rounding = "R", saturate = "SAT"} : !pto.vmi.vreg<128xf32, #pto.vmi.layout<contiguous>> -> !pto.vmi.vreg<128xf8E4M3FN, #pto.vmi.layout<contiguous, lane_stride = 4>>
 // ASSIGN-NEXT: %[[VAL_26:[a-zA-Z0-9_.$-]+]] = pto.vmi.truncf %[[VAL_24]] {rounding = "R", saturate = "SAT"} : !pto.vmi.vreg<128xf32, #pto.vmi.layout<contiguous>> -> !pto.vmi.vreg<128xf8E4M3FN, #pto.vmi.layout<contiguous, lane_stride = 4>>
-// ASSIGN-NEXT: pto.vmi.store %[[VAL_25]], %[[VAL_1]]{{\[}}%[[VAL_6]]] : !pto.vmi.vreg<128xf8E4M3FN, #pto.vmi.layout<contiguous, lane_stride = 4>>, !pto.ptr<f8E4M3FN, ub>
-// ASSIGN-NEXT: pto.vmi.store %[[VAL_26]], %[[VAL_1]]{{\[}}%[[VAL_7]]] : !pto.vmi.vreg<128xf8E4M3FN, #pto.vmi.layout<contiguous, lane_stride = 4>>, !pto.ptr<f8E4M3FN, ub>
+// ASSIGN-NEXT: pto.vmi.store %[[VAL_25]], %[[VAL_1]]{{\[}}%[[VAL_6]]] : !pto.vmi.vreg<128xf8E4M3FN, #pto.vmi.layout<contiguous, lane_stride = 4>>, !pto.ptr<f8E4M3FN, ub>, index
+// ASSIGN-NEXT: pto.vmi.store %[[VAL_26]], %[[VAL_1]]{{\[}}%[[VAL_7]]] : !pto.vmi.vreg<128xf8E4M3FN, #pto.vmi.layout<contiguous, lane_stride = 4>>, !pto.ptr<f8E4M3FN, ub>, index
 // ASSIGN-NEXT: return
 // ASSIGN-NEXT: }

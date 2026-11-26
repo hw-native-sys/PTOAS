@@ -16,14 +16,14 @@ module attributes {pto.target_arch = "a5", pto.kernel_kind = #pto.kernel_kind<ve
     %c0 = arith.constant 0 : index
     pto.vecscope {
       %packed = pto.vmi.vload %src[%c0]
-          : !pto.ptr<!pto.f4E1M2x2, ub>
+          : !pto.ptr<!pto.f4E1M2x2, ub>, index
          -> !pto.vmi.vreg<64x!pto.f4E1M2x2>
       %wide = pto.vmi.vcvt %packed
           : !pto.vmi.vreg<64x!pto.f4E1M2x2>
          -> !pto.vmi.vreg<64x!pto.bf16x2>
       pto.vmi.vstore %wide, %dst[%c0]
           : !pto.vmi.vreg<64x!pto.bf16x2>,
-            !pto.ptr<!pto.bf16x2, ub>
+            !pto.ptr<!pto.bf16x2, ub>, index
     }
     return
   }
@@ -37,14 +37,14 @@ module attributes {pto.target_arch = "a5", pto.kernel_kind = #pto.kernel_kind<ve
     %c0 = arith.constant 0 : index
     pto.vecscope {
       %packed = pto.vmi.vload %src[%c0]
-          : !pto.ptr<!pto.f4E1M2x2, ub>
+          : !pto.ptr<!pto.f4E1M2x2, ub>, index
          -> !pto.vmi.vreg<256x!pto.f4E1M2x2>
       %wide = pto.vmi.vcvt %packed
           : !pto.vmi.vreg<256x!pto.f4E1M2x2>
          -> !pto.vmi.vreg<256x!pto.bf16x2>
       pto.vmi.vstore %wide, %dst[%c0]
           : !pto.vmi.vreg<256x!pto.bf16x2>,
-            !pto.ptr<!pto.bf16x2, ub>
+            !pto.ptr<!pto.bf16x2, ub>, index
     }
     return
   }

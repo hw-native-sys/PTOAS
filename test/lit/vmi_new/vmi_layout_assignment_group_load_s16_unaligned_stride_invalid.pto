@@ -17,13 +17,13 @@ module {
     %c1 = arith.constant 1 : index
     %stride20 = arith.constant 20 : index
     %x = pto.vmi.vload %base[%off], %stride20 {group = 8}
-        : !pto.ptr<f32, ub> -> !pto.vmi.vreg<128xf32>
+        : !pto.ptr<f32, ub>, index -> !pto.vmi.vreg<128xf32>
     %sum = pto.vmi.vcadd %x, %mask
         {group = 8, reassoc}
         : !pto.vmi.vreg<128xf32>, !pto.vmi.mask<128xpred>
         -> !pto.vmi.vreg<8xf32>
     pto.vmi.vstore %sum, %dst[%off], %c1 {group = 8}
-        : !pto.vmi.vreg<8xf32>, !pto.ptr<f32, ub>
+        : !pto.vmi.vreg<8xf32>, !pto.ptr<f32, ub>, index
     return
   }
 }

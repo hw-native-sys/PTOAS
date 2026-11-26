@@ -11,7 +11,7 @@
 
 import numpy as np
 
-from common import assert_close, auto_main
+from common import assert_close, auto_main, golden_output_case
 from ptodsl import pto
 from ptodsl.tilelib.templates.a5.unary.tabs import (
     template_tabs,
@@ -54,6 +54,9 @@ TADDS_PADDED_SHAPE = (4, 128)
 TCMPS_DATA_SHAPE = (4, 256)
 TCMPS_MASK_SHAPE = (4, 32)
 TCMPS_PADDED_DATA_SHAPE = (4, 512)
+TCMPS_ROW_STRIDE_DATA_SHAPE = (8, 32)
+TCMPS_ROW_STRIDE_MASK_SHAPE = (8, 4)
+TCMPS_ROW_STRIDE_PHYSICAL_MASK_SHAPE = (8, 32)
 TSELS_DATA_SHAPE = (4, 256)
 TSELS_MASK_SHAPE = (4, 32)
 TSELS_PADDED_DATA_SHAPE = (4, 512)
@@ -275,6 +278,34 @@ def elementwise_tcmps_1d_2d_equivalence(
     pto.tile.store(out_1d, out_1d_view)
     pto.tile.store(out_2d, out_2d_view)
 
+
+@_equivalence_jit("tcmps_row_stride")
+def elementwise_tcmps_i8_s8x32_rm_gt(
+    src_ptr: pto.ptr(pto.i8, "gm"),
+    out_ptr: pto.ptr(pto.ui8, "gm"),
+):
+    data_rows, data_cols = TCMPS_ROW_STRIDE_DATA_SHAPE
+    mask_rows, mask_cols = TCMPS_ROW_STRIDE_MASK_SHAPE
+
+    src_view = _row_major_view(src_ptr, data_rows, data_cols)
+    out_view = _row_major_view(
+        out_ptr, mask_rows, mask_cols, offset=GUARD_ELEMENTS
+    )
+    src = pto.alloc_tile(
+        shape=[data_rows, data_cols], dtype=pto.i8, addr=0
+    )
+    out = pto.alloc_tile(
+        shape=list(TCMPS_ROW_STRIDE_PHYSICAL_MASK_SHAPE),
+        valid_shape=[mask_rows, mask_cols],
+        dtype=pto.ui8,
+        addr=4096,
+    )
+
+    pto.tile.load(src_view, src)
+    pto.tile.cmps(src, 3, out, cmp_mode="gt")
+    pto.tile.store(out, out_view)
+
+
 @_equivalence_jit("tsels")
 def elementwise_tsels_1d_2d_equivalence(
     mask_ptr: pto.ptr(pto.i8, "gm"),
@@ -435,6 +466,17 @@ def _equivalence_case(
         "check": check,
     }
 
+
+def _tcmps_row_stride_expected(src):
+    logical = np.packbits(
+        src > np.int8(3),
+        axis=1,
+        bitorder="little",
+    ).reshape(-1)
+    guard = np.zeros(GUARD_ELEMENTS, dtype=np.uint8)
+    return np.concatenate((guard, logical, guard))
+
+
 def _tabs_inputs():
     rng = np.random.default_rng(SEED + 1)
     return [rng.uniform(-20.0, 20.0, size=TABS_SHAPE).astype(np.float32)]
@@ -454,6 +496,14 @@ def _tcmps_inputs():
     rng = np.random.default_rng(SEED + 4)
     src = rng.integers(0, 10, size=TCMPS_DATA_SHAPE, dtype=np.int8)
     return [src]
+
+
+def _tcmps_row_stride_inputs():
+    src = np.arange(
+        np.prod(TCMPS_ROW_STRIDE_DATA_SHAPE), dtype=np.uint8
+    ).view(np.int8).reshape(TCMPS_ROW_STRIDE_DATA_SHAPE)
+    return [src]
+
 
 def _tsels_inputs():
     rng = np.random.default_rng(SEED + 5)
@@ -508,6 +558,15 @@ CASES = [
         ),
         output_dtype=np.uint8,
         guard_value=np.uint8(0xA5),
+    ),
+    golden_output_case(
+        "cmps_i8_s8x32_rm_gt",
+        elementwise_tcmps_i8_s8x32_rm_gt,
+        inputs=_tcmps_row_stride_inputs,
+        expected=_tcmps_row_stride_expected,
+        output_dtype=np.uint8,
+        rtol=0.0,
+        atol=0.0,
     ),
     _equivalence_case(
         "elementwise_tsels_i8_aligned_1d_2d_equivalence",

@@ -25,6 +25,9 @@ _DTYPES = [
     ("i16", "i16", "ui8"),
     ("i8", "i8", "ui8"),
     ("ui8", "ui8", "ui8"),
+    ("ui16", "ui16", "ui8"),
+    ("ui32", "ui32", "ui8"),
+    ("bf16", "bf16", "ui8"),
 ]
 
 
@@ -59,7 +62,7 @@ def _emit_tcmps_linear(operands):
     cmp_mode = operands.cmp_mode
     lanes = pto.elements_per_vreg(dtype)
     remained = total_elements
-    packed = str(dtype) in {"f16", "i16"}
+    packed = str(dtype) in {"f16", "i16", "ui16", "bf16"}
     for offset in range(0, total_elements, lanes):
         mask, remained = pto.make_mask(dtype, remained)
         value = pto.vlds(src_ptr, offset)
@@ -78,7 +81,7 @@ def _emit_tcmps_1d(src, scalar, dst):
     src_ptr = src.as_ptr()
     dst_ptr = dst.as_ptr()
 
-    if str(dtype) in {"f32", "i32"}:
+    if str(dtype) in {"f32", "i32", "ui32"}:
         remained = total_elements
         for offset in range(0, total_elements, lanes * 2):
             first_mask, remained = pto.make_mask(dtype, remained)
@@ -121,7 +124,9 @@ def _emit_tcmps_2d_f32(src, scalar, dst, cmp_mode):
     dst_ptr = dst.as_ptr()
     repeat_times = (valid_cols + lanes - 1) // lanes + 1
     iterations = repeat_times // 2
-    packed_row_bytes = iterations * 16
+    # The destination tile may be padded, so advance by its physical row
+    # stride instead of the bytes this loop happens to produce.
+    dst_row_bytes = dst.shape[1] * pto.bytewidth(dst.dtype)
     for row in range(0, valid_rows, 1):
         remained = valid_cols
         for col in range(0, iterations, 1):
@@ -147,7 +152,7 @@ def _emit_tcmps_2d_f32(src, scalar, dst, cmp_mode):
                 second_mask,
                 cmp_mode,
             )
-            store_offset = row * packed_row_bytes + col * 16
+            store_offset = row * dst_row_bytes + col * 16
             pto.psts(
                 packed_low,
                 dst_ptr,
@@ -164,7 +169,9 @@ def _emit_tcmps_2d_narrow(src, scalar, dst, cmp_mode, packed):
     lanes = pto.elements_per_vreg(dtype)
     dst_ptr = dst.as_ptr()
     bytes_per_iter = 16 if packed else 32
-    iters_per_row = (valid_cols + lanes - 1) // lanes
+    # Use the physical destination row stride: valid_cols can be narrower than
+    # the padded destination tile.
+    dst_row_bytes = dst.shape[1] * pto.bytewidth(dst.dtype)
     dist = pto.PredicateDist.PK if packed else pto.PredicateDist.NORM
     for row in range(0, valid_rows, 1):
         remained = valid_cols
@@ -172,9 +179,7 @@ def _emit_tcmps_2d_narrow(src, scalar, dst, cmp_mode, packed):
             mask, remained = pto.make_mask(dtype, remained)
             value = pto.vlds(src[row, col:])
             cmp = pto.vcmps(value, scalar, mask, cmp_mode)
-            store_offset = (
-                row * iters_per_row + col // lanes
-            ) * bytes_per_iter
+            store_offset = row * dst_row_bytes + (col // lanes) * bytes_per_iter
             pto.psts(
                 cmp,
                 dst_ptr,
@@ -187,10 +192,12 @@ def _emit_tcmps_2d_narrow(src, scalar, dst, cmp_mode, packed):
 def _emit_tcmps_2d(src, scalar, dst):
     dtype = src.dtype
     cmp_mode = pto.get_op_attr("cmp_mode", "eq")
-    if str(dtype) in {"f32", "i32"}:
+    if str(dtype) in {"f32", "i32", "ui32"}:
         _emit_tcmps_2d_f32(src, scalar, dst, cmp_mode)
     else:
-        _emit_tcmps_2d_narrow(src, scalar, dst, cmp_mode, str(dtype) in {"f16", "i16"})
+        _emit_tcmps_2d_narrow(
+            src, scalar, dst, cmp_mode, str(dtype) in {"f16", "i16", "ui16", "bf16"}
+        )
 
 
 def _register_tcmps(*, name, traversal):

@@ -18,8 +18,8 @@ module {
     %lo, %hi = pto.vmi.vintlv %a, %b, %mask : !pto.vmi.vreg<64xf32>, !pto.vmi.vreg<64xf32>, !pto.vmi.mask<64xpred> -> !pto.vmi.vreg<64xf32>, !pto.vmi.vreg<64xf32>
     %x = pto.vmi.truncf %lo {rounding = "R", saturate = "SAT"} : !pto.vmi.vreg<64xf32> -> !pto.vmi.vreg<64xbf16>
     %y = pto.vmi.truncf %hi {rounding = "R", saturate = "SAT"} : !pto.vmi.vreg<64xf32> -> !pto.vmi.vreg<64xbf16>
-    pto.vmi.store %x, %dst[%zero] : !pto.vmi.vreg<64xbf16>, !pto.ptr<bf16, ub>
-    pto.vmi.store %y, %dst[%next] : !pto.vmi.vreg<64xbf16>, !pto.ptr<bf16, ub>
+    pto.vmi.store %x, %dst[%zero] : !pto.vmi.vreg<64xbf16>, !pto.ptr<bf16, ub>, index
+    pto.vmi.store %y, %dst[%next] : !pto.vmi.vreg<64xbf16>, !pto.ptr<bf16, ub>, index
     return
   }
   func.func @pack256(%a: !pto.vmi.vreg<128xf32>, %b: !pto.vmi.vreg<128xf32>, %dst: !pto.ptr<bf16, ub>, %other: !pto.ptr<bf16, ub>) {
@@ -30,8 +30,8 @@ module {
     %lo, %hi = pto.vmi.vintlv %a, %b, %mask : !pto.vmi.vreg<128xf32>, !pto.vmi.vreg<128xf32>, !pto.vmi.mask<128xpred> -> !pto.vmi.vreg<128xf32>, !pto.vmi.vreg<128xf32>
     %x = pto.vmi.truncf %lo {rounding = "R", saturate = "SAT"} : !pto.vmi.vreg<128xf32> -> !pto.vmi.vreg<128xbf16>
     %y = pto.vmi.truncf %hi {rounding = "R", saturate = "SAT"} : !pto.vmi.vreg<128xf32> -> !pto.vmi.vreg<128xbf16>
-    pto.vmi.store %x, %dst[%zero] : !pto.vmi.vreg<128xbf16>, !pto.ptr<bf16, ub>
-    pto.vmi.store %y, %dst[%next] : !pto.vmi.vreg<128xbf16>, !pto.ptr<bf16, ub>
+    pto.vmi.store %x, %dst[%zero] : !pto.vmi.vreg<128xbf16>, !pto.ptr<bf16, ub>, index
+    pto.vmi.store %y, %dst[%next] : !pto.vmi.vreg<128xbf16>, !pto.ptr<bf16, ub>, index
     return
   }
   func.func @partial_mask(%a: !pto.vmi.vreg<64xf32>, %b: !pto.vmi.vreg<64xf32>, %dst: !pto.ptr<bf16, ub>, %other: !pto.ptr<bf16, ub>) {
@@ -42,8 +42,8 @@ module {
     %lo, %hi = pto.vmi.vintlv %a, %b, %mask : !pto.vmi.vreg<64xf32>, !pto.vmi.vreg<64xf32>, !pto.vmi.mask<64xpred> -> !pto.vmi.vreg<64xf32>, !pto.vmi.vreg<64xf32>
     %x = pto.vmi.truncf %lo {rounding = "R", saturate = "SAT"} : !pto.vmi.vreg<64xf32> -> !pto.vmi.vreg<64xbf16>
     %y = pto.vmi.truncf %hi {rounding = "R", saturate = "SAT"} : !pto.vmi.vreg<64xf32> -> !pto.vmi.vreg<64xbf16>
-    pto.vmi.store %x, %dst[%zero] : !pto.vmi.vreg<64xbf16>, !pto.ptr<bf16, ub>
-    pto.vmi.store %y, %dst[%next] : !pto.vmi.vreg<64xbf16>, !pto.ptr<bf16, ub>
+    pto.vmi.store %x, %dst[%zero] : !pto.vmi.vreg<64xbf16>, !pto.ptr<bf16, ub>, index
+    pto.vmi.store %y, %dst[%next] : !pto.vmi.vreg<64xbf16>, !pto.ptr<bf16, ub>, index
     return
   }
   func.func @gap(%a: !pto.vmi.vreg<64xf32>, %b: !pto.vmi.vreg<64xf32>, %dst: !pto.ptr<bf16, ub>, %other: !pto.ptr<bf16, ub>) {
@@ -54,8 +54,8 @@ module {
     %lo, %hi = pto.vmi.vintlv %a, %b, %mask : !pto.vmi.vreg<64xf32>, !pto.vmi.vreg<64xf32>, !pto.vmi.mask<64xpred> -> !pto.vmi.vreg<64xf32>, !pto.vmi.vreg<64xf32>
     %x = pto.vmi.truncf %lo {rounding = "R", saturate = "SAT"} : !pto.vmi.vreg<64xf32> -> !pto.vmi.vreg<64xbf16>
     %y = pto.vmi.truncf %hi {rounding = "R", saturate = "SAT"} : !pto.vmi.vreg<64xf32> -> !pto.vmi.vreg<64xbf16>
-    pto.vmi.store %x, %dst[%zero] : !pto.vmi.vreg<64xbf16>, !pto.ptr<bf16, ub>
-    pto.vmi.store %y, %dst[%next] : !pto.vmi.vreg<64xbf16>, !pto.ptr<bf16, ub>
+    pto.vmi.store %x, %dst[%zero] : !pto.vmi.vreg<64xbf16>, !pto.ptr<bf16, ub>, index
+    pto.vmi.store %y, %dst[%next] : !pto.vmi.vreg<64xbf16>, !pto.ptr<bf16, ub>, index
     return
   }
   func.func @memory_between(%a: !pto.vmi.vreg<64xf32>, %b: !pto.vmi.vreg<64xf32>, %dst: !pto.ptr<bf16, ub>, %other: !pto.ptr<bf16, ub>) {
@@ -66,10 +66,10 @@ module {
     %lo, %hi = pto.vmi.vintlv %a, %b, %mask : !pto.vmi.vreg<64xf32>, !pto.vmi.vreg<64xf32>, !pto.vmi.mask<64xpred> -> !pto.vmi.vreg<64xf32>, !pto.vmi.vreg<64xf32>
     %x = pto.vmi.truncf %lo {rounding = "R", saturate = "SAT"} : !pto.vmi.vreg<64xf32> -> !pto.vmi.vreg<64xbf16>
     %y = pto.vmi.truncf %hi {rounding = "R", saturate = "SAT"} : !pto.vmi.vreg<64xf32> -> !pto.vmi.vreg<64xbf16>
-    pto.vmi.store %x, %dst[%zero] : !pto.vmi.vreg<64xbf16>, !pto.ptr<bf16, ub>
-    %read = pto.vmi.load %dst[%zero] : !pto.ptr<bf16, ub> -> !pto.vmi.vreg<64xbf16>
-    pto.vmi.store %read, %other[%zero] : !pto.vmi.vreg<64xbf16>, !pto.ptr<bf16, ub>
-    pto.vmi.store %y, %dst[%next] : !pto.vmi.vreg<64xbf16>, !pto.ptr<bf16, ub>
+    pto.vmi.store %x, %dst[%zero] : !pto.vmi.vreg<64xbf16>, !pto.ptr<bf16, ub>, index
+    %read = pto.vmi.load %dst[%zero] : !pto.ptr<bf16, ub>, index -> !pto.vmi.vreg<64xbf16>
+    pto.vmi.store %read, %other[%zero] : !pto.vmi.vreg<64xbf16>, !pto.ptr<bf16, ub>, index
+    pto.vmi.store %y, %dst[%next] : !pto.vmi.vreg<64xbf16>, !pto.ptr<bf16, ub>, index
     return
   }
   func.func @extra_user(%a: !pto.vmi.vreg<64xf32>, %b: !pto.vmi.vreg<64xf32>, %dst: !pto.ptr<bf16, ub>, %other: !pto.ptr<f32, ub>) {
@@ -78,11 +78,11 @@ module {
     %active = arith.constant 64 : index
     %mask = pto.vmi.create_mask %active : index -> !pto.vmi.mask<64xpred>
     %lo, %hi = pto.vmi.vintlv %a, %b, %mask : !pto.vmi.vreg<64xf32>, !pto.vmi.vreg<64xf32>, !pto.vmi.mask<64xpred> -> !pto.vmi.vreg<64xf32>, !pto.vmi.vreg<64xf32>
-    pto.vmi.store %lo, %other[%zero] : !pto.vmi.vreg<64xf32>, !pto.ptr<f32, ub>
+    pto.vmi.store %lo, %other[%zero] : !pto.vmi.vreg<64xf32>, !pto.ptr<f32, ub>, index
     %x = pto.vmi.truncf %lo {rounding = "R", saturate = "SAT"} : !pto.vmi.vreg<64xf32> -> !pto.vmi.vreg<64xbf16>
     %y = pto.vmi.truncf %hi {rounding = "R", saturate = "SAT"} : !pto.vmi.vreg<64xf32> -> !pto.vmi.vreg<64xbf16>
-    pto.vmi.store %x, %dst[%zero] : !pto.vmi.vreg<64xbf16>, !pto.ptr<bf16, ub>
-    pto.vmi.store %y, %dst[%next] : !pto.vmi.vreg<64xbf16>, !pto.ptr<bf16, ub>
+    pto.vmi.store %x, %dst[%zero] : !pto.vmi.vreg<64xbf16>, !pto.ptr<bf16, ub>, index
+    pto.vmi.store %y, %dst[%next] : !pto.vmi.vreg<64xbf16>, !pto.ptr<bf16, ub>, index
     return
   }
   func.func @different_rounding(%a: !pto.vmi.vreg<64xf32>, %b: !pto.vmi.vreg<64xf32>, %dst: !pto.ptr<bf16, ub>, %other: !pto.ptr<bf16, ub>) {
@@ -93,8 +93,8 @@ module {
     %lo, %hi = pto.vmi.vintlv %a, %b, %mask : !pto.vmi.vreg<64xf32>, !pto.vmi.vreg<64xf32>, !pto.vmi.mask<64xpred> -> !pto.vmi.vreg<64xf32>, !pto.vmi.vreg<64xf32>
     %x = pto.vmi.truncf %lo {rounding = "R", saturate = "SAT"} : !pto.vmi.vreg<64xf32> -> !pto.vmi.vreg<64xbf16>
     %y = pto.vmi.truncf %hi {rounding = "Z", saturate = "SAT"} : !pto.vmi.vreg<64xf32> -> !pto.vmi.vreg<64xbf16>
-    pto.vmi.store %x, %dst[%zero] : !pto.vmi.vreg<64xbf16>, !pto.ptr<bf16, ub>
-    pto.vmi.store %y, %dst[%next] : !pto.vmi.vreg<64xbf16>, !pto.ptr<bf16, ub>
+    pto.vmi.store %x, %dst[%zero] : !pto.vmi.vreg<64xbf16>, !pto.ptr<bf16, ub>, index
+    pto.vmi.store %y, %dst[%next] : !pto.vmi.vreg<64xbf16>, !pto.ptr<bf16, ub>, index
     return
   }
   func.func @dynamic_bounded(%a: !pto.vmi.vreg<64xf32>, %b: !pto.vmi.vreg<64xf32>, %dst: !pto.ptr<bf16, ub>) {
@@ -114,8 +114,8 @@ module {
       %lo, %hi = pto.vmi.vintlv %a, %b, %mask : !pto.vmi.vreg<64xf32>, !pto.vmi.vreg<64xf32>, !pto.vmi.mask<64xpred> -> !pto.vmi.vreg<64xf32>, !pto.vmi.vreg<64xf32>
       %x = pto.vmi.truncf %lo {saturate = "SAT"} : !pto.vmi.vreg<64xf32> -> !pto.vmi.vreg<64xbf16>
       %y = pto.vmi.truncf %hi {saturate = "SAT"} : !pto.vmi.vreg<64xf32> -> !pto.vmi.vreg<64xbf16>
-      pto.vmi.store %x, %ptr0[%zero] : !pto.vmi.vreg<64xbf16>, !pto.ptr<bf16, ub>
-      pto.vmi.store %y, %ptr1[%zero] : !pto.vmi.vreg<64xbf16>, !pto.ptr<bf16, ub>
+      pto.vmi.store %x, %ptr0[%zero] : !pto.vmi.vreg<64xbf16>, !pto.ptr<bf16, ub>, index
+      pto.vmi.store %y, %ptr1[%zero] : !pto.vmi.vreg<64xbf16>, !pto.ptr<bf16, ub>, index
     }
     return
   }
@@ -136,8 +136,8 @@ module {
       %lo, %hi = pto.vmi.vintlv %a, %b, %mask : !pto.vmi.vreg<64xf32>, !pto.vmi.vreg<64xf32>, !pto.vmi.mask<64xpred> -> !pto.vmi.vreg<64xf32>, !pto.vmi.vreg<64xf32>
       %x = pto.vmi.truncf %lo {saturate = "SAT"} : !pto.vmi.vreg<64xf32> -> !pto.vmi.vreg<64xbf16>
       %y = pto.vmi.truncf %hi {saturate = "SAT"} : !pto.vmi.vreg<64xf32> -> !pto.vmi.vreg<64xbf16>
-      pto.vmi.store %x, %ptr0[%zero] : !pto.vmi.vreg<64xbf16>, !pto.ptr<bf16, ub>
-      pto.vmi.store %y, %ptr1[%zero] : !pto.vmi.vreg<64xbf16>, !pto.ptr<bf16, ub>
+      pto.vmi.store %x, %ptr0[%zero] : !pto.vmi.vreg<64xbf16>, !pto.ptr<bf16, ub>, index
+      pto.vmi.store %y, %ptr1[%zero] : !pto.vmi.vreg<64xbf16>, !pto.ptr<bf16, ub>, index
     }
     return
   }
@@ -158,8 +158,8 @@ module {
       %lo, %hi = pto.vmi.vintlv %a, %b, %mask : !pto.vmi.vreg<64xf32>, !pto.vmi.vreg<64xf32>, !pto.vmi.mask<64xpred> -> !pto.vmi.vreg<64xf32>, !pto.vmi.vreg<64xf32>
       %x = pto.vmi.truncf %lo {saturate = "SAT"} : !pto.vmi.vreg<64xf32> -> !pto.vmi.vreg<64xbf16>
       %y = pto.vmi.truncf %hi {saturate = "SAT"} : !pto.vmi.vreg<64xf32> -> !pto.vmi.vreg<64xbf16>
-      pto.vmi.store %x, %ptr0[%zero] : !pto.vmi.vreg<64xbf16>, !pto.ptr<bf16, ub>
-      pto.vmi.store %y, %ptr1[%zero] : !pto.vmi.vreg<64xbf16>, !pto.ptr<bf16, ub>
+      pto.vmi.store %x, %ptr0[%zero] : !pto.vmi.vreg<64xbf16>, !pto.ptr<bf16, ub>, index
+      pto.vmi.store %y, %ptr1[%zero] : !pto.vmi.vreg<64xbf16>, !pto.ptr<bf16, ub>, index
     }
     return
   }
@@ -171,8 +171,8 @@ module {
     %lo, %hi = pto.vmi.vintlv %a, %b, %mask : !pto.vmi.vreg<64xf32, #pto.vmi.layout<contiguous>>, !pto.vmi.vreg<64xf32, #pto.vmi.layout<contiguous>>, !pto.vmi.mask<64xb32, #pto.vmi.layout<contiguous>> -> !pto.vmi.vreg<64xf32, #pto.vmi.layout<contiguous>>, !pto.vmi.vreg<64xf32, #pto.vmi.layout<contiguous>>
     %x = pto.vmi.truncf %lo {rounding = "Z", saturate = "NOSAT"} : !pto.vmi.vreg<64xf32, #pto.vmi.layout<contiguous>> -> !pto.vmi.vreg<64xbf16, #pto.vmi.layout<contiguous>>
     %y = pto.vmi.truncf %hi {rounding = "Z", saturate = "NOSAT"} : !pto.vmi.vreg<64xf32, #pto.vmi.layout<contiguous>> -> !pto.vmi.vreg<64xbf16, #pto.vmi.layout<contiguous>>
-    pto.vmi.store %x, %dst[%zero] : !pto.vmi.vreg<64xbf16, #pto.vmi.layout<contiguous>>, !pto.ptr<bf16, ub>
-    pto.vmi.store %y, %dst[%next] : !pto.vmi.vreg<64xbf16, #pto.vmi.layout<contiguous>>, !pto.ptr<bf16, ub>
+    pto.vmi.store %x, %dst[%zero] : !pto.vmi.vreg<64xbf16, #pto.vmi.layout<contiguous>>, !pto.ptr<bf16, ub>, index
+    pto.vmi.store %y, %dst[%next] : !pto.vmi.vreg<64xbf16, #pto.vmi.layout<contiguous>>, !pto.ptr<bf16, ub>, index
     return
   }
 }

@@ -16,9 +16,9 @@ module {
     %aligned_offset = arith.muli %offset, %c8 : index
     %second_offset = arith.addi %aligned_offset, %c64 : index
     %first = pto.vmi.vload %src[%aligned_offset]
-        : !pto.ptr<f32, ub> -> !pto.vmi.vreg<64xf32, #pto.vmi.layout<contiguous>>
+        : !pto.ptr<f32, ub>, index -> !pto.vmi.vreg<64xf32, #pto.vmi.layout<contiguous>>
     %second = pto.vmi.vload %src[%second_offset]
-        : !pto.ptr<f32, ub> -> !pto.vmi.vreg<64xf32, #pto.vmi.layout<contiguous>>
+        : !pto.ptr<f32, ub>, index -> !pto.vmi.vreg<64xf32, #pto.vmi.layout<contiguous>>
     %mask = pto.vmi.pset "PAT_ALL"
         : !pto.vmi.mask<64xb32, #pto.vmi.layout<contiguous>>
     %lo, %hi = pto.vmi.vdintlv %first, %second, %mask
@@ -41,9 +41,9 @@ module {
     %aligned_offset = arith.muli %offset, %c8 : index
     %second_offset = arith.addi %aligned_offset, %c128 : index
     %first = pto.vmi.vload %src[%aligned_offset]
-        : !pto.ptr<f32, ub> -> !pto.vmi.vreg<128xf32, #pto.vmi.layout<contiguous>>
+        : !pto.ptr<f32, ub>, index -> !pto.vmi.vreg<128xf32, #pto.vmi.layout<contiguous>>
     %second = pto.vmi.vload %src[%second_offset]
-        : !pto.ptr<f32, ub> -> !pto.vmi.vreg<128xf32, #pto.vmi.layout<contiguous>>
+        : !pto.ptr<f32, ub>, index -> !pto.vmi.vreg<128xf32, #pto.vmi.layout<contiguous>>
     %mask = pto.vmi.pset "PAT_ALL"
         : !pto.vmi.mask<128xb32, #pto.vmi.layout<contiguous>>
     %lo, %hi = pto.vmi.vdintlv %first, %second, %mask

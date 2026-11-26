@@ -1,0 +1,372 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+
+// Boundary and fallback tests for issue #983. All addresses are explicit so
+// the standalone pass sees both SSA aliases and physical storage reuse.
+// RUN: pto-test-opt --pto-insert-sync %s -o %t.sync.pto
+// RUN: FileCheck %s --input-file=%t.sync.pto
+// RUN: pto-test-opt --pto-check-sync-ids --pto-check-sync-interference --pto-check-sync-self-coverage %t.sync.pto -o /dev/null 2> %t.oracle
+// RUN: FileCheck %s --check-prefix=ORACLE --input-file=%t.oracle
+// RUN: sed '/pto.wait_flag\[<PIPE_V>, <PIPE_MTE3>/d' %t.sync.pto > %t.fault.pto
+// RUN: not pto-test-opt --pto-check-sync-self-coverage %t.fault.pto -o /dev/null 2>&1 | FileCheck %s --check-prefix=FAULT
+// RUN: pto-test-opt --pto-unified-sync %s -o %t.unified.pto
+// RUN: FileCheck %s --check-prefix=UNIFIED --input-file=%t.unified.pto
+// RUN: sed 's/"a5"/"a3"/' %s | pto-test-opt --pto-insert-sync | FileCheck %s --check-prefix=A3
+
+!tile = !pto.tile_buf<vec, 16x16xf32>
+!view = !pto.tensor_view<?x?xf32>
+!part = !pto.partition_tensor_view<16x16xf32>
+!ring = !pto.multi_tile_buf<!pto.tile_buf<vec, 16x16xf32>, count=2>
+
+module attributes {pto.target_arch = "a5"} {
+  func.func @multiple_results(%src_ptr: !pto.ptr<f32>, %dst_ptr: !pto.ptr<f32>) {
+    %c0 = arith.constant 0 : index
+    %c1 = arith.constant 1 : index
+    %c16 = arith.constant 16 : index
+    %a0 = arith.constant 0 : i64
+    %a1 = arith.constant 1024 : i64
+    %a2 = arith.constant 2048 : i64
+    %a3 = arith.constant 3072 : i64
+    %src_view = pto.make_tensor_view %src_ptr, shape = [%c16, %c16], strides = [%c16, %c1] : !view
+    %dst_view = pto.make_tensor_view %dst_ptr, shape = [%c16, %c16], strides = [%c16, %c1] : !view
+    %src = pto.partition_view %src_view, offsets = [%c0, %c0], sizes = [%c16, %c16] : !view -> !part
+    %dst = pto.partition_view %dst_view, offsets = [%c0, %c0], sizes = [%c16, %c16] : !view -> !part
+    %x = pto.alloc_tile addr = %a0 : !tile
+    pto.tload ins(%src : !part) outs(%x : !tile)
+    %r:2 = pto.fusion_region {
+      %first = pto.alloc_tile addr = %a1 : !tile
+      %second = pto.alloc_tile addr = %a2 : !tile
+      pto.tadd ins(%x, %x : !tile, !tile) outs(%first : !tile)
+      pto.tsub ins(%first, %x : !tile, !tile) outs(%second : !tile)
+      pto.yield(%first, %second) : (!tile, !tile) -> ()
+    } : !tile, !tile
+    pto.tstore ins(%r#1 : !tile) outs(%dst : !part)
+    return
+  }
+
+  func.func @consecutive_groups(%src_ptr: !pto.ptr<f32>, %dst_ptr: !pto.ptr<f32>) {
+    %c0 = arith.constant 0 : index
+    %c1 = arith.constant 1 : index
+    %c16 = arith.constant 16 : index
+    %a0 = arith.constant 0 : i64
+    %a1 = arith.constant 1024 : i64
+    %a2 = arith.constant 2048 : i64
+    %a3 = arith.constant 3072 : i64
+    %src_view = pto.make_tensor_view %src_ptr, shape = [%c16, %c16], strides = [%c16, %c1] : !view
+    %dst_view = pto.make_tensor_view %dst_ptr, shape = [%c16, %c16], strides = [%c16, %c1] : !view
+    %src = pto.partition_view %src_view, offsets = [%c0, %c0], sizes = [%c16, %c16] : !view -> !part
+    %dst = pto.partition_view %dst_view, offsets = [%c0, %c0], sizes = [%c16, %c16] : !view -> !part
+    %x = pto.alloc_tile addr = %a0 : !tile
+    pto.tload ins(%src : !part) outs(%x : !tile)
+    %r = pto.fusion_region {
+      %tmp = pto.alloc_tile addr = %a1 : !tile
+      pto.tadd ins(%x, %x : !tile, !tile) outs(%tmp : !tile)
+      pto.yield(%tmp) : (!tile) -> ()
+    } : !tile
+    %s = pto.fusion_region {
+      %out = pto.alloc_tile addr = %a2 : !tile
+      pto.tsub ins(%r, %x : !tile, !tile) outs(%out : !tile)
+      pto.yield(%out) : (!tile) -> ()
+    } : !tile
+    pto.tstore ins(%s : !tile) outs(%dst : !part)
+    return
+  }
+
+  func.func @internal_storage_reuse(%src_ptr: !pto.ptr<f32>, %dst_ptr: !pto.ptr<f32>) {
+    %c0 = arith.constant 0 : index
+    %c1 = arith.constant 1 : index
+    %c16 = arith.constant 16 : index
+    %a0 = arith.constant 0 : i64
+    %a1 = arith.constant 1024 : i64
+    %a2 = arith.constant 2048 : i64
+    %a3 = arith.constant 3072 : i64
+    %src_view = pto.make_tensor_view %src_ptr, shape = [%c16, %c16], strides = [%c16, %c1] : !view
+    %dst_view = pto.make_tensor_view %dst_ptr, shape = [%c16, %c16], strides = [%c16, %c1] : !view
+    %src = pto.partition_view %src_view, offsets = [%c0, %c0], sizes = [%c16, %c16] : !view -> !part
+    %dst = pto.partition_view %dst_view, offsets = [%c0, %c0], sizes = [%c16, %c16] : !view -> !part
+    %x = pto.alloc_tile addr = %a0 : !tile
+    pto.tload ins(%src : !part) outs(%x : !tile)
+    %r = pto.fusion_region {
+      %tmp = pto.alloc_tile addr = %a1 : !tile
+      %out = pto.alloc_tile addr = %a2 : !tile
+      pto.tadd ins(%x, %x : !tile, !tile) outs(%tmp : !tile)
+      pto.tsub ins(%tmp, %x : !tile, !tile) outs(%out : !tile)
+      pto.yield(%out) : (!tile) -> ()
+    } : !tile
+    %reuse = pto.alloc_tile addr = %a1 : !tile
+    pto.tload ins(%src : !part) outs(%reuse : !tile)
+    pto.tstore ins(%r : !tile) outs(%dst : !part)
+    return
+  }
+
+  func.func @loop_group(%src_ptr: !pto.ptr<f32>, %dst_ptr: !pto.ptr<f32>, %bound: index) {
+    %c0 = arith.constant 0 : index
+    %c1 = arith.constant 1 : index
+    %c16 = arith.constant 16 : index
+    %a0 = arith.constant 0 : i64
+    %a1 = arith.constant 1024 : i64
+    %a2 = arith.constant 2048 : i64
+    %a3 = arith.constant 3072 : i64
+    %src_view = pto.make_tensor_view %src_ptr, shape = [%c16, %c16], strides = [%c16, %c1] : !view
+    %dst_view = pto.make_tensor_view %dst_ptr, shape = [%c16, %c16], strides = [%c16, %c1] : !view
+    %src = pto.partition_view %src_view, offsets = [%c0, %c0], sizes = [%c16, %c16] : !view -> !part
+    %dst = pto.partition_view %dst_view, offsets = [%c0, %c0], sizes = [%c16, %c16] : !view -> !part
+    %x = pto.alloc_tile addr = %a0 : !tile
+    scf.for %iv = %c0 to %bound step %c1 {
+      pto.tload ins(%src : !part) outs(%x : !tile)
+      %r = pto.fusion_region {
+        %out = pto.alloc_tile addr = %a1 : !tile
+        pto.tadd ins(%x, %x : !tile, !tile) outs(%out : !tile)
+        pto.yield(%out) : (!tile) -> ()
+      } : !tile
+      pto.tstore ins(%r : !tile) outs(%dst : !part)
+    }
+    return
+  }
+
+  func.func @mixed_pipe_group(%src_ptr: !pto.ptr<f32>, %dst_ptr: !pto.ptr<f32>) {
+    %c0 = arith.constant 0 : index
+    %c1 = arith.constant 1 : index
+    %c16 = arith.constant 16 : index
+    %a0 = arith.constant 0 : i64
+    %a1 = arith.constant 1024 : i64
+    %a2 = arith.constant 2048 : i64
+    %a3 = arith.constant 3072 : i64
+    %src_view = pto.make_tensor_view %src_ptr, shape = [%c16, %c16], strides = [%c16, %c1] : !view
+    %dst_view = pto.make_tensor_view %dst_ptr, shape = [%c16, %c16], strides = [%c16, %c1] : !view
+    %src = pto.partition_view %src_view, offsets = [%c0, %c0], sizes = [%c16, %c16] : !view -> !part
+    %dst = pto.partition_view %dst_view, offsets = [%c0, %c0], sizes = [%c16, %c16] : !view -> !part
+    %x = pto.alloc_tile addr = %a0 : !tile
+    %r = pto.fusion_region {
+      %out = pto.alloc_tile addr = %a1 : !tile
+      pto.tload ins(%src : !part) outs(%x : !tile)
+      pto.tadd ins(%x, %x : !tile, !tile) outs(%out : !tile)
+      pto.yield(%out) : (!tile) -> ()
+    } : !tile
+    pto.tstore ins(%r : !tile) outs(%dst : !part)
+    return
+  }
+
+  func.func @control_group(%src_ptr: !pto.ptr<f32>, %dst_ptr: !pto.ptr<f32>, %condition: i1) {
+    %c0 = arith.constant 0 : index
+    %c1 = arith.constant 1 : index
+    %c16 = arith.constant 16 : index
+    %a0 = arith.constant 0 : i64
+    %a1 = arith.constant 1024 : i64
+    %a2 = arith.constant 2048 : i64
+    %a3 = arith.constant 3072 : i64
+    %src_view = pto.make_tensor_view %src_ptr, shape = [%c16, %c16], strides = [%c16, %c1] : !view
+    %dst_view = pto.make_tensor_view %dst_ptr, shape = [%c16, %c16], strides = [%c16, %c1] : !view
+    %src = pto.partition_view %src_view, offsets = [%c0, %c0], sizes = [%c16, %c16] : !view -> !part
+    %dst = pto.partition_view %dst_view, offsets = [%c0, %c0], sizes = [%c16, %c16] : !view -> !part
+    %x = pto.alloc_tile addr = %a0 : !tile
+    %r = pto.fusion_region {
+      %out = pto.alloc_tile addr = %a1 : !tile
+      scf.if %condition {
+        pto.tload ins(%src : !part) outs(%x : !tile)
+      } else {
+        pto.tload ins(%src : !part) outs(%x : !tile)
+      }
+      pto.tadd ins(%x, %x : !tile, !tile) outs(%out : !tile)
+      pto.yield(%out) : (!tile) -> ()
+    } : !tile
+    pto.tstore ins(%r : !tile) outs(%dst : !part)
+    return
+  }
+
+  func.func @local_slot_group(%src_ptr: !pto.ptr<f32>, %dst_ptr: !pto.ptr<f32>, %slot: index) {
+    %c0 = arith.constant 0 : index
+    %c1 = arith.constant 1 : index
+    %c2 = arith.constant 2 : index
+    %c16 = arith.constant 16 : index
+    %a0 = arith.constant 0 : i64
+    %a1 = arith.constant 1024 : i64
+    %a2 = arith.constant 2048 : i64
+    %a3 = arith.constant 3072 : i64
+    %src_view = pto.make_tensor_view %src_ptr, shape = [%c16, %c16], strides = [%c16, %c1] : !view
+    %dst_view = pto.make_tensor_view %dst_ptr, shape = [%c16, %c16], strides = [%c16, %c1] : !view
+    %src = pto.partition_view %src_view, offsets = [%c0, %c0], sizes = [%c16, %c16] : !view -> !part
+    %dst = pto.partition_view %dst_view, offsets = [%c0, %c0], sizes = [%c16, %c16] : !view -> !part
+    %x = pto.alloc_tile addr = %a0 : !tile
+    %ring = pto.alloc_multi_tile addr = %a1 : !ring
+    %loaded = pto.multi_tile_get %ring[%slot] : !ring -> !tile
+    pto.tload ins(%src : !part) outs(%loaded : !tile)
+    %r = pto.fusion_region {
+      %inner_slot = arith.remui %slot, %c2 : index
+      %inner = pto.multi_tile_get %ring[%inner_slot] : !ring -> !tile
+      %out = pto.alloc_tile addr = %a3 : !tile
+      pto.tadd ins(%inner, %inner : !tile, !tile) outs(%out : !tile)
+      pto.yield(%out) : (!tile) -> ()
+    } : !tile
+    pto.tstore ins(%r : !tile) outs(%dst : !part)
+    return
+  }
+
+
+  func.func @manual_sync_group(%src_ptr: !pto.ptr<f32>, %dst_ptr: !pto.ptr<f32>) {
+    %c0 = arith.constant 0 : index
+    %c1 = arith.constant 1 : index
+    %c16 = arith.constant 16 : index
+    %a0 = arith.constant 0 : i64
+    %a1 = arith.constant 1024 : i64
+    %a2 = arith.constant 2048 : i64
+    %a3 = arith.constant 3072 : i64
+    %src_view = pto.make_tensor_view %src_ptr, shape = [%c16, %c16], strides = [%c16, %c1] : !view
+    %dst_view = pto.make_tensor_view %dst_ptr, shape = [%c16, %c16], strides = [%c16, %c1] : !view
+    %src = pto.partition_view %src_view, offsets = [%c0, %c0], sizes = [%c16, %c16] : !view -> !part
+    %dst = pto.partition_view %dst_view, offsets = [%c0, %c0], sizes = [%c16, %c16] : !view -> !part
+    %x = pto.alloc_tile addr = %a0 : !tile
+    pto.tload ins(%src : !part) outs(%x : !tile)
+    pto.set_flag[<PIPE_MTE2>, <PIPE_V>, <EVENT_ID3>]
+    %r = pto.fusion_region {
+      %out = pto.alloc_tile addr = %a1 : !tile
+      pto.wait_flag[<PIPE_MTE2>, <PIPE_V>, <EVENT_ID3>]
+      pto.tadd ins(%x, %x : !tile, !tile) outs(%out : !tile)
+      pto.yield(%out) : (!tile) -> ()
+    } : !tile
+    pto.set_flag[<PIPE_V>, <PIPE_MTE3>, <EVENT_ID4>]
+    pto.wait_flag[<PIPE_V>, <PIPE_MTE3>, <EVENT_ID4>]
+    pto.tstore ins(%r : !tile) outs(%dst : !part)
+    return
+  }
+}
+
+// CHECK-LABEL: func.func @multiple_results(
+// CHECK: pto.set_flag[<PIPE_MTE2>, <PIPE_V>, <EVENT_ID[[IN:[0-7]]]>]
+// CHECK-NEXT: pto.wait_flag[<PIPE_MTE2>, <PIPE_V>, <EVENT_ID[[IN]]>]
+// CHECK-NEXT: %[[PAIR:.*]]:2 = pto.fusion_region {
+// CHECK-NEXT: {{.*}}pto.alloc_tile
+// CHECK-NEXT: {{.*}}pto.alloc_tile
+// CHECK-NEXT: pto.tadd
+// CHECK-NEXT: pto.tsub
+// CHECK-NEXT: pto.yield
+// CHECK-NEXT: }
+// CHECK-NEXT: pto.set_flag[<PIPE_V>, <PIPE_MTE3>, <EVENT_ID[[OUT:[0-7]]]>]
+// CHECK-NEXT: pto.wait_flag[<PIPE_V>, <PIPE_MTE3>, <EVENT_ID[[OUT]]>]
+// CHECK-NEXT: pto.tstore ins(%[[PAIR]]#1
+
+// CHECK-LABEL: func.func @consecutive_groups(
+// CHECK: pto.wait_flag[<PIPE_MTE2>, <PIPE_V>,
+// CHECK-NEXT: %[[FIRST:.*]] = pto.fusion_region {
+// CHECK-NEXT: {{.*}}pto.alloc_tile
+// CHECK-NEXT: pto.tadd
+// CHECK-NEXT: pto.yield
+// CHECK-NEXT: }
+// CHECK-NEXT: %[[SECOND:.*]] = pto.fusion_region {
+// CHECK-NEXT: {{.*}}pto.alloc_tile
+// CHECK-NEXT: pto.tsub ins(%[[FIRST]],
+// CHECK-NEXT: pto.yield
+// CHECK-NEXT: }
+// CHECK-NEXT: pto.set_flag[<PIPE_V>, <PIPE_MTE3>,
+// CHECK-NEXT: pto.wait_flag[<PIPE_V>, <PIPE_MTE3>,
+// CHECK-NEXT: pto.tstore ins(%[[SECOND]]
+
+// The internal temporary does not escape in SSA, but its physical address is
+// overwritten by a later DMA. The V->MTE2 anti-dependency must still be emitted.
+// CHECK-LABEL: func.func @internal_storage_reuse(
+// CHECK: pto.fusion_region {
+// CHECK-NEXT: {{.*}}pto.alloc_tile
+// CHECK-NEXT: {{.*}}pto.alloc_tile
+// CHECK-NEXT: pto.tadd
+// CHECK-NEXT: pto.tsub
+// CHECK-NEXT: pto.yield
+// CHECK-NEXT: }
+// CHECK-NEXT: pto.set_flag[<PIPE_V>, <PIPE_MTE2>, <EVENT_ID[[REUSE:[0-7]]]>]
+// CHECK: pto.wait_flag[<PIPE_V>, <PIPE_MTE2>, <EVENT_ID[[REUSE]]>]
+// CHECK-NEXT: pto.tload
+
+// CHECK-LABEL: func.func @loop_group(
+// CHECK: pto.set_flag[<PIPE_V>, <PIPE_MTE2>, <EVENT_ID[[BACK:[0-7]]]>]
+// CHECK: scf.for
+// CHECK: pto.wait_flag[<PIPE_V>, <PIPE_MTE2>, <EVENT_ID[[BACK]]>]
+// CHECK: pto.wait_flag[<PIPE_MTE3>, <PIPE_V>,
+// CHECK-NEXT: {{.*}}pto.fusion_region {
+// CHECK-NEXT: {{.*}}pto.alloc_tile
+// CHECK-NEXT: pto.tadd
+// CHECK-NEXT: pto.yield
+// CHECK-NEXT: }
+// CHECK-NEXT: pto.set_flag[<PIPE_V>, <PIPE_MTE2>, <EVENT_ID[[BACK]]>]
+// CHECK: pto.tstore
+// CHECK: pto.wait_flag[<PIPE_V>, <PIPE_MTE2>, <EVENT_ID[[BACK]]>]
+// CHECK: pto.barrier <PIPE_ALL> {pto.auto_sync_tail_barrier}
+
+// Mixed pipes/control/locally computed slots keep the legacy internal anchors.
+// Moving this wait before the container would put it before its own producer.
+// CHECK-LABEL: func.func @mixed_pipe_group(
+// CHECK: pto.fusion_region {
+// CHECK: pto.tload
+// CHECK-NEXT: pto.set_flag[<PIPE_MTE2>, <PIPE_V>, <EVENT_ID[[MIX:[0-7]]]>]
+// CHECK-NEXT: pto.wait_flag[<PIPE_MTE2>, <PIPE_V>, <EVENT_ID[[MIX]]>]
+// CHECK-NEXT: pto.tadd
+// CHECK-NEXT: pto.set_flag[<PIPE_V>, <PIPE_MTE3>, <EVENT_ID[[MIXOUT:[0-7]]]>]
+// CHECK-NEXT: pto.yield
+// CHECK-NEXT: }
+// CHECK-NEXT: pto.wait_flag[<PIPE_V>, <PIPE_MTE3>, <EVENT_ID[[MIXOUT]]>]
+
+// CHECK-LABEL: func.func @control_group(
+// CHECK: pto.fusion_region {
+// CHECK: scf.if
+// CHECK: pto.tload
+// CHECK: } else {
+// CHECK: pto.tload
+// CHECK: pto.wait_flag[<PIPE_MTE2>, <PIPE_V>,
+// CHECK-NEXT: pto.tadd
+
+// CHECK-LABEL: func.func @local_slot_group(
+// CHECK: pto.fusion_region {
+// CHECK-NEXT: {{.*}}arith.remui
+// CHECK-NEXT: {{.*}}pto.multi_tile_get
+// CHECK-NEXT: {{.*}}pto.alloc_tile
+// CHECK-NEXT: pto.wait_flag[<PIPE_MTE2>, <PIPE_V>,
+// CHECK-NEXT: pto.tadd
+
+// CHECK-LABEL: func.func @manual_sync_group(
+// CHECK: pto.set_flag[<PIPE_MTE2>, <PIPE_V>, <EVENT_ID3>]
+// CHECK-NEXT: {{.*}}pto.fusion_region {
+// CHECK-NEXT: {{.*}}pto.alloc_tile
+// CHECK-NEXT: pto.wait_flag[<PIPE_MTE2>, <PIPE_V>, <EVENT_ID3>]
+// CHECK-NEXT: pto.tadd
+// CHECK-NEXT: pto.yield
+// CHECK-NEXT: }
+// CHECK-NEXT: pto.set_flag[<PIPE_V>, <PIPE_MTE3>, <EVENT_ID4>]
+// CHECK-NEXT: pto.wait_flag[<PIPE_V>, <PIPE_MTE3>, <EVENT_ID4>]
+// CHECK-NEXT: pto.tstore
+// CHECK-NEXT: return
+
+// The oracle keeps body-level anchors, not the emitter's aggregated compound.
+// ORACLE-DAG: [sync-gate:g1-self] func=multiple_results compounds=4 {{.*}}uncovered=0 {{.*}}unmappable=0 OK
+// ORACLE-DAG: [sync-gate:g1-self] func=consecutive_groups compounds=4 {{.*}}uncovered=0 {{.*}}unmappable=0 OK
+// ORACLE-DAG: [sync-gate:g1-self] func=internal_storage_reuse compounds=5 {{.*}}uncovered=0 {{.*}}unmappable=0 OK
+// ORACLE-DAG: [sync-gate:g1-self] func=loop_group compounds=3 {{.*}}uncovered=0 {{.*}}carried=5/5 {{.*}}unmappable=0 OK
+// ORACLE-DAG: [sync-gate:g1-self] func=mixed_pipe_group {{.*}}uncovered=0 {{.*}}unmappable=0 OK
+// ORACLE-DAG: [sync-gate:g1-self] func=control_group {{.*}}uncovered=0 {{.*}}unmappable=0 OK
+// ORACLE-DAG: [sync-gate:g1-self] func=local_slot_group {{.*}}uncovered=0 {{.*}}unmappable=0 OK
+// ORACLE-DAG: [sync-gate:g1-self] func=manual_sync_group {{.*}}uncovered=0 {{.*}}unmappable=0 OK
+// FAULT: kind=uncovered-dependency raw {{.*}}(pto.tsub) -> {{.*}}(pto.tstore) PIPE_V->PIPE_MTE3
+
+// UNIFIED-LABEL: func.func @multiple_results(
+// UNIFIED: pto.wait_flag[<PIPE_MTE2>, <PIPE_V>,
+// UNIFIED-NEXT: {{.*}}pto.fusion_region {
+// UNIFIED-NEXT: {{.*}}pto.alloc_tile
+// UNIFIED-NEXT: {{.*}}pto.alloc_tile
+// UNIFIED-NEXT: pto.tadd
+// UNIFIED-NEXT: pto.tsub
+// UNIFIED-NEXT: pto.yield
+// UNIFIED-NEXT: }
+// UNIFIED-NEXT: pto.set_flag[<PIPE_V>, <PIPE_MTE3>,
+// UNIFIED-NEXT: pto.wait_flag[<PIPE_V>, <PIPE_MTE3>,
+// UNIFIED-NEXT: pto.tstore
+
+// A3 requires same-pipe vector barriers; aggregation is an A5-only choice.
+// A3-LABEL: func.func @multiple_results(
+// A3: pto.fusion_region {
+// A3: pto.wait_flag[<PIPE_MTE2>, <PIPE_V>,
+// A3: pto.tadd
+// A3-NEXT: pto.barrier <PIPE_V>
+// A3: pto.tsub
+// A3: pto.yield

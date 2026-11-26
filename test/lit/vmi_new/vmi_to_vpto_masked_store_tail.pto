@@ -19,7 +19,7 @@ module {
     pto.vmi.vstore %value, %dst[%aligned_offset], %mask
         : !pto.vmi.vreg<100xf32>,
           !pto.ptr<f32, ub>,
-          !pto.vmi.mask<100xb32>
+          index, !pto.vmi.mask<100xb32>
     return
   }
 }

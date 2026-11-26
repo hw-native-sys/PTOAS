@@ -22,7 +22,7 @@ module {
         : !pto.vmi.vreg<128xi32>, i32, !pto.vmi.mask<128xpred>
         -> !pto.vmi.vreg<128xi32>
     pto.vmi.vstore %out, %dst[%c0]
-        : !pto.vmi.vreg<128xi32>, !pto.ptr<i32, ub>
+        : !pto.vmi.vreg<128xi32>, !pto.ptr<i32, ub>, index
     return
   }
 }

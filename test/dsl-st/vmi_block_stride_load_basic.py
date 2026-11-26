@@ -50,9 +50,9 @@ SRC = """module attributes {pto.target_arch = "a5", pto.kernel_kind = #pto.kerne
     pto.vecscope {
       %bs = arith.constant 8 : i16
       %v = pto.vmi.vload %ub_src[%c0], %bs
-          : !pto.ptr<i8, ub> -> !pto.vmi.vreg<64xi8>
+          : !pto.ptr<i8, ub>, index -> !pto.vmi.vreg<64xi8>
       pto.vmi.vstore %v, %ub_dst[%c0]
-          : !pto.vmi.vreg<64xi8>, !pto.ptr<i8, ub>
+          : !pto.vmi.vreg<64xi8>, !pto.ptr<i8, ub>, index
     }
 
     pto.set_flag["PIPE_V", "PIPE_MTE3", "EVENT_ID0"]
