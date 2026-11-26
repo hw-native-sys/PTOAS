@@ -3302,10 +3302,11 @@ def CmoCacheInvalidOp : PTO_Op<"cmo.cacheinvalid"> {
     producer DSL/user and lowers to
     `dcci(addr, cache_line_t::SINGLE_CACHE_LINE)`.
 
-    This op is an explicit CMO boundary. PTOAS no longer runs the historical
-    MemoryConsistency analysis pass that consumed marker-only CMO ops or inferred
-    signal/payload pipe drains, so precise placement and coverage are the
-    producer DSL/user's responsibility.
+    This op is an explicit CMO boundary. A producer may mark the whole-cache
+    form with the unit attribute `pto.comm_acquire` if its sole purpose is
+    acquiring a payload after a communication wait. A3 EmitC can omit that
+    maintenance when there is no scalar GM payload access after the boundary
+    and no preceding scalar GM write that could need writeback.
   }];
 
   let arguments = (ins
