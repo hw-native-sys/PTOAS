@@ -519,8 +519,8 @@ out = pto.vmi.vmul(scale, data, full_mask)
   types are expected. Floating-point usage is rejected.
 - `vshr` performs arithmetic right shift for signed element types (`si*`) and
   logical right shift for unsigned (`ui*`) and signless (`i*`) element types.
-- `vdiv` supports floating-point element types only: `f16` and `f32`. Integer
-  division is not available through this shared signature group.
+- `vdiv` accepts `f16`, `f32`, and, on A5, signed, unsigned, or signless 16-bit
+  and 32-bit integers. 
 
 ---
 

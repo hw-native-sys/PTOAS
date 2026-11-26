@@ -36,7 +36,7 @@ module {
   }
 }
 
-// CHECK: 'pto.vmi.vdiv' op requires f16 or f32 VMI element type
+// CHECK: 'pto.vmi.vdiv' op requires i16, i32, f16, or f32 VMI element type
 
 // -----
 

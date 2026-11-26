@@ -10,6 +10,7 @@
 //===----------------------------------------------------------------------===//
 
 #include "VMIInternal.h"
+#include "mlir/IR/BuiltinOps.h"
 
 using namespace mlir;
 using namespace mlir::pto;
@@ -793,10 +794,45 @@ LogicalResult VMIVmulOp::verify() {
       "requires i16, i32, f16, bf16, or f32 VMI element type");
 }
 
-LogicalResult VMIVdivOp::verify() {
-  return verifyVMIBinaryComputeOp(
-      *this, [](mlir::Type type) { return isVMIF16OrF32Type(type); },
-      "requires f16 or f32 VMI element type");
+LogicalResult VMIVdivOp::verify()
+{
+    LogicalResult verifyResult = verifyVMIBinaryComputeOp(
+        *this,
+        [](Type type) { return type.isInteger(kValue16) || type.isInteger(kValue32) || isVMIF16OrF32Type(type); },
+        "requires i16, i32, f16, or f32 VMI element type");
+    if (failed(verifyResult)) {
+        return failure();
+    }
+    auto elementType = cast<VMIVRegType>(getLhs().getType()).getElementType();
+    if (!elementType.isInteger()) {
+        return success();
+    }
+    if (getPrecisionType() != DivPrecision::Intrinsic) {
+        return emitOpError("integer division requires intrinsic precisionType");
+    }
+    // The parser's target already accounts for command-line overrides. The
+    // module attributes are updated only after parsing and verification.
+    auto parserTarget = getPTOParserTargetArch(getContext());
+    if (parserTarget == PTOParserTargetArch::A5) {
+        return success();
+    }
+    if (parserTarget == PTOParserTargetArch::A3) {
+        return emitOpError("integer division requires the A5 target");
+    }
+    ModuleOp targetModule;
+    for (auto module = getOperation()->getParentOfType<ModuleOp>(); module;
+         module = module->getParentOfType<ModuleOp>()) {
+        const auto arch = module->getAttrOfType<StringAttr>(kPTOTargetArchAttrName);
+        const auto deviceSpec = module->getAttrOfType<StringAttr>("pto.device-spec");
+        if (arch || deviceSpec) {
+            targetModule = module;
+        }
+    }
+    const PTOArch target = getTargetArch(targetModule);
+    if (target != PTOArch::A5) {
+        return emitOpError("integer division requires the A5 target");
+    }
+    return success();
 }
 
 LogicalResult VMIVminOp::verify() {
