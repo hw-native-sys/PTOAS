@@ -108,7 +108,7 @@ borrow occurred. In `vsubcs`, a carry-in of 0 propagates a borrow.
 
 ### `pto.vmi.vdiv`
 
-- **semantics:** Elementwise floating-point divide.
+- **semantics:** Elementwise divide.
 
   ```c
   for (int i = 0; i < L; i++)
@@ -119,7 +119,8 @@ borrow occurred. In `vsubcs`, a carry-in of 0 propagates a borrow.
   ```mlir
   %r = pto.vmi.vdiv %lhs, %rhs, %mask : !pto.vmi.vreg<L×T>, !pto.vmi.vreg<L×T>, !pto.vmi.mask<L> -> !pto.vmi.vreg<L×T>
   ```
-- **datatypes:** `f16`, `f32` only
+- **datatypes:** `f16`, `f32`, and, on A5, signed, unsigned, or signless 16-bit
+  and 32-bit integers.
 - **lowering to `pto.mi`:**
   ```
   K × pto.vdiv

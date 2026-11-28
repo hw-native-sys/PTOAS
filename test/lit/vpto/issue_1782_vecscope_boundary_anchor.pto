@@ -1,0 +1,94 @@
+// RUN: pto-test-opt %s -pto-infer-vpto-vecscope | FileCheck %s
+
+// A pure mask produced outside a runtime scf.for can be used inside the loop
+// even when insert-sync flags make the loop a Boundary region. The escaping
+// mask must be rematerialized inside the loop body, not rejected.
+module {
+  func.func @issue_1782_boundary_loop_mask(%dst: !pto.ptr<f32, ub>, %end: index) {
+    %c0 = arith.constant 0 : index
+    %c1 = arith.constant 1 : index
+    %c16 = arith.constant 16 : i32
+    %cst = arith.constant 1.000000e+00 : f32
+    %mask, %tail = pto.plt_b32 %c16 : i32 -> !pto.mask<b32>, i32
+    scf.for %i = %c0 to %end step %c1 {
+      pto.set_flag["PIPE_V", "PIPE_MTE3", "EVENT_ID0"]
+      %vec = pto.vlds %dst[%c0] : !pto.ptr<f32, ub>, index -> !pto.vreg<64xf32>
+      %sum = pto.vadds %vec, %cst, %mask : !pto.vreg<64xf32>, f32, !pto.mask<b32> -> !pto.vreg<64xf32>
+      pto.vsts %sum, %dst[%c0], %mask : !pto.vreg<64xf32>, !pto.ptr<f32, ub>, index, !pto.mask<b32>
+      pto.wait_flag["PIPE_V", "PIPE_MTE3", "EVENT_ID0"]
+    }
+    return
+  }
+
+  // CHECK-LABEL: func.func @issue_1782_boundary_loop_mask
+  // CHECK: scf.for
+  // CHECK: pto.set_flag
+  // CHECK-NEXT: pto.vecscope {
+  // CHECK: pto.plt_b32
+  // CHECK: pto.vlds
+  // CHECK: pto.vadds
+  // CHECK: pto.vsts
+  // CHECK: }
+  // CHECK-NEXT: pto.wait_flag
+  // CHECK-NEXT: }
+  // CHECK-NEXT: return
+
+  func.func @issue_1782_boundary_if_mask(%dst: !pto.ptr<f32, ub>, %cond: i1) {
+    %c0 = arith.constant 0 : index
+    %c16 = arith.constant 16 : i32
+    %cst = arith.constant 1.000000e+00 : f32
+    %mask, %tail = pto.plt_b32 %c16 : i32 -> !pto.mask<b32>, i32
+    scf.if %cond {
+      pto.set_flag["PIPE_V", "PIPE_MTE3", "EVENT_ID0"]
+      %vec = pto.vlds %dst[%c0] : !pto.ptr<f32, ub>, index -> !pto.vreg<64xf32>
+      %sum = pto.vadds %vec, %cst, %mask : !pto.vreg<64xf32>, f32, !pto.mask<b32> -> !pto.vreg<64xf32>
+      pto.vsts %sum, %dst[%c0], %mask : !pto.vreg<64xf32>, !pto.ptr<f32, ub>, index, !pto.mask<b32>
+      pto.wait_flag["PIPE_V", "PIPE_MTE3", "EVENT_ID0"]
+    }
+    return
+  }
+
+  // CHECK-LABEL: func.func @issue_1782_boundary_if_mask
+  // CHECK: scf.if
+  // CHECK: pto.set_flag
+  // CHECK-NEXT: pto.vecscope {
+  // CHECK: pto.plt_b32
+  // CHECK: pto.vlds
+  // CHECK: pto.vadds
+  // CHECK: pto.vsts
+  // CHECK: }
+  // CHECK-NEXT: pto.wait_flag
+  // CHECK-NEXT: }
+
+  func.func @issue_1782_nested_boundary_loop_mask(%dst: !pto.ptr<f32, ub>, %end: index) {
+    %c0 = arith.constant 0 : index
+    %c1 = arith.constant 1 : index
+    %c16 = arith.constant 16 : i32
+    %cst = arith.constant 1.000000e+00 : f32
+    %mask, %tail = pto.plt_b32 %c16 : i32 -> !pto.mask<b32>, i32
+    scf.for %i = %c0 to %end step %c1 {
+      scf.for %j = %c0 to %end step %c1 {
+        pto.set_flag["PIPE_V", "PIPE_MTE3", "EVENT_ID0"]
+        %vec = pto.vlds %dst[%c0] : !pto.ptr<f32, ub>, index -> !pto.vreg<64xf32>
+        %sum = pto.vadds %vec, %cst, %mask : !pto.vreg<64xf32>, f32, !pto.mask<b32> -> !pto.vreg<64xf32>
+        pto.vsts %sum, %dst[%c0], %mask : !pto.vreg<64xf32>, !pto.ptr<f32, ub>, index, !pto.mask<b32>
+        pto.wait_flag["PIPE_V", "PIPE_MTE3", "EVENT_ID0"]
+      }
+    }
+    return
+  }
+
+  // CHECK-LABEL: func.func @issue_1782_nested_boundary_loop_mask
+  // CHECK: scf.for
+  // CHECK: scf.for
+  // CHECK: pto.set_flag
+  // CHECK-NEXT: pto.vecscope {
+  // CHECK: pto.plt_b32
+  // CHECK: pto.vlds
+  // CHECK: pto.vadds
+  // CHECK: pto.vsts
+  // CHECK: }
+  // CHECK-NEXT: pto.wait_flag
+  // CHECK-NEXT: }
+  // CHECK-NEXT: }
+}

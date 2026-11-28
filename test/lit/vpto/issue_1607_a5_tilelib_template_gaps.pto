@@ -334,18 +334,33 @@ module attributes {pto.target_arch = "a5", pto.kernel_kind = #pto.kernel_kind<ve
 // SELECT-LABEL: func.func @TCMPS_UI32
 // SELECT-NOT: pto.tcmps ins
 // SELECT: pto.vcmps
+
+// Unsigned remainder uses the SoftLib reciprocal for the quotient and stores
+// the dividend minus the quotient times the scalar divisor.
 // SELECT-LABEL: func.func @TFMODS_UI16
 // SELECT-NOT: pto.tfmods ins
-// SELECT: pto.vshrs
+// SELECT: pto.vdiv {{.*}} : !pto.vreg<64xf32>
+// SELECT: %[[PRODUCT:[^ ]+]] = pto.vmuls {{.*}} : !pto.vreg<128xui16>
+// SELECT: %[[REMAINDER:[^ ]+]] = pto.vsub %{{[^,]+}}, %[[PRODUCT]],
+// SELECT: pto.vsts %[[REMAINDER]],
 // SELECT-LABEL: func.func @TFMODS_UI32
 // SELECT-NOT: pto.tfmods ins
-// SELECT: pto.vshrs
+// SELECT: pto.vdiv {{.*}} : !pto.vreg<64xf32>
+// SELECT: %[[PRODUCT:[^ ]+]] = pto.vmuls {{.*}} : !pto.vreg<64xui32>
+// SELECT: %[[REMAINDER:[^ ]+]] = pto.vsub %{{[^,]+}}, %[[PRODUCT]],
+// SELECT: pto.vsts %[[REMAINDER]],
 // SELECT-LABEL: func.func @REMS_UI16
 // SELECT-NOT: pto.trems ins
-// SELECT: pto.vshrs
+// SELECT: pto.vdiv {{.*}} : !pto.vreg<64xf32>
+// SELECT: %[[PRODUCT:[^ ]+]] = pto.vmuls {{.*}} : !pto.vreg<128xui16>
+// SELECT: %[[REMAINDER:[^ ]+]] = pto.vsub %{{[^,]+}}, %[[PRODUCT]],
+// SELECT: pto.vsts %[[REMAINDER]],
 // SELECT-LABEL: func.func @REMS_UI32
 // SELECT-NOT: pto.trems ins
-// SELECT: pto.vshrs
+// SELECT: pto.vdiv {{.*}} : !pto.vreg<64xf32>
+// SELECT: %[[PRODUCT:[^ ]+]] = pto.vmuls {{.*}} : !pto.vreg<64xui32>
+// SELECT: %[[REMAINDER:[^ ]+]] = pto.vsub %{{[^,]+}}, %[[PRODUCT]],
+// SELECT: pto.vsts %[[REMAINDER]],
 // SELECT-LABEL: func.func @TSELS_UI8
 // SELECT-NOT: pto.tsels ins
 // SELECT: pto.vsel

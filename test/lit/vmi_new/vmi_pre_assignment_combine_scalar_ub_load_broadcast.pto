@@ -30,6 +30,38 @@ module {
     %broadcast = pto.vmi.vbrc %scalar : i8 -> !pto.vmi.vreg<256xi8>
     return %broadcast : !pto.vmi.vreg<256xi8>
   }
+
+  func.func @broadcast_ui16(%src: !pto.ptr<ui16, ub>, %off: index) -> !pto.vmi.vreg<128xui16> {
+    %s = pto.load %src[%off] : !pto.ptr<ui16, ub>, index -> ui16
+    %i = builtin.unrealized_conversion_cast %s : ui16 to i16
+    %v = pto.vmi.vbrc %i : i16 -> !pto.vmi.vreg<128xi16>
+    %r = pto.vmi.vinterpret_cast %v : !pto.vmi.vreg<128xi16> -> !pto.vmi.vreg<128xui16>
+    return %r : !pto.vmi.vreg<128xui16>
+  }
+
+  func.func @broadcast_si32(%src: !pto.ptr<si32, ub>, %off: index) -> !pto.vmi.vreg<64xsi32> {
+    %s = pto.load %src[%off] : !pto.ptr<si32, ub>, index -> si32
+    %i = builtin.unrealized_conversion_cast %s : si32 to i32
+    %v = pto.vmi.vbrc %i : i32 -> !pto.vmi.vreg<64xi32>
+    %r = pto.vmi.vinterpret_cast %v : !pto.vmi.vreg<64xi32> -> !pto.vmi.vreg<64xsi32>
+    return %r : !pto.vmi.vreg<64xsi32>
+  }
+
+  func.func @cast96(%src: !pto.ptr<ui16, ub>, %off: index) -> !pto.vmi.vreg<96xui16> {
+    %s = pto.load %src[%off] : !pto.ptr<ui16, ub>, index -> ui16
+    %i = builtin.unrealized_conversion_cast %s : ui16 to i16
+    %v = pto.vmi.vbrc %i : i16 -> !pto.vmi.vreg<96xi16>
+    %r = pto.vmi.vinterpret_cast %v : !pto.vmi.vreg<96xi16> -> !pto.vmi.vreg<96xui16>
+    return %r : !pto.vmi.vreg<96xui16>
+  }
+
+  func.func @mem(%src: memref<256xui16, #pto.address_space<vec>>, %off: index) -> !pto.vmi.vreg<128xui16> {
+    %s = pto.load %src[%off] : memref<256xui16, #pto.address_space<vec>>, index -> ui16
+    %i = builtin.unrealized_conversion_cast %s : ui16 to i16
+    %v = pto.vmi.vbrc %i : i16 -> !pto.vmi.vreg<128xi16>
+    %r = pto.vmi.vinterpret_cast %v : !pto.vmi.vreg<128xi16> -> !pto.vmi.vreg<128xui16>
+    return %r : !pto.vmi.vreg<128xui16>
+  }
 }
 
 // CHECK-LABEL: func.func @scalar_ub_load_broadcast_f32
@@ -61,3 +93,33 @@ module {
 // LOWER-NOT: pto.load
 // LOWER: pto.vlds {{.*}} {dist = "BRC_B8"}
 // LOWER-NOT: pto.vdup
+
+// CHECK-LABEL: func.func @broadcast_ui16
+// CHECK-NOT: pto.load
+// CHECK: %[[V:.*]] = pto.vmi.group_broadcast_load
+// CHECK: return %[[V]]
+// LOWER-LABEL: func.func @broadcast_ui16
+// LOWER: pto.vlds {{.*}} {dist = "BRC_B16"}
+// LOWER-NOT: pto.vdup
+
+// CHECK-LABEL: func.func @broadcast_si32
+// CHECK-NOT: pto.load
+// CHECK: %[[V:.*]] = pto.vmi.group_broadcast_load
+// CHECK: return %[[V]]
+// LOWER-LABEL: func.func @broadcast_si32
+// LOWER: pto.vlds {{.*}} {dist = "BRC_B32"}
+// LOWER-NOT: pto.vdup
+
+// CHECK-LABEL: func.func @cast96
+// CHECK: pto.load
+// CHECK: pto.vmi.broadcast
+// LOWER-LABEL: func.func @cast96
+// LOWER: pto.load
+// LOWER: pto.vdup
+
+// CHECK-LABEL: func.func @mem
+// CHECK: pto.load
+// CHECK: pto.vmi.broadcast
+// LOWER-LABEL: func.func @mem
+// LOWER: pto.load
+// LOWER: pto.vdup

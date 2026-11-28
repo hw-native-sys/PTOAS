@@ -2944,7 +2944,8 @@ pto.vmi.vadd / vsub / vmul / vdiv / vmin / vmax / vneg / vabs / vsqrt / vexp / v
   every target op. Direct lowering must also preflight the concrete VPTO/VISA
   element contract before OneToN rewriting:
     vadd/vsub/vmul -> pto.vadd/vsub/vmul support the corresponding floating or integer element types
-    vdiv -> pto.vdiv supports f16/f32 floating types
+    vdiv -> pto.vdiv supports f16/f32 floating types. i16/i32 are 
+    materialized through the A5 software library.
     vmin/vmax -> pto.vmin/vmax support the corresponding floating or integer element types
     vneg/vabs/vsqrt/vexp/vln/vrelu -> the matching VPTO op and its element-type contract
   bf16/f8 remain legal VMI float-like semantic types for the ops whose VMI

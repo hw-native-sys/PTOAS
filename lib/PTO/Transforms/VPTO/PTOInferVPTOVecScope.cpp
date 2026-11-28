@@ -477,37 +477,51 @@ computeLogicalScopeAnchors(Block &block) {
   return logicalScopeAnchors;
 }
 
-// Group the external uses of `result` by their logical-scope anchor inside
-// `block`. Returns nullopt if any use cannot be anchored.
-static std::optional<llvm::DenseMap<
-    Operation *, SmallVector<OpOperand *, mlir::pto::kValue4>>>
-collectExternalUsesBySegment(
-    OpResult result, const llvm::SmallPtrSetImpl<Operation *> &movedOps,
-    Block &block) {
-  llvm::DenseMap<Operation *, Operation *> logicalScopeAnchors =
-      computeLogicalScopeAnchors(block);
-  llvm::DenseMap<Operation *, SmallVector<OpOperand *, mlir::pto::kValue4>>
-      usesBySegment;
-
-  for (OpOperand &use : result.getUses()) {
-    Operation *user = use.getOwner();
-    if (isUserInsideCluster(user, movedOps)) {
-      continue;
-    }
-
-    Operation *ancestor = pto::getAncestorInBlock(user, &block);
+// Find the anchor before which `user`'s clone must be materialized. Uses
+// inside a Boundary SCF region are anchored in the nested block that owns the
+// user, so the clone stays inside the same region instead of escaping the
+// boundary again.
+static std::optional<Operation*> findLogicalScopeAnchorForUse(Operation* user, Block& block)
+{
+    llvm::DenseMap<Operation*, Operation*> logicalScopeAnchors = computeLogicalScopeAnchors(block);
+    Operation* ancestor = pto::getAncestorInBlock(user, &block);
     if (!ancestor) {
-      return std::nullopt;
+        return std::nullopt;
     }
 
     auto anchorIt = logicalScopeAnchors.find(ancestor);
-    if (anchorIt == logicalScopeAnchors.end()) {
-      return std::nullopt;
+    if (anchorIt != logicalScopeAnchors.end()) {
+        return anchorIt->second;
     }
 
-    usesBySegment[anchorIt->second].push_back(&use);
-  }
-  return usesBySegment;
+    Block* useBlock = user->getBlock();
+    if (!useBlock || useBlock == &block || !isAtomicControlFlowCandidate(ancestor)) {
+        return std::nullopt;
+    }
+    return findLogicalScopeAnchorForUse(user, *useBlock);
+}
+
+// Group the external uses of `result` by their logical-scope anchor inside
+// `block`. Returns nullopt if any use cannot be anchored.
+static std::optional<llvm::DenseMap<Operation*, SmallVector<OpOperand*, mlir::pto::kValue4>>>
+collectExternalUsesBySegment(OpResult result, const llvm::SmallPtrSetImpl<Operation*>& movedOps, Block& block)
+{
+    llvm::DenseMap<Operation*, SmallVector<OpOperand*, mlir::pto::kValue4>> usesBySegment;
+
+    for (OpOperand& use : result.getUses()) {
+        Operation* user = use.getOwner();
+        if (isUserInsideCluster(user, movedOps)) {
+            continue;
+        }
+
+        std::optional<Operation*> anchor = findLogicalScopeAnchorForUse(user, block);
+        if (!anchor) {
+            return std::nullopt;
+        }
+
+        usesBySegment[*anchor].push_back(&use);
+    }
+    return usesBySegment;
 }
 
 static LogicalResult rematerializeEscapingValueForUserSegments(

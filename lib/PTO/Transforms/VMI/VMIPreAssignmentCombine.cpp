@@ -216,6 +216,19 @@ static std::optional<int64_t> getLoadBroadcastGroups(Operation* broadcast)
     return numGroups;
 }
 
+static bool supportsBroadcastLoad(VMIVRegType resultType, Value stride, int64_t numGroups)
+{
+    VMILayoutSupport supports;
+    // Require a dense fallback when the result has no assigned layout. A table
+    // row for a strided carrier alone does not guarantee legal consumer edges.
+    if (!resultType.getLayoutAttr()) {
+        resultType = VMIVRegType::get(
+            resultType.getContext(), resultType.getElementCount(), resultType.getElementType(),
+            VMILayoutAttr::getContiguous(resultType.getContext()));
+    }
+    return succeeded(supports.getGroupBroadcastLoadLayoutFact(resultType, stride, numGroups));
+}
+
 static void fuseVMILoadBroadcast(Operation* broadcast, int64_t numGroups)
 {
     auto load = broadcast->getOperand(0).getDefiningOp<VMILoadOp>();
@@ -224,24 +237,13 @@ static void fuseVMILoadBroadcast(Operation* broadcast, int64_t numGroups)
     // their existing zero-stride representation.
     auto stride = builder.create<arith::ConstantOp>(
         broadcast->getLoc(), builder.getIndexType(), builder.getIndexAttr(numGroups == 1 ? 0 : 1));
-    auto fused = builder.create<VMIGroupBroadcastLoadOp>(
-        broadcast->getLoc(), broadcast->getResult(0).getType(), load.getSource(), load.getOffset(), stride,
-        builder.getI64IntegerAttr(numGroups));
-    VMILayoutSupport supports;
-    auto resultType = cast<VMIVRegType>(fused.getResult().getType());
-    // Require a dense fallback when the result has no assigned layout. A table
-    // row for a strided carrier alone does not guarantee legal consumer edges.
-    if (!resultType.getLayoutAttr()) {
-        resultType = VMIVRegType::get(
-            builder.getContext(), resultType.getElementCount(), resultType.getElementType(),
-            VMILayoutAttr::getContiguous(builder.getContext()));
-    }
-    bool hasSupportedLayout = succeeded(supports.getGroupBroadcastLoadLayoutFact(resultType, stride, numGroups));
-    if (!hasSupportedLayout) {
-        fused.erase();
+    if (!supportsBroadcastLoad(cast<VMIVRegType>(broadcast->getResult(0).getType()), stride, numGroups)) {
         stride.erase();
         return;
     }
+    auto fused = builder.create<VMIGroupBroadcastLoadOp>(
+        broadcast->getLoc(), broadcast->getResult(0).getType(), load.getSource(), load.getOffset(), stride,
+        builder.getI64IntegerAttr(numGroups));
     broadcast->getResult(0).replaceAllUsesWith(fused.getResult());
     broadcast->erase();
     load.erase();
@@ -269,67 +271,88 @@ static LogicalResult fuseVMILoadBroadcasts(ModuleOp module, AliasAnalysis& alias
     return success();
 }
 
-static PTOLoadOp getFusablePTOScalarUBLoad(VMIBroadcastOp broadcast, AliasAnalysis& aliasAnalysis)
+struct ScalarBroadcastMatch {
+    PTOLoadOp load;
+    Value result;
+    UnrealizedConversionCastOp scalarCast;
+    VMIBitcastOp vectorCast;
+};
+
+// A frontend can broadcast through a signless scalar and restore the original
+// element type on the vector. Match the complete bit-preserving round trip.
+static bool matchIntegerBroadcastCasts(VMIBroadcastOp broadcast, ScalarBroadcastMatch& match)
 {
-    auto load = broadcast.getValue().getDefiningOp<PTOLoadOp>();
-    if (!load) {
-        return {};
+    auto scalarCast = broadcast.getValue().getDefiningOp<UnrealizedConversionCastOp>();
+    if (!scalarCast || scalarCast->getNumOperands() != 1 || scalarCast->getNumResults() != 1 ||
+        !broadcast.getValue().hasOneUse() || !broadcast.getResult().hasOneUse()) {
+        return false;
     }
+    auto view = dyn_cast<VMIBitcastOp>(*broadcast.getResult().getUsers().begin());
+    auto input = dyn_cast<IntegerType>(scalarCast->getOperand(0).getType());
+    if (!view || !input || input.isSignless() || !broadcast.getValue().getType().isSignlessInteger(input.getWidth()) ||
+        scalarCast->getBlock() != broadcast->getBlock() || view->getBlock() != broadcast->getBlock()) {
+        return false;
+    }
+    auto source = cast<VMIVRegType>(broadcast.getResult().getType());
+    auto target = cast<VMIVRegType>(view.getResult().getType());
+    if (source.getElementType() != broadcast.getValue().getType() || target.getElementType() != input ||
+        source.getElementCount() != target.getElementCount() || source.getLayoutAttr() || target.getLayoutAttr()) {
+        return false;
+    }
+    match = {scalarCast->getOperand(0).getDefiningOp<PTOLoadOp>(), view.getResult(), scalarCast, view};
+    return true;
+}
 
-    bool hasSingleUse = load.getValue().hasOneUse();
-    bool canReorderLoad = canMoveLoadPastInterveningOps(load, broadcast, load.getPtr(), aliasAnalysis);
-    if (!hasSingleUse || !canReorderLoad) {
-        return {};
+static std::optional<ScalarBroadcastMatch> matchScalarUBBroadcast(VMIBroadcastOp broadcast, AliasAnalysis& aliases)
+{
+    ScalarBroadcastMatch match{broadcast.getValue().getDefiningOp<PTOLoadOp>(), broadcast.getResult(), {}, {}};
+    if (!match.load && !matchIntegerBroadcastCasts(broadcast, match)) {
+        return std::nullopt;
     }
-
-    auto resultType = dyn_cast<VMIVRegType>(broadcast.getResult().getType());
-    if (!resultType) {
-        return {};
+    auto load = match.load;
+    if (!load || !load.getValue().hasOneUse() ||
+        !canMoveLoadPastInterveningOps(load, broadcast, load.getPtr(), aliases)) {
+        return std::nullopt;
     }
-
-    Type sourceType = load.getPtr().getType();
-    Type elementType = resultType.getElementType();
-    bool sourceIsUB = isUBBackedMemoryType(sourceType);
-    bool sourceElementMatches = getMemoryElementType(sourceType) == load.getValue().getType();
-    bool resultElementMatches = load.getValue().getType() == elementType;
-    if (!sourceIsUB || !sourceElementMatches || !resultElementMatches) {
-        return {};
+    Type ptrType = load.getPtr().getType();
+    Type element = cast<VMIVRegType>(match.result.getType()).getElementType();
+    unsigned bits = getVMIElementBitWidth(element);
+    if (!isa<PtrType>(ptrType) || !isUBBackedMemoryType(ptrType) || getMemoryElementType(ptrType) != element ||
+        load.getValue().getType() != element || (bits != kValue8 && bits != kValue16 && bits != kValue32)) {
+        return std::nullopt;
     }
-
-    unsigned bitWidth = getVMIElementBitWidth(elementType);
-    if (bitWidth != kValue8 && bitWidth != kValue16 && bitWidth != kValue32) {
-        return {};
-    }
-    return load;
+    return match;
 }
 
 static LogicalResult fusePTOScalarUBLoadBroadcasts(ModuleOp module, AliasAnalysis& aliasAnalysis)
 {
     SmallVector<VMIBroadcastOp> broadcasts;
-    module.walk([&](VMIBroadcastOp broadcast) {
-        if (getFusablePTOScalarUBLoad(broadcast, aliasAnalysis)) {
-            broadcasts.push_back(broadcast);
-        }
-    });
-
+    module.walk([&](VMIBroadcastOp broadcast) { broadcasts.push_back(broadcast); });
     OpBuilder builder(module.getContext());
     for (VMIBroadcastOp broadcast : broadcasts) {
-        auto load = getFusablePTOScalarUBLoad(broadcast, aliasAnalysis);
-        if (!load) {
+        auto match = matchScalarUBBroadcast(broadcast, aliasAnalysis);
+        if (!match) {
             continue;
         }
-
         builder.setInsertionPoint(broadcast);
-        Value zeroStride =
+        auto zeroStride =
             builder.create<arith::ConstantOp>(broadcast.getLoc(), builder.getIndexType(), builder.getIndexAttr(0));
-        auto fused = builder.create<VMIGroupBroadcastLoadOp>(
-            broadcast.getLoc(), broadcast.getResult().getType(), load.getPtr(), load.getOffset(), zeroStride,
-            builder.getI64IntegerAttr(1));
-        broadcast.getResult().replaceAllUsesWith(fused.getResult());
-        broadcast.erase();
-        if (load->use_empty()) {
-            load.erase();
+        if (!supportsBroadcastLoad(cast<VMIVRegType>(match->result.getType()), zeroStride, 1)) {
+            zeroStride.erase();
+            continue;
         }
+        auto fused = builder.create<VMIGroupBroadcastLoadOp>(
+            broadcast.getLoc(), match->result.getType(), match->load.getPtr(), match->load.getOffset(), zeroStride,
+            builder.getI64IntegerAttr(1));
+        match->result.replaceAllUsesWith(fused.getResult());
+        if (match->vectorCast) {
+            match->vectorCast.erase();
+        }
+        broadcast.erase();
+        if (match->scalarCast) {
+            match->scalarCast.erase();
+        }
+        match->load.erase();
     }
     return success();
 }

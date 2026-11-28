@@ -6,9 +6,11 @@
 // INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
 // See LICENSE in the root of the software repository for the full text of the License.
 
-// RUN: pto-test-opt %s -vmi-mask-granularity-assignment -vmi-layout-assignment -vmi-lower-unified-to-legacy -vmi-to-vpto | FileCheck %s
+// RUN: pto-test-opt %s -pto-vmi-normalize-signless-int-to-unsigned -vmi-mask-granularity-assignment -vmi-layout-assignment -vmi-lower-unified-to-legacy -vmi-to-vpto | FileCheck %s
+// RUN: not ptoas --pto-arch=a3 --emit-pto-ir %s 2>&1 | FileCheck %s --check-prefix=CLI-A3
+// RUN: sed '/^module attributes/s/"a5"/"a3"/' %s | ptoas --pto-arch=a5 --emit-pto-ir - | FileCheck %s --check-prefix=CLI-A5
 
-module {
+module attributes {pto.target_arch = "a5"} {
   func.func @vmi_to_vpto_divf(
       %lhs: !pto.vmi.vreg<128xf32>,
       %rhs: !pto.vmi.vreg<128xf32>) -> !pto.vmi.vreg<128xf32> {
@@ -16,6 +18,24 @@ module {
         : !pto.vmi.vreg<128xf32>, !pto.vmi.vreg<128xf32>
         -> !pto.vmi.vreg<128xf32>
     return %quotient : !pto.vmi.vreg<128xf32>
+  }
+
+  func.func @vmi_to_vpto_div_si16(
+      %lhs: !pto.vmi.vreg<128xsi16>, %rhs: !pto.vmi.vreg<128xsi16>,
+      %mask: !pto.vmi.mask<128xpred>) -> !pto.vmi.vreg<128xsi16> {
+    %quotient = pto.vmi.vdiv %lhs, %rhs, %mask {pmode = "zero"}
+        : !pto.vmi.vreg<128xsi16>, !pto.vmi.vreg<128xsi16>,
+          !pto.vmi.mask<128xpred> -> !pto.vmi.vreg<128xsi16>
+    return %quotient : !pto.vmi.vreg<128xsi16>
+  }
+
+  func.func @vmi_to_vpto_div_i32(
+      %lhs: !pto.vmi.vreg<64xi32>, %rhs: !pto.vmi.vreg<64xi32>)
+      -> !pto.vmi.vreg<64xi32> {
+    %quotient = pto.vmi.vdiv %lhs, %rhs
+        : !pto.vmi.vreg<64xi32>, !pto.vmi.vreg<64xi32>
+        -> !pto.vmi.vreg<64xi32>
+    return %quotient : !pto.vmi.vreg<64xi32>
   }
 }
 
@@ -31,3 +51,19 @@ module {
 // CHECK-NOT: pto.vmi.
 // CHECK-NOT: !pto.vmi.
 // CHECK-NOT: unrealized_conversion_cast
+
+// CHECK-LABEL: func.func @vmi_to_vpto_div_si16(
+// CHECK-SAME: %[[S16L:[^,]+]]: !pto.vreg<128xsi16>
+// CHECK-SAME: %[[S16R:[^,]+]]: !pto.vreg<128xsi16>
+// CHECK: %[[MASK:.*]] = pto.por {{.*}} -> !pto.mask<b16>
+// CHECK: pto.vdiv %[[S16L]], %[[S16R]], %[[MASK]] : !pto.vreg<128xsi16>, !pto.vreg<128xsi16>, !pto.mask<b16> -> !pto.vreg<128xsi16>
+
+// CHECK-LABEL: func.func @vmi_to_vpto_div_i32(
+// CHECK: pto.vdiv {{.*}} : !pto.vreg<64xui32>, !pto.vreg<64xui32>, !pto.mask<b32> -> !pto.vreg<64xui32>
+// CHECK: return {{.*}} : !pto.vreg<64xi32>
+
+// CLI-A3: 'pto.vmi.vdiv' op integer division requires the A5 target
+
+// CLI-A5: pto.target_arch = "a5"
+// CLI-A5-LABEL: func.func @vmi_to_vpto_div_si16(
+// CLI-A5: pto.vmi.vdiv

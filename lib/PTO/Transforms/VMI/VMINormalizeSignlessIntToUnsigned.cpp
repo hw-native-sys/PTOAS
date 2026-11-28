@@ -42,7 +42,8 @@ namespace {
 
 static bool isWhitelisted(Operation *op) {
   return llvm::TypeSwitch<Operation *, bool>(op)
-      .Case<pto::VMIVminOp, pto::VMIVmaxOp, pto::VMIVshrOp, pto::VMIvcmaxOp,
+      .Case<pto::VMIVdivOp, pto::VMIVminOp, pto::VMIVmaxOp, pto::VMIVshrOp,
+            pto::VMIvcmaxOp,
             pto::VMIvcminOp, pto::VMIMaxSOp, pto::VMIMinSOp, pto::VMIShrSOp,
             pto::VMICvtOp, pto::VMIReduceMaxIOp, pto::VMIReduceMinIOp,
             pto::VMIGroupReduceMaxIOp, pto::VMIGroupReduceMinIOp,

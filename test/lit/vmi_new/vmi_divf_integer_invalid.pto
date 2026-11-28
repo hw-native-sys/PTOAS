@@ -6,17 +6,55 @@
 // INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
 // See LICENSE in the root of the software repository for the full text of the License.
 
-// RUN: not ptoas --emit-pto-ir %s 2>&1 | FileCheck %s
+// RUN: pto-test-opt %s -split-input-file -verify-diagnostics
 
 module {
-  func.func @vmi_divf_integer_invalid(
-      %lhs: !pto.vmi.vreg<128xi32>,
-      %rhs: !pto.vmi.vreg<128xi32>) {
+  func.func @vmi_div_byte_invalid(
+      %lhs: !pto.vmi.vreg<256xui8>,
+      %rhs: !pto.vmi.vreg<256xui8>) {
+    // expected-error @+1 {{requires i16, i32, f16, or f32 VMI element type}}
     %quotient = pto.vmi.vdiv %lhs, %rhs
-        : !pto.vmi.vreg<128xi32>, !pto.vmi.vreg<128xi32>
-        -> !pto.vmi.vreg<128xi32>
+        : !pto.vmi.vreg<256xui8>, !pto.vmi.vreg<256xui8>
+        -> !pto.vmi.vreg<256xui8>
     return
   }
 }
 
-// CHECK: 'pto.vmi.vdiv' op requires f16 or f32 VMI element type
+// -----
+
+module attributes {pto.target_arch = "a5"} {
+  func.func @vmi_div_integer_precision_invalid(
+      %lhs: !pto.vmi.vreg<128xsi16>, %rhs: !pto.vmi.vreg<128xsi16>) {
+    // expected-error @+1 {{integer division requires intrinsic precisionType}}
+    %quotient = pto.vmi.vdiv %lhs, %rhs {precisionType = #pto<div_precision precision_0ulp_ftz_true>}
+        : !pto.vmi.vreg<128xsi16>, !pto.vmi.vreg<128xsi16>
+        -> !pto.vmi.vreg<128xsi16>
+    return
+  }
+}
+
+// -----
+
+module attributes {pto.target_arch = "a3"} {
+  func.func @vmi_div_integer_target_invalid(
+      %lhs: !pto.vmi.vreg<64xui32>, %rhs: !pto.vmi.vreg<64xui32>) {
+    // expected-error @+1 {{integer division requires the A5 target}}
+    %quotient = pto.vmi.vdiv %lhs, %rhs
+        : !pto.vmi.vreg<64xui32>, !pto.vmi.vreg<64xui32>
+        -> !pto.vmi.vreg<64xui32>
+    return
+  }
+}
+
+// -----
+
+module {
+  func.func @vmi_div_integer_missing_target(
+      %lhs: !pto.vmi.vreg<64xui32>, %rhs: !pto.vmi.vreg<64xui32>) {
+    // expected-error @+1 {{integer division requires the A5 target}}
+    %quotient = pto.vmi.vdiv %lhs, %rhs
+        : !pto.vmi.vreg<64xui32>, !pto.vmi.vreg<64xui32>
+        -> !pto.vmi.vreg<64xui32>
+    return
+  }
+}

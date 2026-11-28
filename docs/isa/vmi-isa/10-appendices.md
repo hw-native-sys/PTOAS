@@ -12,7 +12,7 @@
 | 4 | `pto.vmi.vadd` | 3: Eltwise | A | Elementwise add (fp+int unified) |
 | 5 | `pto.vmi.vsub` | 3: Eltwise | A | Elementwise subtract |
 | 6 | `pto.vmi.vmul` | 3: Eltwise | A | Elementwise multiply |
-| 7 | `pto.vmi.vdiv` | 3: Eltwise | A | Elementwise divide (fp only) |
+| 7 | `pto.vmi.vdiv` | 3: Eltwise | A | Elementwise divide |
 | 8 | `pto.vmi.vmax` | 3: Eltwise | A | Elementwise maximum |
 | 9 | `pto.vmi.vmin` | 3: Eltwise | A | Elementwise minimum |
 | 10 | `pto.vmi.vabs` | 3: Eltwise | A | Elementwise absolute value |
