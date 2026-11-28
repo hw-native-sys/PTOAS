@@ -190,7 +190,8 @@ copy_validation_assets() {
       rel="${asset#${sample_dir}/}"
       mkdir -p "${out_sample_dir}/$(dirname "${rel}")"
       cp -f "$asset" "${out_sample_dir}/${rel}"
-    done < <(find "${sample_dir}/npu_validation" -type f \( -name 'golden.py' -o -name 'compare.py' \) -print0)
+    done < <(find "${sample_dir}/npu_validation" -type f \( \
+      -name 'golden.py' -o -name 'compare.py' -o -name 'board_run.sh' -o -name 'DeviceBuffer.cpp' \) -print0)
   fi
 }
 

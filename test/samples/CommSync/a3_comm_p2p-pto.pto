@@ -1,0 +1,31 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+
+module {
+  func.func @a3_comm_p2p(%local_src: !pto.ptr<i32>, %local_dst: !pto.ptr<i32>,
+                        %peer_src: !pto.ptr<i32>, %peer_dst: !pto.ptr<i32>)
+      attributes {pto.kernel_kind = #pto.kernel_kind<vector>} {
+    %zero = arith.constant 0 : index
+    %one = arith.constant 1 : index
+    %count = arith.constant 128 : index
+    %local_src_view = pto.make_tensor_view %local_src, shape = [%count], strides = [%one] : !pto.tensor_view<128xi32>
+    %local_dst_view = pto.make_tensor_view %local_dst, shape = [%count], strides = [%one] : !pto.tensor_view<128xi32>
+    %peer_src_view = pto.make_tensor_view %peer_src, shape = [%count], strides = [%one] : !pto.tensor_view<128xi32>
+    %peer_dst_view = pto.make_tensor_view %peer_dst, shape = [%count], strides = [%one] : !pto.tensor_view<128xi32>
+    %send = pto.partition_view %local_src_view, offsets = [%zero], sizes = [%count] : !pto.tensor_view<128xi32>
+    %recv = pto.partition_view %local_dst_view, offsets = [%zero], sizes = [%count] : !pto.tensor_view<128xi32>
+    %peer_send = pto.partition_view %peer_src_view, offsets = [%zero], sizes = [%count] : !pto.tensor_view<128xi32>
+    %peer_recv = pto.partition_view %peer_dst_view, offsets = [%zero], sizes = [%count] : !pto.tensor_view<128xi32>
+    %scratch = pto.alloc_tile : !pto.tile_buf<vec, 1x128xi32>
+    pto.comm.tput(%peer_recv, %send, buf(%scratch) : !pto.partition_tensor_view<128xi32>, !pto.partition_tensor_view<128xi32>, !pto.tile_buf<vec, 1x128xi32>) {atomicType = #pto<atomic_type atomic_none>}
+    pto.fence.barrier_all #pto.fence_scope<gm>
+    pto.comm.tget(%recv, %peer_send, buf(%scratch) : !pto.partition_tensor_view<128xi32>, !pto.partition_tensor_view<128xi32>, !pto.tile_buf<vec, 1x128xi32>)
+    pto.fence.barrier_all #pto.fence_scope<gm>
+    return
+  }
+}

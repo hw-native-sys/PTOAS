@@ -788,6 +788,30 @@ while IFS= read -r -d '' cpp; do
     log "SKIP: ${testcase} (TPRINT is debug-only in pto-isa)"
     continue
   fi
+  if [[ "${case_id}" == "CommSync/a3_comm_p2p" ]]; then
+    # A3 Nightly sets Ascend910 even on hosts where npu-smi omits the chip name.
+    if [[ "${RUN_MODE}" != npu || "${PTOAS_BOARD_IS_A5}" == 1 || "${SOC_VERSION,,}" != ascend910* ]]; then
+      skip_count=$((skip_count + 1))
+      printf "%s\tSKIP\t%s\trequires A3 board\n" "${case_id}" "${STAGE}" >> "${RESULTS_TSV}"
+      log "SKIP: ${case_id} (requires A3 board)"
+    elif [[ "${STAGE}" == run && -n "${TASKQUEUE_INSIDE:-}" && "${TASK_DEVICE:-}" != *,* ]]; then
+      skip_count=$((skip_count + 1))
+      printf "%s\tSKIP\t%s\trequires two reserved devices\n" "${case_id}" "${STAGE}" >> "${RESULTS_TSV}"
+      log "SKIP: ${case_id} (requires two reserved devices)"
+    elif bash "${case_dir}/npu_validation/${testcase}/board_run.sh" \
+        "${cpp}" "${OUTPUT_ROOT}/${case_id}" "${PTO_ISA_ROOT}" "${STAGE}"; then
+      ok_count=$((ok_count + 1))
+      printf "%s\tOK\t%s\tA3 P2P TPUT/TGET\n" "${case_id}" "${STAGE}" >> "${RESULTS_TSV}"
+      log "OK: ${case_id}"
+    else
+      case_rc=$?
+      status=1
+      fail_count=$((fail_count + 1))
+      printf "%s\tFAIL\t%s\texit=%s\n" "${case_id}" "${STAGE}" "${case_rc}" >> "${RESULTS_TSV}"
+      log "ERROR: ${case_id} failed (exit ${case_rc})"
+    fi
+    continue
+  fi
   if [[ "${STAGE}" == "run" && "${RUN_MODE}" == "npu" ]] && case_requires_multicard_comm "${cpp}"; then
     skip_count=$((skip_count + 1))
     printf "%s\tSKIP\t%s\trequires multi-card communication harness\n" "${case_id}" "${STAGE}" >> "${RESULTS_TSV}"
