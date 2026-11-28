@@ -9,7 +9,7 @@
 include "PTO/IR/Linx/LinxTypes.td"
 include "mlir/Interfaces/SideEffectInterfaces.td"
 class LinxPTO_Op<string name, list<Trait> traits = []> :
-    Op<PTO_Dialect, name, traits>;
+    Op<PTO_Dialect, "linx." # name, traits>;
 def LinxPTO_AllocTileOp : LinxPTO_Op<"alloc_tile", [MemoryEffects<[MemAlloc]>]> {
   let results = (outs LinxPTO_TileBuf:$tile);
   let assemblyFormat = "attr-dict `:` type($tile)";

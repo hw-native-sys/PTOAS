@@ -8,29 +8,29 @@
 //--- reduce.pto
 module attributes {pto.target_arch = "linx"} {
   func.func @bad() {
-    %a = pto.alloc_tile : !pto.tile_buf<local, 16x128xf32>
-    %r = pto.alloc_tile : !pto.tile_buf<local, 16x2xf32>
-    pto.trowmax ins(%a : !pto.tile_buf<local, 16x128xf32>) outs(%r : !pto.tile_buf<local, 16x2xf32>)
+    %a = pto.linx.alloc_tile : !pto.linx.tile_buf<local, 16x128xf32>
+    %r = pto.linx.alloc_tile : !pto.linx.tile_buf<local, 16x2xf32>
+    pto.linx.trowmax ins(%a : !pto.linx.tile_buf<local, 16x128xf32>) outs(%r : !pto.linx.tile_buf<local, 16x2xf32>)
     return
   }
 }
 //--- expand.pto
 module attributes {pto.target_arch = "linx"} {
   func.func @bad() {
-    %a = pto.alloc_tile : !pto.tile_buf<local, 16x128xf32>
-    %r = pto.alloc_tile : !pto.tile_buf<local, 16x1xf32>
-    %d = pto.alloc_tile : !pto.tile_buf<local, 16x64xf32>
-    pto.trowexpanddiv ins(%a, %r : !pto.tile_buf<local, 16x128xf32>, !pto.tile_buf<local, 16x1xf32>)
-                     outs(%d : !pto.tile_buf<local, 16x64xf32>)
+    %a = pto.linx.alloc_tile : !pto.linx.tile_buf<local, 16x128xf32>
+    %r = pto.linx.alloc_tile : !pto.linx.tile_buf<local, 16x1xf32>
+    %d = pto.linx.alloc_tile : !pto.linx.tile_buf<local, 16x64xf32>
+    pto.linx.trowexpanddiv ins(%a, %r : !pto.linx.tile_buf<local, 16x128xf32>, !pto.linx.tile_buf<local, 16x1xf32>)
+                     outs(%d : !pto.linx.tile_buf<local, 16x64xf32>)
     return
   }
 }
 //--- exp.pto
 module attributes {pto.target_arch = "linx"} {
   func.func @bad() {
-    %a = pto.alloc_tile : !pto.tile_buf<local, 16x128xf32>
-    %d = pto.alloc_tile : !pto.tile_buf<local, 16x64xf32>
-    pto.texp ins(%a : !pto.tile_buf<local, 16x128xf32>) outs(%d : !pto.tile_buf<local, 16x64xf32>)
+    %a = pto.linx.alloc_tile : !pto.linx.tile_buf<local, 16x128xf32>
+    %d = pto.linx.alloc_tile : !pto.linx.tile_buf<local, 16x64xf32>
+    pto.linx.texp ins(%a : !pto.linx.tile_buf<local, 16x128xf32>) outs(%d : !pto.linx.tile_buf<local, 16x64xf32>)
     return
   }
 }

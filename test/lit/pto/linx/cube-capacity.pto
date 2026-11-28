@@ -1,7 +1,7 @@
 // RUN: not ptoas --pto-arch=linx %s -o - 2>&1 | FileCheck %s
 module attributes {pto.target_arch = "linx"} {
   func.func @bad() {
-    %a = pto.alloc_tile : !pto.tile_buf<local, 1x8192xf32, blayout=m16>
+    %a = pto.linx.alloc_tile : !pto.linx.tile_buf<local, 1x8192xf32, blayout=m16>
     return
   }
 }

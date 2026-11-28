@@ -1,7 +1,8 @@
 # Linx CPU-sim runtime validation
 
 Run all commands on a remote worker. The input is MLIR text with the `.pto`
-extension. No Python bindings or CAPI frontend are required.
+extension. Linx operations and types use `pto.linx.*` and `!pto.linx.*`; the
+CLI remains `--pto-arch=linx`. No Python bindings or CAPI frontend are required.
 
 The supported profile is static rank-2 local f32 (row-major and CUBE M16/M32/N8). Each GM argument
 lowers to a pair `(float *base, int32_t row_stride_elements)` in an `extern "C"`

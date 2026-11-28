@@ -6,12 +6,10 @@
 // INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
 // See LICENSE in the root of the software repository for the full text of the License.
 
-// Full-range unsigned division must expand to the SoftLib restoring loop and
-// never reach an integer HiVM VDIV. The ".u" fragments also pin the premise the
-// loop depends on: on an unsigned vreg the compare and the shift lower to their
-// unsigned forms, so the quotient bits and the remainder compare are unsigned.
+// The dav-3510 reciprocal estimate uses a floating-point VDIV and refines the
+// result in integer arithmetic with unsigned comparisons and predicated selects.
 // RUN: ptoas --pto-arch=a5 --pto-backend=vpto --emit-vpto-llvm-ir %s -o - \
-// RUN:   | FileCheck %s --implicit-check-not=llvm.hivm.vdiv
+// RUN:   | FileCheck %s --implicit-check-not='@llvm.hivm.vdiv.{{[su]}}.x.v{{128|64}}i{{16|32}}'
 
 module attributes {pto.target_arch = "a5", pto.kernel_kind = #pto.kernel_kind<vector>} {
   func.func @issue1607_vdiv_ui16(%lhs: !pto.vreg<128xui16>,
@@ -35,12 +33,12 @@ module attributes {pto.target_arch = "a5", pto.kernel_kind = #pto.kernel_kind<ve
 }
 
 // CHECK-LABEL: define void @issue1607_vdiv_ui16_mix_aiv
-// CHECK-DAG: @llvm.hivm.vshrs.u.x.v128i16
+// CHECK-DAG: @llvm.hivm.vdiv.s.x.v64f32
 // CHECK-DAG: @llvm.hivm.vcmp.ge.u.z.v128i16
-// CHECK-DAG: @llvm.hivm.vcmps.ge.u.z.v128i16
+// CHECK-DAG: @llvm.hivm.vcmps.eq.u.z.v128i16
 // CHECK-DAG: @llvm.hivm.vsub.u.x.v128i16
 // CHECK-LABEL: define void @issue1607_vdiv_ui32_mix_aiv
-// CHECK-DAG: @llvm.hivm.vshrs.u.x.v64i32
+// CHECK-DAG: @llvm.hivm.vdiv.s.x.v64f32
 // CHECK-DAG: @llvm.hivm.vcmp.ge.u.z.v64i32
-// CHECK-DAG: @llvm.hivm.vcmps.ge.u.z.v64i32
+// CHECK-DAG: @llvm.hivm.vcmps.eq.u.z.v64i32
 // CHECK-DAG: @llvm.hivm.vsub.u.x.v64i32

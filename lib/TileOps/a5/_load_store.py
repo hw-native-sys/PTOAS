@@ -68,7 +68,7 @@ def _is_unknown_dim(value) -> bool:
 def _shape_size(shape):
     result = 1
     for dim in shape:
-        if dim is None:
+        if _is_unknown_dim(dim):
             return None
         result *= dim
     return result
@@ -92,14 +92,110 @@ def _is_tile_layout(config, *, row_major: bool, s_layout: str) -> bool:
     return config.b_layout != "row_major" and config.s_layout == s_layout
 
 
-def _check_load_bounds(src_shape, src_strides, dst_shape, dst_valid_shape, *, logical_rows, logical_cols=None, stride_axis=None, ranks=(5,)):
+def _is_row_plus_one_tile(config) -> bool:
+    # compact=2 (row_plus_one) pads each C0 column block with one extra row:
+    # the physical pitch between blocks is (rows + 1) * 32 bytes, while the
+    # NZ load/store templates step bursts by the dense rows * 32 pitch and
+    # would silently corrupt the tile (cf. alloc_multi_tile's rejection of
+    # row_plus_one slots for the same footprint reason).
+    if config is None:
+        return False
+    mode = getattr(config, "compact_mode", None)
+    if mode is None:
+        return False
+    mode = getattr(mode, "value", mode)
+    if isinstance(mode, bool):
+        return False
+    if isinstance(mode, int):
+        return mode == 2
+    return str(mode).strip().lower() in {"2", "row_plus_one", "rowplusone"}
+
+
+# Column-block width, in elements, of one NZ fractal per storage dtype
+# (C0 = 32 / storage bytes); packed sub-byte dtypes count one storage element.
+# An unknown dtype resolves to None and keeps the ND label rejected.
+_NZ_C0_BY_DTYPE = {
+    "f32": 8,
+    "i32": 8,
+    "ui32": 8,
+    "si32": 8,
+    "f16": 16,
+    "bf16": 16,
+    "i16": 16,
+    "ui16": 16,
+    "si16": 16,
+    "i8": 32,
+    "ui8": 32,
+    "si8": 32,
+    "f8e4m3": 32,
+    "f8e5m2": 32,
+    "hif8": 32,
+    "f4e1m2x2": 32,
+    "f4e2m1x2": 32,
+    "i64": 4,
+    "ui64": 4,
+    "si64": 4,
+}
+
+
+def _nz_c0(dtype):
+    # Column-block width, in elements, of one NZ fractal for a storage dtype.
+    return _NZ_C0_BY_DTYPE.get(str(dtype).lower())
+
+
+def _is_nz_dma_tile(config, c0) -> bool:
+    if not _is_tile_layout(config, row_major=False, s_layout="row_major") or _is_row_plus_one_tile(config):
+        return False
+    # Fractal 512 uses a 32-byte inner column block. Fractal 1024 has a fixed
+    # width of 16 columns, which matches the DMA block for two-byte elements.
+    return config.s_fractal_size == 512 or (config.s_fractal_size == 1024 and c0 == 16)
+
+
+def _conflicting_nz_view_layout(layout, shape5d, strides5d, c0) -> bool:
+    # GM<->UB/VEC MTE moves bytes per the view strides and cannot convert
+    # layouts, so an explicitly conflicting view layout must not reach the NZ
+    # templates.  Layout inference, however, labels every unannotated 5D view
+    # that is not NZ-canonical -- single-fractal shapes included -- as ND, so
+    # an ND label is accepted only when the copy degenerates to one contiguous
+    # burst over a single C0-wide column block: g0 * g1 == 1 and g4 == C0 with
+    # dense row-major inner strides (s4 == 1, s3 == g4, s2 == g3 * g4).  The
+    # template's len_burst moves rows * C0 elements in one go, so a wider or
+    # gapped view would leave the tile under-filled or misaligned.  DN never
+    # coincides with the fractal copy order.
+    if layout in {None, "nz", "fractal"}:
+        return False
+    if layout in {"nd", "row_major"}:
+        if _shape_size((shape5d[0], shape5d[1])) != 1:
+            return True
+        if c0 is None or shape5d[4] != c0 or _is_unknown_dim(shape5d[3]):
+            return True
+        if strides5d is None:
+            return True
+        if any(_is_unknown_dim(_stride_at(strides5d, index)) for index in (2, 3, 4)):
+            return True
+        return not (strides5d[4] == 1 and strides5d[3] == c0 and strides5d[2] == shape5d[3] * c0)
+    return True
+
+
+def _check_load_bounds(
+    src_shape,
+    src_strides,
+    dst_shape,
+    dst_valid_shape,
+    *,
+    logical_rows,
+    logical_cols=None,
+    stride_axis=None,
+    ranks=(5,),
+    require_rows_fit_tile=True,
+):
     if _view_rank(src_shape) not in ranks:
         return False
     if stride_axis is not None and not _known_eq(_stride_at(src_strides, stride_axis), 1):
         return False
     if not _known_le(dst_valid_shape[0], logical_rows):
         return False
-    if not _known_le(logical_rows, dst_shape[0]):
+    if require_rows_fit_tile and not _known_le(logical_rows, dst_shape[0]):
         return False
     if not _known_le(dst_valid_shape[0], dst_shape[0]):
         return False
@@ -173,16 +269,48 @@ def tload_dn2dn_constraint(src_kind, src_shape, src_strides, src_memory_space, d
     )
 
 
-def tload_nz2nz_constraint(src_kind, src_shape, src_memory_space, dst_kind, dst_shape, dst_valid_shape, dst_memory_space, dst_config, **_):
+def tload_nz2nz_constraint(
+    src_kind,
+    src_shape,
+    src_strides,
+    src_memory_space,
+    dst_kind,
+    dst_shape,
+    dst_valid_shape,
+    dst_memory_space,
+    dst_config,
+    **_,
+):
+    # The optional view annotation/dtype context keys arrive through **_.
+    src_layout = _.get("src_layout")
+    src_dtype = _.get("src_dtype")
     if src_kind != "view" or dst_kind != "tile" or src_memory_space != "gm" or dst_memory_space not in {"ub", "vec"}:
         return False
-    logical_rows = src_shape[2]
-    return _is_tile_layout(dst_config, row_major=False, s_layout="row_major") and _check_load_bounds(
+    c0 = _nz_c0(src_dtype)
+    if _view_rank(src_shape) != 5 or _conflicting_nz_view_layout(src_layout, src_shape, src_strides, c0):
+        return False
+    if not _is_nz_dma_tile(dst_config, c0):
+        return False
+    # A 5D NZ view [g0, g1, g2, g3, g4] covers g2 * g3 logical rows and
+    # g0 * g1 * g4 logical columns.  The template iterates g0 burst groups of
+    # g1 C0 column blocks stepping by s0/s1, so those column extents and
+    # strides must be statically known.  The DMA length follows the tile's
+    # valid rows, so the row extents may stay dynamic and the source may be
+    # taller than the tile's physical rows -- only the valid prefix is read.
+    logical_rows = _shape_size((src_shape[2], src_shape[3]))
+    logical_cols = _shape_size((src_shape[0], src_shape[1], src_shape[4]))
+    if logical_cols is None:
+        return False
+    if _is_unknown_dim(_stride_at(src_strides, 0)) or _is_unknown_dim(_stride_at(src_strides, 1)):
+        return False
+    return _check_load_bounds(
         src_shape,
         None,
         dst_shape,
         dst_valid_shape,
         logical_rows=logical_rows,
+        logical_cols=logical_cols,
+        require_rows_fit_tile=False,
     )
 
 
@@ -224,12 +352,41 @@ def tstore_dn_constraint(src_kind, src_shape, src_valid_shape, src_memory_space,
     )
 
 
-def tstore_nz_constraint(src_kind, src_shape, src_valid_shape, src_memory_space, src_config, dst_kind, dst_shape, dst_memory_space, **_):
+def tstore_nz_constraint(
+    src_kind,
+    src_shape,
+    src_valid_shape,
+    src_memory_space,
+    src_config,
+    dst_kind,
+    dst_shape,
+    dst_strides,
+    dst_memory_space,
+    **_,
+):
+    # The optional view annotation/dtype context keys arrive through **_.
+    dst_layout = _.get("dst_layout")
+    dst_dtype = _.get("dst_dtype")
     if src_kind != "tile" or dst_kind != "view" or src_memory_space not in {"ub", "vec"} or dst_memory_space != "gm":
         return False
-    logical_rows = dst_shape[2] * dst_shape[3]
-    logical_cols = dst_shape[0] * dst_shape[1] * dst_shape[4]
-    return _is_tile_layout(src_config, row_major=False, s_layout="row_major") and _check_store_bounds(
+    c0 = _nz_c0(dst_dtype)
+    if _view_rank(dst_shape) != 5 or _conflicting_nz_view_layout(dst_layout, dst_shape, dst_strides, c0):
+        return False
+    if not _is_nz_dma_tile(src_config, c0):
+        return False
+    # The store iterates g0 burst groups of g1 C0 column blocks stepping by
+    # s0/s1, so the column extents and strides must be statically known.  The
+    # store DMA length is fixed by the tile's valid rows at compile time, so
+    # the destination must statically prove equal row coverage: an unknown
+    # row extent could be shorter at runtime and the fixed-length DMA would
+    # write past the partition.
+    logical_rows = _shape_size((dst_shape[2], dst_shape[3]))
+    logical_cols = _shape_size((dst_shape[0], dst_shape[1], dst_shape[4]))
+    if logical_cols is None or logical_rows is None:
+        return False
+    if _is_unknown_dim(_stride_at(dst_strides, 0)) or _is_unknown_dim(_stride_at(dst_strides, 1)):
+        return False
+    return _check_store_bounds(
         src_shape,
         src_valid_shape,
         dst_shape,
