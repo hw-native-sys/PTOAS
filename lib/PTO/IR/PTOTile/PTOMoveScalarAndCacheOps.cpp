@@ -157,6 +157,10 @@ void CmoCacheInvalidOp::print(OpAsmPrinter &p) {
 }
 
 LogicalResult CmoCacheInvalidOp::verify() {
+  if (Attribute acquire = (*this)->getAttr("pto.comm_acquire")) {
+    if (getAddr() || !isa<UnitAttr>(acquire))
+      return emitOpError("pto.comm_acquire requires the whole-cache form and a unit attribute");
+  }
   if (!isGmOrDefaultAddressSpace(getSpace().getAddressSpace())) {
     return emitOpError("only supports GM cache maintenance");
   }

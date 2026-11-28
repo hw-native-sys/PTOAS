@@ -1,4 +1,3 @@
-# coding=utf-8
 # Copyright (c) 2026 Huawei Technologies Co., Ltd.
 # This program is free software, you can redistribute it and/or modify it under the terms and conditions of
 # CANN Open Software License Agreement Version 2.0 (the "License").
@@ -9,7 +8,7 @@
 
 """Compiler regressions for A5 expand dtype coverage and legal VPTO lowering."""
 
-import sys
+import re
 from importlib.util import module_from_spec, spec_from_file_location
 from pathlib import Path
 
@@ -17,6 +16,7 @@ import pytest
 
 from ptoas import _cli
 from ptodsl import pto
+from ptodsl._runtime.toolchain import resolve_ptoas_binary
 
 
 def _binary_kernel(op, dtype, row):
@@ -71,12 +71,10 @@ def _compile(kernel, tmp_path, *, llvm_ir=False):
     source = tmp_path / "input.pto"
     output = tmp_path / ("output.ll" if llvm_ir else "output.vpto")
     source.write_text(kernel.compile().mlir_text(), encoding="utf-8")
-    ptoas = Path(sys.executable).with_name("ptoas")
-    assert ptoas.is_file(), "ptoas executable is required for compiler regression tests"
     result = _cli.launch(
         ["--pto-arch=a5", "--pto-backend=vpto",
          "--emit-vpto-llvm-ir" if llvm_ir else "--emit-vpto", str(source), "-o", str(output)],
-        wrapper=ptoas,
+        wrapper=resolve_ptoas_binary(),
     )
     assert result == 0
     return output.read_text(encoding="utf-8")
@@ -130,23 +128,29 @@ def test_i8_multiply_uses_legal_vector_operations(op, row, tmp_path):
     assert "llvm.hivm.vmul.u.x.v128i16" in llvm_ir
     assert "llvm.hivm.vmul.s.x.v256i8" not in llvm_ir
     if row:
-        assert "load i8, ptr addrspace(6)" in llvm_ir
-        assert "align 1" in llvm_ir
+        # Packed INT8 row values are loaded with a one-byte post-update and
+        # broadcast from the vector register.
+        assert re.search(
+            r"call .* @llvm\.hivm\.vldsx1\.post\.v256i8\(ptr addrspace\(6\) [^,]+, i32 1,",
+            llvm_ir,
+        )
+        assert "call <256 x i8> @llvm.hivm.vdup.z.v256i8(" in llvm_ir
 
 
 def test_rowexpand_wide_smoke_compiles(tmp_path):
     source = (Path(__file__).resolve().parents[2] / "test/tilelang_st/npu/a5/src/st/smoke"
               / "testcase/trowexpand/trowexpand.pto")
     output = tmp_path / "rowexpand.ll"
-    ptoas = Path(sys.executable).with_name("ptoas")
     result = _cli.launch(
         ["--pto-arch=a5", "--pto-backend=vpto", "--enable-insert-sync",
          "--enable-tile-op-expand", "--emit-vpto-llvm-ir",
          str(source), "-o", str(output)],
-        wrapper=ptoas,
+        wrapper=resolve_ptoas_binary(),
     )
     assert result == 0
-    assert "llvm.hivm.vdups" in output.read_text(encoding="utf-8")
+    llvm_ir = output.read_text(encoding="utf-8")
+    assert "call <64 x float> @llvm.hivm.vdup.z.v64f32(" in llvm_ir
+    assert "call void @llvm.hivm.vstsx1.v64f32(" in llvm_ir
 
 
 @pytest.mark.parametrize("module_name,kernel_name", [

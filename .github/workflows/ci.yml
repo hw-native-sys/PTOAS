@@ -151,7 +151,7 @@ jobs:
           # LLVM/MLIR Python bindings are not yet compatible with pybind11 3.x.
           "${PTOAS_VENV}/bin/pip" install \
             'scikit-build-core>=0.12.2,<2' 'pybind11<3' \
-            numpy ml-dtypes
+            numpy ml-dtypes pytest
 
       - name: Define payload paths
         shell: bash

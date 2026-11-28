@@ -223,6 +223,16 @@ struct PTOSignalCommToEmitC : public OpConversionPattern<SignalOp> {
       emitTNotifyReleaseActions(rewriter, op.getLoc(), drainMte2, drainMte3);
       rewriter.create<emitc::CallOpaqueOp>(op.getLoc(), TypeRange{}, callee,
                                            ArrayAttr{}, ArrayAttr{}, operands);
+      if (op.getNotifyOp() == pto::NotifyOp::AtomicAdd &&
+          getTargetArch(op.getOperation()) == PTOArch::A3) {
+        // The ISA leaves the store atomic mode enabled after the signal add.
+        rewriter.create<emitc::VerbatimOp>(
+            op.getLoc(), "#if !defined(__CPU_SIM) && !defined(__COSTMODEL)");
+        rewriter.create<emitc::CallOpaqueOp>(
+            op.getLoc(), TypeRange{}, "pto::SetAtomicNone", ArrayAttr{},
+            ArrayAttr{}, ValueRange{});
+        rewriter.create<emitc::VerbatimOp>(op.getLoc(), "#endif");
+      }
       rewriter.eraseOp(op);
     } else {
       auto waitCmpTy =

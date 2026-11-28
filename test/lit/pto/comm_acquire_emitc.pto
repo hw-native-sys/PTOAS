@@ -1,0 +1,144 @@
+// Copyright (c) 2026 Huawei Technologies Co., Ltd.
+// This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+// CANN Open Software License Agreement Version 2.0 (the "License").
+// Please refer to the License for details. You may not use this file except in compliance with the License.
+// THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
+// INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY OR FITNESS FOR A PARTICULAR PURPOSE.
+// See LICENSE in the root of the software repository for the full text of the License.
+
+// RUN: ptoas --pto-arch=a3 %s -o - | FileCheck %s
+
+module {
+  func.func @vector_payload(
+      %src_ptr: !pto.ptr<f32>,
+      %dst_ptr: !pto.ptr<f32>,
+      %count_ptr: !pto.ptr<i32>,
+      %signal_ptr: !pto.ptr<i32>)
+      attributes {pto.kernel_kind = #pto.kernel_kind<vector>} {
+    %c0 = arith.constant 0 : index
+    %c1 = arith.constant 1 : index
+    %c32 = arith.constant 32 : index
+    %v_i32 = arith.constant 7 : i32
+
+    %tile = pto.alloc_tile :
+      !pto.tile_buf<loc=vec, dtype=f32, rows=1, cols=32, v_row=1, v_col=32, blayout=row_major, slayout=none_box, fractal=512, pad=0>
+
+    %src_view = pto.make_tensor_view %src_ptr,
+      shape = [%c1, %c32], strides = [%c32, %c1] : !pto.tensor_view<?x?xf32>
+    %src = pto.partition_view %src_view,
+      offsets = [%c0, %c0], sizes = [%c1, %c32]
+      : !pto.tensor_view<?x?xf32> -> !pto.partition_tensor_view<1x32xf32>
+
+    %dst_view = pto.make_tensor_view %dst_ptr,
+      shape = [%c1, %c32], strides = [%c32, %c1] : !pto.tensor_view<?x?xf32>
+    %dst = pto.partition_view %dst_view,
+      offsets = [%c0, %c0], sizes = [%c1, %c32]
+      : !pto.tensor_view<?x?xf32> -> !pto.partition_tensor_view<1x32xf32>
+
+    %sig_view = pto.make_tensor_view %signal_ptr,
+      shape = [%c1], strides = [%c1] : !pto.tensor_view<1xi32>
+    %sig = pto.partition_view %sig_view,
+      offsets = [%c0], sizes = [%c1]
+      : !pto.tensor_view<1xi32> -> !pto.partition_tensor_view<1xi32>
+    pto.comm.tnotify(%sig, %v_i32 : !pto.partition_tensor_view<1xi32>, i32)
+        {notifyOp = #pto<notify_op atomic_add>}
+    %expected = pto.load %count_ptr[%c0] : !pto.ptr<i32>, index -> i32
+    pto.comm.twait(%sig, %expected : !pto.partition_tensor_view<1xi32>, i32)
+        {cmp = #pto<wait_cmp ge>}
+    pto.cmo.cacheinvalid all #pto.address_space<gm> {pto.comm_acquire}
+
+    pto.tload ins(%src : !pto.partition_tensor_view<1x32xf32>)
+              outs(%tile : !pto.tile_buf<loc=vec, dtype=f32, rows=1, cols=32, v_row=1, v_col=32, blayout=row_major, slayout=none_box, fractal=512, pad=0>)
+    pto.tstore ins(%tile : !pto.tile_buf<loc=vec, dtype=f32, rows=1, cols=32, v_row=1, v_col=32, blayout=row_major, slayout=none_box, fractal=512, pad=0>)
+               outs(%dst : !pto.partition_tensor_view<1x32xf32>)
+    return
+  }
+
+  func.func @scalar_read_after_wait(
+      %payload_ptr: !pto.ptr<i32>,
+      %signal_ptr: !pto.ptr<i32>) -> i32
+      attributes {pto.kernel_kind = #pto.kernel_kind<vector>} {
+    %c0 = arith.constant 0 : index
+    %c1 = arith.constant 1 : index
+    %v_i32 = arith.constant 1 : i32
+
+    %sig_view = pto.make_tensor_view %signal_ptr,
+      shape = [%c1], strides = [%c1] : !pto.tensor_view<1xi32>
+    %sig = pto.partition_view %sig_view,
+      offsets = [%c0], sizes = [%c1]
+      : !pto.tensor_view<1xi32> -> !pto.partition_tensor_view<1xi32>
+    pto.comm.twait(%sig, %v_i32 : !pto.partition_tensor_view<1xi32>, i32)
+        {cmp = #pto<wait_cmp ge>}
+
+    pto.cmo.cacheinvalid all #pto.address_space<gm> {pto.comm_acquire}
+    %val = pto.load %payload_ptr[%c0] : !pto.ptr<i32>, index -> i32
+    return %val : i32
+  }
+
+  func.func @scalar_write_before_wait(
+      %payload_ptr: !pto.ptr<i32>,
+      %signal_ptr: !pto.ptr<i32>)
+      attributes {pto.kernel_kind = #pto.kernel_kind<vector>} {
+    %c0 = arith.constant 0 : index
+    %c1 = arith.constant 1 : index
+    %v_i32 = arith.constant 1 : i32
+
+    pto.store %v_i32, %payload_ptr[%c0] : !pto.ptr<i32>, index, i32
+    %sig_view = pto.make_tensor_view %signal_ptr,
+      shape = [%c1], strides = [%c1] : !pto.tensor_view<1xi32>
+    %sig = pto.partition_view %sig_view,
+      offsets = [%c0], sizes = [%c1]
+      : !pto.tensor_view<1xi32> -> !pto.partition_tensor_view<1xi32>
+    pto.comm.twait(%sig, %v_i32 : !pto.partition_tensor_view<1xi32>, i32)
+        {cmp = #pto<wait_cmp ge>}
+
+    pto.cmo.cacheinvalid all #pto.address_space<gm> {pto.comm_acquire}
+    return
+  }
+
+  func.func @explicit_after_wait(
+      %signal_ptr: !pto.ptr<i32>)
+      attributes {pto.kernel_kind = #pto.kernel_kind<vector>} {
+    %c0 = arith.constant 0 : index
+    %c1 = arith.constant 1 : index
+    %v_i32 = arith.constant 1 : i32
+
+    %sig_view = pto.make_tensor_view %signal_ptr,
+      shape = [%c1], strides = [%c1] : !pto.tensor_view<1xi32>
+    %sig = pto.partition_view %sig_view,
+      offsets = [%c0], sizes = [%c1]
+      : !pto.tensor_view<1xi32> -> !pto.partition_tensor_view<1xi32>
+    pto.comm.twait(%sig, %v_i32 : !pto.partition_tensor_view<1xi32>, i32)
+        {cmp = #pto<wait_cmp ge>}
+
+    pto.cmo.cacheinvalid all #pto.address_space<gm>
+    return
+  }
+}
+
+// CHECK-LABEL: AICORE void vector_payload(
+// CHECK:       pto::comm::NotifyOp::AtomicAdd
+// CHECK:       pto::comm::TNOTIFY(
+// CHECK-NEXT:  #if !defined(__CPU_SIM) && !defined(__COSTMODEL)
+// CHECK-NEXT:  pto::SetAtomicNone();
+// CHECK-NEXT:  #endif
+// CHECK:       pto::comm::TWAIT(
+// CHECK-NOT:   ENTIRE_DATA_CACHE
+// CHECK:       TLOAD(
+// CHECK-NOT:   ENTIRE_DATA_CACHE
+// CHECK:       TSTORE(
+// CHECK-NOT:   ENTIRE_DATA_CACHE
+
+// CHECK-LABEL: AICORE int32_t scalar_read_after_wait(
+// CHECK:       pto::comm::TWAIT(
+// CHECK:       dcci((__gm__ void*)0, cache_line_t::ENTIRE_DATA_CACHE);
+// CHECK:       {{.*}} = {{.*}}[{{.*}}];
+
+// CHECK-LABEL: AICORE void scalar_write_before_wait(
+// CHECK:       {{.*}}[{{.*}}] = {{.*}};
+// CHECK:       pto::comm::TWAIT(
+// CHECK:       dcci((__gm__ void*)0, cache_line_t::ENTIRE_DATA_CACHE);
+
+// CHECK-LABEL: AICORE void explicit_after_wait(
+// CHECK:       pto::comm::TWAIT(
+// CHECK:       dcci((__gm__ void*)0, cache_line_t::ENTIRE_DATA_CACHE);

@@ -22,7 +22,7 @@ endif()
 function(add_ptodsl_python_test test_name script_path)
   add_test(
     NAME ${test_name}
-    COMMAND "${Python3_EXECUTABLE}" "${CMAKE_SOURCE_DIR}/${script_path}"
+    COMMAND "${Python3_EXECUTABLE}" ${ARGN} "${CMAKE_SOURCE_DIR}/${script_path}"
   )
   set_tests_properties(${test_name} PROPERTIES
     LABELS "PTODSL"
@@ -53,6 +53,9 @@ file(
 
 list(SORT _ptodsl_test_files)
 
+# These modules use pytest fixtures and parameterization.
+set(_ptodsl_pytest_tests ptodsl_expand_dtype_regressions ptodsl_tile_div_dispatch)
+
 foreach(test_file IN LISTS _ptodsl_test_files)
   file(RELATIVE_PATH rel_path "${CMAKE_SOURCE_DIR}" "${test_file}")
   get_filename_component(stem "${test_file}" NAME_WE)
@@ -64,7 +67,11 @@ foreach(test_file IN LISTS _ptodsl_test_files)
     set(test_name "ptodsl_${stem}")
   endif()
 
-  add_ptodsl_python_test("${test_name}" "${rel_path}")
+  if(test_name IN_LIST _ptodsl_pytest_tests)
+    add_ptodsl_python_test("${test_name}" "${rel_path}" -m pytest -q --import-mode=importlib)
+  else()
+    add_ptodsl_python_test("${test_name}" "${rel_path}")
+  endif()
 endforeach()
 
 # Shell regressions under the same convention: ptodsl/tests/test_*.sh

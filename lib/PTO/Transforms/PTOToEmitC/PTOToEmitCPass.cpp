@@ -10,6 +10,7 @@
 //===----------------------------------------------------------------------===//
 
 #include "PTOToEmitCPatterns.h"
+#include "PTO/Transforms/MemoryConsistencyAttrs.h"
 #include "PTO/Transforms/Passes.h"
 #include "PTO/Transforms/Tf32ModeSupport.h"
 #include <set>
@@ -20,6 +21,8 @@
 #include "mlir/Conversion/SCFToEmitC/SCFToEmitC.h"
 #include "mlir/Dialect/Func/Transforms/FuncConversions.h"
 #include "mlir/Dialect/SCF/Transforms/Patterns.h"
+#include "mlir/IR/SymbolTable.h"
+#include "mlir/Interfaces/SideEffectInterfaces.h"
 #include "mlir/Transforms/GreedyPatternRewriteDriver.h"
 
 namespace mlir {
@@ -33,6 +36,103 @@ using namespace mlir::pto;
 #define DEBUG_TYPE "pto-emitc"
 
 namespace {
+
+// Treat only explicitly local memory spaces as outside the scalar GM cache.
+static bool isLocalMemory(Value value) {
+  if (!value)
+    return false;
+  Attribute space;
+  Type type = value.getType();
+  if (auto memref = dyn_cast<BaseMemRefType>(type))
+    space = memref.getMemorySpace();
+  else if (auto ptr = dyn_cast<pto::PtrType>(type))
+    space = ptr.getMemorySpace();
+  else if (auto tile = dyn_cast<pto::TileBufType>(type))
+    space = tile.getMemorySpace();
+  auto addressSpace = dyn_cast_if_present<pto::AddressSpaceAttr>(space);
+  return addressSpace && addressSpace.getAddressSpace() != pto::AddressSpace::GM &&
+         addressSpace.getAddressSpace() != pto::AddressSpace::Zero;
+}
+
+enum class ScalarGmEffect { None, Read, UnknownOrWrite };
+
+static ScalarGmEffect getScalarGmEffect(Operation *op) {
+  // Tile DMA bypasses the scalar cache. The signal instructions themselves
+  // maintain their signal line. The other listed ops move no GM payload.
+  if (isa<pto::TLoadOp, pto::TStoreOp, pto::TPutOp, pto::TGetOp,
+          pto::TWaitOp, pto::TTestOp, pto::TNotifyOp, pto::CmoCacheInvalidOp,
+          pto::FenceBarrierAllOp, pto::BarrierOp, pto::SetFlagOp,
+          pto::WaitFlagOp, pto::SyncSetOp, pto::SyncWaitOp, pto::AllocTileOp,
+          pto::DeclareTileOp, func::ReturnOp, scf::YieldOp, scf::ConditionOp>(op) ||
+      isMemoryEffectFree(op))
+    return ScalarGmEffect::None;
+
+  auto memory = dyn_cast<MemoryEffectOpInterface>(op);
+  if (!memory)
+    return ScalarGmEffect::UnknownOrWrite;
+
+  SmallVector<MemoryEffects::EffectInstance> effects;
+  memory.getEffects(effects);
+  ScalarGmEffect result = ScalarGmEffect::None;
+  for (const auto &effect : effects) {
+    if (isLocalMemory(effect.getValue()))
+      continue;
+    if (!isa<MemoryEffects::Read>(effect.getEffect()))
+      return ScalarGmEffect::UnknownOrWrite;
+    result = ScalarGmEffect::Read;
+  }
+  return result;
+}
+
+static void markRedundantCommAcquires(ModuleOp module) {
+  for (auto function : module.getOps<func::FuncOp>()) {
+    // Restrict candidates to straight-line function entry blocks. Walk
+    // structured control flow within the block to account for every path;
+    // unknown calls and region kinds conservatively keep the CMO.
+    if (!function.getBody().hasOneBlock())
+      continue;
+    Block &body = function.getBody().front();
+    SmallVector<pto::CmoCacheInvalidOp> candidates;
+    for (auto cmo : body.getOps<pto::CmoCacheInvalidOp>()) {
+      if (!cmo.getAddr() && cmo->getAttrOfType<UnitAttr>("pto.comm_acquire"))
+        candidates.push_back(cmo);
+    }
+    if (candidates.empty() || !SymbolTable::symbolKnownUseEmpty(function, module))
+      continue;
+
+    bool mayHaveScalarWrite = false;
+    Operation *lastScalarRead = nullptr;
+    for (Operation &root : body) {
+      auto result = root.walk<WalkOrder::PreOrder>([&](Operation *op) {
+        if (isa<scf::ForOp, scf::IfOp, scf::WhileOp, scf::ExecuteRegionOp>(op))
+          return WalkResult::advance();
+        if (op->getNumRegions() != 0)
+          return WalkResult::interrupt();
+        switch (getScalarGmEffect(op)) {
+        case ScalarGmEffect::None:
+          return WalkResult::advance();
+        case ScalarGmEffect::Read:
+          lastScalarRead = &root;
+          return WalkResult::advance();
+        case ScalarGmEffect::UnknownOrWrite:
+          return WalkResult::interrupt();
+        }
+        llvm_unreachable("invalid scalar GM effect");
+      });
+      if (result.wasInterrupted()) {
+        mayHaveScalarWrite = true;
+        break;
+      }
+    }
+    if (mayHaveScalarWrite)
+      continue;
+    for (auto cmo : candidates) {
+      if (!lastScalarRead || lastScalarRead->isBeforeInBlock(cmo))
+        cmo->setAttr(kCmoCacheInvalidSkipLoweringAttrName,
+                     UnitAttr::get(module.getContext()));
+    }
+  }
+}
 
 // scf.execute_region is semantically just an inlined region producing results
 // via scf.yield. Inline it to the parent block to avoid extra lowering needs.
@@ -677,6 +777,9 @@ struct EmitPTOManualPass
     if (failed(validateAndAnnotate(mop))) {
       return signalPassFailure();
     }
+
+    if (targetArch == PTOArch::A3)
+      markRedundantCommAcquires(mop);
 
     emitPreambleHelpers(mop, ctx);
 

@@ -134,6 +134,7 @@ module {
 // CHECK-NEXT: pipe_barrier(PIPE_ALL);
 // CHECK-NEXT: dsb(DSB_DDR);
 // CHECK:      pto::comm::TNOTIFY(
+// CHECK-NOT:  pto::SetAtomicNone();
 
 // CHECK-LABEL: AICORE void scalar_acquire_sequence(
 // CHECK:      pto::comm::TWAIT(
